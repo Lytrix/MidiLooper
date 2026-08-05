@@ -6,15 +6,19 @@
 #include <cstdint>
 
 #include "ApplyEditSessionActions.h"
+#include "ApplyOwnedEditPassRows.h"
 #include "EditSessionActionBuilder.h"
 #include "EditSessionLiveStoreSpan.h"
+#include "EditSessionStoreInvariant.h"
 #include "MidiEvent.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/NoteMovementWrap.h"
 
 #include "../../src/ApplyEditSessionActions.cpp"
+#include "../../src/ApplyOwnedEditPassRows.cpp"
 #include "../../src/EditSessionActionBuilder.cpp"
 #include "../../src/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditSessionStoreInvariant.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/NoteEditFocus.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
@@ -1120,6 +1124,530 @@ void test_same_pitch_left_neighbor_shorten_and_restore_on_leave() {
   TEST_ASSERT_EQUAL_UINT32(720u, leftSpan.endTick);
 }
 
+void test_apply_restore_move_same_start_keeps_mover_length_122352() {
+  // session_20260805_122352.log: L→R over two adjacent pitch-23 notes — Restore overlap stub
+  // then Move mover to same start must keep length 95 (288–383), not inflate via stale off@431.
+  constexpr uint32_t loopLength = 2304;
+  constexpr NoteId kOverlapId = 66;
+  constexpr NoteId kMoverId = 68;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(288, kChannel, 23, 100, kOverlapId));
+  MidiEvent overlapOff = MidiEvent::NoteOff(335, kChannel, 23, 0);
+  overlapOff.noteId = kOverlapId;
+  store.push_back(overlapOff);
+  store.push_back(noteOnWithNoteId(336, kChannel, 23, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(431, kChannel, 23, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 23, 336, 431);
+  focus.commitBaseline = {23, 100, 1344, 1439};
+  focus.baselineMap[kOverlapId] = {23, 100, 288, 383};
+  focus.baselineMap[kMoverId] = {23, 100, 1344, 1439};
+
+  EditSessionActions actions;
+  EditSessionAction restore{};
+  restore.type = EditSessionActionType::RestoreNote;
+  restore.targetNoteId = kOverlapId;
+  restore.startTick = 288;
+  restore.endTick = 383;
+  restore.pitch = 23;
+  restore.velocity = 100;
+  actions.push_back(restore);
+
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 288;
+  move.endTick = 383;
+  move.pitch = 23;
+  move.velocity = 100;
+  actions.push_back(move);
+
+  applyEditSessionActions(actions, store, focus, kChannel, loopLength);
+
+  TEST_ASSERT_EQUAL_UINT32(288u, focus.last.startTick);
+  TEST_ASSERT_EQUAL_UINT32(383u, focus.last.endTick);
+  TEST_ASSERT_EQUAL_UINT32(95u, focus.last.endTick - focus.last.startTick);
+  TEST_ASSERT_FALSE(hasNoteOffAt(store, 431, kChannel, 23));
+
+  NoteBaseline moverSpan{};
+  TEST_ASSERT_TRUE(readLiveLinearSpan(store, kMoverId, kChannel, moverSpan));
+  TEST_ASSERT_EQUAL_UINT32(288u, moverSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(383u, moverSpan.endTick);
+}
+
+void test_enforce_invariant_closes_orphan_pitch71_from_baseline_144520() {
+  // session_20260805_144520: pitch-71 grid note at tick 0 displayed length 3072 when store had
+  // a tagged orphan note-on without a matching off.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kPitch71Id = 41;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(0, kChannel, 71, 100, kPitch71Id));
+
+  NoteEditFocus focus;
+  focus.baselineMap[kPitch71Id] = {71, 100, 0, 47};
+
+  enforceEditSessionStoreInvariant(store, focus, kChannel, kLoopLength);
+
+  NoteBaseline span{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kPitch71Id, kChannel, span, 0, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(47u, span.endTick);
+
+  const EditSessionStoreInvariantResult invariant =
+      verifyEditSessionStoreInvariant(store, kLoopLength, kChannel);
+  TEST_ASSERT_TRUE(invariant.passed);
+
+  const NoteUtils::DisplayNoteVec display =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+  bool foundPitch71 = false;
+  for (const NoteUtils::DisplayNote& dn : display) {
+    if (dn.noteId != kPitch71Id) {
+      continue;
+    }
+    foundPitch71 = true;
+    TEST_ASSERT_EQUAL_UINT8(71, dn.note);
+    TEST_ASSERT_EQUAL_UINT32(0u, dn.startTick);
+    TEST_ASSERT_TRUE(dn.endTick < kLoopLength);
+    TEST_ASSERT_TRUE(dn.endTick - dn.startTick <= 48u);
+  }
+  TEST_ASSERT_TRUE(foundPitch71);
+}
+
+void test_apply_owned_rows_record_shorten_and_move() {
+  constexpr uint32_t loopLength = 1536;
+  constexpr NoteId kOverlapId = 87;
+  constexpr NoteId kMoverId = 71;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {22, 100, 288, 479};
+  focus.last = {22, 100, 240, 431};
+  focus.baselineMap[kOverlapId] = {22, 100, 192, 287};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, kChannel, 22, 100, kOverlapId));
+  MidiEvent overlapOff = MidiEvent::NoteOff(287, kChannel, 22, 0);
+  overlapOff.noteId = kOverlapId;
+  store.push_back(overlapOff);
+  store.push_back(noteOnWithNoteId(288, kChannel, 22, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(479, kChannel, 22, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  EditSessionActions actions;
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 192;
+  shorten.endTick = 239;
+  shorten.pitch = 22;
+  actions.push_back(shorten);
+
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 240;
+  move.endTick = 431;
+  move.pitch = 22;
+  actions.push_back(move);
+
+  EditPassVec applyOwnedRows;
+  applyEditSessionActions(actions, store, focus, kChannel, loopLength, &applyOwnedRows);
+
+  const EditPassVec commitRows = buildCommitRowsFromApplyOwned(applyOwnedRows, focus);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(commitRows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(commitRows[0].actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(commitRows[0].propertyType));
+  TEST_ASSERT_EQUAL(kOverlapId, commitRows[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(239u, commitRows[0].endTick);
+  TEST_ASSERT_EQUAL(kMoverId, commitRows[1].targetNoteId);
+
+  const EditSessionStoreInvariantResult invariant =
+      verifyEditSessionStoreInvariant(store, loopLength, kChannel);
+  TEST_ASSERT_TRUE(invariant.passed);
+}
+
+void test_apply_owned_commit_appends_pitch_when_mover_geometry_row_exists() {
+  // session_20260805_170218: move+overlap apply-owned rows committed geometry but dropped
+  // ChangePitch, so deselect rebuilt focus at the pre-edit pitch.
+  constexpr NoteId kMoverId = 36;
+  constexpr NoteId kOverlapId = 28;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 1440, 1679};
+  focus.last = {30, 100, 1488, 1679};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {23, 100, 1440, 2688};
+
+  EditPassVec applyOwnedRows;
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = focus.last.startTick;
+  move.endTick = focus.last.endTick;
+  move.pitch = focus.last.pitch;
+  recordApplyOwnedEditPassRow(applyOwnedRows, move, focus);
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ChangeLength;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 1440;
+  shorten.endTick = 1487;
+  shorten.pitch = 23;
+  recordApplyOwnedEditPassRow(applyOwnedRows, shorten, focus);
+
+  const EditPassVec commitRows = buildCommitRowsFromApplyOwned(applyOwnedRows, focus);
+  TEST_ASSERT_EQUAL(3, static_cast<int>(commitRows.size()));
+
+  const auto pitchRowIt = std::find_if(
+      commitRows.begin(), commitRows.end(), [](const EditPass& row) {
+        return row.targetNoteId == kMoverId && row.propertyType == EditPropertyType::Pitch;
+      });
+  TEST_ASSERT_TRUE(pitchRowIt != commitRows.end());
+  TEST_ASSERT_EQUAL_UINT8(30, pitchRowIt->pitch);
+}
+
+void test_canonical_commit_rows_do_not_depend_on_apply_owned_diagnostic_rows() {
+  // session_20260805_171134: apply-owned diagnostics are action history; canonical commit rows
+  // come from final session store state compared to transaction baseline.
+  constexpr uint32_t loopLength = 3072;
+  constexpr NoteId kMoverId = 36;
+  constexpr NoteId kOverlapId = 31;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {12, 100, 1488, 1679};
+  focus.last = {12, 100, 1248, 1439};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {12, 100, 1296, 1391};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  EditPassVec applyOwnedRows;
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = focus.last.startTick;
+  move.endTick = focus.last.endTick;
+  move.pitch = focus.last.pitch;
+  recordApplyOwnedEditPassRow(applyOwnedRows, move, focus);
+
+  MidiEventVec finalStore;
+  finalStore.push_back(noteOnWithNoteId(1248, kChannel, 12, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(1439, kChannel, 12, 0);
+  moverOff.noteId = kMoverId;
+  finalStore.push_back(moverOff);
+
+  const EditPassVec diagnosticRows = buildCommitRowsFromApplyOwned(applyOwnedRows, focus);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(diagnosticRows.size()));
+  TEST_ASSERT_EQUAL(kMoverId, diagnosticRows[0].targetNoteId);
+
+  const EditPassVec canonicalRows =
+      buildPreCommitEditPasses(focus, kChannel, &finalStore, loopLength);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(canonicalRows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(canonicalRows[0].actionType));
+  TEST_ASSERT_EQUAL(kOverlapId, canonicalRows[0].targetNoteId);
+  TEST_ASSERT_EQUAL(kMoverId, canonicalRows[1].targetNoteId);
+  TEST_ASSERT_EQUAL(EditPropertyType::NoteRange, canonicalRows[1].propertyType);
+}
+
+void test_apply_restore_storm_keeps_pitch71_bounded_144520() {
+  // session_20260805_144520: pitch-12 mover restore storm must not leave pitch-71 tick-0 open.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kPitch71Id = 41;
+  constexpr NoteId kMoverId = 23;
+  constexpr NoteId kPitch12NeighborId = 25;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(0, kChannel, 71, 100, kPitch71Id));
+  MidiEvent pitch71Off = MidiEvent::NoteOff(47, kChannel, 71, 0);
+  pitch71Off.noteId = kPitch71Id;
+  store.push_back(pitch71Off);
+  store.push_back(noteOnWithNoteId(1152, kChannel, 12, 100, kPitch12NeighborId));
+  MidiEvent neighborOff = MidiEvent::NoteOff(1248, kChannel, 12, 0);
+  neighborOff.noteId = kPitch12NeighborId;
+  store.push_back(neighborOff);
+  store.push_back(noteOnWithNoteId(672, kChannel, 12, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(864, kChannel, 12, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 12, 672, 864);
+  focus.baselineMap[kPitch71Id] = {71, 100, 0, 47};
+  focus.baselineMap[kPitch12NeighborId] = {12, 100, 1152, 1248};
+  focus.baselineMap[kMoverId] = {12, 100, 672, 864};
+
+  EditSessionActions restoreStorm;
+  for (int step = 0; step < 3; ++step) {
+    EditSessionAction restore{};
+    restore.type = EditSessionActionType::RestoreNote;
+    restore.targetNoteId = kPitch12NeighborId;
+    restore.startTick = 1152;
+    restore.endTick = 1248;
+    restore.pitch = 12;
+    restore.velocity = 100;
+    restoreStorm.push_back(restore);
+  }
+
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 624;
+  move.endTick = 816;
+  move.pitch = 12;
+  move.velocity = 100;
+  restoreStorm.push_back(move);
+
+  EditPassVec applyOwnedRows;
+  applyEditSessionActions(restoreStorm, store, focus, kChannel, kLoopLength, &applyOwnedRows);
+
+  NoteBaseline pitch71Span{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kPitch71Id, kChannel, pitch71Span, 0, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(47u, pitch71Span.endTick);
+
+  const EditSessionStoreInvariantResult invariant =
+      verifyEditSessionStoreInvariant(store, kLoopLength, kChannel);
+  TEST_ASSERT_TRUE(invariant.passed);
+
+  const NoteUtils::DisplayNoteVec display =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+  for (const NoteUtils::DisplayNote& dn : display) {
+    if (dn.noteId != kPitch71Id) {
+      continue;
+    }
+    TEST_ASSERT_TRUE(dn.endTick < kLoopLength);
+    TEST_ASSERT_TRUE(dn.endTick - dn.startTick <= 48u);
+  }
+}
+
+void test_pitch_change_to_lane30_emits_restore_and_change_pitch_151910() {
+  // session_20260805_151910 @ ~38.2s: pitch 23 -> 30 runs geometry pipeline (not simple path)
+  // with RestoreNote rows for baseline lane-30 notes plus ChangePitch on the mover.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kMoverId = 42;
+  constexpr NoteId kRestore46 = 46;
+  constexpr NoteId kRestore28 = 28;
+  constexpr NoteId kRestore34 = 34;
+  constexpr NoteId kPitch71Id = 41;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, kChannel, 23, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(383, kChannel, 23, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+  store.push_back(noteOnWithNoteId(720, kChannel, 71, 100, kPitch71Id));
+  MidiEvent pitch71Off = MidiEvent::NoteOff(767, kChannel, 71, 0);
+  pitch71Off.noteId = kPitch71Id;
+  store.push_back(pitch71Off);
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 23, 192, 383);
+  focus.baselineMap[kMoverId] = {23, 100, 192, 383};
+  focus.baselineMap[kRestore46] = {30, 100, 672, 768};
+  focus.baselineMap[kRestore28] = {30, 100, 1440, 1536};
+  focus.baselineMap[kRestore34] = {30, 100, 2208, 2304};
+  focus.baselineMap[kPitch71Id] = {71, 100, 720, 767};
+
+  std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
+      constrained;
+  auto addConstrained = [&](NoteId noteId, uint8_t pitch, uint32_t start, uint32_t end) {
+    ConstrainedNoteGeometry geometry{};
+    geometry.noteId = noteId;
+    geometry.visible = true;
+    geometry.pitch = pitch;
+    geometry.startTick = start;
+    geometry.endTick = end;
+    constrained.push_back(geometry);
+  };
+  addConstrained(kRestore46, 30, 672, 768);
+  addConstrained(kRestore28, 30, 1440, 1536);
+  addConstrained(kRestore34, 30, 2208, 2304);
+
+  EditedGeometry edited{};
+  edited.selection.primaryNote = kMoverId;
+  edited.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = {30, 100, 192, 383};
+  edited.causingSpans.push_back(causing);
+
+  const EditSessionActions actions =
+      buildEditSessionActions(constrained, edited, focus.baselineMap, store, kChannel, focus,
+                              kLoopLength);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::ChangePitch, kMoverId));
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kRestore46));
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kRestore28));
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kRestore34));
+
+  EditPassVec applyOwnedRows;
+  applyEditSessionActions(actions, store, focus, kChannel, kLoopLength, &applyOwnedRows);
+  enforceEditSessionStoreInvariant(store, focus, kChannel, kLoopLength);
+
+  NoteBaseline moverSpan{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kMoverId, kChannel, moverSpan, 192, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT8(30, moverSpan.pitch);
+  TEST_ASSERT_EQUAL_UINT32(192u, moverSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(383u, moverSpan.endTick);
+
+  NoteBaseline pitch71Span{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kPitch71Id, kChannel, pitch71Span, 720, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(767u, pitch71Span.endTick);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength);
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_TRUE(dn.endTick < kLoopLength);
+    if (dn.noteId == kPitch71Id) {
+      TEST_ASSERT_EQUAL_UINT32(720u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(767u, dn.endTick);
+    }
+  }
+
+  const EditSessionStoreInvariantResult invariant =
+      verifyEditSessionStoreInvariant(store, kLoopLength, kChannel);
+  TEST_ASSERT_TRUE(invariant.passed);
+}
+
+void test_pitch_change_projection_no_non_overlap_loop_end_span_151910() {
+  // session_20260805_151910: ChangePitch apply must not leave unrelated top-lane pitch 71
+  // stretched to loop end — verify via full projectNoteEditDisplayNotes.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kMoverId = 42;
+  constexpr NoteId kPitch71Id = 41;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, kChannel, 23, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(383, kChannel, 23, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+  store.push_back(noteOnWithNoteId(720, kChannel, 71, 100, kPitch71Id));
+  MidiEvent pitch71Off = MidiEvent::NoteOff(767, kChannel, 71, 0);
+  pitch71Off.noteId = kPitch71Id;
+  store.push_back(pitch71Off);
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 23, 192, 383);
+  focus.baselineMap[kMoverId] = {23, 100, 192, 383};
+  focus.baselineMap[kPitch71Id] = {71, 100, 720, 767};
+
+  EditSessionActions actions;
+  EditSessionAction changePitch{};
+  changePitch.type = EditSessionActionType::ChangePitch;
+  changePitch.targetNoteId = kMoverId;
+  changePitch.startTick = 192;
+  changePitch.endTick = 383;
+  changePitch.pitch = 30;
+  changePitch.velocity = 100;
+  actions.push_back(changePitch);
+
+  EditPassVec applyOwnedRows;
+  applyEditSessionActions(actions, store, focus, kChannel, kLoopLength, &applyOwnedRows);
+  enforceEditSessionStoreInvariant(store, focus, kChannel, kLoopLength);
+
+  NoteBaseline moverSpan{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kMoverId, kChannel, moverSpan, 192, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT8(30, moverSpan.pitch);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength);
+  bool foundPitch71 = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_TRUE(dn.endTick < kLoopLength);
+    if (dn.noteId != kPitch71Id) {
+      continue;
+    }
+    foundPitch71 = true;
+    TEST_ASSERT_EQUAL_UINT32(720u, dn.startTick);
+    TEST_ASSERT_EQUAL_UINT32(767u, dn.endTick);
+    TEST_ASSERT_TRUE(dn.endTick - dn.startTick <= 48u);
+  }
+  TEST_ASSERT_TRUE(foundPitch71);
+
+  const EditSessionStoreInvariantResult invariant =
+      verifyEditSessionStoreInvariant(store, kLoopLength, kChannel);
+  TEST_ASSERT_TRUE(invariant.passed);
+}
+
+void test_move_lane12_projection_keeps_cross_pitch_bounded_153123() {
+  // session_20260805_153123: after lane-12 move apply, cross-pitch pitch 71 must stay bounded
+  // in full projectNoteEditDisplayNotes — unrelated restore storms must not stretch it.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kMoverId = 23;
+  constexpr NoteId kPitch71Id = 41;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(1584, kChannel, 12, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(1775, kChannel, 12, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+  store.push_back(noteOnWithNoteId(720, kChannel, 71, 100, kPitch71Id));
+  MidiEvent pitch71Off = MidiEvent::NoteOff(767, kChannel, 71, 0);
+  pitch71Off.noteId = kPitch71Id;
+  store.push_back(pitch71Off);
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 12, 1584, 1775);
+  focus.baselineMap[kMoverId] = {12, 100, 1632, 1823};
+  focus.baselineMap[kPitch71Id] = {71, 100, 720, 767};
+
+  EditSessionActions actions;
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 1584;
+  move.endTick = 1775;
+  move.pitch = 12;
+  move.velocity = 100;
+  actions.push_back(move);
+
+  applyEditSessionActions(actions, store, focus, kChannel, kLoopLength);
+  enforceEditSessionStoreInvariant(store, focus, kChannel, kLoopLength);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength);
+  bool foundPitch71 = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_TRUE(dn.endTick < kLoopLength);
+    if (dn.noteId != kPitch71Id) {
+      continue;
+    }
+    foundPitch71 = true;
+    TEST_ASSERT_EQUAL_UINT32(720u, dn.startTick);
+    TEST_ASSERT_EQUAL_UINT32(767u, dn.endTick);
+    TEST_ASSERT_TRUE(dn.endTick - dn.startTick <= 48u);
+  }
+  TEST_ASSERT_TRUE(foundPitch71);
+
+  const EditSessionStoreInvariantResult invariant =
+      verifyEditSessionStoreInvariant(store, kLoopLength, kChannel);
+  TEST_ASSERT_TRUE(invariant.passed);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_apply_restore_hidden_neighbor_144458);
@@ -1143,5 +1671,14 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_same_pitch_complete_cover_hide_and_restore_on_leave);
   RUN_TEST(test_log_scenario_same_pitch_hide_when_moving_right);
   RUN_TEST(test_same_pitch_left_neighbor_shorten_and_restore_on_leave);
+  RUN_TEST(test_apply_restore_move_same_start_keeps_mover_length_122352);
+  RUN_TEST(test_enforce_invariant_closes_orphan_pitch71_from_baseline_144520);
+  RUN_TEST(test_apply_owned_rows_record_shorten_and_move);
+  RUN_TEST(test_apply_owned_commit_appends_pitch_when_mover_geometry_row_exists);
+  RUN_TEST(test_canonical_commit_rows_do_not_depend_on_apply_owned_diagnostic_rows);
+  RUN_TEST(test_apply_restore_storm_keeps_pitch71_bounded_144520);
+  RUN_TEST(test_pitch_change_to_lane30_emits_restore_and_change_pitch_151910);
+  RUN_TEST(test_pitch_change_projection_no_non_overlap_loop_end_span_151910);
+  RUN_TEST(test_move_lane12_projection_keeps_cross_pitch_bounded_153123);
   return UNITY_END();
 }

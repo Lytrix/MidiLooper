@@ -859,28 +859,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
     if (editManager.getEditSessionType() == EditSessionType::Note) {
         const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
         if (editManager.isNoteEditActive() && loopLength > 0) {
-            const NoteEditFocus& focus = editManager.getEditSession().focus;
-            const uint32_t previewRevision = editManager.sessionPreviewRevision();
-            const size_t overlapCount = focus.overlapNotes.size();
-            const bool cacheHit = displaySlot == noteEditDisplayCacheSlot_ &&
-                                  previewRevision == noteEditDisplayCachePreviewRevision_ &&
-                                  loopLength == noteEditDisplayCacheLoopLength_ &&
-                                  overlapCount == noteEditDisplayCacheOverlapCount_ &&
-                                  !liveDisplayNotes.empty();
-            if (!cacheHit) {
-                liveDisplayNotes = filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
-                                                                track.getMidiChannel(), loopLength);
-                noteEditDisplayCacheSlot_ = displaySlot;
-                noteEditDisplayCachePreviewRevision_ = previewRevision;
-                noteEditDisplayCacheLoopLength_ = loopLength;
-                noteEditDisplayCacheOverlapCount_ = overlapCount;
-            }
+            liveDisplayNotes = editManager.projectedNoteEditDisplayNotes(track);
         } else {
             // NOTE_EDIT mode, session idle: never use getCachedNotes() (active loop). Preview
             // focus can differ from activeLoopIndex while another slot is playing.
             liveDisplayNotes.clear();
         }
-        if (liveDisplayNotes.empty() && loopLength > 0) {
+        if (liveDisplayNotes.empty() && loopLength > 0 && !editManager.isNoteEditActive()) {
             const Loop& loop = track.getLoop(displaySlot);
             if (loop.hasCommittedPasses() || loop.captureActive()) {
                 Loop& mutLoop = const_cast<Loop&>(loop);
@@ -930,9 +915,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         invalidateLiveDisplayCache();
         const uint32_t editLoopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
         if (editLoopLength > 0) {
-            const NoteEditFocus& focus = editManager.getEditSession().focus;
-            liveDisplayNotes = filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
-                                                            track.getMidiChannel(), editLoopLength);
+            liveDisplayNotes = editManager.projectedNoteEditDisplayNotes(track);
         }
         return liveDisplayNotes;
     }
@@ -1210,10 +1193,8 @@ void DisplayManager::invalidateLiveDisplayCache() {
 }
 
 void DisplayManager::invalidateNoteEditDisplayCache() {
-    noteEditDisplayCacheSlot_ = 255;
-    noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
-    noteEditDisplayCacheLoopLength_ = 0;
-    noteEditDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
+    editManager.invalidateProjectedNoteEditDisplayCache();
+    liveDisplayNotes.clear();
 }
 
 // Helper function to clear the display buffer
@@ -1564,131 +1545,49 @@ int resolveDrawHighlightIndex(const DisplayNoteVec& notes, const EditorSelection
     if (!editorSelectionHasNote(selection) || loopLength == 0) {
         return -1;
     }
-    if (windowRelativeTicks) {
-        uint32_t bracketInWindow = bracketDisplayTick;
-        if (bracketDisplayTick >= windowStartTick) {
-            bracketInWindow = bracketDisplayTick - windowStartTick;
-        } else {
-            bracketInWindow = bracketDisplayTick + loopLength - windowStartTick;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
+    const bool lengthBracket = editManager.isLengthBracketEditActive();
+    if (!windowRelativeTicks) {
+        return NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+            selection, notes, focus, loopStartTick, loopLength, lengthBracket);
+    }
+    uint32_t bracketInWindow = bracketDisplayTick;
+    if (bracketDisplayTick >= windowStartTick) {
+        bracketInWindow = bracketDisplayTick - windowStartTick;
+    } else {
+        bracketInWindow = bracketDisplayTick + loopLength - windowStartTick;
+    }
+    for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
+        const DisplayNote& dn = notes[static_cast<size_t>(i)];
+        if (dn.noteId != selection.primaryNote) {
+            continue;
         }
-        const bool lengthBracket = editManager.isLengthBracketEditActive();
-        for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
-            const DisplayNote& dn = notes[static_cast<size_t>(i)];
-            if (dn.noteId != selection.primaryNote) {
-                continue;
-            }
-            if (lengthBracket) {
-                if (dn.endTick == bracketInWindow) {
-                    return i;
-                }
-            } else if (dn.startTick == bracketInWindow) {
+        if (lengthBracket) {
+            if (dn.endTick == bracketInWindow) {
                 return i;
             }
+        } else if (dn.startTick == bracketInWindow) {
+            return i;
         }
-        const NoteEditFocus& focus = editManager.getEditSession().focus;
-        if (focus.active && focus.movingNoteId == selection.primaryNote) {
-            const bool lengthBracketActive = editManager.isLengthBracketEditActive();
-            const uint32_t storageBracket =
-                lengthBracketActive ? focus.last.endTick : focus.last.startTick;
-            const uint32_t displayBracket =
-                NoteEditDisplaySnapshot::displayStartTickFromStorage(storageBracket, loopStartTick,
-                                                                     loopLength);
-            if (int byBracket = filteredDisplayNoteIndexForNoteIdAndStart(
-                    notes, focus.movingNoteId, displayBracket, loopStartTick, loopLength);
-                byBracket >= 0) {
-                return byBracket;
-            }
-        }
-        if (int byNoteId = filteredDisplayNoteIndexForNoteId(notes, selection.primaryNote);
-            byNoteId >= 0) {
-            return byNoteId;
-        }
-        return -1;
     }
-    int idx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-        selection, notes, loopStartTick, loopLength, editManager.isLengthBracketEditActive());
-    if (idx < 0) {
-        const NoteEditFocus& focus = editManager.getEditSession().focus;
-        if (focus.active && focus.movingNoteId == selection.primaryNote) {
-            const bool lengthBracket = editManager.isLengthBracketEditActive();
-            const uint32_t storageBracket =
-                lengthBracket ? focus.last.endTick : focus.last.startTick;
-            const uint32_t displayBracket =
-                NoteEditDisplaySnapshot::displayStartTickFromStorage(storageBracket, loopStartTick,
-                                                                     loopLength);
-            idx = filteredDisplayNoteIndexForNoteIdAndStart(
+    if (focus.active && focus.movingNoteId == selection.primaryNote) {
+        const uint32_t storageBracket =
+            lengthBracket ? focus.last.endTick : focus.last.startTick;
+        const uint32_t displayBracket =
+            NoteEditDisplaySnapshot::displayStartTickFromStorage(storageBracket, loopStartTick,
+                                                                 loopLength);
+        if (int byBracket = filteredDisplayNoteIndexForNoteIdAndStart(
                 notes, focus.movingNoteId, displayBracket, loopStartTick, loopLength);
+            byBracket >= 0) {
+            return byBracket;
         }
-        if (idx < 0) {
-            idx = filteredDisplayNoteIndexForNoteId(notes, selection.primaryNote);
-        }
     }
-    return idx;
-}
-
-uint32_t storageOffToDisplayInclusiveEnd(uint32_t storageStart, uint32_t storageOffTick,
-                                         uint32_t loopLength) {
-    if (loopLength == 0 || storageOffTick <= storageStart) {
-        return storageOffTick;
+    if (int byResolver = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+            selection, notes, focus, loopStartTick, loopLength, lengthBracket);
+        byResolver >= 0) {
+        return byResolver;
     }
-    if (storageOffTick > loopLength) {
-        const uint32_t wrapped = storageOffTick % loopLength;
-        return wrapped == 0 ? loopLength - 1 : wrapped - 1;
-    }
-    return storageOffTick - 1;
-}
-
-void storageSpanToDisplayTicks(uint32_t storageStart, uint32_t storageOffTick, uint32_t jamStartTick,
-                               uint32_t loopLength, bool windowRelativeTicks,
-                               uint32_t windowStartTick, uint32_t& outStart,
-                               uint32_t& outEndInclusive) {
-    const uint32_t inclusiveEnd =
-        storageOffToDisplayInclusiveEnd(storageStart, storageOffTick, loopLength);
-    uint32_t loopRelStart = NoteEditDisplaySnapshot::displayStartTickFromStorage(
-        storageStart, jamStartTick, loopLength);
-    uint32_t loopRelEnd = NoteEditDisplaySnapshot::displayStartTickFromStorage(
-        inclusiveEnd, jamStartTick, loopLength);
-    if (!windowRelativeTicks) {
-        outStart = loopRelStart;
-        outEndInclusive = loopRelEnd;
-        return;
-    }
-    uint32_t relStart = loopRelStart;
-    if (relStart < windowStartTick) {
-        relStart += loopLength;
-    }
-    outStart = relStart - windowStartTick;
-    uint32_t relEnd = loopRelEnd;
-    if (relEnd < windowStartTick) {
-        relEnd += loopLength;
-    }
-    if (relEnd < relStart) {
-        relEnd += loopLength;
-    }
-    outEndInclusive = relEnd - windowStartTick;
-}
-
-bool shouldDrawFocusGeometryHighlight(const EditorSelection& selection, NoteId& outMovingNoteId,
-                                    uint8_t& outPitch, uint32_t& outStorageStart,
-                                    uint32_t& outStorageOffTick) {
-    if (editManager.getEditSessionType() != EditSessionType::Note ||
-        !editManager.isNoteEditActive()) {
-        return false;
-    }
-    const NoteEditKind sessionKind = editManager.getNoteEditSessionState().kind;
-    if (!isGeometryEditKind(sessionKind) || sessionKind == NoteEditKind::Select) {
-        return false;
-    }
-    const NoteEditFocus& focus = editManager.getEditSession().focus;
-    if (!focus.active || !editorSelectionHasNote(selection) ||
-        focus.movingNoteId != selection.primaryNote) {
-        return false;
-    }
-    outMovingNoteId = focus.movingNoteId;
-    outPitch = focus.last.pitch;
-    outStorageStart = focus.last.startTick;
-    outStorageOffTick = focus.last.endTick;
-    return true;
+    return -1;
 }
 
 }  // namespace
@@ -1702,11 +1601,6 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
                                                     : resolveLoopOriginTick(track, displaySlot);
     int selectedIdx = -1;
-    bool drawFocusGeometryHighlight = false;
-    NoteId focusMovingNoteId = kInvalidNoteId;
-    uint8_t focusHighlightPitch = 0;
-    uint32_t focusHighlightStorageStart = 0;
-    uint32_t focusHighlightStorageOffTick = 0;
     if (editManager.getEditSessionType() == EditSessionType::Note) {
         const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
         const uint32_t bracketDisplayTick =
@@ -1714,18 +1608,13 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
         selectedIdx = resolveDrawHighlightIndex(notes, selection, jamStartTick, loopLength,
                                                 windowRelativeTicks, windowStartTick,
                                                 bracketDisplayTick);
-        drawFocusGeometryHighlight =
-            shouldDrawFocusGeometryHighlight(selection, focusMovingNoteId, focusHighlightPitch,
-                                             focusHighlightStorageStart,
-                                             focusHighlightStorageOffTick);
     } else {
         selectedIdx = editManager.getSelectedNoteIdx();
     }
 
     for (int i = 0; i < (int)notes.size(); i++) {
         const auto& n = notes[i];
-        const bool indexHighlight =
-            !drawFocusGeometryHighlight && i == selectedIdx;
+        const bool indexHighlight = i == selectedIdx;
         int noteBrightness = indexHighlight ? HIGHLIGHT_COLOR : 7;
 
         uint32_t adjustedStartTick;
@@ -1749,30 +1638,6 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
         y = constrain(y, pianoRollY0, pianoRollY1);
 
         drawNoteBar(n, y, adjustedStartTick, adjustedEndTick, lengthLoop, noteBrightness);
-    }
-
-    if (drawFocusGeometryHighlight) {
-        uint32_t adjustedStartTick = 0;
-        uint32_t adjustedEndInclusive = 0;
-        storageSpanToDisplayTicks(focusHighlightStorageStart, focusHighlightStorageOffTick,
-                                jamStartTick, loopLength, windowRelativeTicks, windowStartTick,
-                                adjustedStartTick, adjustedEndInclusive);
-        const bool skipFocusBar =
-            (!windowRelativeTicks && adjustedStartTick >= lengthLoop &&
-             adjustedEndInclusive >= lengthLoop) ||
-            (windowRelativeTicks && adjustedStartTick >= lengthLoop);
-        if (!skipFocusBar) {
-            DisplayNote focusBar{};
-            focusBar.noteId = focusMovingNoteId;
-            focusBar.note = focusHighlightPitch;
-            focusBar.velocity = 0;
-            focusBar.startTick = adjustedStartTick;
-            focusBar.endTick = adjustedEndInclusive;
-            int y = map(focusHighlightPitch, minPitch, maxPitch, pianoRollY1, pianoRollY0);
-            y = constrain(y, pianoRollY0, pianoRollY1);
-            drawNoteBar(focusBar, y, adjustedStartTick, adjustedEndInclusive, lengthLoop,
-                        HIGHLIGHT_COLOR);
-        }
     }
 }
 
@@ -3151,9 +3016,10 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     int selectedIdx = -1;
     if (editManager.getEditSessionType() == EditSessionType::Note &&
         editorSelectionHasNote(selection)) {
-        selectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-            selection, notes, loopStartTick, lengthLoop,
-            editManager.isLengthBracketEditActive());
+        const uint32_t bracketDisplayTick =
+            resolveBracketDisplayTick(loopStartTick, lengthLoop);
+        selectedIdx = resolveDrawHighlightIndex(notes, selection, loopStartTick, lengthLoop, false,
+                                                0, bracketDisplayTick);
     } else {
         selectedIdx = editManager.getSelectedNoteIdx();
     }
@@ -3247,23 +3113,6 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
         uint32_t lenVal =
             NoteMovementUtils::calculateNoteLength(noteToShow->startTick, endExclusive, lengthLoop);
         uint8_t velVal = noteToShow->velocity;
-        if (editManager.isNoteEditActive()) {
-            const NoteEditFocus& focus = editManager.getEditSession().focus;
-            if (focus.active && editorSelectionHasNote(selection) &&
-                focus.movingNoteId == selection.primaryNote) {
-                noteVal = focus.last.pitch;
-                velVal = focus.last.velocity;
-                const uint32_t focusEndExclusive =
-                    (focus.last.endTick == lengthLoop - 1) ? lengthLoop : focus.last.endTick;
-                lenVal = NoteMovementUtils::calculateNoteLength(focus.last.startTick,
-                                                               focusEndExclusive, lengthLoop);
-                const uint32_t storageBracketTick = editManager.isLengthBracketEditActive()
-                                                        ? focus.last.endTick
-                                                        : focus.last.startTick;
-                displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
-                    storageBracketTick, loopStartTick, lengthLoop);
-            }
-        }
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
         if (validNote) {
@@ -3278,12 +3127,14 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
             static uint8_t capLastPitch = 255;
             static uint32_t capLastStorage = UINT32_MAX;
             static uint32_t capLastDisplay = UINT32_MAX;
+            static uint32_t capLastLength = UINT32_MAX;
             const uint32_t storageStart = noteToShow->startTick;
             if (noteVal != capLastPitch || storageStart != capLastStorage ||
-                displayStartTick != capLastDisplay) {
+                displayStartTick != capLastDisplay || lenVal != capLastLength) {
                 capLastPitch = noteVal;
                 capLastStorage = storageStart;
                 capLastDisplay = displayStartTick;
+                capLastLength = lenVal;
                 SC_DNTE(noteVal, storageStart, displayStartTick, lenVal, selectedIdx);
             }
         }

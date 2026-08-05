@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "EditSessionInteraction.h"
+#include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "ResolveConstrainedGeometry.h"
 
@@ -427,6 +428,64 @@ void test_projected_baseline_drops_cross_lane_keeps_mover() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(projected.count(3)));
 }
 
+/// session_20260805_183125: lane targets in live store but missing from baselineMap produced
+/// pairs>0 interactions=0 until ensure fills spans from the live store.
+void test_ensure_baseline_fills_scope_gap_enables_pitch_lane_interactions() {
+  constexpr uint8_t kChannel = 2;
+  constexpr NoteId kMoverId = 25;
+  constexpr NoteId kLaneTarget = 26;
+  constexpr uint8_t kLane = 23;
+
+  MidiEvent moverOn = taggedNoteOn(1152, kChannel, kLane, kMoverId);
+  MidiEvent moverOff = MidiEvent::NoteOff(1252, kChannel, kLane, 0);
+  moverOff.noteId = kMoverId;
+  MidiEvent targetOn = taggedNoteOn(1152, kChannel, kLane, kLaneTarget);
+  MidiEvent targetOff = MidiEvent::NoteOff(1252, kChannel, kLane, 0);
+  targetOff.noteId = kLaneTarget;
+
+  MidiEventVec liveStore;
+  liveStore.push_back(moverOn);
+  liveStore.push_back(moverOff);
+  liveStore.push_back(targetOn);
+  liveStore.push_back(targetOff);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kMoverId] = {18, 100, 1152, 1252};
+
+  const NoteIdList noneChanged;
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(focus.baselineMap, liveStore, noneChanged, kMoverId, kLane);
+  TEST_ASSERT_TRUE(scopeContains(scope, kLaneTarget));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kLaneTarget)));
+
+  ensureBaselineMapEntriesForEvaluationScope(focus, scope, liveStore, kChannel);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(focus.baselineMap.count(kLaneTarget)));
+
+  EditedGeometry geometry{};
+  geometry.selection.primaryNote = kMoverId;
+  geometry.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = {kLane, 100, 1152, 1252};
+  geometry.causingSpans.push_back(causing);
+
+  const BaselineMap projected = projectTransactionBaselineForEvaluationScope(
+      geometry.selection, focus.baselineMap, scope, kMoverId, 2304);
+  TEST_ASSERT_TRUE(projected.count(kLaneTarget) > 0);
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
+  const auto pairs = determineEligiblePairs(geometry.selection, changed, scope);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
+
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, projected);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL_UINT32(kLaneTarget, interactions[0].targetNoteId);
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::CompleteCover),
+                    static_cast<int>(interactions[0].type));
+}
+
 /// Add (Create): new selected note is causing input — same-pitch overlap uses standard classify.
 void test_add_note_same_pitch_overlap_complete_cover() {
   constexpr NoteId kNewNoteId = 50;
@@ -482,7 +541,8 @@ void test_delete_causing_restore_candidate_without_incoming() {
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, focus.baselineMap, liveStore, kChannel,
-                                                loopLength, selection, editedGeometry);
+                                                loopLength, selection, editedGeometry,
+                                                focus.changedOverlapNoteIds);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targetIds.size()));
   TEST_ASSERT_EQUAL_UINT32(kHiddenNeighborId, targetIds[0]);
 
@@ -503,6 +563,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change);
   RUN_TEST(test_evaluation_scope_ignores_store_channel);
   RUN_TEST(test_projected_baseline_drops_cross_lane_keeps_mover);
+  RUN_TEST(test_ensure_baseline_fills_scope_gap_enables_pitch_lane_interactions);
   RUN_TEST(test_add_note_same_pitch_overlap_complete_cover);
   RUN_TEST(test_delete_causing_restore_candidate_without_incoming);
   RUN_TEST(test_geometry_changed_this_tick_detects_span_delta);

@@ -152,6 +152,8 @@ struct EditSession {
   bool active = false;
   bool replaceEditPassOnClose = false;
   EditPassIdList editPassIds;
+  /// Rows accumulated by applyEditSessionActions for the open noteEditPass batch.
+  EditPassVec applyOwnedEditPassRows;
 
   bool isNote() const { return sessionType == EditSessionType::Note; }
 };

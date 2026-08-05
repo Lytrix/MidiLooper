@@ -240,7 +240,6 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
         return false;
     }
 
-    const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
         manager.buildSelectNavigationSlots(track, selectedTick, true);
 
@@ -252,8 +251,14 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
 
     const EditorSelection& sel = manager.getNoteEditSessionState().selection;
     const auto navNotes = manager.selectableDisplayNotesForEditUi(track);
-    const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
-        slots, navNotes, sel.primaryNote, selectedTick, loopLength);
+    int currentPosIndex = -1;
+    if (editorSelectionHasNote(sel)) {
+        currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
+            slots, navNotes, sel.primaryNote, selectedTick, loopLength);
+    } else {
+        currentPosIndex =
+            SelectNavigation::findSlotIndexForSelection(slots, -1, selectedTick, loopLength);
+    }
 
     if (currentPosIndex < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG,

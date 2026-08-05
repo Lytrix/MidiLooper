@@ -38,8 +38,21 @@ At **`commitAllPendingNoteEditActions`**, the system SHALL emit **one `noteEditP
 - **THEN** **`EditPass`** rows for the mover and hidden target are derived from baseline diff
 - **AND** **`buildPreCommitOverlapEditPasses`** from **`overlapNotes`** is not used
 
+#### Scenario: Apply-owned rows do not own macro commit
+
+- **GIVEN** apply-owned diagnostic rows exist for the open NOTE_EDIT session
+- **WHEN** macro commit runs
+- **THEN** the persisted **`noteEditPass`** batch is serialized from transaction baseline compared to final live store
+- **AND** apply-owned diagnostic rows are not used as persistence authority
+
 ### Requirement: Overlap and focus use derived length at macro commit
 
 After **`normalizeAll`** at macro commit, focus moving-note length SHALL equal linear pair length for **`EditorSelection.primaryNote`**.
 
 **`movingNoteRange`** is **retired**.
+
+#### Scenario: Macro commit refreshes mover length from linear pair
+
+- **WHEN** macro commit normalizes a moved NOTE_EDIT session
+- **THEN** the moving-note length is read from the canonical linear note-on/off pair
+- **AND** **`movingNoteRange`** is not used as length authority

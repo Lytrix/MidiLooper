@@ -5,7 +5,9 @@
 
 #include <algorithm>
 
+#include "ApplyOwnedEditPassRows.h"
 #include "EditSessionLiveStoreSpan.h"
+#include "EditSessionStoreInvariant.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -25,6 +27,20 @@ NOTE_EDIT_MEM MidiEvent* findNoteOnByNoteId(MidiEventVec& liveStore, NoteId note
     }
   }
   return fallback;
+}
+
+NOTE_EDIT_MEM void pruneExtraTaggedOffsForNote(MidiEventVec& liveStore, NoteId noteId,
+                                               uint8_t channel, const MidiEvent* keepOff) {
+  if (noteId == kInvalidNoteId || keepOff == nullptr) {
+    return;
+  }
+  for (auto it = liveStore.begin(); it != liveStore.end();) {
+    if (it->isNoteOff() && it->noteId == noteId && it->channel == channel && &(*it) != keepOff) {
+      it = liveStore.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 NOTE_EDIT_MEM bool eraseNotePairByNoteId(MidiEventVec& liveStore, NoteId noteId, uint8_t channel,
@@ -385,10 +401,13 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
       wrapHeadOff->tick = action.endTick;
       wrapHeadOff->data.noteData.note = action.pitch;
       wrapHeadOff->noteId = action.targetNoteId;
+      pruneExtraTaggedOffsForNote(liveStore, action.targetNoteId, noteOn->channel, wrapHeadOff);
     } else {
       MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, noteOn->channel, action.pitch, 0);
       offEvt.noteId = action.targetNoteId;
       liveStore.push_back(offEvt);
+      pruneExtraTaggedOffsForNote(liveStore, action.targetNoteId, noteOn->channel,
+                                  &liveStore.back());
     }
     if (focus.active && focus.movingNoteId == action.targetNoteId) {
       noteEditFocusApplyMoveEnd(focus, action.startTick, action.endTick);
@@ -400,6 +419,7 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
   if (noteOff->noteId == kInvalidNoteId) {
     noteOff->noteId = action.targetNoteId;
   }
+  pruneExtraTaggedOffsForNote(liveStore, action.targetNoteId, noteOn->channel, noteOff);
   if (focus.active && focus.movingNoteId == action.targetNoteId) {
     noteEditFocusApplyMoveEnd(focus, action.startTick, action.endTick);
   }
@@ -417,6 +437,7 @@ NOTE_EDIT_MEM void applyChangeLength(const EditSessionAction& action, MidiEventV
   if (noteOff->noteId == kInvalidNoteId) {
     noteOff->noteId = action.targetNoteId;
   }
+  pruneExtraTaggedOffsForNote(liveStore, action.targetNoteId, noteOn->channel, noteOff);
   if (focus.active && focus.movingNoteId == action.targetNoteId) {
     noteEditFocusApplyLengthEnd(focus, action.endTick);
   }
@@ -478,7 +499,8 @@ NOTE_EDIT_MEM void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uin
 }
 
 NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, MidiEventVec& liveStore,
-                             NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
+                             NoteEditFocus& focus, uint8_t channel, uint32_t loopLength,
+                             EditPassVec* applyOwnedRows) {
   for (const EditSessionAction& action : actions) {
     // Geometry actions are the only writers of changedOverlapNoteIds. Membership is what
     // authorises a pre-commit Delete row, so a baseline lookup miss can never remove a note.
@@ -515,8 +537,12 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
         applyChangePitch(action, liveStore, focus, channel, loopLength);
         break;
     }
+    if (applyOwnedRows != nullptr) {
+      recordApplyOwnedEditPassRow(*applyOwnedRows, action, focus);
+    }
   }
 
   applyBoundarySplitForEditSession(liveStore, channel);
+  enforceEditSessionStoreInvariant(liveStore, focus, channel, loopLength);
   syncFocusAfterApply(focus, liveStore, channel, loopLength);
 }

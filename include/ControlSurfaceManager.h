@@ -130,6 +130,11 @@ private:
     bool suppressSelectDependentMotorSync_ = false;
     bool pendingSelectDriverMotorSyncValid_ = false;
     bool pendingGeometryDriverMotorSyncValid_ = false;
+    bool selectionRelatchAfterGeometryActive_ = false;
+    bool geometrySelectBlockedDuringGeometryHold_ = false;
+    bool geometryRelatchConsumed_ = false;
+    bool selectionRelatchSuspendOnly_ = false;
+    uint32_t selectionRelatchMotorSentAtMs_ = 0;
     Fader1SelectTarget pendingSelectMotorTarget_{};
     NoteEditFaderOutbound::PlanFlags pendingSelectMotorPlan_{};
     EditorSelection pendingSelectMotorPriorSelection_{};
@@ -142,7 +147,7 @@ private:
     uint8_t lastUserNoteValueCc = 64;
     uint32_t lastNoteValueFaderTime = 0;
     static constexpr uint8_t NOTE_VALUE_MOVEMENT_THRESHOLD = 1;
-    static constexpr uint32_t NOTE_VALUE_STABILITY_TIME = 80;
+    static constexpr uint32_t NOTE_VALUE_STABILITY_TIME = 150;
     static constexpr uint32_t DRIVER_FADER_ACTIVE_MS = 2500;
     
     uint8_t lastFineCCValue = 64;
@@ -207,6 +212,12 @@ private:
     void sendEditedNoteAuditionWhenTransportStopped(Track& track, int16_t pitchOverride = -1);
     void clearPendingSelectDependentMotorSync();
     void clearPendingGeometryDriverMotorSync();
+    void clearSelectionRelatchAfterGeometry();
+    void clearGeometryRelatchCycleEligibility();
+    void finishSelectApplyFromFader1Teardown();
+    void clearSelectFaderNavigationGates();
+    bool fader1SelectTargetChangesSelection(const Fader1SelectTarget& target) const;
+    void preemptGeometryHoldForSelectNavigation(uint32_t now);
     void processPendingSelectDependentMotorSync(Track& track);
     void processPendingGeometryDriverMotorSync(Track& track);
     void syncSelectionFromGeometryEdit(Track& track);

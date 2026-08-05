@@ -18,6 +18,12 @@ Live geometry edits (`EditSessionType::Note` first; Loop and ControlChange later
 
 The system MUST NOT use a restore-first prelude or persistent overlap scratch as the primary model. The system MUST NOT maintain a persistent **`ConstraintRegistry`** between geometry ticks. The system MUST NOT reintroduce **`ResolutionPolicy`** as a separate pipeline stage.
 
+#### Scenario: Geometry pipeline mutates only during apply
+
+- **WHEN** a NOTE_EDIT geometry update runs
+- **THEN** analysis, grouping, resolution, and action building do not mutate **live store**
+- **AND** **`applyEditSessionActions`** performs the storage mutation
+
 ### Requirement: Edited geometry
 
 **Edited geometry** SHALL mean the user-intended geometry for the current geometry update tick — **`EditorSelection`** plus **linear causing spans** for selected notes — before **`applyEditSessionActions`** runs.
@@ -76,6 +82,14 @@ The system MUST NOT use a restore-first prelude or persistent overlap scratch as
 - **WHEN** **`commitAllPendingNoteEditActions`** runs
 - **THEN** **`EditPass`** rows are derived from **transaction baseline compared to final live store**
 - **AND** not from **`overlapNotes`**
+
+#### Scenario: Apply-owned rows are diagnostic only
+
+- **GIVEN** **`applyOwnedEditPassRows`** exist during NOTE_EDIT migration
+- **WHEN** **`commitAllPendingNoteEditActions`** runs
+- **THEN** committed **`EditPass`** rows are derived from **transaction baseline compared to final live store**
+- **AND** **`applyOwnedEditPassRows`** MAY be compared for diagnostics / parity logging
+- **AND** **`applyOwnedEditPassRows`** MUST NOT change the committed **`EditPass`** output
 
 #### Scenario: Analyzer independent of edit-session state
 
@@ -222,6 +236,14 @@ Interaction analysis SHALL emit **only positive geometry facts**.
 4. **Baseline equivalent** — else no incoming interactions → baseline-equivalent span.
 5. **Minimum note edit length hide** — when **`noteMinLengthRemoveEnabled`**, if **`visible = true`** and **`endTick − startTick < noteMinLengthTicks`** → **`visible = false`**. When disabled, skip (shorten stands).
 
+#### Scenario: Resolver scope includes only constrained targets
+
+- **GIVEN** grouped interactions contain target **A**
+- **AND** live store differs from baseline for restore candidate **C**
+- **WHEN** constrained geometry target notes are computed
+- **THEN** **A** and **C** are included
+- **AND** unrelated baseline note **D** is not resolved
+
 ### Requirement: Constrained geometry resolution algorithm
 
 **`resolveConstrainedGeometry`** SHALL implement **constrained geometry resolution** per target using **`EditSessionInteraction`** rows from one **`TargetNoteInteractionGroup`** — **without** a separate **Constraint** type.
@@ -345,6 +367,12 @@ EditSessionActions buildEditSessionActions(
 
 The builder SHALL **observe** these inputs only (plus types above); it SHALL **compute** **`EditSessionActions`**; it SHALL **not mutate** live store.
 
+#### Scenario: Builder observes inputs without mutation
+
+- **WHEN** **`buildEditSessionActions`** receives constrained geometry, edited geometry, transaction baseline, and live store
+- **THEN** it emits **`EditSessionActions`**
+- **AND** live store remains unchanged until **`applyEditSessionActions`**
+
 ### Requirement: Boundary split ownership
 
 **Boundary split** (D10 — off-at-on−1 and same-tick on/off adjustment) SHALL be **part of edit session action apply** — the final live-store geometry sub-step inside **`applyEditSessionActions`**.
@@ -367,6 +395,12 @@ The builder SHALL **observe** these inputs only (plus types above); it SHALL **c
 
 **`buildEditSessionActions`** MUST NOT inspect **`EditSessionInteraction`** or **`EditSessionInteractionsByTarget`** directly.
 
+#### Scenario: Builder consumes constrained geometry, not interactions
+
+- **WHEN** overlap-target desired geometry is available as **`ConstrainedNoteGeometry`**
+- **THEN** **`buildEditSessionActions`** maps that geometry to store-changing actions
+- **AND** it does not inspect **`EditSessionInteraction`** rows
+
 ### Requirement: EditSessionAction types (NOTE_EDIT first implementation)
 
 NOTE_EDIT **`EditSessionActionType`** values SHALL include at minimum:
@@ -382,9 +416,21 @@ NOTE_EDIT **`EditSessionActionType`** values SHALL include at minimum:
 
 Committed **`EditPass`** rows at note edit pass commit are unchanged; **`EditSessionAction`** is live RAM only until **`commitAllPendingNoteEditActions`**.
 
+#### Scenario: EditSessionAction remains live RAM only
+
+- **WHEN** a NOTE_EDIT geometry tick emits **`EditSessionAction`** rows
+- **THEN** they mutate the active **live store** only through **`applyEditSessionActions`**
+- **AND** persisted **`EditPass`** rows are produced later by macro commit
+
 ### Requirement: EditorSelection and baseline as action inputs
 
 **`buildEditSessionActions`** and **`applyEditSessionActions`** SHALL resolve targets by **`NoteId`** from **`EditorSelection`** and **`baselineMap`**. They MUST NOT use **`selectedNoteIdx`** or display wrap **`DisplayNote.endTick`** as storage mutation authority.
+
+#### Scenario: Storage mutation targets NoteId
+
+- **WHEN** a selected display index changes after projection
+- **THEN** storage mutation still targets the selected **`NoteId`**
+- **AND** display index is not used as mutation authority
 
 ### Requirement: EditorSelection selection domain (NOTE_EDIT)
 
@@ -432,6 +478,12 @@ Transaction baseline (**`baselineMap`**) SHALL refresh when **`EditorSelection.p
 
 At **`commitAllPendingNoteEditActions`**, the system SHALL produce **one `noteEditPass` batch** containing **`EditPass` rows for every `NoteId` changed** compared to transaction baseline — mover, overlap targets, add, delete.
 
+#### Scenario: Macro commit batches changed notes
+
+- **WHEN** macro commit runs after one mover edit and one hidden overlap target
+- **THEN** one **`noteEditPass`** batch is created
+- **AND** the batch contains rows for both changed **`NoteId`** values
+
 ### Requirement: overlapNotes and persistent registry removed
 
 **`overlapNotes`** and any persistent **`ConstraintRegistry`** MUST NOT be authoritative after phase 4 wire.
@@ -445,3 +497,9 @@ At **`commitAllPendingNoteEditActions`**, the system SHALL produce **one `noteEd
 ### Requirement: Cross-session extension shape
 
 The pipeline entry points SHALL accept **`EditSessionType`** so Loop and ControlChange edits can extend interaction kinds and action types without renaming **`EditSessionAction`**.
+
+#### Scenario: Note implementation keeps extension type
+
+- **WHEN** NOTE_EDIT calls the pipeline entry points
+- **THEN** the API carries **`EditSessionType::Note`**
+- **AND** future Loop or ControlChange extensions do not require renaming **`EditSessionAction`**

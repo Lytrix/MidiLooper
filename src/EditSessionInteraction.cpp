@@ -188,6 +188,33 @@ NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
   return projected;
 }
 
+NOTE_EDIT_MEM void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& focus,
+                                                              const NoteIdList& evaluationScope,
+                                                              const MidiEventVec& liveStore,
+                                                              uint8_t channel) {
+  if (!focus.active) {
+    return;
+  }
+  const auto ensureNoteId = [&](NoteId noteId) {
+    if (noteId == kInvalidNoteId) {
+      return;
+    }
+    if (focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
+      return;
+    }
+    NoteBaseline live{};
+    if (readLiveLinearSpan(liveStore, noteId, channel, live)) {
+      focus.baselineMap[noteId] = live;
+    }
+  };
+  for (NoteId noteId : evaluationScope) {
+    ensureNoteId(noteId);
+  }
+  if (focus.movingNoteId != kInvalidNoteId) {
+    ensureNoteId(focus.movingNoteId);
+  }
+}
+
 NOTE_EDIT_MEM std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,
                        const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>&

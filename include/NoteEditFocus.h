@@ -82,9 +82,10 @@ struct NoteEditFocus {
   /// Overlap notes the geometry pipeline hid or shortened under the current edit driver.
   /// Transient session state: only geometry actions write it, it is cleared at the edit driver
   /// boundary and session end, and it is never persisted to storage. It travels with the focus in
-  /// session undo snapshots (like `baselineMap` / `overlapNotes`) so a note hidden several steps
-  /// back keeps its Delete authority across undo. Membership plus absence from the live store is
-  /// what authorises a pre-commit Delete row — see `buildPreCommitBaselineLiveDiffOverlapPasses`.
+  /// session undo snapshots (like `baselineMap` / `overlapNotes`) so a note changed several steps
+  /// back keeps its pre-commit authority across undo. Membership authorises overlap Update rows;
+  /// membership plus absence from the live store authorises a Delete row — see
+  /// `buildPreCommitBaselineLiveDiffOverlapPasses`.
   NoteIdList changedOverlapNoteIds;
 
   void clear() {
@@ -101,6 +102,9 @@ struct NoteEditFocus {
 
 NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn);
 
+/// Fingerprint for note-edit display caches — geometry overlap state and mover live span.
+uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus);
+
 uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength);
 
 bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pitch,
@@ -114,6 +118,9 @@ const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteI
 bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
 void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
+void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, NoteId noteId,
+                                        const NoteBaseline& baseline);
+void clearCommittedOverlapDeleteIdsFromFocus(NoteEditFocus& focus, const NoteIdList& noteIds);
 
 /// When an overlap target becomes the selected causing note, drop its scratch row (driver boundary).
 bool evictOverlapScratchForSelectedNote(NoteEditFocus& focus, NoteId selectedNoteId);
@@ -230,11 +237,33 @@ EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel
                                      const MidiEventVec* sessionStoreEvents = nullptr,
                                      uint32_t loopLength = 0);
 
-/// NOTE_EDIT select/display inventory: session reconstruction minus Hidden and innerUnderMovingNote.
+/// NoteIds whose geometry is read from the live session store during NOTE_EDIT display projection.
+NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus);
+
+/// NOTE_EDIT display projection: overlay participant geometry onto a committed/windowed base list.
+template <typename Alloc>
+NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
+    const NoteUtils::DisplayNoteVec& committedBaseNotes,
+    const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
+    uint8_t channel, uint32_t loopLength);
+
+/// Test/back-compat path — uses session-store reconstruction as the committed base.
+template <typename Alloc>
+NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
+    const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
+    uint8_t channel, uint32_t loopLength) {
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(sessionEvents, loopLength, false);
+  return projectNoteEditDisplayNotes(committedBase, sessionEvents, focus, channel, loopLength);
+}
+
+/// Back-compat alias — prefer `projectNoteEditDisplayNotes`.
 template <typename Alloc>
 NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
-    uint8_t channel, uint32_t loopLength);
+    uint8_t channel, uint32_t loopLength) {
+  return projectNoteEditDisplayNotes(sessionEvents, focus, channel, loopLength);
+}
 
 /// NoteIds for micro normalize + full-loop transaction baseline (mover, overlap, all live notes).
 template <typename Alloc>
@@ -328,6 +357,12 @@ inline int filteredDisplayNoteIndexForNoteIdAndEnd(const NotesVec& filtered, Not
 
 template <typename NotesVec>
 inline int filteredDisplayNoteIndexForMovingNote(const NotesVec& filtered, NoteId noteId,
-                                               uint32_t linearStartTick) {
-  return filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);
+                                                 uint32_t linearStartTick,
+                                                 uint32_t loopStartTick = 0,
+                                                 uint32_t loopLength = 0) {
+  const uint32_t displayBracket =
+      loopLength > 0 ? displayStartTickFromStorageNote(linearStartTick, loopStartTick, loopLength)
+                     : linearStartTick;
+  return filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, displayBracket,
+                                                   loopStartTick, loopLength);
 }

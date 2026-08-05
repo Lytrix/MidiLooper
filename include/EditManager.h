@@ -131,9 +131,11 @@ public:
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
     void commitAllPendingNoteEditActions(Track& track);
+    /// Drop pending apply-owned Delete row for a note the user is navigating to via fader-1.
+    void cancelPendingDeleteForSelectNote(NoteId noteId);
     /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.
     void commitPendingOverlapNoteEdits(Track& track);
-    /// Ensure **focus** is active before overlap utils (rebuild from live **DisplayNote** when needed).
+    /// Ensure **focus** is active for `EditorSelection.primaryNote` before overlap utils.
     void ensureNoteEditFocusForLiveEdit(Track& track,
                                         const NoteUtils::DisplayNote& fallbackWhenNoFocus);
     /// Clear focus only (`selectedNoteIdx == -1`). Do **not** pass a filtered or unfiltered list index —
@@ -145,9 +147,12 @@ public:
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
     /// Filtered select inventory during note edit; else cached notes (encoder + fader).
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
+    /// Single cached NOTE_EDIT display projection (session store + focus).
+    NoteUtils::DisplayNoteVec projectedNoteEditDisplayNotes(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (session reconstruction minus Hidden overlap).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
-    /// Live mover geometry: **focus.last** when active, else inventory at **selectedNoteIdx**.
+    void invalidateProjectedNoteEditDisplayCache() const;
+    /// Live mover geometry: **focus.last** only when it matches `EditorSelection.primaryNote`.
     bool isLengthBracketEditActive() const;
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     /// Refresh **focus.last** start/end from the live session store note-on/off pair.
@@ -284,8 +289,9 @@ private:
     uint32_t noteEditFocusMaterializeLoopLength_ = 0;
     MidiEventVec noteEditFocusMaterializedLoopEvents_;
     mutable uint32_t noteEditSelectableDisplayCachePreviewRevision_ = UINT32_MAX;
-    mutable size_t noteEditSelectableDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
+    mutable uint32_t noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
+    mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;
     bool deferredNoteEditDisplayRefreshPending_ = false;
     uint32_t deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
