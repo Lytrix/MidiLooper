@@ -220,32 +220,8 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
 }
 
 void EditManager::commitPendingOverlapNoteEdits(Track& track) {
-    if (!editSession.active || !editSession.focus.active) {
-        return;
-    }
-    const uint8_t channel = track.getMidiChannel();
-    const uint32_t loopLength = noteEditLoopLengthTicks(track);
-    if (loopLength == 0) {
-        return;
-    }
-
-    EditPassVec rows = buildPreCommitOverlapEditPasses(editSession.focus);
-    if (rows.empty()) {
-        return;
-    }
-
-    MidiEventVec& sessionStoreEvents = sessionMidiEvents();
-    resolveOverlapNotesForPreCommit(sessionStoreEvents, editSession.focus, channel,
-                                    loopLength);
-
-    markOverlapDeleteRowsEmitted(editSession.focus, rows);
-    const EditPassId id = commitEditAction(track, std::move(rows));
-    if (id == kInvalidEditPassId) {
-        return;
-    }
-
-    track.invalidateCaches();
-    clearCommittedOverlapScratchExceptHidden(editSession.focus);
+    // Overlap rows now come from baselineMap vs live store (same as macro commit).
+    commitAllPendingNoteEditActions(track);
 }
 
 void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx) {

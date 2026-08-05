@@ -29,11 +29,11 @@ Moving notes works. Shortened / hidden / removed overlapping notes do not commit
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Branch/commit WIP; ARCHITECTURE-REVIEW; this plan; Q14 in design.md | Done |
-| 1 | Pitch-lane gate in `analyzeEditSessionInteractions` | Pending |
-| 2 | Immutable full-loop `baselineMap`; remove enrich/prune and apply writers | Pending |
-| 3 | noteId assign only at session open | Pending |
-| 4 | Resolve on projected baseline; clamp inverted spans | Pending |
-| 5 | Retire session-tagged workarounds + `overlapNotes` (4.5 / 4.5b) | Pending |
+| 1 | Pitch-lane gate in `analyzeEditSessionInteractions` | Done |
+| 2 | Immutable full-loop `baselineMap`; remove enrich/prune and apply writers | Done |
+| 3 | noteId assign only at session open | Done |
+| 4 | Resolve on projected baseline; clamp inverted spans | Done |
+| 5 | Retire `overlapNotes` from commit/filter (4.5 / 4.5b); apply LIFO fallbacks kept behind regression tests | Done |
 | 6 | Native + device verification | Pending |
 
 ## Out of scope

@@ -378,19 +378,8 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus) {
   if (!focus.active) {
     return false;
   }
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.state == OverlapNoteStoreState::Hidden && !entry.preCommitEmitted) {
-      return true;
-    }
-  }
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.state == OverlapNoteStoreState::Shortened &&
-        entry.shortenedEndTick != entry.baseline.endTick) {
-      return true;
-    }
-  }
+  // Overlap hide/shorten pending is detected via noteEditFocusHasPendingBaselineMapDiff
+  // (baselineMap vs live store) — not overlapNotes scratch (OpenSpec 4.5).
   if (focus.last.startTick != focus.commitBaseline.startTick) {
     return true;
   }
@@ -1083,84 +1072,11 @@ template void pruneOverlapNotesBeforePreCommit<ExternalMemoryFirstAllocator<Midi
     NoteEditFocus&, SessionMidiEventVec&, uint8_t);
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
-  EditPassVec rows;
-  if (!focus.active) {
-    return rows;
-  }
-
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.state == OverlapNoteStoreState::Hidden && !entry.preCommitEmitted) {
-      EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
-      row.targetNoteId = entry.noteId;
-      rows.push_back(row);
-    }
-  }
-
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.state == OverlapNoteStoreState::Shortened &&
-        entry.shortenedEndTick != entry.baseline.endTick) {
-      EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
-      row.targetNoteId = entry.noteId;
-      row.startTick = entry.baseline.startTick;
-      row.endTick = entry.shortenedEndTick;
-      rows.push_back(row);
-    }
-  }
-
-  return rows;
+  // Retired: overlap rows come from baselineMap vs live store
+  // (buildPreCommitBaselineLiveDiffOverlapPasses). Kept as empty stub for call-site stability.
+  (void)focus;
+  return EditPassVec{};
 }
-
-namespace {
-
-NOTE_EDIT_MEM const OverlapNote* findOverlapNoteForDisplayNote(const NoteEditFocus& focus,
-                                                 const NoteUtils::DisplayNote& dn) {
-  if (focus.active && focus.movingNoteId != kInvalidNoteId &&
-      dn.noteId == focus.movingNoteId) {
-    if (const OverlapNote* entry = findOverlapNoteEntry(focus, dn.noteId)) {
-      return entry;
-    }
-    return nullptr;
-  }
-  if (dn.noteId != kInvalidNoteId) {
-    if (const OverlapNote* entry = findOverlapNoteEntry(focus, dn.noteId)) {
-      return entry;
-    }
-  }
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.baseline.pitch != dn.note || entry.baseline.startTick != dn.startTick) {
-      continue;
-    }
-    if (entry.state == OverlapNoteStoreState::Shortened &&
-        entry.shortenedEndTick == dn.endTick) {
-      return &entry;
-    }
-    if (entry.baseline.endTick == dn.endTick) {
-      return &entry;
-    }
-  }
-  return nullptr;
-}
-
-NOTE_EDIT_MEM bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& focus,
-                                          const NoteUtils::DisplayNote& dn) {
-  if (focus.active && focus.movingNoteId != kInvalidNoteId &&
-      dn.noteId == focus.movingNoteId) {
-    return false;
-  }
-  const OverlapNote* overlap = findOverlapNoteForDisplayNote(focus, dn);
-  if (overlap == nullptr) {
-    return false;
-  }
-  if (overlap->state == OverlapNoteStoreState::Hidden) {
-    return true;
-  }
-  return overlap->innerUnderMovingNote;
-}
-
-}  // namespace
 
 template <typename AllocA, typename AllocB>
 NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
@@ -1255,18 +1171,30 @@ NOTE_EDIT_MEM
 NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
     uint8_t channel, uint32_t loopLength) {
-  (void)channel;
   NoteUtils::DisplayNoteVec allNotes =
       NoteUtils::reconstructDisplayNotes(sessionEvents, loopLength, false);
-  if (!focus.active || focus.overlapNotes.empty()) {
+  if (!focus.active || loopLength == 0) {
     return allNotes;
   }
 
+  // Hidden notes are absent from the live store (pipeline Hide / baseline-diff Delete).
+  // Defensive filter: drop any reconstructed note whose baselineMap entry has no live pair.
   NoteUtils::DisplayNoteVec filtered;
   filtered.reserve(allNotes.size());
   for (const NoteUtils::DisplayNote& dn : allNotes) {
-    if (isExcludedFromSelectableDisplayNotes(focus, dn)) {
+    if (dn.noteId != kInvalidNoteId && dn.noteId == focus.movingNoteId) {
+      filtered.push_back(dn);
       continue;
+    }
+    if (dn.noteId != kInvalidNoteId &&
+        focus.baselineMap.find(dn.noteId) != focus.baselineMap.end()) {
+      NoteBaseline live{};
+      std::vector<MidiEvent, Alloc>& mutableEvents =
+          const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
+      if (!findLinearNoteSpanForNoteId(mutableEvents, dn.noteId, channel, live, dn.startTick,
+                                       loopLength)) {
+        continue;
+      }
     }
     filtered.push_back(dn);
   }
