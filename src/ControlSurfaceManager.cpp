@@ -2108,18 +2108,6 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
     return true;
 }
 
-NOTE_EDIT_MEM bool ControlSurfaceManager::tryConsumePlayingGeometrySlot(uint32_t now) {
-    if (!clockManager.isTransportRunning()) {
-        return true;
-    }
-    if (lastPlayingGeometryAppliedMs_ == 0 ||
-        (now - lastPlayingGeometryAppliedMs_) >= kPlayingGeometryMinIntervalMs) {
-        lastPlayingGeometryAppliedMs_ = now;
-        return true;
-    }
-    return false;
-}
-
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingMove(const NoteUtils::DisplayNote& note,
                                                                   uint32_t targetTick) {
     pendingPlayingGeometryType_ = PendingPlayingGeometryType::Move;
@@ -2214,10 +2202,8 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingPlayingGeometry(Track& t
         pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
         return;
     }
+    editManager.processKindBoundaryUndoWarm(track);
     const uint32_t now = millis();
-    if (!tryConsumePlayingGeometrySlot(now)) {
-        return;
-    }
 
     const PendingPlayingGeometryType kind = pendingPlayingGeometryType_;
     pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
@@ -2367,11 +2353,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "LENGTH EDIT: pitchbend %d -> tick %lu (was %lu)",
                        pitchValue, targetEndTick, relativeEndTick);
-            if (clockManager.isTransportRunning() && !tryConsumePlayingGeometrySlot(now)) {
+            if (clockManager.isTransportRunning()) {
                 queuePendingPlayingLength(currentNote, targetEndTick);
                 return;
             }
-            pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
             geometryApplied =
                 editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
             if (geometryApplied) {
@@ -2420,11 +2405,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             
             // Store the target step as reference for fine adjustments
             editManager.setReferenceStep(targetSixteenthStep);
-            if (clockManager.isTransportRunning() && !tryConsumePlayingGeometrySlot(now)) {
+            if (clockManager.isTransportRunning()) {
                 queuePendingPlayingMove(currentNote, targetTick);
                 return;
             }
-            pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
             geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetTick);
         }
 
@@ -2503,11 +2487,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
         logger.log(CAT_MIDI, LOG_DEBUG,
                    "LENGTH EDIT (fine): anchor %lu offset %ld -> tick %lu",
                    anchorTick, fineOffset, targetEndTick);
-        if (clockManager.isTransportRunning() && !tryConsumePlayingGeometrySlot(now)) {
+        if (clockManager.isTransportRunning()) {
             queuePendingPlayingLength(currentNote, targetEndTick);
             return;
         }
-        pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
         geometryApplied =
             editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
     } else {
@@ -2541,11 +2524,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                    "POSITION EDIT: Fine adjustment from relative tick %lu to %lu (absolute %lu -> %lu)", 
                    relativeStartTick, relativeTargetStartTick, currentNoteStartTick,
                    targetStartTick);
-        if (clockManager.isTransportRunning() && !tryConsumePlayingGeometrySlot(now)) {
+        if (clockManager.isTransportRunning()) {
             queuePendingPlayingMove(currentNote, targetStartTick);
             return;
         }
-        pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
         geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetStartTick);
     }
         
@@ -2623,11 +2605,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleNoteValueFaderInput(uint8_t ccVa
     clearPendingSelectDependentMotorSync();
     releaseEditedNoteAudition();
 
-    if (clockManager.isTransportRunning() && !tryConsumePlayingGeometrySlot(now)) {
+    if (clockManager.isTransportRunning()) {
         queuePendingPlayingPitch(liveNote, currentNoteValue, newNoteValue);
         return;
     }
-    pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
     const bool refreshPlaybackPreview = !clockManager.isTransportRunning();
     if (!applyPlayingPitchGeometry(track, liveNote, currentNoteValue, newNoteValue,
                                    refreshPlaybackPreview)) {
