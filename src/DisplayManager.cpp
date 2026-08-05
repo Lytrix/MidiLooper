@@ -3272,6 +3272,9 @@ void DisplayManager::update() {
     }
 #endif
     HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
+    if (editManager.isNoteEditActive()) {
+        editManager.markNoteEditDisplayPainted();
+    }
 }
 
 #if defined(SESSION_CAPTURE)

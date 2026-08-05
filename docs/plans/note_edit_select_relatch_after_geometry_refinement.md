@@ -6,6 +6,12 @@
 
 **Gate consolidation (182453):** F1 `selectionChanged` preempts geometry hold and relatch; hold window uses coarse idle (`COARSE_STABILITY_TIME`); relatch arm does not arm settle; coarse blocked when F1 diverges from logical selection.
 
+**F1 bracket sync after coarse (190716):** F1 note select applies bracket from live display note start (`noteSelectBracketTickFromDisplayNote`); geometry edit updates F1 software tracking (`syncSelectFaderTrackingFromLogicalBracket`) and flushes geometry motor sync when coarse/fine driver was idle.
+
+**F1 geometry scheduling (191748):** `syncSelectionFromGeometryEdit` compares `lastGeometryF1SyncedBracketTick_` because `NoteMovementUtils` pre-updates `EditorSelection` before control-surface sync; idle `update()` force-flushes pending geometry motor.
+
+**Empty-step deselect (192408):** geometry empty-step deselect syncs focus before commit and preserves `lastGeometryF1SyncedBracketTick_` at the moving note live bracket (not empty-step slot tick).
+
 **Cursor plan:** [`.cursor/plans/select_relatch_after_geometry_4412f6a9.plan.md`](../../.cursor/plans/select_relatch_after_geometry_4412f6a9.plan.md)  
 **Evidence:** [`captures/session_20260805_174222.log`](../../captures/session_20260805_174222.log)
 

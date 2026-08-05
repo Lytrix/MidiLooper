@@ -46,6 +46,8 @@ public:
     
     //void setup();
     void update();
+    /** After display paint — flush pending select/geometry motor sync (display-first ordering). */
+    void processDeferredFaderMotorSync();
     
     // MIDI input handlers
     void handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn);
@@ -129,7 +131,10 @@ private:
     bool selectDependentSettleBlockLogged_ = false;
     bool suppressSelectDependentMotorSync_ = false;
     bool pendingSelectDriverMotorSyncValid_ = false;
+    uint32_t pendingSelectDependentMotorRequiredPaintEpoch_ = 0;
     bool pendingGeometryDriverMotorSyncValid_ = false;
+    uint32_t pendingGeometryMotorRequiredPaintEpoch_ = 0;
+    uint32_t lastGeometryF1SyncedBracketTick_ = UINT32_MAX;
     bool selectionRelatchAfterGeometryActive_ = false;
     bool geometrySelectBlockedDuringGeometryHold_ = false;
     bool geometryRelatchConsumed_ = false;
@@ -214,12 +219,14 @@ private:
     void clearPendingGeometryDriverMotorSync();
     void clearSelectionRelatchAfterGeometry();
     void clearGeometryRelatchCycleEligibility();
+    uint32_t liveMovingNoteDisplayBracketForF1Sync(const Track& track) const;
     void finishSelectApplyFromFader1Teardown();
     void clearSelectFaderNavigationGates();
     bool fader1SelectTargetChangesSelection(const Fader1SelectTarget& target) const;
     void preemptGeometryHoldForSelectNavigation(uint32_t now);
     void processPendingSelectDependentMotorSync(Track& track);
-    void processPendingGeometryDriverMotorSync(Track& track);
+    void processPendingGeometryDriverMotorSync(Track& track, bool forceFlush = false);
+    void syncSelectFaderTrackingFromLogicalBracket(Track& track);
     void syncSelectionFromGeometryEdit(Track& track);
     bool syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
                                     const NoteEditFaderOutbound::PlanFlags& plan);

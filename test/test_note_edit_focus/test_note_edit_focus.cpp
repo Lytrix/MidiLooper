@@ -2333,6 +2333,59 @@ void test_session_171134_canonical_commit_rows_from_final_session_store() {
   TEST_ASSERT_EQUAL_UINT32(1439u, rows[1].endTick);
 }
 
+void test_focus_rebuild_pending_after_pitch_move_stale_display_hint_session_193016() {
+  // session_20260805_193016: pitch change + coarse move left session store at 2303/pitch 12 while
+  // display cache still pointed at the pre-move tick; stale preferredStartTick missed the live span
+  // and rebuild aligned commitBaseline to stale display, dropping pending commit on deselect.
+  constexpr NoteId kMoverId = 36;
+  constexpr uint32_t loopLength = 3072;
+
+  MidiEventVec committed;
+  MidiEvent committedOn = MidiEvent::NoteOn(1583, 1, 26, 100);
+  committedOn.noteId = kMoverId;
+  committed.push_back(committedOn);
+  committed.push_back(MidiEvent::NoteOff(1774, 1, 26, 0));
+
+  MidiEventVec session;
+  MidiEvent liveOn = MidiEvent::NoteOn(2303, 1, 12, 100);
+  liveOn.noteId = kMoverId;
+  session.push_back(liveOn);
+  session.push_back(MidiEvent::NoteOff(2494, 1, 12, 0));
+
+  NoteBaseline committedSpan;
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(committed, kMoverId, 1, committedSpan, UINT32_MAX, loopLength));
+  NoteBaseline liveSpan;
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(session, kMoverId, 1, liveSpan, UINT32_MAX, loopLength));
+  TEST_ASSERT_FALSE(
+      findLinearNoteSpanForNoteId(session, kMoverId, 1, liveSpan, 1583, loopLength));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = committedSpan;
+  focus.last = liveSpan;
+  focus.baselineMap[kMoverId] = committedSpan;
+  focus.movingNoteRange.start = liveSpan.startTick;
+  focus.movingNoteRange.end = liveSpan.endTick;
+
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &session, loopLength);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
+  const auto noteRangeIt = std::find_if(rows.begin(), rows.end(), [](const EditPass& row) {
+    return row.targetNoteId == kMoverId && row.propertyType == EditPropertyType::NoteRange;
+  });
+  const auto pitchIt = std::find_if(rows.begin(), rows.end(), [](const EditPass& row) {
+    return row.targetNoteId == kMoverId && row.propertyType == EditPropertyType::Pitch;
+  });
+  TEST_ASSERT_TRUE(noteRangeIt != rows.end());
+  TEST_ASSERT_TRUE(pitchIt != rows.end());
+  TEST_ASSERT_EQUAL_UINT32(2303u, noteRangeIt->startTick);
+  TEST_ASSERT_EQUAL_UINT8(12, pitchIt->pitch);
+}
+
 void test_pitch_pre_commit_requires_active_focus() {
   constexpr uint32_t kLoopLength = 768;
   NoteEditFocus focus;
@@ -2926,6 +2979,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_baseline_map_diff_pending_commit_when_mover_unchanged);
   RUN_TEST(test_baseline_map_diff_reads_store_channel_live_span);
   RUN_TEST(test_session_171134_canonical_commit_rows_from_final_session_store);
+  RUN_TEST(test_focus_rebuild_pending_after_pitch_move_stale_display_hint_session_193016);
   RUN_TEST(test_pitch_pre_commit_requires_active_focus);
   return UNITY_END();
 }

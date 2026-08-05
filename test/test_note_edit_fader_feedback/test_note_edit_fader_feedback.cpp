@@ -389,6 +389,12 @@ void test_select_fader_motor_idle_ms_constant() {
     TEST_ASSERT_EQUAL_UINT32(300, NoteEditFaderMotorTiming::kSelectFaderMotorIdleMs);
 }
 
+void test_note_edit_display_paint_gate_blocks_motor_until_painted() {
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::noteEditDisplayPaintedForMotorSync(2, 3));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::noteEditDisplayPaintedForMotorSync(3, 3));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::noteEditDisplayPaintedForMotorSync(4, 3));
+}
+
 void test_should_flush_select_dependent_motor_sync_after_idle() {
     TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
         1000, 300, false));
@@ -644,10 +650,14 @@ void test_ref_driven_motor_sync_ignores_index_only_change() {
     TEST_ASSERT_TRUE(displayNoteInfoChanged(snap, storageChanged));
 }
 
-void test_select_dependent_settle_ms_in_capture_window() {
-    static constexpr uint32_t kSelectDependentSettleMs = 450;
-    TEST_ASSERT_GREATER_OR_EQUAL(400, kSelectDependentSettleMs);
-    TEST_ASSERT_LESS_OR_EQUAL(500, kSelectDependentSettleMs);
+void test_select_dependent_settle_blocks_motor_flush_until_expired() {
+    static constexpr uint32_t kSettleMs = 450;
+    const uint32_t selectAt = 1000;
+    const uint32_t settleUntil = selectAt + kSettleMs;
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::selectDependentSettleExpired(1200, settleUntil));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::selectDependentSettleExpired(1449, settleUntil));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::selectDependentSettleExpired(1450, settleUntil));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::selectDependentSettleExpired(2000, settleUntil));
 }
 
 void test_reference_step_from_bracket_tick() {
@@ -883,6 +893,68 @@ void test_same_bracket_sibling_plan_includes_all_motors() {
     TEST_ASSERT_TRUE(sibling.noteValue);
 }
 
+void test_f1_note_select_bracket_from_live_note_session_190716() {
+    // session_20260805_190716: noteId 36 coarse to storage 2304 / display 1344; stale F1 slot 1056.
+    constexpr NoteId kNoteId = 36;
+    const uint32_t loopLength = 1536;
+    const uint32_t loopStartTick = 960;
+    const uint32_t storageStart = 2304;
+    const uint32_t staleSlotTick = 1056;
+
+    NoteUtils::DisplayNote note{kNoteId, 12, 100, storageStart, storageStart + 96};
+    const uint32_t bracketTick =
+        NoteEditFaderSelectSync::noteSelectBracketTickFromDisplayNote(
+            note, loopStartTick, loopLength, false);
+    TEST_ASSERT_EQUAL_UINT32(1344, bracketTick);
+    TEST_ASSERT_NOT_EQUAL(staleSlotTick, bracketTick);
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::physicalSelectTargetDivergesFromLogical(
+            kNoteId, bracketTick, kNoteId, staleSlotTick));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::physicalSelectTargetDivergesFromLogical(
+            kNoteId, bracketTick, kNoteId, bracketTick));
+}
+
+void test_geometry_bracket_tracking_alignment_predicate() {
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::selectFaderTrackingAlignedWithLogicalBracket(4200, 4200));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::selectFaderTrackingAlignedWithLogicalBracket(3000, 4200));
+}
+
+void test_geometry_bracket_change_detected_after_session_preupdate() {
+    // NoteMovementUtils pre-updates EditorSelection; F1 sync compares lastSynced bracket.
+    const uint32_t sessionTick = 1008;
+    const uint32_t lastSynced = 960;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::geometryBracketChangedForF1Sync(lastSynced, sessionTick));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::geometryBracketChangedForF1Sync(sessionTick, sessionTick));
+}
+
+void test_geometry_bracket_change_session_190716_stale_synced() {
+  // session_20260805_190716: coarse moved to display 1344; stale lastSynced was 1056.
+    const uint32_t liveBracket = 1344;
+    const uint32_t staleSynced = 1056;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::geometryBracketChangedForF1Sync(staleSynced, liveBracket));
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::physicalSelectTargetDivergesFromLogical(
+            36, liveBracket, 36, staleSynced));
+}
+
+void test_empty_step_deselect_preserves_moving_note_f1_bracket_session_192408() {
+    // session_20260805_192408: deselect empty step at 2448 while moving note at display 2592.
+    const uint32_t movingNoteBracket = 2592;
+    const uint32_t emptyStepBracket = 2448;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldPreserveGeometryF1BracketOnEmptyStepDeselect(
+            movingNoteBracket));
+    TEST_ASSERT_NOT_EQUAL(emptyStepBracket, movingNoteBracket);
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::geometryBracketChangedForF1Sync(movingNoteBracket, movingNoteBracket));
+}
+
 void test_geometry_driver_plan_refreshes_fader1_on_bracket_change() {
     const auto plan = NoteEditFaderOutbound::planForGeometryDriverMotorSync(100, 200);
     TEST_ASSERT_TRUE(plan.fader1);
@@ -906,6 +978,26 @@ void test_select_dependent_plan_excludes_fader1() {
     const auto sibling = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(1, 2, 579,
                                                                                        579);
     TEST_ASSERT_FALSE(sibling.fader1);
+}
+
+void test_should_preserve_settle_gates_during_post_select_drift_session_194000() {
+    // session_20260805_194000: mover selected at 1344; settle must survive target change at 1296.
+    constexpr uint32_t settleUntil = 1000;
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldClearSelectFaderNavigationGatesOnTargetChange(true, 500,
+                                                                                     settleUntil));
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldClearSelectFaderNavigationGatesOnTargetChange(true, 1000,
+                                                                                     settleUntil));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldClearSelectFaderNavigationGatesOnTargetChange(false, 500,
+                                                                                     settleUntil));
+}
+
+void test_should_not_clear_navigation_gates_during_selection_grace_session_194000() {
+    // Regression guard: 750ms grace lock was too sluggish — settle-only gate (450ms) is used now.
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldClearSelectFaderNavigationGatesOnTargetChange(true, 800, 0));
 }
 
 void test_geometry_edit_kind_blocks_f1_select_apply_policy() {
@@ -1102,6 +1194,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_motor_fader_timing_matches_ableton_reference_midis);
     RUN_TEST(test_motor_fader_burst_invokes_position_and_notegate_callbacks);
     RUN_TEST(test_select_fader_motor_idle_ms_constant);
+    RUN_TEST(test_note_edit_display_paint_gate_blocks_motor_until_painted);
     RUN_TEST(test_should_flush_select_dependent_motor_sync_after_idle);
     RUN_TEST(test_parallel_motor_fader_burst_interleaves_enabled_slots);
     RUN_TEST(test_ch13_ack_correlation_window_ms_for_capture_logs);
@@ -1124,7 +1217,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_geometry_hold_ignored_only_without_selection_change);
     RUN_TEST(test_relatch_sync_dismiss_requires_select_fader_idle);
     RUN_TEST(test_ref_driven_motor_sync_ignores_index_only_change);
-    RUN_TEST(test_select_dependent_settle_ms_in_capture_window);
+    RUN_TEST(test_select_dependent_settle_blocks_motor_flush_until_expired);
     RUN_TEST(test_reference_step_from_bracket_tick);
     RUN_TEST(test_display_note_info_changed);
     RUN_TEST(test_display_note_info_snapshot_from_ref_wrap_formula);
@@ -1138,8 +1231,15 @@ int main(int argc, char** argv) {
     RUN_TEST(test_window_inclusion_filter_preserves_storage_ticks);
     RUN_TEST(test_fine_position_loop_relative_tick_with_nonzero_loop_start);
     RUN_TEST(test_same_bracket_sibling_plan_includes_all_motors);
+    RUN_TEST(test_f1_note_select_bracket_from_live_note_session_190716);
+    RUN_TEST(test_geometry_bracket_tracking_alignment_predicate);
+    RUN_TEST(test_geometry_bracket_change_detected_after_session_preupdate);
+    RUN_TEST(test_geometry_bracket_change_session_190716_stale_synced);
+    RUN_TEST(test_empty_step_deselect_preserves_moving_note_f1_bracket_session_192408);
     RUN_TEST(test_geometry_driver_plan_refreshes_fader1_on_bracket_change);
     RUN_TEST(test_geometry_driver_plan_empty_when_bracket_unchanged);
+    RUN_TEST(test_should_preserve_settle_gates_during_post_select_drift_session_194000);
+    RUN_TEST(test_should_not_clear_navigation_gates_during_selection_grace_session_194000);
     RUN_TEST(test_geometry_edit_kind_blocks_f1_select_apply_policy);
     RUN_TEST(test_select_dependent_plan_excludes_fader1);
     RUN_TEST(test_motor_sync_plans_are_direction_isolated);
