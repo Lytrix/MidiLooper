@@ -75,21 +75,6 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                                      uint32_t movingNoteStart, uint32_t movingNoteEnd,
                                      uint32_t loopLength);
     
-    void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
-                     uint8_t movingNotePitch,
-                     uint32_t currentStart,
-                     uint32_t newStart,
-                     uint32_t newEnd,
-                     int delta,
-                     uint32_t loopLength,
-                     const EditManager& manager,
-                     MidiEventVec& sessionEvents,
-                     uint8_t channel,
-                     NoteId movingNoteId,
-                     std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
-                     std::vector<NoteUtils::DisplayNote>& notesToDelete,
-                     bool allowSharedEndCoexistence = false);
-    
     void applyShortenOrDelete(MidiEventVec& midiEvents,
                              const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                              const std::vector<NoteUtils::DisplayNote>& notesToDelete,
