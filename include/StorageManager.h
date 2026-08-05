@@ -174,7 +174,14 @@ public:
     /// Queue focus slot and remaining payloads for deferred restore (priority fill).
     static void prioritizeLoopSlotRestoreForFocus(uint8_t trackIndex, uint8_t slotIndex);
     /// True when a verified loop-slot payload exists on SD (not yet loaded into RAM).
+    /// Probes SD — use only on cold paths (boot scan, UI select, deferred restore admit).
     static bool loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex);
+    /// O(1) RAM mirror of loopSlotHasPayloadOnSd; hot paths (clock slot-switch) must use this.
+    static bool hasLoopSlotPayloadOnSdInRam(uint8_t trackIndex, uint8_t slotIndex);
+    /// Probe SD and update the RAM mirror (cold path only).
+    static void refreshLoopSlotPayloadOnSdInRam(uint8_t trackIndex, uint8_t slotIndex);
+    /// Set RAM mirror after persist finalize or load without probing SD.
+    static void setLoopSlotPayloadOnSdInRam(uint8_t trackIndex, uint8_t slotIndex, bool hasPayload);
     /// Before undo: finish deferred undo snapshot hydration when still pending.
     static void restoreDeferredUndoSnapshotsBeforeUse();
 
