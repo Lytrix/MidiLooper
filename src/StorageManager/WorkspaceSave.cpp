@@ -11,6 +11,7 @@
 #include "LoopEventStore.h"
 #include "PersistenceSchema.h"
 #include "RtcTime.h"
+#include "StorageManager.h"
 #include "StorageLoopIo.h"
 #include "TrackManager.h"
 #include "TrackUndo.h"
@@ -200,6 +201,7 @@ STORAGE_PERSIST_MEM bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_
         return false;
     }
     (void)CurrentSetStorage::removeLoopSlotSealJournal(trackIndex, slotIndex);
+    StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, true);
     return true;
 }
 
