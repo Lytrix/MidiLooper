@@ -167,8 +167,14 @@ NOTE_EDIT_MEM ConstrainedNoteGeometry resolveConstrainedGeometry(
     geometry.endTick = baseline.endTick;
   }
 
+  // Inverted / empty span (projected shorten past start) must Hide — never emit end < start
+  // into the live store (LinearNoteOff / check=2).
+  if (geometry.visible && geometry.endTick <= geometry.startTick) {
+    geometry.visible = false;
+    return geometry;
+  }
+
   if (noteMinLengthRemoveEnabled && geometry.visible &&
-      geometry.endTick > geometry.startTick &&
       (geometry.endTick - geometry.startTick) < noteMinLengthTicks) {
     geometry.visible = false;
   }
