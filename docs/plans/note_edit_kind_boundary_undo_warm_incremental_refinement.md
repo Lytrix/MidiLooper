@@ -271,7 +271,7 @@ Minimize risk: profile first, structure second, slice only the proven dominant s
 
 ## Implementation checklist
 
-- [ ] **Phase 1** — `UNDO_WARM` timing in `buildSessionUndoEntry`; capture profile on `session_*` HITL
+- [x] **Phase 1** — `UNDO_WARM` timing in `buildSessionUndoEntry`; capture profile on `session_*` HITL
 - [ ] **Phase 2** — `UndoWarmJob` stages; blocking runner; native parity
 - [ ] **Phase 3** — Baseline cursor + µs budget slices; geometry waits for `Ready`
 - [ ] **Phase 4** — Warm starts on select; slice every `update`; revision invalidation rules

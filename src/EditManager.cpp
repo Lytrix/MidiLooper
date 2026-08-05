@@ -1183,10 +1183,33 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::pushSessionUndoOnKindChange(Track& track
         kindBoundaryUndoCacheRevision_ == sessionPreviewRevision_) {
         entry = kindBoundaryUndoCache_;
         kindBoundaryUndoCacheValid_ = false;
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,push,cache_hit,0,%zu,%u",
+                    static_cast<unsigned long>(micros()),
+                    editSession.focus.baselineMap.size(),
+                    static_cast<unsigned>(kind));
+#endif
     } else {
-        entry = buildSessionUndoEntry(editSession.focus, sessionState.selection,
-                                    editSession.store.readEvents(), track.getMidiChannel(),
-                                    noteEditLoopLengthTicks(track), editSession.editPassIds);
+#if defined(SESSION_CAPTURE)
+        const uint32_t readStartUs = micros();
+#endif
+        const auto& sessionFlat = editSession.store.readEvents();
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,phase,read_events,%lu,%zu,%zu,0",
+                    static_cast<unsigned long>(micros()),
+                    static_cast<unsigned long>(micros() - readStartUs),
+                    editSession.focus.baselineMap.size(), sessionFlat.size());
+        const uint32_t buildStartUs = micros();
+#endif
+        entry = buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
+                                    track.getMidiChannel(), noteEditLoopLengthTicks(track),
+                                    editSession.editPassIds);
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,push,cache_miss,%lu,%zu,%u",
+                    static_cast<unsigned long>(micros()),
+                    static_cast<unsigned long>(micros() - buildStartUs),
+                    editSession.focus.baselineMap.size(), static_cast<unsigned>(kind));
+#endif
     }
     if (!editSession.undoStack.pushEntry(entry)) {
         editSession.store.discardEventsCache();
@@ -1223,12 +1246,30 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track
     if (!editorSelectionHasNote(sessionState.selection)) {
         return;
     }
+#if defined(SESSION_CAPTURE)
+    const uint32_t warmStartUs = micros();
+    const uint32_t readStartUs = micros();
+#endif
+    const auto& sessionFlat = editSession.store.readEvents();
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,UNDO_WARM,phase,read_events,%lu,%zu,%zu,0",
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - readStartUs),
+                editSession.focus.baselineMap.size(), sessionFlat.size());
+#endif
     kindBoundaryUndoCache_ =
-        buildSessionUndoEntry(editSession.focus, sessionState.selection,
-                              editSession.store.readEvents(), track.getMidiChannel(),
-                              noteEditLoopLengthTicks(track), editSession.editPassIds);
+        buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
+                              track.getMidiChannel(), noteEditLoopLengthTicks(track),
+                              editSession.editPassIds);
     kindBoundaryUndoCacheValid_ = true;
     kindBoundaryUndoCacheRevision_ = sessionPreviewRevision_;
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,UNDO_WARM,warm,complete,%lu,%zu,%zu,%u",
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - warmStartUs),
+                editSession.focus.baselineMap.size(), sessionFlat.size(),
+                static_cast<unsigned>(kindBoundaryUndoCache_.editRows.size()));
+#endif
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick) {
