@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-05 (note edit singular commit pipeline side-slice)
+Last updated: 2026-08-05 (edit-session-action-geometry archived)
 
 ---
 
 ## Current branch
 
-**Active work:** HITL CLI rebuild Phase 3 (`base` + `edit_full` layered presets only) — see [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** HITL CLI rebuild Phase 3 and parked edit HITL matrix — see [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`chore/note-edit-control-surface-split`** — Phases 0–8 complete (merged). See [CURRENT_WORK.md](CURRENT_WORK.md).
 
@@ -29,7 +29,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 ## In flight
 
 - **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; stabilize device PASS; other ports deferred
-- **Edit-session-action-geometry:** Phase 4.10f complete — `commitAllPendingNoteEditActions` now commits canonical baseline/live state diff; apply-owned rows are diagnostics only; empty-step deselect emits selection resolution. Gates: `pio test -e native` 797/797 and `pio run -e teensy41-capture-serial` SUCCESS.
+- **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
@@ -70,7 +70,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
 | **`unified-interval-projection`** | Phases 1–5 code shipped; native PASS; **5.5 HITL deferred** (DEC-017); Phase **6.1–6.2** synced with geometry (2026-08-04) |
-| **`edit-session-action-geometry`** | Phase 4.10f complete — canonical commit serialization + selection resolution side-slice; HITL repro for `session_20260805_171134` pending |
+| **`edit-session-action-geometry`** | **Archived** 2026-08-05 — normative `openspec/specs/edit-session-action-geometry/` |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
 | `load-save-overlay-display-regression` | Overlay display fixes |

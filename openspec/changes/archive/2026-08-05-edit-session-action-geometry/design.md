@@ -1,23 +1,30 @@
 ## Context
 
-Today NOTE_EDIT geometry mutates storage through intertwined helpers in [`NoteMovementUtils.cpp`](../../../src/Utils/NoteMovementUtils.cpp):
+**Shipped (2026-08-05):** NOTE_EDIT geometry routes through [`runEditSessionGeometryPipelineForCausingNote`](../../../src/RunEditSessionGeometryPipeline.cpp) from [`NoteMovementUtils.cpp`](../../../src/Utils/NoteMovementUtils.cpp). Imperative restore-first helpers (`restoreOverlapNotesNoLongerOverlapping`, `findOverlaps`, `enrichBaselineMapFromCommittedAndLive`) are **retired** from `src/`.
 
 ```
-moveNoteWithOverlapHandling
-  → restoreOverlapNotesNoLongerOverlapping   (mutate)
-  → findOverlaps                             (decide)
-  → applyShortenOrDelete                     (mutate)
-  → move note events                         (mutate)
-  → finalReconstructAndSelect
+EditedGeometry → Edit projection (D20) → analyze → groupByTarget
+  → resolveConstrainedGeometry → buildEditSessionActions → applyEditSessionActions
+  → live store; commit = baseline diff via buildPreCommitBaselineLiveDiffOverlapPasses
 ```
 
-**`overlapNotes`** on [`NoteEditFocus`](../../../include/NoteEditFocus.h) records hidden/shortened overlap state between fader ticks. Restoration depends on that scratch, so every geometry update is coupled to the previous frame.
+**`overlapNotes`** on [`NoteEditFocus`](../../../include/NoteEditFocus.h) remains scratch for evict/clear/undo sizing; **authority** for hidden overlap notes is `baselineMap` + live store + `changedOverlapNoteIds`. [`filterSelectableDisplayNotes`](../../../src/EditManager.cpp) derives hidden from store, not scratch.
 
-**Identity** is migrating to **`EditorSelection`** (`primaryNote`, `bracketTick`) and **`NoteId`** (DEC stable-note-id). Geometry still mixes display ticks, LIFO pairing, and `% loopLength` in places.
+**Identity** is **`EditorSelection`** (`primaryNote`, `bracketTick`) and **`NoteId`** (DEC stable-note-id).
 
 **Canonical storage** work (`linear-loop-tick-storage`, DEC-013/014) defines invariants and normalize boundaries; this change defines **how live geometry edits produce canonical session-store state** without imperative restore chains.
 
 **Design authority:** User architecture proposal (2026-07-04) — transaction baseline + declarative **`EditSessionActions`**.
+
+### Control surface and display (shipped)
+
+F1 note select does **not** fire a full dependent fader outbound burst on every scrub tick. Sequence:
+
+1. **`applyNoteSelectFromFader1Pitchbend`** → `applySelectNav` + `armSelectDependentSettle` (450 ms reset on each select change; gates **F2–F4** motor flush only, **not** F1 input).
+2. **`main.cpp`** — `maybeUpdateDisplayForNoteEditSelection` after `controlSurfaceManager.update()` when display invalidate is pending; marks paint epoch via `markNoteEditDisplayPainted`.
+3. **`processDeferredFaderMotorSync`** runs **after** `runDeferredLoadAndDisplayFrame` — F2–F4 motor burst only when: F1 idle ≥ 300 ms, settle expired, and display painted since selection (`pendingSelectDependentMotorRequiredPaintEpoch_`).
+
+Constants: `SELECT_DEPENDENT_SETTLE_MS` (450), `kSelectFaderMotorIdleMs` (300). Commit `adf9209` (2026-08-05).
 
 ## Goals / Non-Goals
 

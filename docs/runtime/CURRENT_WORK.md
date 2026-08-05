@@ -2,37 +2,17 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-05 (note edit singular commit pipeline side-slice)
+Last updated: 2026-08-05 (edit-session-action-geometry archived)
 
 ---
 
 ## Now implementing
 
-### Note edit singular commit pipeline — Phase 4.10f complete
+### Edit HITL from scratch — parked
 
-**OpenSpec:** [`openspec/changes/edit-session-action-geometry/`](../../openspec/changes/edit-session-action-geometry/)  
-**Plan:** [`docs/plans/note_edit_singular_commit_pipeline_refinement.md`](../plans/note_edit_singular_commit_pipeline_refinement.md)
+**Plan:** [`docs/plans/m8_edit_note_edit_hitl_automation_refinement.md`](../plans/m8_edit_note_edit_hitl_automation_refinement.md)
 
-| Item | Status |
-|------|--------|
-| Canonical commit authority | Done — `commitAllPendingNoteEditActions` serializes from transaction baseline compared with canonical `NoteEditSession.store` |
-| Apply-owned rows | Diagnostics / `SESSION_CAPTURE` parity only; never persistence authority |
-| Empty-step deselect | Done — selection target change emits the selection resolution path and refreshes note info |
-| Native + build | PASS — `pio test -e native` 797/797; `pio run -e teensy41-capture-serial` SUCCESS |
-
-**Next:** user flash + HITL repro for `session_20260805_171134` move-overlap-deselect-reselect.
-
-### Note edit select relatch after geometry — **done** (2026-08-05)
-
-**Plan:** [`docs/plans/note_edit_select_relatch_after_geometry_refinement.md`](../plans/note_edit_select_relatch_after_geometry_refinement.md)  
-**Evidence:** [`captures/session_20260805_174222.log`](../../captures/session_20260805_174222.log)
-
-| Item | Status |
-|------|--------|
-| Selection Relatch state in ControlSurface | Done — divergent select suspended after geometry hold expires; F1 motor relatch via existing burst/settle |
-| Native + build | PASS — `pio test -e native` 802/802; `pio run -e teensy41-capture-serial` SUCCESS |
-
-**Next:** flash + HITL repro of 174222 (coarse move, scrub select during/after hold — expect motor return, no drifted empty-step commit).
+Deferred from **edit-session-action-geometry** Phase 5 (D14 full matrix). Interim smoke: `edit_minimal` preset only. Requires new layered edit HITL presets (base + 2× overdub fixture, per-interaction matrix).
 
 ### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 
@@ -52,6 +32,13 @@ Last updated: 2026-08-05 (note edit singular commit pipeline side-slice)
 **Phase 3.2 done:** `LayeredLegacyBridge.edit_full_args` includes slot targets + Mode B follow; `run_edit_baseline(..., owns_resources=False)` reuses layered MIDI/serial without opening a second collector; host tests in [`scripts/test_edit_full_layered.py`](../../scripts/test_edit_full_layered.py).
 
 **Phase 3 exit:** Mode B device PASS for `--layered --preset base` and `--layered --preset edit_full`. Keep `legacy_edit_baseline` bridge until `edit_full` no longer needs it.
+
+### Recently archived — edit-session-action-geometry (2026-08-05)
+
+**Archive:** [`openspec/changes/archive/2026-08-05-edit-session-action-geometry/`](../../openspec/changes/archive/2026-08-05-edit-session-action-geometry/)  
+**Normative specs:** [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/), updated [`note-edit-modification-session`](../../openspec/specs/note-edit-modification-session/spec.md)
+
+Phases 1–4.10 shipped (pipeline, canonical commit, display-first F1 motors `adf9209`). Phase 5.1–5.2 HITL matrix **parked** — see Edit HITL plan above.
 
 ---
 

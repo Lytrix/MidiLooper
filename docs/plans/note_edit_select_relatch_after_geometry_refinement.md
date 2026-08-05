@@ -10,6 +10,8 @@
 
 **F1 geometry scheduling (191748):** `syncSelectionFromGeometryEdit` compares `lastGeometryF1SyncedBracketTick_` because `NoteMovementUtils` pre-updates `EditorSelection` before control-surface sync; idle `update()` force-flushes pending geometry motor.
 
+**F1 settle regression (201251):** Applying `selectDependentSettleUntilMs_` to F1 inbound blocked select for 450 ms after each note change. Fix: settle gates **F2–F4 motor flush only**; F1 select remains immediate; display-first ordering via `processDeferredFaderMotorSync` after paint epoch (`adf9209`).
+
 **Empty-step deselect (192408):** geometry empty-step deselect syncs focus before commit and preserves `lastGeometryF1SyncedBracketTick_` at the moving note live bracket (not empty-step slot tick).
 
 **Cursor plan:** [`.cursor/plans/select_relatch_after_geometry_4412f6a9.plan.md`](../../.cursor/plans/select_relatch_after_geometry_4412f6a9.plan.md)  

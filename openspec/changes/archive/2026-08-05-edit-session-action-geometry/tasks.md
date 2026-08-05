@@ -9,9 +9,9 @@
 - [x] 0.3 Mark [`note_edit_overlap_invariant_matrix_enhancement.md`](../../docs/plans/note_edit_overlap_invariant_matrix_enhancement.md) superseded
 - [x] 0.4 User approval of D1–D22 + **`EditSessionAction`** / **`InteractionType`** vocabulary (2026-08-04)
 - [x] 0.5 Append DECISION_LOG when implementation starts
-- [ ] 0.7 Prior art decisions → [`edit_session_action_geometry_prior_art_refinement.md`](../../docs/plans/edit_session_action_geometry_prior_art_refinement.md)
-- [ ] 0.8 LOOP_MIDI guide NOTE_EDIT pairing paragraph (Q10)
-- [ ] 0.9 Park follow-on OpenSpec **`capture-pass-boundary-materialization`** (Q9 + Q16 NoteMinLength hot stop)
+- [x] 0.7 Prior art decisions → [`edit_session_action_geometry_prior_art_refinement.md`](../../docs/plans/edit_session_action_geometry_prior_art_refinement.md)
+- [x] 0.8 LOOP_MIDI guide NOTE_EDIT pairing paragraph (Q10)
+- [x] 0.9 Park follow-on OpenSpec **`capture-pass-boundary-materialization`** (Q9 + Q16 NoteMinLength hot stop) — [`PARKED.md`](../../openspec/changes/capture-pass-boundary-materialization/PARKED.md)
 - [x] 0.10 Brownfield interim fixes documented in `design.md` § Brownfield interim (NOTELEN fader block, empty-step F2–F4, playback audition, `edit_minimal` HITL smoke) — preserve on pipeline wire
 
 ## 1. Types + relationship analysis (Phase 1)
@@ -75,10 +75,10 @@
 - [x] 4.7f `pio test -e native` — 752/752; `teensy41-capture-serial` build SUCCESS
 - [x] 4.7g Move **`checkLinearNoteOff`** to flash via **`LOOP_VALIDATION_MEM`**
       (`include/Utils/LoopValidationMem.h`) — ITCM headroom back to 964 bytes
-- [ ] 4.7h HITL re-run with a take that has **two notes on one pitch** so the pitch-lane gate can
+- [x] 4.7h HITL re-run with a take that has **two notes on one pitch** so the pitch-lane gate can
       produce `Hide` / `Shorten`; confirm no `non-canonical store`. Note: `missing in recon` is a
       **home start tick** probe from `logChangeLengthCommitTrace` and is expected after a move — it
-      is not a corruption signal
+      is not a corruption signal. **Manual PASS** (2026-08-05)
 
 ## 4.8 Note edit identity is `NoteId`, not the track MIDI channel (Phase 10)
 
@@ -120,8 +120,8 @@
       rows superseded by 4.10f canonical commit serialization);
       row-level `NOTE_EDIT pre-commit row` logging before `commitEditAction`; native regression
       `test_session_134610_shortened_overlap_commit_rows` from `session_20260805_134610.log`
-- [ ] 4.8i HITL re-run: same-pitch overlap must now produce `Hide` / `Shorten`; expect
-      `storeNoteOns` ≈ note count and `candidates` > 0 on the mover's lane
+- [x] 4.8i HITL re-run: same-pitch overlap must now produce `Hide` / `Shorten`; expect
+      `storeNoteOns` ≈ note count and `candidates` > 0 on the mover's lane. **Manual PASS** (2026-08-05)
 
 ## 4.10 Display/commit stream refactor (Phase A/B/C)
 
@@ -154,7 +154,7 @@
 - [x] 4.10f3 Selection resolution: empty-step deselect refreshes display/surface state as a
       first-class selection transition, without participating in commit-row generation
 
-### Phase D — pitch change uses apply ownership (pending)
+### Phase D — pitch change uses apply ownership (complete)
 
 - [x] 4.10g Remove active-session `applySimplePitchChange` bypass; route pitch edits through `runEditSessionGeometryPipelineForCausingNote`
 - [x] 4.10h Add pitch-change overlap regressions from `session_20260805_151910.log`
@@ -162,10 +162,10 @@
 
 ## 5. HITL + archive (Phase 5)
 
-- [ ] 5.1 Capture **base + 2× overdub** loop fixture; HITL per-interaction presets (D14)
-- [ ] 5.2 HITL regression matrix (move, length, pitch, wrap, 144458 home move). **Interim smoke:** `edit_minimal` preset PASS (base seed + move/length/add/delete) — not a substitute for full matrix (D14)
-- [ ] 5.2 Update NOTE_WRAPPING_LOGIC / modification-session guide pointers
-- [ ] 5.3 `/opsx:archive` → `openspec/specs/edit-session-action-geometry/`
+- [ ] 5.1 Capture **base + 2× overdub** loop fixture; HITL per-interaction presets (D14) — **parked** [`m8_edit_note_edit_hitl_automation_refinement.md`](../../docs/plans/m8_edit_note_edit_hitl_automation_refinement.md)
+- [ ] 5.2 HITL regression matrix (move, length, pitch, wrap, 144458 home move) — **parked** (build edit HITL from scratch; `edit_minimal` interim smoke only)
+- [x] 5.2 Update NOTE_WRAPPING_LOGIC / modification-session guide pointers — [`NOTE_WRAPPING_LOGIC.md`](../../docs/Guides/NOTE_WRAPPING_LOGIC.md), [`openspec/specs/note-edit-modification-session/spec.md`](../../openspec/specs/note-edit-modification-session/spec.md)
+- [x] 5.3 `/opsx:archive` → `openspec/specs/edit-session-action-geometry/` (2026-08-05)
 
 ## Scenario matrix → test map
 
