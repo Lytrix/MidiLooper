@@ -857,7 +857,8 @@ bool TrackManager::slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, boo
   }
   Track& track = tracks[trackIndex];
   const bool hasDataInRam = track.hasDataInSlot(slotIndex);
-  const bool hasPayloadOnSd = StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex);
+  StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
+  const bool hasPayloadOnSd = StorageManager::hasLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
   if (!slotHasLoopContentInRamOrSd(hasDataInRam, hasPayloadOnSd)) {
     return false;
   }
@@ -996,6 +997,7 @@ void TrackManager::requestSlotSwitch(uint8_t trackIndex,
                                       uint8_t slotIndex,
                                       SlotQuantization quantization,
                                       uint32_t queuedAtTick) {
+  StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
 }
 
@@ -1156,7 +1158,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         // hasDataInSlot is true from metadata length alone — launching that empty 64-bar
         // slot then letting LoadLoopJob adopt into the *active* playing loop hard-faults
         // on fast track→slot3 (session_20260718_205809).
-        if (!StorageManager::loopSlotHasPayloadOnSd(i, targetSlot)) {
+        if (!StorageManager::hasLoopSlotPayloadOnSdInRam(i, targetSlot)) {
           logger.info("LoopEnd playback commit cancelled track=%u target=%u (no committed MIDI)",
                       static_cast<unsigned>(i), static_cast<unsigned>(targetSlot));
           slotStateMachine.clearPendingSlotSwitch(i);
