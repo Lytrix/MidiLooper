@@ -310,6 +310,8 @@ NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **
 
 `beginOverdubSession` commits pending note-edit actions when entering overdub while editing; it does **not** call **closeNoteEditPass** or push capture-pass undo. In-edit overdub stop folds capture into **NoteEditSession.store** and pushes one **E:** entry (live capture **`redoEditRows`**); no **OverdubPassAdded** until edit exit.
 
+**Wrap finalize (record/overdub stop):** `Loop::finalizeCaptureWrapWindowAtStop` is the single owner for wrap-window synthetic note-offs on **capture.store** — used by **`sealCapture`** (normal stop) and **`Track::handleNoteEditFold`** (in-edit overdub stop) before merge into **NoteEditSession.store**. **`foldLiveCaptureIntoNoteEditSession`** merges only; it does not run a second wrap pass.
+
 **Important:** clear-slot snapshot entries capture a deep-cloned pass snapshot (`PersistedLoopSnapshot`) so undo/redo never aliases live chunk refs.
 
 ### In-edit session undo (`NoteEditSessionUndoStack`)

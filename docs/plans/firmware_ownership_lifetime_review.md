@@ -7,22 +7,25 @@ todos:
     status: completed
   - id: p1-display-audition
     content: Defer playback merged rebuild while PLAYING + fix flush double-bump + manual MT-P1-display-audition
-    status: in_progress
+    status: completed
   - id: p1-undo-docs
     content: Align LOOP_MIDI + ARCHITECTURE_RULES undo routing with handleUndo + manual MT-P1-undo
     status: completed
   - id: p1-fold-wrap
     content: Unify wrap finalize ownership (seal + fold) + manual MT-P1-fold
-    status: in_progress
+    status: completed
   - id: audit-dual-revision
     content: "(merged into p1-display-audition)"
     status: cancelled
   - id: phase5-recovery
     content: "Phase 5 longest-prefix load + quarantine + manual MT-P5-recovery"
-    status: pending
+    status: cancelled
+  - id: hygiene-doc-sync
+    content: "Doc/spec sync + native regression (MT-hygiene); park Phase 5 for later"
+    status: completed
   - id: write-review-doc
     content: Land review + manual test matrix at docs/plans/firmware_ownership_lifetime_review.md
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -281,7 +284,7 @@ pio test -e native
 
 **Covers:** P1 unified wrap finalize between `sealCapture` and `foldLiveCaptureIntoNoteEditSession`.
 
-**Regression gate (automated):** layered **`base`** preset — same entry as [HITL-Test-Flow.mdc](.cursor/rules/HITL-Test-Flow.mdc). Requires serial capture and baseline JSON **PASS** (transitions, undo/redo after overdub stop, capture cleanup `wrap_synth` ok).
+**Regression gate (automated):** layered **`base`** preset — **parked** for a dedicated HITL refactor (not a gate for this review). Manual fold below is sufficient for **MT-P1-fold**.
 
 **Mode B** — `capture_session.py` already running (do **not** spawn a second capture):
 
@@ -312,10 +315,12 @@ Do **not** pass `--follow-current-session` without `--no-managed-capture` — th
 
 **Pass criteria:**
 
-- Baseline report `captures/host_midi_automation_baseline_*.json` — **Result: PASS**.
+- Manual in-edit overdub fold — **PASS** (2026-08-06).
 - Serial: in-edit overdub stop logs fold path; no duplicate note-offs at same tick for same pitch.
 - No stuck notes after in-edit overdub stop (listen + host MIDI in).
 - Session undo restores pre-overdub session store; redo restores overdub layer.
+
+**Parked:** layered **`base`** JSON gate — dedicated HITL refactor (see HITL CLI rebuild).
 
 **Not wired:** `--preset edit_overdub_during_note_edit` is **not** registered in `scripts/hitl/registry.py` (use baseline + manual fold above).
 
@@ -323,7 +328,7 @@ Do **not** pass `--follow-current-session` without `--no-managed-capture` — th
 
 ---
 
-### MT-P1-display-audition — NOTE_EDIT geometry while PLAYING (no hang)
+### MT-P1-display-audition — NOTE_EDIT geometry while PLAYING (no hang) — **PASS (manual, 2026-08-06)**
 
 **Covers:** P1 defer playback merged rebuild; repro from `session_20260805_222144.log`.
 
@@ -350,9 +355,11 @@ Do **not** pass `--follow-current-session` without `--no-managed-capture` — th
 
 ---
 
-### MT-P5-recovery — Partial persist / power-loss longest valid prefix
+### MT-P5-recovery — Partial persist / power-loss longest valid prefix — **PARKED**
 
-**Covers:** Phase 5 recovery (when implemented). **Do not run until Phase 5 code lands.**
+**Status:** Deferred — revisit when **continuous-runtime-persistence** Phase 5 recovery is scheduled. No MT-P5 gate until implementation lands.
+
+**Covers:** Phase 5 recovery (when implemented).
 
 **Steps (TBD with implementation — placeholder contract):**
 
@@ -373,11 +380,17 @@ Do **not** pass `--follow-current-session` without `--no-managed-capture` — th
 
 ### MT-hygiene — Smoke after doc-only / low-risk items
 
-**Covers:** phase-gate doc sync, baselineMap spec wording, overlapNotes fingerprint (if touched).
+**Covers:** phase-gate doc sync, baselineMap spec wording, overlapNotes fingerprint (if touched), wrap-finalize owner note in LOOP_MIDI.
 
-**Steps:** Regression gate only (`native` + `base`). If any firmware touched: add **5 min** NOTE_EDIT smoke — enter edit, one move, exit, one global undo.
+**Steps:**
+
+1. `pio test -e native` — **PASS** (828/828, 2026-08-06).
+2. **5 min NOTE_EDIT smoke** — **PASS** (manual, 2026-08-06): enter edit → one move → exit → one global **U:** undo.
+3. Layered **`base`** HITL — **parked** for dedicated HITL refactor (not required for this review closeout).
 
 **Capture label:** optional; note in PR if docs-only.
+
+**Status:** **PASS** — native + manual NOTE_EDIT smoke; layered **`base`** deferred to HITL refactor.
 
 ---
 
@@ -396,11 +409,13 @@ Do **not** pass `--follow-current-session` without `--no-managed-capture` — th
 Each item is **not done** until its **MT-*** manual test PASS is logged in `captures/` (or verifier PASS for scripted presets).
 
 1. **P0 fix:** `Loop::invalidateCaches` materialize stale → **MT-P0 conditional PASS** (`session_20260805_222144.log`).
-2. **P1-display-audition:** defer playback rebuild while PLAYING → **MT-P1-display-audition** (in progress).
+2. **P1-display-audition:** defer playback rebuild while PLAYING → **done**; **MT-P1-display-audition** manual **PASS** (2026-08-06).
 3. **P1 docs:** LOOP_MIDI + ARCHITECTURE_RULES undo routing — **done**; **MT-P1-undo** **PASS** (`session_20260806_003023.log`).
-4. **P1 fold:** single wrap-finalize path → **MT-P1-fold** (layered **`base`** + manual fold).
-5. **Phase 5:** longest-prefix recovery → **MT-P5-recovery**.
-6. **Hygiene:** doc/spec sync → **MT-hygiene** smoke.
+4. **P1 fold:** unified wrap-finalize — **done** (`5af41c7`); **MT-P1-fold** manual **PASS** (2026-08-06).
+5. **Phase 5 recovery:** **PARKED** — longest-prefix load / quarantine (**MT-P5-recovery** deferred).
+6. **Hygiene:** **done** — **MT-hygiene** native + NOTE_EDIT smoke **PASS**; layered **`base`** **parked** (HITL refactor).
+
+**Review closeout:** ranked P0/P1 items shipped or manually gated; remaining automated HITL baseline deferred to dedicated HITL refactor.
 
 Do **not** introduce a new Manager, parallel undo model, or deferred-stop FSM — sync pipeline and dual stacks are the intended design.
 

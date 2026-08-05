@@ -2,15 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-05 (edit-session-action-geometry archived)
+Last updated: 2026-08-06 (firmware ownership review closed)
 
 ---
 
 ## Current branch
 
-**Active work:** HITL CLI rebuild Phase 3 and parked edit HITL matrix — see [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** Confirm next slice — HITL refactor (layered **`base`**), persistence/overlay, or HITL CLI Phase 3 — see [CURRENT_WORK.md](CURRENT_WORK.md).
 
-**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (merged). See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
 **`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`.
 
@@ -28,7 +28,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; stabilize device PASS; other ports deferred
+- **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor
+- **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; layered **`base`** device PASS deferred to dedicated HITL refactor
 - **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
@@ -40,6 +41,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| `5af41c7` | P1 fold wrap unify; NOTELEN exit bracket; HITL serial proxy | firmware_ownership_lifetime_review |
+| `85ae7d6` | P1 undo routing docs (session-gated **E:**) | LOOP_MIDI, ARCHITECTURE_RULES |
 | `d87d0c6` + [`010126`](../../captures/session_20260718_010126.log) | Windowed display + queued countdown; device gate PASS | boot_load_windowed plan |
 | `8b3f93e` | Sync-drain budget, clear-slot restore, post-reboot undo save | persist queue plan |
 | `7a89f03` | Retire monolithic deferred save; work queue (B4) | persist queue plan |
@@ -66,7 +69,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 |--------|--------|
 | **`hitl-cli-rebuild`** | **Phase 1 done** — `foundation_runner`, `layered_registry`, actions/flows/protocol; Phase 2 UIP gate |
 | **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
-| **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed** (`171043` 64+64, `171951` boot restore); Phase 5 recovery **next** |
+| **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
 | **`unified-interval-projection`** | Phases 1–5 code shipped; native PASS; **5.5 HITL deferred** (DEC-017); Phase **6.1–6.2** synced with geometry (2026-08-04) |

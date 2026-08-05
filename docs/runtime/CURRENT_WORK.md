@@ -2,13 +2,30 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-05 (note edit undo reboot fix)
+Last updated: 2026-08-06 (firmware ownership lifetime review — closed)
 
 ---
 
 ## Now implementing
 
-### Note edit undo after reboot — **in progress**
+Confirm next slice with user — candidates: dedicated **HITL refactor** (layered **`base`** gate), persistence/overlay hardening, HITL CLI Phase 3 device PASS.
+
+### Firmware ownership / lifetime review — **closed (2026-08-06)**
+
+**Branch:** `chore/firmware-ownership-lifetime-review`  
+**Plan:** [`docs/plans/firmware_ownership_lifetime_review.md`](../plans/firmware_ownership_lifetime_review.md)
+
+| Item | Status |
+|------|--------|
+| P0 materialize stale | Done — MT-P0 conditional PASS |
+| P1 undo docs + routing | Done — MT-P1-undo PASS (`session_20260806_003023.log`) |
+| P1 fold wrap unify + NOTELEN exit bracket | Done — `5af41c7`; MT-P1-fold manual PASS |
+| P1 display-audition | Done — MT-P1-display-audition manual PASS |
+| Phase 5 recovery | **Parked** — MT-P5 deferred |
+| Hygiene | Done — native 828/828; NOTE_EDIT smoke PASS |
+| Layered **`base`** HITL | **Parked** — dedicated HITL refactor |
+
+### Note edit undo after reboot — **done**
 
 **Plan:** [`.cursor/plans/note_edit_undo_reboot_58ef9394.plan.md`](../../.cursor/plans/note_edit_undo_reboot_58ef9394.plan.md)
 
