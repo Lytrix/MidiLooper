@@ -78,6 +78,8 @@ struct NoteEditFocus {
   MovingNoteRange movingNoteRange{};
   NoteBaseline last{};
   BaselineMap baselineMap;
+  /// Scratch for evict/clear/session undo sizing — not commit or filter authority (baselineMap +
+  /// live store + changedOverlapNoteIds). Retained until explicit retire task.
   OverlapNoteMap overlapNotes;
   /// Overlap notes the geometry pipeline hid or shortened under the current edit driver.
   /// Transient session state: only geometry actions write it, it is cleared at the edit driver
@@ -228,7 +230,9 @@ void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, std::vector<MidiEven
 bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
                                      const NoteBaseline& baseline);
 
-/// B1: overlap-only edit pass rows (Hidden → Delete, Shortened → Length).
+/// Legacy scratch path only — returns empty rows. Production overlap commit uses
+/// buildPreCommitBaselineLiveDiffOverlapPasses when sessionStoreEvents is provided.
+/// Retained for buildPreCommitEditPasses fallback (nullptr session) and native tests.
 EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
 
 /// B1: ordered edit pass rows per pre-commit emission (skip no-ops).

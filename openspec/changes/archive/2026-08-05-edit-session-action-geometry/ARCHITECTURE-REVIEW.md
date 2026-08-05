@@ -468,6 +468,22 @@ pitch-60 note at tick 960 and empty-step deselect clears focus without a deselec
 
 ---
 
+## Post-4.10 implementation review (2026-08-05 doc sync)
+
+Phases 1–4.10 code shipped; OpenSpec tasks 0.7/0.8 and HITL 4.7h/4.8i marked complete.
+
+| Item | Status |
+|------|--------|
+| Pipeline wire (`runEditSessionGeometryPipelineForCausingNote`) | [x] move / length / pitch / add / delete |
+| Canonical commit (`buildPreCommitBaselineLiveDiffOverlapPasses`) | [x] apply-owned rows diagnostic only |
+| Display projection (`projectNoteEditDisplayNotes`) | [x] sole active display producer |
+| F1 select display-first motor sync | [x] `adf9209` — settle gates F2–F4; paint epoch before motor flush |
+| HITL 4.7h pitch-lane gate (two notes one pitch) | [x] manual PASS |
+| HITL 4.8i same-pitch overlap Hide/Shorten | [x] manual PASS |
+| Phase 5 full HITL matrix + archive | [ ] open — tasks 5.1–5.3 |
+
+---
+
 ## Architecture checkpoint (bugfix)
 
 1. **Does this bug require changing ownership?** YES — transaction baseline mutability / prune ownership. Approved via this review + bugfix plan.

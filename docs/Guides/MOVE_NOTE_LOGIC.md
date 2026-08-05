@@ -4,11 +4,13 @@
 
 The move note system in this MIDI looper handles the complex task of moving notes while managing overlaps, maintaining note integrity, and supporting dynamic pitch changes during movement. The system is designed to ensure that the moving note always remains intact while intelligently handling conflicts with other notes.
 
-**Current Architecture (2025):**
-- **Centralized in NoteMovementUtils**: All overlap handling logic moved to `NoteMovementUtils.cpp`
-- **Cached Note Performance**: Uses `Track::getCachedNotes()` for optimal performance
-- **Stable Note Identity**: Maintains moving note identity across operations
-- **Integration Points**: Works with `EditManager`, `EditStates`, and `ControlSurfaceManager`
+**Current Architecture (2026-08):**
+- **Edit-session geometry pipeline**: Move, length, and active-session pitch route through [`runEditSessionGeometryPipelineForCausingNote`](../../src/RunEditSessionGeometryPipeline.cpp) from [`NoteMovementUtils.cpp`](../../src/Utils/NoteMovementUtils.cpp)
+- **Declarative overlap**: Analysis → constrained geometry → `buildEditSessionActions` → `applyEditSessionActions` — not imperative restore-first chains
+- **Stable note identity**: `EditorSelection.primaryNote` + `NoteEditFocus` transaction baseline
+- **Commit**: `commitAllPendingNoteEditActions` serializes baseline vs canonical session store (see [`openspec/specs/edit-session-action-geometry/spec.md`](../../openspec/specs/edit-session-action-geometry/spec.md))
+
+**Legacy (retired from `src/`):** `restoreOverlapNotesNoLongerOverlapping`, `findOverlaps` on move/length overlap paths, `movingNoteRange` restore-first authority.
 
 ## Key Concepts
 
@@ -40,19 +42,31 @@ When overlaps occur:
 
 ### Core Components
 
-#### 1. NoteMovementUtils (Centralized Logic)
+#### 1. Geometry pipeline (primary path)
+
+**Orchestrator:** [`NoteMovementUtils`](../../src/Utils/NoteMovementUtils.cpp) — `moveNoteWithOverlapHandling`, `changeLengthWithOverlapHandling`, `applyPitchChange` (active session) delegate to:
+
+```
+EditedGeometry → Edit projection (D20) → analyzeEditSessionInteractions
+  → groupEditSessionInteractionsByTarget → resolveConstrainedGeometry
+  → buildEditSessionActions → applyEditSessionActions → live store
+```
+
+**Pipeline implementation:** [`RunEditSessionGeometryPipeline.cpp`](../../src/RunEditSessionGeometryPipeline.cpp)
+
+**Post-apply UI sync:** `finalReconstructAndSelect` — selection index + display refresh (not overlap authority).
+
+**Non-session pitch:** `applySimplePitchChange` when no active NOTE_EDIT session (loop view / pre-session path).
+
+#### 2. NoteMovementUtils (legacy section — overlap helpers)
+
 **Location**: `src/Utils/NoteMovementUtils.cpp`
-**Primary Function**: `moveNoteWithOverlapHandling()`
 
-**Key Functions**:
-- `moveNoteWithOverlapHandling()` - Main movement orchestrator
-- `findOverlaps()` - Detects note overlaps and categorizes them
-- `applyShortenOrDelete()` - Applies overlap resolution changes
-- `restoreNotes()` - Restores previously modified notes
-- `notesOverlap()` - Overlap detection algorithm
-- `calculateNoteLength()` - Handles wrap-around note length calculation
+**Retired from live geometry paths:** `findOverlaps`, `restoreOverlapNotesNoLongerOverlapping`, `applyShortenOrDelete` as the primary move/length overlap engine.
 
-#### 2. EditManager (State Management)
+**Still used:** orchestrator entry points, `finalReconstructAndSelect`, wrap/position helpers, non-session `applySimplePitchChange`.
+
+#### 3. EditManager (state management)
 **Location**: `src/EditManager.cpp`
 **Responsibilities**:
 - Maintains `MovingNoteIdentity` state
@@ -117,23 +131,24 @@ if (editManager.movingNote.active) {
 }
 ```
 
-### 3. Centralized Movement Processing
-**Main Function**: `NoteMovementUtils::moveNoteWithOverlapHandling()`
+### 3. Pipeline movement processing
 
-**Process**:
-1. **Validation**: Loop length and delta validation
-2. **Direction Update**: Updates movement direction in identity
-3. **Position Calculation**: Calculates new positions with wrap-around
-4. **Note Filtering**: Creates filtered list excluding moving note
-5. **Overlap Detection**: Uses `findOverlaps()` to categorize conflicts
-6. **MIDI Event Location**: Finds actual MIDI events for moving note
-7. **Pitch Change Detection**: Detects and handles pitch changes
-8. **Event Movement**: Moves MIDI events to new positions
-9. **Overlap Resolution**: Applies shortenings and deletions
-10. **Note Restoration**: Restores previously modified notes
-11. **Final Reconstruction**: Updates cached notes and selection
+**Main path:** `NoteMovementUtils` builds `EditedGeometry` and calls `runEditSessionGeometryPipelineForCausingNote`.
 
-### 4. Cached Note Integration
+**Process (per geometry tick):**
+1. **Edit driver boundary** — refresh transaction baseline when `EditorSelection.primaryNote` changes (D19)
+2. **Edit projection** — linear spans for analyze (`buildEditProjectionContext`, D20)
+3. **Analyze** — `analyzeEditSessionInteractions` (positive interaction graph only)
+4. **Group by target** — `groupEditSessionInteractionsByTarget`
+5. **Resolve** — `resolveConstrainedGeometry` (hide/shorten/restore policy)
+6. **Build actions** — `buildEditSessionActions` (minimal diff vs live store)
+7. **Apply** — `applyEditSessionActions` (sole live-store writer for geometry)
+8. **Invalidate** — `track.invalidateCaches()` for playback preview
+9. **UI sync** — `finalReconstructAndSelect` when needed
+
+**Commit (F1 select / session exit):** `commitAllPendingNoteEditActions` → `buildPreCommitEditPasses` (baseline vs canonical store diff).
+
+### 4. Cached note integration (display / selection)
 **Performance Optimization**: All note access uses cached notes:
 
 ```cpp
@@ -149,9 +164,17 @@ const auto& notes = track.getCachedNotes();  // O(1) if cached
 - Automatic cache rebuild only when necessary
 - Maintains cache across multiple operations
 
-## Overlap Detection and Resolution
+## Overlap detection and resolution (pipeline)
 
-### Enhanced Overlap Detection
+Overlap policy lives in **`resolveConstrainedGeometry`** and **`buildEditSessionActions`** — not in imperative `findOverlaps` / `restoreNotes` chains.
+
+**Hide / shorten:** `OverlapNoteOn`, `CompleteCover` → hide; `OverlapNoteOff` → restrictive shorten combine; minimum note edit length hide when `noteMinLengthRemoveEnabled`.
+
+**Restore:** Omitted interaction pairs + baseline-equivalent constrained geometry → `RestoreNote` actions when live store differs from transaction baseline.
+
+See [`openspec/specs/edit-session-action-geometry/spec.md`](../../openspec/specs/edit-session-action-geometry/spec.md) for normative precedence tables.
+
+### Legacy overlap section (historical)
 **Function**: `NoteMovementUtils::findOverlaps()`
 
 **Process**:
@@ -280,14 +303,12 @@ void moveNote(Track& track, uint32_t targetTick, int delta) {
 - **Boundary checking**: Validates all position calculations
 - **Graceful degradation**: Continues operation even with unexpected conditions
 
-## Current Status (2025)
+## Current Status (2026-08)
 
-✅ **Centralized Logic**: All overlap handling in `NoteMovementUtils`  
-✅ **Cached Performance**: 95% performance improvement with cached notes  
-✅ **Stable Identity**: Consistent moving note identity across operations  
-✅ **Robust Error Handling**: Comprehensive error detection and recovery  
-✅ **Multi-State Integration**: Works seamlessly with all edit states  
-✅ **Fader Integration**: Smooth integration with fader-driven movements  
-✅ **Production Ready**: Extensively tested and optimized system  
+✅ **Pipeline wire**: Move / length / pitch / add / delete through `runEditSessionGeometryPipelineForCausingNote`  
+✅ **Canonical commit**: Baseline vs session store diff; apply-owned rows diagnostic only  
+✅ **Display projection**: `projectNoteEditDisplayNotes` sole active display producer  
+✅ **F1 select display-first motors**: Dependent settle gates F2–F4; paint epoch before motor flush (`adf9209`)  
+✅ **Native + HITL**: Phases 1–4.10 complete; full regression matrix (Phase 5) open  
 
-This system ensures robust note movement with intelligent conflict resolution while maintaining optimal performance through caching and providing a smooth user experience across all interaction modes. 
+**Further reading:** [`openspec/specs/edit-session-action-geometry/spec.md`](../../openspec/specs/edit-session-action-geometry/spec.md), [`FADER_STATE_SYSTEM.md`](FADER_STATE_SYSTEM.md) § Select-dependent motor sync.

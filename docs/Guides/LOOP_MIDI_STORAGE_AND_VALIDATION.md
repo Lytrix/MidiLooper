@@ -213,7 +213,7 @@ For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_re
 
 ### NOTE_EDIT live store — pairing and overlap (EditSessionAction)
 
-While **NoteEditSession** is active, **`EditManager::noteEditSession.store`** holds **linear** note-on/note-off pairs (DEC-014). The **EditSessionAction** pipeline (see [`edit-session-action-geometry`](../../openspec/changes/edit-session-action-geometry/design.md)) is the sole live mutator for overlap geometry:
+While **NoteEditSession** is active, **`EditManager::noteEditSession.store`** holds **linear** note-on/note-off pairs (DEC-014). The **EditSessionAction** pipeline (see [`edit-session-action-geometry`](../../openspec/specs/edit-session-action-geometry/spec.md)) is the sole live mutator for overlap geometry:
 
 1. **Wrap** — display/wrapped segments are linearized via **Edit projection** (`IntervalProjection::projectEditIntervalsForAnalysis` / `resolveLinearNoteSpanForOverlap`); storage ticks stay linear.
 2. **Same pitch** — when a causing note overlaps a target on the **same pitch**, classify as **OverlapNoteOn** (mover hits target on), **OverlapNoteOff** (tail trim), or **CompleteCover** (swallow).

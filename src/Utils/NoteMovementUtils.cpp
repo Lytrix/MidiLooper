@@ -537,6 +537,8 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
 
 namespace {
 
+// Non-session pitch path: loop view or before NOTE_EDIT session applies overlap pipeline.
+// Active NOTE_EDIT pitch uses runEditSessionGeometryPipelineForCausingNote (Phase 4.10g).
 NOTE_EDIT_MEM bool applySimplePitchChange(MidiEventVec& midiEvents, EditManager& manager,
                                           Track& track, NoteEditFocus& focus, uint8_t channel,
                                           uint8_t currentNoteValue, uint8_t newNoteValue,

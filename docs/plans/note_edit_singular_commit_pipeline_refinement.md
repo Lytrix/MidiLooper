@@ -39,12 +39,12 @@
 - No consumer derives its state from another consumer.
 - Display logic must not influence persistence, and persistence logic must not influence display or selection beyond invalidating the canonical state they consume.
 
-## Review Findings
-- In `RunEditSessionGeometryPipeline.cpp`, the live path is already close to the desired ownership: `buildEditSessionActions` determines intent and `applyEditSessionActions` mutates `NoteEditSession.store`.
-- In `EditManager.cpp`, `commitAllPendingNoteEditActions` still forks persistence: non-empty `applyOwnedEditPassRows` uses `buildCommitRowsFromApplyOwned`; otherwise it uses `buildPreCommitEditPasses`. That makes the action record and final session state competing commit authorities.
-- In `ApplyOwnedEditPassRows.cpp`, apply-owned rows coalesce by `targetNoteId`, so multi-property edits and restore/shorten/hide sequences need patch-specific repairs.
-- In `captures/session_20260805_171134.log`, commit at 63.151 serializes `Delete noteId=31` plus `NoteRange noteId=36`, then selection lands on idx 19 / pitch 60 at tick 960, and empty-step deselect clears focus without a deselect `SelectionChanged` event. This proves the current path still lets commit, selection, and projection diverge.
-- In `openspec/changes/edit-session-action-geometry/design.md`, the desired commit model is already stated as one `noteEditPass` batch from transaction baseline compared to final live store. The implementation should match that contract.
+## Review Findings (historical — migration landed 2026-08-05)
+
+- **Resolved:** `commitAllPendingNoteEditActions` always serializes via `buildPreCommitEditPasses` (canonical baseline/live diff). The `fromApplyOwned` persistence branch is removed; apply-owned rows are parity diagnostics only.
+- **Resolved:** `session_20260805_171134` shape covered by native regressions (mover + overlap deselect/reselect).
+- **Ongoing diagnostic:** `NOTE_EDIT commit parity mismatch` (`canonical=2 apply_owned=1`) under `SESSION_CAPTURE` — canonical output wins; not a corruption signal.
+- **Design alignment:** Commit model in `design.md` (one `noteEditPass` batch from transaction baseline vs final live store) matches implementation.
 
 ## Migration
 
