@@ -122,35 +122,41 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
   return editManager.editMidiEvents(*this);
 }
 
-void Track::invalidateCaches(bool refreshPlaybackPreview) {
+void Track::invalidateLoopDerivedCaches() {
   committedMidiScratchRevision_ = UINT32_MAX;
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;
-  if (editManager.isNoteEditActive()) {
-    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
-      if (&trackManager.getTrack(trackIndex) != this) {
-        continue;
-      }
-      const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIndex);
-      if (selectedSlot != activeLoopIndex) {
-        getLoop(selectedSlot).invalidateCaches();
-      }
-      break;
+  if (!editManager.isNoteEditActive()) {
+    return;
+  }
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    if (&trackManager.getTrack(trackIndex) != this) {
+      continue;
     }
+    const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIndex);
+    if (selectedSlot != activeLoopIndex) {
+      getLoop(selectedSlot).invalidateCaches();
+    }
+    break;
+  }
+}
+
+void Track::invalidateCaches(bool refreshPlaybackPreview) {
+  if (editManager.isNoteEditActive()) {
+    // Session-store overlay only — committed loop visual cache stays valid until bake.
     editManager.bumpSessionPreviewRevision();
     if (refreshPlaybackPreview) {
-      // While transport is running, defer playback merged rebuild off the clock path.
-      // Rapid geometry edits otherwise bump sessionPlaybackPreviewRevision_ every fader
-      // tick and force ensurePlaybackMergedMidiEventsBuilt + rebuildPlaybackOrder on MIDI
-      // clock (session_20260805_222144 hang/crash under NOTE_EDIT + PLAYING).
       if (isPlaying()) {
         editManager.scheduleDeferredNoteEditDisplayRefresh();
       } else {
         editManager.bumpSessionPlaybackPreviewRevision();
+        getActiveLoop().playbackOrderDirty = true;
       }
     }
+    return;
   }
+  invalidateLoopDerivedCaches();
 }
 
 namespace {

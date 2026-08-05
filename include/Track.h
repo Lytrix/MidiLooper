@@ -315,6 +315,9 @@ public:
     return loop.getCachedEventIndex();
   }
   
+  /// Loop / playback derived caches only (no note-edit preview revision bumps).
+  void invalidateLoopDerivedCaches();
+
   /// Invalidate caches when MIDI events change (includes flat sync when dirty).
   void invalidateCaches(bool refreshPlaybackPreview = true);
 

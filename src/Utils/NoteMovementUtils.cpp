@@ -582,8 +582,7 @@ NOTE_EDIT_MEM bool applySimplePitchChange(MidiEventVec& midiEvents, EditManager&
   focus.movingNoteRange.start = focus.last.startTick;
   focus.movingNoteRange.end = focus.last.endTick;
   focus.overlapNotes.erase(focus.movingNoteId);
-  manager.bumpSessionPreviewRevision();
-  manager.scheduleDeferredNoteEditDisplayRefresh();
+  track.invalidateCaches(true);
   logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed successfully (simple path): %d -> %d",
              currentNoteValue, newNoteValue);
   return true;
