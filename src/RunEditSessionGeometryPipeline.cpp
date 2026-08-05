@@ -134,14 +134,16 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
   const EditSessionInteractionsByTarget grouped =
       groupEditSessionInteractionsByTarget(interactions);
 
+  // Resolve + build use the same projected baseline/edited spans as analyze so shorten
+  // ends stay in the linear frame (avoids inverted off ticks / check=2).
   const std::vector<ConstrainedNoteGeometry,
                      InternalHeapFirstAllocator<ConstrainedNoteGeometry>> constrained =
-      resolveAllConstrainedGeometry(grouped, transactionBaseline, liveStore, channel, loopLength,
+      resolveAllConstrainedGeometry(grouped, projectedBaseline, liveStore, channel, loopLength,
                                     noteMinLengthTicks, noteMinLengthRemoveEnabled, selection,
-                                    editedGeometry);
+                                    projectedEdited);
 
   const EditSessionActions actions =
-      buildEditSessionActions(constrained, editedGeometry, transactionBaseline, liveStore,
+      buildEditSessionActions(constrained, projectedEdited, projectedBaseline, liveStore,
                               channel, focus, loopLength);
 
   if (actions.empty()) {

@@ -184,6 +184,23 @@ void test_resolve_start_abut_overlap_note_off_shortens_one_tick() {
   TEST_ASSERT_EQUAL_UINT32(143u, geometry.endTick);
 }
 
+void test_resolve_inverted_shorten_end_hides_instead_of_emitting_inverted_span() {
+  NoteBaseline baseline{60, 100, 100, 200};
+  EditSessionInteraction off{};
+  off.type = InteractionType::OverlapNoteOff;
+  off.targetNoteId = 10;
+  off.causingNoteId = 20;
+  off.baselineSpan = baseline;
+  // causingStart - 1 == 49, which is before baseline start 100 → inverted.
+  off.causingSpan = {60, 100, 50, 150};
+
+  const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
+      incoming = {off};
+  const ConstrainedNoteGeometry geometry =
+      resolveConstrainedGeometry(10, baseline, incoming, 1536, 12, true);
+  TEST_ASSERT_FALSE(geometry.visible);
+}
+
 void test_analyze_resolve_same_pitch_complete_cover_hide_omits_cross_pitch() {
   // Q14: same-pitch CompleteCover hides; cross-pitch tick overlap is omitted.
   constexpr uint32_t loopLength = 2304;
@@ -254,6 +271,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_determine_constrained_targets_includes_restore_candidate);
   RUN_TEST(test_determine_constrained_targets_excludes_selected_moved_causing_note);
   RUN_TEST(test_resolve_start_abut_overlap_note_off_shortens_one_tick);
+  RUN_TEST(test_resolve_inverted_shorten_end_hides_instead_of_emitting_inverted_span);
   RUN_TEST(test_analyze_resolve_same_pitch_complete_cover_hide_omits_cross_pitch);
   return UNITY_END();
 }
