@@ -136,6 +136,24 @@ bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);
 bool stepMidPassChunkPersist();
 bool beginDeferredSaveJob(const LooperState& state);
 bool stepDeferredSaveJob();
+bool stepDeferredSaveJobCurrentSetMeta();
+bool stepDeferredSaveJobTrackHeaderAndSlots();
+bool stepDeferredSaveJobCurrentSetLoopSlot();
+bool stepDeferredSaveJobFooter();
+bool stepDeferredSaveJobUndoStacks();
+bool stepDeferredSaveJobCurrentSetCompletion();
+
+void clearCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex);
+void quarantineLegacyMonolithStorageFile();
+bool closeDeferredMetaTempForLoopWrites();
+bool reopenDeferredMetaTempForAppend();
+bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex);
+bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex);
+
+bool hasPersistenceWorkPending();
+bool deferredSaveBlockedByActiveSlotLoadSd();
+bool deferredSaveBlockedByPostLoadCommitHoldoff();
+void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice);
 
 void resetRevisionCommitJobState();
 uint32_t resolveMaxPersistenceMicros(const LooperState& state);
