@@ -88,7 +88,7 @@ void test_baseline_map_includes_moving_note_at_select() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
 }
 
-void test_enrich_baseline_map_discovers_cross_pitch_log_scenario() {
+void test_populate_baseline_full_loop_includes_cross_pitch() {
   constexpr uint32_t loopLength = 384;
   constexpr uint8_t channel = 1;
   constexpr NoteId kHead12 = 77;
@@ -114,17 +114,16 @@ void test_enrich_baseline_map_discovers_cross_pitch_log_scenario() {
   focus.commitBaseline = {12, 100, 96, 192};
   focus.last = focus.commitBaseline;
   focus.baselineMap[kMoverId] = focus.commitBaseline;
-  focus.baselineMap[kHead12] = {12, 100, 0, 192};
 
-  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, channel,
-                                        loopLength);
+  populateBaselineMapForEditClosure(focus, committed, store, channel, loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kHead12) > 0);
   TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
   TEST_ASSERT_TRUE(focus.baselineMap.count(kCross96) > 0);
   TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kCross93].startTick);
   TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kCross93].endTick);
 }
 
-void test_enrich_baseline_map_maps_committed_pitch_start_via_live_note_id() {
+void test_populate_baseline_maps_committed_pitch_start_via_live_note_id() {
   // Record-pass materialize may lack noteId on note-ons; session store has stable ids.
   constexpr uint32_t loopLength = 2304;
   constexpr uint8_t channel = 1;
@@ -156,15 +155,14 @@ void test_enrich_baseline_map_maps_committed_pitch_start_via_live_note_id() {
   focus.movingNoteId = kMoverId;
   focus.baselineMap[kMoverId] = {26, 100, 360, 576};
 
-  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, channel,
-                                        loopLength);
+  populateBaselineMapForEditClosure(focus, committed, store, channel, loopLength);
   TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
   TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kCross93].startTick);
   TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kCross93].endTick);
 }
 
-void test_enrich_baseline_map_prefers_live_note_id_over_pass_materialize_id() {
-  // Session store re-assigns noteIds on open; pass materialize keeps older ids.
+void test_populate_baseline_keys_by_live_note_id_not_pass_id() {
+  // Driver-boundary snapshot keys from live store; pass-only ids are never inserted.
   constexpr uint32_t loopLength = 2304;
   constexpr uint8_t channel = 1;
   constexpr NoteId kMoverId = 78;
@@ -191,14 +189,51 @@ void test_enrich_baseline_map_prefers_live_note_id_over_pass_materialize_id() {
   focus.active = true;
   focus.movingNoteId = kMoverId;
   focus.baselineMap[kMoverId] = {13, 100, 360, 576};
-  focus.baselineMap[kPassCrossId] = {93, 100, 144, 192};
+  // Fresh driver boundary clears stale pass ids — simulate clear + mover seed only.
+  focus.baselineMap.clear();
+  focus.baselineMap[kMoverId] = {13, 100, 360, 576};
 
-  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, channel,
-                                        loopLength);
+  populateBaselineMapForEditClosure(focus, committed, store, channel, loopLength);
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kPassCrossId)));
   TEST_ASSERT_TRUE(focus.baselineMap.count(kLiveCrossId) > 0);
   TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kLiveCrossId].startTick);
   TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kLiveCrossId].endTick);
+}
+
+void test_hidden_note_baseline_survives_for_pre_commit_delete() {
+  // Hide removes the live pair; immutable baseline must still yield a Delete row.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kInnerId = 3;
+  constexpr NoteId kMoverId = 9;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 144, 336};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kInnerId] = {23, 100, 192, 240};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(336, channel, 23, 0));
+  // Inner hidden — absent from live store; baseline entry must remain.
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
+  TEST_ASSERT_TRUE(
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(kInnerId, rows[0].targetNoteId);
+
+  // Re-populate must not erase the hidden note's baseline (insert-if-missing only).
+  populateBaselineMapForEditClosure(focus, store, store, channel, loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kInnerId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(240u, focus.baselineMap[kInnerId].endTick);
 }
 
 void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
@@ -1808,9 +1843,10 @@ void test_pitch_pre_commit_requires_active_focus() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
-  RUN_TEST(test_enrich_baseline_map_discovers_cross_pitch_log_scenario);
-  RUN_TEST(test_enrich_baseline_map_maps_committed_pitch_start_via_live_note_id);
-  RUN_TEST(test_enrich_baseline_map_prefers_live_note_id_over_pass_materialize_id);
+  RUN_TEST(test_populate_baseline_full_loop_includes_cross_pitch);
+  RUN_TEST(test_populate_baseline_maps_committed_pitch_start_via_live_note_id);
+  RUN_TEST(test_populate_baseline_keys_by_live_note_id_not_pass_id);
+  RUN_TEST(test_hidden_note_baseline_survives_for_pre_commit_delete);
   RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
   RUN_TEST(test_populate_baseline_map_includes_linear_same_pitch_neighbor);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);

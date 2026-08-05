@@ -209,24 +209,19 @@ NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
     uint8_t channel, uint32_t loopLength);
 
-/// NoteIds for micro normalize scope: mover, overlap participants, same-pitch wrap interactors.
+/// NoteIds for micro normalize + full-loop transaction baseline (mover, overlap, all live notes).
 template <typename Alloc>
 std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
                                                    const std::vector<MidiEvent, Alloc>& sessionEvents,
                                                    uint8_t channel, uint32_t loopLength);
 
-/// Committed-loop linear baselines for edit-closure note ids (moving note + wrap interactors).
+/// Snapshot missing baselineMap entries from committed materialize at edit-driver boundary (D19).
+/// Insert-if-missing only — never prune hidden notes. Keys use live-store noteIds.
 template <typename AllocA, typename AllocB>
 void populateBaselineMapForEditClosure(NoteEditFocus& focus,
                                        const std::vector<MidiEvent, AllocA>& committedLoopEvents,
                                        const std::vector<MidiEvent, AllocB>& sessionEvents,
                                        uint8_t channel, uint32_t loopLength);
-
-/// D21: discover cross-pitch overlap targets — committed transaction baseline, live fallback.
-void enrichBaselineMapFromCommittedAndLive(BaselineMap& baselineMap,
-                                           const MidiEventVec& committedEvents,
-                                           MidiEventVec& liveStore, NoteId movingNoteId,
-                                           uint8_t channel, uint32_t loopLength);
 
 template <typename NotesVec>
 inline NoteId noteIdFromFilteredDisplayNote(const NotesVec& filtered, int filteredIndex) {

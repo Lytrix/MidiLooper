@@ -184,21 +184,19 @@ void test_resolve_start_abut_overlap_note_off_shortens_one_tick() {
   TEST_ASSERT_EQUAL_UINT32(143u, geometry.endTick);
 }
 
-void test_session_012119_analyze_resolve_cross_pitch_complete_cover_hide() {
-  // session_20260805_012119: mover 120–336 covers cross-pitch grid @144–288.
+void test_analyze_resolve_same_pitch_complete_cover_hide_omits_cross_pitch() {
+  // Q14: same-pitch CompleteCover hides; cross-pitch tick overlap is omitted.
   constexpr uint32_t loopLength = 2304;
   constexpr NoteId kMoverId = 78;
+  constexpr NoteId kSamePitchInner = 7;
   constexpr NoteId kCross93 = 4;
   constexpr NoteId kCross96 = 3;
-  constexpr NoteId kCross92 = 5;
-  constexpr NoteId kCross91 = 6;
 
   BaselineMap baseline;
   baseline[kMoverId] = {26, 100, 360, 576};
+  baseline[kSamePitchInner] = {26, 100, 144, 192};
   baseline[kCross93] = {93, 100, 144, 192};
   baseline[kCross96] = {96, 100, 144, 192};
-  baseline[kCross92] = {92, 100, 192, 240};
-  baseline[kCross91] = {91, 100, 240, 288};
 
   EditorSelection selection{};
   selection.primaryNote = kMoverId;
@@ -213,8 +211,8 @@ void test_session_012119_analyze_resolve_cross_pitch_complete_cover_hide() {
   edited.causingSpans.push_back(causing);
 
   std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
-  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets = {kCross93, kCross96, kCross92,
-                                                                     kCross91};
+  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets = {
+      kSamePitchInner, kCross93, kCross96};
   const auto pairs = determineEligiblePairs(selection, changed, targets);
 
   BaselineMap projectedBaseline;
@@ -228,20 +226,21 @@ void test_session_012119_analyze_resolve_cross_pitch_complete_cover_hide() {
 
   const auto interactions =
       analyzeEditSessionInteractions(pairs, projectedEdited, projectedBaseline);
-  TEST_ASSERT_EQUAL(4, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL_UINT32(kSamePitchInner, interactions[0].targetNoteId);
 
   const EditSessionInteractionsByTarget grouped = groupEditSessionInteractionsByTarget(interactions);
   const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>*
-      incoming93 = nullptr;
+      incomingSame = nullptr;
   for (const TargetNoteInteractionGroup& group : grouped.groups) {
-    if (group.targetNoteId == kCross93) {
-      incoming93 = &group.incoming;
+    if (group.targetNoteId == kSamePitchInner) {
+      incomingSame = &group.incoming;
       break;
     }
   }
-  TEST_ASSERT_NOT_NULL(incoming93);
-  const ConstrainedNoteGeometry hidden =
-      resolveConstrainedGeometry(kCross93, baseline[kCross93], *incoming93, loopLength, 12, true);
+  TEST_ASSERT_NOT_NULL(incomingSame);
+  const ConstrainedNoteGeometry hidden = resolveConstrainedGeometry(
+      kSamePitchInner, baseline[kSamePitchInner], *incomingSame, loopLength, 12, true);
   TEST_ASSERT_FALSE(hidden.visible);
 }
 
@@ -255,6 +254,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_determine_constrained_targets_includes_restore_candidate);
   RUN_TEST(test_determine_constrained_targets_excludes_selected_moved_causing_note);
   RUN_TEST(test_resolve_start_abut_overlap_note_off_shortens_one_tick);
-  RUN_TEST(test_session_012119_analyze_resolve_cross_pitch_complete_cover_hide);
+  RUN_TEST(test_analyze_resolve_same_pitch_complete_cover_hide_omits_cross_pitch);
   return UNITY_END();
 }
