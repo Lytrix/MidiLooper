@@ -177,6 +177,8 @@ public:
     void scheduleDeferredNoteEditDisplayRefresh();
     void processDeferredNoteEditDisplayRefresh(Track& track);
     void flushDeferredNoteEditDisplayRefresh(Track& track);
+    /// Pre-build kind-boundary undo after fader-1 selection (idle frame, not fader path).
+    void processKindBoundaryUndoWarm(Track& track);
 
     /// Returns session store during note edit, else loop materialized events.
     MidiEventVec& editMidiEvents(Track& track);
@@ -309,7 +311,12 @@ private:
     mutable bool noteEditDisplayImmediatePaintRequested_ = false;
     bool deferredNoteEditDisplayRefreshPending_ = false;
     uint32_t deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
-    static constexpr uint32_t kDeferredNoteEditDisplayRefreshIdleMs = 80;
+    static constexpr uint32_t kDeferredNoteEditPlaybackRefreshIdleMs = 80;
+    bool kindBoundaryUndoWarmPending_ = false;
+    bool kindBoundaryUndoCacheValid_ = false;
+    SessionUndoEntry kindBoundaryUndoCache_{};
+    uint32_t kindBoundaryUndoCacheRevision_ = UINT32_MAX;
+    void scheduleKindBoundaryUndoWarm();
     // Add more states as needed
     
     // EditModeManager state

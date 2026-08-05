@@ -119,12 +119,24 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
     return entry;
   }
 
+  const bool needsBaselineMapDiff =
+      noteEditFocusHasPendingBaselineMapDiff(focus, sessionFlat, channel, loopLength);
+  const bool needsOverlapResolve = needsBaselineMapDiff && !focus.overlapNotes.empty();
+
   std::vector<MidiEvent, Alloc> resolvedFlat = sessionFlat;
   NoteEditFocus focusCopy = focus;
-  resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
-  MidiEventVec flatForBaselineDiff(resolvedFlat.begin(), resolvedFlat.end());
+  if (needsOverlapResolve) {
+    resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
+  }
+
+  const MidiEventVec* baselineDiffSource = nullptr;
+  MidiEventVec flatForBaselineDiff;
+  if (needsBaselineMapDiff) {
+    flatForBaselineDiff.assign(resolvedFlat.begin(), resolvedFlat.end());
+    baselineDiffSource = &flatForBaselineDiff;
+  }
   entry.editRows =
-      buildPreCommitEditPasses(focusCopy, channel, &flatForBaselineDiff, loopLength);
+      buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength);
   return entry;
 }
 
