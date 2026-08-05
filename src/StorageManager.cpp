@@ -124,12 +124,46 @@ std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
 bool undoSnapshotsPending_ = false;
 
-bool STORAGE_PERSIST_MEM StorageManager::loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex) {
+std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
+    loopSlotPayloadOnSdInRam_{};
+
+namespace {
+
+bool probeLoopSlotPayloadOnSdFromSd(uint8_t trackIndex, uint8_t slotIndex) {
     char loopPath[64];
     if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
         return false;
     }
     return SD.exists(loopPath) && CurrentSetStorage::verifySaveFileTokenAtPath(loopPath);
+}
+
+}  // namespace
+
+bool STORAGE_PERSIST_MEM StorageManager::loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex) {
+    return probeLoopSlotPayloadOnSdFromSd(trackIndex, slotIndex);
+}
+
+bool STORAGE_PERSIST_MEM StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t trackIndex,
+                                                                     uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return false;
+    }
+    return loopSlotPayloadOnSdInRam_[trackIndex][slotIndex];
+}
+
+void STORAGE_PERSIST_MEM StorageManager::setLoopSlotPayloadOnSdInRam(uint8_t trackIndex,
+                                                                     uint8_t slotIndex,
+                                                                     bool hasPayload) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    loopSlotPayloadOnSdInRam_[trackIndex][slotIndex] = hasPayload;
+}
+
+void STORAGE_PERSIST_MEM StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t trackIndex,
+                                                                           uint8_t slotIndex) {
+    setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex,
+                                probeLoopSlotPayloadOnSdFromSd(trackIndex, slotIndex));
 }
 
 bool loopSlotManifestExistsOnSd(uint8_t trackIndex, uint8_t slotIndex) {
@@ -190,7 +224,8 @@ void STORAGE_PERSIST_MEM reprioritizeDeferredLoopSlotRestoreEntries() {
 }
 
 void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
-    if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
+    StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
+    if (!StorageManager::hasLoopSlotPayloadOnSdInRam(trackIndex, slotIndex)) {
         return;
     }
     const uint16_t restorePriority = currentDeferredRestorePriority(trackIndex, slotIndex);
@@ -3410,6 +3445,7 @@ bool STORAGE_PERSIST_MEM hydrateLoopSlotMetadataFromCurrentSetSd(uint8_t trackIn
         return false;
     }
     if (!SD.exists(loopPath) || !CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
+        StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, false);
         return false;
     }
     File loopFile = SD.open(loopPath, FILE_READ);
@@ -3423,6 +3459,7 @@ bool STORAGE_PERSIST_MEM hydrateLoopSlotMetadataFromCurrentSetSd(uint8_t trackIn
         return false;
     }
     applyLoopSlotMetadataToLoop(loop, metadata);
+    StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, true);
     return true;
 }
 
@@ -3434,6 +3471,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
     }
     Loop& loop = track.getLoop(slotIndex);
     if (!SD.exists(loopPath)) {
+        StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, false);
         resetLoopSlotToEmpty(loop, slotIndex);
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
@@ -3441,6 +3479,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
     if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
         Serial.print("[StorageManager] WARN: loop file incomplete, treating slot as empty ");
         Serial.println(loopPath);
+        StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, false);
         resetLoopSlotToEmpty(loop, slotIndex);
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
@@ -3449,6 +3488,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
     if (!loopFile) {
         Serial.print("[StorageManager] WARN: could not open loop file, treating slot as empty ");
         Serial.println(loopPath);
+        StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, false);
         resetLoopSlotToEmpty(loop, slotIndex);
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
@@ -3463,6 +3503,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         session.fail();
         Serial.print("[StorageManager] WARN: loop read failed, treating slot as empty ");
         Serial.println(loopPath);
+        StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, false);
         resetLoopSlotToEmpty(loop, slotIndex);
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
@@ -3475,6 +3516,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
     if (loop.hasCommittedPasses()) {
         anySlotHasEventsOut = true;
     }
+    StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, true);
     (void)session.advanceAfterPhaseWork();  // Committing → Completed
     markLoopSlotRestoreAttempted(trackIndex, slotIndex);
     return true;
@@ -3771,7 +3813,8 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
         bool anySlotHasEvents = false;
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             resetLoopSlotForBootManifest(track.getLoop(s), s);
-            if (!StorageManager::loopSlotHasPayloadOnSd(t, s)) {
+            StorageManager::refreshLoopSlotPayloadOnSdInRam(t, s);
+            if (!StorageManager::hasLoopSlotPayloadOnSdInRam(t, s)) {
                 continue;
             }
             (void)hydrateLoopSlotMetadataFromCurrentSetSd(t, s, track.getLoop(s));
@@ -4017,8 +4060,7 @@ void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8
     // Full background fill is only via enqueueRemainingLoopSlotRestoresFromSd() after
     // bootInteractiveReady().
     auto queueIfNeeded = [](uint8_t t, uint8_t s) {
-        if (!trackManager.getTrack(t).getLoop(s).hasCommittedPasses() &&
-            StorageManager::loopSlotHasPayloadOnSd(t, s)) {
+        if (!trackManager.getTrack(t).getLoop(s).hasCommittedPasses()) {
             queueDeferredLoopSlotRestore(t, s);
         }
     };
