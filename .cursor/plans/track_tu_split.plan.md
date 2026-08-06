@@ -31,7 +31,7 @@ todos:
     status: completed
   - id: phase-9-transport
     content: "Phase 9: Extract TrackTransportControl.cpp (start/stop playing, queued grid start)"
-    status: pending
+    status: completed
   - id: phase-10-defer-geom
     content: "Phase 10: Extract TrackDeferredMaintenance.cpp + TrackLoopJamGeometry.cpp (REVT, idle validate, loop/jam, clear)"
     status: pending
