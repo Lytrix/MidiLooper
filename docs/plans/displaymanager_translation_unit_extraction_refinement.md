@@ -17,7 +17,8 @@ Shrink `src/DisplayManager.cpp` from a ~3.3k-line monolith into a thin frame orc
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/DisplayManager.cpp` | **~410** (root TU; was ~3300) |
+| `src/DisplayManager.cpp` | **~295** (root TU; was ~3300) |
+| `src/DisplayManager/BootDisplay.cpp` | **~130** (Phase 5) |
 | `src/DisplayManager/SidebarAndInfo.cpp` | **~578** (Phase 4) |
 | `src/DisplayManager/PianoRollDraw.cpp` | **~552** (Phase 3) |
 | `src/DisplayManager/DisplayNoteResolve.cpp` | **~864** (Phase 2a–2c) |
@@ -241,7 +242,7 @@ Sub-phases must land **in order 2a → 2b → 2c** on one branch; do not merge 2
 
 ---
 
-## Phase 5 — `BootDisplay.cpp` (~200 LOC)
+## Phase 5 — `BootDisplay.cpp` (~200 LOC) — **shipped** (`refactor/displaymanager`)
 
 ### Move
 
