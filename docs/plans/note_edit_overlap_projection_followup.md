@@ -17,6 +17,14 @@ No new top-level ownership. Work stays within existing D19a owners:
 - `NoteEditSessionCommit`
 - `applyOwnedEditPassRows` (reconstruction trace)
 
+## Implementation status
+
+| Phase | Status |
+|-------|--------|
+| Phase 1 — Macro commit guard (RC7) | **Shipped** |
+| Phase 2 — Projection ownership (RC6) | Open |
+| Phase 3 — Reconstruction parity (RC8) | Open |
+
 ---
 
 ## Symptoms (`212810`)
