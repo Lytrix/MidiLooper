@@ -182,6 +182,12 @@ bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out);
 bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uint8_t focusSlot,
                                      DeferredLoopSlotRestore& out);
 void reprioritizeDeferredLoopSlotRestoreEntries();
+void queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex);
+void enqueueRemainingLoopSlotRestores();
+bool isFocusDeferredLoopSlotRestorePending(uint8_t trackIndex, uint8_t slotIndex);
+bool readLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex);
+void writeLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex, bool hasPayload);
+void refreshLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex);
 bool isDeferredLoopSlotRestoreQueued(uint8_t trackIndex, uint8_t slotIndex);
 uint16_t pendingLoopSlotRestoreCount();
 
