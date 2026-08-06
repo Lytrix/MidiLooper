@@ -133,6 +133,8 @@ public:
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
     void commitAllPendingNoteEditActions(Track& track);
+    /// True when live edit driver satisfies D19a (NoteId + store linear span).
+    bool isLiveEditDriverValidForTrack(const Track& track) const;
     /// Drop pending apply-owned Delete row for a note the user is navigating to via fader-1.
     void cancelPendingDeleteForSelectNote(NoteId noteId);
     /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.

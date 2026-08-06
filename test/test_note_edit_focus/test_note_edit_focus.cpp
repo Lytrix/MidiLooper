@@ -2913,6 +2913,44 @@ void test_is_live_edit_driver_valid_rejects_id_match_span_mismatch() {
   TEST_ASSERT_TRUE(isLiveEditDriverValid(sel, focus, session, 1, loopLength));
 }
 
+void test_pre_commit_rejects_mover_note_range_zero_start_after_nonzero_baseline() {
+  constexpr uint32_t loopLength = 1536;
+  constexpr NoteId kMoverId = 3;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {65, 100, 1233, 1583};
+  focus.last = {65, 100, 0, 1145};
+
+  MidiEventVec session;
+  session.push_back(noteOnWithNoteId(1233, 1, 65, 100, kMoverId));
+  session.push_back(MidiEvent::NoteOff(1583, 1, 65, 0));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &session, loopLength);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(rows.size()));
+}
+
+void test_pre_commit_emits_valid_mover_note_range() {
+  constexpr uint32_t loopLength = 1536;
+  constexpr NoteId kMoverId = 3;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {65, 100, 1185, 1535};
+  focus.last = {65, 100, 1233, 1583};
+
+  MidiEventVec session;
+  session.push_back(noteOnWithNoteId(1233, 1, 65, 100, kMoverId));
+  session.push_back(MidiEvent::NoteOff(1583, 1, 65, 0));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &session, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::NoteRange),
+                    static_cast<int>(rows[0].propertyType));
+  TEST_ASSERT_EQUAL_UINT32(1233, rows[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1583, rows[0].endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -2959,6 +2997,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_project_post_commit_no_phantom_note_153954);
   RUN_TEST(test_display_fingerprint_changes_when_overlap_geometry_changes);
   RUN_TEST(test_is_live_edit_driver_valid_rejects_id_match_span_mismatch);
+  RUN_TEST(test_pre_commit_rejects_mover_note_range_zero_start_after_nonzero_baseline);
+  RUN_TEST(test_pre_commit_emits_valid_mover_note_range);
   RUN_TEST(test_filter_excludes_inner_under_moving_note);
   RUN_TEST(test_filtered_display_note_index_for_note_ref);
   RUN_TEST(test_sync_linear_focus_avoids_spurious_display_length_commit);
