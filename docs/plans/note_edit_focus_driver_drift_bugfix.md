@@ -1,8 +1,26 @@
-# Note edit focus driver drift — bugfix plan
+# Note edit focus driver drift — completed investigation
 
-Handoff for `captures/session_20260806_204643.log`. Related archived work: D19a (`edit-session-action-geometry`), `edit-focus-selection-drift`, `note_edit_scoped_display_handoff.md`.
+Architectural reference for the driver validity model. Primary capture: `captures/session_20260806_204643.log`.
 
-## Symptoms (this capture)
+Related archived work: D19a (`edit-session-action-geometry`), `edit-focus-selection-drift`, `note_edit_scoped_display_handoff.md`.
+
+**Shipped:** PR #15 (`bugfix/note-edit-focus-driver-drift` → `dev`).
+
+**Follow-up work** (display projection, select relatch, reconstruction) is tracked in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md).
+
+---
+
+## Status
+
+Driver drift is **resolved** in PR #15.
+
+The original geometry pipeline failure (`GEOM_APPLY,pipeline,…,0,3,0`) no longer reproduces in post-fix captures (`212448`, `212810`).
+
+Remaining NOTE_EDIT issues visible after that fix (ghost projection, overlap display flicker, reconstruction miss) are **distinct investigations** — see the follow-up doc above.
+
+---
+
+## Symptoms (original capture — `204643`)
 
 | Symptom | When | Log anchor |
 |--------|------|------------|
@@ -10,6 +28,16 @@ Handoff for `captures/session_20260806_204643.log`. Related archived work: D19a 
 | Other pitch-65 notes black out during move | Same session | `EditSessionAction: type=1/2 noteId=7 start=804…` (Shorten/Hide on inner note) |
 | Note gone after NOTE_EDIT exit | ~154s | `NoteEditPassClosed editPass=0 edits=7` |
 | “Same note still on screen” after first move | ~118s first successful move | See § Same-note-on-screen below |
+
+## Verification (post-fix)
+
+| Capture | Verdict | Key evidence |
+|---------|---------|--------------|
+| `session_20260806_204643.log` | **Broken baseline** | 504× `GEOM_APPLY,pipeline,…,0,3,0`; `geometry pipeline did not apply move` at 1185 |
+| `session_20260806_212448.log` | **Fixed** | 0 pipeline failures; `Moving note start=1185`; `type=3 noteId=3` MoveNote |
+| `session_20260806_212810.log` | **RC1 fixed** | 0 pipeline failures; long note moves at 234s (other issues → follow-up doc) |
+
+---
 
 ## Core invariant
 
@@ -33,7 +61,7 @@ If any link in this chain breaks, the driver is **stale** and must be rebuilt be
 
 D19a names `EditorSelection.primaryNote` as the edit driver identity. In practice, the cached driver is identified by **`(NoteId, LinearSpan)`**, not `NoteId` alone. D19a accidentally reduced driver identity to `NoteId` in the enforcement layer (`editorSelectionMatchesDriverNote`, `ensureNoteEditFocusForLiveEdit`, `liveEditDisplayNoteAtSelect`). Any mismatch between resolved store span and `focus.last` means the cache cannot safely be reused — even when `primaryNote == movingNoteId`.
 
-Every implementation phase below enforces this invariant rather than patching isolated symptoms.
+---
 
 ## Driver validity invariant
 
@@ -46,9 +74,11 @@ A live edit driver is **valid** iff all of the following hold:
 | 3 | `movingNoteId` resolves to a note in the session store (`findLinearNoteSpanForNoteId` succeeds) |
 | 4 | The resolved store linear span equals `focus.last` (pitch, start tick, end tick) |
 
-**Native helper (proposed):** `isLiveEditDriverValid(sel, focus, sessionStore, channel, loopLength)` — returns true only when the full invariant holds. All geometry and display paths consult this before trusting cached focus.
+**Native helper:** `isLiveEditDriverValid(sel, focus, sessionStore, channel, loopLength)` — returns true only when the full invariant holds. All geometry and display paths consult this before trusting cached focus.
 
 When invalid: rebuild via `rebuildNoteEditFocusForDisplayNote` from the current selectable `DisplayNote` at `selectedNoteIdx`. Never synthesize a hybrid `DisplayNote` from mismatched `noteId` + `focus.last` ticks.
+
+---
 
 ## Same-note-on-screen (log beginning)
 
@@ -65,13 +95,15 @@ When invalid: rebuild via `rebuildNoteEditFocusForDisplayNote` from the current 
 - Selected note index 3 at tick 564 (`focus.last start=1044`).
 - **Move succeeds:** `MoveNote noteId=7` 1044→996; `HideNote noteId=6` 1050–1145 (overlap).
 - Post-move DNTE: single entry `65,996,516,95,2` — **no second bar at 1044** in capture.
-- `GeometryPipeline: storeNoteOns=5 baselineMap=4` — store/baseline counts diverge on first apply (hidden overlap note still counted in store; see § Store health).
+- `GeometryPipeline: storeNoteOns=5 baselineMap=4` — store/baseline counts diverge on first apply (hidden overlap note still counted in store).
 
 **Likely user perception:** while moving the short note, the **long note at 1185 stays on screen** (correct — different `NoteId`) and the **inner note at 1050 is hidden** (overlap blackout). On a dense pitch lane this reads as “the same note is still there” even though the capture shows one moved note, not a duplicate at the old tick.
 
 **Conclusion:** early-log “duplicate” is primarily **multiple same-pitch notes + overlap hide preview**, not a broken note-on/off pair at 1044. The 1185 stuck-move bug is the stronger D19a driver-drift failure later in the same session.
 
-## Root cause (ranked — not an identity-guard fallback)
+---
+
+## Root cause (ranked)
 
 ### RC1 — D19a enforcement reduced driver identity to `NoteId` only (primary)
 
@@ -98,31 +130,31 @@ Geometry pipeline runs on **noteId=7** with overlap actions at 804–896; move l
 
 This is a **driver validity invariant violation**, not a missing coordinate fallback in `findBaselineNoteIdForDisplay` alone.
 
-### RC2 — Select path may use two sources for identity (secondary)
+### RC2 — Select path used two sources for identity (secondary)
 
-`SelectFaderInput` (select apply):
+`SelectFaderInput` (select apply, pre-fix):
 
 1. `selectNoteId` from **pre-commit** filtered list (`noteIdFromFilteredDisplayNote(notes, noteIdx)`)
 2. `rebuildNoteEditFocusForDisplayNote(selectedNote)` from **post-commit** list
-3. `applySelectNav(..., selectNoteId)` — session selection uses pre-commit id
+3. `applySelectNav(..., selectNoteId)` — session selection used pre-commit id
 
-One plausible path is that projection overlays `movingNoteId` onto the wrong display row before commit, so pre-commit and post-commit `NoteId` diverge. The capture is **consistent with** this contributing to RC1, but RC1 alone explains the observed failure once IDs align with mismatched spans.
+The capture is **consistent with** this contributing to RC1, but RC1 alone explains the observed failure once IDs align with mismatched spans.
 
-**Fix direction:** single post-rebuild `DisplayNote` drives **both** `movingNoteId` and `primaryNote`.
+**Fix:** single post-rebuild `DisplayNote` drives **both** `movingNoteId` and `primaryNote` (Phase 2).
 
-### RC3 — `ensureNoteEditFocusForLiveEdit` skips rebuild when IDs match
+### RC3 — `ensureNoteEditFocusForLiveEdit` skipped rebuild when IDs matched
 
 ```cpp
 if (focusMatchesSelection) return; // ID match only — insufficient for driver validity
 ```
 
-After RC1, IDs can match while spans differ → no rebuild before every move/pitch fader tick.
+After RC1, IDs could match while spans differ → no rebuild before every move/pitch fader tick.
 
-### RC4 — Display projection participant overlay (secondary)
+### RC4 — Display projection participant overlay (secondary, not primary for 1185)
 
-`projectNoteEditDisplayNotes` can leave a committed row and add a participant row when `noteId` binding fails (`note_edit_scoped_display_handoff.md`). The capture is **consistent with** wrong `NoteId` on a visible row feeding RC2. Not the primary explanation for the 1185/7 span split once IDs align.
+`projectNoteEditDisplayNotes` can leave a committed row and add a participant row when `noteId` binding fails (`note_edit_scoped_display_handoff.md`). The capture is **consistent with** wrong `NoteId` on a visible row feeding RC2. Not the primary explanation for the 1185/7 span split once IDs align. Overlap projection issues are tracked in the follow-up doc.
 
-### RC5 — Broken MIDI event vector (investigate, not primary)
+### RC5 — Broken MIDI event vector (investigated, not primary for driver drift)
 
 **Evidence against (this capture):**
 
@@ -132,12 +164,13 @@ After RC1, IDs can match while spans differ → no rebuild before every move/pit
 
 **Evidence for further audit:**
 
-- `storeNoteOns` vs `baselineMap` size mismatches (e.g. `storeNoteOns=5 baselineMap=4` at 118.608; `storeNoteOns=4 baselineMap=5` at 132s+). Consistent with **hidden overlap notes still in `baselineMap`** or transient hide/remove in session store — not necessarily unpaired on/off.
-- Worth a native assert: every session store note-on has `noteId != kInvalidNoteId` and a resolvable off.
+- `storeNoteOns` vs `baselineMap` size mismatches (e.g. `storeNoteOns=5 baselineMap=4` at 118.608). Consistent with **hidden overlap notes still in `baselineMap`** — not necessarily unpaired on/off.
 
-**Verdict:** treat store pair health as **Phase 4 only** (see entry conditions below). Do not block Phases 1–3 on store audit.
+**Verdict:** not the driver-drift root cause. Store/reconstruction audit is in the follow-up doc if needed after projection and commit guards land.
 
-## What we will not do first
+---
+
+## What we did not do
 
 | Avoid | Why |
 |-------|-----|
@@ -145,86 +178,31 @@ After RC1, IDs can match while spans differ → no rebuild before every move/pit
 | New top-level module / noun | D19a already names owners |
 | Full `validateAndCleanupMidiEvents` on geometry tick | Forbidden on hot path per `Loop-MIDI-Storage-And-Validation` |
 
-## Fix strategy (architectural)
+---
 
-Each phase enforces the **driver validity invariant** or a projection ownership invariant derived from it.
+## Implementation (shipped)
 
-### Phase 0 — Pin regression (native)
+| Phase | Owner | Change |
+|-------|-------|--------|
+| 0 — Native regression | `test_note_edit_focus` | `test_is_live_edit_driver_valid_rejects_id_match_span_mismatch` |
+| 1 — Driver validity | `EditManager`, `NoteEditFocusState.cpp` | `isLiveEditDriverValid`; enforce in `liveEditDisplayNoteAtSelect`, `ensureNoteEditFocusForLiveEdit` |
+| 2 — Select single source | `SelectFaderInput.cpp` | `applySelectNav(..., selectedNote.noteId)` after post-commit rebuild |
 
-Build a minimal fixture from this capture:
+No new architectural ownership was introduced. Work stays within D19a owners: `EditManager`, `SelectFaderInput`, `NoteEditFocus`.
 
-- Loop length 1536; pitch-65 notes: inner ~804–899 (`noteId=7`), middle ~1044–1139, outer ~1185–1535 (`noteId` TBD from materialize).
-- Sequence: edit inner note 7 → select outer at 1185 → move left.
+---
 
-**Primary assertion:** `isLiveEditDriverValid(...)` is true after select rebuild and remains true through geometry apply. This single check subsumes per-field asserts on `movingNoteId`, `focus.last`, and geometry target alignment.
+## Verification gates (driver drift)
 
-**Secondary assertions:**
+| Gate | Result |
+|------|--------|
+| `pio test -e native` | `isLiveEditDriverValid` regression passes |
+| HITL / capture | 0× `GEOM_APPLY,pipeline,…,0,3,0` when moving selected outer note at 1185 |
+| HITL / capture | `EditSessionAction` includes `MoveNote` on correct `NoteId`; driver valid after select rebuild |
 
-- geometry emits `MoveNote` on outer `NoteId`
-- projection ownership invariant (see Phase 3) holds on projected display list
+---
 
-Optional capture telemetry (SESSION_CAPTURE): one line on select apply: `primaryNote`, `movingNoteId`, `focus.last` start/end, `isLiveEditDriverValid`, `DisplayNote.noteId` + ticks at selected index.
-
-### Phase 1 — Enforce driver validity invariant
-
-**Owner:** `EditManager` — `liveEditDisplayNoteAtSelect`, `ensureNoteEditFocusForLiveEdit`.
-
-1. Add `isLiveEditDriverValid(sel, focus, sessionStore, channel, loopLength)` per § Driver validity invariant.
-2. `liveEditDisplayNoteAtSelect`: return cached `focus.last` view **only** when `isLiveEditDriverValid` is true; else return selectable list note at `selectedNoteIdx` (never synthesize inconsistent id + ticks).
-3. `ensureNoteEditFocusForLiveEdit`: rebuild when `!isLiveEditDriverValid(...)` (replace ID-only `editorSelectionMatchesDriverNote` check).
-
-### Phase 2 — Select apply single source of truth
-
-**Owner:** `SelectFaderInput` select apply path.
-
-Reorder:
-
-1. `commitAllPendingNoteEditActions`
-2. `notesAfterCommit = selectableDisplayNotesForEditUi`
-3. Resolve `selectedNote` by slot/tick/index on **post-commit** list only
-4. `rebuildNoteEditFocusForDisplayNote(track, selectedNote)`
-5. `applySelectNav(track, bracketTick, selectedNote.noteId)` — **same** `NoteId` as rebuild
-6. Assert `isLiveEditDriverValid(...)` before returning from select apply
-
-Remove use of pre-commit `selectNoteId` for `applySelectNav` (or assert it equals post-rebuild id).
-
-### Phase 3 — Projection ownership invariant
-
-**Owner:** `projectNoteEditDisplayNotes` (`NoteEditFocusDisplayProjection.cpp`).
-
-After overlay, the projected display list must satisfy:
-
-| Rule | Meaning |
-|------|---------|
-| Each visible `NoteId` appears **exactly once** | No duplicate bars for the same object identity |
-| Each participant appears **exactly once** | `movingNoteId` + `changedOverlapNoteIds` overlay does not double-insert |
-| No committed row **and** a projected participant row for the same logical note | Participant update must replace/bind the committed row, not add alongside it |
-
-Implementation notes:
-
-- If committed row has `kInvalidNoteId` but matches participant baseline, bind in place (existing path); do not `push_back` duplicate.
-- Native test from `note_edit_scoped_display_handoff.md` (display count must not grow).
-
-### Phase 4 — Store/baseline audit (secondary investigation)
-
-**Entry condition:** Only investigate the session store if **driver validity invariants hold** (Phases 1–2) and **projection ownership invariant holds** (Phase 3), but the bug still reproduces on hardware or in an extended fixture.
-
-**Owner:** `populateBaselineMapForEditClosure`, `NoteGeometryResolver` debug.
-
-- Log or assert `storeNoteOns` vs visible baseline entries after hide actions.
-- Confirm hidden overlap notes are removed from participant projection and do not leave duplicate committed rows.
-- Only if orphans found: fix pairing in `applyEditSessionActions` / `stampNoteIdsOntoPairedNoteOffs` path.
-
-## Verification
-
-| Gate | Command / action |
-|------|------------------|
-| Native regression | `pio test -e native` — `isLiveEditDriverValid` fixture + `test_note_edit_focus`, `test_apply_edit_session_actions` |
-| Build | `pio run -e teensy41-capture-serial` |
-| HITL | Reproduce pitch-65 lane: move inner note, select outer, move outer; exit NOTE_EDIT — note count unchanged |
-| Capture check | No `GEOM_APPLY,pipeline,...,0,3,0` when moving selected outer note; `EditSessionAction` includes `MoveNote` on correct id; driver valid after each select |
-
-## Architecture checkpoint
+## Architecture checkpoint (final)
 
 | Question | Answer |
 |----------|--------|
@@ -234,17 +212,11 @@ Implementation notes:
 | State transition change? | **NO** — select rebuild and geometry entry preconditions only |
 | Behavior-preserving? | **YES** — when driver is already valid, no rebuild churn |
 
-## Open items before implementation
-
-1. Pin outer-note `NoteId` at 1185 in fixture (materialize from loop fixture or capture slice).
-2. Confirm whether `findBaselineNoteIdForDisplay` first branch (`dn.noteId in baselineMap`) should require span match — only if Phases 1–2 leave a gap after `isLiveEditDriverValid` enforcement.
+---
 
 ## Related docs
 
+- [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) — active work after driver drift fix (RC6–RC8)
 - `docs/plans/note_edit_scoped_display_handoff.md` — projection duplicate / participant scope
 - `docs/plans/note_edit_pitch_lane_highlight_bugfix.md` — highlight index vs `primaryNote`
 - `openspec/changes/archive/2026-08-05-edit-session-action-geometry/ARCHITECTURE-REVIEW.md` — D19a gate
-
-## Architecture review (incorporated)
-
-Review feedback integrated above: explicit `(NoteId, LinearSpan)` driver identity, driver validity invariant section, softened RC2/RC4 wording, `isLiveEditDriverValid` naming, Phase 0 invariant assertion, broadened projection ownership rules, Phase 4 entry conditions gated on invariant compliance.
