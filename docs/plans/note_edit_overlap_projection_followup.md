@@ -13,7 +13,7 @@ This document indexes **remaining** post-geometry work that is **not** projectio
 | Track | Phase | Status | Doc |
 |-------|-------|--------|-----|
 | Macro commit guard | Phase 1 (RC7) | **Shipped** | § Phase 1 below |
-| Projection ownership | Phase 2 (RC6) | Open | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
+| Projection ownership | Phase 2 (RC6) | **Shipped** | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
 | Reconstruction parity | Phase 3 (RC8) | Open | § Phase 3 below |
 
 Recommended order: **RC6 (projection) → RC8 (recon)**. Phase 1 (RC7) shipped to stop invalid macro commits from obscuring projection debugging.
