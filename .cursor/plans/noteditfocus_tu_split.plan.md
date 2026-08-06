@@ -7,25 +7,25 @@ todos:
     status: completed
   - id: phase-2-linear-span
     content: "Phase 2 → NoteEditFocusLinearSpan.cpp: pair/span resolution"
-    status: pending
+    status: completed
   - id: phase-3-baseline
     content: "Phase 3 → NoteEditFocusBaseline.cpp: baselineMap + closure"
-    status: pending
+    status: completed
   - id: phase-4-overlap
     content: "Phase 4 → NoteEditFocusOverlap.cpp: overlap scratch + pre-commit materialize"
-    status: pending
+    status: completed
   - id: phase-5-state
     content: "Phase 5 → NoteEditFocusState.cpp: apply + rebuild from store"
-    status: pending
+    status: completed
   - id: phase-6-precommit
     content: "Phase 6 → NoteEditFocusPreCommit.cpp: buildPreCommitEditPasses (high)"
-    status: pending
+    status: completed
   - id: phase-7-display
     content: "Phase 7 → NoteEditFocusDisplayProjection.cpp: projectNoteEditDisplayNotes"
-    status: pending
+    status: completed
   - id: phase-10-remove-root
     content: "Phase 10: delete root NoteEditFocus.cpp; update test includes"
-    status: pending
+    status: completed
   - id: phase-lr-legacy-retirement
     content: "Phase LR (optional): remove filterSelectableDisplayNotes / buildPreCommitOverlapEditPasses wrappers"
     status: pending
@@ -52,7 +52,7 @@ NoteEditFocusRebuild.cpp            (existing) EditManager orchestration
 
 ## PR stack
 
-`0 → 2 → 3 → 4 → 5 → 6 → 7 → 10 → LR (optional)`
+`0 → 2 → 3 → 4 → 5 → 6 → 7 → 10 → LR (optional)` — **shipped on `refactor/noteditfocus`**
 
 **Branch:** `refactor/noteditfocus` from `dev`
 

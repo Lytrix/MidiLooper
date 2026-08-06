@@ -169,7 +169,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 2 — linear span → `NoteEditFocusLinearSpan.cpp`
+## Phase 2 — linear span → `NoteEditFocusLinearSpan.cpp` ✅
 
 **Risk:** low
 
@@ -187,7 +187,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 3 — baseline → `NoteEditFocusBaseline.cpp`
+## Phase 3 — baseline → `NoteEditFocusBaseline.cpp` ✅
 
 **Risk:** low
 
@@ -204,7 +204,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 4 — overlap scratch → `NoteEditFocusOverlap.cpp`
+## Phase 4 — overlap scratch → `NoteEditFocusOverlap.cpp` ✅
 
 **Risk:** medium
 
@@ -222,7 +222,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 5 — focus state apply → `NoteEditFocusState.cpp`
+## Phase 5 — focus state apply → `NoteEditFocusState.cpp` ✅
 
 **Risk:** low
 
@@ -238,7 +238,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 6 — pre-commit rows → `NoteEditFocusPreCommit.cpp`
+## Phase 6 — pre-commit rows → `NoteEditFocusPreCommit.cpp` ✅
 
 **Risk:** high
 
@@ -260,7 +260,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 7 — display projection → `NoteEditFocusDisplayProjection.cpp`
+## Phase 7 — display projection → `NoteEditFocusDisplayProjection.cpp` ✅
 
 **Risk:** medium
 
@@ -274,7 +274,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 10 — remove root TU + test deps
+## Phase 10 — remove root TU + test deps ✅
 
 **Risk:** low
 
