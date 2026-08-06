@@ -197,4 +197,6 @@ private:
     static bool loadCurrentSetBundleAndActiveLoopSlots(File& file, const char* setDir, LooperState& state,
                                                        std::vector<uint8_t>& activeLoopIndex,
                                                        uint8_t& selectedTrackIdx);
-}; 
+};
+
+#include "StorageManagerStatusQueries.inl"

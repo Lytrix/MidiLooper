@@ -297,35 +297,7 @@ STORAGE_PERSIST_MEM void maybeAdmitDeferredWorkspaceFooter() {
 #endif
 }
 
-bool hasPersistenceWorkPending() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return storageSession.currentWorkspaceSave.pending ||
-           PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||
-           storageSession.persistenceWorkItem.itemActive;
-#endif
-}
-
-
 }  // namespace StorageManagerInternal
-
-bool StorageManager::isDeferredSaveActive() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return storageSession.currentWorkspaceSave.sdIoActive ||
-           storageSession.persistenceWorkItem.sdIoActive;
-#endif
-}
-
-bool StorageManager::hasDeferredSaveWork() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return hasPersistenceWorkPending();
-#endif
-}
 
 bool StorageManager::hasPendingLoopSlotRestore() {
     return StorageManagerInternal::pendingLoopSlotRestoreCount() > 0 || SlotLoadSession::isActive() ||
@@ -400,22 +372,6 @@ void StorageManager::requestCommitRevision() {
 #endif
     storageSession.revisionCommit.pending = true;
     SC_PERSIST("rev_request", 0, 0, 0, "queued");
-}
-
-bool StorageManager::hasRevisionCommitWork() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return storageSession.revisionCommit.pending || storageSession.revisionCommit.inProgress;
-#endif
-}
-
-bool StorageManager::isRevisionCommitActive() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return storageSession.revisionCommit.sdIoActive;
-#endif
 }
 
 
@@ -817,106 +773,8 @@ CAPTURE_HITL_MEM void StorageManager::pollBootQuarantineWorkspaceBeforeLoad(uint
 
 #endif
 
-DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t nowMs) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)nowMs;
-    return {};
-#else
-    DeferredSaveDisplayInputs inputs{};
-    inputs.savePending = storageSession.currentWorkspaceSave.pending ||
-                       PersistenceWorkQueue::queueDepth() > 0;
-    inputs.saveInProgress = storageSession.persistenceWorkItem.itemActive ||
-                            PersistenceWorkQueue::writingWorkItemCount() > 0 ||
-                            storageSession.persistenceWorkItem.sdIoActive;
-    inputs.revisionCommitPending = storageSession.revisionCommit.pending;
-    inputs.revisionCommitInProgress = storageSession.revisionCommit.inProgress;
-    inputs.completedAtMs = storageSession.currentWorkspaceSave.completedAtMs;
-    inputs.failedAtMs = storageSession.currentWorkspaceSave.failedAtMs;
-    return resolveDeferredSaveDisplayStatus(nowMs, inputs);
-#endif
-}
-
 bool StorageManager::saveState(const LooperState& state) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)state;
-    Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
-    return true;
-#endif
-    HotPathTelemetry::ScopedSaveState telemetryScope;
-    Serial.println("[StorageManager] Draining persistence work queue to SD card...");
-
-    storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
-    storageSession.currentWorkspaceSave.urgentRequested = true;
-    storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
-    const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
-    storageSession.currentWorkspaceSave.pending = true;
-    SC_PERSIST("request", 0, 0, 0,
-               alreadyPending ? "sync_drain_already_pending" : "sync_drain");
-
-    storageSession.currentWorkspaceSave.lastCompletedOk = false;
-
-    const SyncDrainBudget drainBudget = buildSyncDrainBudgetForSession();
-    uint32_t steps = 0;
-    uint32_t stuckIterations = 0;
-    SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
-    SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
-
-    while (hasPersistenceWorkPending()) {
-        if (steps >= drainBudget.maxSliceSteps) {
-            failureReason = SyncDrainFailureReason::ExceededSliceBudget;
-            break;
-        }
-
-        maybeAdmitFinalizeWorkspaceAfterDrain();
-        const SyncDrainProgressSnapshot beforeProgress = lastProgress;
-        processDeferredSaveState(state);
-        yield();
-        steps++;
-
-        const SyncDrainProgressSnapshot afterProgress = captureSyncDrainProgressSnapshot();
-        if (PersistenceSyncDrainBudget::madeSyncDrainProgress(beforeProgress, afterProgress)) {
-            stuckIterations = 0;
-            lastProgress = afterProgress;
-        } else {
-            ++stuckIterations;
-            if (stuckIterations >= drainBudget.maxStuckIterations) {
-                failureReason = SyncDrainFailureReason::Stuck;
-                break;
-            }
-        }
-    }
-
-    const bool completed = !hasPersistenceWorkPending();
-    if (!completed) {
-        if (failureReason == SyncDrainFailureReason::Stuck) {
-            Serial.printf(
-                "[StorageManager] ERROR: Persistence drain stuck after %u iterations "
-                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
-                static_cast<unsigned>(stuckIterations),
-                static_cast<unsigned>(drainBudget.maxStuckIterations),
-                static_cast<unsigned>(drainBudget.expectedSliceSteps),
-                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
-        } else {
-            Serial.printf(
-                "[StorageManager] ERROR: Persistence drain exceeded slice budget after %u steps "
-                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
-                static_cast<unsigned>(steps), static_cast<unsigned>(drainBudget.maxSliceSteps),
-                static_cast<unsigned>(drainBudget.expectedSliceSteps),
-                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
-        }
-        return false;
-    }
-    if (storageSession.currentWorkspaceSave.pending) {
-        Serial.println("[StorageManager] ERROR: Persistence drain left flush pending");
-        return false;
-    }
-    if (!storageSession.currentWorkspaceSave.lastCompletedOk) {
-        Serial.println("[StorageManager] ERROR: Persistence drain failed");
-        return false;
-    }
-    Serial.println("[StorageManager] State saved successfully (v4).");
-    telemetryScope.setOk(true);
-    return true;
+    return StorageManagerInternal::drainPersistenceWorkBlocking(state);
 }
 
 namespace StorageManagerInternal {
