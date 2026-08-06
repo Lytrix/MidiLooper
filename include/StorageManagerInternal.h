@@ -15,10 +15,12 @@
 #include "RevisionCommitPolicy.h"
 #include "RevisionPackedBlob.h"
 #include "SetRevisionCatalog.h"
+#include "SavedSetCatalog.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
 #include "PersistenceSyncDrainBudget.h"
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
+#include "SlotLoadSession.h"
 #include "StorageSession.h"
 #include "TrackState.h"
 #include "MidiEvent.h"
@@ -63,6 +65,33 @@ extern uint16_t workspaceLastCommittedRevisionId;
 extern char autoSaveBeforeLoadFolderPending[16];
 extern bool autoSaveBeforeLoadFolderPendingValid;
 extern StorageSession storageSession;
+
+extern bool workspaceFooterPersistDeferred;
+
+bool anyAllocatedLoopEditStateDirty();
+void markCurrentSetLoopSlotDirtyInternal(uint8_t trackIndex, uint8_t slotIndex,
+                                         bool markMaterialChange = true);
+void markCurrentSetTrackDirtyInternal(uint8_t trackIndex, bool markMaterialChange = true);
+void markAllCurrentSetLoopSlotsDirtyInternal(bool markMaterialChange = true);
+
+constexpr size_t kSavedSetPathCapacity = 64;
+
+bool parseSavedSetSequence(const char* folderName, uint32_t& sequence);
+bool formatSavedSetDirectoryPath(const char* folderName, char* out, size_t outSize);
+bool resolveSavedSetFolderNameBySequence(uint32_t sequence, char* out, size_t outSize);
+bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index);
+bool buildSavedSetMetadata(uint32_t sequence, SavedSetCatalog::FolderNamingMode namingMode,
+                           uint32_t createdAtUnix, SavedSetCatalog::SavedSetMetadata& metadata);
+bool patchCurrentSetAnchor();
+bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_t outSize);
+bool copySavedSetIntoCurrent(const char* sourceSetDir);
+
+void loadWorkspaceMetaCountersFromSd();
+void queueBootRevisionRecovery(uint16_t setId, uint16_t revisionId);
+void discardIncompleteRevisionTempFilesOnSd();
+void discardIncompleteCurrentWorkspaceTempFilesOnSd();
+void syncWallClockFromSdTimestampsQuickForBootLoad();
+void markAllCurrentSetLoopSlotsDirtyForBootRecovery();
 
 void resetStorageSessionJobs();
 
@@ -130,12 +159,80 @@ bool resolvePersistKeyToTrackSlot(const PersistKey& key, uint8_t& trackIndexOut,
                                   uint8_t& slotIndexOut);
 SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
 SyncDrainBudget buildSyncDrainBudgetForSession();
+bool drainPersistenceWorkBlocking(const LooperState& state);
 bool beginDeferredRuntimeBundleWrite(const LooperState& state);
 bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut);
 bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);
 bool stepMidPassChunkPersist();
 bool beginDeferredSaveJob(const LooperState& state);
 bool stepDeferredSaveJob();
+bool stepDeferredSaveJobCurrentSetMeta();
+bool stepDeferredSaveJobTrackHeaderAndSlots();
+bool stepDeferredSaveJobCurrentSetLoopSlot();
+bool stepDeferredSaveJobFooter();
+bool stepDeferredSaveJobUndoStacks();
+bool stepDeferredSaveJobCurrentSetCompletion();
+
+void clearCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex);
+void quarantineLegacyMonolithStorageFile();
+bool closeDeferredMetaTempForLoopWrites();
+bool reopenDeferredMetaTempForAppend();
+bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex);
+bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex);
+
+bool deferredSaveBlockedByActiveSlotLoadSd();
+bool deferredSaveBlockedByPostLoadCommitHoldoff();
+void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice);
+
+struct DeferredLoopSlotRestore {
+    uint8_t track = 0;
+    uint8_t slot = 0;
+    uint16_t restorePriority = 3;
+};
+
+void clearLoadLoopJob();
+void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uint8_t focusSlot);
+void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint8_t focusSlot);
+void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uint8_t focusSlot);
+SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs);
+
+bool anyLoadLoopJobActive();
+bool loadLoopJobHasOpenSdFile();
+bool isActiveLoadLoopJobFor(uint8_t trackIndex, uint8_t slotIndex);
+bool isParkedLoadLoopJobFor(uint8_t trackIndex, uint8_t slotIndex);
+void setBootTitleLoadDrain(bool enabled);
+bool getBootTitleLoadDrain();
+void armBackgroundRestoreHoldoff(uint32_t delayMs);
+
+void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex);
+bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex);
+bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out);
+bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uint8_t focusSlot,
+                                     DeferredLoopSlotRestore& out);
+void reprioritizeDeferredLoopSlotRestoreEntries();
+void queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex);
+void enqueueRemainingLoopSlotRestores();
+bool isFocusDeferredLoopSlotRestorePending(uint8_t trackIndex, uint8_t slotIndex);
+bool readLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex);
+void writeLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex, bool hasPayload);
+void refreshLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex);
+bool isDeferredLoopSlotRestoreQueued(uint8_t trackIndex, uint8_t slotIndex);
+uint16_t pendingLoopSlotRestoreCount();
+
+void clearPendingLoopSlotRestoresAtBoot();
+void resetAllLoopSlotRestoreAttempted();
+bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority);
+void sortPendingLoopSlotRestoreQueue();
+bool peekFirstPendingLoopSlotRestore(DeferredLoopSlotRestore& out);
+void setRestoredSetBundlePath(const char* path);
+
+void resetBootUndoHydrateState();
+
+bool hydrateLoopSlotMetadataFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Loop& loop);
+
+void resetLoopSlotForBootManifest(Loop& loop, uint8_t slotIndex);
+void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex);
+void markLoopCommittedChunksPersistedFromSdLoad(Loop& loop);
 
 void resetRevisionCommitJobState();
 uint32_t resolveMaxPersistenceMicros(const LooperState& state);
@@ -222,6 +319,18 @@ bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& a
 
 #if defined(SESSION_CAPTURE)
 bool handleHitlQuarantineCommandLine(const char* line);
+void quarantineCorruptRuntimeBundleOnSd();
 #endif
+
+inline bool hasPersistenceWorkPending() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return storageSession.currentWorkspaceSave.pending ||
+           PersistenceWorkQueue::queueDepth() > 0 ||
+           PersistenceWorkQueue::writingWorkItemCount() > 0 ||
+           storageSession.persistenceWorkItem.itemActive;
+#endif
+}
 
 }  // namespace StorageManagerInternal
