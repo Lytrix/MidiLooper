@@ -91,9 +91,10 @@ Roadmap for incremental convergence. **Do not batch-rename** — adopt when touc
 
 | Current | Preferred | Priority | Approx. usage | Recommended timing |
 |---------|-----------|----------|---------------|-------------------|
-| `runEditSessionGeometryPipeline` | `runEditSessionGeometryResolution` | **High** | ~15 call sites | Next note-edit geometry refactor |
-| `RunEditSessionGeometryPipeline.*` files | `RunEditSessionGeometryResolution.*` | High | 3 files + driver header | Same refactor pass |
-| `runEditSessionGeometryPipelineForCausingNote` | `runEditSessionGeometryResolutionForCausingNote` | High | `NoteMovementUtils`, `EditManager` | Same refactor pass |
+| `runEditSessionGeometryPipeline` | `NoteGeometryResolver::resolve` | **High** | ~15 call sites | EditManager TU split Phase 7 |
+| `RunEditSessionGeometryPipeline.*` files | `NoteGeometryResolver.cpp` / `NoteGeometryResolver.h` | High | 3 files → 2 | Same refactor pass |
+| `runEditSessionGeometryPipelineForCausingNote` | `NoteGeometryResolver::resolveForCausingNote` | High | `NoteMovementUtils`, `EditManager` | Same refactor pass |
+| `RunEditSessionGeometryPipelineDriver.h` | merged into `NoteGeometryResolver.h` | High | driver header | Same refactor pass |
 | `*Ingress.cpp` filenames | `*Input.cpp` | Low | 2 ControlSurface TUs | Next ControlSurface TU work |
 | Ingress/egress in ARCHITECTURE_RULES prose | Input / Output / Outbound | Low | Ownership table | Doc cleanup (this pass) |
 | Duplicate suffix tables | Single table in NAMING.md | Medium | 2 authority/guide docs | This pass |
@@ -133,26 +134,45 @@ Commit         → apply actions, refresh caches
 
 | Current | Preferred |
 |---------|-----------|
-| `runEditSessionGeometryPipeline` | `runEditSessionGeometryResolution` |
-| `runEditSessionGeometryPipelineForCausingNote` | `runEditSessionGeometryResolutionForCausingNote` |
-| `RunEditSessionGeometryPipeline.h/.cpp` | `RunEditSessionGeometryResolution.h/.cpp` |
-| `RunEditSessionGeometryPipelineDriver.h` | `RunEditSessionGeometryResolutionDriver.h` |
+| `runEditSessionGeometryPipeline` | `NoteGeometryResolver::resolve` |
+| `runEditSessionGeometryPipelineForCausingNote` | `NoteGeometryResolver::resolveForCausingNote` |
+| `RunEditSessionGeometryPipeline.h/.cpp` | `NoteGeometryResolver.h` / `src/EditManager/NoteGeometryResolver.cpp` |
+| `RunEditSessionGeometryPipelineDriver.h` | merged into `NoteGeometryResolver.h` |
 
-### Future decomposition vocabulary (when subsystem refactored)
+**Rationale:** **Pipeline** names implementation shape; **Resolver** names responsibility (resolve note geometry into valid mutations). **NoteGeometry** is the stable domain noun (`EditedGeometry`, `ConstrainedNoteGeometry`); avoid `EditSessionGeometryResolver` — callers own edit sessions.
 
-- `GeometryPreparation`, `GeometryAnalysis`, `GeometryResolution`, `GeometryCommit`
-- Or: `GeometryResolver`, `GeometryResolutionContext`, `GeometryResolutionActions`
+### Future decomposition vocabulary (optional — Phase 7c or later)
+
+Private phase methods on `NoteGeometryResolver`: `validate`, `prepareEvaluationScope`, `projectBaseline`, `analyzeInteractions`, `resolveConstraints`, `buildActions`, `applyActions`.
+
+If the subsystem grows, a `src/NoteGeometry/` folder may hold collaborating types; public entry remains `NoteGeometryResolver::resolve`.
+
+**Superseded intermediate recommendation (do not implement):** `runEditSessionGeometryResolution` free-function rename — replaced by `NoteGeometryResolver` (user-approved 2026-08-06).
 
 ### Call sites to migrate (record only — not this pass)
 
 - `src/Utils/NoteMovementUtils.cpp` — move/length/pitch paths
 - `src/EditManager.cpp` — create note, geometry apply
-- `include/RunEditSessionGeometryPipeline.h`, `RunEditSessionGeometryPipelineDriver.h`
+- `include/NoteGeometryResolver.h` (replaces `RunEditSessionGeometryPipeline*.h`)
 - `docs/Guides/MOVE_NOTE_LOGIC.md`
 - `openspec/specs/note-edit-modification-session/spec.md`
 - Archived OpenSpec change `2026-08-05-edit-session-action-geometry`
 
-NAMING.md codifies **Resolution vs Pipeline**; this section records the specific rename debt.
+NAMING.md codifies **`NoteGeometryResolver`** and **note geometry** as a first-class domain concept; this section records the specific rename debt.
+
+### Note geometry promotion (incremental)
+
+**Not** a repository-wide rename. Apply [NAMING.md](../00-authority/NAMING.md) § Note geometry — boundary **NoteGeometry**, concise implementation inside owners.
+
+| Current | Preferred (evaluate on touch) | Domain |
+|---------|------------------------------|--------|
+| `EditedGeometry` | `EditedNoteGeometry` | Note geometry — public struct |
+| `ResolveConstrainedGeometry.*` | `ResolveConstrainedNoteGeometry.*` or `NoteGeometry/` folder | Note geometry — constraint step |
+| `GeometryFaderInput.cpp` | `NoteGeometryFaderInput.cpp` | Note geometry — fader input |
+| `isGeometryDriverActive`, … | `NoteGeometryDriver` vocabulary | Note geometry — ControlSurface boundary |
+| `UndoLoopGeometry` | **Keep** | Loop length — different domain |
+
+Phase 7 ships `NoteGeometryResolver` only; other rows adopt on subsystem refactors.
 
 ---
 
