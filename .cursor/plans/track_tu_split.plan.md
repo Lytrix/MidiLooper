@@ -34,7 +34,7 @@ todos:
     status: completed
   - id: phase-10-defer-geom
     content: "Phase 10: Extract TrackDeferredMaintenance.cpp + TrackLoopJamGeometry.cpp (REVT, idle validate, loop/jam, clear)"
-    status: pending
+    status: completed
 isProject: false
 ---
 
