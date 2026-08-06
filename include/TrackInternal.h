@@ -48,6 +48,8 @@ TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const
 
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track);
 
+TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop);
+
 #if defined(SESSION_CAPTURE)
 TRACK_INTERNAL_MEM void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick,
                                                     uint32_t storageTick, uint8_t channel,

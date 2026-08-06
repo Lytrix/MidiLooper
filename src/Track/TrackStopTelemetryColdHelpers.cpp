@@ -147,6 +147,17 @@ TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
   return trackManager.getSelectedTrackIndex();
 }
 
+TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
+  loop.discardCapture();
+  loop.resetPassTimeline();
+  loop.loopLengthTicks = 0;
+  loop.loopStartTick = 0;
+  loop.startLoopTick = 0;
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = 0;
+  loop.invalidatePlaybackCaches();
+}
+
 #if defined(SESSION_CAPTURE)
 TRACK_INTERNAL_MEM void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick,
                                                     uint32_t storageTick, uint8_t channel,
