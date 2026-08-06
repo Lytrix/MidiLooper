@@ -38,7 +38,7 @@ Select relatch / macro commit / recon        ← RC7 / RC8 (separate follow-up i
 
 | Phase | Status |
 |-------|--------|
-| Phase 2 — Projection ownership (RC6) | **Open** |
+| Phase 2 — Projection ownership (RC6) | **Shipped** |
 
 ---
 
@@ -105,12 +105,12 @@ Short note move (`noteId=7` at 1044) into outer `noteId=3`:
 
 ### Tasks
 
-1. **Committed row replacement** — when a participant `NoteId` exists in `result` (committed base), always overwrite with live store span from `findLinearNoteSpanForNoteId`; never `push_back` a second row.
-2. **Shortened outer note** — after `type=1` Length on overlap participant, remove or resize committed row to match session store before paint; do not leave 350-tick committed bar when store end is 947.
-3. **Hidden participant** — ensure `hiddenParticipants` and `hasChangedOverlapNote` paths drop committed rows consistently (no 4↔5 `DISP` flicker when store count unchanged).
-4. **`kInvalidNoteId` bind** — if committed row has `kInvalidNoteId` but matches participant baseline pitch+span, bind in place (existing handoff rule); do not append duplicate.
-5. **Native fixture** — pitch-65 lane: outer `noteId=3` (609–959) + inner `noteId=7` (1044–1145); apply shorten/move action sequence from `214302` slice; assert one bar per `NoteId`, outer length decreases monotonically, display count does not exceed store-visible note count.
-6. **Handoff regression** — retain `note_edit_scoped_display_handoff.md` display-count-must-not-grow test.
+1. **Committed row replacement** — when a participant `NoteId` exists in `result` (committed base), skip the stale committed copy; participant overlay is the sole source. ✅
+2. **Shortened outer note** — participant overlay reads live store span via `resolveParticipantDisplaySpan`. ✅
+3. **Hidden participant** — existing `hiddenParticipants` path; committed copies skipped for participants. ✅
+4. **`kInvalidNoteId` lane bar** — skip committed rows without `NoteId` when any participant on the same pitch overlaps the row span (visual-cache lane ghost). ✅
+5. **Native fixture** — `test_project_pitch65_outer_shorten_inner_move_214302`, `test_project_pitch65_hidden_nested_not_in_display_214302`, `test_project_pitch65_visual_cache_lane_bar_not_left_alongside_participants_214302`. ✅
+6. **Handoff regression** — `test_project_post_commit_no_phantom_note_153954` and related projection tests unchanged. ✅
 
 ### HITL gate
 

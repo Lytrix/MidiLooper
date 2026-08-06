@@ -12,6 +12,76 @@
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
 
+namespace {
+
+template <typename Alloc>
+bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
+                                   std::vector<MidiEvent, Alloc>& sessionEvents, uint8_t channel,
+                                   uint32_t loopLength, uint8_t& pitch, uint8_t& velocity,
+                                   uint32_t& startTick, uint32_t& endTick) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  if (noteId == focus.movingNoteId) {
+    pitch = focus.last.pitch;
+    velocity = focus.last.velocity;
+    startTick = focus.last.startTick;
+    endTick = focus.last.endTick;
+    return true;
+  }
+  NoteBaseline live{};
+  if (findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, live, UINT32_MAX, loopLength)) {
+    pitch = live.pitch;
+    velocity = live.velocity;
+    startTick = live.startTick;
+    endTick = live.endTick;
+    return true;
+  }
+  const auto baselineIt = focus.baselineMap.find(noteId);
+  if (baselineIt == focus.baselineMap.end()) {
+    return false;
+  }
+  const NoteBaseline& baseline = baselineIt->second;
+  pitch = baseline.pitch;
+  velocity = baseline.velocity;
+  startTick = baseline.startTick;
+  endTick = baseline.endTick;
+  return true;
+}
+
+template <typename Alloc>
+bool invalidCommittedRowSupersededByParticipant(
+    const NoteUtils::DisplayNote& dn, const NoteIdList& participants,
+    const std::unordered_set<NoteId>& hiddenParticipants, const NoteEditFocus& focus,
+    std::vector<MidiEvent, Alloc>& sessionEvents, uint8_t channel, uint32_t loopLength) {
+  if (dn.noteId != kInvalidNoteId) {
+    return false;
+  }
+  const uint32_t dnEnd = dn.endTick >= dn.startTick ? dn.endTick : dn.startTick;
+  for (NoteId noteId : participants) {
+    if (noteId == kInvalidNoteId || hiddenParticipants.count(noteId) > 0) {
+      continue;
+    }
+    uint8_t pitch = 0;
+    uint8_t velocity = 0;
+    uint32_t startTick = 0;
+    uint32_t endTick = 0;
+    if (!resolveParticipantDisplaySpan(focus, noteId, sessionEvents, channel, loopLength, pitch,
+                                       velocity, startTick, endTick)) {
+      continue;
+    }
+    if (pitch != dn.note) {
+      continue;
+    }
+    if (linearStorageSpansOverlapLocal(dn.startTick, dnEnd, startTick, endTick)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
 NOTE_EDIT_FOCUS_INTERNAL_MEM void sortNoteIdList(NoteIdList& ids) {
   for (size_t i = 1; i < ids.size(); ++i) {
     const NoteId key = ids[i];
@@ -106,6 +176,14 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       continue;
     }
     if (dn.noteId != kInvalidNoteId &&
+        std::find(participants.begin(), participants.end(), dn.noteId) != participants.end()) {
+      continue;
+    }
+    if (invalidCommittedRowSupersededByParticipant(dn, participants, hiddenParticipants, focus,
+                                                   mutableEvents, channel, loopLength)) {
+      continue;
+    }
+    if (dn.noteId != kInvalidNoteId &&
         std::find(participants.begin(), participants.end(), dn.noteId) == participants.end() &&
         hasChangedOverlapNote(focus, dn.noteId)) {
       NoteBaseline live{};
@@ -133,21 +211,10 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
 
     NoteUtils::DisplayNote participantDn{};
     participantDn.noteId = noteId;
-    if (noteId == focus.movingNoteId) {
-      participantDn.note = focus.last.pitch;
-      participantDn.velocity = focus.last.velocity;
-      participantDn.startTick = focus.last.startTick;
-      participantDn.endTick = focus.last.endTick;
-    } else {
-      NoteBaseline live{};
-      if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
-                                       loopLength)) {
-        continue;
-      }
-      participantDn.note = live.pitch;
-      participantDn.velocity = live.velocity;
-      participantDn.startTick = live.startTick;
-      participantDn.endTick = live.endTick;
+    if (!resolveParticipantDisplaySpan(focus, noteId, mutableEvents, channel, loopLength,
+                                       participantDn.note, participantDn.velocity,
+                                       participantDn.startTick, participantDn.endTick)) {
+      continue;
     }
 
     const auto it = indexById.find(noteId);

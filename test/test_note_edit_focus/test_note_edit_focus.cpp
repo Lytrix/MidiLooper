@@ -2871,6 +2871,211 @@ void test_project_post_commit_no_phantom_note_153954() {
   TEST_ASSERT_TRUE(foundMover);
 }
 
+void test_project_pitch65_outer_shorten_inner_move_214302() {
+  // session_20260806_214302: inner noteId=7 moves left through outer noteId=3 on pitch 65.
+  // Geometry emits ShortenNote on outer + MoveNote on inner; projection must show live store
+  // spans (one bar per NoteId) without keeping the pre-shorten committed outer length.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kEarlyId = 1;
+  constexpr NoteId kMidId = 2;
+  constexpr NoteId kOuterId = 3;
+  constexpr NoteId kNestedId = 6;
+  constexpr NoteId kMoverId = 7;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(378, channel, 65, 100, kEarlyId));
+  store.push_back(MidiEvent::NoteOff(426, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(714, channel, 65, 100, kMidId));
+  store.push_back(MidiEvent::NoteOff(762, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(609, channel, 65, 100, kOuterId));
+  store.push_back(MidiEvent::NoteOff(959, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(1050, channel, 65, 100, kNestedId));
+  store.push_back(MidiEvent::NoteOff(1139, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(1044, channel, 65, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(1145, channel, 65, 0));
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+  TEST_ASSERT_EQUAL(5, static_cast<int>(committedBase.size()));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {65, 100, 1044, 1145};
+  focus.last = {65, 100, 948, 1049};
+  focus.baselineMap[kEarlyId] = {65, 100, 378, 426};
+  focus.baselineMap[kMidId] = {65, 100, 714, 762};
+  focus.baselineMap[kOuterId] = {65, 100, 609, 959};
+  focus.baselineMap[kNestedId] = {65, 100, 1050, 1139};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  EditSessionActions actions;
+  EditSessionAction restore{};
+  restore.type = EditSessionActionType::RestoreNote;
+  restore.targetNoteId = kNestedId;
+  restore.startTick = 1050;
+  restore.endTick = 1139;
+  restore.pitch = 65;
+  actions.push_back(restore);
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOuterId;
+  shorten.startTick = 609;
+  shorten.endTick = 947;
+  shorten.pitch = 65;
+  actions.push_back(shorten);
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 948;
+  move.endTick = 1049;
+  move.pitch = 65;
+  actions.push_back(move);
+  applyEditSessionActions(actions, store, focus, channel, kLoopLength);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+
+  TEST_ASSERT_EQUAL(committedBase.size(), projected.size());
+
+  std::unordered_map<NoteId, int> idCounts;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kInvalidNoteId) {
+      continue;
+    }
+    ++idCounts[dn.noteId];
+    TEST_ASSERT_EQUAL(1, idCounts[dn.noteId]);
+  }
+
+  bool foundOuter = false;
+  bool foundMover = false;
+  bool foundNested = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kOuterId) {
+      TEST_ASSERT_EQUAL_UINT32(609u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(947u, dn.endTick);
+      foundOuter = true;
+    }
+    if (dn.noteId == kMoverId) {
+      TEST_ASSERT_EQUAL_UINT32(948u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1049u, dn.endTick);
+      foundMover = true;
+    }
+    if (dn.noteId == kNestedId) {
+      TEST_ASSERT_EQUAL_UINT32(1050u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1139u, dn.endTick);
+      foundNested = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundOuter);
+  TEST_ASSERT_TRUE(foundMover);
+  TEST_ASSERT_TRUE(foundNested);
+}
+
+void test_project_pitch65_hidden_nested_not_in_display_214302() {
+  // session_20260806_214302: after HideNote on nested noteId=6, projection must not paint it
+  // from the committed base while storeNoteOns drops (DISP 5→4 class).
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOuterId = 3;
+  constexpr NoteId kNestedId = 6;
+  constexpr NoteId kMoverId = 7;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(609, channel, 65, 100, kOuterId));
+  store.push_back(MidiEvent::NoteOff(959, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(1050, channel, 65, 100, kNestedId));
+  store.push_back(MidiEvent::NoteOff(1139, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(1044, channel, 65, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(1145, channel, 65, 0));
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+  TEST_ASSERT_EQUAL(3, static_cast<int>(committedBase.size()));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {65, 100, 1044, 1145};
+  focus.last = {65, 100, 996, 1097};
+  focus.baselineMap[kOuterId] = {65, 100, 609, 959};
+  focus.baselineMap[kNestedId] = {65, 100, 1050, 1139};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  EditSessionActions actions;
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kNestedId;
+  hide.startTick = 1050;
+  hide.endTick = 1139;
+  hide.pitch = 65;
+  actions.push_back(hide);
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 996;
+  move.endTick = 1097;
+  move.pitch = 65;
+  actions.push_back(move);
+  applyEditSessionActions(actions, store, focus, channel, kLoopLength);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kNestedId);
+  }
+}
+
+void test_project_pitch65_visual_cache_lane_bar_not_left_alongside_participants_214302() {
+  // Visual cache can retain a kInvalidNoteId lane-wide bar alongside per-NoteId rows on the same
+  // pitch. After overlap shorten, that ghost row must not survive next to live participant spans.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOuterId = 3;
+  constexpr NoteId kNestedId = 6;
+  constexpr NoteId kMoverId = 7;
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kInvalidNoteId, 65, 100, 378, 1145});
+  committedBase.push_back({kOuterId, 65, 100, 609, 959});
+  committedBase.push_back({kNestedId, 65, 100, 1050, 1139});
+  committedBase.push_back({kMoverId, 65, 100, 1044, 1145});
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(609, channel, 65, 100, kOuterId));
+  store.push_back(MidiEvent::NoteOff(947, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(1050, channel, 65, 100, kNestedId));
+  store.push_back(MidiEvent::NoteOff(1139, channel, 65, 0));
+  store.push_back(noteOnWithNoteId(948, channel, 65, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(1049, channel, 65, 0));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {65, 100, 1044, 1145};
+  focus.last = {65, 100, 948, 1049};
+  focus.baselineMap[kOuterId] = {65, 100, 609, 959};
+  focus.baselineMap[kNestedId] = {65, 100, 1050, 1139};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kOuterId);
+  recordChangedOverlapNote(focus, kNestedId);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kInvalidNoteId && dn.note == 65);
+    if (dn.noteId == kOuterId) {
+      TEST_ASSERT_EQUAL_UINT32(609u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(947u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_EQUAL(3, static_cast<int>(projected.size()));
+}
+
 void test_display_fingerprint_changes_when_overlap_geometry_changes() {
   NoteEditFocus focus;
   focus.active = true;
@@ -2995,6 +3200,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_163142_highlight_resolver_prefers_mover_over_shortened_overlap);
   RUN_TEST(test_session_163142_moving_note_index_uses_loop_origin_display_bracket);
   RUN_TEST(test_project_post_commit_no_phantom_note_153954);
+  RUN_TEST(test_project_pitch65_outer_shorten_inner_move_214302);
+  RUN_TEST(test_project_pitch65_hidden_nested_not_in_display_214302);
+  RUN_TEST(test_project_pitch65_visual_cache_lane_bar_not_left_alongside_participants_214302);
   RUN_TEST(test_display_fingerprint_changes_when_overlap_geometry_changes);
   RUN_TEST(test_is_live_edit_driver_valid_rejects_id_match_span_mismatch);
   RUN_TEST(test_pre_commit_rejects_mover_note_range_zero_start_after_nonzero_baseline);
