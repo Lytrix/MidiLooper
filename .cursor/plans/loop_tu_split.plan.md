@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: phase-2-materialize
     content: "Phase 2 → LoopMaterialization.cpp: merge, materializeEditView, midiEvents, discardPassesMaterializedCache"
-    status: pending
+    status: completed
   - id: phase-3-edit-pass
     content: "Phase 3 → LoopEditPasses.cpp: save/replace/disable edit passes"
     status: pending
