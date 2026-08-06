@@ -7,7 +7,7 @@
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
-#include "../../src/EditApply.cpp"
+#include "../../src/EditManager/EditApply.cpp"
 #include "../../src/LoopPool.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"

@@ -5,7 +5,7 @@
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
-#include "../../src/EditApply.cpp"
+#include "../../src/EditManager/EditApply.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/LoopPasses.cpp"
