@@ -239,3 +239,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditFocusLastFromSessionStore(Tr
     MidiEventVec& events = sessionMidiEvents();
     syncNoteEditFocusLinearFromSessionStore(focus, events, track.getMidiChannel(), loopLength);
 }
+
+EDIT_MANAGER_IMPL_MEM bool EditManager::isLiveEditDriverValidForTrack(const Track& track) const {
+    if (!editSession.active || !editSession.focus.active) {
+        return false;
+    }
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (loopLength == 0) {
+        return false;
+    }
+    return isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
+                               track.getMidiChannel(), loopLength);
+}

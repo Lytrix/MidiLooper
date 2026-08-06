@@ -93,6 +93,8 @@ public:
                                           bool geometryIsDriver = false);
     bool isFaderOutboundActive() const;
     void refreshEditingActivity();
+    /// True during NOTE_SELECTION_GRACE_PERIOD after geometry apply (defer select macro commit).
+    bool isNoteEditMacroCommitDeferred(uint32_t nowMs) const;
     /** Run SessionOpen outbound pipeline to completion (blocking). */
     void drainFaderOutboundUntilIdle();
 

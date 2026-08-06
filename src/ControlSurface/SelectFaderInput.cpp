@@ -311,7 +311,10 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
         editManager.cancelPendingDeleteForSelectNote(selectNoteId);
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);
-        editManager.commitAllPendingNoteEditActions(track);
+        if (!isNoteEditMacroCommitDeferred(millis()) &&
+            editManager.isLiveEditDriverValidForTrack(track)) {
+            editManager.commitAllPendingNoteEditActions(track);
+        }
         const std::vector<NoteUtils::DisplayNote> notesAfterCommit =
             editManager.selectableDisplayNotesForEditUi(track);
         int postCommitNoteIdx = filteredDisplayNoteIndexForNoteIdAndStart(
@@ -349,6 +352,9 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
                 selectedNote, loopStartTick, loopLength, editManager.isLengthEditingMode());
         editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
         editManager.applySelectNav(track, bracketTick, selectedNote.noteId, false, false);
+        if (!editManager.isLiveEditDriverValidForTrack(track)) {
+            editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
+        }
         resetLengthEditingModeOnNoteSelect();
         lastUserNoteValueCc = selectedNote.note;
         lastNoteValueFaderTime = 0;
@@ -359,7 +365,10 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
     } else {
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);
-        editManager.commitAllPendingNoteEditActions(track);
+        if (!isNoteEditMacroCommitDeferred(millis()) &&
+            editManager.isLiveEditDriverValidForTrack(track)) {
+            editManager.commitAllPendingNoteEditActions(track);
+        }
         editManager.rebuildNoteEditFocusAtSelect(track, -1);
         editManager.applySelectNav(track, absoluteTargetTick, kInvalidNoteId, false, false);
         editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);

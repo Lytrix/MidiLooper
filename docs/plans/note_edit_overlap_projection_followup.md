@@ -110,9 +110,9 @@ Phase 1 removes one source of invalid pre-commit state before projection and rec
 | Phase 2 | Phase 3 | Projection ownership (RC6) |
 | Phase 3 | Phase 4 | Reconstruction parity (RC8) |
 
-### Phase 1 — Macro commit guard (RC7)
+### Phase 1 — Macro commit guard (RC7) ✅ shipped
 
-**Owner:** `SelectFaderInput` select apply; `NoteEditSessionCommit.cpp` (`buildPreCommitRows` / `mover_focus`).
+**Owner:** `SelectFaderInput` select apply; `NoteEditSessionCommit.cpp`; `NoteEditFocusPreCommit.cpp`.
 
 1. After select apply rebuild, call `isLiveEditDriverValid` — if false, rebuild from `selectedNote` and do not macro-commit until valid.
 2. In pre-commit row builder: reject `mover_focus` **NoteRange** when `startTick == 0` or `startTick >= loopLength` (unless explicit wrap move documented in focus).

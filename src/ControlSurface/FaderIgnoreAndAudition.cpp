@@ -88,6 +88,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::refreshEditingActivity() {
     lastEditingActivityTime = millis();
     logger.log(CAT_MIDI, LOG_DEBUG, "Editing activity refreshed - note selection disabled for %dms", NOTE_SELECTION_GRACE_PERIOD);
 }
+NOTE_EDIT_MEM bool ControlSurfaceManager::isNoteEditMacroCommitDeferred(uint32_t nowMs) const {
+    return lastEditingActivityTime != 0 &&
+           (nowMs - lastEditingActivityTime) < NOTE_SELECTION_GRACE_PERIOD;
+}
 NOTE_EDIT_MEM void ControlSurfaceManager::releaseEditedNoteAudition() {
     if constexpr (!kEditedNoteAuditionEnabled) {
         return;

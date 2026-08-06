@@ -2,7 +2,10 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
 #include "NoteEditFocusInternal.h"
+
+#include <algorithm>
 
 #include "Utils/NoteEditMem.h"
 
@@ -80,6 +83,58 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
   return rows;
 }
 
+namespace {
+
+NOTE_EDIT_MEM bool isPlausibleMoverLinearSpan(uint32_t startTick, uint32_t endTick,
+                                              uint32_t loopLength) {
+  if (endTick <= startTick) {
+    return false;
+  }
+  if (loopLength == 0) {
+    return false;
+  }
+  return startTick < loopLength;
+}
+
+NOTE_EDIT_MEM bool shouldRejectMoverPreCommitRow(const EditPass& row, const NoteEditFocus& focus,
+                                                 uint32_t loopLength) {
+  if (!focus.active || row.targetNoteId != focus.movingNoteId) {
+    return false;
+  }
+  if (row.actionType != EditActionType::Update) {
+    return false;
+  }
+  if (row.propertyType == EditPropertyType::NoteRange) {
+    if (row.startTick != focus.last.startTick || row.endTick != focus.last.endTick) {
+      return true;
+    }
+    if (!isPlausibleMoverLinearSpan(row.startTick, row.endTick, loopLength)) {
+      return true;
+    }
+    if (row.startTick == 0 && focus.commitBaseline.startTick != 0) {
+      return true;
+    }
+    return false;
+  }
+  if (row.propertyType == EditPropertyType::Length) {
+    if (row.startTick != focus.commitBaseline.startTick || row.endTick != focus.last.endTick) {
+      return true;
+    }
+    return !isPlausibleMoverLinearSpan(row.startTick, row.endTick, loopLength);
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM void removeInvalidMoverPreCommitRows(EditPassVec& rows, const NoteEditFocus& focus,
+                                                   uint32_t loopLength) {
+  const auto invalid = [&](const EditPass& row) {
+    return shouldRejectMoverPreCommitRow(row, focus, loopLength);
+  };
+  rows.erase(std::remove_if(rows.begin(), rows.end(), invalid), rows.end());
+}
+
+}  // namespace
+
 NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                                    const MidiEventVec* sessionStoreEvents,
                                                    uint32_t loopLength) {
@@ -116,6 +171,10 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, u
     row.targetNoteId = focus.movingNoteId;
     row.pitch = focus.last.pitch;
     rows.push_back(row);
+  }
+
+  if (loopLength > 0) {
+    removeInvalidMoverPreCommitRows(rows, focus, loopLength);
   }
 
   return rows;

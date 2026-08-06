@@ -57,6 +57,20 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
 
+    if (!isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionStoreEvents,
+                               channel, loopLength)) {
+#if defined(SESSION_CAPTURE)
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "NOTE_EDIT macro commit skipped: driver invalid (moving=%lu primary=%lu "
+                   "focus_last=%lu-%lu)",
+                   static_cast<unsigned long>(editSession.focus.movingNoteId),
+                   static_cast<unsigned long>(sessionState.selection.primaryNote),
+                   static_cast<unsigned long>(editSession.focus.last.startTick),
+                   static_cast<unsigned long>(editSession.focus.last.endTick));
+#endif
+        return;
+    }
+
     const LoopEventValidation::LoopEventValidationResult macroInvariantResult =
         LoopEventValidation::validateLoopEvents(sessionStoreEvents, loopLength,
                                                 LoopEventValidation::kCanonicalInvariantMask);
