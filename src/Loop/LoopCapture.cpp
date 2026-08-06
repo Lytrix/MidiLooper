@@ -1,0 +1,668 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include "Loop.h"
+
+#include "Globals.h"
+#include "LoopInternal.h"
+#include "Logger.h"
+#include "LoopPasses.h"
+#include "Utils/CaptureIncrementalSanity.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/Diagnostics.h"
+#include "Utils/IntervalProjection.h"
+#include "Utils/LoopStopFinalize.h"
+#include "Utils/MemoryMonitor.h"
+#include "Utils/NoteUtils.h"
+
+#include <algorithm>
+#include <cstring>
+
+bool Loop::hasCommittedPasses() const {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    return true;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint32_t Loop::findLastCommittedEventTick() const {
+  uint32_t lastTick = 0;
+  // Use chunk lastTick metadata only — never copyEventsTo into MidiEventVec (InternalHeap).
+  // Adopt/reconcile during focus LoadLoopJob Commit while PLAYING otherwise abort()s
+  // when RAM1 cannot hold a 256-event scratch (session_20260718_235129: silence after
+  // parse edits grain, before apply_us).
+  auto scanChunkRefs = [&lastTick](const CommittedChunkIdList& committedChunkIds) {
+    for (uint16_t chunkId : committedChunkIds) {
+      uint32_t firstTick = 0;
+      uint32_t chunkLast = 0;
+      if (!LoopEventStore::chunkTickSpan(chunkId, firstTick, chunkLast)) {
+        continue;
+      }
+      (void)firstTick;
+      if (chunkLast > lastTick) {
+        lastTick = chunkLast;
+      }
+    }
+  };
+
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    scanChunkRefs(passes.recordPass.committedChunkIds);
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      scanChunkRefs(pass.committedChunkIds);
+    }
+  }
+  return lastTick;
+}
+
+uint32_t Loop::reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const {
+  if (!hasCommittedPasses()) {
+    return candidateLengthTicks;
+  }
+  const uint32_t lastEventTick = findLastCommittedEventTick();
+  if (lastEventTick == 0) {
+    return candidateLengthTicks;
+  }
+
+  constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  const uint32_t fullBars = lastEventTick / ticksPerBar;
+  const uint32_t rem = lastEventTick % ticksPerBar;
+  const uint32_t grace = ticksPerBar / 6;
+  uint32_t contentLength = 0;
+  if (rem <= grace) {
+    contentLength = (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+  } else if (lastEventTick < ticksPerBar / 2) {
+    contentLength = ticksPerBar;
+  } else {
+    contentLength = (fullBars + 1) * ticksPerBar;
+  }
+
+  if (candidateLengthTicks == 0 || candidateLengthTicks < contentLength) {
+    return contentLength;
+  }
+  return candidateLengthTicks;
+}
+
+void Loop::freeActiveCapturePassChunks() {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active) {
+    LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+    passes.recordPass.committedChunkIds.clear();
+    passes.recordPass.id = kInvalidPassId;
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active) {
+      continue;
+    }
+    LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+    pass.committedChunkIds.clear();
+  }
+  passes.overdubPasses.erase(
+      std::remove_if(passes.overdubPasses.begin(), passes.overdubPasses.end(),
+                     [](const OverdubPass& pass) {
+                       return pass.state == CapturePassState::Active;
+                     }),
+      passes.overdubPasses.end());
+}
+
+bool Loop::reclaimDisabledCapturePass(PassId id) {
+  if (id == kInvalidPassId) {
+    return false;
+  }
+  if (passes.hasRecordPass() && passes.recordPass.id == id &&
+      passes.recordPass.state == CapturePassState::Disabled) {
+    LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+    passes.recordPass.committedChunkIds.clear();
+    passes.recordPass.id = kInvalidPassId;
+    ++playbackRevision;
+    markPassDerivedStale();
+    return true;
+  }
+  for (auto it = passes.overdubPasses.begin(); it != passes.overdubPasses.end(); ++it) {
+    if (it->id != id || it->state != CapturePassState::Disabled) {
+      continue;
+    }
+    LoopEventStore::releaseChunkRefs(it->committedChunkIds);
+    passes.overdubPasses.erase(it);
+    ++playbackRevision;
+    markPassDerivedStale();
+    return true;
+  }
+  return false;
+}
+
+void Loop::reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs) {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Disabled &&
+      !refs.referencesCapturePass(passes.recordPass.id)) {
+    reclaimDisabledCapturePass(passes.recordPass.id);
+  }
+  for (size_t i = passes.overdubPasses.size(); i > 0; --i) {
+    const OverdubPass& pass = passes.overdubPasses[i - 1];
+    if (pass.state == CapturePassState::Disabled && !refs.referencesCapturePass(pass.id)) {
+      reclaimDisabledCapturePass(pass.id);
+    }
+  }
+}
+
+bool Loop::setCapturePassState(PassId id, CapturePassState state) {
+  if (passes.hasRecordPass() && passes.recordPass.id == id) {
+    if (passes.recordPass.state == state) {
+      return true;
+    }
+    passes.recordPass.state = state;
+    ++playbackRevision;
+    markPassDerivedStale();
+    return true;
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.id != id) {
+      continue;
+    }
+    if (pass.state == state) {
+      return true;
+    }
+    pass.state = state;
+    ++playbackRevision;
+    markPassDerivedStale();
+    return true;
+  }
+  return false;
+}
+
+size_t Loop::activeCapturePassCount() const {
+  size_t count = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active) {
+    ++count;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
+  store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
+}
+
+void Loop::shiftActiveCapturePassTicks(int64_t delta) {
+  if (delta == 0 || !hasCommittedPasses()) {
+    return;
+  }
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    MidiEventVec flat;
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, flat);
+    if (!flat.empty()) {
+      LoopEventStore staging;
+      staging.loadFromEvents(flat);
+      staging.shiftAllTicks(delta);
+      LoopEventStore temp;
+      temp.adoptAll(staging);
+      LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+      passes.recordPass.committedChunkIds.clear();
+      CaptureChunkIdList captureIds;
+      temp.detachChunksTo(captureIds);
+      LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(passes.recordPass.committedChunkIds,
+                                                         captureIds);
+    }
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+      continue;
+    }
+    MidiEventVec flat;
+    LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, flat);
+    if (flat.empty()) {
+      continue;
+    }
+    LoopEventStore staging;
+    staging.loadFromEvents(flat);
+    staging.shiftAllTicks(delta);
+    LoopEventStore temp;
+    temp.adoptAll(staging);
+    LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+    pass.committedChunkIds.clear();
+    CaptureChunkIdList captureIds;
+    temp.detachChunksTo(captureIds);
+    LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(pass.committedChunkIds, captureIds);
+  }
+  for (EditPass& editPass : passes.editPasses) {
+    if (editPass.state != EditPassState::Active) {
+      continue;
+    }
+    if (editPass.passType != EditPassType::Note) {
+      continue;
+    }
+    editPass.startTick =
+        static_cast<uint32_t>(static_cast<int64_t>(editPass.startTick) + delta);
+    editPass.endTick =
+        static_cast<uint32_t>(static_cast<int64_t>(editPass.endTick) + delta);
+    for (MidiEvent& evt : editPass.addedEvents) {
+      evt.tick = static_cast<uint32_t>(static_cast<int64_t>(evt.tick) + delta);
+    }
+  }
+  ++playbackRevision;
+  markPassDerivedStale();
+}
+
+void Loop::beginCapture(CapturePhase phase) {
+  discardPendingCapturePass();
+  capture.phase = phase;
+  capture.store.clear();
+  capturePreview.clear();
+  captureNextEventIndex = 0;
+  captureEventsSortDirty = false;
+  captureDedupEventsDropped_ = 0;
+  ++captureDisplayRevision;
+}
+
+void Loop::discardCapture() {
+  capture.store.clear();
+  capture.phase = CapturePhase::None;
+  captureNextEventIndex = 0;
+  captureEventsSortDirty = false;
+  capturePreview.clear();
+  captureDedupEventsDropped_ = 0;
+}
+
+bool Loop::appendCaptureEvent(const MidiEvent& evt) {
+  if (capture.phase == CapturePhase::None) {
+    return false;
+  }
+  if (hasPendingCapturePass_) {
+    return false;
+  }
+  if (isDuplicateCaptureEvent(*this, evt)) {
+    ++captureDedupEventsDropped_;
+    return false;
+  }
+  if (!capture.store.append(evt)) {
+    return false;
+  }
+  captureEventsSortDirty = true;
+  applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR);
+  ++captureDisplayRevision;
+  return true;
+}
+
+bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
+  if (!captureActive() || capture.store.empty() || loopLengthTicks == 0) {
+    return false;
+  }
+  ensureCaptureEventsSorted();
+
+  SessionMidiEventVec flat;
+  capture.store.copyEventsTo(flat);
+  if (flat.empty()) {
+    return false;
+  }
+
+  const std::vector<NoteUtils::OpenNoteOn> opens =
+      NoteUtils::findOpenNoteOns(flat, loopLengthTicks);
+  uint32_t openTick = UINT32_MAX;
+  for (const NoteUtils::OpenNoteOn& open : opens) {
+    if (open.note != note) {
+      continue;
+    }
+    for (const MidiEvent& evt : flat) {
+      if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note &&
+          evt.tick == open.tick) {
+        openTick = open.tick;
+        break;
+      }
+    }
+    if (openTick != UINT32_MAX) {
+      break;
+    }
+  }
+  if (openTick == UINT32_MAX) {
+    return false;
+  }
+
+  SessionMidiEventVec kept;
+  kept.reserve(flat.size() - 1);
+  bool removed = false;
+  for (const MidiEvent& evt : flat) {
+    if (!removed && evt.isNoteOn() && evt.channel == channel &&
+        evt.data.noteData.note == note && evt.tick == openTick &&
+        evt.data.noteData.velocity > 0) {
+      removed = true;
+      continue;
+    }
+    kept.push_back(evt);
+  }
+  if (!removed) {
+    return false;
+  }
+
+  capture.store.clear();
+  if (!kept.empty()) {
+    capture.store.loadFromEvents(kept);
+  }
+  captureEventsSortDirty = false;
+  rebuildCapturePreviewFromStore(*this);
+  ++captureDisplayRevision;
+  return true;
+}
+
+bool Loop::captureHasNoteOffAfter(uint8_t channel, uint8_t note, uint32_t onTick) const {
+  if (!captureActive() || capture.store.empty()) {
+    return false;
+  }
+  SessionMidiEventVec flat;
+  capture.store.copyEventsTo(flat);
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
+        evt.tick > onTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+size_t Loop::liveEventCount() const {
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, loopLengthTicks);
+  size_t count = flat.size();
+  if (captureActive()) {
+    count += capture.store.size();
+  }
+  return count;
+}
+
+bool Loop::captureActive() const {
+  return capture.phase != CapturePhase::None;
+}
+
+bool Loop::ensureCaptureEventsSorted() {
+  if (!captureEventsSortDirty) {
+    return false;
+  }
+  sortCaptureStoreByTick(capture.store);
+  captureEventsSortDirty = false;
+  return true;
+}
+
+void Loop::clearCaptureOnNewPass() {
+  discardCapture();
+}
+
+void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
+  const PassId preserveId = lastCommittedPassId_;
+  CapturePassPhase preservePhase = CapturePassPhase::Overdub;
+  uint32_t preserveMergeSeq = 0;
+  if (passes.hasRecordPass() && passes.recordPass.id == preserveId) {
+    preservePhase = CapturePassPhase::Record;
+  } else {
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (pass.state == CapturePassState::Active && pass.id == preserveId) {
+        preserveMergeSeq = pass.mergeSequence;
+        break;
+      }
+    }
+  }
+
+  CaptureChunkIdList captureIds;
+  merged.detachChunksTo(captureIds);
+  if (captureIds.empty()) {
+    return;
+  }
+
+  CommittedChunkIdList publishedIds;
+  if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds)) {
+    LoopEventStore::releaseChunkRefs(captureIds);
+    return;
+  }
+
+  freeActiveCapturePassChunks();
+
+  if (preservePhase == CapturePassPhase::Record) {
+    RecordPass rebuilt{};
+    rebuilt.id = (preserveId != kInvalidPassId) ? preserveId : nextPassId_++;
+    if (rebuilt.id >= nextPassId_) {
+      nextPassId_ = rebuilt.id + 1;
+    }
+    rebuilt.state = CapturePassState::Active;
+    rebuilt.committedChunkIds = std::move(publishedIds);
+    passes.recordPass = rebuilt;
+    lastCommittedPassId_ = rebuilt.id;
+  } else {
+    OverdubPass rebuilt{};
+    rebuilt.id = (preserveId != kInvalidPassId) ? preserveId : nextPassId_++;
+    if (rebuilt.id >= nextPassId_) {
+      nextPassId_ = rebuilt.id + 1;
+    }
+    rebuilt.mergeSequence = preserveMergeSeq;
+    rebuilt.state = CapturePassState::Active;
+    rebuilt.committedChunkIds = std::move(publishedIds);
+    passes.overdubPasses.push_back(rebuilt);
+    lastCommittedPassId_ = rebuilt.id;
+  }
+
+  ++playbackRevision;
+  discardPassesMaterializedCache();
+  markDisplayCachesStale();
+}
+
+void Loop::seedRecordPassFromStore(LoopEventStore& store) {
+  resetPassTimeline();
+  if (store.empty()) {
+    discardPassesMaterializedCache();
+    return;
+  }
+  CaptureChunkIdList captureIds;
+  store.detachChunksTo(captureIds);
+  if (captureIds.empty()) {
+    discardPassesMaterializedCache();
+    return;
+  }
+  CommittedChunkIdList publishedIds;
+  if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds)) {
+    LoopEventStore::releaseChunkRefs(captureIds);
+    discardPassesMaterializedCache();
+    return;
+  }
+  RecordPass record{};
+  record.id = nextPassId_++;
+  record.state = CapturePassState::Active;
+  record.committedChunkIds = std::move(publishedIds);
+  passes.recordPass = std::move(record);
+  lastCommittedPassId_ = passes.recordPass.id;
+  ++playbackRevision;
+  markPassDerivedStale();
+  discardPassesMaterializedCache();
+  rebuildVisualCacheFromPasses();
+}
+
+CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {
+  const bool emitStopStage = reason == CommitReason::RecordStop ||
+                             reason == CommitReason::RecordStopToStopped;
+  const uint32_t commitStartUs = traceMicros();
+  const size_t stopStageEventCount = stopPathEventCount(*this);
+  const size_t stopStageChunkRefCount = stopPathChunkRefCount(*this);
+  auto emitStage = [&](const char* stage, uint32_t durationUs,
+                       uint32_t heapBefore, uint32_t heapAfter, const char* outcome) {
+    if (!emitStopStage) {
+      return;
+    }
+    const uint32_t elapsedUs = traceMicros() - commitStartUs;
+    SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter,
+                      stopStageEventCount, stopStageChunkRefCount, outcome);
+    if (stage != nullptr && std::strcmp(stage, "publish") == 0 && outcome != nullptr &&
+        std::strcmp(outcome, "ok") == 0) {
+      Diagnostics::emitArchitectureMetricsSnapshot();
+    }
+  };
+
+  if (capture.store.empty()) {
+    const uint32_t heap = MemoryMonitor::getInternalHeapFreeBytes();
+    emitStage("seal", 0, heap, heap, "skipped_empty");
+    emitStage("publish", 0, heap, heap, "not_run");
+    discardCapture();
+    return CommitResult::Skipped;
+  }
+
+  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t sealStartUs = traceMicros();
+  const SealOutcome seal = sealCapture(sealedAtTick);
+  const uint32_t sealDurationUs = traceMicros() - sealStartUs;
+  const uint32_t sealHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+  emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
+  if (seal != SealOutcome::Ok) {
+    emitStage("publish", 0, sealHeapAfter, sealHeapAfter, "not_run");
+    return CommitResult::SealFailed;
+  }
+
+  const uint32_t publishHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t publishStartUs = traceMicros();
+  if (!commitPendingCapturePass()) {
+    const uint32_t publishDurationUs = traceMicros() - publishStartUs;
+    const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+    emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
+    return CommitResult::SealFailed;
+  }
+  const uint32_t publishDurationUs = traceMicros() - publishStartUs;
+  const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+  emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
+
+  markPassDerivedStale();
+  return CommitResult::Committed;
+}
+
+void Loop::discardPendingCapturePass() {
+  if (!hasPendingCapturePass_) {
+    return;
+  }
+  LoopEventStore::releaseChunkRefs(pendingCapturePass_.committedChunkIds);
+  pendingCapturePass_ = PendingCapturePass{};
+  hasPendingCapturePass_ = false;
+  pendingVisualDelta.clear();
+}
+
+LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick) {
+  if (capture.store.empty() || loopLengthTicks == 0) {
+    return {};
+  }
+  if (capture.phase != CapturePhase::Record && capture.phase != CapturePhase::Overdub) {
+    return {};
+  }
+  uint32_t openTailCloseTick = UINT32_MAX;
+  if (startLoopTick != UINT32_MAX) {
+    openTailCloseTick = IntervalProjection::tickPhaseInLoop(stopAbsTick, startLoopTick,
+                                                            loopLengthTicks);
+  }
+  return LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks,
+                                                     openTailCloseTick);
+}
+
+SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
+  if (hasPendingCapturePass_) {
+    return SealOutcome::AlreadyPending;
+  }
+  if (capture.store.empty()) {
+    return SealOutcome::SkippedEmpty;
+  }
+  if (!LoopEventStore::canAllocChunkWithReserve()) {
+    return SealOutcome::PoolExhausted;
+  }
+
+  ensureCaptureEventsSorted();
+  assignMissingNoteIdsInStore(capture.store);
+
+  const char* phaseLabel = capturePhaseLabel(capture.phase);
+  uint32_t minLenPairsRemoved = 0;
+  uint32_t wrapSyntheticOffs = 0;
+
+  if (loopLengthTicks > 0 &&
+      (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
+    const LoopStopFinalize::Result fin = finalizeCaptureWrapWindowAtStop(sealedAtTick);
+    wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
+    minLenPairsRemoved = static_cast<uint32_t>(
+        CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
+            capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled));
+    CaptureIncrementalSanity::verifyCaptureHotStop(capture.store, loopLengthTicks);
+    if (capture.store.empty()) {
+      return SealOutcome::FailedValidation;
+    }
+  }
+
+  SC_CAPTURE_CLEANUP(phaseLabel, "dedup", captureDedupEventsDropped_);
+  SC_CAPTURE_CLEANUP(phaseLabel, "minlen", minLenPairsRemoved);
+  SC_CAPTURE_CLEANUP(phaseLabel, "wrap_synth", wrapSyntheticOffs);
+#if defined(SESSION_CAPTURE)
+  if (wrapSyntheticOffs > 0) {
+    logger.info("Seal wrap synth offs: count=%u", wrapSyntheticOffs);
+  }
+#endif
+  captureDedupEventsDropped_ = 0;
+
+  const CapturePassPhase phase =
+      effectiveCapturePassPhase(capture.phase, passes.hasRecordPass());
+
+  pendingCapturePass_ = PendingCapturePass{};
+  pendingCapturePass_.id = nextPassId_++;
+  pendingCapturePass_.mergeSequence = nextMergeSequence_++;
+  pendingCapturePass_.phase = phase;
+  pendingCapturePass_.sealedAtTick = sealedAtTick;
+  if (!capture.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
+    pendingCapturePass_ = PendingCapturePass{};
+    return SealOutcome::FailedValidation;
+  }
+
+  if (pendingCapturePass_.committedChunkIds.empty()) {
+    pendingCapturePass_ = PendingCapturePass{};
+    return SealOutcome::FailedValidation;
+  }
+
+  pendingVisualDelta.clear();
+  hasPendingCapturePass_ = true;
+  return SealOutcome::Ok;
+}
+
+bool Loop::commitPendingCapturePass() {
+  if (!hasPendingCapturePass_) {
+    return false;
+  }
+
+  PendingCapturePass published = std::move(pendingCapturePass_);
+  if (published.phase == CapturePassPhase::Record) {
+    RecordPass record{};
+    record.id = published.id;
+    record.state = CapturePassState::Active;
+    record.sealedAtTick = published.sealedAtTick;
+    record.committedChunkIds = std::move(published.committedChunkIds);
+    passes.recordPass = std::move(record);
+  } else {
+    OverdubPass overdub{};
+    overdub.id = published.id;
+    overdub.mergeSequence = published.mergeSequence;
+    overdub.state = CapturePassState::Active;
+    overdub.sealedAtTick = published.sealedAtTick;
+    overdub.committedChunkIds = std::move(published.committedChunkIds);
+    passes.overdubPasses.push_back(std::move(overdub));
+  }
+  lastCommittedPassId_ = published.id;
+
+  pendingCapturePass_ = PendingCapturePass{};
+  hasPendingCapturePass_ = false;
+
+  ++playbackRevision;
+  pendingVisualDelta.clear();
+
+  capture.store.clear();
+  capture.phase = CapturePhase::None;
+  captureNextEventIndex = 0;
+  captureEventsSortDirty = false;
+  capturePreview.clear();
+
+  return true;
+}

@@ -5,7 +5,7 @@
 
 #include "../../src/Logger.cpp"
 #include "../../src/LoopEventStore.cpp"
-#include "../../src/SlotLoadSession.cpp"
+#include "../../src/StorageManager/SlotLoadSession.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 
 #include "SlotLoadSession.h"

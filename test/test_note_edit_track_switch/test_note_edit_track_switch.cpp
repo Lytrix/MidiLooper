@@ -10,15 +10,14 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/EditManager/EditApply.cpp"
-#include "../../src/LoopPasses.cpp"
+#include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
-#include "../../src/NoteEditFocus.cpp"
-#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../test_support/NoteEditFocusTestDeps.cpp"
 
 #include "Loop.h"
 #include "LoopEventBuffer.h"
@@ -148,7 +147,7 @@ void test_filter_selectable_display_notes_after_track_switch_reopen() {
 
   NoteEditFocus focus{};
   const auto displayNotes =
-      filterSelectableDisplayNotes(session.readEvents(), focus, kChannel, kLongLoopLength);
+      projectNoteEditDisplayNotes(session.readEvents(), focus, kChannel, kLongLoopLength);
   TEST_ASSERT_EQUAL(4u, displayNotes.size());
 }
 
