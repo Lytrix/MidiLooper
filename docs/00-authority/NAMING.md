@@ -103,6 +103,7 @@ Use these suffixes consistently. Do not invent parallel nouns (`Service`, `Facad
 | **Manager** | Owns a domain or coordinates subcomponents over a lifecycle | `TrackManager`, `ClockManager`, `DisplayManager`, `StorageManager` |
 | **Controller** | *Not used as a class suffix.* Prefer **Manager** or **Handler**. | — |
 | **Handler** | Receives events and routes or processes them (often single-purpose) | `MidiHandler`, `BarStepButtonHandler` |
+| **Resolver** | Synchronous multi-phase domain algorithm with a single public entry (stateless static methods until state is needed) | `NoteGeometryResolver` |
 | **Processor** | Transforms raw input into detected events (stateless or thin state) | `MidiButtonProcessor`, `MidiFaderProcessor` |
 | **Action** / **Actions** | Executes a domain operation in response to a detected gesture or fader move | `MidiButtonActions`, `MidiFaderActions` |
 | **State** | FSM state object or small state machine (UI/edit), not global app mode | `EditNoteState`, `SlotStateMachine`, `ClockSourceStateMachine` |
@@ -126,7 +127,7 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 | **commit*** | Finalize a bounded pass or edit batch | `commitCapturePass`, `commitEditAction` |
 | **request*** / **admit*** | Queue persistence or admission intent | `requestDeferredSaveState`, `admitLoopPersist` |
 | **invalidate*** / **rebuild*** | Cache coherence | `invalidatePlaybackMergedMidiEvents`, `rebuildNoteEditFocusFromStore` |
-| **run*** | Orchestrate a multi-step synchronous algorithm | Prefer `run*Resolution` over `run*Pipeline` for sync conflict solving |
+| **run*** | Orchestrate a multi-step synchronous algorithm (legacy free-function style) | Prefer **`NoteGeometryResolver::resolve`** for note geometry; see § Geometry resolution |
 
 ---
 
@@ -211,6 +212,64 @@ Platform/SDK symbols that must stay unchanged behind shims are allowed (for exam
 
 **Relationship qualifiers:** **overlapping**, **inner**, **adjacent**, **contained** — see [MOVE_NOTE_LOGIC.md](../Guides/MOVE_NOTE_LOGIC.md).
 
+### Note geometry
+
+**Note geometry** — The spatial properties of a note within a loop, including start tick, end tick, duration, projection, overlap relationships, and constraint-derived adjustments. Geometry is the canonical representation used by the note editing subsystem before mutations are applied.
+
+**First-class domain concept:** **Note geometry** is the architectural name for this subsystem. Generic **Geometry** alone is ambiguous at boundaries (UI layout, piano-roll drawing, loop length, display coordinates). Promote **NoteGeometry** in public APIs and cross-module types; keep **Geometry** concise inside the note-geometry subsystem when context is already obvious.
+
+#### Guiding principle
+
+> Broader scope → more explicit names.
+
+| Scope | Naming |
+|-------|--------|
+| **Subsystem boundary** (headers, public types, TUs, folders) | **NoteGeometry** prefix or suffix — e.g. `NoteGeometryResolver`, `NoteGeometryDriver`, `EditedNoteGeometry` |
+| **Inside note-geometry module** (private methods, locals) | **Geometry** without repetition — e.g. `projectBaseline()`, `constraints`, `baseline` |
+| **Different domain** (loop length, undo snapshots, display draw) | Do **not** force **NoteGeometry** — use domain-specific names (`UndoLoopGeometry`, display projection) |
+
+**Namespace compression:** context in the name should decrease as scope narrows.
+
+```text
+NoteGeometryResolver::resolve()
+    → projectBaseline()
+    → analyzeInteractions()
+    → resolveConstraints()
+    → buildActions()
+```
+
+Avoid `projectNoteGeometryBaseline()` inside `NoteGeometryResolver`; avoid `noteGeometryConstraints` as a local when `constraints` is clear.
+
+#### Review strategy (incremental — not mechanical)
+
+1. Identify architectural uses of generic **Geometry** (`rg Geometry` on `include/`, public headers).
+2. Ask: is the name ambiguous outside the note-edit subsystem?
+3. Promote to **NoteGeometry** at boundaries when yes.
+4. Leave implementation details concise when the enclosing type or file already scopes the domain.
+5. Apply on **touch-and-rename** during refactors — no repository-wide rename-only pass.
+
+**Future folder** (when subsystem grows): `src/NoteGeometry/` — `NoteGeometryResolver`, `NoteGeometryDriver`, `NoteGeometryAnalysis`, `NoteGeometryConstraints`, `NoteGeometryActions`. Public entry remains `NoteGeometryResolver::resolve`.
+
+#### Public symbol review (evaluate on touch)
+
+| Current | Recommendation | Timing / notes |
+|---------|----------------|--------------|
+| `runEditSessionGeometryPipeline` | `NoteGeometryResolver::resolve` | EditManager TU split **Phase 7a** |
+| `RunEditSessionGeometryPipeline.*` | `NoteGeometryResolver.*` | Phase 7a |
+| `ResolveConstrainedGeometry.h/.cpp` | Evaluate `ResolveConstrainedNoteGeometry` or move under `NoteGeometry/` | Phase 7 or 7c |
+| `resolveConstrainedGeometry` / `resolveAllConstrainedGeometry` | Evaluate `resolveConstrainedNoteGeometry` / `resolveAllConstrainedNoteGeometry` | With resolver TU work |
+| `EditedGeometry` | Evaluate `EditedNoteGeometry` | Phase 7+ when `EditSessionAction.h` touched |
+| `ConstrainedNoteGeometry` | **Keep** — already explicit | — |
+| `GeometryFaderInput.cpp` | Evaluate `NoteGeometryFaderInput.cpp` | Next ControlSurface note-edit fader work |
+| `PlayingGeometryDefer.cpp` | Evaluate `PlayingNoteGeometryDefer.cpp` | With playing-transport defer refactor |
+| `isGeometryDriverActive`, `finishGeometryDriverSideEffects`, … | Evaluate **NoteGeometryDriver** vocabulary | ControlSurface boundary — disambiguate from UI/display geometry |
+| `EditEvent::GeometryChanged` | Evaluate `NoteGeometryChanged` | When `EditEvent` consumers refactored |
+| `beginGeometryMutation`, `isGeometryEditKind`, … | **Keep** concise — `EditManager` / `NoteEditKind` context is sufficient | — |
+| `UndoLoopGeometry`, `LoopEditDepartGeometry` | **Keep** — loop-length domain, not note geometry | — |
+| Display / piano-roll “geometry” in plans | **Not** note geometry — do not conflate | — |
+
+Related types today: `EditedGeometry`, `ConstrainedNoteGeometry`, geometry driver, **`NoteGeometryResolver`**.
+
 ### Geometry resolution (preferred term)
 
 Note-edit geometry changes run a **deterministic synchronous resolution algorithm**:
@@ -221,7 +280,25 @@ Note-edit geometry changes run a **deterministic synchronous resolution algorith
 4. **Resolution** — constraint solving, action generation
 5. **Commit** — apply actions, refresh caches
 
-Preferred orchestration name: **`runEditSessionGeometryResolution`**. The legacy name `runEditSessionGeometryPipeline` is naming debt — migrate on next note-edit geometry refactor. See investigation doc § Geometry resolution.
+**Domain vocabulary:** **note geometry** — see § Note geometry above (`EditedGeometry`, `ConstrainedNoteGeometry`, geometry driver). Do not rename the domain noun; replace implementation-oriented **Pipeline** naming.
+
+**Preferred public owner:** **`NoteGeometryResolver`** — responsibility-oriented type for “resolve note geometry into valid note mutations.” Callers (today: `EditManager`, `NoteMovementUtils`) own edit-session context; the resolver owns note-geometry resolution.
+
+```cpp
+class NoteGeometryResolver {
+public:
+    static bool resolve(...);              // was runEditSessionGeometryPipeline
+    static bool resolveForCausingNote(...); // was runEditSessionGeometryPipelineForCausingNote
+};
+```
+
+**TU:** [`src/EditManager/NoteGeometryResolver.cpp`](../../src/EditManager/NoteGeometryResolver.cpp), [`include/NoteGeometryResolver.h`](../../include/NoteGeometryResolver.h).
+
+**Legacy debt:** `runEditSessionGeometryPipeline` / `RunEditSessionGeometryPipeline.*` — migrate in [EditManager TU split Phase 7](plans/editmanager_translation_unit_extraction_refinement.md). Do not introduce new `*Pipeline*` identifiers for this algorithm.
+
+**Inner steps** (already named): `resolveConstrainedGeometry`, `resolveAllConstrainedGeometry`, `applyEditSessionActions` — evaluate **NoteGeometry** promotion per § Note geometry public symbol review. **Future** (optional): private phase methods on `NoteGeometryResolver` (`validate`, `prepareEvaluationScope`, `analyzeInteractions`, …) — not required for the initial rename.
+
+**Avoid:** `EditSessionGeometryResolver` — scopes the type to the caller, not the domain (`NoteGeometry` is the stable noun).
 
 ### Note edit read path
 
@@ -291,6 +368,8 @@ Use during code review, OpenSpec implementation review, and before merge:
 
 - [ ] No unnecessary new terminology introduced
 - [ ] Existing architectural vocabulary reused (check concept boundaries above)
+- [ ] **Note geometry:** public cross-module symbols use **NoteGeometry** where generic **Geometry** would be ambiguous (§ Note geometry)
+- [ ] **Namespace compression:** no redundant `NoteGeometry` prefix on private methods or locals inside note-geometry owners
 - [ ] File names describe responsibilities, not implementation mechanics
 - [ ] Public APIs follow established verb conventions
 - [ ] This document updated if a new architectural concept is approved

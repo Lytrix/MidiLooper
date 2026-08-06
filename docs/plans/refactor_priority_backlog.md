@@ -35,8 +35,9 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 | Item | Category | Impact | Risk | Trigger / timing | Source |
 |------|----------|--------|------|------------------|--------|
 | **StorageManager** TU extraction until `saveState` leaves root | Structural | High — maintainability | Medium | With persistence CURRENT_WORK | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) § Next hygiene slices |
+| **EditManager** TU extraction (Phases 0–9) | Structural | High — maintainability | Medium–High (commit/lifecycle phases) | After ControlSurface split (PR #11); dedicated `refactor/editmanager` branch | [editmanager_translation_unit_extraction_refinement.md](editmanager_translation_unit_extraction_refinement.md) |
 | **Persistence / overlay hardening** | Product | High — active milestone | High | CURRENT_WORK queue | [CURRENT_WORK.md](../runtime/CURRENT_WORK.md), [ROADMAP.md](../runtime/ROADMAP.md) |
-| **`runEditSessionGeometryPipeline` → `runEditSessionGeometryResolution`** (+ files, driver, call sites) | Naming | High — wrong architectural metaphor | Medium | Next note-edit geometry refactor | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B, § C; [NAMING.md](../00-authority/NAMING.md) § Geometry resolution |
+| **`runEditSessionGeometryPipeline` → `NoteGeometryResolver`** (`resolve`, `resolveForCausingNote`; merge driver header; delete `*Pipeline*` files) | Naming | High — wrong architectural metaphor | Medium | **EditManager TU split Phase 7** (bundled with geometry ops extract) | [editmanager_translation_unit_extraction_refinement.md](editmanager_translation_unit_extraction_refinement.md) Phase 7; [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § C; [NAMING.md](../00-authority/NAMING.md) § Geometry resolution |
 | **Dedicated HITL refactor** (layered **`base`** gate device PASS) | Test infra | High — regression gate | Medium | Parked slice; confirm in CURRENT_WORK | [CURRENT_WORK.md](../runtime/CURRENT_WORK.md) |
 
 ---
@@ -45,7 +46,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 
 | Item | Category | Impact | Risk | Trigger / timing | Source |
 |------|----------|--------|------|------------------|--------|
-| **`PersistenceQueue` → mid-pass/chunk-oriented name** | Naming + structural | Medium | Medium | Persistence hardening | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) |
+| **`Note geometry` promotion** (`EditedGeometry`, `ResolveConstrainedGeometry`, ControlSurface geometry driver, …) | Naming | Medium — boundary ambiguity | Low–Medium | Touch-and-rename per [NAMING.md](../00-authority/NAMING.md) § Note geometry | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § C; EditManager Phase 7c / ControlSurface |
 | **`completeOutboundPipelineAtDone` — evaluate rename** | Naming | Medium | Low–Medium | Next ControlSurface motor/outbound work | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **Scoped EditPass model** (data model, not rename-only) | Data model | High — future edit domains | High | OpenSpec when prioritized; **do not** mix with naming drift Track 1 | [naming_drift_scoped_edit_pass_handoff.md](naming_drift_scoped_edit_pass_handoff.md) Track 2 |
 | **Promote Commit/Publish glossary to NAMING.md** | Docs | Medium | Low | When unified publish pipeline stabilizes | [unified_publish_pipeline_commit_terminology_refinement.md](unified_publish_pipeline_commit_terminology_refinement.md) |
