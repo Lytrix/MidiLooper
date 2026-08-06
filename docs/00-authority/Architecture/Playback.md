@@ -2,6 +2,8 @@
 
 **Parent:** [RuntimeArchitecture.md](RuntimeArchitecture.md)
 
+**Naming:** [NAMING.md](../NAMING.md) — Playback vs Playing, interval projection vocabulary.
+
 ---
 
 ## Runtime request

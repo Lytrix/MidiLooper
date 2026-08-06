@@ -40,3 +40,59 @@ NOTE_EDIT_MEM void ControlSurfaceManager::updateGpioEncoderButtonHold(bool encod
     }
     gpioEncoderButtonWasHeld_ = encoderButtonHeld;
 }
+
+NOTE_EDIT_MEM void ControlSurfaceManager::processEncoderMovement(int rawDelta) {
+    if (rawDelta == 0) {
+        return;
+    }
+
+    static uint32_t lastEncoderTime = 0;
+    const uint32_t now = millis();
+    const uint32_t interval = now - lastEncoderTime;
+    lastEncoderTime = now;
+
+    int accel = 1;
+    switch (editManager.getNoteEditSessionState().kind) {
+        case NoteEditKind::Move:
+            if (interval < 25) {
+                accel = 24;
+            } else if (interval < 50) {
+                accel = 8;
+            } else if (interval < 100) {
+                accel = 4;
+            }
+            break;
+        case NoteEditKind::Length:
+            if (interval < 25) {
+                accel = 8;
+            } else if (interval < 50) {
+                accel = 4;
+            } else if (interval < 100) {
+                accel = 2;
+            }
+            break;
+        case NoteEditKind::Pitch:
+            if (interval < 50) {
+                accel = 4;
+            } else if (interval < 75) {
+                accel = 3;
+            } else if (interval < 100) {
+                accel = 2;
+            }
+            break;
+        default:
+            if (interval < 50) {
+                accel = 4;
+            } else if (interval < 75) {
+                accel = 3;
+            } else if (interval < 100) {
+                accel = 2;
+            }
+            break;
+    }
+
+    const int finalDelta = rawDelta * accel;
+    if (editManager.getCurrentState() != nullptr) {
+        editManager.onEncoderTurn(trackManager.getSelectedTrack(), finalDelta);
+    }
+}

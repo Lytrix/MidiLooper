@@ -59,7 +59,7 @@ Cite in OpenSpec artifacts; do not duplicate wholesale (see DELIVERY_RULES):
 
 ## Naming
 
-See `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` and global **action + scope** rule.
+See `docs/00-authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer and global **action + scope** rule.
 Reuse **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline.
 
 ## Verification

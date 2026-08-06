@@ -20,7 +20,7 @@ Human-approved planning role for coding agents. This layer does **not** run auto
 - Write production firmware implementation (`.cpp` / `.h` in `src/`, `include/`)
 - Resolve OpenSpec vs ARCHITECTURE_RULES conflicts by implementing anyway — must output reassessment and wait for approval
 - Skip authority hierarchy (plans over specs, code over docs)
-- Introduce new top-level domain nouns without user approval (see Naming-Vocabulary rule)
+- Introduce new top-level domain nouns without user approval (see [NAMING.md](../00-authority/NAMING.md))
 
 ## Output format
 

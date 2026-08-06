@@ -2,6 +2,8 @@
 
 **Parent:** [RuntimeArchitecture.md](RuntimeArchitecture.md)
 
+**Naming:** [NAMING.md](../NAMING.md) — Display read paths; avoid new `*View` types.
+
 ---
 
 ## Runtime request
