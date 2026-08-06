@@ -17,8 +17,7 @@
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
-#include "../../src/NoteEditFocus.cpp"
-#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../test_support/NoteEditFocusTestDeps.cpp"
 
 #include "Loop.h"
 #include "LoopEventBuffer.h"
