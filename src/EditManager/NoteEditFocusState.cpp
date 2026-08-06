@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Utils/IntervalProjection.h"
+#include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/NoteUtils.h"
@@ -47,6 +48,24 @@ template bool isLiveEditDriverValid<InternalHeapFirstAllocator<MidiEvent>>(
 template bool isLiveEditDriverValid<ExternalMemoryFirstAllocator<MidiEvent>>(
     const EditorSelection&, const NoteEditFocus&, const SessionMidiEventVec&, uint8_t,
     uint32_t);
+
+NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
+                                                        uint32_t selectBracketTick,
+                                                        const NoteEditFocus& focus,
+                                                        uint32_t loopStartTick,
+                                                        uint32_t loopLength, bool lengthBracket) {
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return true;
+  }
+  if (selectNoteId == kInvalidNoteId || selectNoteId != focus.movingNoteId) {
+    return true;
+  }
+  const uint32_t storageBracketTick =
+      lengthBracket ? focus.last.endTick : focus.last.startTick;
+  const uint32_t driverDisplayBracket = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+      storageBracketTick, loopStartTick, loopLength);
+  return selectBracketTick == driverDisplayBracket;
+}
 
 NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus) {
   uint32_t fp = static_cast<uint32_t>(focus.changedOverlapNoteIds.size());

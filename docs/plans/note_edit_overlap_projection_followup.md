@@ -12,15 +12,18 @@ This document indexes **remaining** post-geometry work that is **not** projectio
 
 | Track | Phase | Status | Doc |
 |-------|-------|--------|-----|
-| Macro commit guard | Phase 1 (RC7) | **Shipped** | § Phase 1 below |
-| Projection ownership | Phase 2 (RC6) | **Shipped** | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
-| Reconstruction parity | Phase 3 (RC8) | Open | § Phase 3 below |
+| Macro commit guard Phase 1 (RC7) | **Shipped** | § RC7 Phase 1 below |
+| Select bracket mismatch guard (RC7b) | **Shipped** | [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md) |
+| Projection ownership (RC6) | **Shipped** | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
+| Reconstruction parity (RC8) | Open | § RC8 below |
 
-Recommended order: **RC6 (projection) → RC8 (recon)**. Phase 1 (RC7) shipped to stop invalid macro commits from obscuring projection debugging.
+Recommended order: **RC7b → selection index stability → RC8**. RC6 and RC7 Phase 1 shipped.
 
 ---
 
-## RC7 — Select-after-move macro commit (Phase 1 ✅ shipped)
+## RC7 — Macro commit guards
+
+### Phase 1 ✅ shipped
 
 **Primary capture:** `captures/session_20260806_212810.log` (~235s ghost `DNTE,65,0,0,47,0`, `NoteRange start=0`).
 
@@ -33,11 +36,17 @@ Recommended order: **RC6 (projection) → RC8 (recon)**. Phase 1 (RC7) shipped t
 3. Defer macro commit during geometry editing-activity hold (`isNoteEditMacroCommitDeferred`, 750 ms)
 4. Native tests: `test_pre_commit_rejects_mover_note_range_zero_start_after_nonzero_baseline`, `test_pre_commit_emits_valid_mover_note_range`
 
-**HITL gate (open):** after geometry move, select different note — no `DNTE,65,0,0,…`; no `NoteRange start=0`. `214302` did not hit this path (Phase 1 may be effective or scenario differed).
+**HITL gate (open):** after geometry move, select different note — no `DNTE,65,0,0,…`; no `NoteRange start=0`.
+
+### RC7b ✅ shipped — select bracket mismatch
+
+**Primary capture:** `captures/session_20260806_220331.log` (~55.7s).
+
+Re-select same `NoteId` at bracket ≠ `focus.last` display bracket → skip macro commit (`isMacroCommitAlignedWithSelectTarget`). See [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md).
 
 ---
 
-## RC8 — Session store reconstruction miss (Phase 3 — open)
+## RC8 — Session store reconstruction miss (open)
 
 **Primary capture:** `captures/session_20260806_212810.log` — `M65@369 missing in recon`, `M65@1050 missing in recon`.
 

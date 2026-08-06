@@ -311,10 +311,25 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
         editManager.cancelPendingDeleteForSelectNote(selectNoteId);
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);
-        if (!isNoteEditMacroCommitDeferred(millis()) &&
-            editManager.isLiveEditDriverValidForTrack(track)) {
+        const bool macroCommitDeferred = isNoteEditMacroCommitDeferred(millis());
+        const bool driverValid = editManager.isLiveEditDriverValidForTrack(track);
+        const bool selectBracketAligned =
+            editManager.isMacroCommitAlignedWithSelectTargetForTrack(track, selectNoteId,
+                                                                     absoluteTargetTick);
+        if (!macroCommitDeferred && driverValid && selectBracketAligned) {
             editManager.commitAllPendingNoteEditActions(track);
         }
+#if defined(SESSION_CAPTURE)
+        else if (!macroCommitDeferred && driverValid && !selectBracketAligned) {
+            logger.log(CAT_TRACK, LOG_WARNING,
+                       "NOTE_EDIT macro commit skipped: select bracket mismatch "
+                       "(moving=%lu bracket=%lu focus_last=%lu-%lu)",
+                       static_cast<unsigned long>(editManager.getEditSession().focus.movingNoteId),
+                       static_cast<unsigned long>(absoluteTargetTick),
+                       static_cast<unsigned long>(editManager.getEditSession().focus.last.startTick),
+                       static_cast<unsigned long>(editManager.getEditSession().focus.last.endTick));
+        }
+#endif
         const std::vector<NoteUtils::DisplayNote> notesAfterCommit =
             editManager.selectableDisplayNotesForEditUi(track);
         int postCommitNoteIdx = filteredDisplayNoteIndexForNoteIdAndStart(
