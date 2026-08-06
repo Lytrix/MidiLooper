@@ -15,8 +15,8 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
-#include "../../src/TrackStateMachine.cpp"
-#include "../../src/TrackDisplayState.cpp"
+#include "../../src/Track/TrackStateMachine.cpp"
+#include "../../src/Track/TrackDisplayState.cpp"
 
 #include "Loop.h"
 #include "TrackDisplayState.h"

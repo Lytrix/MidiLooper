@@ -12,7 +12,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/Loop.cpp"
-#include "../../src/TrackPlaybackRuntime.cpp"
+#include "../../src/Track/TrackPlaybackRuntime.cpp"
 #include "Loop.h"
 #include "TrackPlaybackRuntime.h"
 
