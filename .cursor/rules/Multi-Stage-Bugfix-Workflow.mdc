@@ -1,0 +1,96 @@
+---
+description: Multi-stage bugfix — one root cause per commit; freeze solved layers; evidence-backed sequencing
+alwaysApply: true
+---
+
+# Multi-stage bugfix workflow
+
+Fixing one root cause often **unmasks** the next. That is expected — not a reason to hold commits or bundle unrelated fixes.
+
+**Goal:** a sequence of small, evidence-backed commits. Each commit fixes **one** confirmed root cause, strengthens **one** invariant, and improves observability for what remains.
+
+**Does not replace:** [architecture-checkpoint-bugfix](architecture-checkpoint-bugfix.mdc), [Plan-Pre-Implementation-Review.mdc](Plan-Pre-Implementation-Review.mdc), [OpenSpec-Phase-Gate.mdc](OpenSpec-Phase-Gate.mdc).
+
+## One capture ≠ one commit
+
+A single capture may show several bugs. **Split by root cause**, not by session.
+
+| Do | Don't |
+|----|-------|
+| One commit per confirmed RC with native test + log anchor | One mega-commit for "weird NOTE_EDIT in capture X" |
+| Freeze the solved investigation doc (FROZEN + misattribution guard) | Reopen a closed RC because a new symptom appeared downstream |
+| Start a new plan doc for the next RC layer | Append unrelated RCs to a frozen bugfix plan |
+
+## Debugging boundary
+
+Draw an explicit boundary in the plan doc before coding the next stage:
+
+```
+… → EditSessionAction     ← trust geometry unless pipeline apply fails
+      → projection / select / commit / recon   ← current investigation
+```
+
+When the boundary holds, **do not** revisit solved layers (e.g. driver drift after `GEOM_APPLY,pipeline,…,1,3,0` is clean).
+
+## Per-commit checklist
+
+Before landing a stage fix:
+
+1. **Root cause** — named RC; log anchor (`#CAP` / function), not symptom alone.
+2. **Owner** — extend existing function/module ([Reference-Functions-Not-Lines.mdc](Reference-Functions-Not-Lines.mdc)); no new top-level owner without design session.
+3. **Invariant** — one sentence: what must hold after this commit.
+4. **Test** — native fixture from capture slice when possible; HITL only for what host cannot cover.
+5. **Observability** — one log or guard that makes the *next* failure obvious (e.g. `macro commit skipped: bracket_mismatch`).
+6. **Docs** — mark stage **shipped** in active plan; freeze parent investigation when the RC layer is closed.
+
+Run `pio test -e native` before sharing the commit.
+
+## Commit message shape
+
+Lead with the **invariant**, not the capture name:
+
+```
+Block macro commit when select bracket disagrees with live mover span.
+
+Native fixture from session_20260806_220331 (~55.7s). Does not change
+projection or recon — RC7b only.
+```
+
+## Sequencing (NOTE_EDIT example)
+
+Order by **dependency**, not symptom severity:
+
+1. Driver / geometry identity (RC1) — frozen when pipeline apply is clean.
+2. Projection ownership (RC6) — display after `EditSessionAction`.
+3. Select / macro commit guards (RC7) — before deep recon debugging.
+4. Reconstruction parity (RC8) — only when commit input is trustworthy.
+
+Do not start RC8 recon while RC7 still commits plausible-but-wrong mover rows.
+
+## When to stop and split
+
+Open a **new** plan or stage when:
+
+- the fix touches a **different owner** than the current stage;
+- the investigation doc would mix two invariants;
+- architecture-checkpoint answers **yes** to ownership or transition change.
+
+## Example (same capture, three commits)
+
+**Bad:** projection skip + defer commit + index guard + recon audit in one PR.
+
+**Good:**
+
+1. `RC6` — `projectNoteEditDisplayNotes` lane ghost; freeze driver-drift doc.
+2. `RC7b` — block macro commit on bracket ≠ `focus.last`; native test only.
+3. `RC8` — recon fixture `M65@609 missing`; fix pairing only if fixture proves it.
+
+## Plan doc hygiene
+
+| State | Location |
+|-------|----------|
+| Closed RC layer | `docs/plans/*_bugfix.md` — **FROZEN**, final validation section |
+| Active RC | New or sibling plan — debugging boundary at top |
+| Index only | Short follow-up doc linking frozen + active work |
+
+Reference: [`note_edit_focus_driver_drift_bugfix.md`](docs/plans/note_edit_focus_driver_drift_bugfix.md) (frozen), [`note_edit_projection_ownership_bugfix.md`](docs/plans/note_edit_projection_ownership_bugfix.md), [`note_edit_overlap_projection_followup.md`](docs/plans/note_edit_overlap_projection_followup.md).
