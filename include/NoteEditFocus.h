@@ -215,6 +215,15 @@ bool isLiveEditDriverValid(const EditorSelection& selection, const NoteEditFocus
                            const std::vector<MidiEvent, Alloc>& sessionStore, uint8_t channel,
                            uint32_t loopLength);
 
+/// True when fader-1 select may macro-commit pending mover geometry for **selectNoteId** at
+/// **selectBracketTick**. Re-selecting the same **NoteId** at a bracket that disagrees with
+/// **focus.last** must not commit (stale mover_focus row — RC7b).
+bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
+                                                        uint32_t selectBracketTick,
+                                                        const NoteEditFocus& focus,
+                                                        uint32_t loopStartTick,
+                                                        uint32_t loopLength, bool lengthBracket);
+
 /// Session-open pairing aid: stamp each note-on's noteId onto its LIFO-paired note-off when the
 /// off still has kInvalidNoteId. Safe only on non-overlapping same-pitch stores (canonical MIDI).
 /// Pairs within each event's own channel — the track's output channel is not an identity key.

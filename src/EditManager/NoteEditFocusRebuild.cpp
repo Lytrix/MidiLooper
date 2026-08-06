@@ -251,3 +251,18 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isLiveEditDriverValidForTrack(const Trac
     return isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
                                track.getMidiChannel(), loopLength);
 }
+
+EDIT_MANAGER_IMPL_MEM bool EditManager::isMacroCommitAlignedWithSelectTargetForTrack(
+    const Track& track, NoteId selectNoteId, uint32_t selectBracketTick) const {
+    if (!editSession.active || !editSession.focus.active) {
+        return true;
+    }
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (loopLength == 0) {
+        return true;
+    }
+    const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
+    return isMacroCommitAlignedWithSelectTarget(selectNoteId, selectBracketTick, editSession.focus,
+                                                noteEditLoopStartTick(track), loopLength,
+                                                lengthBracket);
+}

@@ -135,6 +135,9 @@ public:
     void commitAllPendingNoteEditActions(Track& track);
     /// True when live edit driver satisfies D19a (NoteId + store linear span).
     bool isLiveEditDriverValidForTrack(const Track& track) const;
+    /// True when select bracket matches **focus.last** for the same mover (RC7b).
+    bool isMacroCommitAlignedWithSelectTargetForTrack(const Track& track, NoteId selectNoteId,
+                                                      uint32_t selectBracketTick) const;
     /// Drop pending apply-owned Delete row for a note the user is navigating to via fader-1.
     void cancelPendingDeleteForSelectNote(NoteId noteId);
     /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.
