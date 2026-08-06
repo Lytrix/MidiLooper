@@ -7,10 +7,10 @@ todos:
     status: completed
   - id: phase-1-routing
     content: "Phase 1: Extract TrackMidiEventRouting.cpp (legacy scratch, editAwareMidiEvents, invalidateCaches)"
-    status: pending
+    status: completed
   - id: phase-2-slots
     content: "Phase 2: Extract TrackSlotPool.cpp (loop pool adapters, hasDataInSlot, reconcileTransportState)"
-    status: pending
+    status: completed
   - id: phase-3-state
     content: "Phase 3: Extract TrackStateFacade.cpp (setState wrapper, predicates, mute, slot focus)"
     status: pending
