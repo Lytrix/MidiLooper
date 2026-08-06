@@ -25,7 +25,7 @@ todos:
     status: completed
   - id: phase-7-window
     content: "Phase 7: Extract TrackPlaybackWindowBuild.cpp (merged MIDI build, runtime reclaim, playback reset)"
-    status: pending
+    status: completed
   - id: phase-8-playback
     content: "Phase 8: Extract TrackPlaybackHotPath.cpp (playMidiEvents, sendMidiEvent, jam filter)"
     status: pending
