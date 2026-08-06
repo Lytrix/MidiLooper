@@ -17,7 +17,8 @@ Shrink `src/DisplayManager.cpp` from a ~3.3k-line monolith into a thin frame orc
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/DisplayManager.cpp` | **~1540** (root TU; was ~3300) |
+| `src/DisplayManager.cpp` | **~1000** (root TU; was ~3300) |
+| `src/DisplayManager/PianoRollDraw.cpp` | **~550** (Phase 3) |
 | `src/DisplayManager/DisplayNoteResolve.cpp` | **~864** (Phase 2a–2c) |
 | `src/DisplayManager/LoadSaveOverlay.cpp` | **~906** (Phase 1) |
 | `src/DisplayManager/DisplayColdHelpers.cpp` | **~68** (Phase 0) |
@@ -166,6 +167,7 @@ Milestone after **Phases 0–6**: root TU within target band.
 | `resolveDisplayNotes` | Full mode dispatch (delegates to `resolveDisplayNotesLiveCapture` for live capture) |
 | `resolveDisplayNotesLiveCapture` | Live record / overdub branch (Phase 2b) |
 | `applyCapturePlayheadTails`, `applyLiveOpenTails`, `applyRecordingPreviewOpenTails` | Open-tail helpers (`DisplayManagerInternal`) |
+| `resolveBracketDisplayTick`, `resolveDrawHighlightIndex` | NOTE_EDIT bracket/highlight helpers (`DisplayManagerInternal`; shared with `drawNoteInfo` until Phase 4) |
 | `emitDisplayCaptureSnapshot` (both overloads), `maybeEmitDisplayCaptureOnChange` | `#CAP DISP` telemetry |
 
 ### Optional sub-phases (if single PR > ~1200 LOC diff)
@@ -197,7 +199,7 @@ Sub-phases must land **in order 2a → 2b → 2c** on one branch; do not merge 2
 
 ---
 
-## Phase 3 — `PianoRollDraw.cpp` (~550 LOC)
+## Phase 3 — `PianoRollDraw.cpp` (~550 LOC) — **shipped** (`refactor/displaymanager`)
 
 ### Move
 
