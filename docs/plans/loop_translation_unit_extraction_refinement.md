@@ -236,7 +236,7 @@ Cold helpers for later phases (merge, gather, visual) remain in `Loop.cpp` until
 
 ---
 
-## Phase 3 — edit pass mutation → `LoopEditPasses.cpp`
+## Phase 3 — edit pass mutation → `LoopEditPasses.cpp` ✅
 
 | Symbol | Role |
 |--------|------|
