@@ -1,0 +1,214 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include "NoteEditFocus.h"
+#include "NoteEditFocusInternal.h"
+
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "Utils/NoteEditMem.h"
+#include "Utils/NoteUtils.h"
+
+NOTE_EDIT_FOCUS_INTERNAL_MEM void sortNoteIdList(NoteIdList& ids) {
+  for (size_t i = 1; i < ids.size(); ++i) {
+    const NoteId key = ids[i];
+    size_t j = i;
+    while (j > 0 && ids[j - 1] > key) {
+      ids[j] = ids[j - 1];
+      --j;
+    }
+    ids[j] = key;
+  }
+}
+
+NOTE_EDIT_FOCUS_INTERNAL_MEM bool displayNoteOrderBefore(const NoteUtils::DisplayNote& left,
+                                         const NoteUtils::DisplayNote& right) {
+  if (left.startTick != right.startTick) {
+    return left.startTick < right.startTick;
+  }
+  if (left.note != right.note) {
+    return left.note < right.note;
+  }
+  return left.noteId < right.noteId;
+}
+
+NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus) {
+  NoteIdList participants;
+  if (focus.movingNoteId != kInvalidNoteId) {
+    participants.push_back(focus.movingNoteId);
+  }
+  for (NoteId noteId : focus.changedOverlapNoteIds) {
+    if (noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
+      participants.push_back(noteId);
+    }
+  }
+  sortNoteIdList(participants);
+  return participants;
+}
+
+template <typename Alloc>
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
+    const NoteUtils::DisplayNoteVec& committedBaseNotes,
+    const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
+    uint8_t channel, uint32_t loopLength) {
+  if (!focus.active || loopLength == 0) {
+    return committedBaseNotes;
+  }
+
+  NoteIdList participants = collectProjectionParticipantNoteIds(focus);
+  std::unordered_set<NoteId> committedIds;
+  committedIds.reserve(committedBaseNotes.size());
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != kInvalidNoteId) {
+      committedIds.insert(dn.noteId);
+    }
+  }
+  for (const MidiEvent& evt : sessionEvents) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 || evt.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (committedIds.find(evt.noteId) != committedIds.end()) {
+      continue;
+    }
+    if (focus.baselineMap.find(evt.noteId) != focus.baselineMap.end()) {
+      continue;
+    }
+    if (std::find(participants.begin(), participants.end(), evt.noteId) == participants.end()) {
+      participants.push_back(evt.noteId);
+    }
+  }
+  sortNoteIdList(participants);
+
+  std::unordered_set<NoteId> hiddenParticipants;
+  std::vector<MidiEvent, Alloc>& mutableEvents =
+      const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
+  for (NoteId noteId : participants) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    NoteBaseline live{};
+    if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
+                                     loopLength)) {
+      hiddenParticipants.insert(noteId);
+    }
+  }
+
+  NoteUtils::DisplayNoteVec result;
+  result.reserve(committedBaseNotes.size());
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != kInvalidNoteId && hiddenParticipants.count(dn.noteId) > 0) {
+      continue;
+    }
+    if (dn.noteId != kInvalidNoteId &&
+        std::find(participants.begin(), participants.end(), dn.noteId) == participants.end() &&
+        hasChangedOverlapNote(focus, dn.noteId)) {
+      NoteBaseline live{};
+      if (!findLinearNoteSpanForNoteId(mutableEvents, dn.noteId, channel, live, dn.startTick,
+                                       loopLength)) {
+        continue;
+      }
+    }
+    result.push_back(dn);
+  }
+
+  std::unordered_map<NoteId, size_t> indexById;
+  indexById.reserve(result.size());
+  for (size_t i = 0; i < result.size(); ++i) {
+    if (result[i].noteId != kInvalidNoteId) {
+      indexById[result[i].noteId] = i;
+    }
+  }
+
+  bool needsSort = false;
+  for (NoteId noteId : participants) {
+    if (noteId == kInvalidNoteId || hiddenParticipants.count(noteId) > 0) {
+      continue;
+    }
+
+    NoteUtils::DisplayNote participantDn{};
+    participantDn.noteId = noteId;
+    if (noteId == focus.movingNoteId) {
+      participantDn.note = focus.last.pitch;
+      participantDn.velocity = focus.last.velocity;
+      participantDn.startTick = focus.last.startTick;
+      participantDn.endTick = focus.last.endTick;
+    } else {
+      NoteBaseline live{};
+      if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
+                                       loopLength)) {
+        continue;
+      }
+      participantDn.note = live.pitch;
+      participantDn.velocity = live.velocity;
+      participantDn.startTick = live.startTick;
+      participantDn.endTick = live.endTick;
+    }
+
+    const auto it = indexById.find(noteId);
+    if (it != indexById.end()) {
+      const uint32_t oldStart = result[it->second].startTick;
+      result[it->second] = participantDn;
+      if (oldStart != participantDn.startTick) {
+        needsSort = true;
+      }
+      continue;
+    }
+
+    size_t bindIdx = result.size();
+    const auto baselineIt = focus.baselineMap.find(noteId);
+    if (baselineIt != focus.baselineMap.end()) {
+      const NoteBaseline& baseline = baselineIt->second;
+      for (size_t i = 0; i < result.size(); ++i) {
+        if (result[i].noteId != kInvalidNoteId) {
+          continue;
+        }
+        if (result[i].note == baseline.pitch && result[i].startTick == baseline.startTick &&
+            result[i].endTick == baseline.endTick) {
+          bindIdx = i;
+          break;
+        }
+      }
+    }
+    if (bindIdx < result.size()) {
+      const uint32_t oldStart = result[bindIdx].startTick;
+      result[bindIdx] = participantDn;
+      indexById[noteId] = bindIdx;
+      if (oldStart != participantDn.startTick) {
+        needsSort = true;
+      }
+      continue;
+    }
+
+    result.push_back(participantDn);
+    indexById[noteId] = result.size() - 1;
+    needsSort = true;
+  }
+
+  if (needsSort) {
+    for (size_t i = 1; i < result.size(); ++i) {
+      const NoteUtils::DisplayNote key = result[i];
+      size_t j = i;
+      while (j > 0 && displayNoteOrderBefore(key, result[j - 1])) {
+        result[j] = result[j - 1];
+        --j;
+      }
+      result[j] = key;
+    }
+  }
+
+  return result;
+}
+
+template NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
+    const NoteUtils::DisplayNoteVec&, const MidiEventVec&, const NoteEditFocus&, uint8_t,
+    uint32_t);
+template NoteUtils::DisplayNoteVec
+projectNoteEditDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(
+    const NoteUtils::DisplayNoteVec&, const SessionMidiEventVec&, const NoteEditFocus&, uint8_t,
+    uint32_t);

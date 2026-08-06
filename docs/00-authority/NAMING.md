@@ -356,6 +356,7 @@ Before adding a new architectural term:
 | No rename-only PRs | Never repository-wide symbol renames without accompanying functional change |
 | New modules follow this document | All new code and docs use preferred terms immediately |
 | Touch-and-rename | Adopt preferred names when a subsystem undergoes significant refactor |
+| TU / subsystem extraction | **Valid vehicle for architectural renames** — strengthen identifiers in the **same PR** as moves (Phase 0 naming table in plan). Agents must **propose** renames when names hide ownership; do not defer to a separate naming sprint. Behavior-preserving TU work **includes** touch-and-strengthen in touched files; it does **not** mean “no identifier changes.” **Do not remove** legacy wrappers/aliases during extraction — use a dedicated **Legacy Retirement** phase ([legacy_api_retirement_tu_extraction_refinement.md](../plans/legacy_api_retirement_tu_extraction_refinement.md)). |
 | Serial capture tokens frozen | `#CAP`, `PERS`, `REVT` — never rename |
 | Plan glossary promotion | When a plan glossary term stabilizes, promote it here; mark plan section superseded |
 | Investigation doc for debt | Current-vs-preferred mapping and timing live in the investigation doc, not here |

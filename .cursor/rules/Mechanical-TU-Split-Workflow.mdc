@@ -1,0 +1,74 @@
+---
+description: Mechanical TU extraction — batching, verification gates, naming in-scope, LOC heuristics
+alwaysApply: false
+---
+
+# Mechanical TU split workflow
+
+Use when shrinking a root `.cpp` by moving **behavior-preserving** method bodies into domain folders (`src/Loop/`, `src/EditManager/`, …).
+
+**Plan template:** [`docs/templates/translation_unit_extraction_plan_template.md`](../../docs/templates/translation_unit_extraction_plan_template.md)  
+**Legacy API retirement:** [`docs/plans/legacy_api_retirement_tu_extraction_refinement.md`](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)
+
+## Phase 0 (before first edit)
+
+1. **Prior splits inventory** — read shipped sibling plans (`track_tu_split`, `editmanager_tu_split`, `loop_tu_split`); list already-extracted TUs in this domain.
+2. **Naming pass** — table of strengthenings (action+scope per [NAMING.md](../../docs/00-authority/NAMING.md)); commit with moves when they clarify ownership; **do not delete legacy wrappers/aliases in extraction phases** (see Legacy Retirement below).
+3. **Cross-domain placement table** — symbol → owner TU → rationale; flag misleading names.
+
+## Risk tiers
+
+| Tier | Session batching | Firmware build | Native tests |
+|------|------------------|----------------|--------------|
+| **low / medium** | All phases in one agent session OK | **Every phase** (`pio run -e teensy41-capture-serial`) | **Once at batch end** |
+| **high** | Split sessions (stop-path, commit, placement ambiguity) | Every slice | Every slice |
+
+High risk includes: capture stop/commit, persistence gating, pre-commit edit-pass emission, cross-domain placement that could mis-file code.
+
+## Per-phase gate (always)
+
+1. `git commit` (phase boundary message)
+2. `pio run -e teensy41-capture-serial` — **not optional** (memory/link bisect)
+3. Record per-TU LOC in plan tracker
+
+## Batch-end gate (low/med)
+
+1. `pio test -e native` (828/828)
+2. One upload offer (do not prompt every phase)
+3. Optional: [mechanical split hardware smoke](../../docs/plans/mechanical_split_hardware_smoke_checklist.md) on first split with a new model/domain
+
+## Handoff
+
+- User says **continue** or **stop after phase N** once at session start.
+- Do not treat **behavior-preserving** as **no identifier change** — naming strengthenings in touched files are in-scope.
+
+## LOC heuristic (review only — not success criteria)
+
+| Band | Signal |
+|------|--------|
+| &lt;200 | Possible over-slice — too many TUs for one domain? |
+| ~150–250 coordinator / ~300–700 domain module | Healthy (Loop split reference) |
+| &gt;800 | Split candidate — only if domain rationale supports |
+
+Primary driver: **domain ownership**, not line count.
+
+## Naming
+
+- **Allowed:** rename moved symbols; fix misleading prefixes; action+scope in touched files; same commit as extraction.
+- **Blocked:** rename-only drive-bys; new domain nouns without user ask; repo-wide synonym hunts.
+
+See [NAMING.md](../../docs/00-authority/NAMING.md) § Migration policy.
+
+## Legacy API retirement (move first, simplify later)
+
+Translation-unit extraction phases **must not** remove compatibility wrappers, aliases, or legacy entry points unless removal is **required for compilation**. Prefer thin forwarders.
+
+Legacy APIs remain until:
+
+- all internal callers have migrated;
+- tests no longer depend on them;
+- no remaining extraction phase references them.
+
+Obsolete entry points are removed together in a dedicated **Legacy Retirement** phase after architectural ownership has stabilized ([legacy_api_retirement_tu_extraction_refinement.md](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)).
+
+Mark temporary wrappers with `TODO(refactor): Remove during Legacy Retirement` and `[[deprecated]]` where appropriate.

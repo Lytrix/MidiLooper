@@ -17,11 +17,10 @@
 #include "../../src/EditManager/ApplyEditSessionActions.cpp"
 #include "../../src/EditManager/ApplyOwnedEditPassRows.cpp"
 #include "../../src/EditManager/EditSessionActionBuilder.cpp"
-#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/EditSessionStoreInvariant.cpp"
 #include "../../src/Logger.cpp"
-#include "../../src/NoteEditFocus.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
+#include "../test_support/NoteEditFocusTestDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 
