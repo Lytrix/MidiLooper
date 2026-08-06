@@ -12,7 +12,7 @@
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/NoteMovementUtils.h"
-#include "RunEditSessionGeometryPipelineDriver.h"
+#include "NoteGeometryResolver.h"
 #include "Utils/IntervalProjection.h"
 #include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
@@ -538,7 +538,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
 namespace {
 
 // Non-session pitch path: loop view or before NOTE_EDIT session applies overlap pipeline.
-// Active NOTE_EDIT pitch uses runEditSessionGeometryPipelineForCausingNote (Phase 4.10g).
+// Active NOTE_EDIT pitch uses NoteGeometryResolver::resolveForCausingNote (Phase 4.10g).
 NOTE_EDIT_MEM bool applySimplePitchChange(MidiEventVec& midiEvents, EditManager& manager,
                                           Track& track, NoteEditFocus& focus, uint8_t channel,
                                           uint8_t currentNoteValue, uint8_t newNoteValue,
@@ -636,7 +636,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
         const NoteBaseline priorLatch{currentNoteValue, focus.last.velocity, noteStart, noteEnd};
         const NoteBaseline editedSpan{newNoteValue, focus.last.velocity, noteStart, noteEnd};
-        const bool pipelineApplied = runEditSessionGeometryPipelineForCausingNote(
+        const bool pipelineApplied = NoteGeometryResolver::resolveForCausingNote(
             track, manager, focus.movingNoteId, editedSpan, priorLatch, std::nullopt, newNoteValue,
             refreshPlaybackPreview);
         if (!pipelineApplied) {
@@ -691,7 +691,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     const NoteBaseline priorLatch{currentNoteValue, focus.last.velocity, noteStart, noteEnd};
     const NoteBaseline editedSpan{newNoteValue, focus.last.velocity, noteStart, noteEnd};
     const bool overlapStructureChanged =
-        runEditSessionGeometryPipelineForCausingNote(track, manager, focus.movingNoteId, editedSpan,
+        NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId, editedSpan,
                                                      priorLatch, std::nullopt, newNoteValue, false);
     if (overlapStructureChanged) {
       noteStart = focus.last.startTick;
@@ -866,7 +866,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
     // Overlap scope is the mover's own lane — a move never changes pitch (Q14).
     const bool pipelineApplied =
-        runEditSessionGeometryPipelineForCausingNote(track, manager, focus.movingNoteId, editedSpan,
+        NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId, editedSpan,
                                                      focus.last, targetTick, movingNotePitch,
                                                      false);
 
@@ -966,7 +966,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
 
     const NoteBaseline editedSpan{notePitch, focus.last.velocity, newStart, linearNewEnd};
     const bool pipelineApplied =
-        runEditSessionGeometryPipelineForCausingNote(track, manager, focus.movingNoteId,
+        NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId,
                                                      editedSpan, focus.last, std::nullopt,
                                                      notePitch, false);
 
