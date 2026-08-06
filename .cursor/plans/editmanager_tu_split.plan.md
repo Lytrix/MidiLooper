@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: phase-2-focus
     content: "Phase 2: Extract NoteEditFocusRebuild.cpp (focus rebuild, index sync, cancel pending delete)"
-    status: pending
+    status: completed
   - id: phase-3-commit
     content: "Phase 3: Extract NoteEditSessionCommit.cpp (commitAllPending, commitEditAction, bake) — protected"
     status: pending
