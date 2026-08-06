@@ -8,10 +8,13 @@
 #include "Globals.h"
 #include "Loop.h"
 #include "MidiEvent.h"
+#include "NoteEditSessionState.h"
+#include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteUtils.h"
 #include <vector>
 
 class Track;
+struct EditorSelection;
 
 namespace DisplayManagerInternal {
 
@@ -42,5 +45,11 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                         uint32_t closeTick, NoteUtils::DisplayNoteVec& notes,
                         bool extendHeldNotesToPlayhead);
+
+uint32_t resolveBracketDisplayTick(uint32_t loopStartTick, uint32_t loopLength);
+int resolveDrawHighlightIndex(const NoteUtils::DisplayNoteVec& notes,
+                              const EditorSelection& selection, uint32_t loopStartTick,
+                              uint32_t loopLength, bool windowRelativeTicks,
+                              uint32_t windowStartTick, uint32_t bracketDisplayTick);
 
 }  // namespace DisplayManagerInternal
