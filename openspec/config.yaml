@@ -21,6 +21,7 @@ context: |
   `openspec/changes/archive/20260617-parked-jam-recording-d13/PARKED.md`
 
   Authority (agents):
+  - `docs/00-authority/NAMING.md` — architectural vocabulary (canonical)
   - `docs/00-authority/README.md` — hierarchy + conflict resolution (OpenSpec = behavior; architecture = structure)
   - `docs/runtime/PROJECT_STATE.md` — execution context (load first)
   - `docs/runtime/CURRENT_WORK.md` — implementation scope (required before coding)
@@ -41,7 +42,7 @@ context: |
 
   Conventions:
   - Reuse repo nouns: **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline
-  - See `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`
+  - See `docs/00-authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer
   - Before push: `pio test -e native`; HITL when firmware timing/storage/edit changes
   - Do not upload Teensy firmware without user confirmation
 

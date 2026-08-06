@@ -1,5 +1,7 @@
 # Handover — naming drift cleanup and scoped EditPass model
 
+> **Vocabulary:** merge/materialize/memory-tier terms are canonical in [`docs/00-authority/NAMING.md`](../00-authority/NAMING.md). This handoff retains implementation ordering for firmware renames.
+
 **Date:** 2026-06-23  
 **Branch:** `refactor/timeline-data-model`  
 **Status:** planning complete; implementation not started.

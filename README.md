@@ -200,30 +200,11 @@ State persistence uses storage **version 4+** on loop slots (**passes** timeline
 
 ### Loop storage vocabulary (code)
 
-Each **loop slot** (`Loop`) separates live capture from committed timeline **passes**:
+Canonical glossary: **[`docs/00-authority/NAMING.md`](docs/00-authority/NAMING.md)** § Domain vocabulary.
 
-| Term | Role |
-|------|------|
-| **Capture** | Live record/overdub buffer until stop |
-| **passes** (`LoopPasses`) | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
-| **recordPass** / **overdubPass** | Committed capture from record or overdub stop |
-| **editPass** | One `saveNoteEditPass()` row in **passes.editPasses[]** |
-| **EditSessionType** | Live edit session on **EditSession** (`Loop`, `Note`, `ControlChange`) |
-| **EditPassType** | Stored domain on each `editPass` (`Note`, `ControlChange`, `Audio`) |
-| **EditActionType** | Stored edit action (`Create`, `Update`, `Delete`) |
-| **EditPropertyType** | Updated stored field (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
-| **commitCapturePass()** | Seal **Capture** into **recordPass** or append **overdubPass** |
-| **RecordPassAdded** / **OverdubPassAdded** | Global undo when a capture pass commits |
-| **NoteEditPassClosed** | Global undo when a note-edit pass batch closes on exit |
-| **EditSession** | Live edit RAM owner on **EditManager** (`sessionType`, store, focus, in-session undo) |
-| **saveNoteEditPass()** | Persist note scoped rows into **passes.editPasses[]** (legacy **EditChange** payload retained during migration) |
-| **closeNoteEditPass()** | Flush a **noteEditPass** batch and push **NoteEditPassClosed** undo |
-| **EditNoteState** | Base class for note-edit UI states (`EditSelectNoteState`, …) |
-| **DebugSessionCapture** | Instrumented `#CAP` serial fixtures (`teensy41-capture-serial` build) |
+Quick reference — each **loop slot** (`Loop`) separates live **Capture** from committed timeline **passes** (`LoopPasses`: recordPass, overdubPasses, editPasses). Live note edit uses **NoteEditSession.store**; committed rows are **editPass** entries via `saveNoteEditPass()`. **merge** replays active capture passes; **materialize** replays full passes to a MIDI vector. Memory tiers: **internal heap** (fast RAM) and **external memory pool** (external RAM / PSRAM).
 
-Committed **passes** materialize via `LoopPasses::materialize()` for playback and display; live note edit reads/writes **NoteEditSession.store**. Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
-
-Naming notes: **merge** means active capture pass merge (`mergeActiveCapturePasses`, `mergeMaterializedPassesWithCapture`), **materialize** means full pass replay (`materializeToEventVector`), and memory tiers are **internal heap** (fast RAM) plus **external memory pool** (external RAM / PSRAM hardware).
+Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
 **How the system works (record → memory → playback → display → SD):** [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](docs/plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (external memory pool chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
 
@@ -233,7 +214,7 @@ Naming notes: **merge** means active capture pass merge (`mergeActiveCapturePass
 
 **Full capability list:** [`docs/FEATURES.md`](docs/FEATURES.md).
 
-**Code layout (Handler / Manager / Processor / Actions):** [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
+**Naming authority:** [`docs/00-authority/NAMING.md`](docs/00-authority/NAMING.md). **Code layout:** [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
 
 **Build:** [PlatformIO](https://platformio.org/) — `platformio.ini`, board **Teensy 4.1**.
 

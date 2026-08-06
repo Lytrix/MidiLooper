@@ -1,5 +1,7 @@
 # Unified publish pipeline — terminology refinement (Commit over Publish)
 
+> **Vocabulary:** Commit vs Publish terms remain plan-local until promoted to [`docs/00-authority/NAMING.md`](../00-authority/NAMING.md). See [`architecture_naming_authority_refinement.md`](architecture_naming_authority_refinement.md) § Plan glossary index.
+
 **Kind:** architecture refinement  
 **Date:** 2026-07-18  
 **Parent:** [`unified_publish_pipeline_deferred_lazy_loading_architecture.md`](unified_publish_pipeline_deferred_lazy_loading_architecture.md)

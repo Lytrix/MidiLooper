@@ -10,7 +10,7 @@ Verification role before merge, push, or "done" — human or agent.
 - Detect duplicated helpers, parallel state, display writes from business logic
 - Confirm tests listed in builder output were run or scheduled
 - Check OpenSpec `tasks.md` and [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md) updated when scope shipped
-- Enforce naming per `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`
+- Enforce naming per [NAMING.md](../00-authority/NAMING.md)
 
 ## Must reject implementation when
 
@@ -60,3 +60,15 @@ APPROVE / REQUEST CHANGES
 | Display | Read-only from domain; draw in DisplayManager |
 | Tests | Native suite for logic; HITL when touching capture/edit |
 | Docs | New decisions appended to DECISION_LOG at closeout |
+| Naming | [NAMING.md](../00-authority/NAMING.md) checklist — no new synonyms; verb conventions; Resolution not Pipeline for sync algorithms |
+
+## Naming review checklist
+
+From [NAMING.md](../00-authority/NAMING.md) § Architecture review checklist:
+
+- [ ] No unnecessary new terminology introduced
+- [ ] Existing architectural vocabulary reused (concept boundaries)
+- [ ] File names describe responsibilities
+- [ ] Public APIs follow established verb conventions
+- [ ] NAMING.md updated if a new architectural concept is approved
+- [ ] Pipeline / Queue / Flow not used for synchronous deterministic algorithms

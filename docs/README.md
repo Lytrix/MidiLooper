@@ -12,7 +12,8 @@ Does **not** change firmware — process and documentation for coding agents.
 
 | Document | Role |
 |----------|------|
-| [**00-authority/**](00-authority/README.md) | Authority hierarchy: intent → architecture → delivery |
+| [**00-authority/**](00-authority/README.md) | Authority hierarchy: intent → architecture → naming → delivery |
+| [00-authority/NAMING.md](00-authority/NAMING.md) | Architectural vocabulary, concept boundaries, migration policy |
 | [runtime/PROJECT_STATE.md](runtime/PROJECT_STATE.md) | Execution context — **load first** |
 | [runtime/CURRENT_WORK.md](runtime/CURRENT_WORK.md) | Implementation scope (now / not now) — **required before coding** |
 | [BRANCHING.md](BRANCHING.md) | v1 / v2 / v3 branches, feature workflow, local archive refs |
@@ -34,7 +35,7 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 
 | Document | Summary |
 |----------|---------|
-| [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Handler / Manager / Processor / Actions naming and module overview |
+| [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Module map; suffix naming → [NAMING.md](00-authority/NAMING.md) |
 | [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Capture / passes (record, overdub, edit), commitCapturePass, validation tiers, undo stacks, SD v4** — read before touching Loop/Track undo or stop paths |
 | [**record_overdub_memory_display_timeline_enhancement.md**](plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
 | [DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Central deferred save routing and chunk-bounded SD writer stages |
