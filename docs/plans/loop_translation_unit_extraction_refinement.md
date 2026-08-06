@@ -328,7 +328,7 @@ Appends to **`LoopCapture.cpp`**.
 
 ---
 
-## Phase 9 — visual cache → `LoopVisualCache.cpp`
+## Phase 9 — visual cache → `LoopVisualCache.cpp` ✅
 
 | Symbol | Role |
 |--------|------|
