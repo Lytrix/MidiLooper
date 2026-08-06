@@ -28,7 +28,7 @@ todos:
     status: completed
   - id: phase-10-remainder
     content: "Phase 10: evidence-driven placement per ownership guide (10a/10b/10c sub-slices as needed)"
-    status: pending
+    status: completed
 isProject: false
 ---
 
