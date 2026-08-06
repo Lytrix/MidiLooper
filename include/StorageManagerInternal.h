@@ -66,6 +66,14 @@ extern char autoSaveBeforeLoadFolderPending[16];
 extern bool autoSaveBeforeLoadFolderPendingValid;
 extern StorageSession storageSession;
 
+extern bool workspaceFooterPersistDeferred;
+
+bool anyAllocatedLoopEditStateDirty();
+void markCurrentSetLoopSlotDirtyInternal(uint8_t trackIndex, uint8_t slotIndex,
+                                         bool markMaterialChange = true);
+void markCurrentSetTrackDirtyInternal(uint8_t trackIndex, bool markMaterialChange = true);
+void markAllCurrentSetLoopSlotsDirtyInternal(bool markMaterialChange = true);
+
 constexpr size_t kSavedSetPathCapacity = 64;
 
 bool parseSavedSetSequence(const char* folderName, uint32_t& sequence);

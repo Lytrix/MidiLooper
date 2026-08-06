@@ -17,8 +17,9 @@ Shrink `src/StorageManager.cpp` from a ~4.4k-line monolith into a thin façade b
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/StorageManager.cpp` | **2120** (root TU; was 4411) |
-| `src/StorageManager/LegacyMonolithLoad.cpp` | **~285** (Phase 6) |
+| `src/StorageManager.cpp` | **1808** (root TU; was 4411) |
+| `src/StorageManager/PersistenceAdmit.cpp` | **~335** (Phase 7) |
+| `src/StorageManager/LegacyMonolithLoad.cpp` | **285** (Phase 6) |
 | `src/StorageManager/BootRecovery.cpp` | **349** (Phase 5) |
 | `src/StorageManager/SavedSetIo.cpp` | **418** (Phase 4) |
 | `src/StorageManager/LoopSlotRestoreQueue.cpp` | **321** (Phase 3) |
@@ -273,7 +274,7 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 
 ---
 
-## Phase 7 — `PersistenceAdmit.cpp` (~270 LOC)
+## Phase 7 — `PersistenceAdmit.cpp` (~270 LOC) — **shipped** (`refactor/storagemanager`)
 
 ### Move
 
