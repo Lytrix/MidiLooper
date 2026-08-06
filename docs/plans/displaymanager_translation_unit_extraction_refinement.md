@@ -17,10 +17,11 @@ Shrink `src/DisplayManager.cpp` from a ~3.3k-line monolith into a thin frame orc
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/DisplayManager.cpp` | **~2375** (root TU; was ~3300) |
+| `src/DisplayManager.cpp` | **~1540** (root TU; was ~3300) |
+| `src/DisplayManager/DisplayNoteResolve.cpp` | **~864** (Phase 2a–2c) |
 | `src/DisplayManager/LoadSaveOverlay.cpp` | **~906** (Phase 1) |
 | `src/DisplayManager/DisplayColdHelpers.cpp` | **~68** (Phase 0) |
-| `include/DisplayManagerInternal.h` | **~32** (Phase 0) |
+| `include/DisplayManagerInternal.h` | **~48** (Phase 0 + open-tail helpers) |
 | Related split already shipped | [`include/HitlDisplayBridge.h`](../../include/HitlDisplayBridge.h) — HITL serial entry points only |
 
 ### Target end state
@@ -150,9 +151,11 @@ Milestone after **Phases 0–6**: root TU within target band.
 
 ---
 
-## Phase 2 — `DisplayNoteResolve.cpp` (~1000 LOC)
+## Phase 2 — `DisplayNoteResolve.cpp` (~1000 LOC) — **shipped** (`refactor/displaymanager`, sub-phases 2a → 2b → 2c)
 
 **Priority:** Second — largest cohesive **read** domain; isolates hot path for a later **behavioral** mode split (optional sub-phases below).
+
+**Commits:** `f439eaa` (2a tick/window), `a4bbf6f` (2b live capture + open-tail helpers), `…` (2c playback/NOTE_EDIT dispatch + `#CAP DISP`).
 
 ### Move
 
@@ -160,8 +163,9 @@ Milestone after **Phases 0–6**: root TU within target band.
 |--------|------|
 | `isLiveRecordingDisplay`, `resolveDisplayLoopLength`, `resolveDisplayTick`, `resolveLoopOriginTick`, `resolvePlayheadInLoop` | Tick / length helpers |
 | `syncDetailedPaintWindow`, `resolveWindowedDisplayNotes` | Bounded window gather |
-| `resolveDisplayNotes` | Full mode dispatch (~666–1031) |
-| `applyCapturePlayheadTails`, `applyLiveOpenTails`, `applyRecordingPreviewOpenTails` | Open-tail helpers (anonymous, ~300–496) |
+| `resolveDisplayNotes` | Full mode dispatch (delegates to `resolveDisplayNotesLiveCapture` for live capture) |
+| `resolveDisplayNotesLiveCapture` | Live record / overdub branch (Phase 2b) |
+| `applyCapturePlayheadTails`, `applyLiveOpenTails`, `applyRecordingPreviewOpenTails` | Open-tail helpers (`DisplayManagerInternal`) |
 | `emitDisplayCaptureSnapshot` (both overloads), `maybeEmitDisplayCaptureOnChange` | `#CAP DISP` telemetry |
 
 ### Optional sub-phases (if single PR > ~1200 LOC diff)
