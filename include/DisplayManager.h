@@ -184,6 +184,8 @@ private:
     uint32_t resolvePlayheadInLoop(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     const DisplayNoteVec& resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                               uint32_t currentTick);
+    const DisplayNoteVec& resolveDisplayNotesLiveCapture(const Track& track, uint8_t displaySlot,
+                                                         uint32_t currentTick);
     /// Match `drawPianoRoll` detailed-window geometry (auto-follow + clamp).
     bool syncDetailedPaintWindow(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                  uint32_t loopLength, uint32_t& outWindowStart,
