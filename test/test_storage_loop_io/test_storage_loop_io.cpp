@@ -8,7 +8,7 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/LoopEventStore.cpp"
-#include "../../src/EditApply.cpp"
+#include "../../src/EditManager/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/StorageLoopIo.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"

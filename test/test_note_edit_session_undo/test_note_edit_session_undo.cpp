@@ -7,7 +7,7 @@
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
-#include "../../src/EditApply.cpp"
+#include "../../src/EditManager/EditApply.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/LoopPasses.cpp"
@@ -15,8 +15,8 @@
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/NoteEditFocus.cpp"
-#include "../../src/EditSessionLiveStoreSpan.cpp"
-#include "../../src/NoteEditSessionUndo.cpp"
+#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/NoteEditSessionUndoStack.cpp"
 
 #include "EditPass.h"
 #include "Globals.h"

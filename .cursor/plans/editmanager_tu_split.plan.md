@@ -32,6 +32,9 @@ todos:
   - id: phase-9-depart
     content: "Phase 9: Extract EditSessionDepart.cpp (track/slot depart, length mode, session cycle)"
     status: completed
+  - id: phase-10-colocate
+    content: "Phase 10: Colocate EditSession pipeline TUs + ResolveConstrainedGeometry under src/EditManager/"
+    status: completed
 isProject: false
 ---
 
@@ -43,6 +46,6 @@ isProject: false
 
 **Baseline:** `EditManager.cpp` **~2602 LOC** → target **~250–400 LOC** after Phases 0–9.
 
-**Shipped siblings (Phase 7):** `RunEditSessionGeometryPipeline.cpp` → `src/EditManager/NoteGeometryResolver.cpp` + `include/NoteGeometryResolver.h`. **Do not re-move bodies from:** `EditApply.cpp`, `EditSessionActionBuilder.cpp`, `EditSessionInteraction.cpp`, `EditSessionLiveStoreSpan.cpp`, `EditSessionStoreInvariant.cpp`, `EditStates/*.cpp`.
+**Shipped siblings:** under `src/EditManager/` — `EditApply`, `EditSessionActionBuilder`, `EditSessionInteraction`, `EditSessionLiveStoreSpan`, `EditSessionStoreInvariant`, `ApplyEditSessionActions`, `ApplyOwnedEditPassRows`, `NoteEditSessionUndoStack` (stack helpers), `ResolveConstrainedGeometry`. **At `src/` root:** `EditManager.cpp`, `NoteEditFocus.cpp`, `NoteEditSessionState.cpp`, `EditStates/*.cpp`.
 
 **PR stack:** 0 → 1 → 2 → 3 → 4 → 5; 6 after 2; 7 after 3+6; 8 parallel after 6; 9 last.

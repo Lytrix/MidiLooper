@@ -7,8 +7,8 @@
 #include "EditSessionActionBuilder.h"
 #include "MidiEvent.h"
 
-#include "../../src/EditSessionActionBuilder.cpp"
-#include "../../src/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/EditSessionActionBuilder.cpp"
+#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/NoteEditFocus.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
