@@ -154,7 +154,7 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase 0 — `NoteEditFocusInternal` scaffold
+## Phase 0 — `NoteEditFocusInternal` scaffold ✅
 
 **Risk:** low
 

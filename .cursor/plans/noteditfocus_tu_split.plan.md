@@ -4,7 +4,7 @@ overview: Shrink root NoteEditFocus.cpp (~1554 LOC) into domain modules under sr
 todos:
   - id: phase-0-scaffold
     content: "Phase 0: NoteEditFocusInternal.h + optional NoteEditFocusTestDeps.cpp"
-    status: pending
+    status: completed
   - id: phase-2-linear-span
     content: "Phase 2 → NoteEditFocusLinearSpan.cpp: pair/span resolution"
     status: pending
