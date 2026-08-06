@@ -17,8 +17,9 @@ Shrink `src/DisplayManager.cpp` from a ~3.3k-line monolith into a thin frame orc
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/DisplayManager.cpp` | **~295** (root TU; was ~3300) |
-| `src/DisplayManager/BootDisplay.cpp` | **~130** (Phase 5) |
+| `src/DisplayManager.cpp` | **~184** (root TU; was ~3300) — `update()`, `setup()`, ctor, `clearDisplayBuffer`, HITL bridge |
+| `src/DisplayManager/DisplayCacheLifecycle.cpp` | **~126** (Phase 6) |
+| `src/DisplayManager/BootDisplay.cpp` | **~127** (Phase 5) |
 | `src/DisplayManager/SidebarAndInfo.cpp` | **~578** (Phase 4) |
 | `src/DisplayManager/PianoRollDraw.cpp` | **~552** (Phase 3) |
 | `src/DisplayManager/DisplayNoteResolve.cpp` | **~864** (Phase 2a–2c) |
@@ -31,8 +32,8 @@ Shrink `src/DisplayManager.cpp` from a ~3.3k-line monolith into a thin frame orc
 
 | Artifact | Target |
 |----------|--------|
-| `DisplayManager.cpp` | **~400–600** — `update()`, `setup()`, boot gate, ctor, thin delegates |
-| New TUs (this plan) | **~2700** moved out in 6 phases |
+| `DisplayManager.cpp` | **~184** — `update()`, `setup()`, ctor, `clearDisplayBuffer`, HITL bridge |
+| New TUs (this plan) | **~3220** moved out in Phases 0–6 (**complete**) |
 | `DisplayManager` instance | **unchanged** — `_display`, `liveDisplayNotes`, load/save caches stay on the class |
 | Ownership / transitions | **unchanged** — hygiene only |
 
@@ -264,7 +265,7 @@ Sub-phases must land **in order 2a → 2b → 2c** on one branch; do not merge 2
 
 ---
 
-## Phase 6 — `DisplayCacheLifecycle.cpp` (~200 LOC)
+## Phase 6 — `DisplayCacheLifecycle.cpp` (~200 LOC) — **shipped** (`refactor/displaymanager`)
 
 ### Move
 
