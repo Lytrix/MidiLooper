@@ -303,7 +303,7 @@ Appends to **`LoopMaterialization.cpp`**.
 
 ---
 
-## Phase 8 — capture stop / seal / commit → `LoopCapture.cpp` (protected)
+## Phase 8 — capture stop / seal / commit → `LoopCapture.cpp` (protected) ✅
 
 Appends to **`LoopCapture.cpp`**.
 

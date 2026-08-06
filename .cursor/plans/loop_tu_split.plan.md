@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: phase-8-capture-stop
     content: "Phase 8 → LoopCapture.cpp: sealCapture, commitCapturePass (protected)"
-    status: pending
+    status: completed
   - id: phase-9-visual
     content: "Phase 9 → LoopVisualCache.cpp: visual cache + displayEventCountHint"
     status: pending
