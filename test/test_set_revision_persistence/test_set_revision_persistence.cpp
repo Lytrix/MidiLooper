@@ -8,11 +8,11 @@
 
 #include "../../src/PersistenceBudget.cpp"
 #include "../../src/PersistenceFailurePolicy.cpp"
-#include "../../src/CurrentWorkspaceStorage.cpp"
+#include "../../src/StorageManager/CurrentWorkspaceStorage.cpp"
 #include "../../src/PersistenceSchema.cpp"
 #include "../../src/RevisionPackedBlob.cpp"
 #include "../../src/RevisionLoadPolicy.cpp"
-#include "../../src/StorageActivitySnapshot.cpp"
+#include "../../src/StorageManager/StorageActivitySnapshot.cpp"
 #include "../../src/OverlayCatalogReadPolicy.cpp"
 #include "../../src/BootRecoveryPolicy.cpp"
 #include "../../src/SetBrowserOverlayPolicy.cpp"
