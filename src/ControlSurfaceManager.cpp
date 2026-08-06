@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "Utils/SelectNavigation.h"
 #include "ControlSurfaceManager.h"
+#include "ControlSurfaceManagerInternal.h"
 #include "LoopEditManager.h"
 
 #include "ClockManager.h"
@@ -82,85 +83,6 @@ void logGeomApplySkip(uint8_t reasonCode) {
                 static_cast<unsigned>(reasonCode));
 }
 #endif
-
-NOTE_EDIT_MEM void applyLengthEndTargetRules(uint32_t noteStart, uint32_t currentEnd, uint32_t loopLength,
-                               uint32_t minNoteDuration, uint32_t& targetEndTick) {
-    if (loopLength == 0) {
-        return;
-    }
-    noteStart %= loopLength;
-    currentEnd %= loopLength;
-    targetEndTick %= loopLength;
-
-    const bool nonWrap = currentEnd > noteStart;
-    if (nonWrap) {
-        const uint32_t minEndTick = noteStart + minNoteDuration;
-        if (targetEndTick < minEndTick) {
-            targetEndTick = minEndTick;
-        }
-        return;
-    }
-
-    const uint32_t newNoteDuration =
-        NoteMovementUtils::calculateNoteLength(noteStart, targetEndTick, loopLength);
-    if (newNoteDuration < minNoteDuration) {
-        targetEndTick = (noteStart + minNoteDuration) % loopLength;
-    }
-}
-
-NOTE_EDIT_MEM int16_t lengthEditLoopTickToCoarsePitchbend(uint32_t tick, uint32_t loopLength) {
-    if (loopLength <= 1) {
-        return MidiConfig::Pitchbend::CENTER;
-    }
-    tick %= loopLength;
-    const float normalizedPos =
-        static_cast<float>(tick) / static_cast<float>(loopLength - 1);
-    const int16_t pitchbend = static_cast<int16_t>(
-        MidiConfig::Pitchbend::MIN +
-        normalizedPos * static_cast<float>(MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
-    return constrain(pitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
-}
-
-NOTE_EDIT_MEM uint32_t lengthEditCoarsePitchbendToLoopTick(int16_t pitchValue, uint32_t loopLength) {
-    if (loopLength <= 1) {
-        return 0;
-    }
-    const float normalizedPos =
-        static_cast<float>(pitchValue - MidiConfig::Pitchbend::MIN) /
-        static_cast<float>(MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN);
-    const float tickFloat = normalizedPos * static_cast<float>(loopLength - 1);
-    const uint32_t tick = static_cast<uint32_t>(tickFloat + 0.5f);
-    return tick >= loopLength ? loopLength - 1 : tick;
-}
-
-NOTE_EDIT_MEM void clampLengthEditFineTargetTick(int32_t signedTick, uint32_t loopLength,
-                                   uint32_t& outRelativeTick) {
-    if (loopLength == 0) {
-        outRelativeTick = 0;
-        return;
-    }
-    if (signedTick <= 0) {
-        outRelativeTick = 0;
-        return;
-    }
-    if (static_cast<uint32_t>(signedTick) >= loopLength) {
-        outRelativeTick = loopLength - 1;
-        return;
-    }
-    outRelativeTick = static_cast<uint32_t>(signedTick);
-}
-
-NOTE_EDIT_MEM int32_t lengthEditFineOffsetFromCc(uint8_t ccValue) {
-    const int32_t halfRange = static_cast<int32_t>(Config::TICKS_PER_16TH_STEP);
-    const int32_t rawOffset = static_cast<int32_t>(ccValue) - 64;
-    return constrain(rawOffset, -halfRange, halfRange);
-}
-
-NOTE_EDIT_MEM uint8_t lengthEditFineCcFromOffset(int32_t offsetFromAnchor) {
-    const int32_t halfRange = static_cast<int32_t>(Config::TICKS_PER_16TH_STEP);
-    const int32_t clampedOffset = constrain(offsetFromAnchor, -halfRange, halfRange);
-    return static_cast<uint8_t>(constrain(64 + clampedOffset, 0, 127));
-}
 
 }  // namespace
 
@@ -263,62 +185,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleMidiCC(uint8_t channel, uint8_t 
     
     logger.log(CAT_MIDI, LOG_DEBUG, "CC ignored: not on monitored channels/CC (%d/%d, %d/%d, or loop length)", 
                FINE_CC_CHANNEL, FINE_CC_NUMBER, NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER);
-}
-
-NOTE_EDIT_MEM void ControlSurfaceManager::processEncoderMovement(int rawDelta) {
-    if (rawDelta == 0) {
-        return;
-    }
-
-    static uint32_t lastEncoderTime = 0;
-    const uint32_t now = millis();
-    const uint32_t interval = now - lastEncoderTime;
-    lastEncoderTime = now;
-
-    int accel = 1;
-    switch (editManager.getNoteEditSessionState().kind) {
-        case NoteEditKind::Move:
-            if (interval < 25) {
-                accel = 24;
-            } else if (interval < 50) {
-                accel = 8;
-            } else if (interval < 100) {
-                accel = 4;
-            }
-            break;
-        case NoteEditKind::Length:
-            if (interval < 25) {
-                accel = 8;
-            } else if (interval < 50) {
-                accel = 4;
-            } else if (interval < 100) {
-                accel = 2;
-            }
-            break;
-        case NoteEditKind::Pitch:
-            if (interval < 50) {
-                accel = 4;
-            } else if (interval < 75) {
-                accel = 3;
-            } else if (interval < 100) {
-                accel = 2;
-            }
-            break;
-        default:
-            if (interval < 50) {
-                accel = 4;
-            } else if (interval < 75) {
-                accel = 3;
-            } else if (interval < 100) {
-                accel = 2;
-            }
-            break;
-    }
-
-    const int finalDelta = rawDelta * accel;
-    if (editManager.getCurrentState() != nullptr) {
-        editManager.onEncoderTurn(trackManager.getSelectedTrack(), finalDelta);
-    }
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::cycleEditSession(Track& track) {
