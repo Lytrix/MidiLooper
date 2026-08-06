@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: phase-6-overdub
     content: "Phase 6: Extract TrackOverdubLifecycle.cpp (start/stop overdub, handleNoteEditFold) — protected"
-    status: pending
+    status: completed
   - id: phase-7-window
     content: "Phase 7: Extract TrackPlaybackWindowBuild.cpp (merged MIDI build, runtime reclaim, playback reset)"
     status: pending
