@@ -244,10 +244,3 @@ template void pruneOverlapNotesBeforePreCommit<InternalHeapFirstAllocator<MidiEv
     NoteEditFocus&, MidiEventVec&, uint8_t);
 template void pruneOverlapNotesBeforePreCommit<ExternalMemoryFirstAllocator<MidiEvent>>(
     NoteEditFocus&, SessionMidiEventVec&, uint8_t);
-
-NOTE_EDIT_MEM EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
-  // Retired: overlap rows come from baselineMap vs live store
-  // (buildPreCommitBaselineLiveDiffOverlapPasses). Kept as empty stub for call-site stability.
-  (void)focus;
-  return EditPassVec{};
-}

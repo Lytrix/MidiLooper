@@ -14,7 +14,7 @@ namespace SelectNavigation {
 struct SelectNavSlot {
     uint32_t relativeTick = 0;
     NoteId noteId = kInvalidNoteId;
-    /// Index into **filterSelectableDisplayNotes** when **NoteEditSession** is active; else full note list.
+    /// Index into **projectNoteEditDisplayNotes** (via EditManager selectable display) when **NoteEditSession** is active; else full note list.
     int noteIdx = -1;  // -1 = empty 16th step (no note)
 };
 

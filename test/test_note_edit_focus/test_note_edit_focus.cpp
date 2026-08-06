@@ -1030,7 +1030,7 @@ void test_filter_excludes_hidden_overlap_note() {
   focus.baselineMap[12] = {60, 64, 584, 680};
 
   const NoteUtils::DisplayNoteVec filtered =
-      filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
+      projectNoteEditDisplayNotes(flat, focus, 1, kLoopLength);
 
   TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
   for (const NoteUtils::DisplayNote& dn : filtered) {
@@ -1053,7 +1053,7 @@ void test_filter_includes_shortened_overlap_note() {
   populateBaselineMapForEditClosure(focus, flat, flat, 1, kLoopLength);
 
   const NoteUtils::DisplayNoteVec filtered =
-      filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
+      projectNoteEditDisplayNotes(flat, focus, 1, kLoopLength);
 
   bool foundShortened = false;
   for (const NoteUtils::DisplayNote& dn : filtered) {
@@ -1093,7 +1093,7 @@ void test_filter_shortened_overlap_uses_live_span_when_reconstruct_mispairs() {
   store.push_back(moverOff);
 
   const NoteUtils::DisplayNoteVec filtered =
-      filterSelectableDisplayNotes(store, focus, channel, kLoopLength);
+      projectNoteEditDisplayNotes(store, focus, channel, kLoopLength);
 
   bool foundShortenedOverlap = false;
   for (const NoteUtils::DisplayNote& dn : filtered) {
@@ -1130,7 +1130,7 @@ void test_filter_excludes_inner_under_moving_note() {
   populateBaselineMapForEditClosure(focus, flat, flat, 1, kLoopLength);
 
   const NoteUtils::DisplayNoteVec filtered =
-      filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
+      projectNoteEditDisplayNotes(flat, focus, 1, kLoopLength);
 
   TEST_ASSERT_EQUAL(3, static_cast<int>(filtered.size()));
   bool foundInner = false;
@@ -1162,7 +1162,7 @@ void test_filter_includes_moving_note_when_hidden_overlap_baseline_matches() {
   focus.last = {60, 100, 576, 624};
 
   const NoteUtils::DisplayNoteVec filtered =
-      filterSelectableDisplayNotes(flat, focus, channel, kLoopLength);
+      projectNoteEditDisplayNotes(flat, focus, channel, kLoopLength);
 
   TEST_ASSERT_EQUAL(1, static_cast<int>(filtered.size()));
   TEST_ASSERT_EQUAL(kMoverId, filtered[0].noteId);
@@ -1177,7 +1177,7 @@ void test_filtered_display_note_index_for_note_ref() {
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
 
   const NoteUtils::DisplayNoteVec filtered =
-      filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
+      projectNoteEditDisplayNotes(flat, focus, 1, kLoopLength);
   TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
 
   const NoteId secondId = noteIdFromFilteredDisplayNote(filtered, 1);
@@ -1236,7 +1236,7 @@ void test_prune_overlap_shortened_display_baseline_artifact() {
   pruneOverlapNotesBeforePreCommit(focus, session, 1);
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
 
-  const EditPassVec rows = buildPreCommitOverlapEditPasses(focus);
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
   TEST_ASSERT_EQUAL(0, static_cast<int>(rows.size()));
 }
 
@@ -1898,7 +1898,7 @@ void test_editor_selection_resolves_mover_after_macro_normalize() {
 
   runNoteEditMacroCommitNormalize(session, focus, 1, loopLength);
 
-  const auto filtered = filterSelectableDisplayNotes(session, focus, 1, loopLength);
+  const auto filtered = projectNoteEditDisplayNotes(session, focus, 1, loopLength);
   const int idx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
       sessionState.selection, filtered);
   TEST_ASSERT_TRUE(idx >= 0);

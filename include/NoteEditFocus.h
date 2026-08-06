@@ -230,13 +230,9 @@ void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, std::vector<MidiEven
 bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
                                      const NoteBaseline& baseline);
 
-/// Legacy scratch path only — returns empty rows. Production overlap commit uses
-/// buildPreCommitBaselineLiveDiffOverlapPasses when sessionStoreEvents is provided.
-/// Retained for buildPreCommitEditPasses fallback (nullptr session) and native tests.
-EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
-
 /// B1: ordered edit pass rows per pre-commit emission (skip no-ops).
 /// When @p sessionStoreEvents is set, overlap target rows derive from baseline vs live store.
+/// When unset, overlap rows are omitted (moving-note rows still emitted when focus is active).
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                      const MidiEventVec* sessionStoreEvents = nullptr,
                                      uint32_t loopLength = 0);
@@ -259,14 +255,6 @@ NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   const NoteUtils::DisplayNoteVec committedBase =
       NoteUtils::reconstructDisplayNotes(sessionEvents, loopLength, false);
   return projectNoteEditDisplayNotes(committedBase, sessionEvents, focus, channel, loopLength);
-}
-
-/// Back-compat alias — prefer `projectNoteEditDisplayNotes`.
-template <typename Alloc>
-NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
-    const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
-    uint8_t channel, uint32_t loopLength) {
-  return projectNoteEditDisplayNotes(sessionEvents, focus, channel, loopLength);
 }
 
 /// NoteIds for micro normalize + full-loop transaction baseline (mover, overlap, all live notes).

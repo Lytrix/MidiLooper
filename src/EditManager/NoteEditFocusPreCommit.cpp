@@ -87,8 +87,6 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, u
   if (sessionStoreEvents != nullptr && loopLength > 0) {
     rows = buildPreCommitBaselineLiveDiffOverlapPasses(focus, *sessionStoreEvents, channel,
                                                        loopLength);
-  } else {
-    rows = buildPreCommitOverlapEditPasses(focus);
   }
   if (!focus.active) {
     return rows;
