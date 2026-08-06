@@ -159,6 +159,7 @@ bool resolvePersistKeyToTrackSlot(const PersistKey& key, uint8_t& trackIndexOut,
                                   uint8_t& slotIndexOut);
 SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
 SyncDrainBudget buildSyncDrainBudgetForSession();
+bool drainPersistenceWorkBlocking(const LooperState& state);
 bool beginDeferredRuntimeBundleWrite(const LooperState& state);
 bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut);
 bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);
@@ -179,7 +180,6 @@ bool reopenDeferredMetaTempForAppend();
 bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex);
 bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex);
 
-bool hasPersistenceWorkPending();
 bool deferredSaveBlockedByActiveSlotLoadSd();
 bool deferredSaveBlockedByPostLoadCommitHoldoff();
 void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice);
@@ -321,5 +321,16 @@ bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& a
 bool handleHitlQuarantineCommandLine(const char* line);
 void quarantineCorruptRuntimeBundleOnSd();
 #endif
+
+inline bool hasPersistenceWorkPending() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return storageSession.currentWorkspaceSave.pending ||
+           PersistenceWorkQueue::queueDepth() > 0 ||
+           PersistenceWorkQueue::writingWorkItemCount() > 0 ||
+           storageSession.persistenceWorkItem.itemActive;
+#endif
+}
 
 }  // namespace StorageManagerInternal
