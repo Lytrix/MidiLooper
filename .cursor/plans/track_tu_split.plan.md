@@ -35,6 +35,9 @@ todos:
   - id: phase-10-defer-geom
     content: "Phase 10: Extract TrackDeferredMaintenance.cpp + TrackLoopJamGeometry.cpp (REVT, idle validate, loop/jam, clear)"
     status: completed
+  - id: phase-11-colocate
+    content: "Phase 11: Colocate TrackStateMachine, TrackPlaybackRuntime, TrackDisplayState under src/Track/"
+    status: completed
 isProject: false
 ---
 
@@ -44,8 +47,10 @@ isProject: false
 
 **Branch:** `refactor/track` (from `dev`)
 
-**Baseline:** `Track.cpp` **~2436 LOC** → target **~200–350 LOC** after Phases 0–10.
+**Baseline:** `Track.cpp` **~23 LOC** (ctor/dtor). Phases 0–10 complete; Phase 11 colocated sibling TUs under `src/Track/`.
 
-**Shipped siblings (do not re-move):** `TrackStateMachine.cpp`, `TrackPlaybackRuntime.cpp`, `TrackUndo.cpp`, `TrackDisplayState.cpp`, `TrackManager.cpp`.
+**At `src/` root (by design):** `Track.cpp`, `TrackManager.cpp`, `TrackUndo.cpp` — same pattern as `EditManager.cpp` + `NoteEditSession` at root.
+
+**Under `src/Track/`:** Phases 0–10 TUs + `TrackStateMachine.cpp`, `TrackPlaybackRuntime.cpp`, `TrackDisplayState.cpp`.
 
 **PR stack:** 0 → 1 → 2; 3 parallel after 2; 4 before 5; 5 → 6 sequential (protected); 7 before 8; 9 after 3+8; 10 last.

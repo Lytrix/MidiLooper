@@ -63,9 +63,9 @@ Shrink [`src/Track.cpp`](../../src/Track.cpp) from a ~2436-line monolith into a 
 
 | Area | Reason |
 |------|--------|
-| `TrackStateMachine.cpp` | Transition table owner — `Track::setState` stays thin wrapper |
-| `TrackPlaybackRuntime.cpp` | Runtime allocation / `LoopPlaybackRuntime` lifecycle |
-| `TrackUndo.cpp` | Global undo — separate module |
+| `src/Track/TrackStateMachine.cpp` | Transition table owner — colocated Phase 11; **do not duplicate** |
+| `src/Track/TrackPlaybackRuntime.cpp` | Runtime allocation / `LoopPlaybackRuntime` lifecycle — colocated Phase 11 |
+| `TrackUndo.cpp` | Global undo — stays at `src/` root (separate module) |
 | `Loop::commitCapturePass` / seal logic | `Loop` owner — Track only orchestrates stop |
 | `TrackManager.cpp` | Multi-track routing — separate plan |
 | Behavioral DRY (`unified_capture_stop_driver`) | **Separate track** — [unified_capture_stop_driver_refinement.md](unified_capture_stop_driver_refinement.md); this plan is **body moves only** |
@@ -446,6 +446,22 @@ Split into **10a** and **10b** if a single PR exceeds review comfort; otherwise 
 - Deferred validate policy; slot clear; loop length edit smoke
 
 **PR title:** `refactor(track): extract deferred maintenance and loop/jam geometry`
+
+---
+
+## Phase 11 — Colocate sibling TUs under `src/Track/` (shipped)
+
+Mechanical `git mv` only — no behavior change.
+
+| From | To |
+|------|-----|
+| `src/TrackStateMachine.cpp` | `src/Track/TrackStateMachine.cpp` |
+| `src/TrackPlaybackRuntime.cpp` | `src/Track/TrackPlaybackRuntime.cpp` |
+| `src/TrackDisplayState.cpp` | `src/Track/TrackDisplayState.cpp |
+
+**Left at `src/` root:** `Track.cpp`, `TrackManager.cpp`, `TrackUndo.cpp` (same pattern as `EditManager.cpp` + `NoteEditSession` at root).
+
+**PR title:** `refactor(track): colocate per-track sibling TUs under src/Track`
 
 ---
 
