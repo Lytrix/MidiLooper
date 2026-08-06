@@ -25,13 +25,13 @@ todos:
     status: completed
   - id: phase-7-geometry
     content: "Phase 7: NoteGeometryResolver (relocate TU, merge driver header) + extract NoteEditGeometryOps.cpp"
-    status: pending
+    status: completed
   - id: phase-8-fsm
     content: "Phase 8: Extract EditNoteStateCoordinator.cpp (encoder FSM routing, bracket nav)"
-    status: pending
+    status: completed
   - id: phase-9-depart
     content: "Phase 9: Extract EditSessionDepart.cpp (track/slot depart, length mode, session cycle)"
-    status: pending
+    status: completed
 isProject: false
 ---
 
