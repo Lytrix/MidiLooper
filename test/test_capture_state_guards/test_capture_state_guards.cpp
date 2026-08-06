@@ -7,7 +7,7 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditManager/EditApply.cpp"
-#include "../../src/LoopPasses.cpp"
+#include "../../src/Loop/LoopPasses.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"

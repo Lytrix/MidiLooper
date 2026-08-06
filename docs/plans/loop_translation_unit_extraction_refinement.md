@@ -123,9 +123,9 @@ Only introduce a new translation unit if a genuine process emerges
 
 Capture commit and edit-pass mutation call `markPassDerivedStale` (coordinator) → materialized + visual stale. Visual rebuild **calls into** Materialization; it does not duplicate gather logic.
 
-### Naming note — `LoopPasses.cpp` already exists
+### Naming note — `LoopPasses.cpp`
 
-[`src/LoopPasses.cpp`](../../src/LoopPasses.cpp) owns **`LoopPasses::materialize`** (struct-level merge/replay). Optional Phase 11 colocate under `src/Loop/` — unchanged responsibility.
+[`src/Loop/LoopPasses.cpp`](../../src/Loop/LoopPasses.cpp) owns **`LoopPasses::materialize`** (struct-level merge/replay). Phase 11 colocated under `src/Loop/` — unchanged responsibility.
 
 ---
 
@@ -136,9 +136,9 @@ Capture commit and edit-pass mutation call `markPassDerivedStale` (coordinator) 
 | [`src/Loop.cpp`](../../src/Loop.cpp) | **~1644** (root TU) |
 | [`include/Loop.h`](../../include/Loop.h) | **~231** |
 | `LoopInternal.h` | **does not exist yet** |
-| [`src/LoopPasses.cpp`](../../src/LoopPasses.cpp) | **~154** — `LoopPasses::materialize` |
+| [`src/Loop/LoopPasses.cpp`](../../src/Loop/LoopPasses.cpp) | **~154** — `LoopPasses::materialize` |
 | [`src/LoopEventStore.cpp`](../../src/LoopEventStore.cpp) | **~960** |
-| [`src/LoopPool.cpp`](../../src/LoopPool.cpp) | **~133** |
+| [`src/Loop/LoopPool.cpp`](../../src/Loop/LoopPool.cpp) | **~133** |
 
 ### Target end state
 
@@ -370,12 +370,14 @@ After 10a–10c, root `Loop.cpp` target: **~150–250 LOC**.
 
 ---
 
-## Optional Phase 11 — colocate sibling TUs
+## Optional Phase 11 — colocate sibling TUs ✅
 
 | From | To |
 |------|-----|
 | `src/LoopPasses.cpp` | `src/Loop/LoopPasses.cpp` |
 | `src/LoopPool.cpp` | `src/Loop/LoopPool.cpp` |
+
+Headers remain in `include/`. `LoopEventStore` stays at `src/LoopEventStore.cpp` (shared storage primitive).
 
 ---
 

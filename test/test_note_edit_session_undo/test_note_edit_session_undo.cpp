@@ -10,7 +10,7 @@
 #include "../../src/EditManager/EditApply.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/LoopEventStore.cpp"
-#include "../../src/LoopPasses.cpp"
+#include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
