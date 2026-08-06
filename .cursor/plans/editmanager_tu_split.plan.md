@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: phase-3-commit
     content: "Phase 3: Extract NoteEditSessionCommit.cpp (commitAllPending, commitEditAction, bake) — protected"
-    status: pending
+    status: completed
   - id: phase-4-lifecycle
     content: "Phase 4: Extract NoteEditSessionLifecycle.cpp (open/close/fold/persist) — protected"
     status: pending
