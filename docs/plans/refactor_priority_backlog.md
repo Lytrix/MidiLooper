@@ -81,6 +81,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 | **DisplayManager TU extraction** Phases 0–6 | Complete | [displaymanager_translation_unit_extraction_refinement.md](displaymanager_translation_unit_extraction_refinement.md) |
 | **Track TU extraction** Phases 0–11 | Shipped PR #13 | [track_translation_unit_extraction_refinement.md](track_translation_unit_extraction_refinement.md) |
 | **Mechanical TU split workflow** (template + Cursor rule + smoke checklist) | Process | High — agent efficiency | Low | **Done** — 2026-08-06 | [dev_workflow_reflection plan](../../.cursor/plans/dev_workflow_reflection_aa358598.plan.md), [Mechanical-TU-Split-Workflow.mdc](../../.cursor/rules/Mechanical-TU-Split-Workflow.mdc) |
+| **Legacy API retirement** (move first, Phase LR) | Process | High — review/bisect | Low | **Done** — policy doc + rule | [legacy_api_retirement_tu_extraction_refinement.md](legacy_api_retirement_tu_extraction_refinement.md) |
 | **Firmware ownership lifetime review** P0–P1 | 2026-08-06 | [firmware_ownership_lifetime_review.md](firmware_ownership_lifetime_review.md) |
 
 ---

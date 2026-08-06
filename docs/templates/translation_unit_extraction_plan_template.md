@@ -3,7 +3,8 @@
 **Kind:** refinement  
 **Branch:** `refactor/{module}` (from `dev`)  
 **Naming authority:** [NAMING.md](../00-authority/NAMING.md)  
-**Workflow:** [Mechanical-TU-Split-Workflow.mdc](../../.cursor/rules/Mechanical-TU-Split-Workflow.mdc)
+**Workflow:** [Mechanical-TU-Split-Workflow.mdc](../../.cursor/rules/Mechanical-TU-Split-Workflow.mdc)  
+**Legacy API retirement:** [legacy_api_retirement_tu_extraction_refinement.md](../plans/legacy_api_retirement_tu_extraction_refinement.md)
 
 ---
 
@@ -70,7 +71,7 @@ include/{Module}Internal.h     shared cold helpers / template decls (if needed)
 2. **Architecture checkpoint** — ownership **NO**, transition **NO** unless phase explicitly approved.
 3. **Per phase:** `git commit` + `pio run -e teensy41-capture-serial` (mandatory).
 4. **Per batch (low/med):** `pio test -e native` once at end.
-5. **Naming in-scope** — touch-and-strengthen in same commit as move; no rename-only PRs.
+5. **Naming in-scope** — touch-and-strengthen in same commit as move; **no legacy wrapper/alias removal** during extraction ([legacy_api_retirement_tu_extraction_refinement.md](../plans/legacy_api_retirement_tu_extraction_refinement.md)).
 6. **Risk tier** per phase: `low` | `medium` | `high` — high splits sessions; firmware + native per slice.
 
 ---
@@ -84,6 +85,20 @@ include/{Module}Internal.h     shared cold helpers / template decls (if needed)
 | | |
 
 **PR title:** `refactor({module}): Phase N …`
+
+---
+
+## Phase LR — Legacy Retirement (optional, after Phase 10)
+
+**Risk:** low — API cleanup only; no ownership or behaviour change.
+
+List wrappers/aliases to remove (must meet [retirement criteria](../plans/legacy_api_retirement_tu_extraction_refinement.md#retirement-criteria)):
+
+| Legacy symbol | Replacement | Callers migrated? |
+|---------------|-------------|-------------------|
+| | | |
+
+**PR title:** `refactor({module}): Legacy Retirement — remove obsolete wrappers`
 
 ---
 
