@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: phase-3-state
     content: "Phase 3: Extract TrackStateFacade.cpp (setState wrapper, predicates, mute, slot focus)"
-    status: pending
+    status: completed
   - id: phase-4-capture-in
     content: "Phase 4: Extract TrackCaptureInput.cpp (startRecording, recordMidiEvents, noteOn/Off, finalizePendingNotes)"
     status: pending
