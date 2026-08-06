@@ -16,10 +16,10 @@ todos:
     status: completed
   - id: phase-4-capture-in
     content: "Phase 4: Extract TrackCaptureInput.cpp (startRecording, recordMidiEvents, noteOn/Off, finalizePendingNotes)"
-    status: pending
+    status: completed
   - id: phase-5-capture-stop
     content: "Phase 5: Extract TrackCaptureStopCommit.cpp (prepareRecordStop, stopRecording, commitCaptureForStop) — protected"
-    status: pending
+    status: completed
   - id: phase-6-overdub
     content: "Phase 6: Extract TrackOverdubLifecycle.cpp (start/stop overdub, handleNoteEditFold) — protected"
     status: pending
