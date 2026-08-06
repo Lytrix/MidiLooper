@@ -9,6 +9,9 @@
 #include "Loop.h"
 #include "LoopPasses.h"
 #include "Track.h"
+#include "TrackPlaybackRuntime.h"
+#include "Utils/IntervalProjection.h"
+#include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/TrackMem.h"
 
 #if defined(__IMXRT1062__)
@@ -49,6 +52,32 @@ TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track);
 
 TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop);
+
+struct MergedPlaybackStreamCtx {
+  const PlaybackOrderVec* order = nullptr;
+  const SessionMidiEventVec* merged = nullptr;
+};
+
+TRACK_INTERNAL_MEM ProjectionContext makePlaybackContext(const Track& track, const Loop& loop,
+                                                         uint32_t currentTick);
+
+TRACK_INTERNAL_MEM void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents,
+                                              const PlaybackOrderVec& order,
+                                              const ProjectionContext& playbackContext);
+
+TRACK_INTERNAL_MEM void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop,
+                                                            LoopPlaybackRuntime& runtime,
+                                                            bool allowHeavyBuild,
+                                                            uint32_t currentTick);
+
+TRACK_INTERNAL_MEM void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
+                                             const ProjectionContext& playbackContext);
+
+TRACK_INTERNAL_MEM void reanchorCaptureIndex(Loop& loop);
+
+TRACK_INTERNAL_MEM PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx);
+
+TRACK_INTERNAL_MEM PlaybackEventStream makeCapturePlaybackStream(Loop& loop);
 
 #if defined(SESSION_CAPTURE)
 TRACK_INTERNAL_MEM void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick,
