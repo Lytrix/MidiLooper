@@ -17,7 +17,8 @@ Shrink `src/DisplayManager.cpp` from a ~3.3k-line monolith into a thin frame orc
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/DisplayManager.cpp` | **~3251** (root TU; was ~3300) |
+| `src/DisplayManager.cpp` | **~2375** (root TU; was ~3300) |
+| `src/DisplayManager/LoadSaveOverlay.cpp` | **~906** (Phase 1) |
 | `src/DisplayManager/DisplayColdHelpers.cpp` | **~68** (Phase 0) |
 | `include/DisplayManagerInternal.h` | **~32** (Phase 0) |
 | Related split already shipped | [`include/HitlDisplayBridge.h`](../../include/HitlDisplayBridge.h) — HITL serial entry points only |
@@ -110,7 +111,7 @@ Milestone after **Phases 0–6**: root TU within target band.
 
 ---
 
-## Phase 1 — `LoadSaveOverlay.cpp` (~800 LOC)
+## Phase 1 — `LoadSaveOverlay.cpp` (~800 LOC) — **shipped** (`refactor/displaymanager`)
 
 **Priority:** Highest ROI — self-contained overlay UI; minimal coupling to piano-roll hot path.
 
