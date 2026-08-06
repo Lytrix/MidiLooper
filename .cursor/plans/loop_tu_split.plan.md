@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: phase-5-snapshot
     content: "Phase 5 → LoopEditPasses.cpp: share/adopt/restore snapshot"
-    status: pending
+    status: completed
   - id: phase-7-capture-live
     content: "Phase 7 → LoopCapture.cpp: beginCapture, appendCaptureEvent"
     status: pending

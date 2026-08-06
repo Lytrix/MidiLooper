@@ -274,7 +274,7 @@ Appends to **`LoopMaterialization.cpp`**.
 
 ---
 
-## Phase 5 — snapshots → `LoopEditPasses.cpp`
+## Phase 5 — snapshots → `LoopEditPasses.cpp` ✅
 
 | Symbol | Role |
 |--------|------|

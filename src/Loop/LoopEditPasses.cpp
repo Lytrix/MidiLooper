@@ -7,6 +7,66 @@
 #include "Logger.h"
 #include "Utils/MemoryMonitor.h"
 
+#include <memory>
+
+LoopSnapshotRef Loop::sharePassesSnapshot() const {
+  auto snapshot = std::make_shared<PersistedLoopSnapshot>();
+  snapshot->loopId = loopId;
+  snapshot->startLoopTick = startLoopTick;
+  snapshot->loopLengthTicks = loopLengthTicks;
+  snapshot->loopStartTick = loopStartTick;
+  snapshot->nextPassId = nextPassId_;
+  snapshot->nextNoteId = nextNoteId_;
+  snapshot->nextMergeSequence = nextMergeSequence_;
+  snapshot->lastCommittedPassId = lastCommittedPassId_;
+  snapshot->passes = deepClonePasses(passes);
+  return snapshot;
+}
+
+void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
+  discardPendingCapturePass();
+  discardCapture();
+  resetPassTimeline();
+  loopId = snapshot.loopId;
+  startLoopTick = snapshot.startLoopTick;
+  loopLengthTicks = snapshot.loopLengthTicks;
+  loopStartTick = snapshot.loopStartTick;
+  nextPassId_ = snapshot.nextPassId == 0 ? 1 : snapshot.nextPassId;
+  nextNoteId_ = snapshot.nextNoteId == 0 ? 1 : snapshot.nextNoteId;
+  nextMergeSequence_ = snapshot.nextMergeSequence;
+  lastCommittedPassId_ = snapshot.lastCommittedPassId;
+  lastTickInLoop = 0;
+  nextEventIndex = 0;
+  playbackOrderDirty = true;
+  passes = std::move(snapshot.passes);
+  snapshot.passes = LoopPasses{};
+  loopLengthTicks = reconcileLoopLengthWithCommittedPasses(loopLengthTicks);
+  ++playbackRevision;
+  discardPassesMaterializedCache();
+  markDisplayCachesStale();
+}
+
+void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
+  discardPendingCapturePass();
+  discardCapture();
+  resetPassTimeline();
+  loopId = snapshot.loopId;
+  startLoopTick = snapshot.startLoopTick;
+  loopLengthTicks = snapshot.loopLengthTicks;
+  loopStartTick = snapshot.loopStartTick;
+  nextPassId_ = snapshot.nextPassId == 0 ? 1 : snapshot.nextPassId;
+  nextNoteId_ = snapshot.nextNoteId == 0 ? 1 : snapshot.nextNoteId;
+  nextMergeSequence_ = snapshot.nextMergeSequence;
+  lastCommittedPassId_ = snapshot.lastCommittedPassId;
+  lastTickInLoop = 0;
+  nextEventIndex = 0;
+  playbackOrderDirty = true;
+  passes = deepClonePasses(snapshot.passes);
+  ++playbackRevision;
+  discardPassesMaterializedCache();
+  markDisplayCachesStale();
+}
+
 EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType) {
   if (!canHeapAdmitEditPass(row)) {
     logger.log(CAT_TRACK, LOG_WARNING,
