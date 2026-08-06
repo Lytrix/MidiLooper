@@ -32,6 +32,7 @@
 #include "SetRevisionCatalog.h"
 #include "RtcTime.h"
 #include "HitlDisplayBridge.h"
+#include "DisplayManagerInternal.h"
 
 #if defined(__IMXRT1062__)
 #define DISP_COLD_MEM FLASHMEM
@@ -39,57 +40,8 @@
 #define DISP_COLD_MEM
 #endif
 
-namespace {
+using namespace DisplayManagerInternal;
 
-bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength) {
-    // Long-loop policy only. Transient SD/undo/save pressure must not skip short-loop
-    // ensureVisualCacheBuilt — syncDetailedPaintWindow cannot run below the 16-bar threshold,
-    // and after invalidate that left the OLED on an empty roll after the first good paint.
-    return loop.shouldAvoidFullVisualRebuild(loopLength);
-}
-
-bool shouldDeferHeavyDisplayRebuild() {
-    // Undo hydrate / deferred save can steal the SD bus for long stretches — soft-defer
-    // full visual cache builds. Do NOT key off SlotLoadSession: LoadLoopJob can
-    // stay active across many main-loop turns and made OLED stutter (session_20260718_174018).
-    // Long loops already use the windowed / stale-while-revalidate path while PLAYING.
-    return StorageManager::hasPendingUndoSnapshotHydrate() ||
-           StorageManager::hasDeferredSaveWork();
-}
-
-/// Windowed reconstruction of display notes from published (+ optional capture) events.
-DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopLength,
-                                               uint32_t windowStart, uint32_t windowLength,
-                                               SessionMidiEventVec& eventBuffer,
-                                               NoteUtils::DisplayNoteVec& outNotes) {
-    eventBuffer.clear();
-    if (loop.captureActive()) {
-        mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart, windowLength);
-    } else {
-        mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
-    }
-    if (!eventBuffer.empty()) {
-        const NoteUtils::DisplayNoteVec reconstructed =
-            NoteUtils::reconstructDisplayNotes(eventBuffer, loopLength, false);
-        outNotes.assign(reconstructed.begin(), reconstructed.end());
-    } else {
-        outNotes.clear();
-    }
-}
-
-/// Extra bars gathered beyond the paint window so auto-follow does not rebuild every tick.
-constexpr uint8_t kWindowedGatherMarginBars = 2;
-
-uint8_t resolveTrackIndex(const Track& track) {
-    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-        if (&trackManager.getTrack(i) == &track) {
-            return i;
-        }
-    }
-    return 255;
-}
-
-}  // namespace
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
 #include "SavedSetCatalog.h"
@@ -107,7 +59,6 @@ uint8_t resolveTrackIndex(const Track& track) {
 
 DMAMEM DisplayManager displayManager;
 namespace {
-SessionMidiEventVec liveDisplayEventBuffer;
 
 // Minimal gutter for longest line ("OVERD" = 30px) + 1px separator; content is right-aligned to display edge.
 constexpr int SIDEBAR_WIDTH = 30;
