@@ -249,7 +249,7 @@ Cold helpers for later phases (merge, gather, visual) remain in `Loop.cpp` until
 
 ---
 
-## Phase 4 — gather → `LoopMaterialization.cpp` (protected)
+## Phase 4 — gather → `LoopMaterialization.cpp` (protected) ✅
 
 Appends to **`LoopMaterialization.cpp`**.
 

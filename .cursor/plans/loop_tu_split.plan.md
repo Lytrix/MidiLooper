@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: phase-4-gather
     content: "Phase 4 → LoopMaterialization.cpp: gatherCommittedEvents* (protected)"
-    status: pending
+    status: completed
   - id: phase-5-snapshot
     content: "Phase 5 → LoopEditPasses.cpp: share/adopt/restore snapshot"
     status: pending
