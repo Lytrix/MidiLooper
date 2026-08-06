@@ -4,12 +4,7 @@ How the codebase is organized: **suffix naming** and the **button/fader pipeline
 
 ## Suffix naming
 
-| Suffix | Role | Examples |
-|--------|------|----------|
-| **Handler** | Receives events and routes or processes them | `MidiHandler` receives all MIDI and dispatches to appropriate modules |
-| **Manager** | Owns a domain or coordinates components | `TrackManager`, `ClockManager`, `LoopEditManager` |
-| **Processor** | Transforms input (raw → detected events) | `MidiButtonProcessor` detects short/long/double/triple from Note On/Off |
-| **Actions** | Executes domain operations | `MidiButtonActions`, `MidiFaderActions` perform record, undo, fader moves |
+Canonical suffix table and verb conventions: **[NAMING.md](../00-authority/NAMING.md)** § Module suffix vocabulary and § Verb conventions.
 
 **Input pipelines** (buttons, faders) use **Manager → Processor + Actions**:
 

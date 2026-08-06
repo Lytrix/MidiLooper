@@ -2,6 +2,8 @@
 
 **Parent:** [RuntimeArchitecture.md](RuntimeArchitecture.md)
 
+**Naming:** [NAMING.md](../NAMING.md) — Capture, passes, merge, materialize, Deferred vs Pending.
+
 ---
 
 ## Question

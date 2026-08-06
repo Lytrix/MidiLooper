@@ -2,7 +2,7 @@
 
 **Parent:** [RuntimeArchitecture.md](RuntimeArchitecture.md)
 
-**Naming:** “Derived view” in diagrams means **derived representation** in prose and new docs. Avoid new `*View` type names in code ([Naming-Vocabulary-Teensy-Looper](../../../.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc)).
+**Naming:** “Derived view” in diagrams means **derived representation** in prose and new docs. Avoid new `*View` type names in code ([NAMING.md](../NAMING.md)).
 
 ---
 

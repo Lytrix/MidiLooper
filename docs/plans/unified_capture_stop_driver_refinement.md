@@ -1,5 +1,7 @@
 # Unified capture stop driver — implementation strategy
 
+> **Vocabulary:** Capture-stop layered terms remain plan-local. Canonical deferral vocabulary: [`docs/00-authority/NAMING.md`](../00-authority/NAMING.md) § Concept boundaries (Deferred, Pending).
+
 **Kind:** refinement  
 **Date:** 2026-07-08  
 **Status:** Design refinement (incremental migration; supersedes single-shot refactor)
