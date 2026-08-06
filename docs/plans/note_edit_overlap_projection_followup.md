@@ -15,11 +15,11 @@ This document indexes **remaining** post-geometry work that is **not** projectio
 | Macro commit guard Phase 1 (RC7) | **Shipped** | § RC7 Phase 1 below |
 | Select bracket mismatch guard (RC7b) | **Shipped** (HITL gate open) | [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md) |
 | Projection ownership (RC6) | **Shipped** | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
-| Overlap restore span (RC9) | Open | [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) |
+| Overlap restore span (RC9) | **Shipped** | [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) |
 | Selection index stability (RC10) | **Shipped** | [`note_edit_selection_index_stability_bugfix.md`](note_edit_selection_index_stability_bugfix.md) |
 | Reconstruction parity (RC8) | Open | § RC8 below |
 
-Recommended order: **RC9 → RC8**. RC6, RC7, RC7b, RC10 shipped.
+Recommended order: **RC8** recon parity. RC6, RC7, RC7b, RC10, RC9 shipped.
 
 ---
 
@@ -50,7 +50,9 @@ Re-select same `NoteId` at bracket ≠ `focus.last` display bracket → skip mac
 
 ---
 
-## RC9 — Overlap restore span (open)
+## RC9 — Overlap restore span + head overlap (shipped)
+
+See [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) — RC9b restore span, RC9c head-trim.
 
 **Primary capture:** `captures/session_20260806_222937.log` — shorten→hide→move-away restores full baseline 609–959.
 

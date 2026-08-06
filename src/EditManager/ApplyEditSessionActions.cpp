@@ -8,9 +8,35 @@
 #include "ApplyOwnedEditPassRows.h"
 #include "EditSessionLiveStoreSpan.h"
 #include "EditSessionStoreInvariant.h"
+#include "NoteEditFocus.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
+
+NOTE_EDIT_MEM void recordOverlapGeometryScratch(NoteEditFocus& focus, NoteId noteId,
+                                                const MidiEventVec& liveStore, uint8_t channel,
+                                                OverlapNoteStoreState state) {
+  if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+    return;
+  }
+  const auto mapIt = focus.baselineMap.find(noteId);
+  if (mapIt == focus.baselineMap.end()) {
+    return;
+  }
+
+  OverlapNote& entry = focus.overlapNotes[noteId];
+  entry.noteId = noteId;
+  if (entry.baseline.endTick <= entry.baseline.startTick) {
+    entry.baseline = mapIt->second;
+  }
+
+  NoteBaseline live{};
+  if (readLiveLinearSpan(liveStore, noteId, channel, live)) {
+    entry.baseline = live;
+    entry.shortenedEndTick = live.endTick;
+  }
+  entry.state = state;
+}
 
 NOTE_EDIT_MEM MidiEvent* findNoteOnByNoteId(MidiEventVec& liveStore, NoteId noteId,
                                             uint8_t preferredChannel) {
@@ -274,7 +300,7 @@ NOTE_EDIT_MEM void applyRestoreNote(const EditSessionAction& action, MidiEventVe
 }
 
 NOTE_EDIT_MEM void applyShortenNote(const EditSessionAction& action, MidiEventVec& liveStore,
-                      const NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
+                      NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
   MidiEvent* noteOn = findNoteOnForNoteId(liveStore, action.targetNoteId, channel, action.pitch,
                                           action.startTick);
   if (noteOn == nullptr) {
@@ -330,6 +356,8 @@ NOTE_EDIT_MEM void applyShortenNote(const EditSessionAction& action, MidiEventVe
     if (noteOff->noteId == kInvalidNoteId) {
       noteOff->noteId = action.targetNoteId;
     }
+    recordOverlapGeometryScratch(focus, action.targetNoteId, liveStore, channel,
+                                 OverlapNoteStoreState::Shortened);
     return;
   }
   // No safe existing off (mover owns the only later untagged off): append once. Prefer
@@ -350,7 +378,9 @@ NOTE_EDIT_MEM void applyShortenNote(const EditSessionAction& action, MidiEventVe
 }
 
 NOTE_EDIT_MEM void applyHideNote(const EditSessionAction& action, MidiEventVec& liveStore,
-                                 const NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
+                                 NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
+  recordOverlapGeometryScratch(focus, action.targetNoteId, liveStore, channel,
+                               OverlapNoteStoreState::Hidden);
   eraseNotePairByNoteId(liveStore, action.targetNoteId, channel, loopLength, focus.movingNoteId);
 }
 
@@ -411,6 +441,9 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
     }
     if (focus.active && focus.movingNoteId == action.targetNoteId) {
       noteEditFocusApplyMoveEnd(focus, action.startTick, action.endTick);
+    } else {
+      recordOverlapGeometryScratch(focus, action.targetNoteId, liveStore, channel,
+                                   OverlapNoteStoreState::Shortened);
     }
     return;
   }
@@ -422,6 +455,9 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
   pruneExtraTaggedOffsForNote(liveStore, action.targetNoteId, noteOn->channel, noteOff);
   if (focus.active && focus.movingNoteId == action.targetNoteId) {
     noteEditFocusApplyMoveEnd(focus, action.startTick, action.endTick);
+  } else {
+    recordOverlapGeometryScratch(focus, action.targetNoteId, liveStore, channel,
+                                 OverlapNoteStoreState::Shortened);
   }
 }
 

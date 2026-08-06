@@ -30,4 +30,4 @@ resolveAllConstrainedGeometry(
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
     uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
-    const NoteIdList& changedOverlapNoteIds);
+    const NoteIdList& changedOverlapNoteIds, const NoteEditFocus& focus);
