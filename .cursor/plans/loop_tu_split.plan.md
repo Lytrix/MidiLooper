@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: phase-3-edit-pass
     content: "Phase 3 → LoopEditPasses.cpp: save/replace/disable edit passes"
-    status: pending
+    status: completed
   - id: phase-4-gather
     content: "Phase 4 → LoopMaterialization.cpp: gatherCommittedEvents* (protected)"
     status: pending
