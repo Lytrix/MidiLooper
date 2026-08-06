@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: phase-6-selection
     content: "Phase 6: Extract NoteEditSelection.cpp (applySelectNav, nav slots, session state sync)"
-    status: pending
+    status: completed
   - id: phase-7-geometry
     content: "Phase 7: NoteGeometryResolver (relocate TU, merge driver header) + extract NoteEditGeometryOps.cpp"
     status: pending
