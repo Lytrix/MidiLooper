@@ -3,7 +3,7 @@
 
 #include <unity.h>
 
-#include "../../src/TrackDisplayState.cpp"
+#include "../../src/Track/TrackDisplayState.cpp"
 #include "TrackDisplayState.h"
 
 void test_applyLoadedTrackState_stopped_becomes_empty_when_no_slots() {
