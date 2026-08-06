@@ -17,10 +17,10 @@ Shrink `src/StorageManager.cpp` from a ~4.4k-line monolith into a thin façade b
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/StorageManager.cpp` | **3062** (root TU; was 4411) |
+| `src/StorageManager.cpp` | **2668** (root TU; was 4411) |
+| `src/StorageManager/SavedSetIo.cpp` | **~415** (Phase 4) |
 | `src/StorageManager/LoopSlotRestoreQueue.cpp` | **321** (Phase 3) |
-| Already extracted under `src/StorageManager/` | revision commit/load, workspace save, LoadLoopJob, CurrentSetBootLoad, deferred save, … |
-| Phases 0–3 on `refactor/storagemanager` | committed (`63cce36` … Phase 3) |
+| Phases 0–4 on `refactor/storagemanager` | committed |
 
 ### Target end state
 
@@ -192,7 +192,7 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 
 ---
 
-## Phase 4 — `SavedSetIo.cpp` (~550 LOC)
+## Phase 4 — `SavedSetIo.cpp` (~550 LOC) — **shipped** (`refactor/storagemanager`)
 
 **Priority:** High ROI, low risk — self-contained saved-set feature.
 

@@ -15,6 +15,7 @@
 #include "RevisionCommitPolicy.h"
 #include "RevisionPackedBlob.h"
 #include "SetRevisionCatalog.h"
+#include "SavedSetCatalog.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
 #include "PersistenceSyncDrainBudget.h"
@@ -64,6 +65,18 @@ extern uint16_t workspaceLastCommittedRevisionId;
 extern char autoSaveBeforeLoadFolderPending[16];
 extern bool autoSaveBeforeLoadFolderPendingValid;
 extern StorageSession storageSession;
+
+constexpr size_t kSavedSetPathCapacity = 64;
+
+bool parseSavedSetSequence(const char* folderName, uint32_t& sequence);
+bool formatSavedSetDirectoryPath(const char* folderName, char* out, size_t outSize);
+bool resolveSavedSetFolderNameBySequence(uint32_t sequence, char* out, size_t outSize);
+bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index);
+bool buildSavedSetMetadata(uint32_t sequence, SavedSetCatalog::FolderNamingMode namingMode,
+                           uint32_t createdAtUnix, SavedSetCatalog::SavedSetMetadata& metadata);
+bool patchCurrentSetAnchor();
+bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_t outSize);
+bool copySavedSetIntoCurrent(const char* sourceSetDir);
 
 void resetStorageSessionJobs();
 
