@@ -164,6 +164,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncSelectedNoteIdxToFilteredInventory(T
 
     const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
+    const bool geometryMoverHold =
+        editSession.focus.active &&
+        editSession.focus.movingNoteId == sessionState.selection.primaryNote &&
+        isGeometryEditKind(sessionState.kind);
     int matchIdx = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
         sessionState.selection, filtered, editSession.focus, loopStartTick, loopLength,
         lengthBracket);
@@ -214,7 +218,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncSelectedNoteIdxToFilteredInventory(T
                         loopLength);
                     byFocus >= 0) {
                     setSelectedNoteIdx(byFocus);
-                } else {
+                } else if (!geometryMoverHold) {
                     setSelectedNoteIdx(noteIdOnlyIdx);
                 }
             }
@@ -222,6 +226,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncSelectedNoteIdxToFilteredInventory(T
             setSelectedNoteIdx(-1);
         }
     } else if (matchIdx != selectedNoteIdx) {
+        if (geometryMoverHold && selectedNoteIdx >= 0 &&
+            selectedNoteIdx < static_cast<int>(filtered.size()) &&
+            filtered[static_cast<size_t>(selectedNoteIdx)].noteId ==
+                sessionState.selection.primaryNote) {
+            return;
+        }
         setSelectedNoteIdx(matchIdx);
     }
 }

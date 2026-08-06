@@ -1329,6 +1329,41 @@ void test_selection_index_geometry_move_prefers_focus_display_bracket() {
                               filtered, kMoverId, 1484u, 0u, kLoopLength));
 }
 
+void test_selection_index_geometry_hold_when_primary_note_at_current_idx() {
+  // RC10 / session_20260806_223833: overlap hide reorders list; highlight resolver may
+  // return a new index while selectedNoteIdx still points at primaryNote — hold policy
+  // keeps the cursor index when notes[selectedNoteIdx].noteId == primaryNote.
+  constexpr NoteId kMoverId = 7;
+  constexpr NoteId kOverlapId = 3;
+  constexpr uint32_t kLoopLength = 1536;
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedTick = 660u;
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {65, 100, 660, 761};
+
+  std::vector<NoteUtils::DisplayNote> before;
+  before.push_back({kOverlapId, 65, 100, 609, 959});
+  before.push_back({kMoverId, 65, 100, 660, 761});
+
+  std::vector<NoteUtils::DisplayNote> after;
+  after.push_back({kMoverId, 65, 100, 660, 761});
+
+  const int idxBefore = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+      selection, before, focus, 0u, kLoopLength, false);
+  const int idxAfter = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+      selection, after, focus, 0u, kLoopLength, false);
+
+  TEST_ASSERT_EQUAL(1, idxBefore);
+  TEST_ASSERT_EQUAL(0, idxAfter);
+  TEST_ASSERT_TRUE(before[static_cast<size_t>(idxBefore)].noteId == kMoverId);
+  TEST_ASSERT_TRUE(after[static_cast<size_t>(idxAfter)].noteId == kMoverId);
+}
+
 void test_is_plausible_storage_span_rejects_lifo_mispair() {
   constexpr uint32_t kLoopLength = 1536;
   TEST_ASSERT_TRUE(isPlausibleStorageSpan(387, 436, kLoopLength));
@@ -3244,6 +3279,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_filtered_display_note_index_rejects_only_mispaired_low_segment);
   RUN_TEST(test_selection_index_duplicate_pitch_uses_linear_start);
   RUN_TEST(test_selection_index_geometry_move_prefers_focus_display_bracket);
+  RUN_TEST(test_selection_index_geometry_hold_when_primary_note_at_current_idx);
   RUN_TEST(test_is_plausible_storage_span_rejects_lifo_mispair);
   RUN_TEST(test_find_linear_note_span_rejects_mispaired_off);
   RUN_TEST(test_find_linear_note_span_resolves_across_store_channel);

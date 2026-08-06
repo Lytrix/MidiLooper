@@ -13,11 +13,13 @@ This document indexes **remaining** post-geometry work that is **not** projectio
 | Track | Phase | Status | Doc |
 |-------|-------|--------|-----|
 | Macro commit guard Phase 1 (RC7) | **Shipped** | § RC7 Phase 1 below |
-| Select bracket mismatch guard (RC7b) | **Shipped** | [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md) |
+| Select bracket mismatch guard (RC7b) | **Shipped** (HITL gate open) | [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md) |
 | Projection ownership (RC6) | **Shipped** | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
+| Overlap restore span (RC9) | Open | [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) |
+| Selection index stability (RC10) | **Shipped** | [`note_edit_selection_index_stability_bugfix.md`](note_edit_selection_index_stability_bugfix.md) |
 | Reconstruction parity (RC8) | Open | § RC8 below |
 
-Recommended order: **RC7b → selection index stability → RC8**. RC6 and RC7 Phase 1 shipped.
+Recommended order: **RC9 → RC8**. RC6, RC7, RC7b, RC10 shipped.
 
 ---
 
@@ -43,6 +45,24 @@ Recommended order: **RC7b → selection index stability → RC8**. RC6 and RC7 P
 **Primary capture:** `captures/session_20260806_220331.log` (~55.7s).
 
 Re-select same `NoteId` at bracket ≠ `focus.last` display bracket → skip macro commit (`isMacroCommitAlignedWithSelectTarget`). See [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md).
+
+**HITL validation (`222937`):** failure mode absent (`M65@609 missing in recon` not seen; no `mover_focus start=993` after select at 609). Exact gate **not exercised** — after move 609→993, select-at-609 was blocked by `geometry_driver_ignored` (~46.8s), not `bracket mismatch`. Dedicated retest: move to 993, wait >750 ms geometry hold, re-select same `NoteId` at 609 → expect `NOTE_EDIT macro commit skipped: select bracket mismatch`.
+
+---
+
+## RC9 — Overlap restore span (open)
+
+**Primary capture:** `captures/session_20260806_222937.log` — shorten→hide→move-away restores full baseline 609–959.
+
+See [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md).
+
+---
+
+## RC10 — Selection index stability (shipped)
+
+**Primary capture:** `captures/session_20260806_223833.log` — index churn during overlap geometry; re-select shorten.
+
+See [`note_edit_selection_index_stability_bugfix.md`](note_edit_selection_index_stability_bugfix.md).
 
 ---
 

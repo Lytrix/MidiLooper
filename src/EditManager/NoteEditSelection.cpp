@@ -72,7 +72,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectionFromGeometryEdit(Track& tr
         return;
     }
     syncGeometrySelectionToUi(track);
-    syncSelectedNoteIdxToFilteredInventory(track);
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncGeometrySelectionToUi(Track& track) {
