@@ -16,10 +16,10 @@ todos:
     status: completed
   - id: phase-4-lifecycle
     content: "Phase 4: Extract NoteEditSessionLifecycle.cpp (open/close/fold/persist) — protected"
-    status: pending
+    status: completed
   - id: phase-5-undo
     content: "Phase 5: Extract NoteEditSessionUndo.cpp (session undo/redo, kind-boundary warm)"
-    status: pending
+    status: completed
   - id: phase-6-selection
     content: "Phase 6: Extract NoteEditSelection.cpp (applySelectNav, nav slots, session state sync)"
     status: pending
