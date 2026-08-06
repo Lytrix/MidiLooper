@@ -1,4 +1,6 @@
-# Note edit focus driver drift — completed investigation
+# Note edit focus driver drift — completed investigation (FROZEN)
+
+**Status: FROZEN** — RC1 driver drift investigation closed. Do not extend this document for new bugs; misattribution to driver drift is a process failure.
 
 Architectural reference for the driver validity model. Primary capture: `captures/session_20260806_204643.log`.
 
@@ -6,7 +8,7 @@ Related archived work: D19a (`edit-session-action-geometry`), `edit-focus-select
 
 **Shipped:** PR #15 (`bugfix/note-edit-focus-driver-drift` → `dev`).
 
-**Follow-up work** (display projection, select relatch, reconstruction) is tracked in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md).
+**Downstream work** (display projection, select relatch, reconstruction) is tracked separately — see Related docs.
 
 ---
 
@@ -14,9 +16,9 @@ Related archived work: D19a (`edit-session-action-geometry`), `edit-focus-select
 
 Driver drift is **resolved** in PR #15.
 
-The original geometry pipeline failure (`GEOM_APPLY,pipeline,…,0,3,0`) no longer reproduces in post-fix captures (`212448`, `212810`).
+The original geometry pipeline failure (`GEOM_APPLY,pipeline,…,0,3,0`) no longer reproduces in post-fix captures (`212448`, `212810`, `214302`).
 
-Remaining NOTE_EDIT issues visible after that fix (ghost projection, overlap display flicker, reconstruction miss) are **distinct investigations** — see the follow-up doc above.
+Remaining NOTE_EDIT issues visible after that fix (overlap display flicker, ghost projection, reconstruction miss) are **distinct investigations** with a clean debugging boundary: geometry through `EditSessionAction` is trusted; display/commit/recon after that line is not.
 
 ---
 
@@ -35,7 +37,28 @@ Remaining NOTE_EDIT issues visible after that fix (ghost projection, overlap dis
 |---------|---------|--------------|
 | `session_20260806_204643.log` | **Broken baseline** | 504× `GEOM_APPLY,pipeline,…,0,3,0`; `geometry pipeline did not apply move` at 1185 |
 | `session_20260806_212448.log` | **Fixed** | 0 pipeline failures; `Moving note start=1185`; `type=3 noteId=3` MoveNote |
-| `session_20260806_212810.log` | **RC1 fixed** | 0 pipeline failures; long note moves at 234s (other issues → follow-up doc) |
+| `session_20260806_212810.log` | **RC1 fixed** | 0 pipeline failures; long note moves at 234s (display issues → projection doc) |
+| `session_20260806_214302.log` | **RC1 fixed** | 0 pipeline failures; long-note moves clean; overlap cascade only after inner-note move |
+
+---
+
+## Final validation (`214302`)
+
+Final validation capture after driver-drift fix + macro-commit guard (Phase 1 of commit/projection follow-up). Confirms RC1 is closed; symptoms that remain are **not** driver drift.
+
+| Check | Result |
+|-------|--------|
+| `GEOM_APPLY,pipeline,…,0,3,0` | **0** (geometry applies on every move step) |
+| Long note move (`noteId=3`, 609–959) | `overlapNotes=0`; only `type=3` MoveNote; `DISP` stays 5 painted notes |
+| Driver validity at select | `DNTE,65,609,849,350,2` — storage start matches store span, not bracket-only composite |
+| `NoteRange start=0` / ghost `DNTE,65,0,0,…` | **None** in this capture |
+| Breakpoint | Overlap cascade starts only when moving **inner** note `noteId=7` at 1044 into outer `noteId=3` (~21.7s) |
+
+**Store at NOTE_EDIT entry (not a driver bug):** loop has **5 notes** on pitch 65 (`DISP,…,5,5,5,5`). Nested overdub notes (`noteId=6` 89 ticks at 1050, `noteId=7` 101 ticks at 1044) sit under the long outer note on the piano roll — a rendering stack, not missing stop-path cleanup.
+
+**What `214302` proves:** geometry and driver cache are trustworthy through `EditSessionAction`. `DISP` oscillating 4↔5 while `sourceEventCount` stays 5, `DNTE` alternating 350/101/89 lengths, and notes appearing/disappearing on first inner-note move are **downstream of geometry** — projection ownership (RC6), not RC1.
+
+**Misattribution guard:** if a new capture shows `GEOM_APPLY,pipeline,…,0,3,0` or `focus.last` stuck while `movingNoteId` and store span disagree, reopen driver drift. If pipeline apply succeeds and `EditSessionAction` rows look correct, do **not** revisit this document.
 
 ---
 
@@ -216,7 +239,8 @@ No new architectural ownership was introduced. Work stays within D19a owners: `E
 
 ## Related docs
 
-- [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) — active work after driver drift fix (RC6–RC8)
+- [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) — **active** RC6 projection ownership (Phase 2)
+- [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) — RC7 macro commit + RC8 reconstruction (index)
 - `docs/plans/note_edit_scoped_display_handoff.md` — projection duplicate / participant scope
 - `docs/plans/note_edit_pitch_lane_highlight_bugfix.md` — highlight index vs `primaryNote`
 - `openspec/changes/archive/2026-08-05-edit-session-action-geometry/ARCHITECTURE-REVIEW.md` — D19a gate
