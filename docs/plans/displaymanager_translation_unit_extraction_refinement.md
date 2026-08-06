@@ -155,7 +155,7 @@ Milestone after **Phases 0–6**: root TU within target band.
 
 **Priority:** Second — largest cohesive **read** domain; isolates hot path for a later **behavioral** mode split (optional sub-phases below).
 
-**Commits:** `f439eaa` (2a tick/window), `a4bbf6f` (2b live capture + open-tail helpers), `…` (2c playback/NOTE_EDIT dispatch + `#CAP DISP`).
+**Commits:** `f439eaa` (2a tick/window), `a4bbf6f` (2b live capture + open-tail helpers), `bcf693a` (2c playback/NOTE_EDIT dispatch + `#CAP DISP`).
 
 ### Move
 
