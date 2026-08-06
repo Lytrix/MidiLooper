@@ -28,7 +28,7 @@ todos:
     status: completed
   - id: phase-8-playback
     content: "Phase 8: Extract TrackPlaybackHotPath.cpp (playMidiEvents, sendMidiEvent, jam filter)"
-    status: pending
+    status: completed
   - id: phase-9-transport
     content: "Phase 9: Extract TrackTransportControl.cpp (start/stop playing, queued grid start)"
     status: pending
