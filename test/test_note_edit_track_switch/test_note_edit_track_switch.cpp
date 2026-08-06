@@ -147,7 +147,7 @@ void test_filter_selectable_display_notes_after_track_switch_reopen() {
 
   NoteEditFocus focus{};
   const auto displayNotes =
-      filterSelectableDisplayNotes(session.readEvents(), focus, kChannel, kLongLoopLength);
+      projectNoteEditDisplayNotes(session.readEvents(), focus, kChannel, kLongLoopLength);
   TEST_ASSERT_EQUAL(4u, displayNotes.size());
 }
 

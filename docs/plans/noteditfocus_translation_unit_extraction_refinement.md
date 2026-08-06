@@ -76,8 +76,8 @@ Shrink [`src/NoteEditFocus.cpp`](../../src/NoteEditFocus.cpp) (~1554 LOC) by mov
 
 | Current | Proposed | Rationale | Phase |
 |---------|----------|-----------|-------|
-| `filterSelectableDisplayNotes` (alias) | **Keep** during extraction; add `[[deprecated]]` + `TODO(refactor): Legacy Retirement` in Phase 7 | Surfaces canonical name; **remove in Phase LR** after callers migrate | 7 → LR |
-| `buildPreCommitOverlapEditPasses` | **Keep** (legacy stub); document as deprecated path in module header | Tests + nullptr fallback; retire in **Phase LR** if callers gone | 6 → LR |
+| `filterSelectableDisplayNotes` (alias) | **Removed** Phase LR — tests use `projectNoteEditDisplayNotes` | Surfaces canonical name | LR ✅ |
+| `buildPreCommitOverlapEditPasses` | **Removed** Phase LR — empty `rows` when no live store | Stub retired; undo uses moving-note tail only | LR ✅ |
 | File-static pair finders (`findLinearOff*`, …) | Move to `NoteEditFocusInternal.h` declarations | Reveal module boundary; not public API growth | 2 |
 | `makeNoteEditRow` | Keep name (action+scope OK) or inline into pre-commit module only | Small helper | 6 |
 
@@ -286,18 +286,50 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 
 ---
 
-## Phase LR — Legacy Retirement (after Phase 10, optional)
+## Phase LR — Legacy Retirement ✅
 
 **Risk:** low — API cleanup only; no ownership or behaviour change.
 
-| Legacy symbol | Replacement | Retire when |
-|---------------|-------------|-------------|
-| `filterSelectableDisplayNotes` | `projectNoteEditDisplayNotes` | All internal callers + tests migrated |
-| `buildPreCommitOverlapEditPasses` | `buildPreCommitEditPasses` | No test/nullptr fallback depends on stub |
+### Retirement criteria met (2026-08-06)
 
-Mark during extraction (Phases 6–7); delete only when [retirement criteria](legacy_api_retirement_tu_extraction_refinement.md#retirement-criteria) are met.
+| Legacy symbol | `src/` callers | Test callers | Action |
+|---------------|----------------|--------------|--------|
+| `filterSelectableDisplayNotes` | **None** (firmware uses `projectNoteEditDisplayNotes` via `EditManager::selectableDisplayNotesForEditUi`) | 8 | Remove header alias; migrate tests |
+| `buildPreCommitOverlapEditPasses` | **Indirect only** via `buildPreCommitEditPasses` `else` branch | 1 direct | Remove stub + `else`; see below |
 
-**PR title:** `refactor(noteditfocus): Legacy Retirement — remove obsolete wrappers`
+### `buildPreCommitEditPasses` — remove `else`, not “special-case undo”
+
+`buildPreCommitEditPasses` had two overlap row sources:
+
+| Branch | Overlap rows | Moving-note rows |
+|--------|--------------|------------------|
+| `sessionStoreEvents != nullptr && loopLength > 0` | `buildPreCommitBaselineLiveDiffOverlapPasses` (baselineMap vs live store) | Appended when `focus.active` |
+| `else` → `buildPreCommitOverlapEditPasses` | **Always `{}`** (retired scratch path) | Appended when `focus.active` |
+
+The `else` existed for the **pre–4.5 overlap scratch** API. After edit-session-action-geometry 4.5, `buildPreCommitOverlapEditPasses` is an empty stub. The `else` is therefore equivalent to leaving `rows` default-empty.
+
+**Production paths:**
+
+- **Macro commit** (`NoteEditSessionCommit.cpp`) — always passes `&sessionStoreEvents` and `loopLength > 0` → overlap diff branch only.
+- **Undo warm** (`NoteEditSessionUndoStack.cpp`) — passes `baselineDiffSource == nullptr` when `needsBaselineMapDiff` is false (moving-note-only edit). Hits `else` today → `{}` overlap rows + moving-note rows. **No undo change required** — empty overlap slice is correct; undo already relies on the moving-note tail of `buildPreCommitEditPasses`.
+
+**Simplification (behavior-preserving):**
+
+```cpp
+EditPassVec rows;
+if (sessionStoreEvents != nullptr && loopLength > 0) {
+  rows = buildPreCommitBaselineLiveDiffOverlapPasses(...);
+}
+// rows stays {} without live store — overlap diff skipped; moving-note rows appended below
+```
+
+Delete `buildPreCommitOverlapEditPasses` (declaration, stub implementation, direct test call). Replace `test_prune_overlap_shortened_display_baseline_artifact` stub assertion with `buildPreCommitEditPasses(focus, channel)` (no store) — same empty overlap rows.
+
+### `filterSelectableDisplayNotes` — remove header alias
+
+Inline alias in `NoteEditFocus.h` forwards to `projectNoteEditDisplayNotes`. Migrate native tests to the canonical name. Update `SelectNavigation.h` comment to reference `projectNoteEditDisplayNotes` / EditManager selectable display path.
+
+**PR title:** `refactor(noteditfocus): Phase LR — remove obsolete wrappers`
 
 ---
 

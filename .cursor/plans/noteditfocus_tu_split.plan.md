@@ -27,8 +27,8 @@ todos:
     content: "Phase 10: delete root NoteEditFocus.cpp; update test includes"
     status: completed
   - id: phase-lr-legacy-retirement
-    content: "Phase LR (optional): remove filterSelectableDisplayNotes / buildPreCommitOverlapEditPasses wrappers"
-    status: pending
+    content: "Phase LR: remove filterSelectableDisplayNotes / buildPreCommitOverlapEditPasses wrappers"
+    status: completed
 isProject: false
 ---
 
