@@ -1,8 +1,9 @@
 # DisplayManager translation-unit extraction
 
 **Kind:** refinement  
-**Branch:** `refactor/displaymanager` (from `dev`)   [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md), [multi_track_playback_pressure_closure_refinement.md](multi_track_playback_pressure_closure_refinement.md), [runtime_process_building_blocks_overview.md](runtime_process_building_blocks_overview.md)  
-**Prerequisite:** none (orthogonal to StorageManager extraction; may land after `refactor/storagemanager` merges)
+**Branch:** `refactor/displaymanager` (from `dev`)  
+**Parent context:** [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md), [multi_track_playback_pressure_closure_refinement.md](multi_track_playback_pressure_closure_refinement.md), [runtime_process_building_blocks_overview.md](runtime_process_building_blocks_overview.md)  
+**Prerequisite merged:** PR #9 — StorageManager translation-unit extraction (`refactor/storagemanager` → `dev`)
 
 ---
 
