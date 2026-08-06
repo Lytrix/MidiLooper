@@ -3,7 +3,7 @@
 
 #include <unity.h>
 
-#include "../../src/LoadLoopSelectionPolicy.cpp"
+#include "../../src/StorageManager/LoadLoopSelectionPolicy.cpp"
 
 #include "LoadLoopSelectionPolicy.h"
 
