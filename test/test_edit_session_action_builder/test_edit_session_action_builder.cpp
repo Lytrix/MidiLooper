@@ -357,6 +357,30 @@ void test_builder_orders_restore_shorten_hide_before_causing_actions() {
                     static_cast<int>(actions[3].type));
 }
 
+void test_builder_emits_move_note_for_overlap_head_trim_225121() {
+  constexpr NoteId kOuterId = 3;
+  const NoteBaseline baseline{65, 100, 609, 959};
+  ConstrainedNoteGeometry constrained{};
+  constrained.noteId = kOuterId;
+  constrained.visible = true;
+  constrained.startTick = 618;
+  constrained.endTick = 959;
+  constrained.pitch = 65;
+
+  BaselineMap transactionBaseline;
+  transactionBaseline[kOuterId] = baseline;
+  MidiEventVec liveStore = makeLivePair(kOuterId, 65, 609, 959);
+
+  const EditSessionActions actions =
+      buildEditSessionActions({constrained}, EditedGeometry{}, transactionBaseline, liveStore,
+                              kChannel, kEmptyFocus, kLoopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(actions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditSessionActionType::MoveNote),
+                    static_cast<int>(actions[0].type));
+  TEST_ASSERT_EQUAL_UINT32(618u, actions[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(959u, actions[0].endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_builder_emits_restore_when_live_differs_from_baseline);
@@ -372,5 +396,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_emits_change_pitch_for_pitch_delta);
   RUN_TEST(test_builder_does_not_remap_hidden_overlap_target_to_mover);
   RUN_TEST(test_builder_orders_restore_shorten_hide_before_causing_actions);
+  RUN_TEST(test_builder_emits_move_note_for_overlap_head_trim_225121);
   return UNITY_END();
 }

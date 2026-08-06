@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "NoteEditFocus.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -57,11 +58,6 @@ incomingForTarget(NoteId targetNoteId, const EditSessionInteractionsByTarget& gr
   return nullptr;
 }
 
-NOTE_EDIT_MEM bool interactionHasCompleteHidePrecedence(const EditSessionInteraction& interaction) {
-  return interaction.type == InteractionType::OverlapNoteOn ||
-         interaction.type == InteractionType::CompleteCover;
-}
-
 NOTE_EDIT_MEM bool interactionIsOverlapNoteOff(const EditSessionInteraction& interaction) {
   return interaction.type == InteractionType::OverlapNoteOff;
 }
@@ -84,6 +80,47 @@ NOTE_EDIT_MEM bool isChangedOverlapParticipant(NoteId noteId,
                                                const NoteIdList& changedOverlapNoteIds) {
   return std::find(changedOverlapNoteIds.begin(), changedOverlapNoteIds.end(), noteId) !=
          changedOverlapNoteIds.end();
+}
+
+NOTE_EDIT_MEM bool causingSpanInsideTargetBaseline(const EditSessionInteraction& interaction,
+                                                 const NoteBaseline& baseline) {
+  const uint32_t causingStart = interaction.causingSpan.startTick;
+  const uint32_t causingEnd = interaction.causingSpan.endTick;
+  return causingStart > baseline.startTick && causingEnd < baseline.endTick;
+}
+
+NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
+    NoteId targetNoteId, const NoteBaseline& transactionBaseline, const MidiEventVec& liveStore,
+    uint8_t channel, const NoteEditFocus& focus) {
+  ConstrainedNoteGeometry geometry{};
+  geometry.noteId = targetNoteId;
+  geometry.pitch = transactionBaseline.pitch;
+  geometry.visible = true;
+
+  NoteBaseline live{};
+  if (readLiveLinearSpan(liveStore, targetNoteId, channel, live)) {
+    if (live.endTick < transactionBaseline.endTick) {
+      geometry.startTick = transactionBaseline.startTick;
+      geometry.endTick = transactionBaseline.endTick;
+      return geometry;
+    }
+    geometry.startTick = live.startTick;
+    geometry.endTick = live.endTick;
+    return geometry;
+  }
+
+  const auto scratchIt = focus.overlapNotes.find(targetNoteId);
+  if (scratchIt != focus.overlapNotes.end() &&
+      scratchIt->second.state != OverlapNoteStoreState::Visible) {
+    geometry.startTick = scratchIt->second.baseline.startTick;
+    geometry.endTick = scratchIt->second.baseline.endTick;
+    geometry.pitch = scratchIt->second.baseline.pitch;
+    return geometry;
+  }
+
+  geometry.startTick = transactionBaseline.startTick;
+  geometry.endTick = transactionBaseline.endTick;
+  return geometry;
 }
 
 }  // namespace
@@ -140,19 +177,37 @@ NOTE_EDIT_MEM ConstrainedNoteGeometry resolveConstrainedGeometry(
   geometry.visible = true;
 
   bool completeHide = false;
-  bool hasOverlapNoteOff = false;
+  bool hasTailShorten = false;
   uint32_t shortestEndTick = baseline.endTick;
+  uint32_t headTrimStartTick = baseline.startTick;
 
   for (const EditSessionInteraction& interaction : incomingInteractionsForTarget) {
-    if (interactionHasCompleteHidePrecedence(interaction)) {
+    if (interaction.type == InteractionType::CompleteCover) {
       completeHide = true;
       break;
     }
+
+    const uint32_t causingEnd = interaction.causingSpan.endTick;
+
+    if (interaction.type == InteractionType::OverlapNoteOn) {
+      if (baseline.endTick > causingEnd) {
+        headTrimStartTick = std::max(headTrimStartTick, causingEnd + 1);
+      } else {
+        completeHide = true;
+        break;
+      }
+      continue;
+    }
+
     if (interactionIsOverlapNoteOff(interaction)) {
-      hasOverlapNoteOff = true;
-      const uint32_t candidateEnd = computeShortenedEndTick(interaction, loopLength);
-      if (candidateEnd < shortestEndTick) {
-        shortestEndTick = candidateEnd;
+      if (causingSpanInsideTargetBaseline(interaction, baseline)) {
+        headTrimStartTick = std::max(headTrimStartTick, causingEnd + 1);
+      } else {
+        hasTailShorten = true;
+        const uint32_t candidateEnd = computeShortenedEndTick(interaction, loopLength);
+        if (candidateEnd < shortestEndTick) {
+          shortestEndTick = candidateEnd;
+        }
       }
     }
   }
@@ -162,10 +217,11 @@ NOTE_EDIT_MEM ConstrainedNoteGeometry resolveConstrainedGeometry(
     return geometry;
   }
 
-  if (hasOverlapNoteOff) {
+  const bool headTrimmed = headTrimStartTick > baseline.startTick;
+  if (headTrimmed || hasTailShorten) {
     geometry.visible = true;
-    geometry.startTick = baseline.startTick;
-    geometry.endTick = shortestEndTick;
+    geometry.startTick = headTrimmed ? headTrimStartTick : baseline.startTick;
+    geometry.endTick = hasTailShorten ? shortestEndTick : baseline.endTick;
   } else if (!incomingInteractionsForTarget.empty() &&
              interactionsAreBoundaryTouchOnly(incomingInteractionsForTarget)) {
     geometry.visible = true;
@@ -198,7 +254,7 @@ resolveAllConstrainedGeometry(
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
     uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
-    const NoteIdList& changedOverlapNoteIds) {
+    const NoteIdList& changedOverlapNoteIds, const NoteEditFocus& focus) {
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, transactionBaseline, liveStore, channel,
                                                 loopLength, selection, editedGeometry,
@@ -215,6 +271,15 @@ resolveAllConstrainedGeometry(
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>*
         incoming = incomingForTarget(targetNoteId, grouped);
     const auto& incomingInteractions = incoming != nullptr ? *incoming : emptyIncoming;
+    if (incomingInteractions.empty()) {
+      ConstrainedNoteGeometry restoreCandidate = constrainedGeometryFromRestoreCandidate(
+          targetNoteId, baselineIt->second, liveStore, channel, focus);
+      if (restoreCandidate.endTick <= restoreCandidate.startTick) {
+        continue;
+      }
+      out.push_back(restoreCandidate);
+      continue;
+    }
     out.push_back(resolveConstrainedGeometry(targetNoteId, baselineIt->second, incomingInteractions,
                                              loopLength, noteMinLengthTicks,
                                              noteMinLengthRemoveEnabled));

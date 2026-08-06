@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "EditSessionLiveStoreSpan.h"
+#include "NoteEditFocus.h"
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
@@ -142,12 +143,21 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
         if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
           continue;
         }
-        actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, baseline));
+        const NoteBaseline restoreSpan{constrained.pitch, baseline.velocity, constrained.startTick,
+                                     constrained.endTick};
+        actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, restoreSpan));
       }
       continue;
     }
 
-    if (constrained.endTick < baseline.endTick) {
+    if (constrained.startTick > baseline.startTick &&
+        constrained.endTick >= baseline.endTick) {
+      const NoteBaseline headTrimmed{constrained.pitch, baseline.velocity, constrained.startTick,
+                                     constrained.endTick};
+      if (!liveReadable || live.startTick != constrained.startTick) {
+        actions.push_back(makeAction(EditSessionActionType::MoveNote, liveNoteId, headTrimmed));
+      }
+    } else if (constrained.endTick < baseline.endTick) {
       const NoteBaseline shortened{constrained.pitch, baseline.velocity, constrained.startTick,
                                    constrained.endTick};
       if (!liveReadable || live.endTick != constrained.endTick) {

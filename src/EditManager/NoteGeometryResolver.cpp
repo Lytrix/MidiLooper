@@ -110,7 +110,8 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
         constrained = resolveAllConstrainedGeometry(
             grouped, projectedBaseline, liveStore, channel, loopLength, noteMinLengthTicks,
-            noteMinLengthRemoveEnabled, selection, projectedEdited, focus.changedOverlapNoteIds);
+            noteMinLengthRemoveEnabled, selection, projectedEdited, focus.changedOverlapNoteIds,
+            focus);
 
     const EditSessionActions actions =
         buildEditSessionActions(constrained, projectedEdited, projectedBaseline, liveStore, channel,

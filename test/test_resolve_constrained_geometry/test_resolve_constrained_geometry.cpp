@@ -7,6 +7,7 @@
 #include "ResolveConstrainedGeometry.h"
 #include "EditSessionInteraction.h"
 #include "MidiEvent.h"
+#include "NoteEditFocus.h"
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
@@ -248,9 +249,10 @@ void test_resolve_all_constrained_empty_without_interactions_or_changed_overlap_
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const NoteIdList noneChanged;
+  NoteEditFocus emptyFocus{};
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, liveStore, kChannel, kLoopLength, 12, true, selection, edited,
-      noneChanged);
+      noneChanged, emptyFocus);
   TEST_ASSERT_EQUAL(0, static_cast<int>(constrained.size()));
 }
 
@@ -350,6 +352,68 @@ void test_analyze_resolve_same_pitch_complete_cover_hide_omits_cross_pitch() {
   TEST_ASSERT_FALSE(hidden.visible);
 }
 
+void test_resolve_overlap_note_on_head_trim_keeps_tail_visible_225121() {
+  // session_20260806_225121 @15.071s: mover 516-617 over long 609-959 must head-trim to 618-959,
+  // not CompleteCover Hide.
+  const NoteBaseline baseline{65, 100, 609, 959};
+  EditSessionInteraction headOverlap{};
+  headOverlap.type = InteractionType::OverlapNoteOn;
+  headOverlap.causingSpan = {65, 100, 516, 617};
+  headOverlap.baselineSpan = baseline;
+  const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
+      incoming = {headOverlap};
+  const ConstrainedNoteGeometry geometry =
+      resolveConstrainedGeometry(3, baseline, incoming, 1536, 12, true);
+  TEST_ASSERT_TRUE(geometry.visible);
+  TEST_ASSERT_EQUAL_UINT32(618u, geometry.startTick);
+  TEST_ASSERT_EQUAL_UINT32(959u, geometry.endTick);
+}
+
+void test_resolve_overlap_note_off_inside_target_head_trims_225121() {
+  // session_20260806_225121 @38.637s: mover 612-713 inside long 609-959 → tail 714-959.
+  const NoteBaseline baseline{65, 100, 609, 959};
+  EditSessionInteraction inside{};
+  inside.type = InteractionType::OverlapNoteOff;
+  inside.causingSpan = {65, 100, 612, 713};
+  inside.baselineSpan = baseline;
+  const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
+      incoming = {inside};
+  const ConstrainedNoteGeometry geometry =
+      resolveConstrainedGeometry(3, baseline, incoming, 1536, 12, true);
+  TEST_ASSERT_TRUE(geometry.visible);
+  TEST_ASSERT_EQUAL_UINT32(714u, geometry.startTick);
+  TEST_ASSERT_EQUAL_UINT32(959u, geometry.endTick);
+}
+
+void test_resolve_restore_candidate_uses_overlap_scratch_not_full_baseline() {
+  constexpr NoteId kOuterId = 3;
+  constexpr uint8_t kChannel = 1;
+  BaselineMap baseline;
+  baseline[kOuterId] = {65, 100, 609, 959};
+
+  MidiEventVec liveStore;
+  NoteEditFocus focus;
+  focus.baselineMap = baseline;
+  OverlapNote shortened{};
+  shortened.noteId = kOuterId;
+  shortened.baseline = {65, 100, 609, 659};
+  shortened.state = OverlapNoteStoreState::Hidden;
+  shortened.shortenedEndTick = 659;
+  focus.overlapNotes[kOuterId] = shortened;
+  NoteIdList changed;
+  changed.push_back(kOuterId);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  EditorSelection selection{};
+  EditedGeometry edited{};
+  const auto constrained = resolveAllConstrainedGeometry(
+      emptyGrouped, baseline, liveStore, kChannel, 1536, 12, true, selection, edited, changed,
+      focus);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
+  TEST_ASSERT_EQUAL_UINT32(609u, constrained[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(659u, constrained[0].endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_resolve_complete_hide_precedence_over_shorten);
@@ -364,5 +428,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_start_abut_overlap_note_off_shortens_one_tick);
   RUN_TEST(test_resolve_inverted_shorten_end_hides_instead_of_emitting_inverted_span);
   RUN_TEST(test_analyze_resolve_same_pitch_complete_cover_hide_omits_cross_pitch);
+  RUN_TEST(test_resolve_overlap_note_on_head_trim_keeps_tail_visible_225121);
+  RUN_TEST(test_resolve_overlap_note_off_inside_target_head_trims_225121);
+  RUN_TEST(test_resolve_restore_candidate_uses_overlap_scratch_not_full_baseline);
   return UNITY_END();
 }
