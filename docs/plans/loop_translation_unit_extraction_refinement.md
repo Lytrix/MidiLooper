@@ -285,7 +285,7 @@ Appends to **`LoopMaterialization.cpp`**.
 
 ---
 
-## Phase 7 — capture live → `LoopCapture.cpp`
+## Phase 7 — capture live → `LoopCapture.cpp` ✅
 
 **Creates** [`src/Loop/LoopCapture.cpp`](../../src/Loop/LoopCapture.cpp).
 

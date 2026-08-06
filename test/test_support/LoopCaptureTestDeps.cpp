@@ -17,3 +17,4 @@ bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED
 #include "../../src/Loop/LoopInternalColdHelpers.cpp"
 #include "../../src/Loop/LoopMaterialization.cpp"
 #include "../../src/Loop/LoopEditPasses.cpp"
+#include "../../src/Loop/LoopCapture.cpp"
