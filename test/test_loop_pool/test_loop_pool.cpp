@@ -3,7 +3,7 @@
 
 #include <unity.h>
 
-#include "../../src/LoopPool.cpp"
+#include "../../src/Loop/LoopPool.cpp"
 #include "LoopPasses.h"
 #include "Slot.h"
 

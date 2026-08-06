@@ -29,6 +29,9 @@ todos:
   - id: phase-10-remainder
     content: "Phase 10: evidence-driven placement per ownership guide (10a/10b/10c sub-slices as needed)"
     status: completed
+  - id: phase-11-colocate
+    content: "Phase 11: colocate LoopPasses.cpp and LoopPool.cpp under src/Loop/"
+    status: completed
 isProject: false
 ---
 
@@ -43,13 +46,15 @@ LoopCapture.cpp          Phases 7, 8; Phase 10 (capture ownership)
 LoopMaterialization.cpp  Phases 2, 4
 LoopEditPasses.cpp       Phases 3, 5; Phase 10 (edit-pass ownership)
 LoopVisualCache.cpp      Phase 9
-Loop.cpp                 coordinator (~150–250): cross-domain routers, slot-wide state
+LoopPasses.cpp           Phase 11 (struct-level materialize)
+LoopPool.cpp             Phase 11 (per-track loop array)
+Loop.cpp                 coordinator (~65 LOC): cross-domain routers, slot-wide state
 ```
 
 **Principle:** extend existing modules before introducing new TUs. Fifth TU not currently expected.
 
 ## PR stack
 
-`0 → 2 → 3 → 4 → 5 → 7 → 8 → 9 → 10` (10 may split into 10a/10b/10c)
+`0 → 2 → 3 → 4 → 5 → 7 → 8 → 9 → 10 → 11`
 
 **Branch:** `refactor/loop` from `dev`

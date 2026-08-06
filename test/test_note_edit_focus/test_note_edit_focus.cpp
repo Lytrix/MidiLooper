@@ -14,7 +14,7 @@
 #include "../../src/EditManager/ApplyOwnedEditPassRows.cpp"
 #include "../../src/EditManager/EditSessionStoreInvariant.cpp"
 #include "../../src/EditManager/EditApply.cpp"
-#include "../../src/LoopPasses.cpp"
+#include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Loop.cpp"
