@@ -78,6 +78,13 @@ bool patchCurrentSetAnchor();
 bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_t outSize);
 bool copySavedSetIntoCurrent(const char* sourceSetDir);
 
+void loadWorkspaceMetaCountersFromSd();
+void queueBootRevisionRecovery(uint16_t setId, uint16_t revisionId);
+void discardIncompleteRevisionTempFilesOnSd();
+void discardIncompleteCurrentWorkspaceTempFilesOnSd();
+void syncWallClockFromSdTimestampsQuickForBootLoad();
+void markAllCurrentSetLoopSlotsDirtyForBootRecovery();
+
 void resetStorageSessionJobs();
 
 StorageActivitySnapshot buildStorageActivitySnapshot();

@@ -17,8 +17,9 @@ Shrink `src/StorageManager.cpp` from a ~4.4k-line monolith into a thin façade b
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/StorageManager.cpp` | **2668** (root TU; was 4411) |
-| `src/StorageManager/SavedSetIo.cpp` | **~415** (Phase 4) |
+| `src/StorageManager.cpp` | **2356** (root TU; was 4411) |
+| `src/StorageManager/BootRecovery.cpp` | **~350** (Phase 5) |
+| `src/StorageManager/SavedSetIo.cpp` | **418** (Phase 4) |
 | `src/StorageManager/LoopSlotRestoreQueue.cpp` | **321** (Phase 3) |
 | Phases 0–4 on `refactor/storagemanager` | committed |
 
@@ -221,7 +222,7 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 
 ---
 
-## Phase 5 — `BootRecovery.cpp` (~200 LOC)
+## Phase 5 — `BootRecovery.cpp` (~200 LOC) — **shipped** (`refactor/storagemanager`)
 
 ### Move
 
