@@ -20,10 +20,13 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditFocusForLiveEdit(Track& tr
     if (!editSession.active) {
         return;
     }
-    const bool focusMatchesSelection =
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    const bool driverValid =
         editSession.focus.active &&
-        editorSelectionMatchesDriverNote(sessionState.selection, editSession.focus.movingNoteId);
-    if (focusMatchesSelection) {
+        isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
+                              channel, loopLength);
+    if (driverValid) {
         return;
     }
     if (editSession.focus.active && !editorSelectionHasNote(sessionState.selection)) {

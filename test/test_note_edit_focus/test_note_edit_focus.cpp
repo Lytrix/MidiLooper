@@ -2882,6 +2882,37 @@ void test_display_fingerprint_changes_when_overlap_geometry_changes() {
   TEST_ASSERT_NOT_EQUAL(fpBefore, fpAfter);
 }
 
+void test_is_live_edit_driver_valid_rejects_id_match_span_mismatch() {
+  constexpr uint32_t loopLength = 1536;
+  constexpr NoteId kInnerId = 7;
+  constexpr NoteId kOuterId = 8;
+  EditorSelection sel{};
+  NoteEditFocus focus;
+  MidiEventVec session;
+  session.push_back(noteOnWithNoteId(804, 1, 65, 100, kInnerId));
+  session.push_back(MidiEvent::NoteOff(899, 1, 65, 0));
+  session.push_back(noteOnWithNoteId(1185, 1, 65, 100, kOuterId));
+  session.push_back(MidiEvent::NoteOff(1535, 1, 65, 0));
+
+  focus.active = true;
+  focus.movingNoteId = kInnerId;
+  focus.last = {65, 100, 1185, 1535};
+  sel.primaryNote = kInnerId;
+  sel.selectedNotes.push_back(kInnerId);
+
+  TEST_ASSERT_TRUE(editorSelectionMatchesDriverNote(sel, focus.movingNoteId));
+  TEST_ASSERT_FALSE(isLiveEditDriverValid(sel, focus, session, 1, loopLength));
+
+  focus.last = {65, 100, 804, 899};
+  TEST_ASSERT_TRUE(isLiveEditDriverValid(sel, focus, session, 1, loopLength));
+
+  sel.primaryNote = kOuterId;
+  sel.selectedNotes[0] = kOuterId;
+  focus.movingNoteId = kOuterId;
+  focus.last = {65, 100, 1185, 1535};
+  TEST_ASSERT_TRUE(isLiveEditDriverValid(sel, focus, session, 1, loopLength));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -2927,6 +2958,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_163142_moving_note_index_uses_loop_origin_display_bracket);
   RUN_TEST(test_project_post_commit_no_phantom_note_153954);
   RUN_TEST(test_display_fingerprint_changes_when_overlap_geometry_changes);
+  RUN_TEST(test_is_live_edit_driver_valid_rejects_id_match_span_mismatch);
   RUN_TEST(test_filter_excludes_inner_under_moving_note);
   RUN_TEST(test_filtered_display_note_index_for_note_ref);
   RUN_TEST(test_sync_linear_focus_avoids_spurious_display_length_commit);

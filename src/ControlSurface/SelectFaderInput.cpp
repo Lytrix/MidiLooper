@@ -348,7 +348,7 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
             NoteEditFaderSelectSync::noteSelectBracketTickFromDisplayNote(
                 selectedNote, loopStartTick, loopLength, editManager.isLengthEditingMode());
         editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
-        editManager.applySelectNav(track, bracketTick, selectNoteId, false, false);
+        editManager.applySelectNav(track, bracketTick, selectedNote.noteId, false, false);
         resetLengthEditingModeOnNoteSelect();
         lastUserNoteValueCc = selectedNote.note;
         lastNoteValueFaderTime = 0;

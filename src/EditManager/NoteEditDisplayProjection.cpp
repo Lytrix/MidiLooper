@@ -123,8 +123,10 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsFor
 }
 
 EDIT_MANAGER_IMPL_MEM DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
-    if (isNoteEditActive() && editSession.focus.active &&
-        editorSelectionMatchesDriverNote(sessionState.selection, editSession.focus.movingNoteId)) {
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (isNoteEditActive() && editSession.focus.active && loopLength > 0 &&
+        isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
+                              track.getMidiChannel(), loopLength)) {
         const NoteBaseline& last = editSession.focus.last;
         return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
                 last.endTick};
