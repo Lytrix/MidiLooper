@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
 #include "NoteEditFocusInternal.h"
 
 #include <vector>
@@ -10,6 +11,42 @@
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/NoteUtils.h"
+
+namespace {
+
+NOTE_EDIT_MEM bool noteBaselineMatches(const NoteBaseline& left, const NoteBaseline& right) {
+  return left.pitch == right.pitch && left.velocity == right.velocity &&
+         left.startTick == right.startTick && left.endTick == right.endTick;
+}
+
+}  // namespace
+
+template <typename Alloc>
+NOTE_EDIT_MEM bool isLiveEditDriverValid(const EditorSelection& selection,
+                                         const NoteEditFocus& focus,
+                                         const std::vector<MidiEvent, Alloc>& sessionStore,
+                                         uint8_t channel, uint32_t loopLength) {
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return false;
+  }
+  if (!editorSelectionMatchesDriverNote(selection, focus.movingNoteId)) {
+    return false;
+  }
+  NoteBaseline storeSpan{};
+  std::vector<MidiEvent, Alloc>& mutableStore =
+      const_cast<std::vector<MidiEvent, Alloc>&>(sessionStore);
+  if (!findLinearNoteSpanForNoteId(mutableStore, focus.movingNoteId, channel, storeSpan,
+                                   UINT32_MAX, loopLength)) {
+    return false;
+  }
+  return noteBaselineMatches(storeSpan, focus.last);
+}
+
+template bool isLiveEditDriverValid<InternalHeapFirstAllocator<MidiEvent>>(
+    const EditorSelection&, const NoteEditFocus&, const MidiEventVec&, uint8_t, uint32_t);
+template bool isLiveEditDriverValid<ExternalMemoryFirstAllocator<MidiEvent>>(
+    const EditorSelection&, const NoteEditFocus&, const SessionMidiEventVec&, uint8_t,
+    uint32_t);
 
 NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus) {
   uint32_t fp = static_cast<uint32_t>(focus.changedOverlapNoteIds.size());

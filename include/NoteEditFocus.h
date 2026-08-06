@@ -11,6 +11,7 @@
 
 #include "EditPass.h"
 #include "MidiEvent.h"
+#include "NoteEditSessionState.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/NoteUtils.h"
@@ -207,6 +208,12 @@ template <typename Alloc>
 bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
                                              std::vector<MidiEvent, Alloc>& events,
                                              uint8_t channel, uint32_t loopLength = 0);
+
+/// True when cached focus is a valid live edit driver (D19a: **NoteId** + **LinearSpan**).
+template <typename Alloc>
+bool isLiveEditDriverValid(const EditorSelection& selection, const NoteEditFocus& focus,
+                           const std::vector<MidiEvent, Alloc>& sessionStore, uint8_t channel,
+                           uint32_t loopLength);
 
 /// Session-open pairing aid: stamp each note-on's noteId onto its LIFO-paired note-off when the
 /// off still has kInvalidNoteId. Safe only on non-overlapping same-pitch stores (canonical MIDI).
