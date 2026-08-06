@@ -7,7 +7,7 @@
 #include <unity.h>
 #include <vector>
 
-#include "../../src/CurrentSetStorage.cpp"
+#include "../../src/StorageManager/CurrentSetStorage.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/LoopEventStore.cpp"
