@@ -507,4 +507,5 @@ Private phase methods on `NoteGeometryResolver`; relocate `ResolveConstrainedGeo
 - [refactor_priority_backlog.md](refactor_priority_backlog.md) — P1 geometry resolution (scheduled Phase 7)
 - [note_edit_control_surface_split_refinement.md](note_edit_control_surface_split_refinement.md) — ownership law
 - [LOOP_MIDI_STORAGE_AND_VALIDATION.md](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — commit/fold constraints
+- [legacy_api_retirement_tu_extraction_refinement.md](legacy_api_retirement_tu_extraction_refinement.md) — optional **Phase LR** after structural split (e.g. `commitPendingOverlapNoteEdits` alias)
 - [controlsurface TU split](.cursor/plans/controlsurface_tu_split_e4d3f1d8.plan.md) — shipped template (PR #11)

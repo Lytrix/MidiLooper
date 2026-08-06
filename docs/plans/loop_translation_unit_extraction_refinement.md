@@ -416,3 +416,8 @@ Many suites `#include "../../src/Loop.cpp"` directly. Update when symbols move (
 | [unified_capture_stop_driver_refinement.md](unified_capture_stop_driver_refinement.md) | Behavioral DRY on `Track` stop — **after** this hygiene |
 | [memory_scalability_refactor_enhancement.md](memory_scalability_refactor_enhancement.md) | Pool / chunk policy — separate |
 | [storagemanager_translation_unit_extraction_refinement.md](storagemanager_translation_unit_extraction_refinement.md) | `StorageLoopIo` split — parallel track |
+| [legacy_api_retirement_tu_extraction_refinement.md](legacy_api_retirement_tu_extraction_refinement.md) | Optional **Phase LR** after structural split — remove wrappers shipped for compatibility |
+
+### Shipped split — optional follow-up
+
+Loop extraction (Phases 0–11) preserved forwarding where practical. Schedule a **Legacy Retirement** PR only when call sites and tests no longer need compatibility entry points.

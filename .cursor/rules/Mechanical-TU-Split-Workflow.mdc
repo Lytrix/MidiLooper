@@ -7,12 +7,13 @@ alwaysApply: false
 
 Use when shrinking a root `.cpp` by moving **behavior-preserving** method bodies into domain folders (`src/Loop/`, `src/EditManager/`, …).
 
-**Plan template:** [`docs/templates/translation_unit_extraction_plan_template.md`](../../docs/templates/translation_unit_extraction_plan_template.md)
+**Plan template:** [`docs/templates/translation_unit_extraction_plan_template.md`](../../docs/templates/translation_unit_extraction_plan_template.md)  
+**Legacy API retirement:** [`docs/plans/legacy_api_retirement_tu_extraction_refinement.md`](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)
 
 ## Phase 0 (before first edit)
 
 1. **Prior splits inventory** — read shipped sibling plans (`track_tu_split`, `editmanager_tu_split`, `loop_tu_split`); list already-extracted TUs in this domain.
-2. **Naming pass** — table of strengthenings (action+scope per [NAMING.md](../../docs/00-authority/NAMING.md)); commit with moves, not a rename-only PR.
+2. **Naming pass** — table of strengthenings (action+scope per [NAMING.md](../../docs/00-authority/NAMING.md)); commit with moves when they clarify ownership; **do not delete legacy wrappers/aliases in extraction phases** (see Legacy Retirement below).
 3. **Cross-domain placement table** — symbol → owner TU → rationale; flag misleading names.
 
 ## Risk tiers
@@ -57,3 +58,17 @@ Primary driver: **domain ownership**, not line count.
 - **Blocked:** rename-only drive-bys; new domain nouns without user ask; repo-wide synonym hunts.
 
 See [NAMING.md](../../docs/00-authority/NAMING.md) § Migration policy.
+
+## Legacy API retirement (move first, simplify later)
+
+Translation-unit extraction phases **must not** remove compatibility wrappers, aliases, or legacy entry points unless removal is **required for compilation**. Prefer thin forwarders.
+
+Legacy APIs remain until:
+
+- all internal callers have migrated;
+- tests no longer depend on them;
+- no remaining extraction phase references them.
+
+Obsolete entry points are removed together in a dedicated **Legacy Retirement** phase after architectural ownership has stabilized ([legacy_api_retirement_tu_extraction_refinement.md](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)).
+
+Mark temporary wrappers with `TODO(refactor): Remove during Legacy Retirement` and `[[deprecated]]` where appropriate.

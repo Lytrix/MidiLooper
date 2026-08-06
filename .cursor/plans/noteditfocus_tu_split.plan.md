@@ -26,6 +26,9 @@ todos:
   - id: phase-10-remove-root
     content: "Phase 10: delete root NoteEditFocus.cpp; update test includes"
     status: pending
+  - id: phase-lr-legacy-retirement
+    content: "Phase LR (optional): remove filterSelectableDisplayNotes / buildPreCommitOverlapEditPasses wrappers"
+    status: pending
 isProject: false
 ---
 
@@ -49,6 +52,8 @@ NoteEditFocusRebuild.cpp            (existing) EditManager orchestration
 
 ## PR stack
 
-`0 → 2 → 3 → 4 → 5 → 6 → 7 → 10`
+`0 → 2 → 3 → 4 → 5 → 6 → 7 → 10 → LR (optional)`
 
 **Branch:** `refactor/noteditfocus` from `dev`
+
+**Legacy retirement:** [legacy_api_retirement_tu_extraction_refinement.md](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)

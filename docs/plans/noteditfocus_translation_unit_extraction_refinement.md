@@ -5,7 +5,8 @@
 **Parent context:** [editmanager_translation_unit_extraction_refinement.md](editmanager_translation_unit_extraction_refinement.md) (EditManager split — **in progress**), [note_edit_control_surface_split_refinement.md](note_edit_control_surface_split_refinement.md) (shipped)  
 **Naming authority:** [NAMING.md](../00-authority/NAMING.md)  
 **Workflow:** [Mechanical-TU-Split-Workflow.mdc](../../.cursor/rules/Mechanical-TU-Split-Workflow.mdc)  
-**Pattern reference:** [loop_translation_unit_extraction_refinement.md](loop_translation_unit_extraction_refinement.md) (shipped on `dev`)
+**Pattern reference:** [loop_translation_unit_extraction_refinement.md](loop_translation_unit_extraction_refinement.md) (shipped on `dev`)  
+**Legacy API retirement:** [legacy_api_retirement_tu_extraction_refinement.md](legacy_api_retirement_tu_extraction_refinement.md)
 
 ---
 
@@ -75,8 +76,8 @@ Shrink [`src/NoteEditFocus.cpp`](../../src/NoteEditFocus.cpp) (~1554 LOC) by mov
 
 | Current | Proposed | Rationale | Phase |
 |---------|----------|-----------|-------|
-| `filterSelectableDisplayNotes` (alias) | Keep alias; add `[[deprecated]]` comment in header pointing to `projectNoteEditDisplayNotes` | Surfaces canonical display projection name | 7 |
-| `buildPreCommitOverlapEditPasses` | Keep (legacy stub); document in module header as **deprecated path** only | Tests + nullptr fallback | 6 |
+| `filterSelectableDisplayNotes` (alias) | **Keep** during extraction; add `[[deprecated]]` + `TODO(refactor): Legacy Retirement` in Phase 7 | Surfaces canonical name; **remove in Phase LR** after callers migrate | 7 → LR |
+| `buildPreCommitOverlapEditPasses` | **Keep** (legacy stub); document as deprecated path in module header | Tests + nullptr fallback; retire in **Phase LR** if callers gone | 6 → LR |
 | File-static pair finders (`findLinearOff*`, …) | Move to `NoteEditFocusInternal.h` declarations | Reveal module boundary; not public API growth | 2 |
 | `makeNoteEditRow` | Keep name (action+scope OK) or inline into pre-commit module only | Small helper | 6 |
 
@@ -132,6 +133,7 @@ src/EditManager/NoteEditFocusRebuild.cpp          (existing) EditManager orchest
 4. **Batch (low/med phases):** single `pio test -e native` at end; run `test_note_edit_focus`, `test_edit_apply` if overlap/pre-commit touched.
 5. **Preserve `NOTE_EDIT_MEM`** on moved hot-path symbols ([`NoteEditMem.h`](../../include/Utils/NoteEditMem.h)).
 6. **Templates:** keep explicit instantiations for `InternalHeapFirstAllocator` and `ExternalMemoryFirstAllocator` in the same TU as definitions.
+7. **Move first, simplify later** — do not remove compatibility wrappers or aliases during Phases 2–10 ([legacy_api_retirement_tu_extraction_refinement.md](legacy_api_retirement_tu_extraction_refinement.md)).
 
 ### Protected paths (extra scrutiny)
 
@@ -281,6 +283,21 @@ Phase **1** skipped (no separate coordinator file — root TU deleted at Phase 1
 - Update [unified_interval_projection_phase2_edit_projection_handoff.md](unified_interval_projection_phase2_edit_projection_handoff.md) paths if needed
 
 **PR title:** `refactor(noteditfocus): Phase 10 remove root NoteEditFocus.cpp`
+
+---
+
+## Phase LR — Legacy Retirement (after Phase 10, optional)
+
+**Risk:** low — API cleanup only; no ownership or behaviour change.
+
+| Legacy symbol | Replacement | Retire when |
+|---------------|-------------|-------------|
+| `filterSelectableDisplayNotes` | `projectNoteEditDisplayNotes` | All internal callers + tests migrated |
+| `buildPreCommitOverlapEditPasses` | `buildPreCommitEditPasses` | No test/nullptr fallback depends on stub |
+
+Mark during extraction (Phases 6–7); delete only when [retirement criteria](legacy_api_retirement_tu_extraction_refinement.md#retirement-criteria) are met.
+
+**PR title:** `refactor(noteditfocus): Legacy Retirement — remove obsolete wrappers`
 
 ---
 
