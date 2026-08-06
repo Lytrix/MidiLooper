@@ -17,13 +17,15 @@ Shrink `src/StorageManager.cpp` from a ~4.4k-line monolith into a thin façade b
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/StorageManager.cpp` | **1808** (root TU; was 4411) |
+| `src/StorageManager.cpp` | **~1219** (root TU; was 4411) |
+| `src/StorageManager/SetBrowserRead.cpp` | **~470** (Phase 8b) |
+| `src/StorageManager/WallClockSdSync.cpp` | **~167** (Phase 8a) |
 | `src/StorageManager/PersistenceAdmit.cpp` | **~335** (Phase 7) |
 | `src/StorageManager/LegacyMonolithLoad.cpp` | **285** (Phase 6) |
 | `src/StorageManager/BootRecovery.cpp` | **349** (Phase 5) |
 | `src/StorageManager/SavedSetIo.cpp` | **418** (Phase 4) |
 | `src/StorageManager/LoopSlotRestoreQueue.cpp` | **321** (Phase 3) |
-| Phases 0–4 on `refactor/storagemanager` | committed |
+| Phases 0–8 on `refactor/storagemanager` | committed |
 
 ### Target end state
 
@@ -72,7 +74,8 @@ Phase 8  Wall-clock + browser      (~400 LOC)
 ```
 
 Milestone after phases **0–4**: root TU **~2800 LOC**.  
-Milestone after phases **0–7**: root TU **~1500 LOC**.
+Milestone after phases **0–7**: root TU **~1500 LOC**.  
+Milestone after phases **0–8**: root TU **~1219 LOC** (within target band).
 
 ---
 
@@ -300,9 +303,9 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 
 ---
 
-## Phase 8 — Wall-clock sync + browser metadata (~400 LOC)
+## Phase 8 — Wall-clock sync + browser metadata (~400 LOC) — **shipped** (`refactor/storagemanager`)
 
-Two small TUs or one `SetBrowserRead.cpp` — pick one PR if combined.
+Two TUs: `WallClockSdSync.cpp` + `SetBrowserRead.cpp`.
 
 ### 8a — `WallClockSdSync.cpp` (~176 LOC)
 
@@ -338,7 +341,7 @@ Two small TUs or one `SetBrowserRead.cpp` — pick one PR if combined.
 |------|-----|-------|
 | `saveState` drain → `SyncDrainBudget.cpp` | ~80 | Pair with scheduler ownership review |
 | Deferred-save status queries | ~130 | Collapse to header inlines after root TU &lt; 1.5k |
-| `toggleSetRevisionCatalogFavorite` + revision catalog | ~200 | Could merge with Phase 8b |
+| `toggleSetRevisionCatalogFavorite` + revision catalog | — | Shipped in Phase 8b |
 | `StorageSession` colocation ([DEC-012](storage_session_state_refactor_handoff.md)) | — | **After** extractions stabilize file boundaries |
 
 ---
