@@ -14,8 +14,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
-#include "../../src/NoteEditFocus.cpp"
-#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../test_support/NoteEditFocusTestDeps.cpp"
 #include "../../src/EditManager/NoteEditSessionUndoStack.cpp"
 
 #include "EditPass.h"

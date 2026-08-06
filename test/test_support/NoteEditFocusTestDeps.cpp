@@ -2,10 +2,13 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // Include once in native tests that link NoteEditFocus symbols.
-// Phase 10 will switch suites from direct NoteEditFocus.cpp includes to this aggregate.
 
 #pragma once
 
-#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
-#include "../../src/NoteEditFocus.cpp"
+#include "../../src/EditManager/NoteEditFocusLinearSpan.cpp"
+#include "../../src/EditManager/NoteEditFocusBaseline.cpp"
+#include "../../src/EditManager/NoteEditFocusOverlap.cpp"
+#include "../../src/EditManager/NoteEditFocusState.cpp"
+#include "../../src/EditManager/NoteEditFocusPreCommit.cpp"
+#include "../../src/EditManager/NoteEditFocusDisplayProjection.cpp"

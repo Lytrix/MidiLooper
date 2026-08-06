@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // Internal helpers for NoteEditFocus domain modules under src/EditManager/.
-// Implementations remain in src/NoteEditFocus.cpp until extraction phases 2–7.
+// Implementations live in src/EditManager/NoteEditFocus*.cpp domain modules.
 
 #pragma once
 
