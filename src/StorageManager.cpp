@@ -53,9 +53,6 @@
 
 using namespace StorageManagerInternal;
 
-#define STORAGE_FILENAME CurrentSetStorage::kLegacyMonolithPath
-#define STORAGE_VERSION 6
-
 namespace {
 #if defined(SESSION_CAPTURE)
 #if defined(__IMXRT1062__)
@@ -182,21 +179,6 @@ void clearAllocatedLoopEditStateDirty() {
             track.getLoop(s).clearEditStateDirty();
         }
     }
-}
-
-static void quarantineStorageFile() {
-#if defined(ARDUINO)
-    if (!SD.exists(STORAGE_FILENAME)) {
-        return;
-    }
-    char quarantineName[48];
-    snprintf(quarantineName, sizeof(quarantineName), "/state.bad.%lu",
-             static_cast<unsigned long>(millis()));
-    if (SD.rename(STORAGE_FILENAME, quarantineName)) {
-        Serial.print("[StorageManager] Quarantined storage file as ");
-        Serial.println(quarantineName);
-    }
-#endif
 }
 
 }  // namespace
@@ -1668,10 +1650,10 @@ CAPTURE_HITL_MEM bool quarantineCurrentWorkspaceOnSdImpl() {
         ok = false;
     }
 
-    if (SD.exists(STORAGE_FILENAME)) {
+    if (SD.exists(CurrentSetStorage::kLegacyMonolithPath)) {
         written = std::snprintf(dest, sizeof(dest), "/state.bad.%lu", stamp);
         if (written > 0 && static_cast<size_t>(written) < sizeof(dest)) {
-            ok = renamePathOnSdIfPresent(STORAGE_FILENAME, dest) && ok;
+            ok = renamePathOnSdIfPresent(CurrentSetStorage::kLegacyMonolithPath, dest) && ok;
         } else {
             ok = false;
         }
@@ -2129,224 +2111,6 @@ void STORAGE_PERSIST_MEM StorageManager::enqueueRemainingLoopSlotRestoresFromSd(
 
 bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {
     return loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
-}
-
-// Cold v5 migration path — keep out of ITCM so DMAMEM StorageSession does not
-// tip FlexRAM into a 14th code bank (steals a DTCM bank).
-bool STORAGE_PERSIST_MEM StorageManager::loadV5MonolithIntoRam(LooperState& state) {
-    Serial.println("[StorageManager] Loading state from SD card...");
-    File file = SD.open(STORAGE_FILENAME, FILE_READ);
-    if (!file) {
-        Serial.print("[StorageManager] ERROR: Could not open file for reading: ");
-        Serial.println(STORAGE_FILENAME);
-        return false;
-    }
-    // Use temporary variables to avoid corrupting current state if file is bad
-    uint32_t version = 0;
-    if (!readRaw(file, &version, sizeof(version))) {
-        Serial.println("[StorageManager] ERROR: Failed to read version");
-        file.close();
-        return false;
-    }
-    Serial.println("[StorageManager] Version read OK");
-    if (version != 6) {
-        Serial.print("[StorageManager] ERROR: Unsupported legacy storage version. Found: ");
-        Serial.println(version);
-        file.close();
-        return false;
-    }
-
-    float savedBpm = 0;
-    if (!readRaw(file, &savedBpm, sizeof(savedBpm))) {
-        Serial.println("[StorageManager] ERROR: Failed to read BPM");
-        file.close();
-        return false;
-    }
-    if (savedBpm >= 20.0f && savedBpm <= 300.0f) {
-        bpm = savedBpm;
-        Serial.print("[StorageManager] Restored BPM: ");
-        Serial.println(savedBpm);
-    }
-
-    // Looper state
-    uint32_t looperStateVal = 0;
-    if (!readRaw(file, &looperStateVal, sizeof(looperStateVal))) {
-        Serial.println("[StorageManager] ERROR: Failed to read looper state");
-        file.close();
-        return false;
-    }
-    LooperState loadedLooperState = sanitizeLooperStateForPersistence(static_cast<LooperState>(looperStateVal));
-
-    // Master loop length
-    uint32_t masterLoopLength = 0;
-    if (!readRaw(file, &masterLoopLength, sizeof(masterLoopLength))) {
-        Serial.println("[StorageManager] ERROR: Failed to read master loop length");
-        file.close();
-        return false;
-    }
-
-    // Tracks
-    uint8_t numTracks = 0;
-    if (!readRaw(file, &numTracks, sizeof(numTracks))) {
-        Serial.println("[StorageManager] ERROR: Failed to read numTracks");
-        file.close();
-        return false;
-    }
-    if (numTracks != Config::NUM_TRACKS) {
-        Serial.print("[StorageManager] ERROR: numTracks mismatch. Found: ");
-        Serial.println(numTracks);
-        file.close();
-        return false;
-    }
-
-    std::vector<uint8_t> activeLoopIndex(numTracks, 0);
-        uint8_t selectedTrackIdx = 0;
-        auto failAfterPartialLoad = [&file]() {
-            file.close();
-            quarantineStorageFile();
-            resetTracksAfterFailedLoad();
-            return false;
-        };
-
-        for (uint8_t t = 0; t < numTracks; ++t) {
-            Track& track = trackManager.getTrack(t);
-            track.ensureLoopsAllocated();
-
-            uint32_t trackStateRaw = 0;
-            if (!readRaw(file, &trackStateRaw, sizeof(trackStateRaw))) {
-                Serial.print("[StorageManager] ERROR: Failed to read trackState for track "); Serial.println(t);
-                return failAfterPartialLoad();
-            }
-            TrackState loadedTrackState = static_cast<TrackState>(trackStateRaw);
-
-            bool muted = false;
-            if (!readRaw(file, &muted, sizeof(muted))) {
-                Serial.print("[StorageManager] ERROR: Failed to read muted for track "); Serial.println(t);
-                return failAfterPartialLoad();
-            }
-
-            bool anySlotHasEvents = false;
-
-            for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-                bool slotEnabled = false;
-                bool slotMuted = false;
-                LoopId slotLoopId = kInvalidLoopId;
-                if (!readRaw(file, &slotEnabled, sizeof(slotEnabled))) { Serial.print("[StorageManager] ERROR: Failed to read slotEnabled for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); return failAfterPartialLoad(); }
-                if (!readRaw(file, &slotMuted, sizeof(slotMuted))) { Serial.print("[StorageManager] ERROR: Failed to read slotMuted for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); return failAfterPartialLoad(); }
-                if (!readRaw(file, &slotLoopId, sizeof(slotLoopId))) { Serial.print("[StorageManager] ERROR: Failed to read slotLoopId for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); return failAfterPartialLoad(); }
-
-                if (slotLoopId == kInvalidLoopId || slotLoopId >= Config::MAX_LOOPS_PER_TRACK) {
-                    Serial.print("[StorageManager] WARNING: Invalid slotLoopId ");
-                    Serial.print(static_cast<unsigned long>(slotLoopId));
-                    Serial.print(" for track ");
-                    Serial.print(t);
-                    Serial.print(" slot ");
-                    Serial.print(s);
-                    Serial.print(" — repairing to ");
-                    Serial.println(s);
-                    slotLoopId = static_cast<LoopId>(s);
-                }
-
-                trackManager.setSlotEnabled(t, s, slotEnabled);
-                trackManager.setSlotMuted(t, s, slotMuted);
-                track.slots_[s].loopId = slotLoopId;
-            }
-
-            const StorageIo loopIo = storageIoFromFileRead(file);
-            for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
-                Loop& loop = track.loopPool_.at(p);
-                if (!readLoopPersisted(loopIo, loop)) {
-                    Serial.print("[StorageManager] ERROR: Failed to read loop pool entry track ");
-                    Serial.print(t);
-                    Serial.print(" pool ");
-                    Serial.println(p);
-                    return failAfterPartialLoad();
-                }
-                if (loop.hasCommittedPasses()) {
-                    anySlotHasEvents = true;
-                }
-            }
-
-            applyLoadedTrackStateAfterLoopSlots(track, loadedTrackState, anySlotHasEvents, muted);
-        }
-
-        if (!readRaw(file, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
-            Serial.println("[StorageManager] ERROR: Failed to read selectedTrackIdx for legacy monolith");
-            return failAfterPartialLoad();
-        }
-
-        std::vector<uint8_t> selectedSlotIndex(numTracks, 0);
-        for (uint8_t t = 0; t < numTracks; ++t) {
-            if (!readRaw(file, &activeLoopIndex[t], sizeof(activeLoopIndex[t]))) {
-                Serial.println("[StorageManager] ERROR: Failed to read activeLoopIndex for legacy monolith");
-                return failAfterPartialLoad();
-            }
-        }
-
-        uint32_t footerToken = 0;
-        if (!readRaw(file, &footerToken, sizeof(footerToken))) {
-            Serial.println("[StorageManager] ERROR: Failed to read global undo stack token for legacy monolith");
-            return failAfterPartialLoad();
-        }
-        if (footerToken == kFooterSelectedSlotExtensionToken) {
-            for (uint8_t t = 0; t < numTracks; ++t) {
-                if (!readRaw(file, &selectedSlotIndex[t], sizeof(selectedSlotIndex[t]))) {
-                    Serial.println("[StorageManager] ERROR: Failed to read selectedSlotIndex for legacy monolith");
-                    return failAfterPartialLoad();
-                }
-            }
-            if (!readRaw(file, &footerToken, sizeof(footerToken))) {
-                Serial.println("[StorageManager] ERROR: Failed to read global undo stack token for legacy monolith");
-                return failAfterPartialLoad();
-            }
-        } else {
-            for (uint8_t t = 0; t < numTracks; ++t) {
-                selectedSlotIndex[t] = activeLoopIndex[t];
-            }
-        }
-        if (footerToken != kGlobalUndoStackToken) {
-            Serial.println("[StorageManager] ERROR: Global undo stack token mismatch for legacy monolith");
-            return failAfterPartialLoad();
-        }
-        for (uint8_t t = 0; t < numTracks; ++t) {
-            Track& track = trackManager.getTrack(t);
-            if (!readGlobalUndoStackFromFile(file, track.getGlobalUndoStack())) {
-                Serial.print("[StorageManager] ERROR: Failed to read global undo stack for track ");
-                Serial.println(t);
-                return failAfterPartialLoad();
-            }
-        }
-
-        uint32_t svokToken = 0;
-        if (!readRaw(file, &svokToken, sizeof(svokToken))) {
-            Serial.println("[StorageManager] ERROR: Failed to read storage completion marker for legacy monolith");
-            return failAfterPartialLoad();
-        }
-        if (svokToken != CurrentSetStorage::kSaveFileToken) {
-            Serial.println("[StorageManager] ERROR: Storage completion marker mismatch for legacy monolith");
-            return failAfterPartialLoad();
-        }
-
-        file.close();
-        Serial.println("[StorageManager] Legacy monolith state loaded successfully (v5).");
-
-        applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedSlotIndex, selectedTrackIdx,
-                                   state, loadedLooperState, masterLoopLength);
-        return true;
-}
-
-bool StorageManager::migrateV5MonolithToCurrentSet(LooperState& state) {
-    Serial.println("[StorageManager] Migrating v5 monolith to CurrentSet (deferred SD write)...");
-    if (!loadV5MonolithIntoRam(state)) {
-        return false;
-    }
-    currentSetAnchorFields = {};
-    quarantineLegacyMonolithAfterSave = true;
-    forceCurrentSetFullLoopWrite = true;
-    markAllCurrentSetLoopSlotsDirtyInternal(false);
-    requestDeferredSaveState(state);
-    Serial.println("[StorageManager] v5 state loaded to RAM; CurrentSet write queued.");
-    return true;
 }
 
 bool StorageManager::loadCurrentSetFromSd(LooperState& state) {
