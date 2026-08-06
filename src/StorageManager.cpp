@@ -69,150 +69,12 @@ namespace {
 
 constexpr size_t kSavedSetPathCapacity = 64;
 
-
-struct PendingLoopSlotRestoreQueue {
-    static constexpr uint16_t kCapacity =
-        static_cast<uint16_t>(Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK);
-    DeferredLoopSlotRestore entries[kCapacity];
-    uint16_t count = 0;
-};
-
-PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
 bool workspaceFooterPersistDeferred = false;
 char restoredSetBundlePath_[80] = {};
-
-/// After a completed restore attempt (success or empty/fail), do not re-enqueue.
-bool loopSlotRestoreAttempted_[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]{};
 
 std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
 bool undoSnapshotsPending_ = false;
-
-std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
-    loopSlotPayloadOnSdInRam_{};
-
-namespace {
-
-bool probeLoopSlotPayloadOnSdFromSd(uint8_t trackIndex, uint8_t slotIndex) {
-    char loopPath[64];
-    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
-        return false;
-    }
-    return SD.exists(loopPath) && CurrentSetStorage::verifySaveFileTokenAtPath(loopPath);
-}
-
-}  // namespace
-
-bool STORAGE_PERSIST_MEM StorageManager::loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex) {
-    return probeLoopSlotPayloadOnSdFromSd(trackIndex, slotIndex);
-}
-
-bool STORAGE_PERSIST_MEM StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t trackIndex,
-                                                                     uint8_t slotIndex) {
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return false;
-    }
-    return loopSlotPayloadOnSdInRam_[trackIndex][slotIndex];
-}
-
-void STORAGE_PERSIST_MEM StorageManager::setLoopSlotPayloadOnSdInRam(uint8_t trackIndex,
-                                                                     uint8_t slotIndex,
-                                                                     bool hasPayload) {
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return;
-    }
-    loopSlotPayloadOnSdInRam_[trackIndex][slotIndex] = hasPayload;
-}
-
-void STORAGE_PERSIST_MEM StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t trackIndex,
-                                                                           uint8_t slotIndex) {
-    setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex,
-                                probeLoopSlotPayloadOnSdFromSd(trackIndex, slotIndex));
-}
-
-bool loopSlotManifestExistsOnSd(uint8_t trackIndex, uint8_t slotIndex) {
-    char loopPath[64];
-    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
-        return false;
-    }
-    return SD.exists(loopPath);
-}
-
-void STORAGE_PERSIST_MEM removeDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count;) {
-        if (pendingLoopSlotRestores_.entries[i].track == trackIndex &&
-            pendingLoopSlotRestores_.entries[i].slot == slotIndex) {
-            for (uint16_t j = i + 1; j < pendingLoopSlotRestores_.count; ++j) {
-                pendingLoopSlotRestores_.entries[j - 1] = pendingLoopSlotRestores_.entries[j];
-            }
-            --pendingLoopSlotRestores_.count;
-        } else {
-            ++i;
-        }
-    }
-}
-
-void STORAGE_PERSIST_MEM sortPendingLoopSlotRestoresByPriority() {
-    for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
-        const DeferredLoopSlotRestore item = pendingLoopSlotRestores_.entries[i];
-        uint16_t j = i;
-        while (j > 0 &&
-               pendingLoopSlotRestores_.entries[j - 1].restorePriority > item.restorePriority) {
-            pendingLoopSlotRestores_.entries[j] = pendingLoopSlotRestores_.entries[j - 1];
-            --j;
-        }
-        pendingLoopSlotRestores_.entries[j] = item;
-    }
-}
-
-uint16_t STORAGE_PERSIST_MEM currentDeferredRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
-    const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
-    uint8_t selectedSlotIndex[Config::NUM_TRACKS]{};
-    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        selectedSlotIndex[t] = trackManager.getSelectedSlotIndex(t);
-    }
-    return computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
-                                          Config::NUM_TRACKS, Config::NUM_TRACKS,
-                                          Config::MAX_LOOPS_PER_TRACK);
-}
-
-
-void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
-    StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
-    if (!StorageManager::hasLoopSlotPayloadOnSdInRam(trackIndex, slotIndex)) {
-        return;
-    }
-    const uint16_t restorePriority = currentDeferredRestorePriority(trackIndex, slotIndex);
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
-        if (pending.track == trackIndex && pending.slot == slotIndex) {
-            pending.restorePriority = restorePriority;
-            sortPendingLoopSlotRestoresByPriority();
-            return;
-        }
-    }
-    if (!StorageManager::needsSlotLoad(trackIndex, slotIndex)) {
-        return;
-    }
-    if (pendingLoopSlotRestores_.count >= PendingLoopSlotRestoreQueue::kCapacity) {
-        return;
-    }
-    pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
-                                                                          restorePriority};
-    sortPendingLoopSlotRestoresByPriority();
-}
-
-/// Enqueue every HEADER_READY SD payload for background fill (adjacent/track/forward priority).
-void STORAGE_PERSIST_MEM enqueueRemainingLoopSlotRestores() {
-    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            queueDeferredLoopSlotRestore(t, s);
-        }
-    }
-    StorageManagerInternal::reprioritizeDeferredLoopSlotRestoreEntries();
-    // Give transport/UI a quiet window after title clears before SD fill resumes.
-    StorageManagerInternal::armBackgroundRestoreHoldoff(2000);
-}
 
 bool setCurrentSetLoadedFromFolder(const char* folderName) {
     if (folderName == nullptr || folderName[0] == '\0') {
@@ -735,126 +597,6 @@ bool copySavedSetIntoCurrent(const char* sourceSetDir) {
 }  // namespace
 
 namespace StorageManagerInternal {
-
-STORAGE_PERSIST_MEM void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex) {
-    if (trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
-        loopSlotRestoreAttempted_[trackIndex][slotIndex] = true;
-    }
-}
-
-bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex) {
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return false;
-    }
-    return loopSlotRestoreAttempted_[trackIndex][slotIndex];
-}
-
-uint16_t pendingLoopSlotRestoreCount() {
-    return pendingLoopSlotRestores_.count;
-}
-
-bool isDeferredLoopSlotRestoreQueued(uint8_t trackIndex, uint8_t slotIndex) {
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        const DeferredLoopSlotRestore& entry = pendingLoopSlotRestores_.entries[i];
-        if (entry.track == trackIndex && entry.slot == slotIndex) {
-            return true;
-        }
-    }
-    return false;
-}
-
-STORAGE_PERSIST_MEM bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out) {
-    while (pendingLoopSlotRestores_.count > 0) {
-        const DeferredLoopSlotRestore& head = pendingLoopSlotRestores_.entries[0];
-        const bool done =
-            loopSlotRestoreAttempted_[head.track][head.slot] ||
-            trackManager.getTrack(head.track).getLoop(head.slot).hasCommittedPasses();
-        if (!done) {
-            out = head;
-            for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
-                pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
-            }
-            --pendingLoopSlotRestores_.count;
-            return true;
-        }
-        for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
-            pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
-        }
-        --pendingLoopSlotRestores_.count;
-    }
-    return false;
-}
-
-STORAGE_PERSIST_MEM bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uint8_t focusSlot,
-                                                         DeferredLoopSlotRestore& out) {
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        const DeferredLoopSlotRestore& entry = pendingLoopSlotRestores_.entries[i];
-        if (entry.track != focusTrack || entry.slot != focusSlot) {
-            continue;
-        }
-        const bool done =
-            loopSlotRestoreAttempted_[entry.track][entry.slot] ||
-            trackManager.getTrack(entry.track).getLoop(entry.slot).hasCommittedPasses();
-        if (done) {
-            for (uint16_t j = i + 1; j < pendingLoopSlotRestores_.count; ++j) {
-                pendingLoopSlotRestores_.entries[j - 1] = pendingLoopSlotRestores_.entries[j];
-            }
-            --pendingLoopSlotRestores_.count;
-            return false;
-        }
-        out = entry;
-        for (uint16_t j = i + 1; j < pendingLoopSlotRestores_.count; ++j) {
-            pendingLoopSlotRestores_.entries[j - 1] = pendingLoopSlotRestores_.entries[j];
-        }
-        --pendingLoopSlotRestores_.count;
-        return true;
-    }
-    return false;
-}
-
-void reprioritizeDeferredLoopSlotRestoreEntries() {
-    if (pendingLoopSlotRestores_.count == 0) {
-        return;
-    }
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
-        pending.restorePriority = currentDeferredRestorePriority(pending.track, pending.slot);
-    }
-    sortPendingLoopSlotRestoresByPriority();
-}
-
-void clearPendingLoopSlotRestoresAtBoot() {
-    pendingLoopSlotRestores_.count = 0;
-}
-
-void resetAllLoopSlotRestoreAttempted() {
-    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            loopSlotRestoreAttempted_[t][s] = false;
-        }
-    }
-}
-
-bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority) {
-    if (pendingLoopSlotRestores_.count >= PendingLoopSlotRestoreQueue::kCapacity) {
-        return false;
-    }
-    pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
-                                                                          restorePriority};
-    return true;
-}
-
-void sortPendingLoopSlotRestoreQueue() {
-    sortPendingLoopSlotRestoresByPriority();
-}
-
-bool peekFirstPendingLoopSlotRestore(DeferredLoopSlotRestore& out) {
-    if (pendingLoopSlotRestores_.count == 0) {
-        return false;
-    }
-    out = pendingLoopSlotRestores_.entries[0];
-    return true;
-}
 
 void setRestoredSetBundlePath(const char* path) {
     if (path == nullptr) {
@@ -1876,7 +1618,7 @@ bool StorageManager::hasDeferredSaveWork() {
 }
 
 bool StorageManager::hasPendingLoopSlotRestore() {
-    return pendingLoopSlotRestores_.count > 0 || SlotLoadSession::isActive() ||
+    return StorageManagerInternal::pendingLoopSlotRestoreCount() > 0 || SlotLoadSession::isActive() ||
            StorageManagerInternal::anyLoadLoopJobActive();
 }
 
@@ -1892,22 +1634,7 @@ bool STORAGE_PERSIST_MEM StorageManager::isFocusedLoopSlotRestoreWork() {
     if (StorageManagerInternal::isParkedLoadLoopJobFor(focusTrack, focusSlot)) {
         return true;
     }
-    // Scan the whole queue — first eligible entry may be a neighbor from prioritize.
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        const DeferredLoopSlotRestore& entry = pendingLoopSlotRestores_.entries[i];
-        if (entry.track != focusTrack || entry.slot != focusSlot) {
-            continue;
-        }
-        if (loopSlotRestoreAttempted_[entry.track][entry.slot]) {
-            return false;
-        }
-        if (entry.track < trackManager.getTrackCount() &&
-            trackManager.getTrack(entry.track).getLoop(entry.slot).hasCommittedPasses()) {
-            return false;
-        }
-        return true;
-    }
-    return false;
+    return StorageManagerInternal::isFocusDeferredLoopSlotRestorePending(focusTrack, focusSlot);
 }
 
 void STORAGE_PERSIST_MEM StorageManager::setBootTitleLoadDrain(bool enabled) {
@@ -1918,7 +1645,7 @@ bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;
     }
-    if (loopSlotRestoreAttempted_[trackIndex][slotIndex]) {
+    if (StorageManagerInternal::isLoopSlotRestoreAttempted(trackIndex, slotIndex)) {
         return false;
     }
     if (SlotLoadSession::isActiveFor(trackIndex, slotIndex)) {
@@ -1936,11 +1663,8 @@ bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
             return false;
         }
     }
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        const DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
-        if (pending.track == trackIndex && pending.slot == slotIndex) {
-            return false;
-        }
+    if (StorageManagerInternal::isDeferredLoopSlotRestoreQueued(trackIndex, slotIndex)) {
+        return false;
     }
     return true;
 }
@@ -1951,7 +1675,7 @@ bool StorageManager::bootInteractiveReady() {
     // Non-playback SD slots are not enqueued at boot (HEADER_READY metadata only).
     // Do not re-derive readiness from getActiveLoopIndex() after the footer —
     // loadTransportSlotIndices remaps active→selected while stopped.
-    return pendingLoopSlotRestores_.count == 0 && !SlotLoadSession::isActive() &&
+    return StorageManagerInternal::pendingLoopSlotRestoreCount() == 0 && !SlotLoadSession::isActive() &&
            !StorageManagerInternal::anyLoadLoopJobActive();
 }
 
@@ -2722,12 +2446,6 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
 
 }  // namespace StorageManagerInternal
 
-void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
-    const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
-        false, StorageManager::isFocusedLoopSlotRestoreWork(), false);
-    DeferredJobScheduler::runFrame(budgetUs);
-}
-
 void STORAGE_PERSIST_MEM StorageManager::processDeferredUndoSnapshots() {
     if (!undoSnapshotsPending_ || undoHydrateTrackIndex_ >= Config::NUM_TRACKS) {
         return;
@@ -2782,7 +2500,7 @@ void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8
     // bootInteractiveReady().
     auto queueIfNeeded = [](uint8_t t, uint8_t s) {
         if (!trackManager.getTrack(t).getLoop(s).hasCommittedPasses()) {
-            queueDeferredLoopSlotRestore(t, s);
+            StorageManagerInternal::queueDeferredLoopSlotRestore(t, s);
         }
     };
     queueIfNeeded(trackIndex, slotIndex);
@@ -2803,7 +2521,7 @@ void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8
 }
 
 void STORAGE_PERSIST_MEM StorageManager::enqueueRemainingLoopSlotRestoresFromSd() {
-    enqueueRemainingLoopSlotRestores();
+    StorageManagerInternal::enqueueRemainingLoopSlotRestores();
 }
 
 bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {
