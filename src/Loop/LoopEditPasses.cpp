@@ -7,7 +7,42 @@
 #include "Logger.h"
 #include "Utils/MemoryMonitor.h"
 
+#include <algorithm>
 #include <memory>
+
+void Loop::assignMissingNoteIds(SessionMidiEventVec& events) {
+  for (MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+      evt.noteId = allocateNoteId();
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "assignMissingNoteIds: assigned noteId=%lu tick=%lu pitch=%u",
+                 static_cast<unsigned long>(evt.noteId), static_cast<unsigned long>(evt.tick),
+                 static_cast<unsigned>(evt.data.noteData.note));
+    }
+  }
+}
+
+void Loop::assignMissingNoteIds(MidiEventVec& events) {
+  for (MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+      evt.noteId = allocateNoteId();
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "assignMissingNoteIds: assigned noteId=%lu tick=%lu pitch=%u",
+                 static_cast<unsigned long>(evt.noteId), static_cast<unsigned long>(evt.tick),
+                 static_cast<unsigned>(evt.data.noteData.note));
+    }
+  }
+}
+
+void Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs) {
+  passes.editPasses.erase(
+      std::remove_if(passes.editPasses.begin(), passes.editPasses.end(),
+                     [&](const EditPass& editPass) {
+                       return editPass.state == EditPassState::Disabled &&
+                              !refs.referencesEditPass(editPass.id);
+                     }),
+      passes.editPasses.end());
+}
 
 LoopSnapshotRef Loop::sharePassesSnapshot() const {
   auto snapshot = std::make_shared<PersistedLoopSnapshot>();

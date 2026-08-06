@@ -343,7 +343,7 @@ Appends to **`LoopCapture.cpp`**.
 
 ---
 
-## Phase 10 — remaining responsibilities (evidence-driven)
+## Phase 10 — remaining responsibilities (evidence-driven) ✅
 
 **Goal:** After Phase 9, inventory what remains in root `Loop.cpp`, confirm ownership against the **Phase 10 ownership guide** (above), and extract into existing modules. **No catch-all module.**
 
