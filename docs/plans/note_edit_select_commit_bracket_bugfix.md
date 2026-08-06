@@ -24,6 +24,16 @@ When fader-1 re-selects the **same** `NoteId` as `focus.movingNoteId`, macro com
 
 **Native test:** `test_macro_commit_aligned_with_select_target_rejects_bracket_mismatch_220331`
 
+## HITL validation
+
+| Capture | Result |
+|---------|--------|
+| `220331` (~55.7s) | **Pre-fix failure** — `mover_focus` 993–1187 after select at 609; `M65@609 missing in recon` |
+| `222937` | **Failure absent** — no wrong-bracket pre-commit; no `M65@609 missing` |
+| `222937` RC7b gate | **Not exercised** — post-move select at 609 blocked by `geometry_driver_ignored`, not `bracket mismatch` telemetry |
+
+**Open HITL:** move note 609→993, wait geometry hold (>750 ms), fader-1 re-select same `NoteId` at 609 → expect skip log + no `mover_focus` at 993.
+
 ## Out of scope (separate commits)
 
 - Selection index stability during geometry (`Note selection changed: 1→2` same mover)
