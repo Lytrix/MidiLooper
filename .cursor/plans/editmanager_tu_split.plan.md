@@ -4,10 +4,10 @@ overview: Shrink `src/EditManager.cpp` (~2602 LOC) into a thin session coordinat
 todos:
   - id: phase-0-scaffold
     content: "Phase 0: EditManagerInternal.h + NoteEditCommitColdHelpers.cpp (anon namespace pre-commit helpers)"
-    status: pending
+    status: completed
   - id: phase-1-display
     content: "Phase 1: Extract NoteEditDisplayProjection.cpp (display cache, deferred refresh, live display note)"
-    status: pending
+    status: completed
   - id: phase-2-focus
     content: "Phase 2: Extract NoteEditFocusRebuild.cpp (focus rebuild, index sync, cancel pending delete)"
     status: pending
