@@ -11,9 +11,10 @@ These files are **copies of plans from** `~/.cursor/plans/` so they are **versio
 **To refresh from your machine:**  
 `cp ~/.cursor/plans/*.plan.md docs/plans/`
 
----
+| [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) | Naming investigation + debt audit (2026-08-06) |
+| [refactor_priority_backlog.md](refactor_priority_backlog.md) | **Cross-cutting refactor priority index** (P1/P2/P3) |
 
-## Hygiene sprint (`chore/codebase-hygiene-sprint1`)
+---
 
 In-repo refinement/bugfix plans for the hygiene branch (all **Status: Done**). Mass archive of historical Cursor exports under this folder is still optional — see review item 18.
 

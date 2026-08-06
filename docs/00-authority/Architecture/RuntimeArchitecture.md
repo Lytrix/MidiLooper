@@ -4,6 +4,8 @@
 
 **Entry point for agents:** read this file first for display, playback, LED, or NOTE_EDIT read paths — then the layer-specific child doc.
 
+**Naming:** [NAMING.md](../NAMING.md) — architectural vocabulary and concept boundaries.
+
 ---
 
 ## Four layers

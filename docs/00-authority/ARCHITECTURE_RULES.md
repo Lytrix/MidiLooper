@@ -4,7 +4,7 @@ Contract for agents and humans: who owns what, how modules are named, what is fo
 
 Authority: subordinate to [PROJECT_INTENT.md](PROJECT_INTENT.md); overrides guides, plans, and ad-hoc code patterns.
 
-Module naming reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md). Domain vocabulary: `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`.
+Module naming reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md). Domain vocabulary: [NAMING.md](NAMING.md).
 
 **Runtime data flow** (storage → representations → interval → consumers): [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md).
 
@@ -46,7 +46,7 @@ Each row is the **single owner** for lifecycle and mutation of that scope. Calle
 | **ClockManager** | `ClockManager` | 192 PPQN tick, MIDI clock in/out, internal fallback, bar/beat derivation | Track record arm logic, edit session state |
 | **Display** | `DisplayManager` | OLED/LCD draw calls, piano roll layout, track strip, load/save overlay **presentation** | Business decisions (what to save, when to commit a pass); reads state via getters |
 | **UI state (global mode)** | `LooperStateManager` | `LooperState` enum (idle/record/play/overdub/edit/settings), edit overlay context, load/save overlay active flag, quantized transition queue | Per-track slot data, MIDI event storage |
-| **Note edit session** | `EditManager` + `ControlSurfaceManager` | Live `EditSession`, `NoteEditSession.store`, focus/overlap notes, `EditStates/*` FSM; hardware ingress/egress on `ControlSurfaceManager` | Committed `editPass` rows (owned by `Loop` until `saveNoteEditPass` / `closeNoteEditPass`) |
+| **Note edit session** | `EditManager` + `ControlSurfaceManager` | Live `EditSession`, `NoteEditSession.store`, focus/overlap notes, `EditStates/*` FSM; hardware Input/Outbound on `ControlSurfaceManager` | Committed `editPass` rows (owned by `Loop` until `saveNoteEditPass` / `closeNoteEditPass`) |
 | **Undo (global)** | `TrackUndo` on each `Track` | Capture-pass undo, note-edit-pass undo, clear/loop-start snapshots | In-session edit undo stack inside `EditManager` |
 | **Persistence admission** | `StorageManager::requestDeferredSaveState` + idle drain in `main.cpp` | When and how Current workspace hits SD | Hot-path record/overdub stop (no full validate on stop) |
 | **Input (MIDI buttons)** | `MidiButtonManager` → `MidiButtonProcessor` + `MidiButtonActions` | Gesture detection and action dispatch | Direct `Track` field mutation outside action paths |
@@ -125,6 +125,16 @@ Do **not** add permanent adapters, shadow Managers, or duplicate fields to avoid
 
 ---
 
+## Naming as architecture
+
+Naming is a **first-class architectural concern** — not a coding-style preference. Vocabulary communicates responsibilities and prevents drift across modules, docs, and OpenSpec.
+
+**Canonical vocabulary:** [NAMING.md](NAMING.md) — concept boundaries, domain terms, verb conventions, migration policy, and review checklist.
+
+**Suffix rules** below are summarized; full table lives in NAMING.md § Module suffix vocabulary.
+
+---
+
 ## Naming rules (suffix meaning)
 
 Use these suffixes consistently. Do not invent parallel nouns (`Service`, `Facade`, `Helper`) without architecture review.
@@ -155,7 +165,7 @@ Global app mode uses the enum name **`LooperState`**; the manager class is **`Lo
 | **Direct cross-manager mutation** | e.g. `MidiButtonActions` writing `StorageManager` private statics without API | Call public `StorageManager` / policy methods |
 | **Full flatten on stop** | Breaks pool-budget and stop-path latency | `finalizeLoopAtStop`, `mergeActiveCapturePasses`, `LoopPasses::materialize` for read paths |
 | **Shallow undo snapshots** | Corrupts chunk-backed storage | `shareForSnapshot()` + `restoreFromSnapshot` always `cloneShared()` |
-| **New top-level domain nouns** | Naming drift | Reuse vocabulary in Naming-Vocabulary rule; ask user if no fit |
+| **New top-level domain nouns** | Naming drift | Reuse vocabulary in [NAMING.md](NAMING.md); ask user if no fit |
 
 ---
 

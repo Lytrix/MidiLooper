@@ -7,6 +7,8 @@ PROJECT_INTENT.md          ← product identity, scope, philosophy
     ↓
 ARCHITECTURE_RULES.md      ← ownership, boundaries, structure
     ↓
+NAMING.md                  ← architectural vocabulary (ubiquitous language)
+    ↓
 OpenSpec                   ← desired behavior, accepted requirements
     openspec/specs/          (archived normative behavior)
     openspec/changes/        (active deltas until /opsx:archive)
@@ -27,7 +29,8 @@ Code                       ← implementation; cannot silently redefine architec
 | Layer | Defines | Cannot be… |
 |-------|---------|------------|
 | **PROJECT_INTENT** | Product identity, scope, litmus tests, key decisions | Overridden by lower layers without deliberate intent update |
-| **ARCHITECTURE_RULES** | Ownership, naming, forbidden patterns, extension rules | Bypassed by OpenSpec, plans, or code |
+| **ARCHITECTURE_RULES** | Ownership, forbidden patterns, extension rules | Bypassed by OpenSpec, plans, or code |
+| **NAMING** | Architectural vocabulary, concept boundaries, verb conventions, migration policy | Bypassed by plans or code without deliberate update |
 | **OpenSpec** | Desired behavior, SHALL/MUST requirements, task scope | Used to redefine architecture directly (new Manager, ownership move) without reassessment |
 | **Guides** | How shipped behavior works today | Authority over OpenSpec specs or architecture |
 | **Historical plans** | Design context, handoffs, exports | Treated as normative or override for architecture |
@@ -132,7 +135,7 @@ Do not resolve conflicts by:
 - **Implement** via `tasks.md` + `/opsx:apply`; **archive** only after native (+ HITL when required).
 - **Cite brownfield docs** in proposals; do not duplicate [LOOP_MIDI_STORAGE_AND_VALIDATION.md](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) or phase-3 plans into new specs.
 - **Locked order:** persistence/hardening → JamRecorder → M10 → **D13 last** — never start parked `jam-recording` early.
-- **Naming:** passes, Capture, editPass, NoteEditSession — see Naming-Vocabulary Cursor rule.
+- **Naming:** architectural vocabulary — see [NAMING.md](NAMING.md) (canonical); Cursor rule is agent enforcement pointer.
 
 ---
 
@@ -141,7 +144,8 @@ Do not resolve conflicts by:
 | File | Role |
 |------|------|
 | [PROJECT_INTENT.md](PROJECT_INTENT.md) | Canonical project goal and decision log |
-| [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership, naming suffixes, forbidden patterns, new-abstraction checklist |
+| [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership, forbidden patterns, new-abstraction checklist |
+| [NAMING.md](NAMING.md) | Architectural vocabulary, concept boundaries, verb conventions, migration policy |
 | [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md) | Runtime data flow: storage → derived representations → interval projection → consumers |
 | [Architecture/](Architecture/) | Child docs: Storage, DerivedViews, IntervalProjection, Playback, Display |
 | [DELIVERY_RULES.md](DELIVERY_RULES.md) | How work is tracked, verified, and shipped |

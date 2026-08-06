@@ -108,7 +108,7 @@ Normative SHALL/MUST requirements belong in `openspec/specs/` after archive — 
 
 ## Naming (OpenSpec + code)
 
-Follow `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` and global **action + scope** naming.
+Follow [NAMING.md](NAMING.md) and global **action + scope** naming.
 
 Reuse domain terms in specs and tasks: **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, **JamAction**, HITL baseline.
 
