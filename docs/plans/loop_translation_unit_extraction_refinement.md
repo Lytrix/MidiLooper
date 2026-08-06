@@ -221,7 +221,7 @@ Cold helpers for later phases (merge, gather, visual) remain in `Loop.cpp` until
 
 ---
 
-## Phase 2 — materialize + merge → `LoopMaterialization.cpp`
+## Phase 2 — materialize + merge → `LoopMaterialization.cpp` ✅
 
 | Symbol | Role |
 |--------|------|
