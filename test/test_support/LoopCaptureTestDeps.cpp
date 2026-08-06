@@ -14,3 +14,4 @@ bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED
 #include "../../src/Utils/DisplayWindowUtils.cpp"
 #include "../../src/CommittedEventRange.cpp"
 #include "../../src/Utils/CaptureIncrementalSanity.cpp"
+#include "../../src/Loop/LoopInternalColdHelpers.cpp"

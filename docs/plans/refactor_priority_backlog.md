@@ -36,7 +36,8 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 |------|----------|--------|------|------------------|--------|
 | **StorageManager** TU extraction until `saveState` leaves root | Structural | High — maintainability | Medium | With persistence CURRENT_WORK | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) § Next hygiene slices |
 | **EditManager** TU extraction (Phases 0–9) | Structural | High — maintainability | Medium–High (commit/lifecycle phases) | **Done** — PR #12 → `dev` | [editmanager_translation_unit_extraction_refinement.md](editmanager_translation_unit_extraction_refinement.md) |
-| **Track** TU extraction (Phases 0–10) | Structural | High — maintainability | Medium–High (stop/playback phases) | Dedicated `refactor/track` branch | [track_translation_unit_extraction_refinement.md](track_translation_unit_extraction_refinement.md) |
+| **Track** TU extraction (Phases 0–11) | Structural | High — maintainability | Medium–High (stop/playback phases) | **Done** — PR #13 → `dev` | [track_translation_unit_extraction_refinement.md](track_translation_unit_extraction_refinement.md) |
+| **`Loop.cpp` TU extraction** (Phases 0–10) | Structural | High — maintainability | Medium–High (gather + capture stop phases) | Next hygiene after Track | [loop_translation_unit_extraction_refinement.md](loop_translation_unit_extraction_refinement.md) |
 | **Persistence / overlay hardening** | Product | High — active milestone | High | CURRENT_WORK queue | [CURRENT_WORK.md](../runtime/CURRENT_WORK.md), [ROADMAP.md](../runtime/ROADMAP.md) |
 | **`runEditSessionGeometryPipeline` → `NoteGeometryResolver`** (`resolve`, `resolveForCausingNote`; merge driver header; delete `*Pipeline*` files) | Naming | High — wrong architectural metaphor | Medium | **Done** — EditManager TU Phase 7 / PR #12 | [editmanager_translation_unit_extraction_refinement.md](editmanager_translation_unit_extraction_refinement.md) Phase 7; [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § C; [NAMING.md](../00-authority/NAMING.md) § Geometry resolution |
 | **Dedicated HITL refactor** (layered **`base`** gate device PASS) | Test infra | High — regression gate | Medium | Parked slice; confirm in CURRENT_WORK | [CURRENT_WORK.md](../runtime/CURRENT_WORK.md) |
@@ -77,6 +78,8 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 | **`mergeActiveCapturePasses`** (was `flattenActiveCapturePasses`) | Prior timeline refactor | [64bar_regression_commit_analysis_enhancement.md](64bar_regression_commit_analysis_enhancement.md) |
 | **`PlaybackMergedMidiEvents`** (was `PlaybackWindow` merge cache) | Hygiene Phase −1 | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) |
 | **DisplayManager TU extraction** Phases 0–6 | Complete | [displaymanager_translation_unit_extraction_refinement.md](displaymanager_translation_unit_extraction_refinement.md) |
+| **Track TU extraction** Phases 0–11 | Shipped PR #13 | [track_translation_unit_extraction_refinement.md](track_translation_unit_extraction_refinement.md) |
+| **EditManager / StorageManager colocation** on `dev` | 2026-08-06 | Phase 10 siblings under `src/EditManager/` + `src/StorageManager/` |
 | **Firmware ownership lifetime review** P0–P1 | 2026-08-06 | [firmware_ownership_lifetime_review.md](firmware_ownership_lifetime_review.md) |
 
 ---
