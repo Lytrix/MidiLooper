@@ -41,32 +41,7 @@ void logGeomApplySkip(uint8_t reasonCode) {
 #endif
 
 }  // namespace
-namespace {
 
-#if defined(SESSION_CAPTURE)
-void logGeomApplyQueue(uint8_t kind, uint32_t targetField, bool transportRunning) {
-    logger.info("#CAP,%lu,GEOM_APPLY,queue,%u,%lu,%u,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned>(kind), static_cast<unsigned long>(targetField),
-                transportRunning ? 1u : 0u);
-}
-
-void logGeomApplyDequeue(uint32_t queueAgeMs, uint8_t kind) {
-    logger.info("#CAP,%lu,GEOM_APPLY,dequeue,%lu,%u,0,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(queueAgeMs), static_cast<unsigned>(kind));
-}
-
-void logGeomApplyDone(bool applied, uint32_t displayRevision) {
-    logger.info("#CAP,%lu,GEOM_APPLY,done,%u,%lu,0,0", static_cast<unsigned long>(micros()),
-                applied ? 1u : 0u, static_cast<unsigned long>(displayRevision));
-}
-
-void logGeomApplySkip(uint8_t reasonCode) {
-    logger.info("#CAP,%lu,GEOM_APPLY,skip,%u,0,0,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned>(reasonCode));
-}
-#endif
-
-}  // namespace
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingMove(const NoteUtils::DisplayNote& note,
                                                                   uint32_t targetTick) {
     pendingPlayingGeometryType_ = PendingPlayingGeometryType::Move;
