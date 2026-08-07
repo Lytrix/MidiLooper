@@ -299,13 +299,15 @@ apply.
 `sessionState.selection.primaryNote`, coarse/fine geometry faders must keep driving from
 selection identity + `focus.last` — inventory shrink from overlap hide must not stall the driver.
 
-- [ ] 5.1 After overlap geometry apply that emits `HideNote` / changes projecting inventory,
+- [x] 5.1 After overlap geometry apply that emits `HideNote` / changes projecting inventory,
       call `syncSelectedNoteIdxToFilteredInventory` (or extend `applySelectionFromGeometryEdit` /
       `syncGeometrySelectionToUi` to refresh `selectedNoteIdx` from filtered inventory).
-- [ ] 5.2 **Or** in `handleCoarseFaderInput` / fine path: when driver valid, resolve
+- [x] 5.2 **Or** in `handleCoarseFaderInput` / fine path: when driver valid, resolve
       `currentNote` via `liveEditDisplayNoteAtSelect` + `primaryNote` without requiring stale
       `selectedNoteIdx < notes.size()` (prefer one owner — sync after apply is smaller diff).
-- [ ] 5.3 Native fixture: mover + overlap target in selectable list → pipeline emits `HideNote` on
+      **Shipped both:** `applySelectionFromGeometryEdit` always syncs idx; coarse path re-syncs
+      when idx is out of bounds before apply gate.
+- [x] 5.3 Native fixture: mover + overlap target in selectable list → pipeline emits `HideNote` on
       target → next coarse step still emits `MoveNote` for mover; `selectedNoteIdx` in bounds or
       driver path does not depend on idx.
 - [ ] 5.4 `pio test -e native`; firmware build; HITL re-run of `162713` overlap-hide-then-continue-move
