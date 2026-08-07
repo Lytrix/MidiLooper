@@ -175,6 +175,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
 
     const bool overlapClosureActive =
         overlapClosureActiveForTarget(constrained.noteId, editedGeometry, focus, currentState);
+    const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
 
     if (!constrained.visible) {
       if (livePresent) {
@@ -214,6 +215,15 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
         actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
         continue;
       }
+      if (currentState != nullptr && causingSpan != nullptr) {
+        const NoteEditCurrentNoteState* row = currentState->find(liveNoteId);
+        if (row != nullptr) {
+          const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+          if (participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+            continue;
+          }
+        }
+      }
       const NoteBaseline reinsert{constrained.pitch, baseline.velocity, constrained.startTick,
                                   constrained.endTick};
       actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, reinsert));
@@ -224,6 +234,15 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       if (!liveReadable || !baselineSpansEqual(live, baseline)) {
         if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline) || overlapClosureActive) {
           continue;
+        }
+        if (currentState != nullptr && causingSpan != nullptr) {
+          const NoteEditCurrentNoteState* row = currentState->find(constrained.noteId);
+          if (row != nullptr) {
+            const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+            if (participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+              continue;
+            }
+          }
         }
         const NoteBaseline restoreSpan{constrained.pitch, baseline.velocity, constrained.startTick,
                                      constrained.endTick};

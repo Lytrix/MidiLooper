@@ -25,6 +25,9 @@ struct NoteEditCurrentNoteState {
   NoteBaseline committedSpan{};
   NoteBaseline currentSpan{};
   NoteEditPresenceType presence = NoteEditPresenceType::Visible;
+  /// Visible overlap shorten sealed into committedSpan (overlap_baseline_diff or equivalent).
+  /// Enables leave-restore to committed on later overlap clears when committed == storage.
+  bool visibleOverlapShortenSealed = false;
 };
 
 template <typename T>
@@ -77,8 +80,11 @@ class NoteEditCurrentState {
   bool hasRow(NoteId noteId) const;
   bool rowProjectsToStore(NoteId noteId) const;
   /// Visible/Added rows whose overlap tail is inventory-masked are excluded from selectable inventory
-  /// but remain semantically shortened (not Hidden).
+  /// but remain semantically shortened (not Hidden). Without focus/selection context, reports whether
+  /// the row has a masked-tail shape (unit tests). Runtime selection uses the overload below.
   bool rowIncludedInSelectableInventory(NoteId noteId) const;
+  bool rowIncludedInSelectableInventory(NoteId noteId, const NoteEditFocus& focus,
+                                          int selectedNoteIdx) const;
   bool isRowHiddenOrDeleted(NoteId noteId) const;
   bool readCurrentSpan(NoteId noteId, NoteBaseline& out) const;
 

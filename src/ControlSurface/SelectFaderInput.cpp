@@ -274,6 +274,30 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
                                false, "unchanged_note");
     }
 }
+NOTE_EDIT_MEM void ControlSurfaceManager::macroCommitPendingEditsBeforeSelectNav(
+    Track& track, NoteId selectNoteId, uint32_t bracketTick) {
+    if (isNoteEditMacroCommitDeferred(millis())) {
+        return;
+    }
+    if (!editManager.isLiveEditDriverValidForTrack(track)) {
+        return;
+    }
+    if (!editManager.isMacroCommitAlignedWithSelectTargetForTrack(track, selectNoteId,
+                                                                  bracketTick)) {
+#if defined(SESSION_CAPTURE)
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "NOTE_EDIT macro commit skipped: select bracket mismatch "
+                   "(moving=%lu bracket=%lu focus_last=%lu-%lu)",
+                   static_cast<unsigned long>(editManager.getEditSession().focus.movingNoteId),
+                   static_cast<unsigned long>(bracketTick),
+                   static_cast<unsigned long>(editManager.getEditSession().focus.last.startTick),
+                   static_cast<unsigned long>(editManager.getEditSession().focus.last.endTick));
+#endif
+        return;
+    }
+    editManager.commitAllPendingNoteEditActions(track);
+}
+
 NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue,
                                                          int posIndex) {
     const uint32_t loopLength = track.getLoopLength();
@@ -322,25 +346,7 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
         editManager.cancelPendingDeleteForSelectNote(selectNoteId);
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);
-        const bool macroCommitDeferred = isNoteEditMacroCommitDeferred(millis());
-        const bool driverValid = editManager.isLiveEditDriverValidForTrack(track);
-        const bool selectBracketAligned =
-            editManager.isMacroCommitAlignedWithSelectTargetForTrack(track, selectNoteId,
-                                                                     absoluteTargetTick);
-        if (!macroCommitDeferred && driverValid && selectBracketAligned) {
-            editManager.commitAllPendingNoteEditActions(track);
-        }
-#if defined(SESSION_CAPTURE)
-        else if (!macroCommitDeferred && driverValid && !selectBracketAligned) {
-            logger.log(CAT_TRACK, LOG_WARNING,
-                       "NOTE_EDIT macro commit skipped: select bracket mismatch "
-                       "(moving=%lu bracket=%lu focus_last=%lu-%lu)",
-                       static_cast<unsigned long>(editManager.getEditSession().focus.movingNoteId),
-                       static_cast<unsigned long>(absoluteTargetTick),
-                       static_cast<unsigned long>(editManager.getEditSession().focus.last.startTick),
-                       static_cast<unsigned long>(editManager.getEditSession().focus.last.endTick));
-        }
-#endif
+        macroCommitPendingEditsBeforeSelectNav(track, selectNoteId, absoluteTargetTick);
         const std::vector<NoteUtils::DisplayNote> notesAfterCommit =
             editManager.selectableDisplayNotesForEditUi(track);
         int postCommitNoteIdx = filteredDisplayNoteIndexForNoteIdAndStart(
@@ -402,14 +408,8 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
     } else {
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);
-        const NoteEditKind sessionKind = editManager.getNoteEditSessionState().kind;
-        if (!isNoteEditMacroCommitDeferred(millis()) &&
-            editManager.isLiveEditDriverValidForTrack(track) &&
-            sessionKind != NoteEditKind::Select &&
-            editManager.isMacroCommitAlignedWithSelectTargetForTrack(
-                track, kInvalidNoteId, absoluteTargetTick)) {
-            editManager.commitAllPendingNoteEditActions(track);
-        }
+        macroCommitPendingEditsBeforeSelectNav(track, kInvalidNoteId, absoluteTargetTick);
+        editManager.clearVisibleOverlapParticipationBeforeDeselect();
         editManager.rebuildNoteEditFocusAtSelect(track, -1);
         editManager.applySelectNav(track, absoluteTargetTick, kInvalidNoteId, false, false);
         editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);

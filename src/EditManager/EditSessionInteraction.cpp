@@ -321,7 +321,7 @@ NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
       const NoteEditCurrentNoteState* row = currentState->find(noteId);
       if (row != nullptr) {
         const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-        if (participatingNoteQualifiesForLeaveRestoreTarget(participant, movingNoteId) &&
+        if (participatingNoteUsesCommittedBaselineDuringOverlapClosure(participant, movingNoteId) &&
             causingSpan != nullptr &&
             participatingNoteOverlapClosureActive(participant, *causingSpan)) {
           // Active overlap closure: classify hide/shorten against committed geometry, not stub.

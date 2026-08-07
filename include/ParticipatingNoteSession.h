@@ -30,6 +30,8 @@ struct ParticipatingNoteState {
   NoteBaseline committedSpan{};
   /// `currentSpan` is a same-start shortened tail vs `committedSpan` (overlap inventory mask).
   bool shortenedVsCommitted = false;
+  /// Prior macro sealed a visible overlap shorten into `committedSpan`.
+  bool visibleOverlapShortenSealed = false;
   /// Whether this participant may appear in projecting session store / selectable inventory.
   bool projectsToStore = false;
 };
@@ -93,7 +95,21 @@ bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& commit
 
 /// Overlap participant (not mover) that may receive leave-restore when interactions clear.
 bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteState& participant,
-                                                       NoteId movingNoteId);
+                                                     NoteId movingNoteId);
+
+/// Visible shortened overlap after macro commit — restore currentSpan to sealed committedSpan
+/// when mover clears closure (second+ overlap pass). Never restore to pre-shorten storage baseline.
+bool participatingNoteCommittedSpanSealedBelowStorageBaseline(
+    const ParticipatingNoteState& participant, const NoteBaseline& storageBaseline);
+
+bool participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(
+    const ParticipatingNoteState& participant, const NoteBaseline& storageBaseline,
+    NoteId movingNoteId);
+
+/// Interaction overlay uses committed geometry while overlap closure is active (includes visible
+/// shortened tails). Leave-restore RestoreNote remains hidden/deleted only.
+bool participatingNoteUsesCommittedBaselineDuringOverlapClosure(
+    const ParticipatingNoteState& participant, NoteId movingNoteId);
 
 /// Leave-restore must emit the session committed span — not a live-store shortened stub.
 bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant);
@@ -110,6 +126,17 @@ bool participatingNoteOverlapClosureActive(const ParticipatingNoteState& partici
 /// Leave-restore may use committed/session baseline — only when closure is cleared.
 bool participatingNoteOverlapInteractionCleared(const ParticipatingNoteState& participant,
                                                 const NoteBaseline& causingSpan);
+
+/// Visible same-start shorten tail while mover still intersects committed overlap closure.
+/// Defer leave-restore and macro-commit of transient bridge geometry (Stage 7.5).
+bool participatingNoteVisibleOverlapTailInProgress(const ParticipatingNoteState& participant,
+                                                   const NoteBaseline& causingSpan);
+
+/// Selectable inventory mask for visible shortened overlap tails — active only while the
+/// overlap mover is selected and the tail session is still in progress.
+bool visibleShortenedOverlapTailInventoryMasked(const NoteEditCurrentNoteState& row,
+                                                const NoteEditFocus& focus,
+                                                int selectedNoteIdx);
 
 const NoteBaseline* findCausingSpanForMover(NoteId movingNoteId,
                                             const EditedGeometry& editedGeometry);

@@ -67,12 +67,16 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
     NoteIdList preservedChangedOverlapNoteIds;
     BaselineMap preservedOverlapBaselines;
     std::unordered_map<NoteId, OverlapNote, NoteIdHash> preservedOverlapNotes;
+    NoteBaseline preservedMoverSpan{};
+    NoteId preservedMovingNoteId = kInvalidNoteId;
     const bool pendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
     const bool pendingOverlapDiff =
         noteEditFocusHasPendingBaselineMapDiff(editSession.focus, sessionMidiEvents(), channel,
                                              loopLength);
     if (selectedNoteIdx < 0 && !pendingMoverCommit && !pendingOverlapDiff) {
         preservedChangedOverlapNoteIds = editSession.focus.changedOverlapNoteIds;
+        preservedMovingNoteId = editSession.focus.movingNoteId;
+        preservedMoverSpan = editSession.focus.last;
         for (NoteId noteId : preservedChangedOverlapNoteIds) {
             const auto baselineIt = editSession.focus.baselineMap.find(noteId);
             if (baselineIt != editSession.focus.baselineMap.end()) {
@@ -114,6 +118,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
         for (auto& [noteId, entry] : preservedOverlapNotes) {
             editSession.focus.overlapNotes[noteId] = std::move(entry);
         }
+        if (!editSession.noteEditCurrentState.empty() && preservedMovingNoteId != kInvalidNoteId) {
+            clearChangedOverlapParticipationWhenInteractionCleared(
+                editSession.focus, editSession.noteEditCurrentState, preservedMoverSpan,
+                preservedMovingNoteId);
+        }
+        invalidateProjectedNoteEditDisplayCache();
         return;
     }
     populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
@@ -349,6 +359,18 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditFocusLastFromSessionStore(Tr
     }
     MidiEventVec& events = sessionMidiEvents();
     syncNoteEditFocusLinearFromSessionStore(focus, events, track.getMidiChannel(), loopLength);
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::clearVisibleOverlapParticipationBeforeDeselect() {
+    if (!editSession.active || !editSession.focus.active ||
+        editSession.focus.movingNoteId == kInvalidNoteId ||
+        editSession.noteEditCurrentState.empty()) {
+        return;
+    }
+    clearChangedOverlapParticipationWhenInteractionCleared(
+        editSession.focus, editSession.noteEditCurrentState, editSession.focus.last,
+        editSession.focus.movingNoteId);
+    invalidateProjectedNoteEditDisplayCache();
 }
 
 EDIT_MANAGER_IMPL_MEM bool EditManager::isLiveEditDriverValidForTrack(const Track& track) const {

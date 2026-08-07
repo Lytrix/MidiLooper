@@ -114,6 +114,7 @@ NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
 NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus,
                                                        const NoteEditCurrentState* currentState) {
   uint32_t fp = static_cast<uint32_t>(focus.changedOverlapNoteIds.size());
+  fp ^= focus.active ? 0xA5A5A5A5u : 0u;
   fp ^= focus.last.startTick + (focus.last.endTick << 1);
   fp ^= static_cast<uint32_t>(focus.last.pitch) << 16;
   fp ^= static_cast<uint32_t>(focus.overlapNotes.size()) << 8;
@@ -129,6 +130,8 @@ NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focu
       fp ^= static_cast<uint32_t>(noteId) * 0x85EBCA6Bu;
       fp ^= static_cast<uint32_t>(row.presence) << 28;
       fp ^= row.currentSpan.startTick + (row.currentSpan.endTick << 1);
+      fp ^= row.committedSpan.startTick + (row.committedSpan.endTick << 2);
+      fp ^= row.visibleOverlapShortenSealed ? 0x6C078965u : 0u;
     }
   }
   return fp;

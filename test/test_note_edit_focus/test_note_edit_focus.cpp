@@ -3344,6 +3344,19 @@ void test_project_pitch65_visual_cache_lane_bar_not_left_alongside_participants_
   TEST_ASSERT_EQUAL(3, static_cast<int>(projected.size()));
 }
 
+void test_display_fingerprint_changes_when_focus_goes_inactive() {
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 13;
+  focus.last = {88, 100, 2688, 2735};
+  const uint32_t fpActive = noteEditDisplayCacheFingerprint(focus);
+  focus.active = false;
+  focus.movingNoteId = kInvalidNoteId;
+  focus.last = {};
+  const uint32_t fpInactive = noteEditDisplayCacheFingerprint(focus);
+  TEST_ASSERT_NOT_EQUAL(fpActive, fpInactive);
+}
+
 void test_display_fingerprint_changes_when_overlap_geometry_changes() {
   NoteEditFocus focus;
   focus.active = true;
@@ -3600,6 +3613,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_project_pitch65_outer_shorten_inner_move_214302);
   RUN_TEST(test_project_pitch65_hidden_nested_not_in_display_214302);
   RUN_TEST(test_project_pitch65_visual_cache_lane_bar_not_left_alongside_participants_214302);
+  RUN_TEST(test_display_fingerprint_changes_when_focus_goes_inactive);
   RUN_TEST(test_display_fingerprint_changes_when_overlap_geometry_changes);
   RUN_TEST(test_is_live_edit_driver_valid_rejects_id_match_span_mismatch);
   RUN_TEST(test_pre_commit_rejects_mover_note_range_zero_start_after_nonzero_baseline);

@@ -173,6 +173,9 @@ public:
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     /// Refresh **focus.last** start/end from the live session store note-on/off pair.
     void syncNoteEditFocusLastFromSessionStore(Track& track);
+    /// Clear visible shortened overlap participation before empty-step deselect so display does
+    /// not flash committed leave-restore length (session_20260808_002309).
+    void clearVisibleOverlapParticipationBeforeDeselect();
     /// Read-only canonical projection of note edit current state during NOTE_EDIT.
     const MidiEventVec& noteEditSessionProjectionEvents() const;
     /// Projection owner: rebuild EditSession.store from noteEditCurrentState.
@@ -322,6 +325,7 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    mutable int noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     mutable NoteUtils::DisplayNoteVec noteEditPaintDisplayCacheNotes_;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;
     mutable uint32_t noteEditDisplayInvalidateEpoch_ = 0;

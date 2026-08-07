@@ -2,13 +2,13 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-07 (223447 HITL logged; Stage 8.3 shipped)
+Last updated: 2026-08-08 (Stage 7.5 slice C select-fader seal)
 
 ---
 
 ## Now implementing
 
-### Note edit resolver authority contracts — Stage 8 (`note_edit_resolver_authority_contracts_refinement`)
+### Note edit resolver authority contracts — Stage 7.5 slice C shipped (`note_edit_resolver_authority_contracts_refinement`)
 
 **Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11
 
@@ -17,14 +17,12 @@ Last updated: 2026-08-07 (223447 HITL logged; Stage 8.3 shipped)
 | 1 — full-overlap Hide paint | **Done** (`8596950`) |
 | 2 — C9 contract tests | **Done** (`ea39f1c`) |
 | 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
-| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1–8.3 **done**; 8.4 HITL `151441` next |
-| 5 — semantic cleanup | Pending (post–Stage 8) |
+| 4 — Stage 8 sidebar/snapshot projection (C5) | **Done** — HITL `224633` PASS |
+| 4.5 — Stage 7.5 overlap restore + macro-commit geometry | **Done** (native) — HITL pending |
+| 4.5.C — Stage 7.5 select-fader seal on every F1 move | **Done** (native) — HITL `004532` pending |
+| 5 — semantic cleanup | **Next** |
 
-**Parked HITL:** `session_20260807_222418` — C7 geometry `RestoreNote` to full `committedSpan` on `interactions=0`; retest after Stage 8, not a projection-only blocker. **`223447`** reproduces same C7 class on note **13** (23.9s / 51.2s / 64.5s) — still parked.
-
-**HITL shipped:** `session_20260807_223447` — 8.1/8.2 V5 sidebar + DISP overlap hide PASS.
-
-**Next:** Stage 8.4 — HITL `151441` full V5 / C5 convergence gate on device.
+**Stage 7.5 shipped (native):** `participatingNoteVisibleOverlapTailInProgress` — defers leave-restore (`224633`) and macro-commit seal (`225025`) while visible same-start shorten tail is still growing. **`macroCommitPendingEditsBeforeSelectNav`** — empty-step deselect now seals before participation clear (`004532`). HITL gate: `222418` / `224633` / `225025` / `004532`.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 

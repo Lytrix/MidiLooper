@@ -5,6 +5,7 @@
 #include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditFocusInternal.h"
+#include "ParticipatingNoteSession.h"
 
 #include <algorithm>
 
@@ -181,6 +182,12 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
     if (live.pitch != baseline.pitch) {
       continue;
     }
+
+    const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+    if (participatingNoteVisibleOverlapTailInProgress(participant, focus.last)) {
+      continue;
+    }
+
     if (loopLength > 0 && !isPlausibleStorageSpan(live.startTick, live.endTick, loopLength)) {
 #if defined(SESSION_CAPTURE)
       logger.log(CAT_TRACK, LOG_WARNING,

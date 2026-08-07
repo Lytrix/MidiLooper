@@ -132,11 +132,41 @@ NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
         geometry.pitch = committed.pitch;
         return geometry;
       }
+      if (participant.phase == ParticipatingNotePhase::Visible && participant.shortenedVsCommitted &&
+          (participant.visibleOverlapShortenSealed ||
+           participatingNoteCommittedSpanSealedBelowStorageBaseline(participant,
+                                                                     transactionBaseline))) {
+        const NoteBaseline committed = participant.committedSpan;
+        geometry.startTick = committed.startTick;
+        geometry.endTick = committed.endTick;
+        geometry.pitch = committed.pitch;
+        return geometry;
+      }
     }
   }
 
   NoteBaseline live{};
   if (readLiveLinearSpan(liveStore, targetNoteId, channel, live)) {
+    if (currentState != nullptr) {
+      const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
+      if (row != nullptr && live.startTick != transactionBaseline.startTick) {
+        const bool headTrimmedLive =
+            live.startTick > transactionBaseline.startTick &&
+            live.endTick == transactionBaseline.endTick;
+        if (!headTrimmedLive) {
+          geometry.startTick = live.startTick;
+          if (row->committedSpan.startTick == live.startTick) {
+            geometry.endTick = row->committedSpan.endTick;
+          } else {
+            const uint32_t committedLength =
+                row->committedSpan.endTick - row->committedSpan.startTick;
+            geometry.endTick = live.startTick + committedLength;
+          }
+          geometry.pitch = live.pitch;
+          return geometry;
+        }
+      }
+    }
     if (live.endTick < transactionBaseline.endTick ||
         live.startTick > transactionBaseline.startTick ||
         live.pitch != transactionBaseline.pitch) {
@@ -224,11 +254,35 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
             !participatingNoteOverlapInteractionCleared(participant, *causingSpan)) {
           continue;
         }
+        if (causingSpan != nullptr &&
+            participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+          continue;
+        }
+        targets.push_back(noteId);
+        continue;
+      }
+      if (participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(participant, baseline,
+                                                                         focus.movingNoteId)) {
+        if (causingSpan == nullptr ||
+            !participatingNoteOverlapInteractionCleared(participant, *causingSpan)) {
+          continue;
+        }
+        if (participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+          continue;
+        }
         targets.push_back(noteId);
         continue;
       }
       if (currentSpanDiffersFromBaseline(noteId, baseline, *currentState) &&
           participatingSpanQualifiesForOverlapLeaveRestore(baseline, row->currentSpan)) {
+        if (causingSpan != nullptr &&
+            participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+          continue;
+        }
+        if (row->presence == NoteEditPresenceType::Visible &&
+            participatingNoteShortenedVsCommitted(row->currentSpan, row->committedSpan)) {
+          continue;
+        }
         targets.push_back(noteId);
       }
       continue;

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "NoteEditCurrentState.h"
+#include "EditSessionAction.h"
 #include "EditSessionLiveStoreSpan.h"
 #include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
@@ -119,6 +120,39 @@ NOTE_EDIT_MEM void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId)
                             focus.changedOverlapNoteIds.end(), noteId);
   if (it != focus.changedOverlapNoteIds.end()) {
     focus.changedOverlapNoteIds.erase(it);
+  }
+}
+
+NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
+    NoteEditFocus& focus, const NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
+    NoteId movingNoteId) {
+  if (movingNoteId == kInvalidNoteId) {
+    return;
+  }
+  NoteIdList noteIds;
+  for (const auto& [noteId, row] : currentState.rows()) {
+    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+      continue;
+    }
+    (void)row;
+    noteIds.push_back(noteId);
+  }
+  for (NoteId noteId : noteIds) {
+    const NoteEditCurrentNoteState* row = currentState.find(noteId);
+    if (row == nullptr) {
+      continue;
+    }
+    const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+    if (participant.phase != ParticipatingNotePhase::Visible || !participant.shortenedVsCommitted) {
+      continue;
+    }
+    if (!participatingNoteOverlapInteractionCleared(participant, causingSpan)) {
+      continue;
+    }
+    // End overlap participation on deselect without mutating currentSpan — restoring committed
+    // geometry here flashes full pre-shorten length when committedSpan lags macro commit
+    // (session_20260807_232118).
+    forgetChangedOverlapNote(focus, noteId);
   }
 }
 
