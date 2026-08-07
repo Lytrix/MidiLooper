@@ -8,6 +8,7 @@
 #include "EditSessionLiveStoreSpan.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
@@ -110,6 +111,21 @@ NOTE_EDIT_MEM bool readEditableCurrentSpan(NoteId noteId, const MidiEventVec& li
   return readLiveLinearSpan(liveStore, noteId, channel, out);
 }
 
+NOTE_EDIT_MEM bool overlapClosureActiveForTarget(NoteId targetNoteId, const EditedGeometry& editedGeometry,
+                                                 const NoteEditFocus& focus,
+                                                 const NoteEditCurrentState* currentState) {
+  if (currentState == nullptr || focus.movingNoteId == kInvalidNoteId) {
+    return false;
+  }
+  const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
+  const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
+  if (row == nullptr || causingSpan == nullptr) {
+    return false;
+  }
+  const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+  return participatingNoteOverlapClosureActive(participant, *causingSpan);
+}
+
 NOTE_EDIT_MEM void appendOverlapTargetActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
@@ -142,6 +158,9 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
     const bool liveReadable =
         livePresent && readEditableCurrentSpan(liveNoteId, liveStore, channel, currentState, live);
 
+    const bool overlapClosureActive =
+        overlapClosureActiveForTarget(constrained.noteId, editedGeometry, focus, currentState);
+
     if (!constrained.visible) {
       if (livePresent) {
         actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
@@ -157,6 +176,12 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
         continue;
       }
+      if (overlapClosureActive) {
+        const NoteBaseline shortened{constrained.pitch, baseline.velocity, constrained.startTick,
+                                     constrained.endTick};
+        actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+        continue;
+      }
       const NoteBaseline reinsert{constrained.pitch, baseline.velocity, constrained.startTick,
                                   constrained.endTick};
       actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, reinsert));
@@ -165,7 +190,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
 
     if (constrainedMatchesBaseline(constrained, baseline)) {
       if (!liveReadable || !baselineSpansEqual(live, baseline)) {
-        if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
+        if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline) || overlapClosureActive) {
           continue;
         }
         const NoteBaseline restoreSpan{constrained.pitch, baseline.velocity, constrained.startTick,

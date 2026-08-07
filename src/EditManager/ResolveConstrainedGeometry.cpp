@@ -211,6 +211,8 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
     if (baseline.pitch != overlapLanePitch) {
       continue;
     }
+    const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
+
     if (currentState != nullptr) {
       const NoteEditCurrentNoteState* row = currentState->find(noteId);
       if (row == nullptr) {
@@ -218,6 +220,10 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
       }
       const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
       if (participatingNoteQualifiesForLeaveRestoreTarget(participant, focus.movingNoteId)) {
+        if (causingSpan == nullptr ||
+            !participatingNoteOverlapInteractionCleared(participant, *causingSpan)) {
+          continue;
+        }
         targets.push_back(noteId);
         continue;
       }

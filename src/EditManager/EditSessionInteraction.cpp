@@ -306,7 +306,8 @@ NOTE_EDIT_MEM InteractionType classifyEditSessionInteraction(uint32_t causingSta
 
 NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
     const BaselineMap& storageBaseline, NoteId movingNoteId, const MidiEventVec& liveStore,
-    uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState) {
+    uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState,
+    const NoteBaseline* causingSpan) {
   BaselineMap analysis = storageBaseline;
   for (const auto& [noteId, baseline] : storageBaseline) {
     if (noteId == kInvalidNoteId || noteId == movingNoteId) {
@@ -320,10 +321,10 @@ NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
       const NoteEditCurrentNoteState* row = currentState->find(noteId);
       if (row != nullptr) {
         const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-        if (participatingNoteQualifiesForLeaveRestoreTarget(participant, movingNoteId)) {
-          // Classify hide/shorten against committed overlap geometry while overlap remains
-          // classified — shortened/hidden stubs must not turn L→R advance into BoundaryTouch-only
-          // (session_20260807_181859: note 9 stub end 2207 vs mover start 2256).
+        if (participatingNoteQualifiesForLeaveRestoreTarget(participant, movingNoteId) &&
+            causingSpan != nullptr &&
+            participatingNoteOverlapClosureActive(participant, *causingSpan)) {
+          // Active overlap closure: classify hide/shorten against committed geometry, not stub.
           analysis[noteId] = row->committedSpan;
           continue;
         }

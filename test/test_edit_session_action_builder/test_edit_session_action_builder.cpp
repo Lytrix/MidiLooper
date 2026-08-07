@@ -557,6 +557,57 @@ void test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920() {
       actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kPriorId));
 }
 
+void test_builder_advance_with_overlap_closure_shorten_not_restore_193632() {
+  // session_20260807_193632: active overlap closure → ShortenNote on hidden overlap, not RestoreNote.
+  constexpr NoteId kOverlapId = 17;
+  constexpr NoteId kMoverId = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline committed{kPitch, 100, 1488, 1936};
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kOverlapId] = committed;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 1344, 1391};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, committed, committed, NoteEditPresenceType::Hidden);
+  currentState.upsertRow(kMoverId, focus.baselineMap[kMoverId], focus.baselineMap[kMoverId],
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  MidiEvent moverOn = MidiEvent::NoteOn(1632, kChannel, kPitch, 100);
+  moverOn.noteId = kMoverId;
+  store.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1679, kChannel, kPitch, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  ConstrainedNoteGeometry constrained{};
+  constrained.noteId = kOverlapId;
+  constrained.visible = true;
+  constrained.pitch = kPitch;
+  constrained.startTick = 1488;
+  constrained.endTick = 1631;
+
+  EditedGeometry edited{};
+  edited.selection.primaryNote = kMoverId;
+  edited.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = {kPitch, 100, 1632, 1679};
+  edited.causingSpans.push_back(causing);
+
+  const EditSessionActions actions =
+      buildEditSessionActions({constrained}, edited, focus.baselineMap, focus.baselineMap,
+                              NoteIdList{}, store, kChannel, focus, kLoopLength, &currentState);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::ShortenNote, kOverlapId));
+  TEST_ASSERT_FALSE(
+      actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kOverlapId));
+}
+
 void test_builder_causing_skip_and_emit_follow_current_state_not_store() {
   constexpr NoteId kMover = 40;
   const NoteBaseline committedSpan{60, 100, 100, 200};
@@ -604,6 +655,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_reads_current_span_for_overlap_shorten_021939);
   RUN_TEST(test_builder_ltr_shorten_shortened_overlap_stub_181859);
   RUN_TEST(test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920);
+  RUN_TEST(test_builder_advance_with_overlap_closure_shorten_not_restore_193632);
   RUN_TEST(test_builder_causing_skip_and_emit_follow_current_state_not_store);
   return UNITY_END();
 }
