@@ -131,12 +131,24 @@ EDIT_MANAGER_IMPL_MEM DisplayNote EditManager::liveEditDisplayNoteAtSelect(const
                                      : isLiveEditDriverValid(sessionState.selection,
                                                              editSession.focus, sessionMidiEvents(),
                                                              track.getMidiChannel(), loopLength);
-        if (driverValid) {
+        if (driverValid &&
+            editorSelectionMatchesDriverNote(sessionState.selection, editSession.focus.movingNoteId)) {
             const NoteBaseline& last = editSession.focus.last;
             return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
                     last.endTick};
         }
     }
+
+    // Stage 8 / C5: fader + snapshot consumers use paint-cache participant span (same as grid).
+    if (isNoteEditActive() && editorSelectionHasNote(sessionState.selection)) {
+        const NoteUtils::DisplayNoteVec& paint = projectedNoteEditDisplayNotes(track);
+        for (const NoteUtils::DisplayNote& dn : paint) {
+            if (dn.noteId == sessionState.selection.primaryNote) {
+                return dn;
+            }
+        }
+    }
+
     const int idx = getSelectedNoteIdx();
     const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
     if (idx < 0 || idx >= static_cast<int>(notes.size())) {
