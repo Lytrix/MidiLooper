@@ -1,7 +1,7 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** architectural migration in progress — Stages 0–2, 4 (code), and 5 **shipped**; Stage 3
-(participating-note model) **shipped**; Stages 6–8 migrate behavior behind participant discovery.
+**Status:** architectural migration in progress — Stages 0–2, 4–5, and **6 (code)** **shipped**; Stage 3
+(participating-note model) **shipped**; Stage 7 code shipped (HITL 7.4 open); Stage 8 pending.
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
 **OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
@@ -203,9 +203,9 @@ Route participation through current state; `changedOverlapNoteIds` membership fr
 
 ### Stage 5 — geometry driver / inventory sync (C6) — **DONE** (`8255fd7`)
 
-### Stage 6 — action semantics from participant state (C8)
+### Stage 6 — action semantics from participant state (C8) — **DONE** (code; HITL 6.5 pending)
 
-Hide/shorten beats stale restore while overlap classified. Evidence: `163621` ~44.212s. Blocked on Stage 4.
+Hide/shorten beats stale restore while overlap classified. Evidence: `163621` ~44.212s, `181859`.
 
 ### Stage 7 — full leave/restore transition (C7) — **IN PROGRESS**
 
@@ -250,7 +250,27 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 - [x] 6.2 L→R into overlap classifies `OverlapNoteOff` against committed geometry (not stub `BoundaryTouch`).
 - [x] 6.3 Native fixtures `181859` (interaction + action builder).
 - [x] 6.4 `pio test -e native` green (910).
-- [ ] 6.5 HITL `163621` / `181859` L→R shorten continuation.
+- [ ] 6.5 HITL `163621` / `181859` L→R shorten continuation — pre-fix **FAIL** `193632`; post-(2) **PASS** `195514` (see below).
+
+#### Stage 6.5 follow-up — overlap closure transition (sequenced; do not bundle)
+
+| Step | Scope | Status |
+|------|--------|--------|
+| **(2)** | Participating-note **overlap closure** rule: while mover intersects participant committed closure, Hidden/Shortened stay constrained by active interaction; committed/session baseline drives Restore only when `participatingNoteOverlapInteractionCleared`. Helpers: `participatingNoteOverlapClosureActive`, overlay + `determineConstrainedGeometryTargetNoteIds` + action builder. Native: `test_overlap_closure_active_and_cleared`, `test_closure_active_suppresses_leave_restore_target_193632`, `test_builder_advance_with_overlap_closure_shorten_not_restore_193632`, updated `111955` (leave-restore when cleared). | **DONE** — native 915; HITL **`195514` PASS** |
+| **(3)** | Mover handoff: selecting another primary/mover must not discard prior mover session state; macro commit on handoff when bracket targets different `NoteId`. | **IN PROGRESS** |
+| **(1)** | Display/projection: Shortened participant stays semantically Shortened; inventory mask separate from selectable projection. | Pending after (3) |
+
+**HITL `session_20260807_195514` (post-(2) firmware)** — vs `193632`:
+
+| Check | `193632` | `195514` |
+|-------|----------|----------|
+| R→L into overlap | RestoreNote stubs on note 17 | **ShortenNote** chain on note 17 (`interactions=1`) |
+| L→R back into overlap | Broken | ShortenNote resumes (~22.8s) |
+| Leave-restore when cleared | Mixed with active overlap | RestoreNote only when `interactions=0` and mover past committed end (~22.1s, ~23.5s) |
+| Mover handoff | Prior mover resets | **FAIL** — `macro commit skipped: select bracket mismatch` (×4); stale `changedOverlapNoteId=9` on rebuild; `RestoreNote` on note 9 at ~35s |
+| Display inventory | Hidden not shortened | DNTE count=1 at overlap entry — **(1)** still open |
+
+**HITL `session_20260807_193632` (pre-(2))** — overlap shows hidden; R→L advance emitted RestoreNote not ShortenNote; handoff reset.
 
 ### Stage 7 — leave/restore transition — **DONE** (code; HITL 7.4 partial)
 

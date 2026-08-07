@@ -751,7 +751,7 @@ void test_analyze_ignores_session_moved_overlap_at_live_span_020105() {
 
   const BaselineMap analysis =
       overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kNewMoverId, liveStore, kChannel,
-                                                     5376u);
+                                                     5376u, nullptr, nullptr);
   const auto analysisIt = analysis.find(kPriorMoverId);
   TEST_ASSERT_TRUE(analysisIt != analysis.end());
   TEST_ASSERT_EQUAL_UINT32(1248u, analysisIt->second.startTick);
@@ -800,7 +800,7 @@ void test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_0206
 
   const BaselineMap analysis =
       overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kNewMoverId, liveStore, kChannel,
-                                                     5376u);
+                                                     5376u, nullptr, nullptr);
   const auto analysisIt = analysis.find(kPriorMoverId);
   TEST_ASSERT_TRUE(analysisIt != analysis.end());
   TEST_ASSERT_EQUAL_UINT32(1488u, analysisIt->second.startTick);
@@ -852,7 +852,7 @@ void test_overlap_analyze_uses_current_span_not_stale_baseline_021939() {
 
   const BaselineMap analysis =
       overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kMoverId, liveStore, kChannel,
-                                                     kLoopLength, &currentState);
+                                                     kLoopLength, &currentState, nullptr);
   const auto analysisIt = analysis.find(kPriorId);
   TEST_ASSERT_TRUE(analysisIt != analysis.end());
   TEST_ASSERT_EQUAL_UINT32(1392u, analysisIt->second.startTick);
@@ -903,9 +903,13 @@ void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
   MidiEventVec liveStore;
   currentState.projectToSessionStore(liveStore, kChannel);
 
+  EditedNoteSpan causingSpan{};
+  causingSpan.noteId = kMoverId;
+  causingSpan.span = {kPitch, 100, 2256, 2351};
+
   const BaselineMap analysis =
       overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kMoverId, liveStore, kChannel,
-                                                     kLoopLength, &currentState);
+                                                     kLoopLength, &currentState, &causingSpan.span);
   const auto analysisIt = analysis.find(kOverlapId);
   TEST_ASSERT_TRUE(analysisIt != analysis.end());
   TEST_ASSERT_EQUAL_UINT32(committed.startTick, analysisIt->second.startTick);
@@ -916,10 +920,7 @@ void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
   selection.selectedNotes.push_back(kMoverId);
   EditedGeometry geometry{};
   geometry.selection = selection;
-  EditedNoteSpan causing{};
-  causing.noteId = kMoverId;
-  causing.span = {kPitch, 100, 2256, 2351};
-  geometry.causingSpans.push_back(causing);
+  geometry.causingSpans.push_back(causingSpan);
 
   NoteIdList changedOverlap;
   changedOverlap.push_back(kOverlapId);

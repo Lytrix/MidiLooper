@@ -7,8 +7,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
+#include "NoteEditCurrentState.h"
+#include "EditSessionAction.h"
 #include "NoteEditSessionState.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
@@ -98,3 +99,17 @@ bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteStat
 bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant);
 
 NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState& participant);
+
+/// Inclusive linear overlap on the same pitch lane (edit-session analyze convention).
+bool participatingSpansOverlapInclusive(const NoteBaseline& left, const NoteBaseline& right);
+
+/// Mover span still intersects the participant's committed overlap closure.
+bool participatingNoteOverlapClosureActive(const ParticipatingNoteState& participant,
+                                             const NoteBaseline& causingSpan);
+
+/// Leave-restore may use committed/session baseline — only when closure is cleared.
+bool participatingNoteOverlapInteractionCleared(const ParticipatingNoteState& participant,
+                                                const NoteBaseline& causingSpan);
+
+const NoteBaseline* findCausingSpanForMover(NoteId movingNoteId,
+                                            const EditedGeometry& editedGeometry);

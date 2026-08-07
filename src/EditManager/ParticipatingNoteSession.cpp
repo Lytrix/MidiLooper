@@ -90,6 +90,33 @@ NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState
   return participant.committedSpan;
 }
 
+bool participatingSpansOverlapInclusive(const NoteBaseline& left, const NoteBaseline& right) {
+  if (left.pitch != right.pitch) {
+    return false;
+  }
+  return left.startTick <= right.endTick && right.startTick <= left.endTick;
+}
+
+bool participatingNoteOverlapClosureActive(const ParticipatingNoteState& participant,
+                                           const NoteBaseline& causingSpan) {
+  return participatingSpansOverlapInclusive(causingSpan, participant.committedSpan);
+}
+
+bool participatingNoteOverlapInteractionCleared(const ParticipatingNoteState& participant,
+                                                const NoteBaseline& causingSpan) {
+  return !participatingNoteOverlapClosureActive(participant, causingSpan);
+}
+
+const NoteBaseline* findCausingSpanForMover(NoteId movingNoteId,
+                                            const EditedGeometry& editedGeometry) {
+  for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
+    if (causing.noteId == movingNoteId) {
+      return &causing.span;
+    }
+  }
+  return nullptr;
+}
+
 ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteState& row) {
   ParticipatingNoteState out{};
   out.noteId = row.noteId;

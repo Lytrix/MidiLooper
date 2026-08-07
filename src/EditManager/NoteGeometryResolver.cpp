@@ -92,10 +92,19 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
       overlapPairs.push_back(pair);
     }
 
+    const NoteBaseline* causingSpan = nullptr;
+    for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
+      if (causing.noteId == focus.movingNoteId) {
+        causingSpan = &causing.span;
+        break;
+      }
+    }
+
     const BaselineMap analysisBaseline =
         overlayAnalysisBaselineForSessionMovedOverlaps(transactionBaselineAfterEnsure,
                                                        focus.movingNoteId, liveStore, channel,
-                                                       loopLength, currentStateReader);
+                                                       loopLength, currentStateReader,
+                                                       causingSpan);
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
         interactions =
             analyzeEditSessionInteractions(overlapPairs, editedGeometry, analysisBaseline);

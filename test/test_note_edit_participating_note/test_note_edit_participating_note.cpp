@@ -118,6 +118,22 @@ void test_participating_leave_restore_hidden_qualifies() {
   TEST_ASSERT_EQUAL_UINT32(3743u, span.endTick);
 }
 
+void test_overlap_closure_active_and_cleared() {
+  ParticipatingNoteState hidden{};
+  hidden.noteId = 17;
+  hidden.phase = ParticipatingNotePhase::Hidden;
+  hidden.committedSpan = {88, 100, 1488, 1936};
+  hidden.currentSpan = {88, 100, 1488, 1631};
+
+  const NoteBaseline moverInside{88, 100, 1536, 1583};
+  const NoteBaseline moverOutside{88, 100, 1940, 2000};
+
+  TEST_ASSERT_TRUE(participatingNoteOverlapClosureActive(hidden, moverInside));
+  TEST_ASSERT_FALSE(participatingNoteOverlapInteractionCleared(hidden, moverInside));
+  TEST_ASSERT_FALSE(participatingNoteOverlapClosureActive(hidden, moverOutside));
+  TEST_ASSERT_TRUE(participatingNoteOverlapInteractionCleared(hidden, moverOutside));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_participating_phase_maps_from_presence);
@@ -127,5 +143,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_primary_driver_must_project);
   RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
   RUN_TEST(test_participating_leave_restore_hidden_qualifies);
+  RUN_TEST(test_overlap_closure_active_and_cleared);
   return UNITY_END();
 }

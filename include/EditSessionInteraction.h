@@ -78,6 +78,8 @@ BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(const BaselineMap& st
                                                            const MidiEventVec& liveStore,
                                                            uint8_t channel, uint32_t loopLength,
                                                            const NoteEditCurrentState* currentState =
+                                                               nullptr,
+                                                           const NoteBaseline* causingSpan =
                                                                nullptr);
 
 std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
