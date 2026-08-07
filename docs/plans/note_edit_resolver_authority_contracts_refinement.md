@@ -384,7 +384,8 @@ One **participant projection contract** (same participant, visibility gate, auth
 | `8596950` | Hidden overlap: no grid row regardless of `visualCache` | step 1 tests | `203805` |
 | `ea39f1c` | C9 paint ≠ inventory | C9 contracts | — |
 | `9248a70` | Hidden: no projection leave-restore; paint after `RestoreNote` apply only | step 3 tests | `215621` partial |
-| `067dc71` | Visible shortened leave-restore aligned to **overlap closure** (not exclusive `movingNoteRange` overlap) | 928 tests | `220917`, `221717` |
+| `a2ddd90` | 8.2 fader/snapshot paint-cache span | 928 tests | — |
+| *(223447)* | 8.1/8.2 HITL — V5 DNTE stub vs mover split; DISP paint≠visualCache on hide | — | `223447` PASS |
 
 **HITL `session_20260807_220917` (~35s):** L→R shorten on overlap 17 while mover 13 advanced — grid dropped overlap note when mover cleared committed closure; fixed by painting `committedSpan` once `participatingNoteOverlapInteractionCleared`.
 
@@ -396,7 +397,7 @@ One **participant projection contract** (same participant, visibility gate, auth
 
 - [x] 8.1 Sidebar `DNTE` / LEN via paint-cache participant span for `selection.primaryNote` (fixes **V5** flicker — `SidebarAndInfo::drawNoteInfo`).
 - [x] 8.2 Fader / snapshot consumers — `liveEditDisplayNoteAtSelect` + F1 motor `makeDependentFaderBuildInput` use paint-cache participant span (same contract as grid).
-- [ ] 8.3 Reduce `loop.visualCache` as committed paint base; projection refresh after apply.
+- [x] 8.3 Committed paint base from `materializedLoopEventsForNoteEditFocus` + `reconstructDisplayNotes` (not `loop.visualCache`); `bumpSessionPreviewRevision` after geometry apply.
 - [ ] 8.4 HITL `151441`.
 
 **Primary projection contract:**
@@ -463,7 +464,7 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 | **1** | **Fix full-overlap Hide paint** | `visible == false` → **projection emits no row** — regardless of `currentSpan`, `committedSpan`, `visualCache`, or inventory membership. Inventory also excludes. | **No change** | **Shipped** (`8596950`) — leave-restore re-show → step 3 |
 | **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory | **Shipped** (native) |
 | **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending; `222418` C7 restore **parked** |
-| **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence | **In progress** (8.1–8.2 shipped; 8.3 next) |
+| **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence | **In progress** (8.1–8.3 shipped; 8.4 HITL next) |
 | **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior |
 
 ### Step 1 — projection gate (strong invariant)
@@ -507,6 +508,18 @@ Native: `220917`, `221717` leave-restore projection contracts. HITL anchors: `16
 **8.1 shipped:** `SidebarAndInfo::drawNoteInfo` overrides `noteToShow` + `displayStartTick` from `editManager.projectedNoteEditDisplayNotes(track)` when `selection.primaryNote` is in the paint cache — sidebar LEN/DNTE match grid paint span. HITL `151441` pending on device.
 
 **8.2 shipped:** `liveEditDisplayNoteAtSelect` prefers paint-cache span for `selection.primaryNote` when not geometry-driving; `makeDependentFaderBuildInput` select-target path uses paint span for F1 motor sync. HITL `151441` pending on device.
+
+**HITL `session_20260807_223447` (post `dc9db34`/`a2ddd90`) — Stage 8.1/8.2 PASS:**
+
+| Check | Result |
+|-------|--------|
+| V5 sidebar DNTE vs paint | Note **13** selected @ 1728 → `DNTE,len=47` stub; mover **9** @ same bracket → `len=534` — correct primary split |
+| Shorten chain ~28s | Note **13** mover: DNTE `len=47` throughout R→L shorten over note **9** |
+| DISP paint vs `visualCache` | Overlap hide: `frameNotes=11,visualCache=12`; restore: `12,12,12,12` |
+| Step 3 projection | No hidden-row paint leak during overlap (`paint=11` while `visualCache=12`) |
+| Parked C7 | `RestoreNote` note **13** @ 23.9s, 51.2s, 64.5s on `interactions=0` — same geometry class as `222418`; not projection |
+
+Pitch edit tail (~68s): note **9** `2256–2591`, DNTE stable `len=335` across F4 changes.
 
 ### Step 5 — semantic cleanup (explicit refactor phase)
 

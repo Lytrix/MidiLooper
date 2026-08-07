@@ -57,13 +57,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         return;
     }
 
-    NoteUtils::DisplayNoteVec committedBase;
-    if (!loop.visualCache.notes.empty()) {
-        committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-    } else {
-        loop.ensureVisualCacheBuilt();
-        committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-    }
+    NoteUtils::DisplayNoteVec committedBase = NoteUtils::reconstructDisplayNotes(
+        const_cast<EditManager*>(this)->materializedLoopEventsForNoteEditFocus(
+            const_cast<Track&>(track)),
+        loopLength, false);
 
     noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-07 (Stage 8.2 fader/snapshot projection shipped)
+Last updated: 2026-08-07 (223447 HITL logged; Stage 8.3 shipped)
 
 ---
 
@@ -17,12 +17,14 @@ Last updated: 2026-08-07 (Stage 8.2 fader/snapshot projection shipped)
 | 1 — full-overlap Hide paint | **Done** (`8596950`) |
 | 2 — C9 contract tests | **Done** (`ea39f1c`) |
 | 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
-| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1–8.2 **done**; 8.3 `visualCache` reduction next |
+| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1–8.3 **done**; 8.4 HITL `151441` next |
 | 5 — semantic cleanup | Pending (post–Stage 8) |
 
-**Parked HITL:** `session_20260807_222418` — C7 geometry `RestoreNote` to full `committedSpan` on `interactions=0`; retest after Stage 8, not a projection-only blocker.
+**Parked HITL:** `session_20260807_222418` — C7 geometry `RestoreNote` to full `committedSpan` on `interactions=0`; retest after Stage 8, not a projection-only blocker. **`223447`** reproduces same C7 class on note **13** (23.9s / 51.2s / 64.5s) — still parked.
 
-**Next:** Stage 8.3 — reduce `loop.visualCache` as committed paint base; projection refresh after apply.
+**HITL shipped:** `session_20260807_223447` — 8.1/8.2 V5 sidebar + DISP overlap hide PASS.
+
+**Next:** Stage 8.4 — HITL `151441` full V5 / C5 convergence gate on device.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 
