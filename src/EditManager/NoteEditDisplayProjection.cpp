@@ -25,14 +25,23 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::selectableDisplayNo
 
 EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::projectedNoteEditDisplayNotes(
     const Track& track) const {
-    return filteredSelectableDisplayNotesForNoteEdit(track);
+    ensureNoteEditDisplayProjectionCachesBuilt(track);
+    return noteEditPaintDisplayCacheNotes_;
 }
 
 EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableDisplayNotesForNoteEdit(
     const Track& track) const {
+    ensureNoteEditDisplayProjectionCachesBuilt(track);
+    return noteEditSelectableDisplayCacheNotes_;
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBuilt(
+    const Track& track) const {
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (!editSession.active || loopLength == 0) {
-        return {};
+        noteEditPaintDisplayCacheNotes_.clear();
+        noteEditSelectableDisplayCacheNotes_.clear();
+        return;
     }
     const NoteEditFocus& focus = editSession.focus;
     Loop& loop = const_cast<Loop&>(trackManager.getSelectedLoop(track));
@@ -44,8 +53,8 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
         displayFingerprint == noteEditSelectableDisplayCacheFingerprint_ &&
         loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
         playbackRevision == noteEditSelectableDisplayCachePlaybackRevision_ &&
-        !noteEditSelectableDisplayCacheNotes_.empty()) {
-        return noteEditSelectableDisplayCacheNotes_;
+        !noteEditPaintDisplayCacheNotes_.empty()) {
+        return;
     }
 
     NoteUtils::DisplayNoteVec committedBase;
@@ -60,12 +69,13 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
     noteEditSelectableDisplayCacheLoopLength_ = loopLength;
     noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
-    noteEditSelectableDisplayCacheNotes_ = filterProjectingSelectableDisplayNotes(
+    noteEditPaintDisplayCacheNotes_ =
         projectNoteEditDisplayNotes(committedBase, track.editAwareMidiEvents(), focus,
                                     track.getMidiChannel(), loopLength,
-                                    &editSession.noteEditCurrentState),
-        &editSession.noteEditCurrentState);
-    return noteEditSelectableDisplayCacheNotes_;
+                                    &editSession.noteEditCurrentState);
+    noteEditSelectableDisplayCacheNotes_ =
+        filterProjectingSelectableDisplayNotes(noteEditPaintDisplayCacheNotes_,
+                                               &editSession.noteEditCurrentState);
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache() const {
@@ -75,6 +85,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     noteEditSelectableDisplayCacheLoopLength_ = 0;
     noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    noteEditPaintDisplayCacheNotes_.clear();
     noteEditSelectableDisplayCacheNotes_.clear();
 }
 

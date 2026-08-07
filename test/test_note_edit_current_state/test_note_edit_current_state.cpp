@@ -688,6 +688,56 @@ void test_driver_validation_rejects_hidden_row_matching_focus_last() {
   TEST_ASSERT_FALSE(isLiveEditDriverValidFromCurrentState(selection, focus, currentState));
 }
 
+void test_projected_paint_includes_shortened_overlap_inventory_excludes() {
+  // session_20260807_202147: OLED paint must show shortened stub; DNTE/select inventory stays masked.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 13;
+  constexpr NoteId kMoverId = 9;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 1296, 1391}, {kPitch, 100, 1296, 1391},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {kPitch, 100, 1728, 2364}, {kPitch, 100, 1728, 1775},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, 1728, 2364});
+  committedBase.push_back({kMoverId, kPitch, 100, 1296, 1391});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 1776, 1823};
+  focus.movingNoteRange = {1776, 1823};
+  focus.baselineMap[kOverlapId] = {kPitch, 100, 1728, 2364};
+  focus.baselineMap[kMoverId] = {kPitch, 100, 1296, 1391};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec paint =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNoteVec selectable =
+      filterProjectingSelectableDisplayNotes(paint, &currentState);
+
+  TEST_ASSERT_EQUAL(2, static_cast<int>(paint.size()));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[0].noteId);
+
+  bool foundShortenedStub = false;
+  for (const NoteUtils::DisplayNote& dn : paint) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(1728u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1775u, dn.endTick);
+      foundShortenedStub = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundShortenedStub);
+}
+
 void test_selectable_inventory_excludes_paint_only_hidden_row() {
   // RC10h / session_20260807_153739: leave-restore paint stays on grid but not in inventory.
   constexpr uint32_t kLoopLength = 5376;
@@ -873,6 +923,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_mover_uses_current_state_not_stale_focus_last);
   RUN_TEST(test_display_projection_inactive_focus_projects_session_moved_span);
   RUN_TEST(test_driver_validation_rejects_hidden_row_matching_focus_last);
+  RUN_TEST(test_projected_paint_includes_shortened_overlap_inventory_excludes);
   RUN_TEST(test_selectable_inventory_excludes_paint_only_hidden_row);
   RUN_TEST(test_geometry_selection_resolves_mover_index_after_overlap_hidden);
   RUN_TEST(test_select_closest_note_snap_tie_breaks_to_first_display_order);
