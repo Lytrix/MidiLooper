@@ -1151,7 +1151,7 @@ void test_same_pitch_left_neighbor_shorten_and_restore_on_leave() {
   leaveLeft.selection = ontoLeft.selection;
   EditedNoteSpan causingLeave{};
   causingLeave.noteId = kMoverId;
-  causingLeave.span = {12, 100, 672, 816};
+  causingLeave.span = {12, 100, 768, 864};
   leaveLeft.causingSpans.push_back(causingLeave);
 
   ConstrainedNoteGeometry leftRestore{};

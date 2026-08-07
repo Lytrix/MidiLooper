@@ -114,16 +114,31 @@ NOTE_EDIT_MEM bool readEditableCurrentSpan(NoteId noteId, const MidiEventVec& li
 NOTE_EDIT_MEM bool overlapClosureActiveForTarget(NoteId targetNoteId, const EditedGeometry& editedGeometry,
                                                  const NoteEditFocus& focus,
                                                  const NoteEditCurrentState* currentState) {
-  if (currentState == nullptr || focus.movingNoteId == kInvalidNoteId) {
+  if (focus.movingNoteId == kInvalidNoteId) {
     return false;
   }
-  const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
   const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
-  if (row == nullptr || causingSpan == nullptr) {
+  if (causingSpan == nullptr) {
     return false;
   }
-  const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-  return participatingNoteOverlapClosureActive(participant, *causingSpan);
+  if (currentState != nullptr) {
+    const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
+    if (row != nullptr) {
+      const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+      return participatingNoteOverlapClosureActive(participant, *causingSpan);
+    }
+  }
+  const auto baselineIt = focus.baselineMap.find(targetNoteId);
+  if (baselineIt == focus.baselineMap.end()) {
+    return false;
+  }
+  ParticipatingNoteState fromBaseline{};
+  fromBaseline.noteId = targetNoteId;
+  fromBaseline.phase = ParticipatingNotePhase::Visible;
+  fromBaseline.committedSpan = baselineIt->second;
+  fromBaseline.currentSpan = baselineIt->second;
+  fromBaseline.projectsToStore = true;
+  return participatingNoteOverlapClosureActive(fromBaseline, *causingSpan);
 }
 
 NOTE_EDIT_MEM void appendOverlapTargetActions(
@@ -163,7 +178,24 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
 
     if (!constrained.visible) {
       if (livePresent) {
-        actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
+        const bool closureActive =
+            overlapClosureActiveForTarget(constrained.noteId, editedGeometry, focus, currentState);
+        const bool constrainedShortensTail =
+            constrained.endTick >= baseline.startTick && constrained.endTick < baseline.endTick;
+        if (closureActive && constrainedShortensTail) {
+          const NoteBaseline shortened{baseline.pitch, baseline.velocity, baseline.startTick,
+                                       constrained.endTick};
+          actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+        } else if (closureActive && liveReadable &&
+                   participatingNoteShortenedVsCommitted(live, baseline)) {
+          if (constrainedShortensTail && live.endTick != constrained.endTick) {
+            const NoteBaseline shortened{baseline.pitch, baseline.velocity, baseline.startTick,
+                                         constrained.endTick};
+            actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+          }
+        } else {
+          actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
+        }
       }
       continue;
     }
