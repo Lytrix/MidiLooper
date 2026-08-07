@@ -25,6 +25,17 @@ NOTE_EDIT_MEM bool liveStoreLinearSpanDiffersFromBaseline(NoteId noteId, const N
          live.endTick != baseline.endTick;
 }
 
+NOTE_EDIT_MEM bool spanQualifiesForOverlapLeaveRestore(const NoteBaseline& baseline,
+                                                       const NoteBaseline& span) {
+  if (span.startTick == baseline.startTick) {
+    return true;
+  }
+  if (span.startTick > baseline.startTick && span.endTick == baseline.endTick) {
+    return true;
+  }
+  return false;
+}
+
 NOTE_EDIT_MEM bool isOverlapLeaveRestoreBaselineDiff(const NoteBaseline& baseline,
                                                      const MidiEventVec& liveStore, NoteId noteId,
                                                      uint8_t channel, uint32_t loopLength) {
@@ -33,13 +44,7 @@ NOTE_EDIT_MEM bool isOverlapLeaveRestoreBaselineDiff(const NoteBaseline& baselin
   if (!readLiveLinearSpan(liveStore, noteId, channel, live)) {
     return true;
   }
-  if (live.startTick == baseline.startTick) {
-    return true;
-  }
-  if (live.startTick > baseline.startTick && live.endTick == baseline.endTick) {
-    return true;
-  }
-  return false;
+  return spanQualifiesForOverlapLeaveRestore(baseline, live);
 }
 
 NOTE_EDIT_MEM bool currentSpanDiffersFromBaseline(NoteId noteId, const NoteBaseline& baseline,
@@ -200,8 +205,18 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
     if (currentState != nullptr) {
       // session_20260807_113010: HideNote can set currentSpan == baselineMap while presence stays
       // Hidden — span diff alone cannot detect leave-restore need (RC10a).
-      if (currentState->isRowHiddenOrDeleted(noteId) ||
-          currentSpanDiffersFromBaseline(noteId, baseline, *currentState)) {
+      if (currentState->isRowHiddenOrDeleted(noteId)) {
+        targets.push_back(noteId);
+        continue;
+      }
+      NoteBaseline current{};
+      if (!currentState->readCurrentSpan(noteId, current)) {
+        targets.push_back(noteId);
+        continue;
+      }
+      // session_20260807_145011: session-moved prior mover (start < baseline) is not leave-restore.
+      if (currentSpanDiffersFromBaseline(noteId, baseline, *currentState) &&
+          spanQualifiesForOverlapLeaveRestore(baseline, current)) {
         targets.push_back(noteId);
       }
       continue;

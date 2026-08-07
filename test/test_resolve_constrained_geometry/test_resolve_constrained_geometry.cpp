@@ -590,6 +590,52 @@ void test_determine_targets_excludes_session_moved_overlap_diff_020105() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
+void test_determine_targets_excludes_session_moved_current_state_145011() {
+  // session_20260807_145011: prior mover at live 1536 with committed baseline 3600 is not leave-restore
+  // when NoteEditCurrentState is authoritative (RestoreNote type=0 regression).
+  constexpr NoteId kPriorMoverId = 17;
+  constexpr NoteId kNewMoverId = 10;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  BaselineMap baseline;
+  baseline[kPriorMoverId] = {kPitch, 100, 3600, 4127};
+  baseline[kNewMoverId] = {kPitch, 100, 2640, 2783};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kPriorMoverId, baseline[kPriorMoverId], {kPitch, 100, 1536, 2063},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kNewMoverId, baseline[kNewMoverId], {kPitch, 100, 2640, 2687},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kNewMoverId;
+  selection.selectedNotes.push_back(kNewMoverId);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kNewMoverId;
+  causing.span = {kPitch, 100, 2640, 2687};
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kNewMoverId;
+  focus.baselineMap = baseline;
+
+  NoteIdList changed;
+  changed.push_back(kPriorMoverId);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      &currentState);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
+}
+
 void test_determine_targets_includes_selected_hidden_overlap_leave_restore_111955() {
   // session_20260807_111955: selected stationary sibling stays a leave-restore candidate.
   constexpr NoteId kMover = 17;
@@ -764,6 +810,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_determine_targets_excludes_vacated_lane_on_pitch_change_011115);
   RUN_TEST(test_resolve_leave_restore_head_trimmed_live_uses_storage_baseline_010415);
   RUN_TEST(test_determine_targets_excludes_session_moved_overlap_diff_020105);
+  RUN_TEST(test_determine_targets_excludes_session_moved_current_state_145011);
   RUN_TEST(test_determine_targets_includes_selected_hidden_overlap_leave_restore_111955);
   RUN_TEST(test_determine_targets_hidden_full_span_sticky_scope_113010);
   RUN_TEST(test_leave_restore_constrained_uses_session_baseline_hidden_full_span_113010);
