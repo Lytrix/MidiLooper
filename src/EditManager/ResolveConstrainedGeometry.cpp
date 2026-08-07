@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "NoteEditFocus.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -27,13 +28,7 @@ NOTE_EDIT_MEM bool liveStoreLinearSpanDiffersFromBaseline(NoteId noteId, const N
 
 NOTE_EDIT_MEM bool spanQualifiesForOverlapLeaveRestore(const NoteBaseline& baseline,
                                                        const NoteBaseline& span) {
-  if (span.startTick == baseline.startTick) {
-    return true;
-  }
-  if (span.startTick > baseline.startTick && span.endTick == baseline.endTick) {
-    return true;
-  }
-  return false;
+  return participatingSpanQualifiesForOverlapLeaveRestore(baseline, span);
 }
 
 NOTE_EDIT_MEM bool isOverlapLeaveRestoreBaselineDiff(const NoteBaseline& baseline,
@@ -120,11 +115,25 @@ NOTE_EDIT_MEM bool isChangedOverlapParticipant(NoteId noteId,
 
 NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
     NoteId targetNoteId, const NoteBaseline& transactionBaseline, const MidiEventVec& liveStore,
-    uint8_t channel, const NoteEditFocus& focus) {
+    uint8_t channel, const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
   ConstrainedNoteGeometry geometry{};
   geometry.noteId = targetNoteId;
   geometry.pitch = transactionBaseline.pitch;
   geometry.visible = true;
+
+  if (currentState != nullptr) {
+    const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
+    if (row != nullptr) {
+      const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+      if (participatingNoteNeedsFullCommittedLeaveRestore(participant)) {
+        const NoteBaseline committed = participatingLeaveRestoreCommittedSpan(participant);
+        geometry.startTick = committed.startTick;
+        geometry.endTick = committed.endTick;
+        geometry.pitch = committed.pitch;
+        return geometry;
+      }
+    }
+  }
 
   NoteBaseline live{};
   if (readLiveLinearSpan(liveStore, targetNoteId, channel, live)) {
@@ -203,20 +212,17 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
       continue;
     }
     if (currentState != nullptr) {
-      // session_20260807_113010: HideNote can set currentSpan == baselineMap while presence stays
-      // Hidden — span diff alone cannot detect leave-restore need (RC10a).
-      if (currentState->isRowHiddenOrDeleted(noteId)) {
+      const NoteEditCurrentNoteState* row = currentState->find(noteId);
+      if (row == nullptr) {
+        continue;
+      }
+      const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+      if (participatingNoteQualifiesForLeaveRestoreTarget(participant, focus.movingNoteId)) {
         targets.push_back(noteId);
         continue;
       }
-      NoteBaseline current{};
-      if (!currentState->readCurrentSpan(noteId, current)) {
-        targets.push_back(noteId);
-        continue;
-      }
-      // session_20260807_145011: session-moved prior mover (start < baseline) is not leave-restore.
       if (currentSpanDiffersFromBaseline(noteId, baseline, *currentState) &&
-          spanQualifiesForOverlapLeaveRestore(baseline, current)) {
+          participatingSpanQualifiesForOverlapLeaveRestore(baseline, row->currentSpan)) {
         targets.push_back(noteId);
       }
       continue;
@@ -327,7 +333,7 @@ resolveAllConstrainedGeometry(
         continue;
       }
       ConstrainedNoteGeometry restoreCandidate = constrainedGeometryFromRestoreCandidate(
-          targetNoteId, storageIt->second, liveStore, channel, focus);
+          targetNoteId, storageIt->second, liveStore, channel, focus, currentState);
       if (restoreCandidate.endTick <= restoreCandidate.startTick) {
         continue;
       }

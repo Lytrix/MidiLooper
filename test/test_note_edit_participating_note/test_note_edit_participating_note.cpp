@@ -105,6 +105,19 @@ void test_collect_overlap_participant_ids_from_current_state() {
                    participants.end());
 }
 
+void test_participating_leave_restore_hidden_qualifies() {
+  ParticipatingNoteState hidden{};
+  hidden.noteId = 17;
+  hidden.phase = ParticipatingNotePhase::Hidden;
+  hidden.committedSpan = {88, 100, 3216, 3743};
+  hidden.currentSpan = {88, 100, 3216, 3263};
+  TEST_ASSERT_TRUE(participatingNoteQualifiesForLeaveRestoreTarget(hidden, 3));
+  TEST_ASSERT_TRUE(participatingNoteNeedsFullCommittedLeaveRestore(hidden));
+  const NoteBaseline span = participatingLeaveRestoreCommittedSpan(hidden);
+  TEST_ASSERT_EQUAL_UINT32(3216u, span.startTick);
+  TEST_ASSERT_EQUAL_UINT32(3743u, span.endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_participating_phase_maps_from_presence);
@@ -113,5 +126,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_builds_from_current_state_and_selection);
   RUN_TEST(test_primary_driver_must_project);
   RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
+  RUN_TEST(test_participating_leave_restore_hidden_qualifies);
   return UNITY_END();
 }

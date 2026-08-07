@@ -85,3 +85,16 @@ bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row);
 
 NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
     const NoteEditCurrentState& currentState, NoteId movingNoteId);
+
+/// Same-start shortened tail or head-trimmed span that may leave-restore to committed baseline.
+bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,
+                                                      const NoteBaseline& current);
+
+/// Overlap participant (not mover) that may receive leave-restore when interactions clear.
+bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteState& participant,
+                                                       NoteId movingNoteId);
+
+/// Leave-restore must emit the session committed span — not a live-store shortened stub.
+bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant);
+
+NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState& participant);
