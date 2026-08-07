@@ -5,6 +5,8 @@
 
 #include <algorithm>
 
+#include "NoteEditFocus.h"
+
 namespace {
 
 void sortParticipatingNoteIdList(NoteIdList& noteIds) {
@@ -76,14 +78,46 @@ bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteStat
     return false;
   }
   return participant.phase == ParticipatingNotePhase::Hidden ||
+         participant.phase == ParticipatingNotePhase::Deleted;
+}
+
+bool participatingNoteCommittedSpanSealedBelowStorageBaseline(
+    const ParticipatingNoteState& participant, const NoteBaseline& storageBaseline) {
+  if (participant.committedSpan.pitch != storageBaseline.pitch) {
+    return false;
+  }
+  return participant.committedSpan.endTick < storageBaseline.endTick ||
+         participant.committedSpan.startTick > storageBaseline.startTick;
+}
+
+bool participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(
+    const ParticipatingNoteState& participant, const NoteBaseline& storageBaseline,
+    NoteId movingNoteId) {
+  if (participant.noteId == kInvalidNoteId || participant.noteId == movingNoteId) {
+    return false;
+  }
+  if (participant.phase != ParticipatingNotePhase::Visible || !participant.shortenedVsCommitted) {
+    return false;
+  }
+  if (participant.visibleOverlapShortenSealed) {
+    return true;
+  }
+  return participatingNoteCommittedSpanSealedBelowStorageBaseline(participant, storageBaseline);
+}
+
+bool participatingNoteUsesCommittedBaselineDuringOverlapClosure(
+    const ParticipatingNoteState& participant, NoteId movingNoteId) {
+  if (participant.noteId == kInvalidNoteId || participant.noteId == movingNoteId) {
+    return false;
+  }
+  return participant.phase == ParticipatingNotePhase::Hidden ||
          participant.phase == ParticipatingNotePhase::Deleted ||
          participant.shortenedVsCommitted;
 }
 
 bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant) {
   return participant.phase == ParticipatingNotePhase::Hidden ||
-         participant.phase == ParticipatingNotePhase::Deleted ||
-         participant.shortenedVsCommitted;
+         participant.phase == ParticipatingNotePhase::Deleted;
 }
 
 NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState& participant) {
@@ -107,6 +141,32 @@ bool participatingNoteOverlapInteractionCleared(const ParticipatingNoteState& pa
   return !participatingNoteOverlapClosureActive(participant, causingSpan);
 }
 
+bool participatingNoteVisibleOverlapTailInProgress(const ParticipatingNoteState& participant,
+                                                   const NoteBaseline& causingSpan) {
+  return participant.phase == ParticipatingNotePhase::Visible &&
+         participant.shortenedVsCommitted &&
+         participatingNoteOverlapClosureActive(participant, causingSpan);
+}
+
+bool visibleShortenedOverlapTailInventoryMasked(const NoteEditCurrentNoteState& row,
+                                              const NoteEditFocus& focus,
+                                              int selectedNoteIdx) {
+  if (!participatingNoteShortenedVsCommitted(row.currentSpan, row.committedSpan)) {
+    return false;
+  }
+  if (selectedNoteIdx < 0 || !focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return false;
+  }
+  if (std::find(focus.changedOverlapNoteIds.begin(), focus.changedOverlapNoteIds.end(),
+                row.noteId) == focus.changedOverlapNoteIds.end()) {
+    return false;
+  }
+  const ParticipatingNoteState participant = buildParticipatingNoteState(row);
+  const NoteBaseline causingSpan{focus.last.pitch, focus.last.velocity, focus.last.startTick,
+                                 focus.last.endTick};
+  return participatingNoteVisibleOverlapTailInProgress(participant, causingSpan);
+}
+
 const NoteBaseline* findCausingSpanForMover(NoteId movingNoteId,
                                             const EditedGeometry& editedGeometry) {
   for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
@@ -125,6 +185,7 @@ ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteStat
   out.committedSpan = row.committedSpan;
   out.shortenedVsCommitted =
       participatingNoteShortenedVsCommitted(row.currentSpan, row.committedSpan);
+  out.visibleOverlapShortenSealed = row.visibleOverlapShortenSealed;
   switch (row.presence) {
     case NoteEditPresenceType::Visible:
     case NoteEditPresenceType::Added:

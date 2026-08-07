@@ -202,6 +202,9 @@ private:
     void resetSelectNavSlotApplyState();
     int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
     bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue, int posIndex);
+    /// Macro-commit pending overlap/mover edits before F1 focus rebuild (note or empty step).
+    void macroCommitPendingEditsBeforeSelectNav(Track& track, NoteId selectNoteId,
+                                                uint32_t bracketTick);
     Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
     NoteEditDependentFaderBuildInput makeDependentFaderBuildInput(
         const Track& track, const Fader1SelectTarget* selectTarget) const;

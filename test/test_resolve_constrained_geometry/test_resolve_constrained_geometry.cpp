@@ -895,6 +895,276 @@ void test_closure_active_suppresses_leave_restore_target_193632() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
+void test_leave_restore_deferred_visible_overlap_tail_224633() {
+  // session_20260807_224633: while mover still inside committed overlap closure and visible
+  // same-start tail is growing — must not leave-restore to full committed span.
+  constexpr NoteId kMover = 13;
+  constexpr NoteId kOverlap = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline kCommitted{kPitch, 100, 2544, 3078};
+  const NoteBaseline kTail{kPitch, 100, 2544, 2591};
+
+  BaselineMap baseline;
+  baseline[kMover] = {kPitch, 100, 2592, 2639};
+  baseline[kOverlap] = kCommitted;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, kCommitted, kTail, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, baseline[kMover], baseline[kMover], NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = baseline[kMover];
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.baselineMap = baseline;
+
+  NoteIdList changed;
+  changed.push_back(kOverlap);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      &currentState);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
+}
+
+void test_sealed_visible_shortened_leave_restore_after_mover_clears_234904() {
+  // session_20260807_234904 ~65s: second overlap pass on macro-sealed note 9 — mover past overlap
+  // must restore current stub to sealed committedSpan (2063), not pre-shorten storage baseline.
+  constexpr NoteId kMover = 13;
+  constexpr NoteId kOverlap = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline kStorage{kPitch, 100, 1776, 3078};
+  const NoteBaseline kSealed{kPitch, 100, 1776, 2063};
+  const NoteBaseline kTail{kPitch, 100, 1776, 1823};
+
+  BaselineMap baseline;
+  baseline[kMover] = {kPitch, 100, 2112, 2159};
+  baseline[kOverlap] = kStorage;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, kSealed, kTail, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, baseline[kMover], baseline[kMover], NoteEditPresenceType::Visible);
+  NoteEditCurrentNoteState* overlapRow = currentState.find(kOverlap);
+  TEST_ASSERT_NOT_NULL(overlapRow);
+  overlapRow->visibleOverlapShortenSealed = true;
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = {kPitch, 100, 1344, 1391};
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.baselineMap = baseline;
+
+  NoteIdList changed;
+  changed.push_back(kOverlap);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
+  TEST_ASSERT_EQUAL_UINT32(kOverlap, targets[0]);
+
+  NoteIdList leaveRestore;
+  const auto constrained = resolveAllConstrainedGeometry(
+      emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
+      edited, changed, focus, leaveRestore, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, constrained[0].endTick);
+}
+
+void test_sealed_visible_shortened_leave_restore_rtl_after_mover_exits_left_235724() {
+  // session_20260807_235724 ~114s: macro-sealed note 9 (2016–2255) re-overlapped; mover 11 exits
+  // left (1968–2015) — must restore stub to committed even when committed == storage baseline.
+  constexpr NoteId kMover = 11;
+  constexpr NoteId kOverlap = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline kSealed{kPitch, 100, 2016, 2255};
+  const NoteBaseline kTail{kPitch, 100, 2016, 2063};
+
+  BaselineMap baseline;
+  baseline[kMover] = {kPitch, 100, 1968, 2015};
+  baseline[kOverlap] = kSealed;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, kSealed, kTail, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, baseline[kMover], baseline[kMover], NoteEditPresenceType::Visible);
+  NoteEditCurrentNoteState* overlapRow = currentState.find(kOverlap);
+  TEST_ASSERT_NOT_NULL(overlapRow);
+  overlapRow->visibleOverlapShortenSealed = true;
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = {kPitch, 100, 1968, 2015};
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.baselineMap = baseline;
+
+  NoteIdList changed;
+  changed.push_back(kOverlap);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
+  TEST_ASSERT_EQUAL_UINT32(kOverlap, targets[0]);
+
+  NoteIdList leaveRestore;
+  const auto constrained = resolveAllConstrainedGeometry(
+      emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
+      edited, changed, focus, leaveRestore, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, constrained[0].endTick);
+}
+
+void test_leave_restore_after_repositioned_macro_sealed_overlap_001226() {
+  // session_20260808_001226 ~41.5s: note 9 macro-sealed, moved to 1680, second overlap exit must not
+  // RestoreNote to frozen storage baseline 2640–3174.
+  constexpr NoteId kMover = 11;
+  constexpr NoteId kOverlap = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline kStorage{kPitch, 100, 2640, 3174};
+  const NoteBaseline kSealed{kPitch, 100, 1680, 2015};
+  const NoteBaseline kTail{kPitch, 100, 1680, 1727};
+
+  BaselineMap storageBaseline;
+  storageBaseline[kMover] = {kPitch, 100, 1632, 1679};
+  storageBaseline[kOverlap] = kStorage;
+
+  BaselineMap analysisBaseline = storageBaseline;
+  analysisBaseline[kOverlap] = kSealed;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, kSealed, kTail, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, analysisBaseline[kMover], analysisBaseline[kMover],
+                         NoteEditPresenceType::Visible);
+  NoteEditCurrentNoteState* overlapRow = currentState.find(kOverlap);
+  TEST_ASSERT_NOT_NULL(overlapRow);
+  overlapRow->visibleOverlapShortenSealed = true;
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = {kPitch, 100, 1632, 1679};
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.baselineMap = storageBaseline;
+
+  NoteIdList changed;
+  changed.push_back(kOverlap);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  NoteIdList leaveRestore;
+  const auto constrained = resolveAllConstrainedGeometry(
+      emptyGrouped, analysisBaseline, storageBaseline, liveStore, kChannel, kLoopLength, 12, true,
+      selection, edited, changed, focus, leaveRestore, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
+  TEST_ASSERT_EQUAL_UINT32(kSealed.startTick, constrained[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, constrained[0].endTick);
+  TEST_ASSERT_NOT_EQUAL_UINT32(kStorage.startTick, constrained[0].startTick);
+}
+
+void test_leave_restore_allowed_after_overlap_closure_cleared_224633() {
+  // session_20260807_224633 @24.321s: visible shortened tail — macro commit owns persistence;
+  // must not leave-restore to full pre-shorten committed span.
+  constexpr NoteId kMover = 13;
+  constexpr NoteId kOverlap = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline kCommitted{kPitch, 100, 2544, 3078};
+  const NoteBaseline kTail{kPitch, 100, 2544, 3071};
+
+  BaselineMap baseline;
+  baseline[kMover] = {kPitch, 100, 3168, 3215};
+  baseline[kOverlap] = kCommitted;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, kCommitted, kTail, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, baseline[kMover], baseline[kMover], NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = baseline[kMover];
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.baselineMap = baseline;
+
+  NoteIdList changed;
+  changed.push_back(kOverlap);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      &currentState);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_resolve_complete_hide_precedence_over_shorten);
@@ -922,5 +1192,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_leave_restore_constrained_uses_session_baseline_hidden_full_span_113010);
   RUN_TEST(test_leave_restore_hidden_live_stub_uses_committed_span_175858);
   RUN_TEST(test_closure_active_suppresses_leave_restore_target_193632);
+  RUN_TEST(test_leave_restore_deferred_visible_overlap_tail_224633);
+  RUN_TEST(test_sealed_visible_shortened_leave_restore_after_mover_clears_234904);
+  RUN_TEST(test_sealed_visible_shortened_leave_restore_rtl_after_mover_exits_left_235724);
+  RUN_TEST(test_leave_restore_after_repositioned_macro_sealed_overlap_001226);
+  RUN_TEST(test_leave_restore_allowed_after_overlap_closure_cleared_224633);
   return UNITY_END();
 }

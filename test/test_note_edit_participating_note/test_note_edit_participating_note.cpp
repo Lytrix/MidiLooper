@@ -118,6 +118,45 @@ void test_participating_leave_restore_hidden_qualifies() {
   TEST_ASSERT_EQUAL_UINT32(3743u, span.endTick);
 }
 
+void test_participating_visible_shortened_does_not_qualify_for_leave_restore() {
+  ParticipatingNoteState visibleShortened{};
+  visibleShortened.noteId = 9;
+  visibleShortened.phase = ParticipatingNotePhase::Visible;
+  visibleShortened.committedSpan = {88, 100, 2016, 3078};
+  visibleShortened.currentSpan = {88, 100, 2016, 2303};
+  visibleShortened.shortenedVsCommitted = true;
+  TEST_ASSERT_FALSE(participatingNoteQualifiesForLeaveRestoreTarget(visibleShortened, 13));
+  TEST_ASSERT_FALSE(participatingNoteNeedsFullCommittedLeaveRestore(visibleShortened));
+  const NoteBaseline storage{88, 100, 2016, 3078};
+  TEST_ASSERT_FALSE(
+      participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(visibleShortened, storage, 13));
+}
+
+void test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore() {
+  ParticipatingNoteState sealedShortened{};
+  sealedShortened.noteId = 9;
+  sealedShortened.phase = ParticipatingNotePhase::Visible;
+  sealedShortened.committedSpan = {88, 100, 1776, 2063};
+  sealedShortened.currentSpan = {88, 100, 1776, 1823};
+  sealedShortened.shortenedVsCommitted = true;
+  const NoteBaseline storage{88, 100, 1776, 3078};
+  TEST_ASSERT_TRUE(
+      participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(sealedShortened, storage, 13));
+}
+
+void test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_flag_set() {
+  ParticipatingNoteState sealedShortened{};
+  sealedShortened.noteId = 9;
+  sealedShortened.phase = ParticipatingNotePhase::Visible;
+  sealedShortened.committedSpan = {88, 100, 2016, 2255};
+  sealedShortened.currentSpan = {88, 100, 2016, 2063};
+  sealedShortened.shortenedVsCommitted = true;
+  sealedShortened.visibleOverlapShortenSealed = true;
+  const NoteBaseline storage{88, 100, 2016, 2255};
+  TEST_ASSERT_TRUE(
+      participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(sealedShortened, storage, 11));
+}
+
 void test_overlap_closure_active_and_cleared() {
   ParticipatingNoteState hidden{};
   hidden.noteId = 17;
@@ -143,6 +182,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_primary_driver_must_project);
   RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
   RUN_TEST(test_participating_leave_restore_hidden_qualifies);
+  RUN_TEST(test_participating_visible_shortened_does_not_qualify_for_leave_restore);
+  RUN_TEST(test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore);
+  RUN_TEST(test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_flag_set);
   RUN_TEST(test_overlap_closure_active_and_cleared);
   return UNITY_END();
 }

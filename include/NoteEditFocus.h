@@ -129,6 +129,9 @@ void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
                                                  uint8_t channel, uint32_t loopLength,
                                                  const NoteEditCurrentState* currentState = nullptr);
 void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
+void clearChangedOverlapParticipationWhenInteractionCleared(
+    NoteEditFocus& focus, const NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
+    NoteId movingNoteId);
 void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, NoteId noteId,
                                         const NoteBaseline& baseline);
 void clearCommittedOverlapDeleteIdsFromFocus(NoteEditFocus& focus, const NoteIdList& noteIds);
@@ -298,7 +301,8 @@ NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
 
 /// Exclude display-only rows (Hidden/Deleted leave-restore paint) from selectable inventory.
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
-    const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState);
+    const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState,
+    const NoteEditFocus& focus, int selectedNoteIdx);
 
 /// NoteIds for micro normalize + full-loop transaction baseline (mover, overlap, all live notes).
 template <typename Alloc>

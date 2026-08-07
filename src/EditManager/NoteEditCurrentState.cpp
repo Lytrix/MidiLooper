@@ -7,6 +7,7 @@
 
 #include "EditSessionAction.h"
 #include "EditSessionLiveStoreSpan.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
 
@@ -162,6 +163,18 @@ NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(NoteId
   return !overlapInventoryMaskedTail(row->currentSpan, row->committedSpan);
 }
 
+NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(
+    NoteId noteId, const NoteEditFocus& focus, int selectedNoteIdx) const {
+  const NoteEditCurrentNoteState* row = find(noteId);
+  if (row == nullptr) {
+    return false;
+  }
+  if (!projectsToSessionStore(row->presence)) {
+    return false;
+  }
+  return !visibleShortenedOverlapTailInventoryMasked(*row, focus, selectedNoteIdx);
+}
+
 NOTE_EDIT_MEM bool NoteEditCurrentState::isRowHiddenOrDeleted(NoteId noteId) const {
   const NoteEditCurrentNoteState* row = find(noteId);
   if (row == nullptr) {
@@ -227,6 +240,26 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
       row->presence = NoteEditPresenceType::Hidden;
       return;
     case EditSessionActionType::MoveNote:
+      if (row == nullptr) {
+        upsertRow(action.targetNoteId, span, span, NoteEditPresenceType::Visible);
+        return;
+      }
+      {
+        const int32_t startDelta = static_cast<int32_t>(span.startTick) -
+                                   static_cast<int32_t>(row->currentSpan.startTick);
+        row->currentSpan = span;
+        if (startDelta != 0) {
+          const int32_t newCommittedStart =
+              static_cast<int32_t>(row->committedSpan.startTick) + startDelta;
+          const int32_t newCommittedEnd =
+              static_cast<int32_t>(row->committedSpan.endTick) + startDelta;
+          if (newCommittedStart >= 0 && newCommittedEnd > newCommittedStart) {
+            row->committedSpan.startTick = static_cast<uint32_t>(newCommittedStart);
+            row->committedSpan.endTick = static_cast<uint32_t>(newCommittedEnd);
+          }
+        }
+      }
+      return;
     case EditSessionActionType::ChangeLength:
     case EditSessionActionType::ChangePitch:
       if (row == nullptr) {
@@ -268,6 +301,11 @@ NOTE_EDIT_MEM void NoteEditCurrentState::syncCommittedSpan(NoteId noteId,
   NoteEditCurrentNoteState* row = find(noteId);
   if (row == nullptr) {
     return;
+  }
+  if (row->presence == NoteEditPresenceType::Visible &&
+      committedSpan.endTick < row->committedSpan.endTick &&
+      committedSpan.startTick == row->committedSpan.startTick) {
+    row->visibleOverlapShortenSealed = true;
   }
   row->committedSpan = committedSpan;
 }

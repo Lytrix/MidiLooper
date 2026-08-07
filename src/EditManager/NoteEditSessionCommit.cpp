@@ -144,6 +144,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     clearCommittedOverlapDeleteIdsFromFocus(editSession.focus, committedOverlapDeleteIds);
     clearCommittedOverlapScratchExceptHidden(editSession.focus);
 
+    invalidateNoteEditDerivedCaches();
+
     // Commit rebuilds projection / filtered ordering; resync index from NoteId + focus.last.
     if (editorSelectionHasNote(sessionState.selection) && editSession.focus.active &&
         editSession.focus.movingNoteId == sessionState.selection.primaryNote) {
@@ -155,7 +157,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
             storageBracketTick, noteEditLoopStartTick(track), loopLength);
         sessionState.selection.selectedTick = displayBracket;
         selectedTick = displayBracket;
-        invalidateNoteEditDerivedCaches();
         syncSelectedNoteIdxToFilteredInventory(track);
     }
 }

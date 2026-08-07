@@ -16,23 +16,13 @@
 
 namespace {
 
-bool overlapLeaveRestoreInteractionCleared(const NoteEditFocus& focus,
-                                           const NoteEditCurrentNoteState& row) {
-  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
-    return true;
-  }
-  const ParticipatingNoteState participant = buildParticipatingNoteState(row);
-  const NoteBaseline causingSpan{focus.last.pitch, focus.last.velocity, focus.last.startTick,
-                                 focus.last.endTick};
-  return participatingNoteOverlapInteractionCleared(participant, causingSpan);
-}
-
 template <typename Alloc>
 bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
                                    std::vector<MidiEvent, Alloc>& sessionEvents, uint8_t channel,
                                    uint32_t loopLength, uint8_t& pitch, uint8_t& velocity,
                                    uint32_t& startTick, uint32_t& endTick,
-                                   const NoteEditCurrentState* currentState) {
+                                   const NoteEditCurrentState* currentState,
+                                   const NoteBaseline* storageCommittedBaseline = nullptr) {
   if (noteId == kInvalidNoteId) {
     return false;
   }
@@ -40,17 +30,39 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
         (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
-      if (noteId != focus.movingNoteId && focus.active) {
-        const NoteEditCurrentNoteState* row = currentState->find(noteId);
-        if (row != nullptr && row->presence == NoteEditPresenceType::Visible &&
-            participatingNoteShortenedVsCommitted(current, row->committedSpan) &&
-            overlapLeaveRestoreInteractionCleared(focus, *row)) {
+      const NoteEditCurrentNoteState* row = currentState->find(noteId);
+      if (row != nullptr && row->presence == NoteEditPresenceType::Visible &&
+          participatingNoteShortenedVsCommitted(current, row->committedSpan)) {
+        const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+        const NoteBaseline causingSpan{focus.last.pitch, focus.last.velocity, focus.last.startTick,
+                                       focus.last.endTick};
+        const bool interactionCleared =
+            !focus.active ||
+            participatingNoteOverlapInteractionCleared(participant, causingSpan);
+        const bool sealedBelowStorage =
+            storageCommittedBaseline != nullptr &&
+            participatingNoteCommittedSpanSealedBelowStorageBaseline(participant,
+                                                                     *storageCommittedBaseline);
+        const bool qualifiesSealed =
+            participant.visibleOverlapShortenSealed || sealedBelowStorage;
+        const bool activeSealedLeaveRestorePaint =
+            focus.active && focus.movingNoteId != kInvalidNoteId &&
+            noteId != focus.movingNoteId && hasChangedOverlapNote(focus, noteId);
+        const bool inactiveMacroSealedPaint =
+            !focus.active && participant.visibleOverlapShortenSealed;
+        if (interactionCleared && qualifiesSealed &&
+            (activeSealedLeaveRestorePaint || inactiveMacroSealedPaint)) {
           pitch = row->committedSpan.pitch;
           velocity = row->committedSpan.velocity;
           startTick = row->committedSpan.startTick;
           endTick = row->committedSpan.endTick;
           return true;
         }
+        pitch = current.pitch;
+        velocity = current.velocity;
+        startTick = current.startTick;
+        endTick = current.endTick;
+        return true;
       }
       pitch = current.pitch;
       velocity = current.velocity;
@@ -147,15 +159,8 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
     return false;
   }
   if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
-    // Paint shortened stub while overlap closure is active (C9 / step 2).
-    if (focus.active && !overlapLeaveRestoreInteractionCleared(focus, *row)) {
-      return false;
-    }
-    if (focus.active) {
-      // Visible shortened: paint full committed length once overlap closure clears (C7).
-      return false;
-    }
-    return true;
+    // Visible shortened stub: paint currentSpan until macro commit syncs committedSpan.
+    return false;
   }
   return false;
 }
@@ -351,12 +356,22 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       continue;
     }
 
+    const NoteBaseline* storageCommittedBaseline = nullptr;
+    NoteBaseline storageCommittedSpan{};
+    for (const NoteUtils::DisplayNote& baseDn : committedBaseNotes) {
+      if (baseDn.noteId == noteId) {
+        storageCommittedSpan = {baseDn.note, baseDn.velocity, baseDn.startTick, baseDn.endTick};
+        storageCommittedBaseline = &storageCommittedSpan;
+        break;
+      }
+    }
+
     NoteUtils::DisplayNote participantDn{};
     participantDn.noteId = noteId;
     if (!resolveParticipantDisplaySpan(focus, noteId, mutableEvents, channel, loopLength,
                                        participantDn.note, participantDn.velocity,
-                                       participantDn.startTick, participantDn.endTick,
-                                       currentState)) {
+                                       participantDn.startTick, participantDn.endTick, currentState,
+                                       storageCommittedBaseline)) {
       continue;
     }
 
@@ -416,14 +431,16 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
 }
 
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
-    const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState) {
+    const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState,
+    const NoteEditFocus& focus, int selectedNoteIdx) {
   if (currentState == nullptr || currentState->empty()) {
     return projected;
   }
   NoteUtils::DisplayNoteVec filtered;
   filtered.reserve(projected.size());
   for (const NoteUtils::DisplayNote& dn : projected) {
-    if (dn.noteId != kInvalidNoteId && !currentState->rowIncludedInSelectableInventory(dn.noteId)) {
+    if (dn.noteId != kInvalidNoteId &&
+        !currentState->rowIncludedInSelectableInventory(dn.noteId, focus, selectedNoteIdx)) {
       continue;
     }
     filtered.push_back(dn);
