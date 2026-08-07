@@ -96,6 +96,24 @@ bool invalidCommittedRowSupersededByParticipant(
   return false;
 }
 
+bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
+                                               const NoteEditFocus& focus) {
+  for (const auto& [noteId, row] : currentState.rows()) {
+    if (noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (row.presence != NoteEditPresenceType::Hidden &&
+        row.presence != NoteEditPresenceType::Deleted) {
+      continue;
+    }
+    if (hasChangedOverlapNote(focus, noteId) ||
+        focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 NOTE_EDIT_FOCUS_INTERNAL_MEM void sortNoteIdList(NoteIdList& ids) {
@@ -143,7 +161,13 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     const NoteUtils::DisplayNoteVec& committedBaseNotes,
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
     uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState) {
-  if (!focus.active || loopLength == 0) {
+  if (loopLength == 0) {
+    return committedBaseNotes;
+  }
+  const bool overlapDisplayMaskPending =
+      currentState != nullptr &&
+      noteEditCurrentStateHasOverlapDisplayMask(*currentState, focus);
+  if (!focus.active && !overlapDisplayMaskPending) {
     return committedBaseNotes;
   }
 
