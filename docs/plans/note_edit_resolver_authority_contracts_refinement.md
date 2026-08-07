@@ -2,6 +2,7 @@
 
 **Status:** architectural migration in progress — Stages 0–2, 4–5, and **6 (code)** **shipped**; Stage 3
 (participating-note model) **shipped**; Stage 7 code shipped (HITL 7.4 open); Stage 8 pending.
+**Remaining work:** §11 approved five-step sequence; orthogonal model §12 (conceptual; code post–Stage 8).
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
 **OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
@@ -24,8 +25,8 @@ Each stage lists its owner and the only inputs it is allowed to trust in the end
 | # | Stage | Owner | Allowed inputs (end state) |
 |---|-------|-------|---------------------------|
 | 1 | Identity | `EditorSelection` (`primaryNote`, `selectedTick`) | user select events |
-| 2 | State authority | `NoteEditCurrentState` (`currentSpan`, `committedSpan`, `presence`) | writer stage 8 only |
-| 3 | Derived latch | `NoteEditFocus` (`movingNoteId`, `last`, `commitBaseline`, `baselineMap`, `changedOverlapNoteIds`) | stages 1 + 2 — pure cache, reconstructible |
+| 2 | State authority | `NoteEditCurrentState` (`currentSpan`, `committedSpan`, `presence`) | see **writers** below — not “Stage 8 only” for all fields |
+| 3 | Derived latch | `NoteEditFocus` (`movingNoteId`, `last`, `commitBaseline`, `baselineMap`, `changedOverlapNoteIds`) | stages 1 + 2 — **transitional cache** until Stage 8; then derived query |
 | 4 | Display projection | `projectNoteEditDisplayNotes` / `resolveParticipantDisplaySpan` | stages 2 + 3, committed passes |
 | 5 | Selectable inventory | `selectableDisplayNotesForEditUi` | stage 4, filtered to editable rows |
 | 6 | Driver gate | `isLiveEditDriverValidFromCurrentState` / `ensureNoteEditFocusForLiveEdit` | stages 1 + 2 + 3 |
@@ -33,9 +34,29 @@ Each stage lists its owner and the only inputs it is allowed to trust in the end
 | 8 | Apply / write | `applyEditSessionActions` → current-state mutation → projection refresh | stage 7 actions only |
 | 9 | Commit | macro commit / `commitNoteEditPass` | stage 2 vs committed baseline |
 
+### `NoteEditCurrentState` writers (split)
+
+| Field | Writer | Examples |
+|-------|--------|----------|
+| **`currentSpan`** | Interactive edit-session **apply** pipeline (Stage 8 path) | `HideNote`, `ShortenNote`, `MoveNote`, `RestoreNote` via `applyEditSessionActions` |
+| **`committedSpan`** | **Commit / handoff sealing** (separate lifecycle) | `commitNoteEditPass`, `syncCommittedSpan` after macro commit (`200656`) |
+
+Interactive geometry mutation goes through apply; commit updates the committed baseline. `syncCommittedSpan` does **not** violate the authority model — it seals `committedSpan` on handoff, not interactive `currentSpan` edits.
+
+### Identity terminology (do not conflate)
+
+| Concept | Meaning | Typical carrier |
+|---------|---------|-----------------|
+| **Selection identity** | What the user selected | `EditorSelection.primaryNote`, `selectedTick` |
+| **Driver identity** | Which selected/participating note supplies the **interaction anchor** for geometry | `focus.movingNoteId`, `focus.last` — **not** always `primaryNote` |
+| **Participant identity** | All notes involved in the edit session | `ParticipatingNoteSession` membership, `NoteEditCurrentState` rows |
+
+Handoff bugs (`200354` → `200656`) conflated driver sealing with selection identity. **`primaryNoteId` is not necessarily the geometry driver** — it is selection identity mapped into the participating session.
+
 Inventory consumers (all read stage 5): `SelectFaderInput`, `GeometryFaderInput`,
 `FaderMotorSync`, `FaderDependentSnapshot`, `EditEventFeedback`, `NoteEditButtonInput`,
 `EditSelectNoteState`, `EditNoteStateCoordinator`, `NoteEditFocusRebuild`, `SidebarAndInfo`.
+
 Whatever stage 5 offers **will** become a driver — that is the contract pressure point.
 
 ---
@@ -55,9 +76,9 @@ The **participating-note model** is introduced incrementally at the authority bo
 3. Keep existing resolver behavior unchanged — new model is an **input contract**, not a replacement resolver.
 4. Route resolver inputs through participating-note state (**Stage 4**).
 5. Remove live-store inference of session semantics.
-6. Remove Focus-owned semantic state (`changedOverlapNoteIds` → derived query).
+6. **Post–Stage 8 cleanup:** remove `changedOverlapNoteIds` as **stored semantic state**; derive from participating-note model (see Stage 4 vs cleanup below).
 7. Convert display/inventory to derived projections (**Stage 8**).
-8. Delete obsolete edge-case helpers only after equivalent invariant assertions exist.
+8. Delete obsolete edge-case helpers only after equivalent invariant assertions exist (**§11 step 5**).
 
 ### Implementation rule
 
@@ -76,11 +97,11 @@ question can be answered by the explicit state model or an invariant.
 | `EditorSelection.primaryNote` | `ParticipatingNoteSession.primaryNoteId` |
 | `EditorSelection.selectedNotes` | `ParticipatingNoteSession.selectedNoteIds` |
 | `focus.last` | derived driver geometry |
-| `focus.movingNoteId` | derived selection / driver state (not fundamental — multi-select ready) |
+| `focus.movingNoteId` | derived **driver** identity (interaction anchor — not always `primaryNote`) |
 | `NoteEditCurrentNoteState.currentSpan` | `ParticipatingNoteState.currentSpan` |
 | `NoteEditCurrentNoteState.committedSpan` | `ParticipatingNoteState.committedSpan` |
-| `NoteEditPresenceType` / span diff | `ParticipatingNotePhase` + `shortenedVsCommitted` |
-| `changedOverlapNoteIds` | derived participating set (Stage 4) |
+| `NoteEditPresenceType` / span diff | visibility + lifecycle + derived geometry predicates (§12) |
+| `changedOverlapNoteIds` | **Stage 4:** membership authority from current state when rebuilding focus; **post–Stage 8:** derived query, cache removed |
 | `focus.baselineMap` | explicit baseline decision at session boundary |
 | `selectableDisplayNotesForEditUi` | derived UI inventory |
 | live session store | persistence representation — **not** session state |
@@ -109,7 +130,12 @@ Gradually remove `readStoreLinearBaseline`, `rowProjectsToStore`, and
 |-------|----------|-----------------|
 | 1 (`182317b`) | `153739` | paint-only rows as drivers |
 | 2 (`497a072`) | causing-note path | live-store authority on mover |
+| 3 (`06c0bdb`) | invariant tests | implicit session semantics → `ParticipatingNoteSession` read model |
+| 4 (`941d87a`) | `161329`, HITL `175858` | live-store overlap closure inference on reselect |
 | 5 (`8255fd7`) | `162713`, `163621` coarse | stale inventory index after hide |
+| 6 (`a5cad55`, `e402b19`) | `181859`, `163621` | leave-restore + L→R overlap vs committed span |
+| 6.5 (`643fee2`–`c4136fd`) | §8 shipped table + HITL below | closure latch, handoff commit, paint vs inventory |
+| 7 (code) | `163621`, `175858` | leave-restore display paints `committedSpan` (HITL 7.4 open) |
 
 ---
 
@@ -121,7 +147,18 @@ Define before migrating code — not “which helper to replace?” first.
 
 1. Every participating note has exactly one session state row.
 2. `currentSpan` is the authoritative editable geometry.
-3. `committedSpan` does not change during the edit session.
+3. `committedSpan` does not change during an **active edit interval**; it may be replaced when that interval is sealed by commit/handoff.
+
+```text
+edit interval
+    committedSpan ───────────── immutable
+                         ↓
+                     macro commit / handoff seal
+                         ↓
+                  new edit interval
+                  committedSpan = sealed geometry (syncCommittedSpan — 200656)
+```
+
 4. A **Hidden** note may be non-projecting but remains a participant.
 5. A **shortened** note (same start, shorter end vs committed) remains a participant.
 6. A non-projecting participant cannot become a selectable driver (Stage 1).
@@ -130,11 +167,12 @@ Define before migrating code — not “which helper to replace?” first.
 
 ### Session invariants
 
-1. `selectedNoteIds ⊆ participatingNotes` (primary driver must project when driving geometry).
-2. Every interaction endpoint in the overlap closure is a participant.
-3. Every emitted overlap action targets a participating note.
-4. Resolver overlap action choice cannot depend on whether a participant happens to project into the live store (Stage 6).
-5. Rebuilding focus without changing `NoteEditCurrentState` cannot change the participant set or resolver result (Stage 4).
+1. `selectedNoteIds ⊆ participatingNotes`.
+2. Any note used as an **active geometry driver** must be projecting and pass the driver gate (C1/C2) — selection identity ≠ driver identity.
+3. Every interaction endpoint in the overlap closure is a participant.
+4. Every emitted overlap action targets a participating note.
+5. Resolver overlap action choice cannot depend on whether a participant happens to project into the live store (Stage 6).
+6. Rebuilding focus without changing `NoteEditCurrentState` cannot change the participant set or resolver result (Stage 4).
 
 **Code anchor (Stage 3):** `include/ParticipatingNoteSession.h`,
 `verifyParticipatingNoteInvariants`, `verifyParticipatingSessionInvariants`,
@@ -150,7 +188,17 @@ Define before migrating code — not “which helper to replace?” first.
 
 ### V3 — Causing-note action builder live-store authoritative — **fixed Stage 2**
 
-### V4 — Overlap closure membership from live-store diff — **Stage 4 target**
+### V4 — Overlap closure membership from live-store diff — **fixed Stage 4** (reselect); display path cleanup open
+
+### Stage 4 vs `changedOverlapNoteIds` cleanup (do not conflate)
+
+| Phase | What | Status |
+|-------|------|--------|
+| **Stage 4 (shipped)** | **Membership authority** — participant set from `NoteEditCurrentState` so focus rebuild does not drop Hidden overlap participants (`161329`, `941d87a`) | **DONE** |
+| **Transitional** | `changedOverlapNoteIds` remains a **reconstructible Focus cache** filled from current state when non-empty — still touched by geometry/display until Stage 8 | **IN PROGRESS** |
+| **Post–Stage 8 cleanup (§11 step 5)** | Remove cache as stored semantic state; derive overlap-participant queries from participating-note model; drop `readStoreLinearBaseline` semantic inference | **NOT STARTED** |
+
+Stage 4 **done** does **not** mean “do not touch `changedOverlapNoteIds`” — display projection (step 1) still migrates consumers; **removal** of the field waits until Stage 8 convergence.
 
 ### V5 — Sidebar `DNTE` span split — **Stage 8 target**
 
@@ -163,7 +211,7 @@ Define before migrating code — not “which helper to replace?” first.
 | Reselect rebuild | membership dropped for Hidden rows | **Yes — ~25.259s:** `changedOverlapNoteIds count=0` |
 | First move | overlap side effects absent | some `changed=0 interactions=0` move-only |
 
-**Stage 4 target:** participant set from `NoteEditCurrentState`; `changedOverlapNoteIds` → derived query.
+**Stage 4 shipped:** membership authority from current state on reselect. **`changedOverlapNoteIds` cleanup** (derived query, cache removal) is **post–Stage 8** — see table above.
 
 ---
 
@@ -174,11 +222,34 @@ Define before migrating code — not “which helper to replace?” first.
 | C1 | Selectable inventory: projecting rows only (Stage 1). |
 | C2 | Driver gate: `rowProjectsToStore` + span match (Stage 1). |
 | C3 | Action builder reads current state first (Stage 2). |
-| C4 | Participant set from `NoteEditCurrentState` — `changedOverlapNoteIds` is a query (Stage 4). |
-| C5 | One span-resolution path for grid + sidebar + snapshot (Stage 8). |
+| C4 | Participant **membership authority** from `NoteEditCurrentState` on reselect (Stage 4). `changedOverlapNoteIds` → derived query + cache removal **after Stage 8**. |
+| C5 | One **participant projection contract** for grid + sidebar + snapshot (Stage 8); separate rendering consumers. |
 | C6 | Coarse/fine driver survives inventory shrink (Stage 5). |
 | C7 | Full baseline leave-restore + display when mover clears committed span (Stage 7). |
 | C8 | Hide/shorten from current constrained geometry while overlap classified — no stale stub restore (Stage 6). |
+| **C9** | **Projection/inventory independence:** selectable inventory is a **filtered consumer** of display projection; removing a row from inventory must **never** cause display projection to lose a **visible** participant (`202147` → `2aeb175`). |
+
+### Primary projection contract (C5 + §8)
+
+```text
+participant
+    ├── visible == false  → no display row (regardless of currentSpan, committedSpan, visualCache)
+    └── visible == true   → project currentSpan
+```
+
+`resolveParticipantDisplaySpan` end state: committed-span restoration happens in **mutation/apply** before projection — not by projection reading `committedSpan` when `visible == false`.
+
+### Display data flow (target — not inventory → paint)
+
+```text
+CurrentState
+    ↓
+Display projection ──────────→ paint (grid / sidebar / snapshot)
+    ↓
+inventory filtering ─────────→ selectable drivers
+```
+
+**Wrong:** `CurrentState → inventory → paint` (caused `202147` leak).
 
 Shared invariant: **participant state and resolver inputs must agree on editability without
 inferring session semantics from live-store projection.**
@@ -197,9 +268,11 @@ inferring session semantics from live-store projection.**
 
 No firmware behavior change. `ParticipatingNoteSession` read model + invariant tests.
 
-### Stage 4 — participant discovery / reselect (C4) — **DONE** (code; HITL 4.4 pending)
+### Stage 4 — participant discovery / reselect (C4) — **DONE** (code; HITL 4.4 done)
 
-Route participation through current state; `changedOverlapNoteIds` membership from current-state rows when `noteEditCurrentState` is non-empty. Evidence: `161329`.
+Establishes **current-state authority for participant membership** — focus rebuild does not drop participants. `reconcileChangedOverlapNoteIdsFromLiveStore` uses current-state rows when `noteEditCurrentState` non-empty. Evidence: `161329`, HITL `175858`.
+
+`changedOverlapNoteIds` remains a **transitional reconstructible cache** until Stage 8 convergence; **post–Stage 8** it becomes a derived query and the cache is removed (§11 step 5). Further display consumers may still migrate to current-state membership before removal.
 
 ### Stage 5 — geometry driver / inventory sync (C6) — **DONE** (`8255fd7`)
 
@@ -207,13 +280,15 @@ Route participation through current state; `changedOverlapNoteIds` membership fr
 
 Hide/shorten beats stale restore while overlap classified. Evidence: `163621` ~44.212s, `181859`.
 
-### Stage 7 — full leave/restore transition (C7) — **IN PROGRESS**
+### Stage 7 — full leave/restore transition (C7) — **DONE** (code; HITL 7.4 partial)
 
 Hidden → full committed baseline restore → Visible via participating-note leave-restore contract. Evidence: `163621`, `175858`.
 
 ### Stage 8 — unified display projection (C5)
 
-Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
+One **participant projection contract** (same participant, visibility gate, authoritative `currentSpan`) for grid, sidebar `DNTE`, and snapshot — **separate rendering consumers**. Evidence: `151441`.
+
+**End-state projection rule:** primary contract — visibility gates projection; spans are authoritative for geometry — see §6 and §12.
 
 ---
 
@@ -250,7 +325,7 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 - [x] 6.2 L→R into overlap classifies `OverlapNoteOff` against committed geometry (not stub `BoundaryTouch`).
 - [x] 6.3 Native fixtures `181859` (interaction + action builder).
 - [x] 6.4 `pio test -e native` green (910).
-- [ ] 6.5 HITL shorten/closure/handoff — **`203805` shorten PASS**; full-overlap commit paint → [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md)
+- [ ] 6.5 HITL shorten/closure/handoff — **`203805` shorten PASS**; full-overlap commit paint **step 1 native shipped** → [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md) (HITL pending)
 
 #### Stage 6.5 follow-up — overlap closure transition (sequenced; do not bundle)
 
@@ -258,9 +333,24 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 |------|--------|--------|
 | **(2)** | Participating-note **overlap closure** rule: while mover intersects participant committed closure, Hidden/Shortened stay constrained by active interaction; committed/session baseline drives Restore only when `participatingNoteOverlapInteractionCleared`. Helpers: `participatingNoteOverlapClosureActive`, overlay + `determineConstrainedGeometryTargetNoteIds` + action builder. Native: `test_overlap_closure_active_and_cleared`, `test_closure_active_suppresses_leave_restore_target_193632`, `test_builder_advance_with_overlap_closure_shorten_not_restore_193632`, updated `111955` (leave-restore when cleared). | **DONE** — native 915; HITL **`195514` PASS** |
 | **(3)** | Mover handoff: `resolveMacroCommitSelectTargetNoteId` + macro commit on different `NoteId`; seal prior mover before focus rebuild. **Follow-up:** `syncCommittedSpan` after macro commit so leave-restore does not use stale `committedSpan` (`200656`). Native: handoff tests + `test_sync_committed_span_leave_restore_uses_sealed_position_200656`. | **DONE** — HITL `201057` handoff @1344 clean |
-| **(1)** | Display/projection: Shortened participant stays semantically Shortened (`Visible` + inventory-masked tail); inventory mask separate from selectable projection; paint shortened stub while overlap active. **Follow-ups:** paint/inventory cache split (`202147`); Hidden→Visible on overlap-tail Shorten (`202538`). | **DONE** — HITL **`203805`** shorten paint PASS |
+| **(1)** | Display/projection: Shortened participant stays semantically Shortened (`Visible` + inventory-masked tail); inventory mask separate from selectable projection; paint shortened stub while overlap active. **Follow-ups:** paint/inventory cache split (`202147` → `2aeb175`); Hidden→Visible on overlap-tail Shorten (`202538` → `c4136fd`). | **DONE** — HITL **`203805`** shorten paint PASS |
 
-**HITL `session_20260807_203805` (post `c4136fd`)** — L→R/R→L **ShortenNote** chains + stub paint **PASS**. New issue: **full overlap HideNote** on short note — inventory drops but grid still paints committed span after commit → [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md).
+#### Shipped commits (Stage 6.5)
+
+| Commit | Step | Owner / change | Native | HITL anchor |
+|--------|------|----------------|--------|-------------|
+| `643fee2` | **(2)** | `participatingNoteOverlapClosureActive`, `participatingNoteOverlapInteractionCleared`; overlay + `determineConstrainedGeometryTargetNoteIds` + action builder | 915 | `195514` Shorten-not-Restore vs `193632` |
+| `bd2f53a` | **(3)** | `resolveMacroCommitSelectTargetNoteId`; `SelectFaderInput` macro commit when bracket owns another `NoteId` | 916 | `200354` — no bracket mismatch |
+| `ad9215e` | **(3)** | `NoteEditCurrentState::syncCommittedSpan` after macro commit (mover + overlap rows) | 917 | `200656` stale `committedSpan` revert |
+| `7c21e73` | **(1)** | Overlap-tail `ShortenNote` stays `Visible`; `rowIncludedInSelectableInventory`; inventory mask vs paint stub | — | `201057` handoff @1344 |
+| `2aeb175` | **(1)** | Split paint vs selectable caches — `noteEditPaintDisplayCacheNotes_`, `projectedNoteEditDisplayNotes`, `filteredSelectableDisplayNotesForNoteEdit`; `NoteMovementUtils` uses filtered API | — | `202147` geometry OK, paint leak |
+| `c4136fd` | **(1)** | Hidden→Visible on overlap-tail Shorten; builder skips Hide when closure active + shortened; leave-restore paint for visible shortened; closure uses `baselineMap` when row missing | 921 | `202538`, `203805` shorten |
+
+**HITL `session_20260807_203805` (post `c4136fd`)** — L→R/R→L **ShortenNote** chains + stub paint **PASS**. New issue: **full overlap HideNote** on short note — inventory drops but grid still paints committed span after commit → [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md). **Fix direction:** visibility projection contract + C4 display participant routing (not `visualCache` patch). Roadmap §11; matrix §10.
+
+**HITL `session_20260807_202147` (post `7c21e73`, pre `2aeb175`)** — **ShortenNote** chains on overlap participant noteId=13 (`interactions=1`, `type=1` from ~`21.0s`). Inventory masking OK. **DISP** repeatedly `frameNotes=12` **visualCache=13` — shortened stub not painted because `projectedNoteEditDisplayNotes` still returned **filtered selectable** notes. Fixed: `2aeb175` — dedicated paint cache in `NoteEditDisplayProjection.cpp`.
+
+**HITL `session_20260807_200354` (post `bd2f53a`, pre `ad9215e`)** — vs `195514`: **no** `NOTE_EDIT macro commit skipped: select bracket mismatch` lines. Handoff path runs macro commit (`pre-commit` note 9 @ ~`42.7s`). Confirms `resolveMacroCommitSelectTargetNoteId` bracket gate; `200656` later exposed stale `committedSpan` → `ad9215e`.
 
 **HITL `session_20260807_202538` (post paint/inventory split)** — ShortenNote chains OK; L→R still hidden: first overlap frame emits **HideNote** full baseline then Shorten on **Hidden** row (presence stayed Hidden). R→L shorten paint OK. Re-entry **HideNote** reset `currentSpan` to full length. Fixed: Shorten promotes Hidden→Visible shortened; builder skips Hide when closure active + already shortened; leave-restore paints committed when mover left overlap zone.
 
@@ -287,9 +377,29 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 
 ### Stage 8 — display projection (was interim Stage 4 sidebar)
 
-- [ ] 8.1–8.4 sidebar + snapshot + HITL `151441`.
+- [ ] 8.1 Sidebar `DNTE` via `resolveParticipantDisplaySpan` (fixes **V5**).
+- [ ] 8.2 Fader / snapshot consumers — same **participant projection contract** as grid (separate rendering).
+- [ ] 8.3 Reduce `loop.visualCache` as committed paint base; projection refresh after apply.
+- [ ] 8.4 HITL `151441`.
 
-**Priority:** 6 → 7 (HITL) → 8.
+**Primary projection contract:**
+
+```text
+participant
+    ├── visible == false  → no display row
+    └── visible == true   → project currentSpan
+```
+
+Projection does **not** classify shortened / moved / restored — that is resolver and session semantics. Committed-span restoration for leave-overlap runs in **apply/mutation** before projection.
+
+End state for `resolveParticipantDisplaySpan`:
+
+```cpp
+if (!participant.visible) return {};  // no row
+return participant.currentSpan;
+```
+
+**Priority:** §11 sequence — full-overlap paint fix and 7.4 HITL precede Stage 8 convergence.
 
 ---
 
@@ -297,4 +407,198 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 
 - Per stage: `pio test -e native`; firmware build when behavior changes; ask before upload.
 - HITL after Stages 4, 6, 7, 8.
-- Anchors: `153739`, `151441`, `161329`, `162713`, `163621`.
+- Anchors: `153739`, `151441`, `161329`, `162713`, `163621`, `203805`.
+
+---
+
+## 10. Authority test matrix
+
+Contract matrix for implementation and native tests — not a bug anthology. **Today:** map `visible` from `presence != Hidden && != Deleted` until §12 lands in code.
+
+| Scenario | Participant | Visible | Current geometry | Paint | Inventory |
+|----------|-------------|---------|------------------|-------|-----------|
+| Normal | yes | yes | committed | yes | yes |
+| Moved | yes | yes | moved | yes | yes |
+| Shortened overlap | yes | yes | shortened (stub) | **shortened span** | **masked** / tail excluded |
+| Hidden overlap | yes | no | constrained | **no** | **no** |
+| Hidden + full geometry retained | yes | no | committed (unchanged spans) | **no** | **no** |
+| Leave overlap | yes | yes | committed (restored) | yes | yes |
+| Rebuilt focus | unchanged | unchanged | unchanged | unchanged | unchanged |
+| Nonparticipant store row | no | — | — | no | no |
+
+**Heart of the architecture (latest confusion):**
+
+| State | Paint | Inventory |
+|-------|-------|-----------|
+| Hidden + committed geometry | **NO** | **NO** |
+| Visible + shortened geometry | **PAINT SHORTENED** | **MAY MASK** |
+
+Step 1 native test must prove the hidden row with: `currentSpan != committedSpan`, `committedSpan` present, `visualCache` contains note, participant exists, inventory excludes — **grid paint still excludes** (independent of `visualCache`). Sidebar projection same rule when step 4 unifies paths.
+
+---
+
+## 11. Remaining roadmap (approved sequence)
+
+**Do not refactor scaffolding while the behavioral contract is still being proved.** Helper removal and latch cleanup are **step 5 only** — after Stage 8.
+
+| # | Step | Prove / deliver | Resolver / action semantics |
+|---|------|-----------------|-----------------------------|
+| **1** | **Fix full-overlap Hide paint** | `visible == false` → **projection emits no row** — regardless of `currentSpan`, `committedSpan`, `visualCache`, or inventory membership. Inventory also excludes. | **No change** | **Native shipped** — HITL `203805` pending |
+| **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory |
+| **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted |
+| **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence |
+| **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior |
+
+### Step 1 — projection gate (strong invariant)
+
+```text
+visible == false
+    → no display row
+    (NOT: if (presence == Hidden) … while another path paints committedSpan)
+```
+
+Native proof conditions (grid required; sidebar when unified in step 4):
+
+- participant exists in session
+- `currentSpan != committedSpan` (or full geometry retained)
+- `committedSpan` present
+- `visualCache` still contains note
+- inventory excludes note
+- **`visible == false` → grid projection excludes note**
+
+Implementation: [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md) — visibility gate + C4 participant source; **not** `visualCache` patch.
+
+### Step 2 — contract test C9 (not “mere regression”)
+
+**Projection/inventory independence:** selectable inventory is a filtered consumer of display projection; filtering a row from inventory must **never** cause display projection to lose a **visible** participant.
+
+| State | Paint | Inventory |
+|-------|-------|-----------|
+| Visible shortened participant | ✅ shortened span | ❌ tail / row may be masked |
+| Hidden participant | ❌ | ❌ |
+
+Evidence: `202147` (inventory OK, paint failed) → `2aeb175` (split caches).
+
+### Step 3 evidence
+
+`163621`, `175858`, `181859` restore on note 9.
+
+### Step 4 evidence
+
+`151441` (sidebar span split **V5**). Requirement: same participant, visibility gate, authoritative `currentSpan` — not identical rendering implementation across grid, sidebar, and snapshot.
+
+### Step 5 — semantic cleanup (explicit refactor phase)
+
+- Derive participant membership from current state / participating-note model
+- Derive changed-overlap queries; **remove** `changedOverlapNoteIds` cache
+- Remove `readStoreLinearBaseline` and similar **semantic** inference from live store
+- Delete transitional helpers (`rowProjectsToStore` semantic uses, etc.)
+- Assert invariants at authority boundary
+
+**Not** part of steps 1–4. Stage 4 membership authority is **shipped**; step 5 **removes** the transitional latch.
+
+---
+
+## 12. Model refinement — orthogonal dimensions (design direction)
+
+**Status:** conceptual contract for steps 1–4; **code representation** (`bool visible`, lifecycle enum) — **post–Stage 8** refactor. Do **not** mix §12 into step 1 implementation.
+
+### Four orthogonal dimensions (not three)
+
+| Dimension | Question |
+|-----------|----------|
+| **Participation** | Membership in `ParticipatingNoteSession` |
+| **Visibility** | Should this participant **project**? |
+| **Geometry** | `currentSpan` vs `committedSpan` |
+| **Lifecycle** | Existing / **Added** / **Deleted** — mutation and commit semantics |
+
+**Do not collapse `Deleted` into `visible == false`.** Deleted and temporarily hidden must stay distinguishable for mutation/commit. **Added** is lifecycle, not projection.
+
+Eventually:
+
+```cpp
+bool visible;
+LifecycleState lifecycle;  // Existing, Added, Deleted
+```
+
+### Visibility vs geometry
+
+`NoteEditPresenceType` and `ParticipatingNotePhase` currently overload visibility and geometry. **Moved is not a presence state** — it is `currentSpan.start != committedSpan.start`.
+
+Leave-overlap = two changes (often simultaneous):
+
+```text
+visibility:  hidden → visible
+geometry:    current constrained span → committedSpan
+```
+
+### Primary invariant
+
+- **Visibility** → whether a participant projects
+- **`currentSpan`** → what geometry projects when visible
+- **`committedSpan`** → session baseline for comparison and restoration; immutable within an edit interval, sealed on commit/handoff (per-note invariant 3)
+
+### Target read model (proposed — post–Stage 8)
+
+```cpp
+struct ParticipatingNoteState {
+    NoteId noteId;
+    NoteBaseline currentSpan;
+    NoteBaseline committedSpan;
+    bool visible;
+    LifecycleState lifecycle;
+};
+```
+
+Derive geometry predicates — **do not store** when spans are authoritative:
+
+```cpp
+bool isRightTailShortened() const {
+    return currentSpan.startTick == committedSpan.startTick &&
+           currentSpan.endTick < committedSpan.endTick;
+}
+bool isMoved() const {
+    return currentSpan.startTick != committedSpan.startTick;
+}
+bool hasShorterDuration() const {
+    return (currentSpan.endTick - currentSpan.startTick) <
+           (committedSpan.endTick - committedSpan.startTick);
+}
+bool hasOriginalLength() const {
+    return (currentSpan.endTick - currentSpan.startTick) ==
+           (committedSpan.endTick - committedSpan.startTick);
+}
+```
+
+`isRightTailShortened` = overlap-tail shortening (current interaction). `hasShorterDuration` = broader “shorter than committed” (e.g. moved + shorter end). Do not encode interaction implementation into a single `isShortened()` name.
+
+### Examples
+
+| committed | current | visible | Meaning |
+|-----------|---------|---------|---------|
+| [100, 200] | [120, 220] | true | visible + moved + original duration |
+| [100, 200] | [100, 150] | true | visible + right-tail shortened |
+| [100, 200] | [120, 170] | true | visible + moved + shorter duration (not `isRightTailShortened`) |
+| [100, 200] | [100, 150] | false | hidden + constrained geometry retained |
+| [100, 200] | [100, 200] | false | hidden + full original geometry retained |
+
+### Bugs in this framing
+
+**Full-overlap Hide (`203805`):** `visible == false` → projection must emit nothing (step 1).
+
+**Shortened overlap (`203805` shorten — step 2):** `visible == true`, shortened `currentSpan` → paint stub; inventory may mask.
+
+### Migration policy
+
+| When | Action |
+|------|--------|
+| Steps 1–4 | Keep `NoteEditPresenceType` + `ParticipatingNotePhase`; implement **visibility projection contract** in code |
+| Stage 8 | Single projection path: `visible` + `currentSpan` |
+| Step 5 | `bool visible` + `LifecycleState`; remove phase enum; derive predicates |
+| Step 5 | Remove helpers that infer participation/presence/session semantics from live-store projection |
+
+**Principle:** do not encode span relationships as state enums when spans are authoritative.
+
+**Code anchors today:** `include/NoteEditCurrentState.h`, `include/ParticipatingNoteSession.h`, `NoteEditFocusDisplayProjection.cpp` (`projectNoteEditDisplayNotes`).
+
+---

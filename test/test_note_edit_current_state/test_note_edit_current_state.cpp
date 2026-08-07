@@ -933,6 +933,145 @@ void test_select_closest_note_snap_tie_breaks_to_first_display_order() {
   TEST_ASSERT_EQUAL_UINT32(11u, notes[static_cast<size_t>(fromMidpoint)].noteId);
 }
 
+void test_full_overlap_hide_excludes_paint_while_visual_cache_retains_note() {
+  // session_20260807_203805 ~34.4s: HideNote full cover on short note 9; visualCache still
+  // holds committed span but grid must not paint (visible == false, overlap active).
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 9;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kCommitted{kPitch, 100, 2592, 2639};
+  constexpr NoteBaseline kMoverCurrent{kPitch, 100, 2544, 2992};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, kMoverCurrent, {kPitch, 100, 3600, 4127},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, kCommitted, kCommitted, NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = kCommitted.startTick;
+  hide.endTick = kCommitted.endTick;
+  hide.pitch = kPitch;
+  currentState.applyEditSessionAction(hide);
+
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_FALSE(currentState.rowIncludedInSelectableInventory(kOverlapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, kCommitted.startTick, kCommitted.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 3600, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = kMoverCurrent;
+  focus.movingNoteRange = {kMoverCurrent.startTick, kMoverCurrent.endTick};
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+
+  const NoteUtils::DisplayNoteVec selectable =
+      filterProjectingSelectableDisplayNotes(projected, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[0].noteId);
+}
+
+void test_full_overlap_hide_excludes_paint_after_commit_rebuild_clears_focus_latch() {
+  // session_20260807_203805 ~30.1s: post-commit focus rebuild clears changedOverlapNoteIds
+  // while overlap row stays Hidden in current state — paint must still exclude.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 9;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kCommitted{kPitch, 100, 2592, 2639};
+  constexpr NoteBaseline kMoverCurrent{kPitch, 100, 2544, 2992};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, kMoverCurrent, {kPitch, 100, 3600, 4127},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, kCommitted, kCommitted, NoteEditPresenceType::Hidden);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, kCommitted.startTick, kCommitted.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 3600, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = kMoverCurrent;
+  focus.movingNoteRange = {kMoverCurrent.startTick, kMoverCurrent.endTick};
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
+  // Post-commit rebuild: overlap latch cleared.
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.changedOverlapNoteIds.size()));
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_NOT_EQUAL(kOverlapId, dn.noteId);
+  }
+}
+
+void test_reselect_span_matched_mover_projects_current_not_visual_cache() {
+  // session_20260807_215126 regression: after macro commit seals mover span, current == committed
+  // but visualCache still holds the pre-move committed-base row — paint must follow current state.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kMoverId = 17;
+  constexpr NoteId kHiddenOverlapId = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kMovedSpan{kPitch, 100, 2256, 2303};
+  constexpr NoteBaseline kOriginalCommitted{kPitch, 100, 3600, 4127};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, kMovedSpan, kMovedSpan, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHiddenOverlapId, kMovedSpan, kMovedSpan, NoteEditPresenceType::Hidden);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+  store.push_back(noteOn(kMoverId, kPitch, kMovedSpan.startTick));
+  store.push_back(noteOff(kMoverId, kPitch, kMovedSpan.endTick));
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kMoverId, kPitch, 100, kOriginalCommitted.startTick,
+                           kOriginalCommitted.endTick});
+  committedBase.push_back({kHiddenOverlapId, kPitch, 100, kMovedSpan.startTick,
+                           kMovedSpan.endTick});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = kMovedSpan;
+  focus.movingNoteRange = {kMovedSpan.startTick, kMovedSpan.endTick};
+  focus.baselineMap[kMoverId] = kOriginalCommitted;
+  focus.baselineMap[kHiddenOverlapId] = kMovedSpan;
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.changedOverlapNoteIds.size()));
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(kMovedSpan.startTick, projected[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kMovedSpan.endTick, projected[0].endTick);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_build_from_session_store_visible_rows);
@@ -956,6 +1095,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_hide_full_baseline_then_shorten_overlap_tail_promotes_visible);
   RUN_TEST(test_projected_paint_includes_shortened_overlap_inventory_excludes);
   RUN_TEST(test_selectable_inventory_excludes_paint_only_hidden_row);
+  RUN_TEST(test_full_overlap_hide_excludes_paint_while_visual_cache_retains_note);
+  RUN_TEST(test_full_overlap_hide_excludes_paint_after_commit_rebuild_clears_focus_latch);
+  RUN_TEST(test_reselect_span_matched_mover_projects_current_not_visual_cache);
   RUN_TEST(test_geometry_selection_resolves_mover_index_after_overlap_hidden);
   RUN_TEST(test_select_closest_note_snap_tie_breaks_to_first_display_order);
   RUN_TEST(test_apply_hide_through_current_state_owner);

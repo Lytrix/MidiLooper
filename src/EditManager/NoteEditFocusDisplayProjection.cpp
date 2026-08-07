@@ -186,6 +186,23 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   return false;
 }
 
+bool nonVisibleParticipantSuppressedWhileOverlapActive(const NoteEditCurrentState& currentState,
+                                                       const NoteEditFocus& focus, NoteId noteId,
+                                                       uint32_t loopLength) {
+  if (noteId == kInvalidNoteId || !currentState.isRowHiddenOrDeleted(noteId)) {
+    return false;
+  }
+  const NoteEditCurrentNoteState* row = currentState.find(noteId);
+  if (row == nullptr) {
+    return false;
+  }
+  if (!focus.active) {
+    return true;
+  }
+  return overlapSpanIntersectsActiveMover(focus, row->committedSpan.startTick,
+                                          row->committedSpan.endTick, loopLength);
+}
+
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
                                                const NoteEditFocus& focus, uint32_t loopLength) {
   for (const auto& [noteId, row] : currentState.rows()) {
@@ -224,7 +241,8 @@ NOTE_EDIT_FOCUS_INTERNAL_MEM bool displayNoteOrderBefore(const NoteUtils::Displa
   return left.noteId < right.noteId;
 }
 
-NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus) {
+NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(
+    const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
   NoteIdList participants;
   if (focus.movingNoteId != kInvalidNoteId) {
     participants.push_back(focus.movingNoteId);
@@ -235,6 +253,19 @@ NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus
     }
     if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
       participants.push_back(noteId);
+    }
+  }
+  if (currentState != nullptr) {
+    for (const auto& [noteId, row] : currentState->rows()) {
+      if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+        continue;
+      }
+      if (row.presence == NoteEditPresenceType::Hidden ||
+          row.presence == NoteEditPresenceType::Deleted) {
+        if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
+          participants.push_back(noteId);
+        }
+      }
     }
   }
   sortNoteIdList(participants);
@@ -258,7 +289,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     return committedBaseNotes;
   }
 
-  NoteIdList participants = collectProjectionParticipantNoteIds(focus);
+  NoteIdList participants = collectProjectionParticipantNoteIds(focus, currentState);
   std::unordered_set<NoteId> committedIds;
   committedIds.reserve(committedBaseNotes.size());
   for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
@@ -322,6 +353,11 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   NoteUtils::DisplayNoteVec result;
   result.reserve(committedBaseNotes.size());
   for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != kInvalidNoteId && currentState != nullptr &&
+        nonVisibleParticipantSuppressedWhileOverlapActive(*currentState, focus, dn.noteId,
+                                                          loopLength)) {
+      continue;
+    }
     if (dn.noteId != kInvalidNoteId && hiddenParticipants.count(dn.noteId) > 0) {
       continue;
     }
