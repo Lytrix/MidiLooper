@@ -305,6 +305,127 @@ void test_hide_then_shorten_stays_hidden_and_masks_on_deselect() {
   TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
 }
 
+void test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect() {
+  // session_20260807_141920: ShortenNote-only overlap tail must not resurrect on deselect.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 2736, 3263}, {kPitch, 100, 2736, 3263},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {kPitch, 100, 2640, 3167}, {kPitch, 100, 2640, 3167},
+                         NoteEditPresenceType::Visible);
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 2640;
+  shorten.endTick = 2783;
+  shorten.pitch = kPitch;
+  currentState.applyEditSessionAction(shorten);
+
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kOverlapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, 2640, 3167});
+  committedBase.push_back({kMoverId, kPitch, 100, 2736, 3263});
+
+  NoteEditFocus focus;
+  focus.active = false;
+  focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+}
+
+void test_leave_restore_inventory_masked_tail_stays_hidden() {
+  // session_20260807_142819: leave-restore RestoreNote with shortened tail must not resurrect
+  // overlap in selectable inventory (DNTE len 143 at overlap tick after select sweep).
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 2736, 3263}, {kPitch, 100, 2736, 3263},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {kPitch, 100, 2640, 3167}, {kPitch, 100, 2640, 3167},
+                         NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = 2640;
+  hide.endTick = 2735;
+  hide.pitch = kPitch;
+  currentState.applyEditSessionAction(hide);
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 2640;
+  shorten.endTick = 2783;
+  shorten.pitch = kPitch;
+  currentState.applyEditSessionAction(shorten);
+
+  EditSessionAction leaveRestore{};
+  leaveRestore.type = EditSessionActionType::RestoreNote;
+  leaveRestore.targetNoteId = kOverlapId;
+  leaveRestore.startTick = 2640;
+  leaveRestore.endTick = 2783;
+  leaveRestore.pitch = kPitch;
+  currentState.applyEditSessionAction(leaveRestore);
+
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kOverlapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, 2640, 3167});
+  committedBase.push_back({kMoverId, kPitch, 100, 2736, 3263});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 1920, 2447};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
+  focus.baselineMap[kMoverId] = {kPitch, 100, 2736, 3263};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kOverlapId);
+  }
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+
+  EditSessionAction fullRestore{};
+  fullRestore.type = EditSessionActionType::RestoreNote;
+  fullRestore.targetNoteId = kOverlapId;
+  fullRestore.startTick = 2640;
+  fullRestore.endTick = 3167;
+  fullRestore.pitch = kPitch;
+  currentState.applyEditSessionAction(fullRestore);
+
+  TEST_ASSERT_FALSE(currentState.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kOverlapId));
+}
+
 void test_apply_hide_through_current_state_owner() {
   NoteEditCurrentState state;
   state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 3600, 4127},
@@ -382,6 +503,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);
   RUN_TEST(test_sync_focus_last_from_current_state);
   RUN_TEST(test_hide_then_shorten_stays_hidden_and_masks_on_deselect);
+  RUN_TEST(test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect);
+  RUN_TEST(test_leave_restore_inventory_masked_tail_stays_hidden);
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);

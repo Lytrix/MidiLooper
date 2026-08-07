@@ -21,6 +21,12 @@ NOTE_EDIT_MEM bool spansEqual(const NoteBaseline& left, const NoteBaseline& righ
          left.startTick == right.startTick && left.endTick == right.endTick;
 }
 
+NOTE_EDIT_MEM bool overlapInventoryMaskedTail(const NoteBaseline& span,
+                                              const NoteBaseline& committed) {
+  return span.pitch == committed.pitch && span.startTick == committed.startTick &&
+         span.endTick < committed.endTick;
+}
+
 }  // namespace
 
 const NoteEditCurrentNoteState* NoteEditCurrentState::find(NoteId noteId) const {
@@ -177,6 +183,10 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         return;
       }
       row->currentSpan = span;
+      if (overlapInventoryMaskedTail(span, row->committedSpan)) {
+        row->presence = NoteEditPresenceType::Hidden;
+        return;
+      }
       if (row->presence == NoteEditPresenceType::Hidden ||
           row->presence == NoteEditPresenceType::Deleted) {
         row->presence = NoteEditPresenceType::Visible;
@@ -188,8 +198,14 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         return;
       }
       row->currentSpan = span;
-      // Inner overlap: HideNote then ShortenNote must not promote back to Visible — that
-      // reinserts a shortened tail on display/deselect (session_20260807_141218 DNTE len 143).
+      if (row->presence == NoteEditPresenceType::Hidden) {
+        return;
+      }
+      // Overlap tail shorten (same start, shorter end): keep off projected store and
+      // selectable inventory until full baseline restore (session_20260807_142819 DNTE len 143).
+      if (overlapInventoryMaskedTail(span, row->committedSpan)) {
+        row->presence = NoteEditPresenceType::Hidden;
+      }
       return;
     case EditSessionActionType::HideNote:
       if (row == nullptr) {
