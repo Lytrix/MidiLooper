@@ -160,8 +160,9 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
     return false;
   }
   if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
+    // Paint shortened stub while overlap is active; suppress on deselect or after leave.
     if (focus.active &&
-        !overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
+        overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
       return false;
     }
     return true;
@@ -414,7 +415,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
   NoteUtils::DisplayNoteVec filtered;
   filtered.reserve(projected.size());
   for (const NoteUtils::DisplayNote& dn : projected) {
-    if (dn.noteId != kInvalidNoteId && !currentState->rowProjectsToStore(dn.noteId)) {
+    if (dn.noteId != kInvalidNoteId && !currentState->rowIncludedInSelectableInventory(dn.noteId)) {
       continue;
     }
     filtered.push_back(dn);

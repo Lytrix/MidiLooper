@@ -308,7 +308,7 @@ void test_hide_then_shorten_stays_hidden_and_masks_on_deselect() {
   TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
 }
 
-void test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect() {
+void test_shorten_overlap_tail_stays_visible_shortened_and_masks_inventory_on_deselect() {
   // session_20260807_141920: ShortenNote-only overlap tail must not resurrect on deselect.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 10;
@@ -329,8 +329,9 @@ void test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect() {
   shorten.pitch = kPitch;
   currentState.applyEditSessionAction(shorten);
 
-  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kOverlapId));
-  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kOverlapId));
+  TEST_ASSERT_FALSE(currentState.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kOverlapId));
+  TEST_ASSERT_FALSE(currentState.rowIncludedInSelectableInventory(kOverlapId));
 
   MidiEventVec store;
   currentState.projectToSessionStore(store, kChannel);
@@ -340,10 +341,28 @@ void test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect() {
   committedBase.push_back({kMoverId, kPitch, 100, 2736, 3263});
 
   NoteEditFocus focus;
-  focus.active = false;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 2736, 3263};
+  focus.movingNoteRange = {2736, 3263};
   focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
   recordChangedOverlapNote(focus, kOverlapId);
 
+  const NoteUtils::DisplayNoteVec projectedWhileOverlap =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projectedWhileOverlap.size()));
+  bool foundShortenedStub = false;
+  for (const NoteUtils::DisplayNote& dn : projectedWhileOverlap) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(2640u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(2783u, dn.endTick);
+      foundShortenedStub = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundShortenedStub);
+
+  focus.active = false;
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
@@ -724,7 +743,7 @@ void test_selectable_inventory_excludes_paint_only_hidden_row() {
   TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
   TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[0].noteId);
   for (const NoteUtils::DisplayNote& dn : selectable) {
-    TEST_ASSERT_TRUE(currentState.rowProjectsToStore(dn.noteId));
+    TEST_ASSERT_TRUE(currentState.rowIncludedInSelectableInventory(dn.noteId));
   }
 }
 
@@ -848,7 +867,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);
   RUN_TEST(test_sync_focus_last_from_current_state);
   RUN_TEST(test_hide_then_shorten_stays_hidden_and_masks_on_deselect);
-  RUN_TEST(test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect);
+  RUN_TEST(test_shorten_overlap_tail_stays_visible_shortened_and_masks_inventory_on_deselect);
   RUN_TEST(test_leave_restore_inventory_masked_tail_stays_hidden);
   RUN_TEST(test_display_projection_leave_restore_paints_baseline_when_mover_left_overlap);
   RUN_TEST(test_display_projection_mover_uses_current_state_not_stale_focus_last);
