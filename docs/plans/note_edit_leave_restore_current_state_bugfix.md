@@ -1,6 +1,6 @@
 # Note edit leave-restore current-state bugfix (RC10)
 
-**Status:** RC10a **shipped** (native) | RC10b open | RC10c deferred
+**Status:** RC10a **shipped** (native + HITL leave) | RC10b **shipped** (native) | RC10c deferred
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -45,15 +45,22 @@ Projection paint, macro commit, deselect display = **RC10b**. Authority consolid
 - [x] `resolveAllConstrainedGeometry` uses baselineMap ticks for leave-restore
 - [x] Native tests pass (886/886)
 - [x] Firmware build (`teensy41-capture-serial`)
-- [ ] HITL 113010 leave shows `type=0`
+- [x] HITL 113010 leave shows `type=0` (validated in session_20260807_140022)
 
 ---
 
-## RC10b — Deselect display authority (open)
+## RC10b — Deselect display authority (shipped native)
 
 While NOTE_EDIT active and overlaps hidden in current state, deselect must not show committed-pass ghost restore.
 
-Prefer option A: session-authoritative display when overlap state pending.
+**Root cause:** `projectNoteEditDisplayNotes` returned raw `committedBaseNotes` when `!focus.active`; empty-step deselect clears focus via `rebuildNoteEditFocusFromStore(-1)` while current state still has `Hidden` overlap rows (`session_20260807_140022`: `DISP 26,29,26,26` → `29,29,29,29`).
+
+**Fix:** When current state has overlap display mask (Hidden/Deleted overlap closure rows), run session-authoritative projection even if focus is inactive.
+
+### RC10b acceptance
+
+- [x] Native: inactive focus + hidden overlaps → committed ghosts omitted
+- [ ] HITL deselect keeps frame note count (26 not 29)
 
 ---
 
