@@ -169,7 +169,11 @@ User selects overlap row at tick 2640 (display index 9). Row is **highlighted** 
 - Selectable vs mover identity: `rebuildNoteEditFocusForDisplayNote` / `findBaselineNoteIdForDisplay` — do not treat overlap inventory row as movable driver when body span disagrees.
 - Depends on RC10g sidebar authority split (same 143 ↔ 47 flicker).
 
----
+### Contract fix (first divergence — shipped)
+
+**First divergence:** `resolveParticipantDisplaySpan` painted `focus.movingNoteId` from stale `focus.last` before reading `NoteEditCurrentState`; `rebuildNoteEditFocusForDisplayNote` then overwrote `focus.last` from session-store linear span instead of `currentSpan`.
+
+**Fix:** Mover + overlap projection reads `currentSpan` first; focus rebuild + select `applySelectNav` bracket derive from current state when driver valid.
 
 ## RC10c — Authority trim (deferred)
 

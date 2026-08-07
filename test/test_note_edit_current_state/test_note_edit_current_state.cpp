@@ -566,6 +566,39 @@ void test_display_projection_leave_restore_paints_baseline_when_mover_left_overl
   TEST_ASSERT_TRUE(foundOverlap);
 }
 
+void test_display_projection_mover_uses_current_state_not_stale_focus_last() {
+  // session_20260807_151441 contract: projection must not paint mover at stale focus.last when
+  // NoteEditCurrentState has the session-moved span.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 3600, 4127}, {kPitch, 100, 1296, 1823},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kMoverId, kPitch, 100, 3600, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 2640, 2687};
+  focus.commitBaseline = {kPitch, 100, 3600, 4127};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1296u, projected[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1823u, projected[0].endTick);
+}
+
 void test_display_projection_inactive_focus_projects_session_moved_span() {
   // RC10g: empty-step deselect still projects when NoteEditCurrentState has session edits.
   constexpr uint32_t kLoopLength = 5376;
@@ -615,6 +648,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_shorten_overlap_tail_stays_hidden_and_masks_on_deselect);
   RUN_TEST(test_leave_restore_inventory_masked_tail_stays_hidden);
   RUN_TEST(test_display_projection_leave_restore_paints_baseline_when_mover_left_overlap);
+  RUN_TEST(test_display_projection_mover_uses_current_state_not_stale_focus_last);
   RUN_TEST(test_display_projection_inactive_focus_projects_session_moved_span);
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);

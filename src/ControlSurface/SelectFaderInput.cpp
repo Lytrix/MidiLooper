@@ -371,11 +371,22 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
         const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
         const NoteUtils::DisplayNote& selectedNote =
             notesAfterCommit[static_cast<size_t>(postCommitNoteIdx)];
-        const uint32_t bracketTick =
+        editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
+        const NoteEditFocus& focusAfterRebuild = editManager.getEditSession().focus;
+        const NoteId navNoteId =
+            focusAfterRebuild.movingNoteId != kInvalidNoteId ? focusAfterRebuild.movingNoteId
+                                                             : selectedNote.noteId;
+        uint32_t bracketTick =
             NoteEditFaderSelectSync::noteSelectBracketTickFromDisplayNote(
                 selectedNote, loopStartTick, loopLength, editManager.isLengthEditingMode());
-        editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
-        editManager.applySelectNav(track, bracketTick, selectedNote.noteId, false, false);
+        if (editManager.isLiveEditDriverValidForTrack(track)) {
+            const uint32_t storageBracket =
+                editManager.isLengthEditingMode() ? focusAfterRebuild.last.endTick
+                                                  : focusAfterRebuild.last.startTick;
+            bracketTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+                storageBracket, loopStartTick, loopLength);
+        }
+        editManager.applySelectNav(track, bracketTick, navNoteId, false, false);
         if (!editManager.isLiveEditDriverValidForTrack(track)) {
             editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
         }

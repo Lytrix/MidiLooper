@@ -34,17 +34,10 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
   if (noteId == kInvalidNoteId) {
     return false;
   }
-  if (noteId == focus.movingNoteId) {
-    pitch = focus.last.pitch;
-    velocity = focus.last.velocity;
-    startTick = focus.last.startTick;
-    endTick = focus.last.endTick;
-    return true;
-  }
   if (currentState != nullptr) {
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
-        currentState->rowProjectsToStore(noteId)) {
+        (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
       pitch = current.pitch;
       velocity = current.velocity;
       startTick = current.startTick;
@@ -64,6 +57,13 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
       }
       return false;
     }
+  }
+  if (noteId == focus.movingNoteId) {
+    pitch = focus.last.pitch;
+    velocity = focus.last.velocity;
+    startTick = focus.last.startTick;
+    endTick = focus.last.endTick;
+    return true;
   }
   NoteBaseline live{};
   if (findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, live, UINT32_MAX, loopLength)) {

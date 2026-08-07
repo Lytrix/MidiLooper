@@ -170,9 +170,19 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
         editSession.focus.commitBaseline.endTick = committedBaseline.endTick;
     }
     NoteBaseline liveBaseline;
-    if (baselineNoteId != kInvalidNoteId &&
-        findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, liveBaseline,
-                                    UINT32_MAX, loopLength)) {
+    const bool liveSpanFromCurrentState =
+        !editSession.noteEditCurrentState.empty() && baselineNoteId != kInvalidNoteId &&
+        editSession.noteEditCurrentState.readCurrentSpan(baselineNoteId, liveBaseline);
+    if (liveSpanFromCurrentState) {
+        editSession.focus.last = liveBaseline;
+        const NoteEditCurrentNoteState* currentRow =
+            editSession.noteEditCurrentState.find(baselineNoteId);
+        if (currentRow != nullptr) {
+            editSession.focus.commitBaseline = currentRow->committedSpan;
+        }
+    } else if (baselineNoteId != kInvalidNoteId &&
+               findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, liveBaseline,
+                                           UINT32_MAX, loopLength)) {
         editSession.focus.last.pitch = liveBaseline.pitch;
         editSession.focus.last.velocity = liveBaseline.velocity;
         editSession.focus.last.startTick = liveBaseline.startTick;
