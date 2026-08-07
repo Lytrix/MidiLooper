@@ -252,6 +252,15 @@ NOTE_EDIT_MEM void NoteEditCurrentState::syncProjectingRowsFromSessionStore(
   }
 }
 
+NOTE_EDIT_MEM void NoteEditCurrentState::syncCommittedSpan(NoteId noteId,
+                                                         const NoteBaseline& committedSpan) {
+  NoteEditCurrentNoteState* row = find(noteId);
+  if (row == nullptr) {
+    return;
+  }
+  row->committedSpan = committedSpan;
+}
+
 NOTE_EDIT_MEM NoteEditCurrentState NoteEditCurrentState::clone() const {
   NoteEditCurrentState copy;
   copy.assignFrom(*this);

@@ -129,6 +129,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     editSession.focus.commitBaseline = editSession.focus.last;
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
+    if (!editSession.noteEditCurrentState.empty()) {
+        for (const auto& [noteId, baseline] : committedOverlapUpdateBaselines) {
+            editSession.noteEditCurrentState.syncCommittedSpan(noteId, baseline);
+        }
+        if (editSession.focus.movingNoteId != kInvalidNoteId) {
+            editSession.noteEditCurrentState.syncCommittedSpan(editSession.focus.movingNoteId,
+                                                               editSession.focus.commitBaseline);
+        }
+    }
     for (const auto& [noteId, baseline] : committedOverlapUpdateBaselines) {
         applyCommittedOverlapUpdateToFocus(editSession.focus, noteId, baseline);
     }

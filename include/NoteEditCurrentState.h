@@ -83,6 +83,9 @@ class NoteEditCurrentState {
   void markRowDeleted(NoteId noteId);
   void removeRow(NoteId noteId);
   void syncProjectingRowsFromSessionStore(const MidiEventVec& store, uint8_t channel);
+  /// After macro commit seals geometry to passes, align session committed baseline so
+  /// leave-restore does not revert to a stale committed span (session_20260807_200656).
+  void syncCommittedSpan(NoteId noteId, const NoteBaseline& committedSpan);
 
   /// Full row-map snapshot for session undo/redo (edit-scope sized, not loop-length sized).
   NoteEditCurrentState clone() const;

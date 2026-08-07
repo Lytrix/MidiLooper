@@ -257,7 +257,7 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 | Step | Scope | Status |
 |------|--------|--------|
 | **(2)** | Participating-note **overlap closure** rule: while mover intersects participant committed closure, Hidden/Shortened stay constrained by active interaction; committed/session baseline drives Restore only when `participatingNoteOverlapInteractionCleared`. Helpers: `participatingNoteOverlapClosureActive`, overlay + `determineConstrainedGeometryTargetNoteIds` + action builder. Native: `test_overlap_closure_active_and_cleared`, `test_closure_active_suppresses_leave_restore_target_193632`, `test_builder_advance_with_overlap_closure_shorten_not_restore_193632`, updated `111955` (leave-restore when cleared). | **DONE** — native 915; HITL **`195514` PASS** |
-| **(3)** | Mover handoff: `resolveMacroCommitSelectTargetNoteId` + macro commit on different `NoteId`; seal prior mover before focus rebuild. Native: `test_macro_commit_allows_mover_handoff_while_mover_pending_195514`, `test_resolve_macro_commit_select_target_handoff_at_bracket_195514`. | **DONE** (code; HITL re-verify pending) |
+| **(3)** | Mover handoff: `resolveMacroCommitSelectTargetNoteId` + macro commit on different `NoteId`; seal prior mover before focus rebuild. **Follow-up:** `syncCommittedSpan` after macro commit so leave-restore does not use stale `committedSpan` (`200656`). Native: handoff tests + `test_sync_committed_span_leave_restore_uses_sealed_position_200656`. | **DONE** (code; HITL `200354` bracket gate pass; `200656` baseline revert fixed in code) |
 | **(1)** | Display/projection: Shortened participant stays semantically Shortened; inventory mask separate from selectable projection. | Pending after (3) |
 
 **HITL `session_20260807_195514` (post-(2) firmware)** — vs `193632`:
@@ -271,6 +271,8 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 | Display inventory | Hidden not shortened | DNTE count=1 at overlap entry — **(1)** still open |
 
 **HITL `session_20260807_193632` (pre-(2))** — overlap shows hidden; R→L advance emitted RestoreNote not ShortenNote; handoff reset.
+
+**HITL `session_20260807_200656` (post-(3) bracket fix)** — bracket gate pass; prior mover still jumped to original baseline: macro commit sealed note 9 @2544 (`201.7s`) but `committedSpan` stayed 2208 → `RestoreNote` @203.8s on new mover cleared overlap. Fixed: `NoteEditCurrentState::syncCommittedSpan` after macro commit.
 
 ### Stage 7 — leave/restore transition — **DONE** (code; HITL 7.4 partial)
 
