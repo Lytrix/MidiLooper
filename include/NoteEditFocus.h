@@ -275,7 +275,9 @@ EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,
                                             uint8_t channel, uint32_t loopLength);
 
 /// NoteIds whose geometry is read from the live session store during NOTE_EDIT display projection.
-NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus);
+/// When \p currentState is non-empty, overlap participants come from current state (C4 display).
+NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus,
+                                               const NoteEditCurrentState* currentState = nullptr);
 
 /// NOTE_EDIT display projection: overlay participant geometry onto a committed/windowed base list.
 template <typename Alloc>
