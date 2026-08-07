@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-07 (resolver contracts step 3 native + Stage 8 start)
+Last updated: 2026-08-07 (Stage 8.1 sidebar projection shipped)
 
 ---
 
@@ -16,13 +16,13 @@ Last updated: 2026-08-07 (resolver contracts step 3 native + Stage 8 start)
 |------|--------|
 | 1 — full-overlap Hide paint | **Done** (`8596950`) |
 | 2 — C9 contract tests | **Done** (`ea39f1c`) |
-| 3 — Stage 7.4 projection leave-restore (native) | **Done** (commit pending: closure-aligned visible shortened paint) |
-| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1 sidebar `DNTE` via participant span |
+| 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
+| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1 **done**; 8.2 fader/snapshot next |
 | 5 — semantic cleanup | Pending (post–Stage 8) |
 
 **Parked HITL:** `session_20260807_222418` — C7 geometry `RestoreNote` to full `committedSpan` on `interactions=0`; retest after Stage 8, not a projection-only blocker.
 
-**Next:** Stage 8.1 — `SidebarAndInfo::drawNoteInfo` / `#CAP DNTE` uses same span as `projectNoteEditDisplayNotes` (V5 / `151441`).
+**Next:** Stage 8.2 — fader feedback and snapshot consumers use the same participant projection contract as grid paint (not `visualCache` / store index span).
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 
