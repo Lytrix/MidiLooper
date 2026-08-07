@@ -11,6 +11,7 @@
 #include "NoteEditSessionState.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/SelectNavigation.h"
+#include "Utils/NoteEditDisplaySnapshot.h"
 
 #include "../test_support/NoteEditFocusTestDeps.cpp"
 #include "../../src/Logger.cpp"
@@ -710,6 +711,65 @@ void test_selectable_inventory_excludes_paint_only_hidden_row() {
   }
 }
 
+void test_geometry_selection_resolves_mover_index_after_overlap_hidden() {
+  // session_20260807_162713: overlap hide shrinks selectable; sync must land idx in bounds.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr uint32_t kLoopStart = 0;
+  constexpr NoteId kOverlapId = 13;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 3600, 4127}, {kPitch, 100, 2928, 3359},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {kPitch, 100, 2640, 3167}, {kPitch, 100, 2640, 3167},
+                         NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = 2928;
+  hide.endTick = 2975;
+  hide.pitch = kPitch;
+  currentState.applyEditSessionAction(hide);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, 2640, 3167});
+  committedBase.push_back({kMoverId, kPitch, 100, 3600, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 2928, 3359};
+  focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNoteVec selectable =
+      filterProjectingSelectableDisplayNotes(projected, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
+
+  EditorSelection selection;
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+  selection.selectedTick = 2928;
+
+  const int matchIdx =
+      NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(selection, selectable, focus,
+                                                             kLoopStart, kLoopLength, false);
+  TEST_ASSERT_EQUAL(0, matchIdx);
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[static_cast<size_t>(matchIdx)].noteId);
+
+  const int staleIdx = static_cast<int>(selectable.size());
+  TEST_ASSERT_EQUAL(1, staleIdx);
+  TEST_ASSERT_FALSE(staleIdx < static_cast<int>(selectable.size()));
+}
+
 int nearestSelectableDisplayNoteIndex(const NoteUtils::DisplayNoteVec& notes, uint32_t startTick,
                                       uint32_t loopLength, uint32_t loopStartTick) {
   if (notes.empty() || loopLength == 0) {
@@ -778,6 +838,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_inactive_focus_projects_session_moved_span);
   RUN_TEST(test_driver_validation_rejects_hidden_row_matching_focus_last);
   RUN_TEST(test_selectable_inventory_excludes_paint_only_hidden_row);
+  RUN_TEST(test_geometry_selection_resolves_mover_index_after_overlap_hidden);
   RUN_TEST(test_select_closest_note_snap_tie_breaks_to_first_display_order);
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
