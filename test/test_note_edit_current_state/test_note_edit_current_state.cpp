@@ -509,6 +509,23 @@ void test_commit_rows_from_current_state_overlap_shorten() {
   TEST_ASSERT_TRUE(foundOverlapMove);
 }
 
+void test_sync_committed_span_leave_restore_uses_sealed_position_200656() {
+  // session_20260807_200656: leave-restore reverted note 9 to 2208 after macro commit sealed 2544.
+  constexpr NoteId kPriorMover = 9;
+  const NoteBaseline kOriginalCommitted{88, 100, 2208, 2255};
+  const NoteBaseline kSealedSpan{88, 100, 2544, 2591};
+
+  NoteEditCurrentState state;
+  state.upsertRow(kPriorMover, kOriginalCommitted, kSealedSpan, NoteEditPresenceType::Hidden);
+  state.syncCommittedSpan(kPriorMover, kSealedSpan);
+
+  const ParticipatingNoteState participant =
+      buildParticipatingNoteState(*state.find(kPriorMover));
+  const NoteBaseline leaveRestore = participatingLeaveRestoreCommittedSpan(participant);
+  TEST_ASSERT_EQUAL_UINT32(2544u, leaveRestore.startTick);
+  TEST_ASSERT_EQUAL_UINT32(2591u, leaveRestore.endTick);
+}
+
 void test_display_projection_leave_restore_paints_baseline_when_mover_left_overlap() {
   // RC10g: hidden overlap paints full baselineMap span once mover leaves overlap zone.
   constexpr uint32_t kLoopLength = 5376;
@@ -843,5 +860,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
+  RUN_TEST(test_sync_committed_span_leave_restore_uses_sealed_position_200656);
   return UNITY_END();
 }
