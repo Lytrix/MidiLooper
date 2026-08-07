@@ -188,9 +188,8 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         return;
       }
       row->currentSpan = span;
-      if (row->presence == NoteEditPresenceType::Hidden) {
-        row->presence = NoteEditPresenceType::Visible;
-      }
+      // Inner overlap: HideNote then ShortenNote must not promote back to Visible — that
+      // reinserts a shortened tail on display/deselect (session_20260807_141218 DNTE len 143).
       return;
     case EditSessionActionType::HideNote:
       if (row == nullptr) {
