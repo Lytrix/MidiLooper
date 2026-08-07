@@ -2,10 +2,10 @@
 
 **Status:** RC10a/b/e/f/h **shipped** | RC10g **partial** (native + `DFRAME` stable; HITL flicker open) | RC10c deferred
 
-**Handoff:** RC10g sidebar remainder owned by the contracts plan —
+**Handoff:** Participating-note migration —
 [`note_edit_resolver_authority_contracts_refinement.md`](note_edit_resolver_authority_contracts_refinement.md)
-(Stage 4 sidebar span authority). RC10h shipped in `182317b` — validated
-`session_20260807_161329` (0× `pipeline,0`; sweep no longer lands on 88 stub at 2640).
+(Stage 3 model; Stage 4 participation; Stage 6 action semantics; Stage 7 leave-restore; Stage 8 sidebar).
+Stage 5 coarse-after-hide shipped (`8255fd7`). Stages 1–2 shipped — keep commits.
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -133,11 +133,12 @@ While NOTE_EDIT active and overlaps hidden in current state, deselect must not s
 
 ### RC10g acceptance
 
-- [ ] Move past hidden overlap: overlap visible at committed span outside mover (paint)
-- [x] Deselect: `DFRAME` stable (17 rows; no post-workflow 29-row blow-up)
-- [ ] Select sweep: no session tail ↔ committed stub flicker on same overlap tick (`143` ↔ `47` still open)
-- [x] RC10e inventory gate on `151441` (masked tail len 143 expected while intersecting)
+- [ ] Move past hidden overlap: overlap visible at committed span outside mover — **Stage 7**
+- [x] Deselect: `DFRAME` stable
+- [ ] Select sweep: no 143 ↔ 47 `DNTE` flicker — **Stage 8**
+- [x] RC10e inventory gate on `151441`
 - [x] Native fixtures (`143654` shape + leave-restore paint)
+- [ ] Re-shorten while mover still overlaps after partial restore — **Stage 6** (`163621`)
 
 ### Next fix target (RC10g follow-up)
 
