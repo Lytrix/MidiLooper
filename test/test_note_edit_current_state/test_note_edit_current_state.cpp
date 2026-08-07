@@ -553,7 +553,8 @@ void test_sync_committed_span_leave_restore_uses_sealed_position_200656() {
 }
 
 void test_display_projection_leave_restore_paints_baseline_when_mover_left_overlap() {
-  // RC10g / step 3: projection paints committed span only after RestoreNote promotes Visible.
+  // session_20260807_220917: hide+shorten promotes Visible shortened; paint committed length once
+  // mover clears overlap — RestoreNote apply still required for inventory/session restore.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 10;
   constexpr NoteId kMoverId = 17;
@@ -597,11 +598,19 @@ void test_display_projection_leave_restore_paints_baseline_when_mover_left_overl
   focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
   recordChangedOverlapNote(focus, kOverlapId);
 
-  const NoteUtils::DisplayNoteVec hiddenWhileMoverLeft =
+  const NoteUtils::DisplayNoteVec visibleShortenedWhileMoverLeft =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
-  TEST_ASSERT_EQUAL(1, static_cast<int>(hiddenWhileMoverLeft.size()));
-  TEST_ASSERT_EQUAL_UINT32(kMoverId, hiddenWhileMoverLeft[0].noteId);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(visibleShortenedWhileMoverLeft.size()));
+  bool foundOverlapWhileMoverLeft = false;
+  for (const NoteUtils::DisplayNote& dn : visibleShortenedWhileMoverLeft) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(2640u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(3167u, dn.endTick);
+      foundOverlapWhileMoverLeft = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundOverlapWhileMoverLeft);
 
   EditSessionAction fullRestore{};
   fullRestore.type = EditSessionActionType::RestoreNote;
@@ -791,7 +800,8 @@ void test_hide_full_baseline_then_shorten_overlap_tail_promotes_visible() {
 }
 
 void test_selectable_inventory_excludes_paint_only_hidden_row() {
-  // Step 3: hidden overlap does not paint on grid while mover has left overlap zone.
+  // Paint vs inventory split: visible shortened overlap paints committed length when mover left,
+  // but selectable inventory stays masked until RestoreNote.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 10;
   constexpr NoteId kMoverId = 17;
@@ -838,8 +848,16 @@ void test_selectable_inventory_excludes_paint_only_hidden_row() {
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
-  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
-  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  bool foundOverlapPaint = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(2640u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(3167u, dn.endTick);
+      foundOverlapPaint = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundOverlapPaint);
 
   const NoteUtils::DisplayNoteVec selectable =
       filterProjectingSelectableDisplayNotes(projected, &currentState);
@@ -1232,6 +1250,109 @@ void test_contract_c9_203805_shorten_paint_stub_inventory_masked() {
   TEST_ASSERT_TRUE(foundStub);
 }
 
+void test_visible_shortened_paints_committed_length_after_ltr_overlap_cleared_220917() {
+  // session_20260807_220917 ~35s: L→R ShortenNote chain on note 17; once mover 13 clears the
+  // committed closure, grid must show full committed length — not disappear while still Visible.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 17;
+  constexpr NoteId kMoverId = 13;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kCommitted{kPitch, 100, 3072, 3520};
+  constexpr NoteBaseline kStub{kPitch, 100, 3072, 3119};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 3120, 3167}, {kPitch, 100, 3024, 3071},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, kCommitted, kStub, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, kCommitted.startTick, kCommitted.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 3024, 3071});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 3120, 3167};
+  focus.movingNoteRange = {3120, 3167};
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3024, 3071};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec whileOverlapActive =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  bool foundStub = false;
+  for (const NoteUtils::DisplayNote& dn : whileOverlapActive) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(kStub.endTick, dn.endTick);
+      foundStub = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundStub);
+
+  focus.last = {kPitch, 100, 3600, 3647};
+  focus.movingNoteRange = {3600, 3647};
+  const NoteUtils::DisplayNoteVec afterOverlapCleared =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  bool foundCommitted = false;
+  for (const NoteUtils::DisplayNote& dn : afterOverlapCleared) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(kCommitted.startTick, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(kCommitted.endTick, dn.endTick);
+      foundCommitted = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundCommitted);
+}
+
+void test_visible_shortened_paints_stub_while_overlap_closure_active_221717() {
+  // session_20260807_221717 ~35.7s: short mover 9 over long overlap 17 — leave-restore paint must
+  // follow participating overlap-closure (inclusive), not exclusive span overlap on movingNoteRange.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 17;
+  constexpr NoteId kMoverId = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kCommitted{kPitch, 100, 2928, 3376};
+  constexpr NoteBaseline kStub{kPitch, 100, 2928, 2975};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 2976, 3023}, {kPitch, 100, 2640, 2687},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, kCommitted, kStub, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, kCommitted.startTick, kCommitted.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 2640, 2687});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 2976, 3023};
+  focus.movingNoteRange = {2976, 3023};
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 2640, 2687};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec whileClosureActive =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  bool foundStub = false;
+  for (const NoteUtils::DisplayNote& dn : whileClosureActive) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(kStub.endTick, dn.endTick);
+      foundStub = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundStub);
+}
+
 void test_contract_c7_leave_restore_visible_paints_after_apply_175858() {
   // session_20260807_175858 / 163621 step 3: RestoreNote promotes Hidden → Visible; paint uses
   // currentSpan only after apply — no projection-side leave-restore while still Hidden.
@@ -1328,6 +1449,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_reselect_span_matched_mover_projects_current_not_visual_cache);
   RUN_TEST(test_contract_c9_projection_inventory_independence);
   RUN_TEST(test_contract_c9_203805_shorten_paint_stub_inventory_masked);
+  RUN_TEST(test_visible_shortened_paints_committed_length_after_ltr_overlap_cleared_220917);
+  RUN_TEST(test_visible_shortened_paints_stub_while_overlap_closure_active_221717);
   RUN_TEST(test_contract_c7_leave_restore_visible_paints_after_apply_175858);
   RUN_TEST(test_geometry_selection_resolves_mover_index_after_overlap_hidden);
   RUN_TEST(test_select_closest_note_snap_tie_breaks_to_first_display_order);
