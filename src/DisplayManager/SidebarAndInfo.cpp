@@ -28,6 +28,21 @@ using namespace DisplayManagerInternal;
 
 namespace {
 
+const NoteUtils::DisplayNote* findProjectedPaintNoteForPrimary(
+    const Track& track, NoteId primaryNote, NoteUtils::DisplayNote& out) {
+  if (primaryNote == kInvalidNoteId || !editManager.isNoteEditActive()) {
+    return nullptr;
+  }
+  const NoteUtils::DisplayNoteVec& paint = editManager.projectedNoteEditDisplayNotes(track);
+  for (const NoteUtils::DisplayNote& dn : paint) {
+    if (dn.noteId == primaryNote) {
+      out = dn;
+      return &out;
+    }
+  }
+  return nullptr;
+}
+
 constexpr int SIDEBAR_WIDTH = 30;
 constexpr int SIDEBAR_RIGHT_MARGIN = 1;
 constexpr int SIDEBAR_SEPARATOR_BRIGHTNESS = 2;
@@ -441,6 +456,21 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
                                                 : noteToShow->startTick;
         displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
             storageBracketTick, loopStartTick, lengthLoop);
+    }
+
+    NoteUtils::DisplayNote projectedPrimarySpan{};
+    if (editorSelectionHasNote(selection)) {
+        if (const NoteUtils::DisplayNote* projected =
+                findProjectedPaintNoteForPrimary(selectedTrack, selection.primaryNote,
+                                                 projectedPrimarySpan)) {
+            // Stage 8 / V5: sidebar LEN + DNTE use paint-cache participant span (same as grid).
+            noteToShow = projected;
+            const uint32_t storageBracketTick = editManager.isLengthBracketEditActive()
+                                                    ? projected->endTick
+                                                    : projected->startTick;
+            displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+                storageBracketTick, loopStartTick, lengthLoop);
+        }
     }
 
     DisplayNote focusDisplayFallback{};
