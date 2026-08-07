@@ -3,7 +3,8 @@
 
 #include <unity.h>
 
-#include "../../src/EditManager/ParticipatingNoteSession.cpp"
+#include <algorithm>
+
 #include "../test_support/NoteEditFocusTestDeps.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
@@ -86,6 +87,24 @@ void test_primary_driver_must_project() {
   TEST_ASSERT_TRUE(inv.actionTargetWouldDependOnProjection);
 }
 
+void test_collect_overlap_participant_ids_from_current_state() {
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(3, {88, 100, 3072, 3215}, {88, 100, 3168, 3311},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(17, {88, 100, 3216, 3743}, {88, 100, 3216, 3263},
+                         NoteEditPresenceType::Hidden);
+  currentState.upsertRow(10, {88, 100, 2640, 3167}, {88, 100, 2640, 2783},
+                         NoteEditPresenceType::Visible);
+
+  const NoteIdList participants =
+      collectOverlapParticipantNoteIdsFromCurrentState(currentState, 3);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(participants.size()));
+  TEST_ASSERT_TRUE(std::find(participants.begin(), participants.end(), 17) !=
+                   participants.end());
+  TEST_ASSERT_TRUE(std::find(participants.begin(), participants.end(), 10) !=
+                   participants.end());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_participating_phase_maps_from_presence);
@@ -93,5 +112,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_visible_shortened_tail_projects_when_visible);
   RUN_TEST(test_session_builds_from_current_state_and_selection);
   RUN_TEST(test_primary_driver_must_project);
+  RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
   return UNITY_END();
 }
