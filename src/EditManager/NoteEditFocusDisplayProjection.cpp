@@ -16,14 +16,15 @@
 
 namespace {
 
-bool overlapSpanIntersectsActiveMover(const NoteEditFocus& focus, uint32_t overlapStart,
-                                      uint32_t overlapEnd, uint32_t loopLength) {
-  if (!focus.active || loopLength == 0) {
-    return false;
+bool overlapLeaveRestoreInteractionCleared(const NoteEditFocus& focus,
+                                           const NoteEditCurrentNoteState& row) {
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return true;
   }
-  const uint32_t moverStart = focus.movingNoteRange.start;
-  const uint32_t moverEnd = movingNoteRangeDisplayEnd(focus, loopLength);
-  return linearStorageSpansOverlapLocal(overlapStart, overlapEnd, moverStart, moverEnd);
+  const ParticipatingNoteState participant = buildParticipatingNoteState(row);
+  const NoteBaseline causingSpan{focus.last.pitch, focus.last.velocity, focus.last.startTick,
+                                 focus.last.endTick};
+  return participatingNoteOverlapInteractionCleared(participant, causingSpan);
 }
 
 template <typename Alloc>
@@ -39,6 +40,18 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
         (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
+      if (noteId != focus.movingNoteId && focus.active) {
+        const NoteEditCurrentNoteState* row = currentState->find(noteId);
+        if (row != nullptr && row->presence == NoteEditPresenceType::Visible &&
+            participatingNoteShortenedVsCommitted(current, row->committedSpan) &&
+            overlapLeaveRestoreInteractionCleared(focus, *row)) {
+          pitch = row->committedSpan.pitch;
+          velocity = row->committedSpan.velocity;
+          startTick = row->committedSpan.startTick;
+          endTick = row->committedSpan.endTick;
+          return true;
+        }
+      }
       pitch = current.pitch;
       velocity = current.velocity;
       startTick = current.startTick;
@@ -122,8 +135,6 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
     return false;
   }
   const NoteBaseline& committed = row->committedSpan;
-  const uint32_t paintStart = committed.startTick;
-  const uint32_t paintEnd = committed.endTick;
   if (row->presence == NoteEditPresenceType::Hidden ||
       row->presence == NoteEditPresenceType::Deleted) {
     return true;
@@ -136,9 +147,12 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
     return false;
   }
   if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
-    // Paint shortened stub only while overlap closure is active (C9 / step 2).
-    if (focus.active &&
-        overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
+    // Paint shortened stub while overlap closure is active (C9 / step 2).
+    if (focus.active && !overlapLeaveRestoreInteractionCleared(focus, *row)) {
+      return false;
+    }
+    if (focus.active) {
+      // Visible shortened: paint full committed length once overlap closure clears (C7).
       return false;
     }
     return true;

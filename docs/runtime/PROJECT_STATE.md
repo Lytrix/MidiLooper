@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-07 (note-edit-current-state preflight)
+Last updated: 2026-08-07 (resolver contracts step 3 native; Stage 8 started)
 
 ---
 
 ## Current branch
 
-**Active work:** **note-edit-current-state** OpenSpec — ownership transfer preflight complete; section 2 foundation next. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** **note-edit resolver contracts** — Stage 8 display projection (sidebar `DNTE` / C5). Plan: [`note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md). Parallel: **note-edit-current-state** archive prep — see [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

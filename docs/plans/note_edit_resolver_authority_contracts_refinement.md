@@ -1,7 +1,7 @@
 # Note edit resolver authority contracts — refinement plan
 
 **Status:** architectural migration in progress — Stages 0–2, 4–5, and **6 (code)** **shipped**; Stage 3
-(participating-note model) **shipped**; Stage 7 code shipped (HITL 7.4 open); Stage 8 pending.
+(participating-note model) **shipped**; Stage 7 native **shipped** (HITL 7.4 + C7 geometry parked items open); **Stage 8 in progress**.
 **Remaining work:** §11 approved five-step sequence; orthogonal model §12 (conceptual; code post–Stage 8).
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
@@ -202,6 +202,8 @@ Stage 4 **done** does **not** mean “do not touch `changedOverlapNoteIds`” �
 
 ### V5 — Sidebar `DNTE` span split — **Stage 8 target**
 
+Sidebar `drawNoteInfo` / `#CAP DNTE` must use the same participant span as grid paint (`projectNoteEditDisplayNotes` / `resolveParticipantDisplaySpan`), not a parallel `focus.last` or committed-base read. Evidence: `151441`.
+
 ---
 
 ## 5. Open trace — post-deselect re-edit (`161329`)
@@ -368,14 +370,29 @@ One **participant projection contract** (same participant, visibility gate, auth
 
 **HITL `session_20260807_200656` (post-(3) bracket fix)** — bracket gate pass; prior mover still jumped to original baseline: macro commit sealed note 9 @2544 (`201.7s`) but `committedSpan` stayed 2208 → `RestoreNote` @203.8s on new mover cleared overlap. Fixed: `NoteEditCurrentState::syncCommittedSpan` after macro commit.
 
-### Stage 7 — leave/restore transition — **DONE** (code; HITL 7.4 partial)
+### Stage 7 — leave/restore transition — **DONE** (native); HITL 7.4 partial; C7 geometry follow-up parked
 
 - [x] 7.1 Participating leave-restore helpers (`participatingNoteNeedsFullCommittedLeaveRestore`, committed span).
 - [x] 7.2 `constrainedGeometryFromRestoreCandidate` uses committed span for hidden/shortened participants.
-- [x] 7.3 Display projection paints `committedSpan` when mover left overlap zone.
-- [ ] 7.4 HITL `163621` / `175858` full restore → Visible; `181859` restore on note 9 confirmed. **Native step 3 shipped** — projection no longer paints Hidden/leave-restore; paint after `RestoreNote` apply only.
+- [x] 7.3 Display projection: visible shortened paints **stub** while `participatingNoteOverlapClosureActive`; paints **`committedSpan`** when `participatingNoteOverlapInteractionCleared` (uses `focus.last` as causing span — same rule as geometry). Hidden/Deleted: **no** projection-side leave-restore.
+- [ ] 7.4 HITL `163621` / `175858` on device with step-3 firmware. Native contracts: `test_visible_shortened_paints_committed_length_after_ltr_overlap_cleared_220917`, `test_visible_shortened_paints_stub_while_overlap_closure_active_221717`.
 
-### Stage 8 — display projection (was interim Stage 4 sidebar)
+#### Step 3 projection ship log (2026-08-07)
+
+| Commit / slice | Invariant | Native | HITL |
+|----------------|-----------|--------|------|
+| `8596950` | Hidden overlap: no grid row regardless of `visualCache` | step 1 tests | `203805` |
+| `ea39f1c` | C9 paint ≠ inventory | C9 contracts | — |
+| `9248a70` | Hidden: no projection leave-restore; paint after `RestoreNote` apply only | step 3 tests | `215621` partial |
+| *(pending commit)* | Visible shortened leave-restore aligned to **overlap closure** (not exclusive `movingNoteRange` overlap) | 928 tests | `220917`, `221717` |
+
+**HITL `session_20260807_220917` (~35s):** L→R shorten on overlap 17 while mover 13 advanced — grid dropped overlap note when mover cleared committed closure; fixed by painting `committedSpan` once `participatingNoteOverlapInteractionCleared`.
+
+**HITL `session_20260807_221717` (~35.7s):** Short mover 9 over long overlap 17 — premature committed-length paint during active shorten chain; fixed by gating leave-restore paint on `participatingNoteOverlapInteractionCleared` (inclusive closure vs `focus.last`), not `linearStorageSpansOverlapLocal` on `movingNoteRange`.
+
+**Parked — `session_20260807_222418` (C7 geometry, test later):** After shorten chain, overlap note **restores to full `committedSpan`** via geometry `RestoreNote` when pipeline reports `interactions=0` (e.g. ~44.2s, ~51.8s on note 9 `3216–3750`) while movement layer may still log `overlapNotes=1`. This is **mutation/apply leave-restore**, not projection-only. **Do not block Stage 8** — verify whether closure should stay active longer or whether full restore on clear remains intended product behavior.
+
+### Stage 8 — display projection (was interim Stage 4 sidebar) — **IN PROGRESS**
 
 - [ ] 8.1 Sidebar `DNTE` via `resolveParticipantDisplaySpan` (fixes **V5**).
 - [ ] 8.2 Fader / snapshot consumers — same **participant projection contract** as grid (separate rendering).
@@ -445,8 +462,8 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 |---|------|-----------------|-----------------------------|
 | **1** | **Fix full-overlap Hide paint** | `visible == false` → **projection emits no row** — regardless of `currentSpan`, `committedSpan`, `visualCache`, or inventory membership. Inventory also excludes. | **No change** | **Shipped** (`8596950`) — leave-restore re-show → step 3 |
 | **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory | **Shipped** (native) |
-| **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending |
-| **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence |
+| **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending; `222418` C7 restore **parked** |
+| **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence | **In progress** (8.1) |
 | **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior |
 
 ### Step 1 — projection gate (strong invariant)
@@ -481,7 +498,7 @@ Evidence: `202147` (inventory OK, paint failed) → `2aeb175` (split caches).
 
 ### Step 3 evidence
 
-`163621`, `175858`, `181859` restore on note 9.
+Native: `220917`, `221717` leave-restore projection contracts. HITL anchors: `163621`, `175858`, `181859` restore on note 9. **Parked:** `222418` — full `RestoreNote` on overlap clear (geometry C7); retest after Stage 8 sidebar convergence.
 
 ### Step 4 evidence
 
