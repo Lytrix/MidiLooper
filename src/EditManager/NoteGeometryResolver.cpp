@@ -112,7 +112,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
             currentStateReader);
 
     const EditSessionActions actions =
-        buildEditSessionActions(constrained, editedGeometry, transactionBaselineAfterEnsure,
+        buildEditSessionActions(constrained, editedGeometry, analysisBaseline,
                                 transactionBaselineAfterEnsure, leaveRestoreTargetNoteIds, liveStore,
                                 channel, focus, loopLength, currentStateReader);
 

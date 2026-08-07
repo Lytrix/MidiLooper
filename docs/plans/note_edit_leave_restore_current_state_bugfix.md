@@ -1,6 +1,6 @@
 # Note edit leave-restore current-state bugfix (RC10)
 
-**Status:** RC10a/b/e **shipped** | RC10f **in progress** | RC10g **open** | RC10c deferred
+**Status:** RC10a/b/e/f **shipped** | RC10g **open** | RC10c deferred
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -97,54 +97,20 @@ While NOTE_EDIT active and overlaps hidden in current state, deselect must not s
 
 ---
 
-## RC10f — Prior mover resets to baseline on second-note select (open)
+## RC10f — Prior mover resets to baseline on second-note select (shipped)
 
-### Symptom
+### Root cause
 
-Move note A (e.g. `noteId=17`) away from baseline (3600 → ~1728–3264). Select note B (e.g. `noteId=10` or `20`) to move. Note A **jumps back** to committed `baselineMap` span (3600–4127) on display and in geometry actions.
+`overlayAnalysisBaselineForSessionMovedOverlaps` already fed **analysis** into `resolveAllConstrainedGeometry` / `analyzeEditSessionInteractions`, but `buildEditSessionActions` was called with **stale `transactionBaselineAfterEnsure`** (committed `baselineMap`) for the projected baseline — emitting `ShortenNote` on the prior mover at committed 3600–4127 when the second mover resolved.
 
-### Proof — `session_20260807_141920`
+### Fix
 
-**Note 17 moved off baseline (~33–42s):**
-
-```text
-[33.559] EditSessionAction: type=3 noteId=17 start=1728 end=2255 pitch=88
-[41.902] EditSessionAction: type=3 noteId=17 start=2928 end=3455 pitch=88
-[42.390] EditSessionAction: type=3 noteId=17 start=3264 end=3791 pitch=88
-```
-
-**Second mover selected (~46.5s):** `select_apply … note_idx=10 … reason=note_changed` at tick 2640 (`noteId=10` becomes focus).
-
-**Baseline reset when moving note 10 (~49.06s):**
-
-```text
-[49.059] POSITION EDIT: … tick 3456 -> 3552  (focus.last on note 10)
-[49.061] GeometryPipeline: … baselineMap=16 lane=88 changed=0 … actions=2
-[49.061] EditSessionAction: type=2 noteId=17 start=3600 end=4127 pitch=88   ← prior mover → committed baseline
-[49.061] EditSessionAction: type=3 noteId=10 start=3552 end=3695 pitch=88
-[49.178] DNTE,88,3600,3600,143,15
-```
-
-`ShortenNote` on note 17 uses **committed** ticks `3600–4127` (baselineMap), not the live moved span (~3264+). Prior mover edit is overwritten when geometry runs for the new focus note.
-
-**Not macro commit:** all `NOTE_EDIT macro commit` lines in this capture are `skipped: select bracket mismatch` — reset happens during **geometry apply** on the second mover, not on successful macro commit.
-
-### Hypothesis (for implementer)
-
-- `rebuildNoteEditFocusAtSelect` on `note_changed` rebuilds closure/`baselineMap` from committed passes while **prior mover `currentSpan` in `NoteEditCurrentState` is not retained** as session authority for inactive movers; or
-- overlap geometry re-constrains **non-focus** lane participants against `baselineMap` when the new mover resolves, emitting `ShortenNote`/`RestoreNote` that snap inactive movers to committed spans.
-
-### Owners (candidates)
-
-- `rebuildNoteEditFocusAtSelect` — preserve prior mover rows in `NoteEditCurrentState` across focus handoff; do not rematerialize inactive movers from `baselineMap` alone.
-- `buildEditSessionActions` / geometry pipeline — do not emit baseline snap actions for movers no longer in `focus.movingNoteId` unless explicit leave-restore scope says so.
-- Macro commit path (if bracket mismatch is fixed later) must commit mover A before focus moves to B.
+`NoteGeometryResolver::resolve` — pass `analysisBaseline` as projected baseline to `buildEditSessionActions` (matches constrained geometry input).
 
 ### RC10f acceptance
 
-- [ ] Move note 17 off 3600, select note 10, move note 10 — note 17 **stays** at last moved tick (no `type=2 noteId=17 start=3600 end=4127`)
-- [ ] Native: two-mover handoff fixture from `141920` shape
-- [ ] HITL: `141920` repro cleared
+- [x] Native: `test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920`
+- [ ] HITL: `141920` repro cleared (move 17 off 3600, select 10, move 10 — no `type=2 noteId=17 start=3600`)
 
 ---
 
