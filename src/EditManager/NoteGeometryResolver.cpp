@@ -148,6 +148,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
                             &manager.getEditSession().applyOwnedEditPassRows,
                             currentStateReader);
+    manager.bumpSessionPreviewRevision();
     track.invalidateCaches(refreshPlaybackPreview);
     return true;
 }

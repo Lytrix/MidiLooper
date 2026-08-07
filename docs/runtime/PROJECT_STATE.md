@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-07 (Stage 8.2 fader/snapshot projection shipped)
+Last updated: 2026-08-07 (Stage 8.3 visualCache decoupling shipped)
 
 ---
 
 ## Current branch
 
-**Active work:** **note-edit resolver contracts** — Stage 8 display projection (8.1–8.2 shipped; 8.3 `visualCache` next). Plan: [`note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md). Parallel: **note-edit-current-state** archive prep — see [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** **note-edit resolver contracts** — Stage 8 display projection (8.1–8.3 shipped; 8.4 HITL next). Plan: [`note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md). Parallel: **note-edit-current-state** archive prep — see [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
