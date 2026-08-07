@@ -373,7 +373,7 @@ One **participant projection contract** (same participant, visibility gate, auth
 - [x] 7.1 Participating leave-restore helpers (`participatingNoteNeedsFullCommittedLeaveRestore`, committed span).
 - [x] 7.2 `constrainedGeometryFromRestoreCandidate` uses committed span for hidden/shortened participants.
 - [x] 7.3 Display projection paints `committedSpan` when mover left overlap zone.
-- [ ] 7.4 HITL `163621` / `175858` full restore → Visible; `181859` restore on note 9 confirmed.
+- [ ] 7.4 HITL `163621` / `175858` full restore → Visible; `181859` restore on note 9 confirmed. **Native step 3 shipped** — projection no longer paints Hidden/leave-restore; paint after `RestoreNote` apply only.
 
 ### Stage 8 — display projection (was interim Stage 4 sidebar)
 
@@ -445,7 +445,7 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 |---|------|-----------------|-----------------------------|
 | **1** | **Fix full-overlap Hide paint** | `visible == false` → **projection emits no row** — regardless of `currentSpan`, `committedSpan`, `visualCache`, or inventory membership. Inventory also excludes. | **No change** | **Shipped** (`8596950`) — leave-restore re-show → step 3 |
 | **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory | **Shipped** (native) |
-| **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted |
+| **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending |
 | **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence |
 | **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior |
 
