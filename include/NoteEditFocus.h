@@ -232,7 +232,8 @@ NOTE_EDIT_MEM void syncNoteEditFocusLastFromCurrentState(NoteEditFocus& focus, N
 
 /// True when fader-1 select may macro-commit pending mover geometry for **selectNoteId** at
 /// **selectBracketTick**. Re-selecting the same **NoteId** at a bracket that disagrees with
-/// **focus.last** must not commit (stale mover_focus row — RC7b).
+/// **focus.last** must not commit (stale mover_focus row — RC7b). Selecting a **different**
+/// **NoteId** (mover handoff) always allows commit (Stage 6.5 (3)).
 bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
                                                         uint32_t selectBracketTick,
                                                         const NoteEditFocus& focus,
@@ -341,6 +342,37 @@ inline uint32_t displayStartTickFromStorageNote(uint32_t storageStart, uint32_t 
                                     ? (storageStart - loopStartTick)
                                     : (storageStart + loopLength - loopStartTick);
   return displayStart % loopLength;
+}
+
+/// Resolve macro-commit select target when fader-1 bracket tick may hand off to a different
+/// **NoteId** than the inventory row index (session_20260807_195514: moving=12 bracket=2881 → note 14).
+template <typename NotesVec>
+inline NoteId resolveMacroCommitSelectTargetNoteId(const NotesVec& filtered, int filteredIndex,
+                                                   uint32_t selectBracketTick,
+                                                   const NoteEditFocus& focus,
+                                                   uint32_t loopStartTick, uint32_t loopLength) {
+  const NoteId inventoryNoteId = noteIdFromFilteredDisplayNote(filtered, filteredIndex);
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return inventoryNoteId;
+  }
+  if (inventoryNoteId != kInvalidNoteId && inventoryNoteId != focus.movingNoteId) {
+    return inventoryNoteId;
+  }
+  if (inventoryNoteId == focus.movingNoteId &&
+      isMacroCommitAlignedWithSelectTarget(inventoryNoteId, selectBracketTick, focus, loopStartTick,
+                                           loopLength, false)) {
+    return inventoryNoteId;
+  }
+  for (const auto& dn : filtered) {
+    if (dn.noteId == kInvalidNoteId || dn.noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength) ==
+        selectBracketTick) {
+      return dn.noteId;
+    }
+  }
+  return inventoryNoteId;
 }
 
 template <typename NotesVec>

@@ -316,7 +316,9 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
                        absoluteTargetTick);
         }
 
-        const NoteId selectNoteId = noteIdFromFilteredDisplayNote(notes, noteIdx);
+        const NoteId selectNoteId = resolveMacroCommitSelectTargetNoteId(
+            notes, noteIdx, absoluteTargetTick, editManager.getEditSession().focus,
+            editManager.noteEditLoopStartTick(track), loopLength);
         editManager.cancelPendingDeleteForSelectNote(selectNoteId);
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);

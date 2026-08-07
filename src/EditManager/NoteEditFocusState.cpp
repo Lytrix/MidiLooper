@@ -94,12 +94,14 @@ NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
   if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
     return true;
   }
-  if (selectNoteId == kInvalidNoteId || selectNoteId != focus.movingNoteId) {
-    // session_20260807_014541: macro commit on a different note (or empty step) with stale
-    // focus.last committed mover_focus start=1296 end=1823 while note 17 lived at ~3504.
+  if (selectNoteId == kInvalidNoteId) {
     if (noteEditFocusHasPendingCommit(focus)) {
       return false;
     }
+    return true;
+  }
+  if (selectNoteId != focus.movingNoteId) {
+    // Mover handoff: seal prior mover + overlap participants before rebuilding focus.
     return true;
   }
   const uint32_t storageBracketTick =

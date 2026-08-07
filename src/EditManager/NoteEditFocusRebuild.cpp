@@ -377,15 +377,6 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isMacroCommitAlignedWithSelectTargetForT
         return true;
     }
     const NoteEditFocus& focus = editSession.focus;
-    if (focus.movingNoteId != kInvalidNoteId && selectNoteId != focus.movingNoteId) {
-        if (noteEditFocusHasPendingCommit(focus)) {
-            return false;
-        }
-        if (noteEditFocusHasPendingBaselineMapDiff(focus, sessionMidiEvents(),
-                                                   track.getMidiChannel(), loopLength)) {
-            return false;
-        }
-    }
     const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
     return isMacroCommitAlignedWithSelectTarget(selectNoteId, selectBracketTick, editSession.focus,
                                                 noteEditLoopStartTick(track), loopLength,
