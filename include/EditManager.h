@@ -154,7 +154,7 @@ public:
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
     /// Filtered select inventory during note edit; else cached notes (encoder + fader).
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
-    /// Single cached NOTE_EDIT display projection (session store + focus).
+    /// Single cached NOTE_EDIT display projection (session store + focus) for grid paint.
     NoteUtils::DisplayNoteVec projectedNoteEditDisplayNotes(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (session reconstruction minus Hidden overlap).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
@@ -289,6 +289,7 @@ private:
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
+    void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     void emitEditEvent(EditEvent event);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
@@ -321,6 +322,7 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    mutable NoteUtils::DisplayNoteVec noteEditPaintDisplayCacheNotes_;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;
     mutable uint32_t noteEditDisplayInvalidateEpoch_ = 0;
     mutable uint32_t noteEditDisplayPaintedEpoch_ = 0;

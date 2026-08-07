@@ -429,7 +429,8 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
     if (manager.isNoteEditActive()) {
         const NoteEditFocus& focus = manager.getEditSession().focus;
         const EditorSelection& selection = manager.getNoteEditSessionState().selection;
-        const NoteUtils::DisplayNoteVec filtered = manager.projectedNoteEditDisplayNotes(track);
+        const NoteUtils::DisplayNoteVec filtered =
+            manager.filteredSelectableDisplayNotesForNoteEdit(track);
 
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
         const bool lengthBracket = manager.isLengthBracketEditActive();
