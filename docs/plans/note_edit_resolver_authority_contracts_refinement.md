@@ -443,8 +443,8 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 
 | # | Step | Prove / deliver | Resolver / action semantics |
 |---|------|-----------------|-----------------------------|
-| **1** | **Fix full-overlap Hide paint** | `visible == false` → **projection emits no row** — regardless of `currentSpan`, `committedSpan`, `visualCache`, or inventory membership. Inventory also excludes. | **No change** | **Native shipped** — HITL `203805` pending |
-| **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory |
+| **1** | **Fix full-overlap Hide paint** | `visible == false` → **projection emits no row** — regardless of `currentSpan`, `committedSpan`, `visualCache`, or inventory membership. Inventory also excludes. | **No change** | **Shipped** (`8596950`) — leave-restore re-show → step 3 |
+| **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory | **Shipped** (native) |
 | **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted |
 | **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence |
 | **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior |

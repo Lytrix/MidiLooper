@@ -1072,6 +1072,143 @@ void test_reselect_span_matched_mover_projects_current_not_visual_cache() {
   TEST_ASSERT_EQUAL_UINT32(kMovedSpan.endTick, projected[0].endTick);
 }
 
+void test_contract_c9_projection_inventory_independence() {
+  // C9 / roadmap step 2: paint and selectable are independent consumers — inventory
+  // filtering must never drop a visible participant from the paint projection path.
+  // Combines session_20260807_203805 shorten (visible stub) with step 1 hidden row.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kMoverId = 17;
+  constexpr NoteId kShortenedId = 13;
+  constexpr NoteId kHiddenId = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kShortenedCommitted{kPitch, 100, 1728, 2364};
+  constexpr NoteBaseline kShortenedCurrent{kPitch, 100, 1728, 1775};
+  constexpr NoteBaseline kHiddenCommitted{kPitch, 100, 1824, 1871};
+  constexpr NoteBaseline kMoverSpan{kPitch, 100, 1776, 2224};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, kMoverSpan, {kPitch, 100, 3648, 4127},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kShortenedId, kShortenedCommitted, kShortenedCurrent,
+                           NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHiddenId, kHiddenCommitted, kHiddenCommitted,
+                         NoteEditPresenceType::Hidden);
+
+  TEST_ASSERT_FALSE(currentState.rowIncludedInSelectableInventory(kShortenedId));
+  TEST_ASSERT_FALSE(currentState.rowIncludedInSelectableInventory(kHiddenId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kShortenedId, kPitch, 100, kShortenedCommitted.startTick,
+                           kShortenedCommitted.endTick});
+  committedBase.push_back({kHiddenId, kPitch, 100, kHiddenCommitted.startTick,
+                           kHiddenCommitted.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 3648, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 1824, 1871};
+  focus.movingNoteRange = {1824, 1871};
+  focus.baselineMap[kShortenedId] = kShortenedCommitted;
+  focus.baselineMap[kHiddenId] = kHiddenCommitted;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3648, 4127};
+  recordChangedOverlapNote(focus, kShortenedId);
+  recordChangedOverlapNote(focus, kHiddenId);
+
+  const NoteUtils::DisplayNoteVec paint =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNoteVec selectable =
+      filterProjectingSelectableDisplayNotes(paint, &currentState);
+
+  TEST_ASSERT_TRUE(static_cast<int>(paint.size()) > static_cast<int>(selectable.size()));
+
+  bool paintHasShortenedStub = false;
+  for (const NoteUtils::DisplayNote& dn : paint) {
+    if (dn.noteId == kShortenedId) {
+      TEST_ASSERT_EQUAL_UINT32(kShortenedCurrent.startTick, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(kShortenedCurrent.endTick, dn.endTick);
+      paintHasShortenedStub = true;
+    }
+    TEST_ASSERT_NOT_EQUAL(kHiddenId, dn.noteId);
+  }
+  TEST_ASSERT_TRUE(paintHasShortenedStub);
+
+  for (const NoteUtils::DisplayNote& dn : selectable) {
+    TEST_ASSERT_NOT_EQUAL(kShortenedId, dn.noteId);
+    TEST_ASSERT_NOT_EQUAL(kHiddenId, dn.noteId);
+    TEST_ASSERT_TRUE(currentState.rowIncludedInSelectableInventory(dn.noteId));
+  }
+
+  for (const NoteUtils::DisplayNote& sel : selectable) {
+    bool foundInPaint = false;
+    for (const NoteUtils::DisplayNote& p : paint) {
+      if (p.noteId == sel.noteId) {
+        TEST_ASSERT_EQUAL_UINT32(sel.startTick, p.startTick);
+        TEST_ASSERT_EQUAL_UINT32(sel.endTick, p.endTick);
+        foundInPaint = true;
+        break;
+      }
+    }
+    TEST_ASSERT_TRUE(foundInPaint);
+  }
+}
+
+void test_contract_c9_203805_shorten_paint_stub_inventory_masked() {
+  // session_20260807_203805 ~18.8s: overlap participant note 13 shortened stub painted;
+  // DNTE/select inventory masks the tail row.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 13;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+  constexpr NoteBaseline kCommitted{kPitch, 100, 1728, 2364};
+  constexpr NoteBaseline kStub{kPitch, 100, 1728, 2303};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 1824, 2271}, {kPitch, 100, 3648, 4127},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, kCommitted, kStub, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, kCommitted.startTick, kCommitted.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 3648, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 1824, 1871};
+  focus.movingNoteRange = {1824, 1871};
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3648, 4127};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec paint =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNoteVec selectable =
+      filterProjectingSelectableDisplayNotes(paint, &currentState);
+
+  TEST_ASSERT_EQUAL(2, static_cast<int>(paint.size()));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[0].noteId);
+
+  bool foundStub = false;
+  for (const NoteUtils::DisplayNote& dn : paint) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(kStub.startTick, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(kStub.endTick, dn.endTick);
+      foundStub = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundStub);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_build_from_session_store_visible_rows);
@@ -1098,6 +1235,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_full_overlap_hide_excludes_paint_while_visual_cache_retains_note);
   RUN_TEST(test_full_overlap_hide_excludes_paint_after_commit_rebuild_clears_focus_latch);
   RUN_TEST(test_reselect_span_matched_mover_projects_current_not_visual_cache);
+  RUN_TEST(test_contract_c9_projection_inventory_independence);
+  RUN_TEST(test_contract_c9_203805_shorten_paint_stub_inventory_masked);
   RUN_TEST(test_geometry_selection_resolves_mover_index_after_overlap_hidden);
   RUN_TEST(test_select_closest_note_snap_tie_breaks_to_first_display_order);
   RUN_TEST(test_apply_hide_through_current_state_owner);
