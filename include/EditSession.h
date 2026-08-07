@@ -13,6 +13,7 @@
 #include "NoteEditSessionUndo.h"
 #include "Utils/MemoryMonitor.h"
 #include "NoteEditFocus.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 
@@ -186,6 +187,7 @@ struct NoteEditSessionUndoStack {
 struct EditSession {
   EditSessionType sessionType = EditSessionType::Loop;
   CowLoopEventStore store;
+  NoteEditCurrentState noteEditCurrentState;
   NoteEditSessionUndoStack undoStack;
   NoteEditFocus focus;
   uint8_t editPassIndex = 0;

@@ -5,14 +5,12 @@
 
 #include <Arduino.h>
 
-#include "ClockManager.h"
-#include "DisplayManager.h"
 #include "EditManager.h"
 #include "Globals.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "TrackManager.h"
-#include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
 
 using DisplayNote = NoteUtils::DisplayNote;
@@ -37,8 +35,6 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
         return {};
     }
     const NoteEditFocus& focus = editSession.focus;
-    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
-    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIndex);
     Loop& loop = const_cast<Loop&>(trackManager.getSelectedLoop(track));
     const uint32_t playbackRevision = loop.playbackRevision;
     const uint32_t previewRevision = sessionPreviewRevision_;
@@ -52,20 +48,8 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
     }
 
     NoteUtils::DisplayNoteVec committedBase;
-    if (loop.shouldAvoidFullVisualRebuild(loopLength)) {
-        const uint32_t currentTick = clockManager.getCurrentTick();
-        const DetailedWindowContext window =
-            displayManager.resolveDetailedWindow(track, displaySlot, currentTick);
-        if (!loop.visualCache.notes.empty()) {
-            committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-        } else {
-            loop.ensureVisualCacheBuilt();
-            committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-        }
-        if (window.active) {
-            committedBase = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                committedBase, window.window, loopLength);
-        }
+    if (!loop.visualCache.notes.empty()) {
+        committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
     } else {
         loop.ensureVisualCacheBuilt();
         committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
@@ -76,7 +60,8 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
     noteEditSelectableDisplayCacheLoopLength_ = loopLength;
     noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
     noteEditSelectableDisplayCacheNotes_ = projectNoteEditDisplayNotes(
-        committedBase, track.editAwareMidiEvents(), focus, track.getMidiChannel(), loopLength);
+        committedBase, track.editAwareMidiEvents(), focus, track.getMidiChannel(), loopLength,
+        &editSession.noteEditCurrentState);
     return noteEditSelectableDisplayCacheNotes_;
 }
 
@@ -124,12 +109,19 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsFor
 
 EDIT_MANAGER_IMPL_MEM DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
-    if (isNoteEditActive() && editSession.focus.active && loopLength > 0 &&
-        isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
-                              track.getMidiChannel(), loopLength)) {
-        const NoteBaseline& last = editSession.focus.last;
-        return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
-                last.endTick};
+    if (isNoteEditActive() && editSession.focus.active && loopLength > 0) {
+        const bool driverValid = !editSession.noteEditCurrentState.empty()
+                                     ? isLiveEditDriverValidFromCurrentState(
+                                           sessionState.selection, editSession.focus,
+                                           editSession.noteEditCurrentState)
+                                     : isLiveEditDriverValid(sessionState.selection,
+                                                             editSession.focus, sessionMidiEvents(),
+                                                             track.getMidiChannel(), loopLength);
+        if (driverValid) {
+            const NoteBaseline& last = editSession.focus.last;
+            return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
+                    last.endTick};
+        }
     }
     const int idx = getSelectedNoteIdx();
     const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);

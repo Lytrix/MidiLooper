@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-029](#dec-029-noteeditcurrentstate-owns-note-edit-editable-note-state) | 2026-08-07 | NoteEditCurrentState owns NOTE_EDIT editable note state | Accepted |
 | [DEC-028](#dec-028-editsessionaction-geometry-pipeline-phase-1-native) | 2026-08-04 | EditSessionAction geometry pipeline Phase 1 native | Accepted |
 | [DEC-026](#dec-026-commit-centered-lazy-slot-load) | 2026-07-18 | Commit-centered lazy slot load (audible boot + on-demand hydrate) | Accepted |
 | [DEC-025](#dec-025-split-focus-playing-preview-pending) | 2026-07-09 | Split focus: playing / preview / pending; committed-transition invariant | Accepted |
@@ -43,7 +44,31 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-029 -->
+<!-- Append new entries below (newest first). Next ID: DEC-030 -->
+
+## DEC-029 — NoteEditCurrentState owns NOTE_EDIT editable note state
+
+**Date:** 2026-08-07  
+**Status:** Accepted  
+**OpenSpec:** [`note-edit-current-state`](../../openspec/changes/note-edit-current-state/)
+
+**Context:** Same-pitch NOTE_EDIT overlap captures (`session_20260807_021939`, `session_20260807_021022`) showed stable `NoteId` identity was correct, but current editable geometry was reconstructed from `EditSession.store`, `baselineMap`, focus fields, overlap scratch, display order, and live-store scans. Stale committed baseline geometry affected later edits; stopgap guards (`sessionMovedNoteSpans`, overlap skip guards) prevented correct current-span overlap edits.
+
+**Decision:** During NOTE_EDIT, `EditSession` owns editable note state through `NoteEditCurrentState`. `baselineMap` remains committed transaction baseline. `EditSession.store` becomes the canonical event projection of `NoteEditCurrentState` for playback preview, serialization, compatibility, and parity checks; it is not editable-state authority.
+
+**Previous owner:** Current editable NOTE_EDIT geometry was effectively owned by `EditSession.store` plus scattered reconstruction helpers.
+
+**New owner:** `NoteEditCurrentState` inside `EditSession`.
+
+**Migration strategy:** Split read/projection access from mutation APIs, add read-only current-state build/verify, prove projection parity, migrate readers, migrate writers, migrate undo/redo and commit diffs, then remove compatibility state and direct projected-store mutation.
+
+**Compatibility period:** `EditSession.store` remains projected MIDI event storage while readers/writers migrate. Legacy store-diff builders may remain as parity checks only.
+
+**Removal trigger:** Delete `sessionMovedNoteSpans`, session-moved overlap skip guards, live-store geometry authority in resolver/action builder/commit, and direct NOTE_EDIT writes through `track.editAwareMidiEvents()` after native fixtures and HITL edit retest pass.
+
+**Validation:** Native tests for 021939, 021022, repeated A/B move undo/redo commit, selection reorder, hidden/deleted/added rows, projection invariant, accessor gate, undo snapshot invariant, and commit parity; then firmware build and user-approved HITL edit retest.
+
+---
 
 ## DEC-028 — EditSessionAction geometry pipeline (Phase 1 native)
 

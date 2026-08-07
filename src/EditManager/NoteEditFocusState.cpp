@@ -4,6 +4,7 @@
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditFocusInternal.h"
+#include "NoteEditCurrentState.h"
 
 #include <vector>
 
@@ -49,6 +50,39 @@ template bool isLiveEditDriverValid<ExternalMemoryFirstAllocator<MidiEvent>>(
     const EditorSelection&, const NoteEditFocus&, const SessionMidiEventVec&, uint8_t,
     uint32_t);
 
+NOTE_EDIT_MEM bool isLiveEditDriverValidFromCurrentState(const EditorSelection& selection,
+                                                         const NoteEditFocus& focus,
+                                                         const NoteEditCurrentState& currentState) {
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return false;
+  }
+  if (!editorSelectionMatchesDriverNote(selection, focus.movingNoteId)) {
+    return false;
+  }
+  NoteBaseline current{};
+  if (!currentState.readCurrentSpan(focus.movingNoteId, current)) {
+    return false;
+  }
+  return noteBaselineMatches(current, focus.last);
+}
+
+NOTE_EDIT_MEM void syncNoteEditFocusLastFromCurrentState(NoteEditFocus& focus, NoteId primaryNote,
+                                                         const NoteEditCurrentState& currentState) {
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return;
+  }
+  if (primaryNote != kInvalidNoteId && primaryNote != focus.movingNoteId) {
+    return;
+  }
+  NoteBaseline current{};
+  if (!currentState.readCurrentSpan(focus.movingNoteId, current)) {
+    return;
+  }
+  focus.last = current;
+  focus.movingNoteRange.start = current.startTick;
+  focus.movingNoteRange.end = current.endTick;
+}
+
 NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
                                                         uint32_t selectBracketTick,
                                                         const NoteEditFocus& focus,
@@ -58,6 +92,11 @@ NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
     return true;
   }
   if (selectNoteId == kInvalidNoteId || selectNoteId != focus.movingNoteId) {
+    // session_20260807_014541: macro commit on a different note (or empty step) with stale
+    // focus.last committed mover_focus start=1296 end=1823 while note 17 lived at ~3504.
+    if (noteEditFocusHasPendingCommit(focus)) {
+      return false;
+    }
     return true;
   }
   const uint32_t storageBracketTick =

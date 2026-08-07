@@ -14,7 +14,10 @@
 #include "NoteEditSessionState.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/InternalHeapFirstAllocator.h"
+#include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
+
+class NoteEditCurrentState;
 
 template <typename T>
 using ExternalMemoryUnorderedMapAllocator = ExternalMemoryFirstAllocator<std::pair<const NoteId, T>>;
@@ -120,6 +123,9 @@ const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteI
 /// Delete authority for `changedOverlapNoteIds` — see the member comment on `NoteEditFocus`.
 bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
 void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
+void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
+                                                 const MidiEventVec& sessionEvents,
+                                                 uint8_t channel, uint32_t loopLength);
 void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, NoteId noteId,
                                         const NoteBaseline& baseline);
@@ -215,6 +221,13 @@ bool isLiveEditDriverValid(const EditorSelection& selection, const NoteEditFocus
                            const std::vector<MidiEvent, Alloc>& sessionStore, uint8_t channel,
                            uint32_t loopLength);
 
+NOTE_EDIT_MEM bool isLiveEditDriverValidFromCurrentState(const EditorSelection& selection,
+                                                         const NoteEditFocus& focus,
+                                                         const NoteEditCurrentState& currentState);
+
+NOTE_EDIT_MEM void syncNoteEditFocusLastFromCurrentState(NoteEditFocus& focus, NoteId primaryNote,
+                                                         const NoteEditCurrentState& currentState);
+
 /// True when fader-1 select may macro-commit pending mover geometry for **selectNoteId** at
 /// **selectBracketTick**. Re-selecting the same **NoteId** at a bracket that disagrees with
 /// **focus.last** must not commit (stale mover_focus row — RC7b).
@@ -253,6 +266,11 @@ EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel
                                      const MidiEventVec* sessionStoreEvents = nullptr,
                                      uint32_t loopLength = 0);
 
+/// Macro commit rows from current state compared to committed baseline (`baselineMap`).
+EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,
+                                            const NoteEditCurrentState& currentState,
+                                            uint8_t channel, uint32_t loopLength);
+
 /// NoteIds whose geometry is read from the live session store during NOTE_EDIT display projection.
 NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus);
 
@@ -261,7 +279,7 @@ template <typename Alloc>
 NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     const NoteUtils::DisplayNoteVec& committedBaseNotes,
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
-    uint8_t channel, uint32_t loopLength);
+    uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState = nullptr);
 
 /// Test/back-compat path — uses session-store reconstruction as the committed base.
 template <typename Alloc>

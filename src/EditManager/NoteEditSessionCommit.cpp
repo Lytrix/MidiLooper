@@ -11,6 +11,7 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "NoteEditFocus.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
 #include "TrackManager.h"
@@ -29,6 +30,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         return;
     }
 
+    // NOTE_EDIT_PROJECTED_STORE_COMPAT: commit normalizes projected flat until tasks.md §7.1.
     MidiEventVec& sessionStoreEvents = sessionMidiEvents();
     const bool hasPendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
     const bool hasPendingApplyOwnedRows = !editSession.applyOwnedEditPassRows.empty();
@@ -54,6 +56,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
     LoopTickNormalize::normalizeAll(sessionStoreEvents, loopLength);
+    if (!editSession.noteEditCurrentState.empty()) {
+        editSession.noteEditCurrentState.syncProjectingRowsFromSessionStore(sessionStoreEvents,
+                                                                            channel);
+    }
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
 
@@ -83,8 +89,18 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
 #if defined(SESSION_CAPTURE)
     const EditPassVec applyOwnedRows = editSession.applyOwnedEditPassRows;
 #endif
-    EditPassVec rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents,
-                                                loopLength);
+    EditPassVec rows;
+    if (!editSession.noteEditCurrentState.empty()) {
+        rows = buildCommitRowsFromCurrentState(editSession.focus, editSession.noteEditCurrentState,
+                                               channel, loopLength);
+#if defined(SESSION_CAPTURE)
+        const EditPassVec parityRows =
+            buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength);
+        logApplyOwnedCommitParity(rows, parityRows);
+#endif
+    } else {
+        rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength);
+    }
     editSession.applyOwnedEditPassRows.clear();
 #if defined(SESSION_CAPTURE)
     if (!applyOwnedRows.empty()) {

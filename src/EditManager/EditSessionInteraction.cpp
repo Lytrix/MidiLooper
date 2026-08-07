@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "EditSessionLiveStoreSpan.h"
+#include "NoteEditCurrentState.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -135,7 +136,8 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
                                                       const MidiEventVec& liveStore,
                                                       const NoteIdList& changedOverlapNoteIds,
                                                       NoteId movingNoteId,
-                                                      std::optional<uint8_t> overlapPitchLane) {
+                                                      std::optional<uint8_t> overlapPitchLane,
+                                                      const NoteEditCurrentState* currentState) {
   NoteIdList scope;
   const auto inLane = [&](uint8_t pitch) {
     return !overlapPitchLane.has_value() || pitch == overlapPitchLane.value();
@@ -159,14 +161,20 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
   for (const auto& [noteId, baseline] : transactionBaseline) {
     addToScope(noteId, baseline.pitch);
   }
-  // Scope membership is NoteId + pitch lane only. The track's output channel is not an identity
-  // key: materialized record/overdub passes carry the channel played at record time, so gating on
-  // it hid every same-pitch overlap from analyze (session_20260805_030517: candidates=0).
-  for (const MidiEvent& evt : liveStore) {
-    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
-      continue;
+  if (currentState != nullptr) {
+    for (const auto& [noteId, row] : currentState->rows()) {
+      addToScope(noteId, row.currentSpan.pitch);
     }
-    addToScope(evt.noteId, evt.data.noteData.note);
+  } else {
+    // Scope membership is NoteId + pitch lane only. The track's output channel is not an identity
+    // key: materialized record/overdub passes carry the channel played at record time, so gating on
+    // it hid every same-pitch overlap from analyze (session_20260805_030517: candidates=0).
+    for (const MidiEvent& evt : liveStore) {
+      if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+        continue;
+      }
+      addToScope(evt.noteId, evt.data.noteData.note);
+    }
   }
   sortNoteIdVector(scope);
   return scope;
@@ -174,7 +182,8 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
 
 NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
     const EditorSelection& selection, const BaselineMap& transactionBaseline,
-    const NoteIdList& evaluationScope, NoteId movingNoteId, uint32_t loopLength) {
+    const NoteIdList& evaluationScope, NoteId movingNoteId, uint32_t loopLength,
+    int32_t originTick) {
   BaselineMap projected;
   for (const auto& [noteId, baseline] : transactionBaseline) {
     if (noteId != movingNoteId &&
@@ -183,7 +192,7 @@ NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
       continue;
     }
     projected[noteId] =
-        projectNoteBaselineForEditAnalysis(selection, baseline, noteId, loopLength);
+        projectNoteBaselineForEditAnalysis(selection, baseline, noteId, loopLength, originTick);
   }
   return projected;
 }
@@ -191,7 +200,8 @@ NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
 NOTE_EDIT_MEM void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& focus,
                                                               const NoteIdList& evaluationScope,
                                                               const MidiEventVec& liveStore,
-                                                              uint8_t channel) {
+                                                              uint8_t channel,
+                                                              const NoteEditCurrentState* currentState) {
   if (!focus.active) {
     return;
   }
@@ -202,9 +212,13 @@ NOTE_EDIT_MEM void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& foc
     if (focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
       return;
     }
-    NoteBaseline live{};
-    if (readLiveLinearSpan(liveStore, noteId, channel, live)) {
-      focus.baselineMap[noteId] = live;
+    NoteBaseline span{};
+    if (currentState != nullptr && currentState->readCurrentSpan(noteId, span)) {
+      focus.baselineMap[noteId] = span;
+      return;
+    }
+    if (readLiveLinearSpan(liveStore, noteId, channel, span)) {
+      focus.baselineMap[noteId] = span;
     }
   };
   for (NoteId noteId : evaluationScope) {
@@ -231,7 +245,14 @@ determineEligiblePairs(const EditorSelection& selection,
         continue;
       }
       if (isIntraSelectionPair(causingNoteId, targetNoteId, selection)) {
-        continue;
+        // Co-moving selected siblings are not overlap targets; stationary selected notes still are
+        // (session_20260807_111955: coarse fader moves focus.last only).
+        const bool targetCoMoving =
+            std::find(changedCausingNoteIds.begin(), changedCausingNoteIds.end(),
+                      targetNoteId) != changedCausingNoteIds.end();
+        if (targetCoMoving) {
+          continue;
+        }
       }
       pairs.push_back(CausingTargetPair{causingNoteId, targetNoteId});
     }
@@ -280,6 +301,41 @@ NOTE_EDIT_MEM InteractionType classifyEditSessionInteraction(uint32_t causingSta
   }
 
   return InteractionType::OverlapNoteOff;
+}
+
+NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
+    const BaselineMap& storageBaseline, NoteId movingNoteId, const MidiEventVec& liveStore,
+    uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState) {
+  BaselineMap analysis = storageBaseline;
+  for (const auto& [noteId, baseline] : storageBaseline) {
+    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+      continue;
+    }
+    if (currentState != nullptr) {
+      NoteBaseline current{};
+      if (!currentState->readCurrentSpan(noteId, current)) {
+        continue;
+      }
+      if (current.startTick != baseline.startTick || current.endTick != baseline.endTick ||
+          current.pitch != baseline.pitch) {
+        analysis[noteId] = current;
+      }
+      continue;
+    }
+    NoteBaseline live{};
+    if (!readLiveLinearSpan(liveStore, noteId, channel, live)) {
+      continue;
+    }
+    if (live.startTick != baseline.startTick && live.endTick == baseline.endTick &&
+        live.startTick > baseline.startTick) {
+      continue;
+    }
+    if (live.startTick != baseline.startTick || live.endTick != baseline.endTick ||
+        live.pitch != baseline.pitch) {
+      analysis[noteId] = live;
+    }
+  }
+  return analysis;
 }
 
 NOTE_EDIT_MEM std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
@@ -362,14 +418,10 @@ NOTE_EDIT_MEM uint32_t computeShortenedEndTick(const EditSessionInteraction& int
 
 NOTE_EDIT_MEM NoteBaseline projectNoteBaselineForEditAnalysis(const EditorSelection& selection,
                                                 const NoteBaseline& baseline, NoteId noteId,
-                                                uint32_t loopLength) {
+                                                uint32_t loopLength, int32_t originTick) {
   const TickInterval window = IntervalProjection::makeFullLoopEditAnalysisWindow(loopLength);
-  const int32_t primaryStart =
-      selection.primaryNote == noteId
-          ? static_cast<int32_t>(baseline.startTick)
-          : static_cast<int32_t>(baseline.startTick);
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
-      selection, loopLength, window, primaryStart);
+      selection, loopLength, window, originTick);
   CanonicalNoteSpan span{};
   span.noteId = noteId;
   span.interval = TickInterval{static_cast<int32_t>(baseline.startTick),

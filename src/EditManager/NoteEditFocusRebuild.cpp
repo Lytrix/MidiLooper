@@ -7,6 +7,7 @@
 
 #include "EditManager.h"
 #include "Globals.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "TrackManager.h"
@@ -24,8 +25,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditFocusForLiveEdit(Track& tr
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const bool driverValid =
         editSession.focus.active &&
-        isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
-                              channel, loopLength);
+        isLiveEditDriverValidForTrack(track);
     if (driverValid) {
         return;
     }
@@ -60,15 +60,59 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
     const uint8_t channel = track.getMidiChannel();
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
 
+    NoteIdList preservedChangedOverlapNoteIds;
+    BaselineMap preservedOverlapBaselines;
+    std::unordered_map<NoteId, OverlapNote, NoteIdHash> preservedOverlapNotes;
+    const bool pendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
+    const bool pendingOverlapDiff =
+        noteEditFocusHasPendingBaselineMapDiff(editSession.focus, sessionMidiEvents(), channel,
+                                             loopLength);
+    if (selectedNoteIdx < 0 && !pendingMoverCommit && !pendingOverlapDiff) {
+        preservedChangedOverlapNoteIds = editSession.focus.changedOverlapNoteIds;
+        for (NoteId noteId : preservedChangedOverlapNoteIds) {
+            const auto baselineIt = editSession.focus.baselineMap.find(noteId);
+            if (baselineIt != editSession.focus.baselineMap.end()) {
+                preservedOverlapBaselines[noteId] = baselineIt->second;
+            }
+            const auto scratchIt = editSession.focus.overlapNotes.find(noteId);
+            if (scratchIt != editSession.focus.overlapNotes.end()) {
+                preservedOverlapNotes[noteId] = scratchIt->second;
+            }
+        }
+    }
+
     // commitBaseline / baselineMap come from committed passes materialize, not the live
     // session preview — otherwise a pending length preview (e.g. end 680) becomes baseline
     // on fader-1 reselect and the next ChangeLength commit is a no-op on rematerialize.
     MidiEventVec loopMidiEventsFromPasses;
     loop.passes.materializeToEventVector(loopMidiEventsFromPasses, loopLength);
+    if (selectedNoteIdx < 0 && (pendingMoverCommit || pendingOverlapDiff)) {
+        // Session store owns live geometry — do not clear focus from passes materialize or
+        // preserve stale overlap closure. Clearing focus.active makes projection return
+        // committed passes only (session_20260807_015614: mover at 1248 reverted to 3600).
+        populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
+                                          sessionMidiEvents(), channel, loopLength);
+        reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionMidiEvents(), channel,
+                                                    loopLength);
+        editSession.focus.active = true;
+        return;
+    }
     rebuildNoteEditFocusFromStore(editSession.focus, loopMidiEventsFromPasses, channel, loopLength,
                                   selectedNoteIdx);
+    if (selectedNoteIdx < 0) {
+        for (const auto& [noteId, baseline] : preservedOverlapBaselines) {
+            editSession.focus.baselineMap[noteId] = baseline;
+        }
+        editSession.focus.changedOverlapNoteIds = std::move(preservedChangedOverlapNoteIds);
+        for (auto& [noteId, entry] : preservedOverlapNotes) {
+            editSession.focus.overlapNotes[noteId] = std::move(entry);
+        }
+        return;
+    }
     populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
                                       sessionMidiEvents(), channel, loopLength);
+    reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionMidiEvents(), channel,
+                                                loopLength);
 
     const std::vector<DisplayNote> liveNotes =
         NoteUtils::reconstructNotes(sessionMidiEvents(), loopLength, false);
@@ -142,6 +186,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
     }
     populateBaselineMapForEditClosure(editSession.focus, committedLoopEvents, sessionEvents,
                                       channel, loopLength);
+    reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionEvents, channel,
+                                                loopLength);
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
@@ -246,6 +292,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditFocusLastFromSessionStore(Tr
     }
 
     NoteEditFocus& focus = editSession.focus;
+    if (!editSession.noteEditCurrentState.empty()) {
+        syncNoteEditFocusLastFromCurrentState(focus, sessionState.selection.primaryNote,
+                                              editSession.noteEditCurrentState);
+        return;
+    }
     MidiEventVec& events = sessionMidiEvents();
     syncNoteEditFocusLinearFromSessionStore(focus, events, track.getMidiChannel(), loopLength);
 }
@@ -257,6 +308,10 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isLiveEditDriverValidForTrack(const Trac
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
         return false;
+    }
+    if (!editSession.noteEditCurrentState.empty()) {
+        return isLiveEditDriverValidFromCurrentState(sessionState.selection, editSession.focus,
+                                                     editSession.noteEditCurrentState);
     }
     return isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionMidiEvents(),
                                track.getMidiChannel(), loopLength);
@@ -270,6 +325,16 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isMacroCommitAlignedWithSelectTargetForT
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
         return true;
+    }
+    const NoteEditFocus& focus = editSession.focus;
+    if (focus.movingNoteId != kInvalidNoteId && selectNoteId != focus.movingNoteId) {
+        if (noteEditFocusHasPendingCommit(focus)) {
+            return false;
+        }
+        if (noteEditFocusHasPendingBaselineMapDiff(focus, sessionMidiEvents(),
+                                                   track.getMidiChannel(), loopLength)) {
+            return false;
+        }
     }
     const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
     return isMacroCommitAlignedWithSelectTarget(selectNoteId, selectBracketTick, editSession.focus,

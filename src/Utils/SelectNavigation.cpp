@@ -5,6 +5,7 @@
 #include "Utils/IntervalProjection.h"
 #include "NoteEditSessionState.h"
 #include <algorithm>
+#include <unordered_set>
 
 namespace SelectNavigation {
 
@@ -79,6 +80,22 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
                 return a.noteIdx < b.noteIdx;
             });
         }
+    }
+
+    std::unordered_set<uint32_t> ticksWithNotes;
+    for (const SelectNavSlot& slot : slots) {
+        if (slot.noteIdx >= 0) {
+            ticksWithNotes.insert(slot.relativeTick);
+        }
+    }
+    if (!ticksWithNotes.empty()) {
+        slots.erase(std::remove_if(slots.begin(), slots.end(),
+                                   [&](const SelectNavSlot& slot) {
+                                       return slot.noteIdx < 0 &&
+                                              ticksWithNotes.find(slot.relativeTick) !=
+                                                  ticksWithNotes.end();
+                                   }),
+                    slots.end());
     }
 
     return slots;

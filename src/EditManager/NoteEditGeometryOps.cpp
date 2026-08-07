@@ -13,6 +13,7 @@
 #include "EditManager.h"
 #include "EditPass.h"
 #include "Logger.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "NoteGeometryResolver.h"
@@ -147,6 +148,18 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::deleteSelectedNote(Track& track,
     logger.info("MIDI Encoder: Deleting note noteId=%lu pitch=%d, start=%lu, end=%lu",
                 static_cast<unsigned long>(deleteTargetNoteId), notePitch, noteStart, noteEnd);
 
+    const uint8_t channel = track.getMidiChannel();
+  NoteEditCurrentState& currentState = editSession.noteEditCurrentState;
+  if (!currentState.empty()) {
+    const NoteEditCurrentNoteState* row = currentState.find(deleteTargetNoteId);
+    if (row != nullptr && row->presence == NoteEditPresenceType::Added) {
+      currentState.removeRow(deleteTargetNoteId);
+    } else {
+      currentState.markRowDeleted(deleteTargetNoteId);
+    }
+    refreshNoteEditSessionProjection(channel);
+  } else {
+    // NOTE_EDIT_PROJECTED_STORE_COMPAT: legacy projected-store delete until open always builds current state.
     auto& midiEvents = track.editAwareMidiEvents();
     MidiEvent* noteOnEvent = nullptr;
     for (MidiEvent& e : midiEvents) {
@@ -199,6 +212,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::deleteSelectedNote(Track& track,
     }
 
     logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
+  }
 
     applyDeleteNoteOverlapRestore(track);
 

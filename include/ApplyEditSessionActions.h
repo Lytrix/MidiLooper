@@ -8,6 +8,7 @@
 #include "EditSessionAction.h"
 #include "EditPass.h"
 #include "MidiEvent.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 
 /// Edit session action apply — sole live-store writer for NOTE_EDIT geometry this tick.
@@ -15,7 +16,8 @@
 /// Caller must invoke track.invalidateCaches() after apply for playback audition refresh.
 void applyEditSessionActions(const EditSessionActions& actions, MidiEventVec& liveStore,
                              NoteEditFocus& focus, uint8_t channel, uint32_t loopLength,
-                             EditPassVec* applyOwnedRows = nullptr);
+                             EditPassVec* applyOwnedRows = nullptr,
+                             NoteEditCurrentState* currentState = nullptr);
 
 /// D10 boundary split sub-step — earlier off moves to later on tick − 1 when they share a tick.
 void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uint8_t channel);

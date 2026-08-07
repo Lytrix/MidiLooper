@@ -12,27 +12,13 @@
 #include "EditSessionInteraction.h"
 #include "EditSessionLiveStoreSpan.h"
 #include "Globals.h"
+#include "NoteEditCurrentState.h"
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
 #include "Logger.h"
 #endif
-
-namespace {
-
-NOTE_EDIT_MEM EditedGeometry projectEditedGeometryForAnalysis(const EditedGeometry& editedGeometry,
-                                                              uint32_t loopLength) {
-    EditedGeometry projected = editedGeometry;
-    for (EditedNoteSpan& causing : projected.causingSpans) {
-        causing.span =
-            projectNoteBaselineForEditAnalysis(editedGeometry.selection, causing.span, causing.noteId,
-                                               loopLength);
-    }
-    return projected;
-}
-
-}  // namespace
 
 NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     Track& track, EditManager& manager, const EditedGeometry& editedGeometry,
@@ -42,8 +28,12 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         return false;
     }
 
+    // NOTE_EDIT_PROJECTED_STORE_COMPAT: geometry pipeline mutates projected store until tasks.md §5.1.
     MidiEventVec& liveStore = track.editAwareMidiEvents();
     NoteEditFocus& focus = manager.getEditSession().focus;
+    NoteEditCurrentState& currentState = manager.getEditSession().noteEditCurrentState;
+    const NoteEditCurrentState* currentStateReader =
+        currentState.empty() ? nullptr : &currentState;
     if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
         return false;
     }
@@ -87,35 +77,44 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
 
     const NoteIdList evaluationScope =
         collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.changedOverlapNoteIds,
-                                      focus.movingNoteId, overlapPitchLane);
+                                      focus.movingNoteId, overlapPitchLane, currentStateReader);
 
-    ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel);
+    ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel,
+                                               currentStateReader);
     const BaselineMap& transactionBaselineAfterEnsure = focus.baselineMap;
 
     const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
         determineEligiblePairs(selection, changedCausingNotes, evaluationScope);
 
-    const BaselineMap projectedBaseline = projectTransactionBaselineForEvaluationScope(
-        selection, transactionBaselineAfterEnsure, evaluationScope, focus.movingNoteId, loopLength);
-    const EditedGeometry projectedEdited =
-        projectEditedGeometryForAnalysis(editedGeometry, loopLength);
+    std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> overlapPairs;
+    overlapPairs.reserve(eligiblePairs.size());
+    for (const CausingTargetPair& pair : eligiblePairs) {
+      overlapPairs.push_back(pair);
+    }
 
+    const BaselineMap analysisBaseline =
+        overlayAnalysisBaselineForSessionMovedOverlaps(transactionBaselineAfterEnsure,
+                                                       focus.movingNoteId, liveStore, channel,
+                                                       loopLength, currentStateReader);
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
         interactions =
-            analyzeEditSessionInteractions(eligiblePairs, projectedEdited, projectedBaseline);
+            analyzeEditSessionInteractions(overlapPairs, editedGeometry, analysisBaseline);
 
     const EditSessionInteractionsByTarget grouped =
         groupEditSessionInteractionsByTarget(interactions);
 
+    NoteIdList leaveRestoreTargetNoteIds;
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
         constrained = resolveAllConstrainedGeometry(
-            grouped, projectedBaseline, liveStore, channel, loopLength, noteMinLengthTicks,
-            noteMinLengthRemoveEnabled, selection, projectedEdited, focus.changedOverlapNoteIds,
-            focus);
+            grouped, analysisBaseline, transactionBaselineAfterEnsure, liveStore,
+            channel, loopLength, noteMinLengthTicks, noteMinLengthRemoveEnabled, selection,
+            editedGeometry, focus.changedOverlapNoteIds, focus, leaveRestoreTargetNoteIds,
+            currentStateReader);
 
     const EditSessionActions actions =
-        buildEditSessionActions(constrained, projectedEdited, projectedBaseline, liveStore, channel,
-                                focus, loopLength);
+        buildEditSessionActions(constrained, editedGeometry, transactionBaselineAfterEnsure,
+                                transactionBaselineAfterEnsure, leaveRestoreTargetNoteIds, liveStore,
+                                channel, focus, loopLength, currentStateReader);
 
     if (actions.empty()) {
         return false;
@@ -138,7 +137,8 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
 #endif
 
     applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
-                            &manager.getEditSession().applyOwnedEditPassRows);
+                            &manager.getEditSession().applyOwnedEditPassRows,
+                            currentStateReader);
     track.invalidateCaches(refreshPlaybackPreview);
     return true;
 }

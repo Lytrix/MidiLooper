@@ -3,6 +3,7 @@
 
 #include "NoteEditFocus.h"
 #include "NoteEditFocusInternal.h"
+#include "NoteEditCurrentState.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -18,7 +19,8 @@ template <typename Alloc>
 bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
                                    std::vector<MidiEvent, Alloc>& sessionEvents, uint8_t channel,
                                    uint32_t loopLength, uint8_t& pitch, uint8_t& velocity,
-                                   uint32_t& startTick, uint32_t& endTick) {
+                                   uint32_t& startTick, uint32_t& endTick,
+                                   const NoteEditCurrentState* currentState) {
   if (noteId == kInvalidNoteId) {
     return false;
   }
@@ -28,6 +30,20 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
     startTick = focus.last.startTick;
     endTick = focus.last.endTick;
     return true;
+  }
+  if (currentState != nullptr) {
+    NoteBaseline current{};
+    if (currentState->readCurrentSpan(noteId, current) &&
+        currentState->rowProjectsToStore(noteId)) {
+      pitch = current.pitch;
+      velocity = current.velocity;
+      startTick = current.startTick;
+      endTick = current.endTick;
+      return true;
+    }
+    if (currentState->isRowHiddenOrDeleted(noteId)) {
+      return false;
+    }
   }
   NoteBaseline live{};
   if (findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, live, UINT32_MAX, loopLength)) {
@@ -67,7 +83,7 @@ bool invalidCommittedRowSupersededByParticipant(
     uint32_t startTick = 0;
     uint32_t endTick = 0;
     if (!resolveParticipantDisplaySpan(focus, noteId, sessionEvents, channel, loopLength, pitch,
-                                       velocity, startTick, endTick)) {
+                                       velocity, startTick, endTick, nullptr)) {
       continue;
     }
     if (pitch != dn.note) {
@@ -126,7 +142,7 @@ template <typename Alloc>
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     const NoteUtils::DisplayNoteVec& committedBaseNotes,
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
-    uint8_t channel, uint32_t loopLength) {
+    uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState) {
   if (!focus.active || loopLength == 0) {
     return committedBaseNotes;
   }
@@ -137,6 +153,16 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
     if (dn.noteId != kInvalidNoteId) {
       committedIds.insert(dn.noteId);
+    }
+  }
+  if (currentState != nullptr) {
+    for (const auto& [noteId, row] : currentState->rows()) {
+      if (noteId == kInvalidNoteId || !currentState->rowProjectsToStore(noteId)) {
+        continue;
+      }
+      if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
+        participants.push_back(noteId);
+      }
     }
   }
   for (const MidiEvent& evt : sessionEvents) {
@@ -160,6 +186,10 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
   for (NoteId noteId : participants) {
     if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (currentState != nullptr && currentState->isRowHiddenOrDeleted(noteId)) {
+      hiddenParticipants.insert(noteId);
       continue;
     }
     NoteBaseline live{};
@@ -213,7 +243,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     participantDn.noteId = noteId;
     if (!resolveParticipantDisplaySpan(focus, noteId, mutableEvents, channel, loopLength,
                                        participantDn.note, participantDn.velocity,
-                                       participantDn.startTick, participantDn.endTick)) {
+                                       participantDn.startTick, participantDn.endTick,
+                                       currentState)) {
       continue;
     }
 
@@ -274,8 +305,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
 
 template NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
     const NoteUtils::DisplayNoteVec&, const MidiEventVec&, const NoteEditFocus&, uint8_t,
-    uint32_t);
+    uint32_t, const NoteEditCurrentState*);
 template NoteUtils::DisplayNoteVec
 projectNoteEditDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(
     const NoteUtils::DisplayNoteVec&, const SessionMidiEventVec&, const NoteEditFocus&, uint8_t,
-    uint32_t);
+    uint32_t, const NoteEditCurrentState*);

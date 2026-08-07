@@ -1,0 +1,292 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include <unity.h>
+#include <cstdint>
+
+#include "NoteEditCurrentState.h"
+#include "MidiEvent.h"
+#include "NoteEditFocus.h"
+#include "EditSessionAction.h"
+#include "Utils/NoteUtils.h"
+
+#include "../test_support/NoteEditFocusTestDeps.cpp"
+#include "../../src/Logger.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
+
+namespace {
+
+constexpr uint8_t kChannel = 1;
+constexpr NoteId kNoteA = 17;
+constexpr NoteId kNoteB = 25;
+
+MidiEvent noteOn(NoteId noteId, uint8_t pitch, uint32_t start, uint8_t velocity = 100) {
+  MidiEvent evt = MidiEvent::NoteOn(start, kChannel, pitch, velocity);
+  evt.noteId = noteId;
+  return evt;
+}
+
+MidiEvent noteOff(NoteId noteId, uint8_t pitch, uint32_t end) {
+  MidiEvent evt = MidiEvent::NoteOff(end, kChannel, pitch, 0);
+  evt.noteId = noteId;
+  return evt;
+}
+
+MidiEventVec makeStorePair(NoteId noteId, uint8_t pitch, uint32_t start, uint32_t end) {
+  MidiEventVec store;
+  store.push_back(noteOn(noteId, pitch, start));
+  store.push_back(noteOff(noteId, pitch, end));
+  return store;
+}
+
+}  // namespace
+
+void test_build_from_session_store_visible_rows() {
+  MidiEventVec store = makeStorePair(kNoteA, 88, 3600, 4127);
+  store.push_back(noteOn(kNoteB, 88, 1392));
+  store.push_back(noteOff(kNoteB, 88, 1919));
+
+  const NoteEditCurrentState state = NoteEditCurrentState::buildFromSessionStore(store, kChannel);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(state.size()));
+
+  const NoteEditCurrentNoteState* rowA = state.find(kNoteA);
+  TEST_ASSERT_NOT_NULL(rowA);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditPresenceType::Visible),
+                    static_cast<int>(rowA->presence));
+  TEST_ASSERT_EQUAL(3600u, rowA->currentSpan.startTick);
+  TEST_ASSERT_EQUAL(4127u, rowA->currentSpan.endTick);
+  TEST_ASSERT_EQUAL(3600u, rowA->committedSpan.startTick);
+
+  const NoteEditCurrentNoteState* rowB = state.find(kNoteB);
+  TEST_ASSERT_NOT_NULL(rowB);
+  TEST_ASSERT_EQUAL(1392u, rowB->currentSpan.startTick);
+  TEST_ASSERT_EQUAL(1919u, rowB->currentSpan.endTick);
+}
+
+void test_projection_visible_and_added_rows() {
+  NoteEditCurrentState state;
+  state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 1392, 1919},
+                  NoteEditPresenceType::Visible);
+  state.upsertRow(kNoteB, {60, 90, 100, 200}, {60, 90, 100, 200},
+                  NoteEditPresenceType::Added);
+
+  MidiEventVec store;
+  state.projectToSessionStore(store, kChannel);
+  TEST_ASSERT_EQUAL(4, static_cast<int>(store.size()));
+
+  const NoteEditCurrentStateVerifyResult projection = state.verifyProjection(store, kChannel);
+  TEST_ASSERT_TRUE(projection.passed);
+}
+
+void test_hidden_and_deleted_rows_do_not_project() {
+  NoteEditCurrentState state;
+  state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 3600, 4127},
+                  NoteEditPresenceType::Hidden);
+  state.upsertRow(kNoteB, {60, 90, 100, 200}, {60, 90, 100, 200},
+                  NoteEditPresenceType::Deleted);
+
+  MidiEventVec store;
+  state.projectToSessionStore(store, kChannel);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(store.size()));
+
+  const NoteEditCurrentStateVerifyResult projection = state.verifyProjection(store, kChannel);
+  TEST_ASSERT_TRUE(projection.passed);
+  TEST_ASSERT_FALSE(projection.hiddenOrDeletedProjected);
+}
+
+void test_build_then_project_round_trip_parity() {
+  const MidiEventVec source = makeStorePair(kNoteA, 88, 3600, 4127);
+  NoteEditCurrentState state = NoteEditCurrentState::buildFromSessionStore(source, kChannel);
+
+  MidiEventVec projected;
+  state.projectToSessionStore(projected, kChannel);
+
+  const NoteEditCurrentStateVerifyResult projection = state.verifyProjection(projected, kChannel);
+  TEST_ASSERT_TRUE(projection.passed);
+  TEST_ASSERT_FALSE(projection.visibleProjectionMismatch);
+}
+
+void test_verify_selected_note_exists() {
+  NoteEditCurrentState state;
+  state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 3600, 4127},
+                  NoteEditPresenceType::Visible);
+
+  const NoteEditCurrentStateVerifyResult ok = state.verifyInvariants(kNoteA);
+  TEST_ASSERT_TRUE(ok.passed);
+
+  const NoteEditCurrentStateVerifyResult missing = state.verifyInvariants(kNoteB);
+  TEST_ASSERT_FALSE(missing.passed);
+  TEST_ASSERT_TRUE(missing.selectedNoteMissing);
+}
+
+void test_projection_owner_refresh_restores_parity() {
+  NoteEditCurrentState state;
+  state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 1392, 1919},
+                  NoteEditPresenceType::Visible);
+
+  MidiEventVec projection;
+  state.projectToSessionStore(projection, kChannel);
+
+  const NoteEditCurrentStateVerifyResult projectionOk = state.verifyProjection(projection, kChannel);
+  TEST_ASSERT_TRUE(projectionOk.passed);
+}
+
+void test_compat_direct_store_mutation_breaks_projection_parity() {
+  MidiEventVec store = makeStorePair(kNoteA, 88, 3600, 4127);
+  const NoteEditCurrentState state = NoteEditCurrentState::buildFromSessionStore(store, kChannel);
+
+  store[0].tick = 9999u;
+  const NoteEditCurrentStateVerifyResult broken = state.verifyProjection(store, kChannel);
+  TEST_ASSERT_FALSE(broken.passed);
+  TEST_ASSERT_TRUE(broken.visibleProjectionMismatch);
+}
+
+void test_projection_owner_path_after_current_state_edit() {
+  NoteEditCurrentState state =
+      NoteEditCurrentState::buildFromSessionStore(makeStorePair(kNoteA, 88, 3600, 4127), kChannel);
+  state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 1392, 1919},
+                  NoteEditPresenceType::Visible);
+
+  MidiEventVec projection;
+  state.projectToSessionStore(projection, kChannel);
+  const NoteEditCurrentStateVerifyResult ok = state.verifyProjection(projection, kChannel);
+  TEST_ASSERT_TRUE(ok.passed);
+  TEST_ASSERT_EQUAL(1392u, projection[0].tick);
+}
+
+void test_display_projection_same_pitch_reorder_uses_current_span() {
+  // session_20260807_021939: note 17 at current 1392 appears before note 25 at 3504 after reorder.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kPriorId = 17;
+  constexpr NoteId kMoverId = 25;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kPriorId, {kPitch, 100, 3600, 4127}, {kPitch, 100, 1392, 1919},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, {kPitch, 100, 3504, 4031}, {kPitch, 100, 3504, 4031},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kMoverId, kPitch, 100, 3504, 4031});
+  committedBase.push_back({kPriorId, kPitch, 100, 3600, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 3504, 4031};
+  focus.commitBaseline = focus.last;
+  focus.baselineMap[kPriorId] = {kPitch, 100, 3600, 4127};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kPriorId, projected[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1392u, projected[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(3504u, projected[1].startTick);
+}
+
+void test_sync_focus_last_from_current_state() {
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 1392, 1919},
+                         NoteEditPresenceType::Visible);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kNoteA;
+  focus.last = {88, 100, 3600, 4127};
+  focus.movingNoteRange = {3600, 4127};
+
+  syncNoteEditFocusLastFromCurrentState(focus, kNoteA, currentState);
+  TEST_ASSERT_EQUAL_UINT32(1392u, focus.last.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1919u, focus.last.endTick);
+  TEST_ASSERT_EQUAL_UINT32(1392u, focus.movingNoteRange.start);
+}
+
+void test_apply_hide_through_current_state_owner() {
+  NoteEditCurrentState state;
+  state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 3600, 4127},
+                  NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kNoteA;
+  hide.startTick = 3600;
+  hide.endTick = 4127;
+  hide.pitch = 88;
+  state.applyEditSessionAction(hide);
+
+  TEST_ASSERT_TRUE(state.isRowHiddenOrDeleted(kNoteA));
+  MidiEventVec store;
+  state.projectToSessionStore(store, kChannel);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(store.size()));
+}
+
+void test_mark_deleted_and_remove_added_row() {
+  NoteEditCurrentState state;
+  state.upsertRow(kNoteA, {60, 90, 100, 200}, {60, 90, 100, 200}, NoteEditPresenceType::Visible);
+  state.upsertRow(kNoteB, {61, 90, 300, 400}, {61, 90, 300, 400}, NoteEditPresenceType::Added);
+
+  state.markRowDeleted(kNoteA);
+  TEST_ASSERT_TRUE(state.isRowHiddenOrDeleted(kNoteA));
+
+  state.removeRow(kNoteB);
+  TEST_ASSERT_FALSE(state.hasRow(kNoteB));
+}
+
+void test_commit_rows_from_current_state_overlap_shorten() {
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 17;
+  constexpr NoteId kMoverId = 25;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {88, 100, 3600, 4127};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {88, 100, 3600, 4127};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  NoteEditCurrentState state;
+  state.upsertRow(kMoverId, focus.commitBaseline, focus.last, NoteEditPresenceType::Visible);
+  state.upsertRow(kOverlapId, focus.baselineMap[kOverlapId], {88, 100, 1392, 1919},
+                  NoteEditPresenceType::Visible);
+
+  const EditPassVec rows =
+      buildCommitRowsFromCurrentState(focus, state, kChannel, kLoopLength);
+  bool foundOverlapMove = false;
+  for (const EditPass& row : rows) {
+    if (row.targetNoteId == kOverlapId && row.actionType == EditActionType::Update &&
+        row.propertyType == EditPropertyType::NoteRange) {
+      TEST_ASSERT_EQUAL_UINT32(1392u, row.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1919u, row.endTick);
+      foundOverlapMove = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundOverlapMove);
+}
+
+int main(int argc, char** argv) {
+  UNITY_BEGIN();
+  RUN_TEST(test_build_from_session_store_visible_rows);
+  RUN_TEST(test_projection_visible_and_added_rows);
+  RUN_TEST(test_hidden_and_deleted_rows_do_not_project);
+  RUN_TEST(test_build_then_project_round_trip_parity);
+  RUN_TEST(test_verify_selected_note_exists);
+  RUN_TEST(test_projection_owner_refresh_restores_parity);
+  RUN_TEST(test_compat_direct_store_mutation_breaks_projection_parity);
+  RUN_TEST(test_projection_owner_path_after_current_state_edit);
+  RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
+  RUN_TEST(test_sync_focus_last_from_current_state);
+  RUN_TEST(test_apply_hide_through_current_state_owner);
+  RUN_TEST(test_mark_deleted_and_remove_added_row);
+  RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
+  return UNITY_END();
+}

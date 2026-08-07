@@ -38,10 +38,10 @@ public:
     /// Creates a default 32nd note at tick and returns its {noteOn, noteOff} events so
     /// callers can record an exact AddNote edit (the buffer is sorted, so the created
     /// events are not necessarily the last two entries).
-    static std::array<MidiEvent, 2> createNoteAtTick(Track& track, uint32_t tick);
+    static std::array<MidiEvent, 2> createNoteAtTick(Track& track, EditManager& manager, uint32_t tick);
 
 private:
-    std::array<MidiEvent, 2> createDefaultNote(Track& track, uint32_t tick) const;
+    std::array<MidiEvent, 2> createDefaultNote(Track& track, EditManager& manager, uint32_t tick) const;
     
     // Track MIDI events count to detect new notes during overdubbing
     size_t lastMidiEventCount = 0;

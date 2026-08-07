@@ -167,6 +167,29 @@ void test_loop_start_offset_no_phantom_slot_at_selected_tick() {
     TEST_ASSERT_EQUAL(displayStart, slots[static_cast<size_t>(slotIdx)].relativeTick);
 }
 
+void test_build_select_slots_no_empty_duplicate_at_note_tick() {
+    const uint32_t loopLength = 5376;
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({1, 60, 100, 720, 768});
+    const auto slots =
+        SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, 720, true);
+
+    bool hasNote720 = false;
+    bool hasEmpty720 = false;
+    for (const SelectNavigation::SelectNavSlot& slot : slots) {
+        if (slot.relativeTick != 720) {
+            continue;
+        }
+        if (slot.noteIdx >= 0) {
+            hasNote720 = true;
+        } else {
+            hasEmpty720 = true;
+        }
+    }
+    TEST_ASSERT_TRUE(hasNote720);
+    TEST_ASSERT_FALSE(hasEmpty720);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -177,5 +200,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_loop_start_offset_maps_display_bracket_to_note);
     RUN_TEST(test_loop_start_offset_maps_first_slot_to_storage_tick);
     RUN_TEST(test_loop_start_offset_no_phantom_slot_at_selected_tick);
+    RUN_TEST(test_build_select_slots_no_empty_duplicate_at_note_tick);
     return UNITY_END();
 }

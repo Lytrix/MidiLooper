@@ -8,6 +8,7 @@
 #include "ApplyOwnedEditPassRows.h"
 #include "EditSessionLiveStoreSpan.h"
 #include "EditSessionStoreInvariant.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "Utils/NoteEditMem.h"
 
@@ -36,6 +37,55 @@ NOTE_EDIT_MEM void recordOverlapGeometryScratch(NoteEditFocus& focus, NoteId not
     entry.shortenedEndTick = live.endTick;
   }
   entry.state = state;
+}
+
+NOTE_EDIT_MEM void recordOverlapGeometryScratchFromCurrentState(NoteEditFocus& focus, NoteId noteId,
+                                                                const NoteEditCurrentState& currentState,
+                                                                OverlapNoteStoreState state) {
+  if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+    return;
+  }
+  const auto mapIt = focus.baselineMap.find(noteId);
+  if (mapIt == focus.baselineMap.end()) {
+    return;
+  }
+
+  OverlapNote& entry = focus.overlapNotes[noteId];
+  entry.noteId = noteId;
+  if (entry.baseline.endTick <= entry.baseline.startTick) {
+    entry.baseline = mapIt->second;
+  }
+
+  NoteBaseline current{};
+  if (currentState.readCurrentSpan(noteId, current)) {
+    entry.baseline = current;
+    entry.shortenedEndTick = current.endTick;
+  }
+  entry.state = state;
+}
+
+NOTE_EDIT_MEM void applyFocusSideEffectsForCurrentStateAction(const EditSessionAction& action,
+                                                              NoteEditFocus& focus,
+                                                              uint32_t loopLength) {
+  if (!focus.active || action.targetNoteId == kInvalidNoteId) {
+    return;
+  }
+  if (action.targetNoteId == focus.movingNoteId) {
+    switch (action.type) {
+      case EditSessionActionType::MoveNote:
+        noteEditFocusApplyMoveEnd(focus, action.startTick, action.endTick);
+        break;
+      case EditSessionActionType::ChangeLength:
+        noteEditFocusApplyLengthEnd(focus, action.endTick);
+        break;
+      case EditSessionActionType::ChangePitch:
+        noteEditFocusApplyPitch(focus, action.pitch, action.startTick, action.endTick, loopLength);
+        break;
+      default:
+        break;
+    }
+    return;
+  }
 }
 
 NOTE_EDIT_MEM MidiEvent* findNoteOnByNoteId(MidiEventVec& liveStore, NoteId noteId,
@@ -495,8 +545,12 @@ NOTE_EDIT_MEM void applyChangePitch(const EditSessionAction& action, MidiEventVe
 }
 
 NOTE_EDIT_MEM void syncFocusAfterApply(NoteEditFocus& focus, MidiEventVec& liveStore, uint8_t channel,
-                         uint32_t loopLength) {
+                         uint32_t loopLength, const NoteEditCurrentState* currentState) {
   if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    return;
+  }
+  if (currentState != nullptr && !currentState->empty()) {
+    syncNoteEditFocusLastFromCurrentState(focus, focus.movingNoteId, *currentState);
     return;
   }
   syncNoteEditFocusLinearFromSessionStore(focus, liveStore, channel, loopLength);
@@ -536,7 +590,12 @@ NOTE_EDIT_MEM void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uin
 
 NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, MidiEventVec& liveStore,
                              NoteEditFocus& focus, uint8_t channel, uint32_t loopLength,
-                             EditPassVec* applyOwnedRows) {
+                             EditPassVec* applyOwnedRows, NoteEditCurrentState* currentState) {
+  const bool useCurrentState = currentState != nullptr;
+  if (useCurrentState && currentState->empty()) {
+    *currentState = NoteEditCurrentState::buildFromSessionStore(liveStore, channel);
+  }
+
   for (const EditSessionAction& action : actions) {
     // Geometry actions are the only writers of changedOverlapNoteIds. Membership is what
     // authorises a pre-commit Delete row, so a baseline lookup miss can never remove a note.
@@ -546,39 +605,89 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
         case EditSessionActionType::HideNote:
           recordChangedOverlapNote(focus, action.targetNoteId);
           break;
-        case EditSessionActionType::RestoreNote:
-          forgetChangedOverlapNote(focus, action.targetNoteId);
-          break;
         default:
           break;
       }
     }
-    switch (action.type) {
-      case EditSessionActionType::RestoreNote:
-        applyRestoreNote(action, liveStore, focus, channel, loopLength);
-        break;
-      case EditSessionActionType::ShortenNote:
-        applyShortenNote(action, liveStore, focus, channel, loopLength);
-        break;
-      case EditSessionActionType::HideNote:
-        applyHideNote(action, liveStore, focus, channel, loopLength);
-        break;
-      case EditSessionActionType::MoveNote:
-        applyMoveNote(action, liveStore, focus, channel, loopLength);
-        break;
-      case EditSessionActionType::ChangeLength:
-        applyChangeLength(action, liveStore, focus, channel, loopLength);
-        break;
-      case EditSessionActionType::ChangePitch:
-        applyChangePitch(action, liveStore, focus, channel, loopLength);
-        break;
+    if (useCurrentState) {
+      currentState->applyEditSessionAction(action);
+      applyFocusSideEffectsForCurrentStateAction(action, focus, loopLength);
+      if (action.targetNoteId != kInvalidNoteId && action.targetNoteId != focus.movingNoteId) {
+        switch (action.type) {
+          case EditSessionActionType::ShortenNote:
+            recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
+                                                         OverlapNoteStoreState::Shortened);
+            break;
+          case EditSessionActionType::HideNote:
+            recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
+                                                         OverlapNoteStoreState::Hidden);
+            break;
+          case EditSessionActionType::MoveNote:
+            recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
+                                                         OverlapNoteStoreState::Shortened);
+            break;
+          case EditSessionActionType::RestoreNote:
+            recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
+                                                         OverlapNoteStoreState::Visible);
+            break;
+          default:
+            break;
+        }
+      }
+      if (action.type == EditSessionActionType::RestoreNote &&
+          action.targetNoteId != kInvalidNoteId && action.targetNoteId != focus.movingNoteId) {
+        const auto baselineIt = focus.baselineMap.find(action.targetNoteId);
+        const NoteEditCurrentNoteState* row = currentState->find(action.targetNoteId);
+        if (baselineIt != focus.baselineMap.end() && row != nullptr &&
+            row->presence == NoteEditPresenceType::Visible &&
+            row->currentSpan.pitch == baselineIt->second.pitch &&
+            row->currentSpan.startTick == baselineIt->second.startTick &&
+            row->currentSpan.endTick == baselineIt->second.endTick) {
+          forgetChangedOverlapNote(focus, action.targetNoteId);
+          focus.overlapNotes.erase(action.targetNoteId);
+        }
+      }
+    } else {
+      switch (action.type) {
+        case EditSessionActionType::RestoreNote:
+          applyRestoreNote(action, liveStore, focus, channel, loopLength);
+          if (action.targetNoteId != kInvalidNoteId && action.targetNoteId != focus.movingNoteId) {
+            const auto baselineIt = focus.baselineMap.find(action.targetNoteId);
+            if (baselineIt != focus.baselineMap.end() &&
+                action.pitch == baselineIt->second.pitch &&
+                action.startTick == baselineIt->second.startTick &&
+                action.endTick == baselineIt->second.endTick) {
+              forgetChangedOverlapNote(focus, action.targetNoteId);
+            }
+          }
+          break;
+        case EditSessionActionType::ShortenNote:
+          applyShortenNote(action, liveStore, focus, channel, loopLength);
+          break;
+        case EditSessionActionType::HideNote:
+          applyHideNote(action, liveStore, focus, channel, loopLength);
+          break;
+        case EditSessionActionType::MoveNote:
+          applyMoveNote(action, liveStore, focus, channel, loopLength);
+          break;
+        case EditSessionActionType::ChangeLength:
+          applyChangeLength(action, liveStore, focus, channel, loopLength);
+          break;
+        case EditSessionActionType::ChangePitch:
+          applyChangePitch(action, liveStore, focus, channel, loopLength);
+          break;
+      }
     }
     if (applyOwnedRows != nullptr) {
       recordApplyOwnedEditPassRow(*applyOwnedRows, action, focus);
     }
   }
 
+  if (useCurrentState) {
+    currentState->projectToSessionStore(liveStore, channel);
+  }
+
   applyBoundarySplitForEditSession(liveStore, channel);
   enforceEditSessionStoreInvariant(liveStore, focus, channel, loopLength);
-  syncFocusAfterApply(focus, liveStore, channel, loopLength);
+  syncFocusAfterApply(focus, liveStore, channel, loopLength, useCurrentState ? currentState : nullptr);
 }

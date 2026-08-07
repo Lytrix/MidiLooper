@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-06 (firmware ownership review closed)
+Last updated: 2026-08-07 (note-edit-current-state preflight)
 
 ---
 
 ## Current branch
 
-**Active work:** Confirm next slice — HITL refactor (layered **`base`**), persistence/overlay, or HITL CLI Phase 3 — see [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** **note-edit-current-state** OpenSpec — ownership transfer preflight complete; section 2 foundation next. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
@@ -67,6 +67,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`note-edit-current-state`** | **Active** — NoteEditCurrentState ownership transfer; preflight + DEC-029 done; foundation next |
 | **`hitl-cli-rebuild`** | **Phase 1 done** — `foundation_runner`, `layered_registry`, actions/flows/protocol; Phase 2 UIP gate |
 | **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
