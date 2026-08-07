@@ -292,6 +292,10 @@ NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   return projectNoteEditDisplayNotes(committedBase, sessionEvents, focus, channel, loopLength);
 }
 
+/// Exclude display-only rows (Hidden/Deleted leave-restore paint) from selectable inventory.
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
+    const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState);
+
 /// NoteIds for micro normalize + full-loop transaction baseline (mover, overlap, all live notes).
 template <typename Alloc>
 std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,

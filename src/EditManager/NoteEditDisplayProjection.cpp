@@ -60,8 +60,10 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
     noteEditSelectableDisplayCacheLoopLength_ = loopLength;
     noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
-    noteEditSelectableDisplayCacheNotes_ = projectNoteEditDisplayNotes(
-        committedBase, track.editAwareMidiEvents(), focus, track.getMidiChannel(), loopLength,
+    noteEditSelectableDisplayCacheNotes_ = filterProjectingSelectableDisplayNotes(
+        projectNoteEditDisplayNotes(committedBase, track.editAwareMidiEvents(), focus,
+                                    track.getMidiChannel(), loopLength,
+                                    &editSession.noteEditCurrentState),
         &editSession.noteEditCurrentState);
     return noteEditSelectableDisplayCacheNotes_;
 }
