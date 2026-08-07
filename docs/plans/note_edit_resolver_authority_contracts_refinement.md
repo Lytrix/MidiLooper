@@ -262,6 +262,8 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 
 **HITL `session_20260807_201057` (post-(3) syncCommittedSpan)** — handoff note 9 @1344; leave-restore @1344 (not 2208); no parity mismatches; ShortenNote chains on overlap.
 
+**HITL `session_20260807_202538` (post paint/inventory split)** — ShortenNote chains OK; L→R still hidden: first overlap frame emits **HideNote** full baseline then Shorten on **Hidden** row (presence stayed Hidden). R→L shorten paint OK. Re-entry **HideNote** reset `currentSpan` to full length. Fixed: Shorten promotes Hidden→Visible shortened; builder skips Hide when closure active + already shortened; leave-restore paints committed when mover left overlap zone.
+
 **HITL `session_20260807_195514` (post-(2) firmware)** — vs `193632`:
 
 | Check | `193632` | `195514` |

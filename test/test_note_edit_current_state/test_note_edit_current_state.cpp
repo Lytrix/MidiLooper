@@ -738,6 +738,36 @@ void test_projected_paint_includes_shortened_overlap_inventory_excludes() {
   TEST_ASSERT_TRUE(foundShortenedStub);
 }
 
+void test_hide_full_baseline_then_shorten_overlap_tail_promotes_visible() {
+  // session_20260807_202538: L→R overlap entry HideNote then ShortenNote must paint shortened stub.
+  constexpr NoteId kOverlapId = 13;
+  const NoteBaseline kCommitted{88, 100, 1728, 2364};
+  const NoteBaseline kStub{88, 100, 1728, 1775};
+
+  NoteEditCurrentState state;
+  state.upsertRow(kOverlapId, kCommitted, kCommitted, NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = kCommitted.startTick;
+  hide.endTick = kCommitted.endTick;
+  hide.pitch = kCommitted.pitch;
+  state.applyEditSessionAction(hide);
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = kStub.startTick;
+  shorten.endTick = kStub.endTick;
+  shorten.pitch = kStub.pitch;
+  state.applyEditSessionAction(shorten);
+
+  TEST_ASSERT_FALSE(state.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_TRUE(state.rowProjectsToStore(kOverlapId));
+  TEST_ASSERT_FALSE(state.rowIncludedInSelectableInventory(kOverlapId));
+}
+
 void test_selectable_inventory_excludes_paint_only_hidden_row() {
   // RC10h / session_20260807_153739: leave-restore paint stays on grid but not in inventory.
   constexpr uint32_t kLoopLength = 5376;
@@ -923,6 +953,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_mover_uses_current_state_not_stale_focus_last);
   RUN_TEST(test_display_projection_inactive_focus_projects_session_moved_span);
   RUN_TEST(test_driver_validation_rejects_hidden_row_matching_focus_last);
+  RUN_TEST(test_hide_full_baseline_then_shorten_overlap_tail_promotes_visible);
   RUN_TEST(test_projected_paint_includes_shortened_overlap_inventory_excludes);
   RUN_TEST(test_selectable_inventory_excludes_paint_only_hidden_row);
   RUN_TEST(test_geometry_selection_resolves_mover_index_after_overlap_hidden);

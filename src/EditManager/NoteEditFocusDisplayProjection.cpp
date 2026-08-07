@@ -39,6 +39,19 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
         (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
+      if (noteId != focus.movingNoteId && focus.active) {
+        const NoteEditCurrentNoteState* row = currentState->find(noteId);
+        if (row != nullptr &&
+            participatingNoteShortenedVsCommitted(current, row->committedSpan) &&
+            !overlapSpanIntersectsActiveMover(focus, row->committedSpan.startTick,
+                                              row->committedSpan.endTick, loopLength)) {
+          pitch = row->committedSpan.pitch;
+          velocity = row->committedSpan.velocity;
+          startTick = row->committedSpan.startTick;
+          endTick = row->committedSpan.endTick;
+          return true;
+        }
+      }
       pitch = current.pitch;
       velocity = current.velocity;
       startTick = current.startTick;
@@ -160,9 +173,12 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
     return false;
   }
   if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
-    // Paint shortened stub while overlap is active; suppress on deselect or after leave.
+    // Paint shortened stub while overlap is active; suppress on deselect only.
     if (focus.active &&
         overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
+      return false;
+    }
+    if (focus.active) {
       return false;
     }
     return true;

@@ -210,6 +210,9 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
       }
       row->currentSpan = span;
       if (row->presence == NoteEditPresenceType::Hidden) {
+        if (overlapInventoryMaskedTail(span, row->committedSpan)) {
+          row->presence = NoteEditPresenceType::Visible;
+        }
         return;
       }
       // Overlap tail shorten stays Visible (semantically shortened); inventory mask is separate
