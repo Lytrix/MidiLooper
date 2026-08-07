@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-07 (Stage 8.1 sidebar projection shipped)
+Last updated: 2026-08-07 (Stage 8.2 fader/snapshot projection shipped)
 
 ---
 
@@ -17,12 +17,12 @@ Last updated: 2026-08-07 (Stage 8.1 sidebar projection shipped)
 | 1 — full-overlap Hide paint | **Done** (`8596950`) |
 | 2 — C9 contract tests | **Done** (`ea39f1c`) |
 | 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
-| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1 **done**; 8.2 fader/snapshot next |
+| 4 — Stage 8 sidebar/snapshot projection (C5) | **In progress** — 8.1–8.2 **done**; 8.3 `visualCache` reduction next |
 | 5 — semantic cleanup | Pending (post–Stage 8) |
 
 **Parked HITL:** `session_20260807_222418` — C7 geometry `RestoreNote` to full `committedSpan` on `interactions=0`; retest after Stage 8, not a projection-only blocker.
 
-**Next:** Stage 8.2 — fader feedback and snapshot consumers use the same participant projection contract as grid paint (not `visualCache` / store index span).
+**Next:** Stage 8.3 — reduce `loop.visualCache` as committed paint base; projection refresh after apply.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 
