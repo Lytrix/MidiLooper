@@ -15,6 +15,16 @@
 
 namespace {
 
+bool overlapSpanIntersectsActiveMover(const NoteEditFocus& focus, uint32_t overlapStart,
+                                      uint32_t overlapEnd, uint32_t loopLength) {
+  if (!focus.active || loopLength == 0) {
+    return false;
+  }
+  const uint32_t moverStart = focus.movingNoteRange.start;
+  const uint32_t moverEnd = movingNoteRangeDisplayEnd(focus, loopLength);
+  return linearStorageSpansOverlapLocal(overlapStart, overlapEnd, moverStart, moverEnd);
+}
+
 template <typename Alloc>
 bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
                                    std::vector<MidiEvent, Alloc>& sessionEvents, uint8_t channel,
@@ -42,6 +52,16 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
       return true;
     }
     if (currentState->isRowHiddenOrDeleted(noteId)) {
+      const auto baselineIt = focus.baselineMap.find(noteId);
+      if (baselineIt != focus.baselineMap.end() && focus.active &&
+          !overlapSpanIntersectsActiveMover(focus, baselineIt->second.startTick,
+                                       baselineIt->second.endTick, loopLength)) {
+        pitch = baselineIt->second.pitch;
+        velocity = baselineIt->second.velocity;
+        startTick = baselineIt->second.startTick;
+        endTick = baselineIt->second.endTick;
+        return true;
+      }
       return false;
     }
   }
@@ -97,7 +117,8 @@ bool invalidCommittedRowSupersededByParticipant(
 }
 
 bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& currentState,
-                                                 const NoteEditFocus& focus, NoteId noteId) {
+                                                 const NoteEditFocus& focus, NoteId noteId,
+                                                 uint32_t loopLength) {
   if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
     return false;
   }
@@ -109,28 +130,41 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   if (row == nullptr) {
     return false;
   }
+  const NoteBaseline& committed = row->committedSpan;
+  const uint32_t paintStart = committed.startTick;
+  const uint32_t paintEnd = committed.endTick;
   if (row->presence == NoteEditPresenceType::Hidden ||
       row->presence == NoteEditPresenceType::Deleted) {
+    if (focus.active &&
+        !overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
+      return false;
+    }
     return true;
   }
   if (row->presence != NoteEditPresenceType::Visible) {
     return false;
   }
   const NoteBaseline& current = row->currentSpan;
-  const NoteBaseline& committed = row->committedSpan;
   if (current.pitch != committed.pitch) {
     return false;
   }
-  return current.startTick == committed.startTick && current.endTick < committed.endTick;
+  if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
+    if (focus.active &&
+        !overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
-                                               const NoteEditFocus& focus) {
+                                               const NoteEditFocus& focus, uint32_t loopLength) {
   for (const auto& [noteId, row] : currentState.rows()) {
     if (noteId == kInvalidNoteId) {
       continue;
     }
-    if (noteEditCurrentStateOverlapRowIsDisplayMasked(currentState, focus, noteId)) {
+    if (noteEditCurrentStateOverlapRowIsDisplayMasked(currentState, focus, noteId, loopLength)) {
       return true;
     }
   }
@@ -187,10 +221,12 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   if (loopLength == 0) {
     return committedBaseNotes;
   }
+  const bool sessionCurrentStatePaint =
+      currentState != nullptr && !currentState->empty();
   const bool overlapDisplayMaskPending =
       currentState != nullptr &&
-      noteEditCurrentStateHasOverlapDisplayMask(*currentState, focus);
-  if (!focus.active && !overlapDisplayMaskPending) {
+      noteEditCurrentStateHasOverlapDisplayMask(*currentState, focus, loopLength);
+  if (!focus.active && !overlapDisplayMaskPending && !sessionCurrentStatePaint) {
     return committedBaseNotes;
   }
 
@@ -236,13 +272,21 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       continue;
     }
     if (currentState != nullptr &&
-        noteEditCurrentStateOverlapRowIsDisplayMasked(*currentState, focus, noteId)) {
+        noteEditCurrentStateOverlapRowIsDisplayMasked(*currentState, focus, noteId, loopLength)) {
       hiddenParticipants.insert(noteId);
       continue;
     }
     NoteBaseline live{};
     if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
                                      loopLength)) {
+      if (currentState != nullptr && currentState->isRowHiddenOrDeleted(noteId)) {
+        const auto baselineIt = focus.baselineMap.find(noteId);
+        if (baselineIt != focus.baselineMap.end() && focus.active &&
+            !overlapSpanIntersectsActiveMover(focus, baselineIt->second.startTick,
+                                         baselineIt->second.endTick, loopLength)) {
+          continue;
+        }
+      }
       hiddenParticipants.insert(noteId);
     }
   }

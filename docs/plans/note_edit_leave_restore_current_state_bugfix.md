@@ -1,6 +1,6 @@
 # Note edit leave-restore current-state bugfix (RC10)
 
-**Status:** RC10a/b/e/f **shipped** | RC10g **open** | RC10c deferred
+**Status:** RC10a/b/e/f **shipped** | RC10g **partial** (native + `DFRAME` stable; HITL flicker open) | RC10h **open** | RC10c deferred
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -24,8 +24,8 @@ Projection paint, macro commit, deselect display = **RC10b**. Authority consolid
 
 | ID | Symptom | Capture proof | Planned owner |
 |----|---------|---------------|---------------|
-| **RC10f** | Selecting a second note to move resets the **previous** mover to `baselineMap` committed span | `141920` ~49.06s | `rebuildNoteEditFocusAtSelect` + geometry pipeline inactive-mover retention |
-| **RC10g** | Hidden overlap not painted while moving past; **full baseline** on deselect; select fader flickers baseline ↔ shortened length | `143654` user report | `DisplayNoteResolve` paint authority + projection cache fingerprint |
+| **RC10g** | Select sweep at overlap tick: `DNTE` alternates session tail (143) ↔ committed stub (47); move-past full baseline paint still open | `151441` ~306–311s | `SidebarAndInfo` / `FaderDependentSnapshot` + projection fingerprint follow-up |
+| **RC10h** | Last selected overlap row **highlighted + flickers** but coarse fader does not move it (`pipeline,0` or `HideNote` on prior mover) | `151441` ~313–316s | `rebuildNoteEditFocusForDisplayNote` + macro-commit handoff when overlap row is prior mover closure |
 
 ---
 
@@ -117,39 +117,57 @@ While NOTE_EDIT active and overlaps hidden in current state, deselect must not s
 
 ---
 
-## RC10g — Display authority on deselect / select sweep (open)
+## RC10g — Display authority on deselect / select sweep (partial)
 
-### Symptoms
+### Shipped (native + partial HITL)
 
-1. Overlap hidden under mover **not restored on piano roll** while moving past (mover left overlap zone).
-2. Same overlap **reappears at full committed length** after deselect (empty-step select).
-3. Select fader sweep over that region **alternates** baseline length vs shortened length on sidebar / roll.
+1. **Session projection** — `projectNoteEditDisplayNotes` runs when `NoteEditCurrentState` is non-empty (deselect flicker / stale `visualCache` span).
+2. **Leave-restore paint** — while `focus.active`, hidden overlap paints full `baselineMap` span once overlap baseline no longer intersects mover range; still masked while intersecting (RC10e inventory stub unchanged on deselect).
+3. **Fingerprint** — `noteEditDisplayCacheFingerprint` mixes in current-state row presence/spans; `filteredSelectableDisplayNotesForNoteEdit` passes `noteEditCurrentState`.
 
-### Root cause (code-backed)
-
-| Layer | Behavior |
-|-------|----------|
-| **Active move** | `projectedNoteEditDisplayNotes` masks inventory-hidden overlap rows (RC10e) → overlap absent from paint. |
-| **Deselect** | `DisplayNoteResolve` with `!focus.active` can fall back to **`loop.visualCache.notes`** (committed passes, full baseline) instead of session projection. |
-| **Select sweep** | Empty step clears `focus.active` → visualCache paint; note step sets `focus.active` → projection — length oscillates. |
-| **Cache** | `noteEditDisplayCacheFingerprint` omits `NoteEditCurrentState` presence → stale selectable list between steps. |
-
-RC10e correctly fixed **selectable inventory** (`143654`: no `DNTE` len 143). RC10g splits **paint authority** from **inventory mask**.
-
-### Planned fix (paint vs inventory)
-
-1. **Paint** — While `NoteEditSession` is open, piano roll always uses `projectedNoteEditDisplayNotes`; never raw `visualCache` fallback when session has current-state overlap mutations.
-2. **Leave-restore display** — When mover has **left** overlap zone, restore **full `baselineMap` span** for paint (RC10a). Keep inventory-masked `Hidden` only for inner stub at overlap tick under mover (RC10e).
-3. **Fingerprint** — Include current-state overlap mask in display cache fingerprint / invalidate on presence change.
-4. **Native** — hide overlap → move past → projection shows full baseline outside mover; deselect no visualCache leak; select sweep stable length.
+**HITL `151441`:** `DFRAME` holds 17 rows post-workflow; overlap tick `2640` no longer interleaves len **527** on select sweep (143 ↔ 47 only).
 
 ### RC10g acceptance
 
 - [ ] Move past hidden overlap: overlap visible at committed span outside mover (paint)
-- [ ] Deselect: paint matches session projection, not committed visualCache alone
-- [ ] Select sweep: no baseline ↔ shortened length flicker on same `NoteId`
-- [ ] RC10e inventory gate still holds (no `DNTE` len 143 at inner overlap tick)
-- [ ] Native fixture from `143654` shape
+- [x] Deselect: `DFRAME` stable (17 rows; no post-workflow 29-row blow-up)
+- [ ] Select sweep: no session tail ↔ committed stub flicker on same overlap tick (`143` ↔ `47` still open)
+- [x] RC10e inventory gate on `151441` (masked tail len 143 expected while intersecting)
+- [x] Native fixtures (`143654` shape + leave-restore paint)
+
+### Next fix target (RC10g follow-up)
+
+Wire **sidebar `DNTE` / `noteToShow`** to the same session-authoritative span as display projection (`NoteEditFocusDisplayProjection`), or stop emitting `DNTE` from stale `visualCache` / committed leave-restore stub rows during select settle (`empty_step` ↔ `note_changed`). Today `SidebarAndInfo` length comes from whichever display row `noteToShow` resolves to — session projection tail (143 ticks) vs committed restore stub (47 ticks) — while `FaderDependentSnapshot` motor sync follows the same split.
+
+---
+
+## RC10h — Highlighted overlap selection cannot move (open)
+
+### Symptom
+
+User selects overlap row at tick 2640 (display index 9). Row is **highlighted** but **flickers** (`DNTE` 143 ↔ 47). Coarse fader does not move the selected span.
+
+### Capture proof — `session_20260807_151441`
+
+| Time | Log | Meaning |
+|------|-----|---------|
+| ~304.99s | `macro commit skipped: moving=17 bracket=2256 focus_last=1296-1823` | Handoff to second mover blocked — note 17 session move not committed |
+| ~306–311s | Repeated `selected note 9 at tick 2640`; `DNTE,88,2640,2640,143` / `47` | Select inventory flicker at overlap tick |
+| ~313.18s | `focus.last start=2640`; `Overlap move bridge … 2640–2687`; `pipeline,…,0,3,0` | Coarse fader targets overlap stub; **zero** geometry actions |
+| ~314.98s | `EditSessionAction: type=1 noteId=17 start=1296 end=1727` | Large coarse move applies **HideNote on prior mover 17**, not `MoveNote` on overlap row |
+
+### Root cause (capture-backed)
+
+1. Macro commit skipped on second-mover select leaves **note 17** as `movingNoteId` with body at **1296–1823**.
+2. Overlap closure / leave-restore projection still surfaces a **selectable row at overlap tick 2640** tied to the same mover lane (inventory tail or restore stub).
+3. `focus.last` syncs to overlap bracket (**2640–2687**, 47 ticks) while `movingNoteId` remains **17** — `isLiveEditDriverValidFromCurrentState` can still pass when `NoteEditCurrentState` matches the overlap stub.
+4. Coarse fader runs `NoteGeometryResolver` for **note 17** from overlap coordinates → overlap **hide** actions or empty pipeline, not a position move of the highlighted overlap tail.
+
+### Planned owner
+
+- Macro-commit / handoff: `SelectFaderInput` + `isMacroCommitAlignedWithSelectTargetForTrack` when overlap row select must transfer mover.
+- Selectable vs mover identity: `rebuildNoteEditFocusForDisplayNote` / `findBaselineNoteIdForDisplay` — do not treat overlap inventory row as movable driver when body span disagrees.
+- Depends on RC10g sidebar authority split (same 143 ↔ 47 flicker).
 
 ---
 
@@ -161,9 +179,10 @@ Derive overlap participants from current state vs session baseline; retire geome
 
 ## Capture validation summary
 
-| Capture | RC10a leave | RC10b deselect | RC10e inner | RC10f multi-mover |
-|---------|-------------|----------------|-------------|-----------------|
-| `140022` | pass | fail (pre-RC10b) | — | — |
-| `141218` | pass | pass | fail (`DNTE` 143) | not isolated |
-| `141920` | pass | pass | pass (post-fix) | **fail** (`type=2 noteId=17` → 3600) |
-| `143654` | pass | n/a | **pass** (no `DNTE` 143) | n/a |
+| Capture | RC10a leave | RC10b deselect | RC10e inner | RC10f multi-mover | RC10g flicker | RC10h move |
+|---------|-------------|----------------|-------------|-----------------|---------------|------------|
+| `140022` | pass | fail (pre-RC10b) | — | — | — | — |
+| `141218` | pass | pass | fail (`DNTE` 143) | not isolated | — | — |
+| `141920` | pass | pass | pass (post-fix) | **fail** (`type=2 noteId=17` → 3600) | — | — |
+| `143654` | pass | n/a | **pass** (no `DNTE` 143) | n/a | user pass | — |
+| `151441` | pass | pass (`DFRAME` 17) | pass (143 tail) | **pass** (no snap to 3600) | **partial** (143↔47) | **fail** (`pipeline,0` / Hide 17) |

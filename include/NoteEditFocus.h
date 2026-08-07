@@ -108,8 +108,9 @@ struct NoteEditFocus {
 
 NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn);
 
-/// Fingerprint for note-edit display caches — geometry overlap state and mover live span.
-uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus);
+/// Fingerprint for note-edit display caches — geometry overlap state, mover live span, current-state rows.
+uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus,
+                                       const NoteEditCurrentState* currentState = nullptr);
 
 uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength);
 

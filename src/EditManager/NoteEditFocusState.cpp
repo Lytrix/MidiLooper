@@ -106,13 +106,25 @@ NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
   return selectBracketTick == driverDisplayBracket;
 }
 
-NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus) {
+NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus,
+                                                       const NoteEditCurrentState* currentState) {
   uint32_t fp = static_cast<uint32_t>(focus.changedOverlapNoteIds.size());
   fp ^= focus.last.startTick + (focus.last.endTick << 1);
   fp ^= static_cast<uint32_t>(focus.last.pitch) << 16;
   fp ^= static_cast<uint32_t>(focus.overlapNotes.size()) << 8;
   for (NoteId noteId : focus.changedOverlapNoteIds) {
     fp ^= static_cast<uint32_t>(noteId) * 0x9E3779B9u;
+  }
+  if (currentState != nullptr) {
+    fp ^= static_cast<uint32_t>(currentState->rows().size()) << 12;
+    for (const auto& [noteId, row] : currentState->rows()) {
+      if (noteId == kInvalidNoteId) {
+        continue;
+      }
+      fp ^= static_cast<uint32_t>(noteId) * 0x85EBCA6Bu;
+      fp ^= static_cast<uint32_t>(row.presence) << 28;
+      fp ^= row.currentSpan.startTick + (row.currentSpan.endTick << 1);
+    }
   }
   return fp;
 }
