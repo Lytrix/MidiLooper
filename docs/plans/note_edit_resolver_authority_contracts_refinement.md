@@ -278,6 +278,42 @@ One commit per stage. Check off here; do not start a stage before its blockers a
 - [ ] 4.4 `pio test -e native`; firmware build; HITL re-run of the `151441` sweep — no
       143 ↔ 47 `DNTE` alternation; mark RC10g shipped in the RC10 plan.
 
+### Stage 5 — geometry driver survives overlap hide (inventory index sync) — **new**
+
+**Not covered by Stages 3 or 4.** Evidence: `session_20260807_162713` ~362.11s.
+
+**Symptom:** After overlap hide on a second note (`HideNote noteId=13`), coarse move halts —
+`POSITION EDIT mode` logs continue but no `Coarse fader using focus.last`, no
+`GeometryPipeline:`, display feels frozen. `0× pipeline did not apply` (not the `153739` stub
+driver bug).
+
+**Root cause (log + code):** Stage 1 C1 removes the hidden overlap row from
+`selectableDisplayNotesForEditUi`. `handleCoarseFaderInput` gates the apply block on
+`selectedNoteIdx < notes.size()`. The geometry move path (`NoteMovementUtils`,
+`geometrySelectionFromFocus`) calls `applySelectionFromGeometryEdit` but does **not** call
+`syncSelectedNoteIdxToFilteredInventory` — so after hide shrinks the list by one, `selectedNoteIdx`
+can equal `notes.size()` (e.g. idx 9, size 9) and every subsequent coarse tick silently skips
+apply.
+
+**Contract (C6):** While `focus.active` and the live driver is valid for
+`sessionState.selection.primaryNote`, coarse/fine geometry faders must keep driving from
+selection identity + `focus.last` — inventory shrink from overlap hide must not stall the driver.
+
+- [ ] 5.1 After overlap geometry apply that emits `HideNote` / changes projecting inventory,
+      call `syncSelectedNoteIdxToFilteredInventory` (or extend `applySelectionFromGeometryEdit` /
+      `syncGeometrySelectionToUi` to refresh `selectedNoteIdx` from filtered inventory).
+- [ ] 5.2 **Or** in `handleCoarseFaderInput` / fine path: when driver valid, resolve
+      `currentNote` via `liveEditDisplayNoteAtSelect` + `primaryNote` without requiring stale
+      `selectedNoteIdx < notes.size()` (prefer one owner — sync after apply is smaller diff).
+- [ ] 5.3 Native fixture: mover + overlap target in selectable list → pipeline emits `HideNote` on
+      target → next coarse step still emits `MoveNote` for mover; `selectedNoteIdx` in bounds or
+      driver path does not depend on idx.
+- [ ] 5.4 `pio test -e native`; firmware build; HITL re-run of `162713` overlap-hide-then-continue-move
+      scenario.
+
+**Priority:** Stage 5 before Stage 4 if coarse freeze is blocking daily edit; Stage 3 remains
+independent (closure membership on reselect).
+
 ---
 
 ## 7. Verification
