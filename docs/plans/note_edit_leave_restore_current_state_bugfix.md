@@ -1,6 +1,11 @@
 # Note edit leave-restore current-state bugfix (RC10)
 
-**Status:** RC10a/b/e/f **shipped** | RC10g **partial** (native + `DFRAME` stable; HITL flicker open) | RC10h **open** | RC10c deferred
+**Status:** RC10a/b/e/f/h **shipped** | RC10g **partial** (native + `DFRAME` stable; HITL flicker open) | RC10c deferred
+
+**Handoff:** RC10g sidebar remainder owned by the contracts plan —
+[`note_edit_resolver_authority_contracts_refinement.md`](note_edit_resolver_authority_contracts_refinement.md)
+(Stage 4 sidebar span authority). RC10h shipped in `182317b` — validated
+`session_20260807_161329` (0× `pipeline,0`; sweep no longer lands on 88 stub at 2640).
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -25,7 +30,6 @@ Projection paint, macro commit, deselect display = **RC10b**. Authority consolid
 | ID | Symptom | Capture proof | Planned owner |
 |----|---------|---------------|---------------|
 | **RC10g** | Select sweep at overlap tick: `DNTE` alternates session tail (143) ↔ committed stub (47); move-past full baseline paint still open | `151441` ~306–311s | `SidebarAndInfo` / `FaderDependentSnapshot` + projection fingerprint follow-up |
-| **RC10h** | Last selected overlap row **highlighted + flickers** but coarse fader does not move it (`pipeline,0` or `HideNote` on prior mover) | `151441` ~313–316s | `rebuildNoteEditFocusForDisplayNote` + macro-commit handoff when overlap row is prior mover closure |
 
 ---
 
