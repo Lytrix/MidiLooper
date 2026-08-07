@@ -1,6 +1,6 @@
 # Note edit leave-restore current-state bugfix (RC10)
 
-**Status:** RC10a **shipped** (native + HITL leave) | RC10b **shipped** (native) | RC10c deferred
+**Status:** RC10a **shipped** | RC10b **shipped** (HITL `141218`) | RC10e **shipped** (native) | RC10c deferred
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -60,7 +60,24 @@ While NOTE_EDIT active and overlaps hidden in current state, deselect must not s
 ### RC10b acceptance
 
 - [x] Native: inactive focus + hidden overlaps → committed ghosts omitted
-- [ ] HITL deselect keeps frame note count (26 not 29)
+- [x] HITL deselect keeps frame note count (`session_20260807_141218`: no `29,29,29,29` after overlap workflow; `DFRAME` 25–26)
+
+---
+
+## RC10e — Inner overlap hide+shorten stays removed on deselect (shipped native)
+
+**Symptom (`session_20260807_141218` ~33s):** After inner overlap `HideNote` + `ShortenNote` on note 10, empty-step deselect still allowed select at 2640 with `DNTE` length 143 (shortened tail).
+
+**Root cause:** `NoteEditCurrentState::applyEditSessionAction(ShortenNote)` promoted `Hidden` → `Visible`, so RC10b display mask no longer applied and the overlap tail reappeared in selectable/display inventory.
+
+**Fix:** Keep `Hidden` presence after `ShortenNote`; update `currentSpan` only.
+
+**Not solved by RC10b alone:** RC10b masks `Hidden`/`Deleted` only; the promotion bug made inner overlaps `Visible` again.
+
+### RC10e acceptance
+
+- [x] Native: hide then shorten → row stays hidden; deselect projection omits overlap
+- [ ] HITL: inner overlap commit + deselect — no selectable/DNTE fragment at overlap tick
 
 ---
 

@@ -254,6 +254,57 @@ void test_sync_focus_last_from_current_state() {
   TEST_ASSERT_EQUAL_UINT32(1392u, focus.movingNoteRange.start);
 }
 
+void test_hide_then_shorten_stays_hidden_and_masks_on_deselect() {
+  // session_20260807_141218: inner overlap HideNote + ShortenNote must not resurrect tail on deselect.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 2736, 3263}, {kPitch, 100, 2736, 3263},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {kPitch, 100, 2640, 2783}, {kPitch, 100, 2640, 2783},
+                         NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = 2640;
+  hide.endTick = 2735;
+  hide.pitch = kPitch;
+  currentState.applyEditSessionAction(hide);
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 2640;
+  shorten.endTick = 2783;
+  shorten.pitch = kPitch;
+  currentState.applyEditSessionAction(shorten);
+
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kOverlapId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kOverlapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, 2640, 2783});
+  committedBase.push_back({kMoverId, kPitch, 100, 2736, 3263});
+
+  NoteEditFocus focus;
+  focus.active = false;
+  focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 2783};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
+}
+
 void test_apply_hide_through_current_state_owner() {
   NoteEditCurrentState state;
   state.upsertRow(kNoteA, {88, 100, 3600, 4127}, {88, 100, 3600, 4127},
@@ -330,6 +381,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);
   RUN_TEST(test_sync_focus_last_from_current_state);
+  RUN_TEST(test_hide_then_shorten_stays_hidden_and_masks_on_deselect);
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
