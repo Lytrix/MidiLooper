@@ -107,10 +107,13 @@ While NOTE_EDIT active and overlaps hidden in current state, deselect must not s
 
 `NoteGeometryResolver::resolve` — pass `analysisBaseline` as projected baseline to `buildEditSessionActions` (matches constrained geometry input).
 
+**Follow-up (`145011`):** `RestoreNote` (type=0) still snapped prior mover via leave-restore when `NoteEditCurrentState` had session-moved span — `determineConstrainedGeometryTargetNoteIds` current-state path omitted `spanQualifiesForOverlapLeaveRestore` gate (live-store path had it via `020105`).
+
 ### RC10f acceptance
 
 - [x] Native: `test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920`
-- [ ] HITL: `141920` repro cleared (move 17 off 3600, select 10, move 10 — no `type=2 noteId=17 start=3600`)
+- [x] Native: `test_determine_targets_excludes_session_moved_current_state_145011`
+- [x] HITL: `145433` — move 17 off 3600, select 13 at 35.35s — no `type=0`/`type=2` on note 17; last paint `DNTE,88,3264,…,527`
 
 ---
 
