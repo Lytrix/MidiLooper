@@ -38,7 +38,8 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableD
     Loop& loop = const_cast<Loop&>(trackManager.getSelectedLoop(track));
     const uint32_t playbackRevision = loop.playbackRevision;
     const uint32_t previewRevision = sessionPreviewRevision_;
-    const uint32_t displayFingerprint = noteEditDisplayCacheFingerprint(focus);
+    const uint32_t displayFingerprint =
+        noteEditDisplayCacheFingerprint(focus, &editSession.noteEditCurrentState);
     if (previewRevision == noteEditSelectableDisplayCachePreviewRevision_ &&
         displayFingerprint == noteEditSelectableDisplayCacheFingerprint_ &&
         loopLength == noteEditSelectableDisplayCacheLoopLength_ &&

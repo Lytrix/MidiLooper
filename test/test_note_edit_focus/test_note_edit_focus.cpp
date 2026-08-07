@@ -3299,8 +3299,14 @@ void test_display_fingerprint_changes_when_overlap_geometry_changes() {
   focus.last = {22, 100, 240, 335};
   const uint32_t fpBefore = noteEditDisplayCacheFingerprint(focus);
   recordChangedOverlapNote(focus, 87);
-  const uint32_t fpAfter = noteEditDisplayCacheFingerprint(focus);
+  const uint32_t fpAfter = noteEditDisplayCacheFingerprint(focus, nullptr);
   TEST_ASSERT_NOT_EQUAL(fpBefore, fpAfter);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(87, {22, 100, 100, 200}, {22, 100, 100, 200},
+                         NoteEditPresenceType::Visible);
+  const uint32_t fpWithState = noteEditDisplayCacheFingerprint(focus, &currentState);
+  TEST_ASSERT_NOT_EQUAL(fpAfter, fpWithState);
 }
 
 void test_is_live_edit_driver_valid_rejects_id_match_span_mismatch() {
