@@ -96,18 +96,41 @@ bool invalidCommittedRowSupersededByParticipant(
   return false;
 }
 
+bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& currentState,
+                                                 const NoteEditFocus& focus, NoteId noteId) {
+  if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+    return false;
+  }
+  if (!hasChangedOverlapNote(focus, noteId) &&
+      focus.baselineMap.find(noteId) == focus.baselineMap.end()) {
+    return false;
+  }
+  const NoteEditCurrentNoteState* row = currentState.find(noteId);
+  if (row == nullptr) {
+    return false;
+  }
+  if (row->presence == NoteEditPresenceType::Hidden ||
+      row->presence == NoteEditPresenceType::Deleted) {
+    return true;
+  }
+  if (row->presence != NoteEditPresenceType::Visible) {
+    return false;
+  }
+  const NoteBaseline& current = row->currentSpan;
+  const NoteBaseline& committed = row->committedSpan;
+  if (current.pitch != committed.pitch) {
+    return false;
+  }
+  return current.startTick == committed.startTick && current.endTick < committed.endTick;
+}
+
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
                                                const NoteEditFocus& focus) {
   for (const auto& [noteId, row] : currentState.rows()) {
     if (noteId == kInvalidNoteId) {
       continue;
     }
-    if (row.presence != NoteEditPresenceType::Hidden &&
-        row.presence != NoteEditPresenceType::Deleted) {
-      continue;
-    }
-    if (hasChangedOverlapNote(focus, noteId) ||
-        focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
+    if (noteEditCurrentStateOverlapRowIsDisplayMasked(currentState, focus, noteId)) {
       return true;
     }
   }
@@ -212,7 +235,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
       continue;
     }
-    if (currentState != nullptr && currentState->isRowHiddenOrDeleted(noteId)) {
+    if (currentState != nullptr &&
+        noteEditCurrentStateOverlapRowIsDisplayMasked(*currentState, focus, noteId)) {
       hiddenParticipants.insert(noteId);
       continue;
     }

@@ -627,8 +627,15 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
                                                          OverlapNoteStoreState::Shortened);
             break;
           case EditSessionActionType::RestoreNote:
-            recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
-                                                         OverlapNoteStoreState::Visible);
+            {
+              const NoteEditCurrentNoteState* row = currentState->find(action.targetNoteId);
+              const OverlapNoteStoreState scratchState =
+                  (row != nullptr && row->presence == NoteEditPresenceType::Hidden)
+                      ? OverlapNoteStoreState::Hidden
+                      : OverlapNoteStoreState::Visible;
+              recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
+                                                           scratchState);
+            }
             break;
           default:
             break;

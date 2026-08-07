@@ -1,6 +1,6 @@
 # Note edit leave-restore current-state bugfix (RC10)
 
-**Status:** RC10a/b **shipped** | RC10e **partial** (native only — HITL failed `141920`) | RC10f **open** | RC10c deferred
+**Status:** RC10a/b/e **shipped** | RC10f **in progress** | RC10g **open** | RC10c deferred
 
 **Index:** [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) (RC9g/h/i) · [`note_edit_overlap_resolution_map_refinement.md`](note_edit_overlap_resolution_map_refinement.md) (case map)
 
@@ -24,8 +24,8 @@ Projection paint, macro commit, deselect display = **RC10b**. Authority consolid
 
 | ID | Symptom | Capture proof | Planned owner |
 |----|---------|---------------|---------------|
-| **RC10e** | Inner overlap still selectable / visible after hide+shorten+deselect (`DNTE` len 143 at overlap tick) | `141920` ~37.7s, ~44.6s | `NoteEditCurrentState` presence + `projectNoteEditDisplayNotes` overlap closure mask |
 | **RC10f** | Selecting a second note to move resets the **previous** mover to `baselineMap` committed span | `141920` ~49.06s | `rebuildNoteEditFocusAtSelect` + geometry pipeline inactive-mover retention |
+| **RC10g** | Hidden overlap not painted while moving past; **full baseline** on deselect; select fader flickers baseline ↔ shortened length | `143654` user report | `DisplayNoteResolve` paint authority + projection cache fingerprint |
 
 ---
 
@@ -63,17 +63,17 @@ While NOTE_EDIT active and overlaps hidden in current state, deselect must not s
 
 ---
 
-## RC10e — Inner overlap stays removed (partial — HITL failed)
+## RC10e — Inner overlap stays removed (shipped — HITL pending)
 
-### Shipped (native)
+### Shipped (native + firmware)
 
-`NoteEditCurrentState::applyEditSessionAction(ShortenNote)` no longer promotes `Hidden → Visible` after `HideNote` (fixes one promotion path).
+1. `NoteEditCurrentState::applyEditSessionAction(ShortenNote)` — tail shorten sets `Hidden`.
+2. **`RestoreNote` leave-restore** — shortened-tail restore keeps `Hidden` (does not promote inventory-masked overlap to `Visible`; `142819` root cause).
+3. `noteEditCurrentStateOverlapRowIsDisplayMasked` display projection mask (defense in depth).
 
-### HITL failure — `session_20260807_141920`
+### HITL gate — `session_20260807_141920` replay
 
-RC10e did **not** solve “keep overlap removed on deselect / select sweep” for inner overlap committed under mover.
-
-**Proof — overlap tail still selectable after hide+shorten:**
+**Pre-fix proof — overlap tail still selectable after hide+shorten:**
 
 | Time | Log | Meaning |
 |------|-----|---------|
@@ -82,22 +82,18 @@ RC10e did **not** solve “keep overlap removed on deselect / select sweep” fo
 | ~37.75s | `#CAP,…,DNTE,88,2640,2640,143,11` after `empty_step` + re-select at 2640 | **143-tick tail still in selectable inventory** |
 | ~44.58s | `#CAP,…,DNTE,88,2640,2640,143,10` on `note_changed` at 2640 | Same after later overlap pass |
 
-**Why RC10e was insufficient:**
+**Why prior partial RC10e was insufficient:**
 
-1. Inner overlap often ends as **`Visible` shortened tail** (`currentSpan` 2640–2783, length 143), not `Hidden` — RC10b/e masks only apply to `Hidden`/`Deleted`.
-2. `type=2` without a preceding `type=1` on the same pass still creates a **Visible** shortened row (`141920` ~32.4s, ~40.8s — `ShortenNote` only).
-3. Selectable/display projection still surfaces closure participants with **Visible** shortened spans from `committedBase` + participant overlay.
-
-**Remaining work (RC10e follow-up):**
-
-- Extend overlap display mask: closure participants with overlap-under-mover geometry should stay off inventory when `changedOverlapNoteIds` marks them and current state is shortened/hidden vs session baseline — not only `Hidden` presence.
-- Or: inner overlap geometry should commit **`Hidden`** (full removal from inventory), not a Visible 143-tick stub, when user expectation is “removed”.
-- Native fixture from `141920` hide+shorten+deselect at 2640.
+1. Inner overlap often ended as **`Visible` shortened tail** (`currentSpan` 2640–2783, length 143), not `Hidden` — RC10b/e masks only applied to `Hidden`/`Deleted`.
+2. `type=2` without a preceding `type=1` on the same pass still created a **Visible** shortened row (`141920` ~32.4s, ~40.8s — `ShortenNote` only).
+3. Selectable/display projection still surfaced closure participants with **Visible** shortened spans from `committedBase` + participant overlay.
 
 ### RC10e acceptance
 
 - [x] Native: hide then shorten → row stays `Hidden` (promotion path)
-- [ ] HITL: no `DNTE` / selectable row at overlap tick after inner commit + deselect (`141920` **failed**)
+- [x] Native: shorten-only tail → `Hidden` + projection omits overlap (`141920` shape)
+- [x] Native: leave-restore shortened tail stays `Hidden` (`142819` shape)
+- [x] HITL: no `DNTE` / selectable row at overlap tick after inner commit + deselect (`143654` **passed**; `142819` **failed** pre-fix)
 
 ---
 
@@ -152,6 +148,42 @@ Move note A (e.g. `noteId=17`) away from baseline (3600 → ~1728–3264). Selec
 
 ---
 
+## RC10g — Display authority on deselect / select sweep (open)
+
+### Symptoms
+
+1. Overlap hidden under mover **not restored on piano roll** while moving past (mover left overlap zone).
+2. Same overlap **reappears at full committed length** after deselect (empty-step select).
+3. Select fader sweep over that region **alternates** baseline length vs shortened length on sidebar / roll.
+
+### Root cause (code-backed)
+
+| Layer | Behavior |
+|-------|----------|
+| **Active move** | `projectedNoteEditDisplayNotes` masks inventory-hidden overlap rows (RC10e) → overlap absent from paint. |
+| **Deselect** | `DisplayNoteResolve` with `!focus.active` can fall back to **`loop.visualCache.notes`** (committed passes, full baseline) instead of session projection. |
+| **Select sweep** | Empty step clears `focus.active` → visualCache paint; note step sets `focus.active` → projection — length oscillates. |
+| **Cache** | `noteEditDisplayCacheFingerprint` omits `NoteEditCurrentState` presence → stale selectable list between steps. |
+
+RC10e correctly fixed **selectable inventory** (`143654`: no `DNTE` len 143). RC10g splits **paint authority** from **inventory mask**.
+
+### Planned fix (paint vs inventory)
+
+1. **Paint** — While `NoteEditSession` is open, piano roll always uses `projectedNoteEditDisplayNotes`; never raw `visualCache` fallback when session has current-state overlap mutations.
+2. **Leave-restore display** — When mover has **left** overlap zone, restore **full `baselineMap` span** for paint (RC10a). Keep inventory-masked `Hidden` only for inner stub at overlap tick under mover (RC10e).
+3. **Fingerprint** — Include current-state overlap mask in display cache fingerprint / invalidate on presence change.
+4. **Native** — hide overlap → move past → projection shows full baseline outside mover; deselect no visualCache leak; select sweep stable length.
+
+### RC10g acceptance
+
+- [ ] Move past hidden overlap: overlap visible at committed span outside mover (paint)
+- [ ] Deselect: paint matches session projection, not committed visualCache alone
+- [ ] Select sweep: no baseline ↔ shortened length flicker on same `NoteId`
+- [ ] RC10e inventory gate still holds (no `DNTE` len 143 at inner overlap tick)
+- [ ] Native fixture from `143654` shape
+
+---
+
 ## RC10c — Authority trim (deferred)
 
 Derive overlap participants from current state vs session baseline; retire geometry-path `overlapNotes` scratch.
@@ -164,4 +196,5 @@ Derive overlap participants from current state vs session baseline; retire geome
 |---------|-------------|----------------|-------------|-----------------|
 | `140022` | pass | fail (pre-RC10b) | — | — |
 | `141218` | pass | pass | fail (`DNTE` 143) | not isolated |
-| `141920` | pass | pass | fail (`DNTE` 143) | **fail** (`type=2 noteId=17` → 3600) |
+| `141920` | pass | pass | pass (post-fix) | **fail** (`type=2 noteId=17` → 3600) |
+| `143654` | pass | n/a | **pass** (no `DNTE` 143) | n/a |
