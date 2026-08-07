@@ -3,6 +3,17 @@
 
 #include "ParticipatingNoteSession.h"
 
+#include <algorithm>
+
+namespace {
+
+void sortParticipatingNoteIdList(NoteIdList& noteIds) {
+  std::sort(noteIds.begin(), noteIds.end());
+  noteIds.erase(std::unique(noteIds.begin(), noteIds.end()), noteIds.end());
+}
+
+}  // namespace
+
 ParticipatingNotePhase participatingPhaseFromPresence(NoteEditPresenceType presence) {
   switch (presence) {
     case NoteEditPresenceType::Visible:
@@ -21,6 +32,31 @@ bool participatingNoteShortenedVsCommitted(const NoteBaseline& current,
                                              const NoteBaseline& committed) {
   return current.pitch == committed.pitch && current.startTick == committed.startTick &&
          current.endTick < committed.endTick;
+}
+
+bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row) {
+  if (row.presence == NoteEditPresenceType::Hidden ||
+      row.presence == NoteEditPresenceType::Deleted) {
+    return true;
+  }
+  return row.currentSpan.pitch != row.committedSpan.pitch ||
+         row.currentSpan.startTick != row.committedSpan.startTick ||
+         row.currentSpan.endTick != row.committedSpan.endTick;
+}
+
+NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
+    const NoteEditCurrentState& currentState, NoteId movingNoteId) {
+  NoteIdList out;
+  for (const auto& [noteId, row] : currentState.rows()) {
+    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+      continue;
+    }
+    if (currentStateRowIsOverlapParticipant(row)) {
+      out.push_back(noteId);
+    }
+  }
+  sortParticipatingNoteIdList(out);
+  return out;
 }
 
 ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteState& row) {
@@ -45,7 +81,7 @@ ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteStat
 }
 
 ParticipatingNoteSession buildParticipatingNoteSession(const EditorSelection& selection,
-                                                         const NoteEditCurrentState& currentState) {
+                                                       const NoteEditCurrentState& currentState) {
   ParticipatingNoteSession session{};
   session.primaryNoteId = selection.primaryNote;
   session.selectedNoteIds = selection.selectedNotes;

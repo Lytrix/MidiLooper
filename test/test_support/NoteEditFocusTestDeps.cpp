@@ -13,3 +13,4 @@
 #include "../../src/EditManager/NoteEditFocusState.cpp"
 #include "../../src/EditManager/NoteEditFocusPreCommit.cpp"
 #include "../../src/EditManager/NoteEditFocusDisplayProjection.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"

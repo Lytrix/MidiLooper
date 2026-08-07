@@ -97,7 +97,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
         populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
                                           sessionMidiEvents(), channel, loopLength);
         reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionMidiEvents(), channel,
-                                                    loopLength);
+                                                    loopLength,
+                                                    editSession.noteEditCurrentState.empty()
+                                                        ? nullptr
+                                                        : &editSession.noteEditCurrentState);
         editSession.focus.active = true;
         return;
     }
@@ -116,7 +119,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
     populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
                                       sessionMidiEvents(), channel, loopLength);
     reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionMidiEvents(), channel,
-                                                loopLength);
+                                                loopLength,
+                                                editSession.noteEditCurrentState.empty()
+                                                    ? nullptr
+                                                    : &editSession.noteEditCurrentState);
 
     const std::vector<DisplayNote> liveNotes =
         NoteUtils::reconstructNotes(sessionMidiEvents(), loopLength, false);
@@ -215,7 +221,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
     populateBaselineMapForEditClosure(editSession.focus, committedLoopEvents, sessionEvents,
                                       channel, loopLength);
     reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionEvents, channel,
-                                                loopLength);
+                                                loopLength,
+                                                editSession.noteEditCurrentState.empty()
+                                                    ? nullptr
+                                                    : &editSession.noteEditCurrentState);
 #if defined(SESSION_CAPTURE)
     {
         const NoteIdList& overlapIds = editSession.focus.changedOverlapNoteIds;

@@ -1,7 +1,7 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** architectural migration in progress — Stages 0–2 and 5 **shipped**; Stage 3
-(participating-note model) is the current center; Stages 4–8 migrate behavior behind it.
+**Status:** architectural migration in progress — Stages 0–2, 4 (code), and 5 **shipped**; Stage 3
+(participating-note model) **shipped**; Stages 6–8 migrate behavior behind participant discovery.
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
 **OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
@@ -197,9 +197,9 @@ inferring session semantics from live-store projection.**
 
 No firmware behavior change. `ParticipatingNoteSession` read model + invariant tests.
 
-### Stage 4 — participant discovery / reselect (C4)
+### Stage 4 — participant discovery / reselect (C4) — **DONE** (code; HITL 4.4 pending)
 
-Route participation through current state; `changedOverlapNoteIds` → derived query. Evidence: `161329`.
+Route participation through current state; `changedOverlapNoteIds` membership from current-state rows when `noteEditCurrentState` is non-empty. Evidence: `161329`.
 
 ### Stage 5 — geometry driver / inventory sync (C6) — **DONE** (`8255fd7`)
 
@@ -233,11 +233,12 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 - [x] 3.4 Invariants documented in §3.
 - [x] 3.5 `pio test -e native` green (no firmware behavior change).
 
-### Stage 4 — participant discovery / reselect
+### Stage 4 — participant discovery / reselect — **DONE** (code; HITL 4.4 pending)
 
-- [ ] 4.1 Derive participant set from current state.
-- [ ] 4.2 `changedOverlapNoteIds` as derived query.
-- [ ] 4.3 Native reselect fixture; HITL `161329`.
+- [x] 4.1 Derive participant set from current state (`currentStateRowIsOverlapParticipant`, `collectOverlapParticipantNoteIdsFromCurrentState`).
+- [x] 4.2 `reconcileChangedOverlapNoteIdsFromLiveStore` uses current state when non-empty; rebuild passes `noteEditCurrentState`.
+- [x] 4.3 Native reselect fixture (`161329` hidden overlap + empty store).
+- [ ] 4.4 HITL `161329`.
 
 ### Stage 5 — **DONE** (code `8255fd7`)
 

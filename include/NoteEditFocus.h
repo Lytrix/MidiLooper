@@ -126,7 +126,8 @@ bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
 void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
                                                  const MidiEventVec& sessionEvents,
-                                                 uint8_t channel, uint32_t loopLength);
+                                                 uint8_t channel, uint32_t loopLength,
+                                                 const NoteEditCurrentState* currentState = nullptr);
 void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, NoteId noteId,
                                         const NoteBaseline& baseline);

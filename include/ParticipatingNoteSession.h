@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "NoteEditCurrentState.h"
+#include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
@@ -78,3 +79,9 @@ ParticipatingNoteInvariantResult verifyParticipatingNoteInvariants(
 
 ParticipatingSessionInvariantResult verifyParticipatingSessionInvariants(
     const ParticipatingNoteSession& session);
+
+/// Overlap closure participant: session-mutated overlap row (not the mover).
+bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row);
+
+NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
+    const NoteEditCurrentState& currentState, NoteId movingNoteId);

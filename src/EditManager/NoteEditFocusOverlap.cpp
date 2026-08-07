@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <vector>
 
+#include "NoteEditCurrentState.h"
 #include "EditSessionLiveStoreSpan.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 
 template <typename Alloc>
@@ -67,13 +69,26 @@ NOTE_EDIT_MEM void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId)
 NOTE_EDIT_MEM void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
                                                                const MidiEventVec& sessionEvents,
                                                                uint8_t channel,
-                                                               uint32_t loopLength) {
+                                                               uint32_t loopLength,
+                                                               const NoteEditCurrentState* currentState) {
   if (!focus.active || loopLength == 0) {
     return;
   }
+  const bool useCurrentState = currentState != nullptr && !currentState->empty();
   for (const auto& [noteId, baseline] : focus.baselineMap) {
     if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
       continue;
+    }
+    if (useCurrentState) {
+      const NoteEditCurrentNoteState* row = currentState->find(noteId);
+      if (row != nullptr) {
+        if (currentStateRowIsOverlapParticipant(*row)) {
+          recordChangedOverlapNote(focus, noteId);
+        } else {
+          forgetChangedOverlapNote(focus, noteId);
+        }
+        continue;
+      }
     }
     NoteBaseline live{};
     const bool hasLive =

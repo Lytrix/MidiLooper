@@ -731,6 +731,58 @@ void test_reconcile_changed_overlap_ids_forgets_when_live_matches_baseline() {
   TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
 }
 
+// session_20260807_161329: reselect mover must not clear overlap closure when current state
+// still classifies a hidden overlap participant and the session store is empty.
+void test_reconcile_changed_overlap_ids_from_current_state_hidden_overlap() {
+  constexpr NoteId kOverlapId = 17;
+  constexpr NoteId kMoverId = 3;
+  constexpr uint32_t loopLength = 3840;
+  constexpr uint8_t channel = 1;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kOverlapId] = {88, 100, 3216, 3743};
+  focus.baselineMap[kMoverId] = {88, 100, 3072, 3215};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {88, 100, 3072, 3215}, {88, 100, 3168, 3311},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {88, 100, 3216, 3743}, {88, 100, 3216, 3263},
+                         NoteEditPresenceType::Hidden);
+
+  MidiEventVec store;
+  reconcileChangedOverlapNoteIdsFromLiveStore(focus, store, channel, loopLength,
+                                              &currentState);
+  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kOverlapId));
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+}
+
+void test_reconcile_changed_overlap_ids_from_current_state_visible_shortened() {
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 3;
+  constexpr uint32_t loopLength = 3840;
+  constexpr uint8_t channel = 1;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kOverlapId] = {88, 100, 2640, 3167};
+  focus.baselineMap[kMoverId] = {88, 100, 3072, 3215};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {88, 100, 3072, 3215}, {88, 100, 3168, 3311},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {88, 100, 2640, 3167}, {88, 100, 2640, 2783},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  reconcileChangedOverlapNoteIdsFromLiveStore(focus, store, channel, loopLength,
+                                              &currentState);
+  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kOverlapId));
+}
+
 void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
   NoteEditFocus focus;
   const MidiEventVec flat = makeTwoNoteFlat(8, 104, 584, 680, 60);
@@ -3489,6 +3541,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_reconcile_changed_overlap_ids_ignores_missing_live_on_empty_session);
   RUN_TEST(test_reconcile_changed_overlap_ids_keeps_hide_scratch_without_live);
   RUN_TEST(test_reconcile_changed_overlap_ids_forgets_when_live_matches_baseline);
+  RUN_TEST(test_reconcile_changed_overlap_ids_from_current_state_hidden_overlap);
+  RUN_TEST(test_reconcile_changed_overlap_ids_from_current_state_visible_shortened);
   RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
   RUN_TEST(test_populate_baseline_map_includes_linear_same_pitch_neighbor);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);
