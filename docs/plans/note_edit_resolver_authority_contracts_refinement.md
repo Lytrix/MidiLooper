@@ -244,16 +244,20 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 
 - [ ] 5.4 HITL `162713`; `163621` coarse pass confirmed.
 
-### Stage 6 — action semantics (was interim “Stage 7”)
+### Stage 6 — action semantics (was interim “Stage 7”) — **DONE** (code; HITL pending)
 
-- [ ] 6.1–6.5 `appendOverlapTargetActions` + fixtures + HITL `163621`.
+- [x] 6.1 `overlayAnalysisBaselineForSessionMovedOverlaps` uses committed span for leave-restore qualifying overlap participants.
+- [x] 6.2 L→R into overlap classifies `OverlapNoteOff` against committed geometry (not stub `BoundaryTouch`).
+- [x] 6.3 Native fixtures `181859` (interaction + action builder).
+- [x] 6.4 `pio test -e native` green (910).
+- [ ] 6.5 HITL `163621` / `181859` L→R shorten continuation.
 
-### Stage 7 — leave/restore transition — **IN PROGRESS**
+### Stage 7 — leave/restore transition — **DONE** (code; HITL 7.4 partial)
 
 - [x] 7.1 Participating leave-restore helpers (`participatingNoteNeedsFullCommittedLeaveRestore`, committed span).
 - [x] 7.2 `constrainedGeometryFromRestoreCandidate` uses committed span for hidden/shortened participants.
 - [x] 7.3 Display projection paints `committedSpan` when mover left overlap zone.
-- [ ] 7.4 HITL `163621` / `175858` full restore → Visible.
+- [ ] 7.4 HITL `163621` / `175858` full restore → Visible; `181859` restore on note 9 confirmed.
 
 ### Stage 8 — display projection (was interim Stage 4 sidebar)
 

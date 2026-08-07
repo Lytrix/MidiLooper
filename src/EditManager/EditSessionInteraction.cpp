@@ -7,6 +7,7 @@
 
 #include "EditSessionLiveStoreSpan.h"
 #include "NoteEditCurrentState.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -315,6 +316,17 @@ NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
       NoteBaseline current{};
       if (!currentState->readCurrentSpan(noteId, current)) {
         continue;
+      }
+      const NoteEditCurrentNoteState* row = currentState->find(noteId);
+      if (row != nullptr) {
+        const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+        if (participatingNoteQualifiesForLeaveRestoreTarget(participant, movingNoteId)) {
+          // Classify hide/shorten against committed overlap geometry while overlap remains
+          // classified — shortened/hidden stubs must not turn L→R advance into BoundaryTouch-only
+          // (session_20260807_181859: note 9 stub end 2207 vs mover start 2256).
+          analysis[noteId] = row->committedSpan;
+          continue;
+        }
       }
       if (current.startTick != baseline.startTick || current.endTick != baseline.endTick ||
           current.pitch != baseline.pitch) {
