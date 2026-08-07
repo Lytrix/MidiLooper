@@ -3455,11 +3455,12 @@ void test_macro_commit_aligned_with_select_target_rejects_bracket_mismatch_22033
       isMacroCommitAlignedWithSelectTarget(7u, 609u, focus, kLoopStart, kLoopLength, false));
 }
 
-void test_macro_commit_blocks_different_note_while_mover_pending_014541() {
+void test_macro_commit_allows_mover_handoff_while_mover_pending_195514() {
+  // session_20260807_195514: selecting a different NoteId must macro-commit prior mover session.
   constexpr uint32_t kLoopLength = 5376;
   constexpr uint32_t kLoopStart = 0;
   constexpr NoteId kMoverId = 17;
-  constexpr NoteId kOtherId = 16;
+  constexpr NoteId kHandoffId = 16;
 
   NoteEditFocus focus;
   focus.active = true;
@@ -3467,11 +3468,35 @@ void test_macro_commit_blocks_different_note_while_mover_pending_014541() {
   focus.commitBaseline = {88, 100, 3600, 4127};
   focus.last = {88, 100, 3504, 4031};
 
-  TEST_ASSERT_FALSE(isMacroCommitAlignedWithSelectTarget(kOtherId, 3600u, focus, kLoopStart,
-                                                         kLoopLength, false));
+  TEST_ASSERT_TRUE(isMacroCommitAlignedWithSelectTarget(kHandoffId, 3600u, focus, kLoopStart,
+                                                        kLoopLength, false));
   TEST_ASSERT_FALSE(isMacroCommitAlignedWithSelectTarget(kInvalidNoteId, 3600u, focus, kLoopStart,
                                                          kLoopLength, false));
   TEST_ASSERT_TRUE(isMacroCommitAlignedWithSelectTarget(kMoverId, 3504u, focus, kLoopStart,
+                                                        kLoopLength, false));
+}
+
+void test_resolve_macro_commit_select_target_handoff_at_bracket_195514() {
+  // session_20260807_195514 ~28.7s: inventory index on mover 12 at bracket 2881 → handoff note 14.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr uint32_t kLoopStart = 0;
+  constexpr NoteId kMoverId = 12;
+  constexpr NoteId kHandoffId = 14;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {88, 100, 2832, 2879};
+  focus.commitBaseline = focus.last;
+
+  std::vector<NoteUtils::DisplayNote> notes;
+  notes.push_back({kMoverId, 88, 100, 2832, 2879});
+  notes.push_back({kHandoffId, 94, 100, 2881, 2927});
+
+  const NoteId resolved =
+      resolveMacroCommitSelectTargetNoteId(notes, 0, 2881u, focus, kLoopStart, kLoopLength);
+  TEST_ASSERT_EQUAL_UINT32(kHandoffId, resolved);
+  TEST_ASSERT_TRUE(isMacroCommitAlignedWithSelectTarget(resolved, 2881u, focus, kLoopStart,
                                                         kLoopLength, false));
 }
 
@@ -3580,7 +3605,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pre_commit_rejects_mover_note_range_zero_start_after_nonzero_baseline);
   RUN_TEST(test_pre_commit_emits_valid_mover_note_range);
   RUN_TEST(test_macro_commit_aligned_with_select_target_rejects_bracket_mismatch_220331);
-  RUN_TEST(test_macro_commit_blocks_different_note_while_mover_pending_014541);
+  RUN_TEST(test_macro_commit_allows_mover_handoff_while_mover_pending_195514);
+  RUN_TEST(test_resolve_macro_commit_select_target_handoff_at_bracket_195514);
   RUN_TEST(test_overlap_pre_commit_skips_implausible_live_span_015045);
   RUN_TEST(test_mover_pre_commit_rejects_stale_wrapped_commit_baseline_length);
   RUN_TEST(test_filter_excludes_inner_under_moving_note);

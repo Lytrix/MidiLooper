@@ -257,7 +257,7 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 | Step | Scope | Status |
 |------|--------|--------|
 | **(2)** | Participating-note **overlap closure** rule: while mover intersects participant committed closure, Hidden/Shortened stay constrained by active interaction; committed/session baseline drives Restore only when `participatingNoteOverlapInteractionCleared`. Helpers: `participatingNoteOverlapClosureActive`, overlay + `determineConstrainedGeometryTargetNoteIds` + action builder. Native: `test_overlap_closure_active_and_cleared`, `test_closure_active_suppresses_leave_restore_target_193632`, `test_builder_advance_with_overlap_closure_shorten_not_restore_193632`, updated `111955` (leave-restore when cleared). | **DONE** — native 915; HITL **`195514` PASS** |
-| **(3)** | Mover handoff: selecting another primary/mover must not discard prior mover session state; macro commit on handoff when bracket targets different `NoteId`. | **IN PROGRESS** |
+| **(3)** | Mover handoff: `resolveMacroCommitSelectTargetNoteId` + macro commit on different `NoteId`; seal prior mover before focus rebuild. Native: `test_macro_commit_allows_mover_handoff_while_mover_pending_195514`, `test_resolve_macro_commit_select_target_handoff_at_bracket_195514`. | **DONE** (code; HITL re-verify pending) |
 | **(1)** | Display/projection: Shortened participant stays semantically Shortened; inventory mask separate from selectable projection. | Pending after (3) |
 
 **HITL `session_20260807_195514` (post-(2) firmware)** — vs `193632`:
