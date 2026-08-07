@@ -63,6 +63,9 @@ NOTE_EDIT_MEM bool isLiveEditDriverValidFromCurrentState(const EditorSelection& 
   if (!currentState.readCurrentSpan(focus.movingNoteId, current)) {
     return false;
   }
+  if (!currentState.rowProjectsToStore(focus.movingNoteId)) {
+    return false;
+  }
   return noteBaselineMatches(current, focus.last);
 }
 

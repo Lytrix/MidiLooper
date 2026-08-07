@@ -8,7 +8,9 @@
 #include "MidiEvent.h"
 #include "NoteEditFocus.h"
 #include "EditSessionAction.h"
+#include "NoteEditSessionState.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SelectNavigation.h"
 
 #include "../test_support/NoteEditFocusTestDeps.cpp"
 #include "../../src/Logger.cpp"
@@ -631,6 +633,130 @@ void test_display_projection_inactive_focus_projects_session_moved_span() {
   TEST_ASSERT_EQUAL_UINT32(2447u, projected[0].endTick);
 }
 
+void test_driver_validation_rejects_hidden_row_matching_focus_last() {
+  // session_20260807_153739: span-only driver gate let a Hidden leave-restore stub validate.
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kNoteA, {88, 100, 2640, 2687}, {88, 100, 2640, 3167},
+                         NoteEditPresenceType::Hidden);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kNoteA;
+  focus.last = {88, 100, 2640, 2687};
+
+  EditorSelection selection;
+  selection.primaryNote = kNoteA;
+
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kNoteA));
+  TEST_ASSERT_FALSE(isLiveEditDriverValidFromCurrentState(selection, focus, currentState));
+}
+
+void test_selectable_inventory_excludes_paint_only_hidden_row() {
+  // RC10h / session_20260807_153739: leave-restore paint stays on grid but not in inventory.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 17;
+  constexpr uint8_t kPitch = 88;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 3600, 4127}, {kPitch, 100, 1920, 2447},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, {kPitch, 100, 2640, 3167}, {kPitch, 100, 2640, 3167},
+                         NoteEditPresenceType::Visible);
+
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = 2640;
+  hide.endTick = 2735;
+  hide.pitch = kPitch;
+  currentState.applyEditSessionAction(hide);
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 2640;
+  shorten.endTick = 2783;
+  shorten.pitch = kPitch;
+  currentState.applyEditSessionAction(shorten);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, 2640, 3167});
+  committedBase.push_back({kMoverId, kPitch, 100, 3600, 4127});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 1920, 2447};
+  focus.movingNoteRange = {1920, 2447};
+  focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
+  focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+
+  const NoteUtils::DisplayNoteVec selectable =
+      filterProjectingSelectableDisplayNotes(projected, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
+  TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[0].noteId);
+  for (const NoteUtils::DisplayNote& dn : selectable) {
+    TEST_ASSERT_TRUE(currentState.rowProjectsToStore(dn.noteId));
+  }
+}
+
+int nearestSelectableDisplayNoteIndex(const NoteUtils::DisplayNoteVec& notes, uint32_t startTick,
+                                      uint32_t loopLength, uint32_t loopStartTick) {
+  if (notes.empty() || loopLength == 0) {
+    return -1;
+  }
+  const uint32_t modStart = SelectNavigation::displayPhaseTick(startTick, loopLength);
+  uint32_t bestDist = loopLength;
+  int bestIdx = 0;
+  for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
+    const uint32_t noteTick =
+        displayStartTickFromStorageNote(notes[static_cast<size_t>(i)].startTick, loopStartTick,
+                                        loopLength);
+    const uint32_t dist =
+        std::min((noteTick + loopLength - modStart) % loopLength,
+                 (modStart + loopLength - noteTick) % loopLength);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+void test_select_closest_note_snap_tie_breaks_to_first_display_order() {
+  // Mirrors EditManager::selectClosestNote — equal distance keeps lower display-tick row.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint32_t kLoopStartTick = 0;
+
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({11, 60, 100, 384, 480});
+  notes.push_back({12, 67, 100, 1152, 1248});
+
+  const int fromLeft = nearestSelectableDisplayNoteIndex(notes, 384, kLoopLength, kLoopStartTick);
+  TEST_ASSERT_EQUAL(0, fromLeft);
+  TEST_ASSERT_EQUAL_UINT32(11u, notes[static_cast<size_t>(fromLeft)].noteId);
+
+  const int fromRight =
+      nearestSelectableDisplayNoteIndex(notes, 1152, kLoopLength, kLoopStartTick);
+  TEST_ASSERT_EQUAL(1, fromRight);
+  TEST_ASSERT_EQUAL_UINT32(12u, notes[static_cast<size_t>(fromRight)].noteId);
+
+  const int fromMidpoint =
+      nearestSelectableDisplayNoteIndex(notes, 768, kLoopLength, kLoopStartTick);
+  TEST_ASSERT_EQUAL(0, fromMidpoint);
+  TEST_ASSERT_EQUAL_UINT32(11u, notes[static_cast<size_t>(fromMidpoint)].noteId);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_build_from_session_store_visible_rows);
@@ -650,6 +776,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_leave_restore_paints_baseline_when_mover_left_overlap);
   RUN_TEST(test_display_projection_mover_uses_current_state_not_stale_focus_last);
   RUN_TEST(test_display_projection_inactive_focus_projects_session_moved_span);
+  RUN_TEST(test_driver_validation_rejects_hidden_row_matching_focus_last);
+  RUN_TEST(test_selectable_inventory_excludes_paint_only_hidden_row);
+  RUN_TEST(test_select_closest_note_snap_tie_breaks_to_first_display_order);
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);

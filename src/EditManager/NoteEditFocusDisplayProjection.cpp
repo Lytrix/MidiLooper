@@ -395,6 +395,22 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   return result;
 }
 
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
+    const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState) {
+  if (currentState == nullptr || currentState->empty()) {
+    return projected;
+  }
+  NoteUtils::DisplayNoteVec filtered;
+  filtered.reserve(projected.size());
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId != kInvalidNoteId && !currentState->rowProjectsToStore(dn.noteId)) {
+      continue;
+    }
+    filtered.push_back(dn);
+  }
+  return filtered;
+}
+
 template NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
     const NoteUtils::DisplayNoteVec&, const MidiEventVec&, const NoteEditFocus&, uint8_t,
     uint32_t, const NoteEditCurrentState*);
