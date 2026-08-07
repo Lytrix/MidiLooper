@@ -151,6 +151,17 @@ NOTE_EDIT_MEM bool NoteEditCurrentState::rowProjectsToStore(NoteId noteId) const
   return projectsToSessionStore(row->presence);
 }
 
+NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(NoteId noteId) const {
+  const NoteEditCurrentNoteState* row = find(noteId);
+  if (row == nullptr) {
+    return false;
+  }
+  if (!projectsToSessionStore(row->presence)) {
+    return false;
+  }
+  return !overlapInventoryMaskedTail(row->currentSpan, row->committedSpan);
+}
+
 NOTE_EDIT_MEM bool NoteEditCurrentState::isRowHiddenOrDeleted(NoteId noteId) const {
   const NoteEditCurrentNoteState* row = find(noteId);
   if (row == nullptr) {
@@ -201,11 +212,8 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
       if (row->presence == NoteEditPresenceType::Hidden) {
         return;
       }
-      // Overlap tail shorten (same start, shorter end): keep off projected store and
-      // selectable inventory until full baseline restore (session_20260807_142819 DNTE len 143).
-      if (overlapInventoryMaskedTail(span, row->committedSpan)) {
-        row->presence = NoteEditPresenceType::Hidden;
-      }
+      // Overlap tail shorten stays Visible (semantically shortened); inventory mask is separate
+      // from presence — see rowIncludedInSelectableInventory and display projection.
       return;
     case EditSessionActionType::HideNote:
       if (row == nullptr) {

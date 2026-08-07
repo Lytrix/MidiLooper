@@ -76,6 +76,9 @@ class NoteEditCurrentState {
 
   bool hasRow(NoteId noteId) const;
   bool rowProjectsToStore(NoteId noteId) const;
+  /// Visible/Added rows whose overlap tail is inventory-masked are excluded from selectable inventory
+  /// but remain semantically shortened (not Hidden).
+  bool rowIncludedInSelectableInventory(NoteId noteId) const;
   bool isRowHiddenOrDeleted(NoteId noteId) const;
   bool readCurrentSpan(NoteId noteId, NoteBaseline& out) const;
 
