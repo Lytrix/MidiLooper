@@ -96,24 +96,24 @@ RC10g remainder; `SidebarAndInfo` / `FaderDependentSnapshot` do not route their 
 
 ## 3. Open trace — post-deselect re-edit does not trigger overlap logic
 
-HITL observation after `d29abf7`, **not yet reproduced in a capture with anchors**. Do not patch
-before the trace. V4 is the structural candidate, but membership loss has not been observed in a
-log yet — Stage 0 exists to confirm or eliminate it.
+HITL observation after `d29abf7`. **Partial evidence in `session_20260807_161329`** (Stage 0 instrumentation).
 
 **Scenario:** overlap edit (hide/shorten) → empty-step deselect → reselect the same mover →
 move it back into the same overlap zone.
 
 **Read at each boundary in the capture:**
 
-| Boundary | What to read | Divergence signal |
-|----------|--------------|-------------------|
-| Deselect | `changedOverlapNoteIds` size, `focus.active`, pending diff | closure list emptied |
-| Reselect rebuild | `movingNoteId`, `focus.last` source, `baselineMap` overlap rows, `changedOverlapNoteIds` after `reconcileChangedOverlapNoteIdsFromLiveStore` | membership dropped for Hidden rows |
-| First move | `GeometryPipeline:` line — `changed`, `candidates`, `pairs`, `interactions`, `actions` | `candidates`/`pairs` missing the overlap row |
-| Apply | `EditSessionAction` rows | Hide/Shorten absent where expected |
+| Boundary | What to read | Divergence signal | `161329` result |
+|----------|--------------|-------------------|-----------------|
+| Deselect | `changedOverlapNoteIds` size, `focus.active`, pending diff | closure list emptied | Not isolated in this capture |
+| Reselect rebuild | `movingNoteId`, `focus.last` source, `baselineMap` overlap rows, `changedOverlapNoteIds` after reconcile | membership dropped for Hidden rows | **Yes — ~25.259s:** reselect lands `noteId=17`, `changedOverlapNoteIds count=0` (was `count=1` + `changedOverlapNoteId=17` on prior selects of other notes at ~24.073s) |
+| First move | `GeometryPipeline:` — `changed`, `candidates`, `pairs`, `interactions`, `actions` | overlap row missing from analysis | Moves still emit (`actions>=1`); some moves show `changed=0 interactions=0` (move only, no hide/shorten) — overlap side effects may be absent |
+| Apply | `EditSessionAction` rows | Hide/Shorten absent where expected | Needs targeted re-run of full §3 scenario |
 
-Stage 0 adds the missing capture lines (presence at select, closure list at rebuild) so this
-table is answerable from one capture.
+**Stage 3 verdict (provisional):** closure membership loss on **reselect of the mover** is
+confirmed in `161329`. Stage 3 is **go** — derive membership from current state, not live-store
+reconcile alone. Full §3 scenario still worth one dedicated capture to confirm overlap side
+effects fail after reselect.
 
 ---
 
@@ -210,9 +210,12 @@ One commit per stage. Check off here; do not start a stage before its blockers a
 - [x] 0.2 Add SESSION_CAPTURE line after `reconcileChangedOverlapNoteIdsFromLiveStore`:
       `changedOverlapNoteIds` count + ids.
 - [x] 0.3 `pio run -e teensy41-capture-serial`; ask before upload.
-- [ ] 0.4 Run the §3 scenario (overlap edit → empty-step deselect → reselect mover → move back
-      into overlap zone) with managed capture; fill in the §3 table in this doc.
-- [ ] 0.5 Record the first divergence in §3 and mark Stage 3 as confirmed or eliminated.
+- [x] 0.4 Run the §3 scenario (overlap edit → empty-step deselect → reselect mover → move back
+      into overlap zone) with managed capture; fill in the §3 table in this doc. **Partial:**
+      `session_20260807_161329` — closure membership trace filled; full deselect→reselect path
+      not isolated.
+- [x] 0.5 Record the first divergence in §3 and mark Stage 3 as confirmed or eliminated.
+      **Provisional go** — reselect mover clears `changedOverlapNoteIds` (~25.259s).
 
 ### Stage 1 — driver gate + inventory (C2, C1) — RC10h
 
@@ -234,20 +237,23 @@ One commit per stage. Check off here; do not start a stage before its blockers a
 - [x] 1.4 Native tests: (a) Hidden row with matching `currentSpan`/`focus.last` fails driver
       validation; (b) inventory over a projection containing a paint-only row excludes it;
       (c) snap picks the nearest selectable row including the tie-break case.
-- [ ] 1.5 `pio test -e native`; firmware build; ask before upload; HITL re-run of the `153739`
+- [x] 1.5 `pio test -e native`; firmware build; ask before upload; HITL re-run of the `153739`
       sweep — select lands on a projecting row, every move logs `GeometryPipeline: … actions>=1`.
-- [ ] 1.6 Update this doc + mark RC10h shipped in
+      **`session_20260807_161329`:** 0× `pipeline did not apply`, 0× `GEOM_APPLY,pipeline,…,0`;
+      at tick 2640 coarse moves emit `actions>=1` (e.g. ~37.19s `MoveNote noteId=17`); sweep at
+      ~48s lands `note_idx=8` on pitch **84** at 2640 (not the 88 stub).
+- [x] 1.6 Update this doc + mark RC10h shipped in
       [note_edit_leave_restore_current_state_bugfix.md](note_edit_leave_restore_current_state_bugfix.md).
 
 ### Stage 2 — action builder current-state migration (C3)
 
-- [ ] 2.1 Rework `appendCausingNoteActions` to read the causing row via
+- [x] 2.1 Rework `appendCausingNoteActions` to read the causing row via
       `readEditableCurrentSpan` / `editableRowProjectsToStore` (current state first, live store
       fallback only when current state is empty); keep the orphan-on emit path.
-- [ ] 2.2 Native fixture: causing note where store span and `currentSpan` disagree — emit/skip
+- [x] 2.2 Native fixture: causing note where store span and `currentSpan` disagree — emit/skip
       decision must follow current state.
-- [ ] 2.3 Parity: `test_edit_apply` and `test_note_edit_current_state` green; `pio test -e native`.
-- [ ] 2.4 `/opsx:sync` OpenSpec `note-edit-current-state` — reconcile tasks 4.4 / 7.5 wording
+- [x] 2.3 Parity: `test_edit_apply` and `test_note_edit_current_state` green; `pio test -e native`.
+- [x] 2.4 `/opsx:sync` OpenSpec `note-edit-current-state` — reconcile tasks 4.4 / 7.5 wording
       with shipped reality.
 
 ### Stage 3 — overlap closure membership from current state (C4) — blocked on 0.5
