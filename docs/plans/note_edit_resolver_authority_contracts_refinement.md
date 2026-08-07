@@ -1,16 +1,18 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** plan approved — tasks spec'd below (§6). Stage 0 (trace) must complete before Stage 3 code.
-**OpenSpec disposition:** no new change. This plan enforces contracts already decided in the
-**active** OpenSpec change `note-edit-current-state` (no ownership transfer, no transition
-change, no new abstraction — no formal trigger). Tasks live in §6 of this doc; the tasks
-4.4 / 7.5 drift is reconciled in the existing change via `/opsx:sync` when Stage 2 ships.
+**Status:** architectural migration in progress — Stages 0–2 and 5 **shipped**; Stage 3
+(participating-note model) is the current center; Stages 4–8 migrate behavior behind it.
+**Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
+not a parallel bugfix sequence or an upfront state-machine rewrite.
+**OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
+ownership transfer. `/opsx:sync` when Stage 2 shipped.
 **Supersedes:** patch-by-patch RC10 fixes in
 [note_edit_leave_restore_current_state_bugfix.md](note_edit_leave_restore_current_state_bugfix.md)
 (RC10h and the RC10g sidebar remainder map onto stages below).
 **Authority basis:** OpenSpec `note-edit-current-state` (design + tasks) — `NoteEditCurrentState`
 owns editable geometry and presence; everything else is a derived reader or a gated writer.
 **Evidence:** `captures/session_20260807_151441.log`, `captures/session_20260807_153739.log`,
+`captures/session_20260807_162713.log`, `captures/session_20260807_163621.log`,
 commit `d29abf7`.
 
 ---
@@ -27,7 +29,7 @@ Each stage lists its owner and the only inputs it is allowed to trust in the end
 | 4 | Display projection | `projectNoteEditDisplayNotes` / `resolveParticipantDisplaySpan` | stages 2 + 3, committed passes |
 | 5 | Selectable inventory | `selectableDisplayNotesForEditUi` | stage 4, filtered to editable rows |
 | 6 | Driver gate | `isLiveEditDriverValidFromCurrentState` / `ensureNoteEditFocusForLiveEdit` | stages 1 + 2 + 3 |
-| 7 | Geometry resolution | `NoteGeometryResolver` stages: `determineChangedCausingNotes` → `collectEvaluationScopeNoteIds` → `projectTransactionBaselineForEvaluationScope` → `determineEligiblePairs` → `analyzeEditSessionInteractions` → `resolveConstrainedGeometry` → `buildEditSessionActions` | stages 2 + 3 (`baselineMap`), edited span |
+| 7 | Geometry resolution | `NoteGeometryResolver` → `buildEditSessionActions` | participating-note input + `baselineMap` |
 | 8 | Apply / write | `applyEditSessionActions` → current-state mutation → projection refresh | stage 7 actions only |
 | 9 | Commit | macro commit / `commitNoteEditPass` | stage 2 vs committed baseline |
 
@@ -38,290 +40,227 @@ Whatever stage 5 offers **will** become a driver — that is the contract pressu
 
 ---
 
-## 2. Contract audit — proven violations
+## 2. Architectural migration
 
-### V1 — Selectable inventory offers non-projecting rows as editable drivers
+The codebase holds several representations of edit-session state: `NoteEditCurrentState`,
+`NoteEditFocus`, selectable inventory, live-store geometry, and derived display spans.
 
-**Evidence (`153739`):** select sweep lands `note_idx=8`, `DNTE,88,2640,2640,47` (the committed
-leave-restore stub). Coarse fader logs `Coarse fader using focus.last: pitch=88, start=2640`,
-`Overlap move bridge: ... end=2687`. Then 87× `pipeline did not apply` with
-`GEOM_APPLY,pipeline,…,0,3,0` and **no** `GeometryPipeline:` debug line — the resolver returned
-at its actions-empty check, before that log.
+The **participating-note model** is introduced incrementally at the authority boundary. It does
+**not** replace the geometry resolver or UI projection in one step.
 
-**Proof of mechanism (code):** `appendCausingNoteActions` emits `MoveNote` whenever
-`readStoreLinearBaseline` finds a span and `causing.span.startTick` differs. Zero actions across
-87 distinct target ticks therefore proves the driven row had **no note-on/off pair in the
-projected session store** and no orphan-on at `focus.last`
-(`causingNoteHasOrphanOnForAction`). A row that does not project to store was selected,
-latched as `movingNoteId`, and silently dropped by every downstream stage.
+### Migration order
 
-### V2 — Driver gate validates span only, never projection/presence
+1. Define participating-note states and invariants (**Stage 3** — design, no behavior change).
+2. Represent current session participants explicitly (`ParticipatingNoteSession`).
+3. Keep existing resolver behavior unchanged — new model is an **input contract**, not a replacement resolver.
+4. Route resolver inputs through participating-note state (**Stage 4**).
+5. Remove live-store inference of session semantics.
+6. Remove Focus-owned semantic state (`changedOverlapNoteIds` → derived query).
+7. Convert display/inventory to derived projections (**Stage 8**).
+8. Delete obsolete edge-case helpers only after equivalent invariant assertions exist.
 
-**Code:** `isLiveEditDriverValidFromCurrentState` calls `readCurrentSpan` and compares against
-`focus.last`. It never calls `rowProjectsToStore` and never reads `presence`. After `d29abf7`,
-`rebuildNoteEditFocusForDisplayNote` sets `focus.last` **from** `currentSpan`, so the gate passes
-by construction for any row that exists in current state — including rows the action builder
-cannot act on. The gate and the builder disagree about what "valid driver" means.
+### Implementation rule
 
-### V3 — Causing-note action builder is still live-store authoritative
+**Do not** add another helper that answers a question about participating-note state if that
+question can be answered by the explicit state model or an invariant.
 
-**Code:** `appendCausingNoteActions` (in `EditSessionActionBuilder.cpp`) compares the edited span
-against `readStoreLinearBaseline` and falls back to `focus.last`. It never consults
-`NoteEditCurrentState`, unlike the overlap-target path which already has
-`readEditableCurrentSpan` / `editableRowProjectsToStore`.
-**Spec drift:** OpenSpec `note-edit-current-state` tasks 4.4 ("route action-builder comparisons
-through current-state spans and presence") and 7.5 ("remove remaining live-store geometry
-authority in … action builder") are checked as done, but this reader was not migrated.
-Reconcile via `/opsx:sync` when Stage 2 ships.
+| Stop and use the model | Likely valid resolver logic |
+|------------------------|-----------------------------|
+| `isHiddenButStillParticipating(...)` | `shouldRestoreBecauseNoLongerOverlapping(...)` |
+| `isActuallyStillAnOverlapParticipantDespiteNotProjecting(...)` | constrained geometry from interactions |
 
-### V4 — Overlap closure membership derives from live-store diff, not current state
+### Current code → target model
 
-**Code:** `reconcileChangedOverlapNoteIdsFromLiveStore` diffs `focus.baselineMap` against the
-live store span. For a Hidden row (absent from store) membership survives only via
-`focus.overlapNotes` scratch or prior `changedOverlapNoteIds` — and the Phase-4 geometry
-pipeline hides **without** writing scratch (documented in `baselineMapPitchLaneNeedsRestore`).
-`rebuildNoteEditFocusForDisplayNote` clears and rebuilds focus on every reselect, so this
-membership is exactly what a deselect → reselect round trip can lose. Current state carries the
-authoritative membership signal (`presence != Visible` or `currentSpan != committedSpan`) and is
-never consulted here.
+| Current | Target |
+|---------|--------|
+| `EditorSelection.primaryNote` | `ParticipatingNoteSession.primaryNoteId` |
+| `EditorSelection.selectedNotes` | `ParticipatingNoteSession.selectedNoteIds` |
+| `focus.last` | derived driver geometry |
+| `focus.movingNoteId` | derived selection / driver state (not fundamental — multi-select ready) |
+| `NoteEditCurrentNoteState.currentSpan` | `ParticipatingNoteState.currentSpan` |
+| `NoteEditCurrentNoteState.committedSpan` | `ParticipatingNoteState.committedSpan` |
+| `NoteEditPresenceType` / span diff | `ParticipatingNotePhase` + `shortenedVsCommitted` |
+| `changedOverlapNoteIds` | derived participating set (Stage 4) |
+| `focus.baselineMap` | explicit baseline decision at session boundary |
+| `selectableDisplayNotesForEditUi` | derived UI inventory |
+| live session store | persistence representation — **not** session state |
 
-### V5 — Sidebar `DNTE` / `noteToShow` reads a different span source than session projection
+### Resolver position (initial)
 
-**Evidence (`151441`):** `DNTE,88,2640,2640,143` ↔ `DNTE,88,2640,2640,47` flicker during the
-select sweep — session projection tail (143) alternating with committed stub (47). This is the
-RC10g remainder; `SidebarAndInfo` / `FaderDependentSnapshot` do not route their span through
-`resolveParticipantDisplaySpan`.
+```text
+NoteEditCurrentState + EditorSelection
+            │
+            ▼
+   ParticipatingNoteSession   ← Stage 3 read model
+            │
+            ▼
+     EXISTING resolver        ← unchanged in Stage 3–4
+            │
+            ▼
+          Actions
+```
 
----
+Gradually remove `readStoreLinearBaseline`, `rowProjectsToStore`, and
+`editableRowProjectsToStore` from places that infer **session semantics** (not storage I/O).
 
-## 3. Open trace — post-deselect re-edit does not trigger overlap logic
+### Shipped migration steps (keep commits)
 
-HITL observation after `d29abf7`. **Partial evidence in `session_20260807_161329`** (Stage 0 instrumentation).
-
-**Scenario:** overlap edit (hide/shorten) → empty-step deselect → reselect the same mover →
-move it back into the same overlap zone.
-
-**Read at each boundary in the capture:**
-
-| Boundary | What to read | Divergence signal | `161329` result |
-|----------|--------------|-------------------|-----------------|
-| Deselect | `changedOverlapNoteIds` size, `focus.active`, pending diff | closure list emptied | Not isolated in this capture |
-| Reselect rebuild | `movingNoteId`, `focus.last` source, `baselineMap` overlap rows, `changedOverlapNoteIds` after reconcile | membership dropped for Hidden rows | **Yes — ~25.259s:** reselect lands `noteId=17`, `changedOverlapNoteIds count=0` (was `count=1` + `changedOverlapNoteId=17` on prior selects of other notes at ~24.073s) |
-| First move | `GeometryPipeline:` — `changed`, `candidates`, `pairs`, `interactions`, `actions` | overlap row missing from analysis | Moves still emit (`actions>=1`); some moves show `changed=0 interactions=0` (move only, no hide/shorten) — overlap side effects may be absent |
-| Apply | `EditSessionAction` rows | Hide/Shorten absent where expected | Needs targeted re-run of full §3 scenario |
-
-**Stage 3 verdict (provisional):** closure membership loss on **reselect of the mover** is
-confirmed in `161329`. Stage 3 is **go** — derive membership from current state, not live-store
-reconcile alone. Full §3 scenario still worth one dedicated capture to confirm overlap side
-effects fail after reselect.
+| Stage | Evidence | What it reduced |
+|-------|----------|-----------------|
+| 1 (`182317b`) | `153739` | paint-only rows as drivers |
+| 2 (`497a072`) | causing-note path | live-store authority on mover |
+| 5 (`8255fd7`) | `162713`, `163621` coarse | stale inventory index after hide |
 
 ---
 
-## 4. Target contracts
+## 3. Participating-note invariants
+
+Define before migrating code — not “which helper to replace?” first.
+
+### Per-note invariants
+
+1. Every participating note has exactly one session state row.
+2. `currentSpan` is the authoritative editable geometry.
+3. `committedSpan` does not change during the edit session.
+4. A **Hidden** note may be non-projecting but remains a participant.
+5. A **shortened** note (same start, shorter end vs committed) remains a participant.
+6. A non-projecting participant cannot become a selectable driver (Stage 1).
+7. A participating note cannot disappear because focus was rebuilt without current-state change.
+8. A restore transition restores from session **committed** baseline — never from a prior constrained/stub span alone (Stages 7–6).
+
+### Session invariants
+
+1. `selectedNoteIds ⊆ participatingNotes` (primary driver must project when driving geometry).
+2. Every interaction endpoint in the overlap closure is a participant.
+3. Every emitted overlap action targets a participating note.
+4. Resolver overlap action choice cannot depend on whether a participant happens to project into the live store (Stage 6).
+5. Rebuilding focus without changing `NoteEditCurrentState` cannot change the participant set or resolver result (Stage 4).
+
+**Code anchor (Stage 3):** `include/ParticipatingNoteSession.h`,
+`verifyParticipatingNoteInvariants`, `verifyParticipatingSessionInvariants`,
+`test_note_edit_participating_note`.
+
+---
+
+## 4. Contract audit — proven violations
+
+### V1 — Selectable inventory offers non-projecting rows as editable drivers — **fixed Stage 1**
+
+### V2 — Driver gate validates span only, never projection/presence — **fixed Stage 1**
+
+### V3 — Causing-note action builder live-store authoritative — **fixed Stage 2**
+
+### V4 — Overlap closure membership from live-store diff — **Stage 4 target**
+
+### V5 — Sidebar `DNTE` span split — **Stage 8 target**
+
+---
+
+## 5. Open trace — post-deselect re-edit (`161329`)
+
+| Boundary | Divergence signal | `161329` result |
+|----------|-------------------|-----------------|
+| Reselect rebuild | membership dropped for Hidden rows | **Yes — ~25.259s:** `changedOverlapNoteIds count=0` |
+| First move | overlap side effects absent | some `changed=0 interactions=0` move-only |
+
+**Stage 4 target:** participant set from `NoteEditCurrentState`; `changedOverlapNoteIds` → derived query.
+
+---
+
+## 6. Target contracts
 
 | ID | Contract (end state) |
 |----|----------------------|
-| C1 | Every `DisplayNote` returned by `selectableDisplayNotesForEditUi` refers to a row with `rowProjectsToStore == true` (Visible/Added). Leave-restore baseline paint of Hidden rows is display-only and never enters the selectable inventory. |
-| C2 | `isLiveEditDriverValidFromCurrentState` requires: row exists in current state, `rowProjectsToStore == true`, and `currentSpan` matches `focus.last`. A row the action builder cannot move can never validate as driver. |
-| C3 | All span comparisons in `EditSessionActionBuilder` read current state first. The causing-note path uses the same `readEditableCurrentSpan` / `editableRowProjectsToStore` helpers the overlap-target path already uses; live store is fallback only when current state is empty. |
-| C4 | `changedOverlapNoteIds` membership is derived from current-state row diff (`presence != Visible` or `currentSpan != committedSpan`); the live-store diff in `reconcileChangedOverlapNoteIdsFromLiveStore` remains only as the empty-current-state fallback. |
-| C5 | One span-resolution function (`resolveParticipantDisplaySpan`) feeds grid paint, sidebar `DNTE` / `noteToShow`, and `FaderDependentSnapshot`. No consumer re-derives a participant span from committed passes while a session is active. |
+| C1 | Selectable inventory: projecting rows only (Stage 1). |
+| C2 | Driver gate: `rowProjectsToStore` + span match (Stage 1). |
+| C3 | Action builder reads current state first (Stage 2). |
+| C4 | Participant set from `NoteEditCurrentState` — `changedOverlapNoteIds` is a query (Stage 4). |
+| C5 | One span-resolution path for grid + sidebar + snapshot (Stage 8). |
+| C6 | Coarse/fine driver survives inventory shrink (Stage 5). |
+| C7 | Full baseline leave-restore + display when mover clears committed span (Stage 7). |
+| C8 | Hide/shorten from current constrained geometry while overlap classified — no stale stub restore (Stage 6). |
 
-Shared invariant: **stages 3–7 must agree on the answer to "can this row be edited right now",
-and that answer is a function of `NoteEditCurrentState` alone.**
-
----
-
-## 5. Stages
-
-One commit per stage (Multi-Stage-Bugfix-Workflow). Architecture checkpoint for all stages:
-ownership change **no** (contracts already assign these owners in OpenSpec
-`note-edit-current-state`; stages enforce, not move), state-transition change **no**.
-
-### Stage 0 — trace instrumentation (investigation only)
-
-- Add SESSION_CAPTURE lines: presence value at `rebuildNoteEditFocusForDisplayNote`
-  (selected noteId, `presence`, `rowProjectsToStore`), and `changedOverlapNoteIds` size after
-  `reconcileChangedOverlapNoteIdsFromLiveStore`.
-- Run the §3 scenario, fill in the §3 table, and record the first divergence here.
-- No behavior change; gate for Stage 3.
-
-### Stage 1 — driver gate + inventory (C2, C1) — fixes the `153739` dead driver (RC10h)
-
-- Owner: `isLiveEditDriverValidFromCurrentState` (`NoteEditFocusState.cpp`) and the selectable
-  filter in `filteredSelectableDisplayNotesForNoteEdit` / `projectNoteEditDisplayNotes`.
-- Invariant: a selected row is always actionable — driver validity implies the action builder
-  can emit for it.
-- Test: native fixture — Hidden row with matching `currentSpan`/`focus.last` must fail driver
-  validation; selectable inventory over a projection containing a paint-only Hidden row must not
-  return it.
-- Log anchor: re-run the `153739` sweep scenario; select must land on a projecting row and moves
-  must log `GeometryPipeline: … actions>=1`.
-- **Decision (user, 2026-08-07):** when the sweep bracket falls on a paint-only stub, selection
-  **snaps to the nearest selectable row** (by display-tick distance; tie-break: lower display
-  tick — implementer pins the tie-break in the fixture).
-
-### Stage 2 — action builder current-state migration (C3)
-
-- Owner: `appendCausingNoteActions` in `EditSessionActionBuilder.cpp`.
-- Invariant: skip/emit decisions for the causing note match what current state says the row
-  currently is; live store consulted only when current state is empty.
-- Test: existing `test_note_edit_current_state` fixtures plus a causing-note fixture where store
-  and current state disagree; parity run of `test_edit_apply`.
-- Follow-up: `/opsx:sync` OpenSpec `note-edit-current-state` tasks 4.4 / 7.5 wording to match
-  the shipped reality.
-
-### Stage 3 — overlap closure membership from current state (C4)
-
-- Owner: `reconcileChangedOverlapNoteIdsFromLiveStore` (`NoteEditFocusOverlap.cpp`) and its
-  call site in focus rebuild.
-- Blocked on Stage 0 confirming membership loss is the divergence in §3.
-- Invariant: deselect → reselect preserves overlap closure — a row hidden or shortened by the
-  session stays a closure member until commit or session end.
-- Test: native fixture — hide overlap via pipeline, rebuild focus for the mover (simulating
-  reselect), assert `changedOverlapNoteIds` still contains the hidden row and the next resolve
-  produces the expected Hide/Restore actions.
-
-### Stage 4 — sidebar span authority (C5) — RC10g remainder
-
-- Owner: `SidebarAndInfo` `DNTE` / `noteToShow` and `FaderDependentSnapshot`, routed through
-  `resolveParticipantDisplaySpan`.
-- Invariant: one span per (noteId, paint epoch) across grid, sidebar, and snapshot — kills the
-  143 ↔ 47 flicker in `151441`.
-- Test: native projection fixture asserting sidebar span == grid span for a session-shortened
-  overlap row; HITL re-run of the `151441` sweep.
-
-### Deferred
-
-- Macro-commit handoff when selecting a different note with a pending prior mover
-  (`macro commit skipped` in `151441`) — re-evaluate after Stages 1–3; the skip guard may
-  already be correct once inventory and driver contracts hold.
+Shared invariant: **participant state and resolver inputs must agree on editability without
+inferring session semantics from live-store projection.**
 
 ---
 
-## 6. Tasks
+## 7. Stages
 
-One commit per stage. Check off here; do not start a stage before its blockers are checked.
+### Stage 0 — evidence / traces — **DONE**
 
-### Stage 0 — trace instrumentation (investigation only)
+### Stage 1 — driver + inventory (C1, C2) — **DONE** (`182317b`)
 
-- [x] 0.1 Add SESSION_CAPTURE line in `rebuildNoteEditFocusForDisplayNote`: selected `noteId`,
-      `presence`, `rowProjectsToStore` result.
-- [x] 0.2 Add SESSION_CAPTURE line after `reconcileChangedOverlapNoteIdsFromLiveStore`:
-      `changedOverlapNoteIds` count + ids.
-- [x] 0.3 `pio run -e teensy41-capture-serial`; ask before upload.
-- [x] 0.4 Run the §3 scenario (overlap edit → empty-step deselect → reselect mover → move back
-      into overlap zone) with managed capture; fill in the §3 table in this doc. **Partial:**
-      `session_20260807_161329` — closure membership trace filled; full deselect→reselect path
-      not isolated.
-- [x] 0.5 Record the first divergence in §3 and mark Stage 3 as confirmed or eliminated.
-      **Provisional go** — reselect mover clears `changedOverlapNoteIds` (~25.259s).
+### Stage 2 — current-state action authority on causing path (C3) — **DONE** (`497a072`)
 
-### Stage 1 — driver gate + inventory (C2, C1) — RC10h
+### Stage 3 — participating-note state model — **DONE** (read model; no behavior change)
 
-- [x] 1.1 Extend `isLiveEditDriverValidFromCurrentState`: require `rowProjectsToStore(noteId)`
-      in addition to the current-span match.
-- [x] 1.2 Exclude paint-only rows (painted Hidden/Deleted leave-restore spans) from
-      `filteredSelectableDisplayNotesForNoteEdit` so `selectableDisplayNotesForEditUi` never
-      returns them; grid paint keeps them (display-only).
-- [x] 1.3 Snap-to-nearest via **existing** machinery — no new snap mechanism. The sweep and
-      encoder both iterate `SelectNavigation::buildSelectNavigationSlots` over
-      `selectableDisplayNotesForEditUi`, so the 1.2 exclusion makes landing on a stub impossible
-      by construction; bracket-resolution call sites (`selectNoteAtBracket`, post-commit
-      reselect, session undo) already snap via `selectClosestNote` (circular display-tick
-      distance, first-in-display-order tie-break). Verify these paths cover the decision; only
-      add code if a call site resolves a bracket without the `selectClosestNote` fallback.
-      **Sweep semantics (default):** the excluded stub's tick becomes an ordinary empty 16th
-      step slot — sweeping onto it deselects, consistent with existing deselect-by-empty-step
-      UX; snap applies at bracket-resolution call sites, not mid-sweep.
-- [x] 1.4 Native tests: (a) Hidden row with matching `currentSpan`/`focus.last` fails driver
-      validation; (b) inventory over a projection containing a paint-only row excludes it;
-      (c) snap picks the nearest selectable row including the tie-break case.
-- [x] 1.5 `pio test -e native`; firmware build; ask before upload; HITL re-run of the `153739`
-      sweep — select lands on a projecting row, every move logs `GeometryPipeline: … actions>=1`.
-      **`session_20260807_161329`:** 0× `pipeline did not apply`, 0× `GEOM_APPLY,pipeline,…,0`;
-      at tick 2640 coarse moves emit `actions>=1` (e.g. ~37.19s `MoveNote noteId=17`); sweep at
-      ~48s lands `note_idx=8` on pitch **84** at 2640 (not the 88 stub).
-- [x] 1.6 Update this doc + mark RC10h shipped in
-      [note_edit_leave_restore_current_state_bugfix.md](note_edit_leave_restore_current_state_bugfix.md).
+No firmware behavior change. `ParticipatingNoteSession` read model + invariant tests.
 
-### Stage 2 — action builder current-state migration (C3)
+### Stage 4 — participant discovery / reselect (C4)
 
-- [x] 2.1 Rework `appendCausingNoteActions` to read the causing row via
-      `readEditableCurrentSpan` / `editableRowProjectsToStore` (current state first, live store
-      fallback only when current state is empty); keep the orphan-on emit path.
-- [x] 2.2 Native fixture: causing note where store span and `currentSpan` disagree — emit/skip
-      decision must follow current state.
-- [x] 2.3 Parity: `test_edit_apply` and `test_note_edit_current_state` green; `pio test -e native`.
-- [x] 2.4 `/opsx:sync` OpenSpec `note-edit-current-state` — reconcile tasks 4.4 / 7.5 wording
-      with shipped reality.
+Route participation through current state; `changedOverlapNoteIds` → derived query. Evidence: `161329`.
 
-### Stage 3 — overlap closure membership from current state (C4) — blocked on 0.5
+### Stage 5 — geometry driver / inventory sync (C6) — **DONE** (`8255fd7`)
 
-- [ ] 3.1 Derive `changedOverlapNoteIds` membership in
-      `reconcileChangedOverlapNoteIdsFromLiveStore` from current-state row diff
-      (`presence != Visible` or `currentSpan != committedSpan`); keep the live-store diff as the
-      empty-current-state fallback.
-- [ ] 3.2 Native fixture: hide overlap via pipeline → rebuild focus for the mover (reselect) →
-      `changedOverlapNoteIds` still contains the hidden row → next resolve emits the expected
-      Hide/Restore actions.
-- [ ] 3.3 `pio test -e native`; firmware build; HITL re-run of the §3 scenario — overlap logic
-      triggers on the post-deselect re-edit.
+### Stage 6 — action semantics from participant state (C8)
 
-### Stage 4 — sidebar span authority (C5) — RC10g remainder
+Hide/shorten beats stale restore while overlap classified. Evidence: `163621` ~44.212s. Blocked on Stage 4.
 
-- [ ] 4.1 Route `SidebarAndInfo` `DNTE` / `noteToShow` span through
-      `resolveParticipantDisplaySpan`.
-- [ ] 4.2 Route `FaderDependentSnapshot` span through the same function.
-- [ ] 4.3 Native projection fixture: sidebar span == grid span for a session-shortened overlap
-      row.
-- [ ] 4.4 `pio test -e native`; firmware build; HITL re-run of the `151441` sweep — no
-      143 ↔ 47 `DNTE` alternation; mark RC10g shipped in the RC10 plan.
+### Stage 7 — full leave/restore transition (C7)
 
-### Stage 5 — geometry driver survives overlap hide (inventory index sync) — **new**
+Hidden → full baseline restore → Visible. Evidence: `163621` visual restore. Blocked on Stage 6.
 
-**Not covered by Stages 3 or 4.** Evidence: `session_20260807_162713` ~362.11s.
+### Stage 8 — unified display projection (C5)
 
-**Symptom:** After overlap hide on a second note (`HideNote noteId=13`), coarse move halts —
-`POSITION EDIT mode` logs continue but no `Coarse fader using focus.last`, no
-`GeometryPipeline:`, display feels frozen. `0× pipeline did not apply` (not the `153739` stub
-driver bug).
-
-**Root cause (log + code):** Stage 1 C1 removes the hidden overlap row from
-`selectableDisplayNotesForEditUi`. `handleCoarseFaderInput` gates the apply block on
-`selectedNoteIdx < notes.size()`. The geometry move path (`NoteMovementUtils`,
-`geometrySelectionFromFocus`) calls `applySelectionFromGeometryEdit` but does **not** call
-`syncSelectedNoteIdxToFilteredInventory` — so after hide shrinks the list by one, `selectedNoteIdx`
-can equal `notes.size()` (e.g. idx 9, size 9) and every subsequent coarse tick silently skips
-apply.
-
-**Contract (C6):** While `focus.active` and the live driver is valid for
-`sessionState.selection.primaryNote`, coarse/fine geometry faders must keep driving from
-selection identity + `focus.last` — inventory shrink from overlap hide must not stall the driver.
-
-- [x] 5.1 After overlap geometry apply that emits `HideNote` / changes projecting inventory,
-      call `syncSelectedNoteIdxToFilteredInventory` (or extend `applySelectionFromGeometryEdit` /
-      `syncGeometrySelectionToUi` to refresh `selectedNoteIdx` from filtered inventory).
-- [x] 5.2 **Or** in `handleCoarseFaderInput` / fine path: when driver valid, resolve
-      `currentNote` via `liveEditDisplayNoteAtSelect` + `primaryNote` without requiring stale
-      `selectedNoteIdx < notes.size()` (prefer one owner — sync after apply is smaller diff).
-      **Shipped both:** `applySelectionFromGeometryEdit` always syncs idx; coarse path re-syncs
-      when idx is out of bounds before apply gate.
-- [x] 5.3 Native fixture: mover + overlap target in selectable list → pipeline emits `HideNote` on
-      target → next coarse step still emits `MoveNote` for mover; `selectedNoteIdx` in bounds or
-      driver path does not depend on idx.
-- [ ] 5.4 `pio test -e native`; firmware build; HITL re-run of `162713` overlap-hide-then-continue-move
-      scenario.
-
-**Priority:** Stage 5 before Stage 4 if coarse freeze is blocking daily edit; Stage 3 remains
-independent (closure membership on reselect).
+Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 
 ---
 
-## 7. Verification
+## 8. Tasks
 
-- Per stage: `pio test -e native`, firmware build `pio run -e teensy41-capture-serial`, ask
-  before upload.
-- HITL edit flow per [HITL-Edit-Test-Flow.mdc](../../.cursor/rules/HITL-Edit-Test-Flow.mdc)
-  after Stages 1 and 4.
-- Capture anchors per stage recorded in this doc before marking a stage shipped.
+### Stage 0 — **DONE** (`2012fef`)
+
+### Stage 1 — **DONE** (`182317b`)
+
+### Stage 2 — **DONE** (`497a072`)
+
+### Stage 3 — participating-note state model
+
+- [x] 3.1 `ParticipatingNoteSession`, `ParticipatingNoteState`, `ParticipatingNotePhase` types.
+- [x] 3.2 `buildParticipatingNoteSession` from `EditorSelection` + `NoteEditCurrentState`.
+- [x] 3.3 Invariant verify helpers + `test_note_edit_participating_note`.
+- [x] 3.4 Invariants documented in §3.
+- [x] 3.5 `pio test -e native` green (no firmware behavior change).
+
+### Stage 4 — participant discovery / reselect
+
+- [ ] 4.1 Derive participant set from current state.
+- [ ] 4.2 `changedOverlapNoteIds` as derived query.
+- [ ] 4.3 Native reselect fixture; HITL `161329`.
+
+### Stage 5 — **DONE** (code `8255fd7`)
+
+- [ ] 5.4 HITL `162713`; `163621` coarse pass confirmed.
+
+### Stage 6 — action semantics (was interim “Stage 7”)
+
+- [ ] 6.1–6.5 `appendOverlapTargetActions` + fixtures + HITL `163621`.
+
+### Stage 7 — leave/restore transition (was interim “Stage 6”)
+
+- [ ] 7.1–7.4 full baseline restore + display + HITL `163621`.
+
+### Stage 8 — display projection (was interim Stage 4 sidebar)
+
+- [ ] 8.1–8.4 sidebar + snapshot + HITL `151441`.
+
+**Priority:** 4 → 6 → 7 → 8.
+
+---
+
+## 9. Verification
+
+- Per stage: `pio test -e native`; firmware build when behavior changes; ask before upload.
+- HITL after Stages 4, 6, 7, 8.
+- Anchors: `153739`, `151441`, `161329`, `162713`, `163621`.
