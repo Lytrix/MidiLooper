@@ -30,6 +30,9 @@
 - [x] 4.2 Route focus rebuild and driver validation through current-state rows for `EditorSelection.primaryNote`.
 - [x] 4.3 Route geometry scope and overlap analysis through current-state spans and presence.
 - [x] 4.4 Route action-builder comparisons through current-state spans and presence.
+      Overlap-target path shipped in Phase 4 reader migration; causing-note path in
+      `appendCausingNoteActions` shipped in contracts plan Stage 2 (`readEditableCurrentSpan` /
+      `editableRowProjectsToStore`; orphan-on `focus.last` fallback retained).
 - [x] 4.5 Add native fixtures for same-pitch display reorder and `session_20260807_021939` repeated current-span overlap edits.
 
 ## 5. Writer Migration
@@ -56,6 +59,8 @@
 - [x] 7.3 Remove `sessionMovedNoteSpans` after current-state hidden/moved rows cover the same behavior.
 - [x] 7.4 Remove session-moved target exclusions and overlap action skip guards after parity fixtures pass.
 - [x] 7.5 Remove remaining live-store geometry authority in resolver, action builder, focus rebuild, and commit paths.
+      Causing-note action builder no longer uses `readStoreLinearBaseline` (Stage 2 contracts
+      plan); overlap reconcile / closure membership remain on live-store diff until Stage 3.
 
 ## 8. Verification
 

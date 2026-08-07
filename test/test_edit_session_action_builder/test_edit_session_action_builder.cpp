@@ -510,6 +510,33 @@ void test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920() {
       actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kPriorId));
 }
 
+void test_builder_causing_skip_and_emit_follow_current_state_not_store() {
+  constexpr NoteId kMover = 40;
+  const NoteBaseline committedSpan{60, 100, 100, 200};
+  const NoteBaseline currentSpan{60, 100, 148, 248};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMover, committedSpan, currentSpan, NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore = makeLivePair(kMover, 60, 100, 200);
+
+  const EditedGeometry matchingCurrent = makeEditedGeometry(kMover, currentSpan);
+  const EditSessionActions skipActions =
+      buildEditSessionActions({}, matchingCurrent, BaselineMap{}, BaselineMap{}, NoteIdList{},
+                              liveStore, kChannel, kEmptyFocus, kLoopLength, &currentState);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(skipActions.size()));
+
+  const NoteBaseline furtherEdited{60, 100, 160, 280};
+  const EditedGeometry furtherMove = makeEditedGeometry(kMover, furtherEdited);
+  const EditSessionActions moveActions =
+      buildEditSessionActions({}, furtherMove, BaselineMap{}, BaselineMap{}, NoteIdList{}, liveStore,
+                              kChannel, kEmptyFocus, kLoopLength, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(moveActions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditSessionActionType::MoveNote),
+                    static_cast<int>(moveActions[0].type));
+  TEST_ASSERT_EQUAL_UINT32(160u, moveActions[0].startTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_builder_emits_restore_when_live_differs_from_baseline);
@@ -529,5 +556,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_leave_restore_emits_restore_not_move_010415);
   RUN_TEST(test_builder_reads_current_span_for_overlap_shorten_021939);
   RUN_TEST(test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920);
+  RUN_TEST(test_builder_causing_skip_and_emit_follow_current_state_not_store);
   return UNITY_END();
 }

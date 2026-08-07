@@ -185,20 +185,6 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
   }
 }
 
-NOTE_EDIT_MEM bool readStoreLinearBaseline(MidiEventVec& liveStore, NoteId noteId, uint8_t channel,
-                                           uint32_t preferredStartTick, uint32_t loopLength,
-                                           NoteBaseline& out) {
-  if (findLinearNoteSpanForNoteId(liveStore, noteId, channel, out, preferredStartTick,
-                                  loopLength)) {
-    return true;
-  }
-  if (preferredStartTick != UINT32_MAX &&
-      findLinearNoteSpanForNoteId(liveStore, noteId, channel, out, UINT32_MAX, loopLength)) {
-    return true;
-  }
-  return false;
-}
-
 NOTE_EDIT_MEM bool causingNoteHasOrphanOnForAction(const NoteEditFocus& focus,
                                                    MidiEventVec& liveStore, NoteId noteId,
                                                    uint8_t channel, uint32_t loopLength) {
@@ -212,19 +198,21 @@ NOTE_EDIT_MEM bool causingNoteHasOrphanOnForAction(const NoteEditFocus& focus,
 NOTE_EDIT_MEM void appendCausingNoteActions(const EditedGeometry& editedGeometry,
                                             MidiEventVec& liveStore, const NoteEditFocus& focus,
                                             uint8_t channel, uint32_t loopLength,
-                                            EditSessionActions& actions) {
+                                            EditSessionActions& actions,
+                                            const NoteEditCurrentState* currentState) {
   for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
-    NoteBaseline storeSpan{};
-    const bool hasStoreSpan = readStoreLinearBaseline(liveStore, causing.noteId, channel,
-                                                      causing.span.startTick, loopLength, storeSpan);
+    NoteBaseline editableSpan{};
+    const bool hasEditableSpan =
+        readEditableCurrentSpan(causing.noteId, liveStore, channel, currentState, editableSpan);
+    const bool projectsToStore =
+        editableRowProjectsToStore(causing.noteId, liveStore, channel, currentState);
 
-    // Store is authoritative for skip. focus.last fallback is only for orphan-on emit
-    // (session_20260804_231426) — never skip when the live store span still differs.
-    if (hasStoreSpan && baselineSpansEqual(causing.span, storeSpan)) {
+    if (hasEditableSpan && projectsToStore &&
+        baselineSpansEqual(causing.span, editableSpan)) {
       continue;
     }
 
-    if (!hasStoreSpan) {
+    if (!hasEditableSpan || !projectsToStore) {
       if (!causingNoteHasOrphanOnForAction(focus, liveStore, causing.noteId, channel,
                                            loopLength)) {
         continue;
@@ -234,7 +222,8 @@ NOTE_EDIT_MEM void appendCausingNoteActions(const EditedGeometry& editedGeometry
       }
     }
 
-    const NoteBaseline& live = hasStoreSpan ? storeSpan : focus.last;
+    const NoteBaseline& live =
+        (hasEditableSpan && projectsToStore) ? editableSpan : focus.last;
 
     if (causing.span.pitch != live.pitch) {
       actions.push_back(makeAction(EditSessionActionType::ChangePitch, causing.noteId,
@@ -279,7 +268,8 @@ NOTE_EDIT_MEM EditSessionActions buildEditSessionActions(
   appendOverlapTargetActions(constrainedGeometry, editedGeometry, projectedTransactionBaseline,
                              storageTransactionBaseline, leaveRestoreTargetNoteIds, liveStore,
                              channel, focus, actions, currentState);
-  appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions);
+  appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions,
+                           currentState);
 
   sortEditSessionActions(actions);
   return actions;
