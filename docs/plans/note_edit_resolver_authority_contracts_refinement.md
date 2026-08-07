@@ -250,7 +250,7 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 - [x] 6.2 L→R into overlap classifies `OverlapNoteOff` against committed geometry (not stub `BoundaryTouch`).
 - [x] 6.3 Native fixtures `181859` (interaction + action builder).
 - [x] 6.4 `pio test -e native` green (910).
-- [ ] 6.5 HITL `163621` / `181859` L→R shorten continuation — pre-fix **FAIL** `193632`; post-(2) **PASS** `195514` (see below).
+- [ ] 6.5 HITL shorten/closure/handoff — **`203805` shorten PASS**; full-overlap commit paint → [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md)
 
 #### Stage 6.5 follow-up — overlap closure transition (sequenced; do not bundle)
 
@@ -258,9 +258,9 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 |------|--------|--------|
 | **(2)** | Participating-note **overlap closure** rule: while mover intersects participant committed closure, Hidden/Shortened stay constrained by active interaction; committed/session baseline drives Restore only when `participatingNoteOverlapInteractionCleared`. Helpers: `participatingNoteOverlapClosureActive`, overlay + `determineConstrainedGeometryTargetNoteIds` + action builder. Native: `test_overlap_closure_active_and_cleared`, `test_closure_active_suppresses_leave_restore_target_193632`, `test_builder_advance_with_overlap_closure_shorten_not_restore_193632`, updated `111955` (leave-restore when cleared). | **DONE** — native 915; HITL **`195514` PASS** |
 | **(3)** | Mover handoff: `resolveMacroCommitSelectTargetNoteId` + macro commit on different `NoteId`; seal prior mover before focus rebuild. **Follow-up:** `syncCommittedSpan` after macro commit so leave-restore does not use stale `committedSpan` (`200656`). Native: handoff tests + `test_sync_committed_span_leave_restore_uses_sealed_position_200656`. | **DONE** — HITL `201057` handoff @1344 clean |
-| **(1)** | Display/projection: Shortened participant stays semantically Shortened (`Visible` + inventory-masked tail); inventory mask separate from selectable projection; paint shortened stub while overlap active. **Follow-up:** `projectedNoteEditDisplayNotes` must return full paint projection — was incorrectly returning filtered selectable list (`202147`). | **DONE** (code; HITL `202147` FAIL → fix pending re-verify) |
+| **(1)** | Display/projection: Shortened participant stays semantically Shortened (`Visible` + inventory-masked tail); inventory mask separate from selectable projection; paint shortened stub while overlap active. **Follow-ups:** paint/inventory cache split (`202147`); Hidden→Visible on overlap-tail Shorten (`202538`). | **DONE** — HITL **`203805`** shorten paint PASS |
 
-**HITL `session_20260807_201057` (post-(3) syncCommittedSpan)** — handoff note 9 @1344; leave-restore @1344 (not 2208); no parity mismatches; ShortenNote chains on overlap.
+**HITL `session_20260807_203805` (post `c4136fd`)** — L→R/R→L **ShortenNote** chains + stub paint **PASS**. New issue: **full overlap HideNote** on short note — inventory drops but grid still paints committed span after commit → [note_edit_full_overlap_commit_display_bugfix.md](note_edit_full_overlap_commit_display_bugfix.md).
 
 **HITL `session_20260807_202538` (post paint/inventory split)** — ShortenNote chains OK; L→R still hidden: first overlap frame emits **HideNote** full baseline then Shorten on **Hidden** row (presence stayed Hidden). R→L shorten paint OK. Re-entry **HideNote** reset `currentSpan` to full length. Fixed: Shorten promotes Hidden→Visible shortened; builder skips Hide when closure active + already shortened; leave-restore paints committed when mover left overlap zone.
 
