@@ -16,6 +16,7 @@
 #include "../../src/EditManager/NoteEditCurrentState.cpp"
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"

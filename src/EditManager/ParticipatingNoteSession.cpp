@@ -59,6 +59,37 @@ NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
   return out;
 }
 
+bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,
+                                                      const NoteBaseline& current) {
+  if (current.startTick == committed.startTick) {
+    return true;
+  }
+  if (current.startTick > committed.startTick && current.endTick == committed.endTick) {
+    return true;
+  }
+  return false;
+}
+
+bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteState& participant,
+                                                     NoteId movingNoteId) {
+  if (participant.noteId == kInvalidNoteId || participant.noteId == movingNoteId) {
+    return false;
+  }
+  return participant.phase == ParticipatingNotePhase::Hidden ||
+         participant.phase == ParticipatingNotePhase::Deleted ||
+         participant.shortenedVsCommitted;
+}
+
+bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant) {
+  return participant.phase == ParticipatingNotePhase::Hidden ||
+         participant.phase == ParticipatingNotePhase::Deleted ||
+         participant.shortenedVsCommitted;
+}
+
+NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState& participant) {
+  return participant.committedSpan;
+}
+
 ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteState& row) {
   ParticipatingNoteState out{};
   out.noteId = row.noteId;

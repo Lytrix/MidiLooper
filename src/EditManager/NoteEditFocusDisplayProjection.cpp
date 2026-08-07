@@ -4,6 +4,7 @@
 #include "NoteEditFocus.h"
 #include "NoteEditFocusInternal.h"
 #include "NoteEditCurrentState.h"
+#include "ParticipatingNoteSession.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -45,6 +46,16 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
       return true;
     }
     if (currentState->isRowHiddenOrDeleted(noteId)) {
+      const NoteEditCurrentNoteState* row = currentState->find(noteId);
+      if (row != nullptr && focus.active &&
+          !overlapSpanIntersectsActiveMover(focus, row->committedSpan.startTick,
+                                           row->committedSpan.endTick, loopLength)) {
+        pitch = row->committedSpan.pitch;
+        velocity = row->committedSpan.velocity;
+        startTick = row->committedSpan.startTick;
+        endTick = row->committedSpan.endTick;
+        return true;
+      }
       const auto baselineIt = focus.baselineMap.find(noteId);
       if (baselineIt != focus.baselineMap.end() && focus.active &&
           !overlapSpanIntersectsActiveMover(focus, baselineIt->second.startTick,

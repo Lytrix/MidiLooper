@@ -207,9 +207,9 @@ Route participation through current state; `changedOverlapNoteIds` membership fr
 
 Hide/shorten beats stale restore while overlap classified. Evidence: `163621` ~44.212s. Blocked on Stage 4.
 
-### Stage 7 — full leave/restore transition (C7)
+### Stage 7 — full leave/restore transition (C7) — **IN PROGRESS**
 
-Hidden → full baseline restore → Visible. Evidence: `163621` visual restore. Blocked on Stage 6.
+Hidden → full committed baseline restore → Visible via participating-note leave-restore contract. Evidence: `163621`, `175858`.
 
 ### Stage 8 — unified display projection (C5)
 
@@ -233,12 +233,12 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 - [x] 3.4 Invariants documented in §3.
 - [x] 3.5 `pio test -e native` green (no firmware behavior change).
 
-### Stage 4 — participant discovery / reselect — **DONE** (code; HITL 4.4 pending)
+### Stage 4 — participant discovery / reselect — **DONE** (`941d87a`; HITL `175858`)
 
 - [x] 4.1 Derive participant set from current state (`currentStateRowIsOverlapParticipant`, `collectOverlapParticipantNoteIdsFromCurrentState`).
 - [x] 4.2 `reconcileChangedOverlapNoteIdsFromLiveStore` uses current state when non-empty; rebuild passes `noteEditCurrentState`.
 - [x] 4.3 Native reselect fixture (`161329` hidden overlap + empty store).
-- [ ] 4.4 HITL `161329`.
+- [x] 4.4 HITL `175858` — reselect keeps `changedOverlapNoteIds` note 17.
 
 ### Stage 5 — **DONE** (code `8255fd7`)
 
@@ -248,15 +248,18 @@ Sidebar `DNTE` via `resolveParticipantDisplaySpan`. Evidence: `151441`.
 
 - [ ] 6.1–6.5 `appendOverlapTargetActions` + fixtures + HITL `163621`.
 
-### Stage 7 — leave/restore transition (was interim “Stage 6”)
+### Stage 7 — leave/restore transition — **IN PROGRESS**
 
-- [ ] 7.1–7.4 full baseline restore + display + HITL `163621`.
+- [x] 7.1 Participating leave-restore helpers (`participatingNoteNeedsFullCommittedLeaveRestore`, committed span).
+- [x] 7.2 `constrainedGeometryFromRestoreCandidate` uses committed span for hidden/shortened participants.
+- [x] 7.3 Display projection paints `committedSpan` when mover left overlap zone.
+- [ ] 7.4 HITL `163621` / `175858` full restore → Visible.
 
 ### Stage 8 — display projection (was interim Stage 4 sidebar)
 
 - [ ] 8.1–8.4 sidebar + snapshot + HITL `151441`.
 
-**Priority:** 4 → 6 → 7 → 8.
+**Priority:** 6 → 7 (HITL) → 8.
 
 ---
 
