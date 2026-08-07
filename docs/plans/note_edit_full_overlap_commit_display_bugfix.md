@@ -1,6 +1,6 @@
 # Note edit — full overlap commit still paints hidden short note
 
-**Status:** **Step 1 shipped** (native) — HITL `203805` full-cover paint gate pending device verify.
+**Status:** **Step 1 shipped** (`8596950`); **step 3 native shipped** — leave-restore paint only after `RestoreNote` → Visible. HITL pending.
 
 **Parent:** [note_edit_resolver_authority_contracts_refinement.md](note_edit_resolver_authority_contracts_refinement.md) — Stage 6.5 display follow-up + **C4 display slice** (participant set from current state).
 

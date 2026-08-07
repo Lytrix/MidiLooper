@@ -39,19 +39,6 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
         (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
-      if (noteId != focus.movingNoteId && focus.active) {
-        const NoteEditCurrentNoteState* row = currentState->find(noteId);
-        if (row != nullptr &&
-            participatingNoteShortenedVsCommitted(current, row->committedSpan) &&
-            !overlapSpanIntersectsActiveMover(focus, row->committedSpan.startTick,
-                                              row->committedSpan.endTick, loopLength)) {
-          pitch = row->committedSpan.pitch;
-          velocity = row->committedSpan.velocity;
-          startTick = row->committedSpan.startTick;
-          endTick = row->committedSpan.endTick;
-          return true;
-        }
-      }
       pitch = current.pitch;
       velocity = current.velocity;
       startTick = current.startTick;
@@ -59,26 +46,6 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
       return true;
     }
     if (currentState->isRowHiddenOrDeleted(noteId)) {
-      const NoteEditCurrentNoteState* row = currentState->find(noteId);
-      if (row != nullptr && focus.active &&
-          !overlapSpanIntersectsActiveMover(focus, row->committedSpan.startTick,
-                                           row->committedSpan.endTick, loopLength)) {
-        pitch = row->committedSpan.pitch;
-        velocity = row->committedSpan.velocity;
-        startTick = row->committedSpan.startTick;
-        endTick = row->committedSpan.endTick;
-        return true;
-      }
-      const auto baselineIt = focus.baselineMap.find(noteId);
-      if (baselineIt != focus.baselineMap.end() && focus.active &&
-          !overlapSpanIntersectsActiveMover(focus, baselineIt->second.startTick,
-                                       baselineIt->second.endTick, loopLength)) {
-        pitch = baselineIt->second.pitch;
-        velocity = baselineIt->second.velocity;
-        startTick = baselineIt->second.startTick;
-        endTick = baselineIt->second.endTick;
-        return true;
-      }
       return false;
     }
   }
@@ -159,10 +126,6 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   const uint32_t paintEnd = committed.endTick;
   if (row->presence == NoteEditPresenceType::Hidden ||
       row->presence == NoteEditPresenceType::Deleted) {
-    if (focus.active &&
-        !overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
-      return false;
-    }
     return true;
   }
   if (row->presence != NoteEditPresenceType::Visible) {
@@ -173,12 +136,9 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
     return false;
   }
   if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
-    // Paint shortened stub while overlap is active; suppress on deselect only.
+    // Paint shortened stub only while overlap closure is active (C9 / step 2).
     if (focus.active &&
         overlapSpanIntersectsActiveMover(focus, paintStart, paintEnd, loopLength)) {
-      return false;
-    }
-    if (focus.active) {
       return false;
     }
     return true;
@@ -186,21 +146,9 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   return false;
 }
 
-bool nonVisibleParticipantSuppressedWhileOverlapActive(const NoteEditCurrentState& currentState,
-                                                       const NoteEditFocus& focus, NoteId noteId,
-                                                       uint32_t loopLength) {
-  if (noteId == kInvalidNoteId || !currentState.isRowHiddenOrDeleted(noteId)) {
-    return false;
-  }
-  const NoteEditCurrentNoteState* row = currentState.find(noteId);
-  if (row == nullptr) {
-    return false;
-  }
-  if (!focus.active) {
-    return true;
-  }
-  return overlapSpanIntersectsActiveMover(focus, row->committedSpan.startTick,
-                                          row->committedSpan.endTick, loopLength);
+bool nonVisibleParticipantSuppressedFromProjection(const NoteEditCurrentState& currentState,
+                                                   NoteId noteId) {
+  return noteId != kInvalidNoteId && currentState.isRowHiddenOrDeleted(noteId);
 }
 
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
@@ -338,13 +286,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     NoteBaseline live{};
     if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
                                      loopLength)) {
-      if (currentState != nullptr && currentState->isRowHiddenOrDeleted(noteId)) {
-        const auto baselineIt = focus.baselineMap.find(noteId);
-        if (baselineIt != focus.baselineMap.end() && focus.active &&
-            !overlapSpanIntersectsActiveMover(focus, baselineIt->second.startTick,
-                                         baselineIt->second.endTick, loopLength)) {
-          continue;
-        }
+      if (currentState != nullptr && currentState->rowProjectsToStore(noteId)) {
+        continue;
       }
       hiddenParticipants.insert(noteId);
     }
@@ -354,8 +297,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   result.reserve(committedBaseNotes.size());
   for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
     if (dn.noteId != kInvalidNoteId && currentState != nullptr &&
-        nonVisibleParticipantSuppressedWhileOverlapActive(*currentState, focus, dn.noteId,
-                                                          loopLength)) {
+        nonVisibleParticipantSuppressedFromProjection(*currentState, dn.noteId)) {
       continue;
     }
     if (dn.noteId != kInvalidNoteId && hiddenParticipants.count(dn.noteId) > 0) {
