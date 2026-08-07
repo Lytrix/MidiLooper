@@ -14,6 +14,10 @@
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteUtils.h"
 
+#if defined(SESSION_CAPTURE)
+#include "Logger.h"
+#endif
+
 using DisplayNote = NoteUtils::DisplayNote;
 
 EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditFocusForLiveEdit(Track& track,
@@ -191,6 +195,20 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
     editSession.focus.active = true;
+#if defined(SESSION_CAPTURE)
+    if (baselineNoteId != kInvalidNoteId) {
+        const NoteEditCurrentNoteState* currentRow =
+            editSession.noteEditCurrentState.find(baselineNoteId);
+        const int presenceValue =
+            currentRow != nullptr ? static_cast<int>(currentRow->presence) : -1;
+        const bool projectsToStore =
+            editSession.noteEditCurrentState.rowProjectsToStore(baselineNoteId);
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "NOTE_EDIT focus rebuild: noteId=%lu presence=%d rowProjectsToStore=%d",
+                   static_cast<unsigned long>(baselineNoteId), presenceValue,
+                   projectsToStore ? 1 : 0);
+    }
+#endif
     if (baselineNoteId != kInvalidNoteId) {
         editSession.focus.baselineMap[baselineNoteId] = editSession.focus.commitBaseline;
     }
@@ -198,6 +216,19 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
                                       channel, loopLength);
     reconcileChangedOverlapNoteIdsFromLiveStore(editSession.focus, sessionEvents, channel,
                                                 loopLength);
+#if defined(SESSION_CAPTURE)
+    {
+        const NoteIdList& overlapIds = editSession.focus.changedOverlapNoteIds;
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "NOTE_EDIT focus rebuild: changedOverlapNoteIds count=%u",
+                   static_cast<unsigned>(overlapIds.size()));
+        for (NoteId overlapId : overlapIds) {
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "NOTE_EDIT focus rebuild: changedOverlapNoteId=%lu",
+                       static_cast<unsigned long>(overlapId));
+        }
+    }
+#endif
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
