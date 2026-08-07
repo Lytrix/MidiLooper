@@ -121,6 +121,14 @@ inline bool shouldIgnoreGeometryDriverHoldForSelectNavigation(bool geometryDrive
     return geometryDriverHoldActive && geometryEditContext && !selectionChanged;
 }
 
+/** Empty-step deselect during geometry hold (session_20260807_013839: F1 drift cleared coarse
+ * target while moving note 10). Note-to-note navigation still preempts via apply path. */
+inline bool shouldBlockEmptyStepSelectDuringGeometryHold(bool geometryDriverHoldActive,
+                                                         bool geometryEditContext,
+                                                         bool targetIsEmptyStep) {
+    return targetIsEmptyStep && geometryDriverHoldActive && geometryEditContext;
+}
+
 /** Dismiss relatch sync only when F1 has been idle (not scrubbing through logical bracket). */
 inline bool shouldDismissRelatchAsSynchronized(bool relatchActive, bool physicalTargetDivergent,
                                                uint32_t now, uint32_t lastSelectFaderInputMs,

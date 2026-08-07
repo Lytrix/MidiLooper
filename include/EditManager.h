@@ -173,6 +173,17 @@ public:
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     /// Refresh **focus.last** start/end from the live session store note-on/off pair.
     void syncNoteEditFocusLastFromSessionStore(Track& track);
+    /// Read-only canonical projection of note edit current state during NOTE_EDIT.
+    const MidiEventVec& noteEditSessionProjectionEvents() const;
+    /// Projection owner: rebuild EditSession.store from noteEditCurrentState.
+    void refreshNoteEditSessionProjection(uint8_t channel);
+    NoteEditCurrentState& noteEditCurrentStateMut();
+    const NoteEditCurrentState& noteEditCurrentState() const;
+#if NOTE_EDIT_PROJECTED_STORE_COMPAT
+    /// Compat direct projected-store mutation — remove after tasks.md §5–7 writer migration.
+    MidiEventVec& mutNoteEditSessionProjectionEventsCompat();
+    MidiEventVec& mutEditProjectionEventsCompat(Track& track);
+#endif
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
     void bumpSessionPreviewRevision();

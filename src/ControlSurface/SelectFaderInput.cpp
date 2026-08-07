@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "MidiConfig.h"
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
 #include "Track.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteEditFaderMotorTiming.h"
@@ -168,7 +169,15 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
             priorSelection.primaryNote, priorSelection.selectedTick, nextPrimaryNote,
             target.absoluteTargetTick);
 
-    if (selectionChanged && geometryEditContext &&
+    if (NoteEditFaderSelectSync::shouldBlockEmptyStepSelectDuringGeometryHold(
+            geometryDriverHoldActive, geometryEditContext, target.noteIdx < 0)) {
+        geometrySelectBlockedDuringGeometryHold_ = true;
+        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
+                               false, "geometry_hold_empty_blocked");
+        return;
+    }
+
+    if (selectionChanged && target.noteIdx >= 0 && geometryEditContext &&
         (geometryDriverHoldActive || selectionRelatchAfterGeometryActive_)) {
         preemptGeometryHoldForSelectNavigation(now);
     }
@@ -188,7 +197,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
 
     if (selectionRelatchAfterGeometryActive_) {
         if (NoteEditFaderSelectSync::shouldSuspendSelectDuringRelatch(true, physicalTargetDivergent)) {
-            if (selectionChanged) {
+            if (selectionChanged && target.noteIdx >= 0) {
                 preemptGeometryHoldForSelectNavigation(now);
             } else {
                 const uint32_t intentionalNavPeriodMs =
@@ -380,8 +389,12 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
     } else {
         const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
         editManager.syncNoteEditFocusLastFromSessionStore(track);
+        const NoteEditKind sessionKind = editManager.getNoteEditSessionState().kind;
         if (!isNoteEditMacroCommitDeferred(millis()) &&
-            editManager.isLiveEditDriverValidForTrack(track)) {
+            editManager.isLiveEditDriverValidForTrack(track) &&
+            sessionKind != NoteEditKind::Select &&
+            editManager.isMacroCommitAlignedWithSelectTargetForTrack(
+                track, kInvalidNoteId, absoluteTargetTick)) {
             editManager.commitAllPendingNoteEditActions(track);
         }
         editManager.rebuildNoteEditFocusAtSelect(track, -1);

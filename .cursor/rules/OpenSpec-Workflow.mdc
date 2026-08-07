@@ -48,6 +48,29 @@ Post-M7 order (do not reorder without project decision):
 2. `ls openspec/changes/` (exclude `archive/`)
 3. `openspec/changes/<name>/tasks.md` before implementing
 
+## Preflight for OpenSpec work
+
+When creating or implementing an OpenSpec change, check whether the change introduces a
+[formal trigger](docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers), especially:
+
+- ownership transfer for mutable state;
+- state transition changes;
+- new top-level abstractions, Managers, or parallel authorities;
+- behavior that conflicts with archived specs or architecture docs.
+
+If no formal trigger fired, use lightweight preflight: short inline owner/change/test summary
+before implementation.
+
+If a formal trigger fired, complete a full preflight before firmware edits:
+
+- use `docs/templates/PREFLIGHT.md`;
+- include ownership-transfer fields when mutable ownership moves;
+- include `docs/templates/DECISION_REVIEW.md` or equivalent findings;
+- create a repo artifact such as `openspec/changes/<name>/PREFLIGHT.md` when the OpenSpec
+  itself carries the design/implementation handoff;
+- add explicit `tasks.md` items for preflight, decision log entry, compatibility removal trigger,
+  and validation gates.
+
 ## Brownfield docs
 
 Cite in OpenSpec artifacts; do not duplicate wholesale (see DELIVERY_RULES):

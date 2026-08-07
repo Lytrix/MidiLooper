@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "EditSessionLiveStoreSpan.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "Utils/NoteEditMem.h"
 
@@ -91,31 +92,55 @@ NOTE_EDIT_MEM bool causingSpanCompletelyCoversBaseline(const EditedGeometry& edi
   return false;
 }
 
+NOTE_EDIT_MEM bool editableRowProjectsToStore(NoteId noteId, const MidiEventVec& liveStore,
+                                              uint8_t channel,
+                                              const NoteEditCurrentState* currentState) {
+  if (currentState != nullptr && currentState->hasRow(noteId)) {
+    return currentState->rowProjectsToStore(noteId);
+  }
+  return liveStoreHasNotePair(liveStore, noteId, channel);
+}
+
+NOTE_EDIT_MEM bool readEditableCurrentSpan(NoteId noteId, const MidiEventVec& liveStore,
+                                           uint8_t channel, const NoteEditCurrentState* currentState,
+                                           NoteBaseline& out) {
+  if (currentState != nullptr && currentState->readCurrentSpan(noteId, out)) {
+    return true;
+  }
+  return readLiveLinearSpan(liveStore, noteId, channel, out);
+}
+
 NOTE_EDIT_MEM void appendOverlapTargetActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
-    const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
+    const EditedGeometry& editedGeometry, const BaselineMap& projectedTransactionBaseline,
+    const BaselineMap& storageTransactionBaseline, const NoteIdList& leaveRestoreTargetNoteIds,
     const MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
-    EditSessionActions& actions) {
+    EditSessionActions& actions, const NoteEditCurrentState* currentState) {
   for (const ConstrainedNoteGeometry& constrained : constrainedGeometry) {
+    const bool leaveRestore =
+        std::find(leaveRestoreTargetNoteIds.begin(), leaveRestoreTargetNoteIds.end(),
+                  constrained.noteId) != leaveRestoreTargetNoteIds.end();
+    const BaselineMap& transactionBaseline =
+        leaveRestore ? storageTransactionBaseline : projectedTransactionBaseline;
     const auto baselineIt = transactionBaseline.find(constrained.noteId);
     if (baselineIt == transactionBaseline.end()) {
       continue;
     }
     const NoteBaseline& baseline = baselineIt->second;
     NoteId liveNoteId = constrained.noteId;
-    if (!liveStoreHasNotePair(liveStore, liveNoteId, channel)) {
+    if (!editableRowProjectsToStore(liveNoteId, liveStore, channel, currentState)) {
       const NoteId resolvedId =
           findLiveNoteIdForPitchStart(liveStore, channel, baseline.pitch, baseline.startTick);
       if (resolvedId != kInvalidNoteId && resolvedId != focus.movingNoteId &&
-          liveStoreHasNotePair(liveStore, resolvedId, channel)) {
+          editableRowProjectsToStore(resolvedId, liveStore, channel, currentState)) {
         liveNoteId = resolvedId;
       }
     }
-    const bool livePresent = liveStoreHasNotePair(liveStore, liveNoteId, channel);
+    const bool livePresent = editableRowProjectsToStore(liveNoteId, liveStore, channel, currentState);
     NoteBaseline live{};
     const bool liveReadable =
-        livePresent && readLiveLinearSpan(liveStore, liveNoteId, channel, live);
+        livePresent && readEditableCurrentSpan(liveNoteId, liveStore, channel, currentState, live);
 
     if (!constrained.visible) {
       if (livePresent) {
@@ -150,14 +175,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       continue;
     }
 
-    if (constrained.startTick > baseline.startTick &&
-        constrained.endTick >= baseline.endTick) {
-      const NoteBaseline headTrimmed{constrained.pitch, baseline.velocity, constrained.startTick,
-                                     constrained.endTick};
-      if (!liveReadable || live.startTick != constrained.startTick) {
-        actions.push_back(makeAction(EditSessionActionType::MoveNote, liveNoteId, headTrimmed));
-      }
-    } else if (constrained.endTick < baseline.endTick) {
+    if (constrained.endTick < baseline.endTick) {
       const NoteBaseline shortened{constrained.pitch, baseline.velocity, constrained.startTick,
                                    constrained.endTick};
       if (!liveReadable || live.endTick != constrained.endTick) {
@@ -253,12 +271,14 @@ NOTE_EDIT_MEM void logEditSessionActions(const EditSessionActions& actions) {
 NOTE_EDIT_MEM EditSessionActions buildEditSessionActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
-    const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
-    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
-    uint32_t loopLength) {
+    const EditedGeometry& editedGeometry, const BaselineMap& projectedTransactionBaseline,
+    const BaselineMap& storageTransactionBaseline, const NoteIdList& leaveRestoreTargetNoteIds,
+    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus, uint32_t loopLength,
+    const NoteEditCurrentState* currentState) {
   EditSessionActions actions;
-  appendOverlapTargetActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore,
-                             channel, focus, actions);
+  appendOverlapTargetActions(constrainedGeometry, editedGeometry, projectedTransactionBaseline,
+                             storageTransactionBaseline, leaveRestoreTargetNoteIds, liveStore,
+                             channel, focus, actions, currentState);
   appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions);
 
   sortEditSessionActions(actions);

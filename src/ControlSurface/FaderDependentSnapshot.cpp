@@ -238,6 +238,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::publishDependentFaderLatch(Track& trac
     if (editManager.isNoteEditActive() && loopLength > 0) {
         const NoteEditFocus& focus = editManager.getEditSession().focus;
         if (focus.active) {
+            // NOTE_EDIT_PROJECTED_STORE_COMPAT: closure normalize on projected store until tasks.md §5.5.
             MidiEventVec& store = editManager.sessionMidiEvents();
             std::unordered_set<NoteId> closure =
                 buildEditClosureNoteIds(focus, store, track.getMidiChannel(), loopLength);

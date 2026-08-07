@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "NoteEditFocus.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditFocusInternal.h"
 
@@ -66,6 +67,18 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
     if (!hasChangedOverlapNote(focus, noteId)) {
       continue;
     }
+    if (loopLength > 0 &&
+        !isPlausibleStorageSpan(live.startTick, live.endTick, loopLength)) {
+#if defined(SESSION_CAPTURE)
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "NOTE_EDIT pre-commit: overlap noteId=%lu live span start=%lu end=%lu implausible; "
+                 "skipped",
+                 static_cast<unsigned long>(noteId),
+                 static_cast<unsigned long>(live.startTick),
+                 static_cast<unsigned long>(live.endTick));
+#endif
+      continue;
+    }
     if (live.startTick != baseline.startTick) {
       EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
       row.targetNoteId = noteId;
@@ -120,6 +133,9 @@ NOTE_EDIT_MEM bool shouldRejectMoverPreCommitRow(const EditPass& row, const Note
     if (row.startTick != focus.commitBaseline.startTick || row.endTick != focus.last.endTick) {
       return true;
     }
+    if (focus.commitBaseline.endTick >= loopLength && focus.last.endTick < loopLength) {
+      return true;
+    }
     return !isPlausibleMoverLinearSpan(row.startTick, row.endTick, loopLength);
   }
   return false;
@@ -134,6 +150,125 @@ NOTE_EDIT_MEM void removeInvalidMoverPreCommitRows(EditPassVec& rows, const Note
 }
 
 }  // namespace
+
+NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
+    const NoteEditFocus& focus, const NoteEditCurrentState& currentState, uint8_t channel,
+    uint32_t loopLength) {
+  EditPassVec rows;
+  if (!focus.active) {
+    return rows;
+  }
+  (void)channel;
+
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (!hasChangedOverlapNote(focus, noteId)) {
+      continue;
+    }
+
+    const NoteEditCurrentNoteState* row = currentState.find(noteId);
+    if (row == nullptr || row->presence == NoteEditPresenceType::Deleted ||
+        row->presence == NoteEditPresenceType::Hidden) {
+      EditPass deleteRow = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
+      deleteRow.targetNoteId = noteId;
+      rows.push_back(std::move(deleteRow));
+      continue;
+    }
+
+    const NoteBaseline& live = row->currentSpan;
+    if (live.pitch != baseline.pitch) {
+      continue;
+    }
+    if (loopLength > 0 && !isPlausibleStorageSpan(live.startTick, live.endTick, loopLength)) {
+#if defined(SESSION_CAPTURE)
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "NOTE_EDIT commit: overlap noteId=%lu current span start=%lu end=%lu implausible; "
+                 "skipped",
+                 static_cast<unsigned long>(noteId),
+                 static_cast<unsigned long>(live.startTick),
+                 static_cast<unsigned long>(live.endTick));
+#endif
+      continue;
+    }
+    if (live.startTick != baseline.startTick) {
+      EditPass updateRow = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
+      updateRow.targetNoteId = noteId;
+      updateRow.startTick = live.startTick;
+      updateRow.endTick = live.endTick;
+      rows.push_back(std::move(updateRow));
+    } else if (live.endTick != baseline.endTick) {
+      EditPass updateRow = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
+      updateRow.targetNoteId = noteId;
+      updateRow.startTick = baseline.startTick;
+      updateRow.endTick = live.endTick;
+      rows.push_back(std::move(updateRow));
+    }
+  }
+
+  for (const auto& [noteId, row] : currentState.rows()) {
+    if (row.presence != NoteEditPresenceType::Added) {
+      continue;
+    }
+    if (focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
+      continue;
+    }
+    const NoteBaseline& span = row.currentSpan;
+    EditPass createRow = makeNoteEditRow(EditActionType::Create, EditPropertyType::None);
+    MidiEvent noteOn = MidiEvent::NoteOn(span.startTick, channel, span.pitch, span.velocity);
+    noteOn.noteId = noteId;
+    createRow.addedEvents.push_back(noteOn);
+    createRow.addedEvents.push_back(MidiEvent::NoteOff(span.endTick, channel, span.pitch, 0));
+    rows.push_back(std::move(createRow));
+  }
+
+  return rows;
+}
+
+NOTE_EDIT_MEM EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,
+                                                          const NoteEditCurrentState& currentState,
+                                                          uint8_t channel, uint32_t loopLength) {
+  EditPassVec rows;
+  if (loopLength > 0 && !currentState.empty()) {
+    rows = buildCommitOverlapRowsFromCurrentState(focus, currentState, channel, loopLength);
+  }
+  if (!focus.active) {
+    return rows;
+  }
+  (void)channel;
+
+  const bool startChanged = focus.last.startTick != focus.commitBaseline.startTick;
+  const bool endChanged = focus.last.endTick != focus.commitBaseline.endTick;
+  const bool pitchChanged = focus.last.pitch != focus.commitBaseline.pitch;
+
+  if (startChanged) {
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
+    row.targetNoteId = focus.movingNoteId;
+    row.startTick = focus.last.startTick;
+    row.endTick = focus.last.endTick;
+    rows.push_back(row);
+  } else if (endChanged) {
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
+    row.targetNoteId = focus.movingNoteId;
+    row.startTick = focus.commitBaseline.startTick;
+    row.endTick = focus.last.endTick;
+    rows.push_back(row);
+  }
+
+  if (pitchChanged) {
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Pitch);
+    row.targetNoteId = focus.movingNoteId;
+    row.pitch = focus.last.pitch;
+    rows.push_back(row);
+  }
+
+  if (loopLength > 0) {
+    removeInvalidMoverPreCommitRows(rows, focus, loopLength);
+  }
+
+  return rows;
+}
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                                    const MidiEventVec* sessionStoreEvents,

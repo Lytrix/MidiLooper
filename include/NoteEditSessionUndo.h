@@ -5,6 +5,7 @@
 
 #include "EditPass.h"
 #include "LoopEventBuffer.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 
@@ -15,10 +16,14 @@ struct SessionUndoEntry {
   NoteEditFocus focus;
   EditorSelection selection;
   EditPassIdList editPassIdsAtPush;
+  NoteEditCurrentState undoCurrentState;
+  bool hasUndoCurrentState = false;
   EditPassVec redoEditRows;
   NoteEditFocus redoFocus;
   EditorSelection redoSelection;
   EditPassIdList redoEditPassIds;
+  NoteEditCurrentState redoCurrentState;
+  bool hasRedoCurrentState = false;
   bool hasRedoPayload = false;
 };
 
@@ -35,7 +40,8 @@ template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,
                                        uint8_t channel, uint32_t loopLength,
-                                       const EditPassIdList& editPassIdsAtPush);
+                                       const EditPassIdList& editPassIdsAtPush,
+                                       const NoteEditCurrentState* currentStateAtPush = nullptr);
 template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntryAfterLiveCaptureDuringNoteEdit(
     const NoteEditFocus& focus, EditorSelection selection,
@@ -47,9 +53,14 @@ EditPassVec buildSessionStoreEditPasses(const std::vector<MidiEvent, AllocA>& ba
                                         const std::vector<MidiEvent, AllocB>& sessionStoreEvents,
                                         uint8_t channel, uint32_t loopLength);
 
+void restoreSessionStoreFromCurrentState(CowLoopEventStore& store,
+                                         const NoteEditCurrentState& currentState,
+                                         uint8_t channel);
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
-                           uint32_t loopLength, const EditPassIdList& currentEditPassIds);
+                           uint32_t loopLength, uint8_t channel,
+                           const EditPassIdList& currentEditPassIds);
 void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
-                           uint32_t loopLength, const EditPassIdList& currentEditPassIds);
+                           uint32_t loopLength, uint8_t channel,
+                           const EditPassIdList& currentEditPassIds);
 
 bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b);

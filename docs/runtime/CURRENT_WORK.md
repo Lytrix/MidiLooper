@@ -2,13 +2,30 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-06 (firmware ownership lifetime review — closed)
+Last updated: 2026-08-07 (note-edit-current-state section 7 commit + compat removal)
 
 ---
 
 ## Now implementing
 
-Confirm next slice with user — candidates: dedicated **HITL refactor** (layered **`base`** gate), persistence/overlay hardening, HITL CLI Phase 3 device PASS.
+### Note edit current state — ownership transfer (`note-edit-current-state`)
+
+**OpenSpec:** [`openspec/changes/note-edit-current-state/`](../../openspec/changes/note-edit-current-state/)  
+**Preflight:** [`PREFLIGHT.md`](../../openspec/changes/note-edit-current-state/PREFLIGHT.md)  
+**Decision:** DEC-029
+
+| Phase | Status |
+|-------|--------|
+| 1 — Architecture gate and preflight | **Done** (2026-08-07) |
+| 2 — Current-state foundation (read-only build + projection) | **Done** (2026-08-07) |
+| 3 — API split and compatibility gates | **Done** (2026-08-07) |
+| 4 — Reader migration | **Done** (2026-08-07) |
+| 5 — Writer migration | **Done** (2026-08-07) |
+| 6 — Undo/redo and folded capture | **Done** (2026-08-07) |
+| 7 — Commit and compatibility removal | **Done** (2026-08-07) |
+| 8 — Verification and archive prep | Next |
+
+Confirm next slice with user when parallel work conflicts — candidates: HITL CLI Phase 3, persistence/overlay hardening.
 
 ### Firmware ownership / lifetime review — **closed (2026-08-06)**
 

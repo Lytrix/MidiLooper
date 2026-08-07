@@ -15,11 +15,13 @@ This document indexes **remaining** post-geometry work that is **not** projectio
 | Macro commit guard Phase 1 (RC7) | **Shipped** | § RC7 Phase 1 below |
 | Select bracket mismatch guard (RC7b) | **Shipped** (HITL gate open) | [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md) |
 | Projection ownership (RC6) | **Shipped** | [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) |
-| Overlap restore span (RC9) | **Shipped** | [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) |
+| Overlap restore span (RC9b/c) | **Shipped** | [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) |
+| Overlap leave-restore (RC9g) | **Active** | [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) § RC9g |
+| Overlap commit authority (RC9) | **Shipped** | same doc § Implementation status |
 | Selection index stability (RC10) | **Shipped** | [`note_edit_selection_index_stability_bugfix.md`](note_edit_selection_index_stability_bugfix.md) |
 | Reconstruction parity (RC8) | Open | § RC8 below |
 
-Recommended order: **RC8** recon parity. RC6, RC7, RC7b, RC10, RC9 shipped.
+Recommended order: **RC8** recon parity, then **RC9g** leave-restore. RC6, RC7, RC7b, RC10, RC9b/c, commit authority shipped. RC9d/e/f WIP reverted (`000657`).
 
 ---
 
@@ -50,13 +52,16 @@ Re-select same `NoteId` at bracket ≠ `focus.last` display bracket → skip mac
 
 ---
 
-## RC9 — Overlap restore span + head overlap (shipped)
-
-See [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) — RC9b restore span, RC9c head-trim.
-
-**Primary capture:** `captures/session_20260806_222937.log` — shorten→hide→move-away restores full baseline 609–959.
+## RC9 — Overlap restore + commit authority
 
 See [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md).
+
+| Sub-track | Status |
+|-----------|--------|
+| RC9b/c head-trim + scratch restore | Shipped (`31379a9`) |
+| Commit authority (empty-step preserve, reconcile on rebuild) | Shipped |
+| RC9d/e/f geometry WIP | **Reverted** — `000657` cross-pitch restore spam |
+| RC9g same-pitch leave-restore | **Open** — findings-first |
 
 ---
 

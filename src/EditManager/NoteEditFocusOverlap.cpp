@@ -64,6 +64,41 @@ NOTE_EDIT_MEM void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId)
   focus.changedOverlapNoteIds.push_back(noteId);
 }
 
+NOTE_EDIT_MEM void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
+                                                               const MidiEventVec& sessionEvents,
+                                                               uint8_t channel,
+                                                               uint32_t loopLength) {
+  if (!focus.active || loopLength == 0) {
+    return;
+  }
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    NoteBaseline live{};
+    const bool hasLive =
+        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength,
+                                       focus.movingNoteId, live);
+    if (!hasLive) {
+      // Missing session rows on a fresh select (baselineMap from committed passes, empty store)
+      // are not overlap mutations — only scratch / prior overlap membership marks hide/shorten.
+      if (focus.overlapNotes.find(noteId) != focus.overlapNotes.end() ||
+          hasChangedOverlapNote(focus, noteId)) {
+        recordChangedOverlapNote(focus, noteId);
+      } else {
+        forgetChangedOverlapNote(focus, noteId);
+      }
+      continue;
+    }
+    if (live.pitch != baseline.pitch || live.startTick != baseline.startTick ||
+        live.endTick != baseline.endTick) {
+      recordChangedOverlapNote(focus, noteId);
+    } else {
+      forgetChangedOverlapNote(focus, noteId);
+    }
+  }
+}
+
 NOTE_EDIT_MEM void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId) {
   const auto it = std::find(focus.changedOverlapNoteIds.begin(),
                             focus.changedOverlapNoteIds.end(), noteId);

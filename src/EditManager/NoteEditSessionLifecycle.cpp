@@ -37,6 +37,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     editSession.applyOwnedEditPassRows.clear();
     editSession.replaceEditPassOnClose = false;
     editSession.undoStack.clear();
+    editSession.noteEditCurrentState.clear();
     DIAG_EVENT(Diagnostics::Edit::NoteEditOpenEnter);
     loop.rematerializeEditView(editSession.store.mutStore());
     DIAG_COUNTER_INC(Materialize);
@@ -48,6 +49,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     loop.assignMissingNoteIds(loop.midiEvents());
     loop.assignMissingNoteIds(editSession.store.mutEvents());
     stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
+    editSession.noteEditCurrentState =
+        NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(),
+                                                    track.getMidiChannel());
     DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;
@@ -73,6 +77,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::reopenNoteEditSession(Track& track) {
     if (editSession.active) {
         editSession.store.mutStore().clear();
         editSession.store.discardEventsCache();
+        editSession.noteEditCurrentState.clear();
         editSession.undoStack.clear();
         editSession.editPassIds.clear();
         editSession.applyOwnedEditPassRows.clear();
@@ -143,6 +148,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
     closeNoteEditPass(track);
     editSession.store.mutStore().clear();
     editSession.store.discardEventsCache();
+    editSession.noteEditCurrentState.clear();
     editSession.focus.clear();
     editSession.applyOwnedEditPassRows.clear();
     editSession.active = false;
@@ -167,6 +173,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::revertNoteEditSessionForLoopClear(Track&
     editSession.applyOwnedEditPassRows.clear();
     editSession.store.mutStore().clear();
     editSession.store.discardEventsCache();
+    editSession.noteEditCurrentState.clear();
     editSession.focus.clear();
     editSession.active = false;
     editSession.editPassIndex = 0;
@@ -197,6 +204,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rematerializeNoteEditSessionAfterWorkspa
     if (editSession.active) {
         editSession.store.mutStore().clear();
         editSession.store.discardEventsCache();
+        editSession.noteEditCurrentState.clear();
         editSession.undoStack.clear();
         editSession.editPassIds.clear();
         editSession.durableCheckpointedEditPassIds.clear();
@@ -224,28 +232,26 @@ EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track
     if (editSession.store.isEventsDirty()) {
         editSession.store.syncEventsToStore();
     }
-    const MidiEventVec baselineStoreEvents = editSession.store.readEvents();
+    const uint8_t channel = track.getMidiChannel();
+    if (editSession.noteEditCurrentState.empty()) {
+        editSession.noteEditCurrentState =
+            NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(), channel);
+    }
+    const NoteEditCurrentState undoCurrentState = editSession.noteEditCurrentState.clone();
 
     MidiEventVec captureFlat;
     loop.capture.store.copyEventsTo(captureFlat);
     loop.assignMissingNoteIds(captureFlat);
-    MidiEventVec& sessionFlat = editSession.store.mutEvents();
-    if (sessionFlat.empty()) {
-        sessionFlat = std::move(captureFlat);
-    } else if (!captureFlat.empty()) {
-        MidiEventVec merged;
-        merged.reserve(sessionFlat.size() + captureFlat.size());
-        std::merge(sessionFlat.begin(), sessionFlat.end(), captureFlat.begin(), captureFlat.end(),
-                   std::back_inserter(merged),
-                   [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-        sessionFlat = std::move(merged);
-    }
-    editSession.store.syncEventsToStore();
+    editSession.noteEditCurrentState.mergeCaptureNotesAsAdded(captureFlat, channel, loopLength);
+    refreshNoteEditSessionProjection(channel);
     loop.discardCapture();
     loop.discardPendingCapturePass();
 
-    const EditPassVec redoRows = buildSessionStoreEditPasses(
-        baselineStoreEvents, editSession.store.readEvents(), track.getMidiChannel(), loopLength);
+    MidiEventVec baselineProjected;
+    undoCurrentState.projectToSessionStore(baselineProjected, channel);
+    const EditPassVec redoRows =
+        buildSessionStoreEditPasses(baselineProjected, editSession.store.readEvents(), channel,
+                                    loopLength);
     if (redoRows.empty()) {
         return;
     }
@@ -254,7 +260,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track
     entry.selection = sessionState.selection;
     entry.focus = snapshotFocusForSessionUndo(editSession.focus);
     entry.editPassIdsAtPush = editSession.editPassIds;
+    entry.undoCurrentState = undoCurrentState;
+    entry.hasUndoCurrentState = true;
     entry.redoEditRows = redoRows;
+    entry.redoCurrentState = editSession.noteEditCurrentState.clone();
+    entry.hasRedoCurrentState = true;
     entry.redoFocus = snapshotFocusForSessionUndo(editSession.focus);
     entry.redoSelection = sessionState.selection;
     entry.redoEditPassIds = editSession.editPassIds;

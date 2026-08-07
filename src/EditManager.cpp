@@ -22,6 +22,7 @@
 #include "EditApply.h"
 #include "EditSession.h"
 #include "NoteEditSessionState.h"
+#include "NoteEditCurrentState.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/LoopTickNormalize.h"
@@ -82,12 +83,50 @@ EDIT_MANAGER_IMPL_MEM uint32_t EditManager::noteEditLoopStartTick(const Track& t
     return loopLength > 0 ? track.getLoopStartTick() % loopLength : 0;
 }
 
-EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::sessionMidiEvents() {
+EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::noteEditSessionProjectionEvents() const {
+    return editSession.store.readEvents();
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::refreshNoteEditSessionProjection(uint8_t channel) {
+    if (!editSession.active || editSession.sessionType != EditSessionType::Note) {
+        return;
+    }
+    MidiEventVec& projection = editSession.store.mutEvents();
+    editSession.noteEditCurrentState.projectToSessionStore(projection, channel);
+    editSession.store.syncEventsToStore();
+}
+
+EDIT_MANAGER_IMPL_MEM NoteEditCurrentState& EditManager::noteEditCurrentStateMut() {
+    return editSession.noteEditCurrentState;
+}
+
+EDIT_MANAGER_IMPL_MEM const NoteEditCurrentState& EditManager::noteEditCurrentState() const {
+    return editSession.noteEditCurrentState;
+}
+
+#if NOTE_EDIT_PROJECTED_STORE_COMPAT
+EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::mutNoteEditSessionProjectionEventsCompat() {
     return editSession.store.mutEvents();
 }
 
+EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::mutEditProjectionEventsCompat(Track& track) {
+    if (editSession.active) {
+        return mutNoteEditSessionProjectionEventsCompat();
+    }
+    return track.legacyMidiEventsFromCommitted();
+}
+#endif
+
+EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::sessionMidiEvents() {
+#if NOTE_EDIT_PROJECTED_STORE_COMPAT
+    return mutNoteEditSessionProjectionEventsCompat();
+#else
+    return editSession.store.mutEvents();
+#endif
+}
+
 EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::sessionMidiEvents() const {
-    return editSession.store.readEvents();
+    return noteEditSessionProjectionEvents();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPreviewRevision() {
@@ -101,14 +140,18 @@ EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPlaybackPreviewRevision() {
 
 EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::editMidiEvents(Track& track) {
     if (editSession.active) {
+#if NOTE_EDIT_PROJECTED_STORE_COMPAT
+        return mutEditProjectionEventsCompat(track);
+#else
         return sessionMidiEvents();
+#endif
     }
     return track.legacyMidiEventsFromCommitted();
 }
 
 EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::editMidiEvents(const Track& track) const {
     if (editSession.active) {
-        return sessionMidiEvents();
+        return noteEditSessionProjectionEvents();
     }
     return track.legacyMidiEventsFromCommitted();
 }
