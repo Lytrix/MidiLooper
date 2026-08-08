@@ -226,6 +226,12 @@ void sortPendingLoopSlotRestoreQueue();
 bool peekFirstPendingLoopSlotRestore(DeferredLoopSlotRestore& out);
 void setRestoredSetBundlePath(const char* path);
 
+/// Boot / revision load: deferred undo-stack hydrate state (shared by epilogue + idle hydrate).
+extern char restoredSetBundlePath_[80];
+extern std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_;
+extern uint8_t undoHydrateTrackIndex_;
+extern bool undoSnapshotsPending_;
+
 void resetBootUndoHydrateState();
 
 bool hydrateLoopSlotMetadataFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Loop& loop);

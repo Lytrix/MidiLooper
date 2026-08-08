@@ -349,7 +349,7 @@ Two TUs: `WallClockSdSync.cpp` + `SetBrowserRead.cpp`.
 
 No OpenSpec / DEC / guide rewrite — behavior unchanged. Durable truth for this refinement remains **this plan** + issue #16 checklist. Update [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) when slices ship or park; close #16 after remaining items done or explicitly deferred.
 | Deferred-save status queries | ~130 | Collapse to header inlines after root TU &lt; 1.5k |
-| `readCurrentSetFilePreamble` / `Epilogue` | ~155 | Colocate with boot/revision load readers |
+| `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | ~155 | **Done** (2026-08-08) — colocated with track-slot metadata; undo-hydrate RAM promoted to `StorageManagerInternal` (`Internal.cpp`) |
 | `toggleSetRevisionCatalogFavorite` + revision catalog | — | Shipped in Phase 8b |
 | `StorageSession` colocation ([DEC-012](storage_session_state_refactor_handoff.md)) | — | **After** extractions stabilize file boundaries |
 
