@@ -164,8 +164,7 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
     if (row == nullptr || !currentStateRowIsOverlapParticipant(*row)) {
       continue;
     }
-    if (row->presence == NoteEditPresenceType::Deleted ||
-        row->presence == NoteEditPresenceType::Hidden) {
+    if (currentStateRowLifecycleIsDeleted(*row) || !currentStateRowIsVisible(*row)) {
       EditPass deleteRow = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
       deleteRow.targetNoteId = noteId;
       rows.push_back(std::move(deleteRow));
@@ -209,7 +208,7 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
   }
 
   for (const auto& [noteId, row] : currentState.rows()) {
-    if (row.presence != NoteEditPresenceType::Added) {
+    if (!currentStateRowLifecycleIsAdded(row)) {
       continue;
     }
     if (focus.baselineMap.find(noteId) != focus.baselineMap.end()) {

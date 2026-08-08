@@ -214,7 +214,7 @@ Always load first:
 
 **Optional**
 
-- [plans/note_edit_resolver_authority_contracts_refinement.md](plans/note_edit_resolver_authority_contracts_refinement.md) — contracts migration detail
+- [plans/note_edit_resolver_authority_contracts_refinement.md](plans/note_edit_resolver_authority_contracts_refinement.md) — behavioral migration DONE; remaining §12 R1–R5 representation only
 - `openspec/specs/edit-session-action-geometry/`
 - `openspec/specs/note-edit-modification-session/`
 - `openspec/changes/note-edit-current-state/` (active until archive)

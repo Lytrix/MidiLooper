@@ -13,13 +13,180 @@
 #include "EditSessionAction.h"
 #include "ParticipatingNoteSession.h"
 
-void test_participating_phase_maps_from_presence() {
-  TEST_ASSERT_EQUAL(static_cast<int>(ParticipatingNotePhase::Hidden),
-                    static_cast<int>(
-                        participatingPhaseFromPresence(NoteEditPresenceType::Hidden)));
-  TEST_ASSERT_EQUAL(static_cast<int>(ParticipatingNotePhase::Visible),
-                    static_cast<int>(
-                        participatingPhaseFromPresence(NoteEditPresenceType::Visible)));
+void test_current_state_row_visibility_maps_from_presence() {
+  NoteEditCurrentNoteState visible{};
+  visible.presence = NoteEditPresenceType::Visible;
+  NoteEditCurrentNoteState added{};
+  added.presence = NoteEditPresenceType::Added;
+  NoteEditCurrentNoteState hidden{};
+  hidden.presence = NoteEditPresenceType::Hidden;
+  NoteEditCurrentNoteState deleted{};
+  deleted.presence = NoteEditPresenceType::Deleted;
+
+  TEST_ASSERT_TRUE(currentStateRowIsVisible(visible));
+  TEST_ASSERT_TRUE(currentStateRowIsVisible(added));
+  TEST_ASSERT_FALSE(currentStateRowIsVisible(hidden));
+  TEST_ASSERT_FALSE(currentStateRowIsVisible(deleted));
+}
+
+void test_participating_note_is_visible_matches_current_state() {
+  NoteEditCurrentNoteState row{};
+  row.noteId = 17;
+  row.committedSpan = {88, 100, 3216, 3743};
+  row.currentSpan = {88, 100, 3216, 3263};
+  row.presence = NoteEditPresenceType::Hidden;
+
+  const ParticipatingNoteState state = buildParticipatingNoteState(row);
+  TEST_ASSERT_FALSE(state.visible);
+  TEST_ASSERT_FALSE(participatingNoteIsVisible(state));
+
+  row.presence = NoteEditPresenceType::Visible;
+  const ParticipatingNoteState visibleState = buildParticipatingNoteState(row);
+  TEST_ASSERT_TRUE(visibleState.visible);
+  TEST_ASSERT_TRUE(participatingNoteIsVisible(visibleState));
+}
+
+void test_row_is_visible_matches_row_projects_to_store() {
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(3, {88, 100, 3072, 3215}, {88, 100, 3168, 3311},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(17, {88, 100, 3216, 3743}, {88, 100, 3216, 3263},
+                         NoteEditPresenceType::Hidden);
+  currentState.upsertRow(42, {60, 100, 100, 200}, {60, 100, 100, 200},
+                         NoteEditPresenceType::Added);
+
+  TEST_ASSERT_TRUE(currentState.rowIsVisible(3));
+  TEST_ASSERT_FALSE(currentState.rowIsVisible(17));
+  TEST_ASSERT_TRUE(currentState.rowIsVisible(42));
+  TEST_ASSERT_EQUAL(currentState.rowIsVisible(3), currentState.rowProjectsToStore(3));
+  TEST_ASSERT_EQUAL(currentState.rowIsVisible(17), currentState.rowProjectsToStore(17));
+  TEST_ASSERT_EQUAL(currentState.rowIsVisible(42), currentState.rowProjectsToStore(42));
+}
+
+void test_current_state_row_lifecycle_maps_from_presence() {
+  NoteEditCurrentNoteState visible{};
+  visible.presence = NoteEditPresenceType::Visible;
+  NoteEditCurrentNoteState hidden{};
+  hidden.presence = NoteEditPresenceType::Hidden;
+  NoteEditCurrentNoteState added{};
+  added.presence = NoteEditPresenceType::Added;
+  NoteEditCurrentNoteState deleted{};
+  deleted.presence = NoteEditPresenceType::Deleted;
+
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Existing),
+                    static_cast<int>(currentStateRowLifecycle(visible)));
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Existing),
+                    static_cast<int>(currentStateRowLifecycle(hidden)));
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Added),
+                    static_cast<int>(currentStateRowLifecycle(added)));
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Deleted),
+                    static_cast<int>(currentStateRowLifecycle(deleted)));
+}
+
+void test_lifecycle_independent_from_visibility() {
+  NoteEditCurrentNoteState hidden{};
+  hidden.noteId = 17;
+  hidden.presence = NoteEditPresenceType::Hidden;
+  hidden.committedSpan = {88, 100, 3216, 3743};
+  hidden.currentSpan = {88, 100, 3216, 3263};
+
+  NoteEditCurrentNoteState deleted{};
+  deleted.noteId = 18;
+  deleted.presence = NoteEditPresenceType::Deleted;
+  deleted.committedSpan = {88, 100, 4000, 4500};
+  deleted.currentSpan = {88, 100, 4000, 4500};
+
+  NoteEditCurrentNoteState added{};
+  added.noteId = 42;
+  added.presence = NoteEditPresenceType::Added;
+  added.committedSpan = {60, 100, 100, 200};
+  added.currentSpan = {60, 100, 100, 200};
+
+  const ParticipatingNoteState hiddenState = buildParticipatingNoteState(hidden);
+  TEST_ASSERT_FALSE(hiddenState.visible);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Existing),
+                    static_cast<int>(hiddenState.lifecycle));
+  TEST_ASSERT_FALSE(currentStateRowLifecycleIsDeleted(hidden));
+  TEST_ASSERT_FALSE(currentStateRowLifecycleIsAdded(hidden));
+
+  const ParticipatingNoteState deletedState = buildParticipatingNoteState(deleted);
+  TEST_ASSERT_FALSE(deletedState.visible);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Deleted),
+                    static_cast<int>(deletedState.lifecycle));
+  TEST_ASSERT_TRUE(currentStateRowLifecycleIsDeleted(deleted));
+
+  const ParticipatingNoteState addedState = buildParticipatingNoteState(added);
+  TEST_ASSERT_TRUE(addedState.visible);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Added),
+                    static_cast<int>(addedState.lifecycle));
+  TEST_ASSERT_TRUE(currentStateRowLifecycleIsAdded(added));
+  TEST_ASSERT_TRUE(participatingNoteLifecycle(addedState) == NoteEditLifecycleType::Added);
+}
+
+void test_row_lifecycle_matches_current_state() {
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(3, {88, 100, 3072, 3215}, {88, 100, 3168, 3311},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(17, {88, 100, 3216, 3743}, {88, 100, 3216, 3263},
+                         NoteEditPresenceType::Hidden);
+  currentState.upsertRow(99, {60, 100, 100, 200}, {60, 100, 100, 200},
+                         NoteEditPresenceType::Deleted);
+
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Existing),
+                    static_cast<int>(currentState.rowLifecycle(3)));
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Existing),
+                    static_cast<int>(currentState.rowLifecycle(17)));
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditLifecycleType::Deleted),
+                    static_cast<int>(currentState.rowLifecycle(99)));
+}
+
+NoteBaseline makeSpan(uint8_t pitch, uint32_t start, uint32_t end) {
+  return {pitch, 100, start, end};
+}
+
+void test_span_geometry_predicates_plan_table() {
+  const NoteBaseline committed = makeSpan(60, 100, 200);
+
+  const NoteBaseline movedOriginal = makeSpan(60, 120, 220);
+  TEST_ASSERT_TRUE(participatingSpanIsMoved(movedOriginal, committed));
+  TEST_ASSERT_TRUE(participatingSpanHasOriginalLength(movedOriginal, committed));
+  TEST_ASSERT_FALSE(participatingSpanIsRightTailShortened(movedOriginal, committed));
+  TEST_ASSERT_FALSE(participatingSpanHasShorterDuration(movedOriginal, committed));
+
+  const NoteBaseline rightTailShortened = makeSpan(60, 100, 150);
+  TEST_ASSERT_TRUE(participatingSpanIsRightTailShortened(rightTailShortened, committed));
+  TEST_ASSERT_TRUE(participatingSpanHasShorterDuration(rightTailShortened, committed));
+  TEST_ASSERT_FALSE(participatingSpanIsMoved(rightTailShortened, committed));
+  TEST_ASSERT_FALSE(participatingSpanHasOriginalLength(rightTailShortened, committed));
+
+  const NoteBaseline movedShorter = makeSpan(60, 120, 170);
+  TEST_ASSERT_TRUE(participatingSpanIsMoved(movedShorter, committed));
+  TEST_ASSERT_TRUE(participatingSpanHasShorterDuration(movedShorter, committed));
+  TEST_ASSERT_FALSE(participatingSpanIsRightTailShortened(movedShorter, committed));
+  TEST_ASSERT_FALSE(participatingSpanHasOriginalLength(movedShorter, committed));
+}
+
+void test_current_state_row_geometry_predicates() {
+  NoteEditCurrentNoteState row{};
+  row.committedSpan = makeSpan(60, 100, 200);
+  row.currentSpan = makeSpan(60, 100, 150);
+
+  TEST_ASSERT_TRUE(currentStateRowIsRightTailShortened(row));
+  TEST_ASSERT_TRUE(currentStateRowHasShorterDuration(row));
+  TEST_ASSERT_FALSE(currentStateRowIsMoved(row));
+  TEST_ASSERT_FALSE(currentStateRowHasOriginalLength(row));
+}
+
+void test_participating_note_geometry_predicates_match_spans() {
+  ParticipatingNoteState state{};
+  state.committedSpan = makeSpan(60, 100, 200);
+  state.currentSpan = makeSpan(60, 120, 170);
+
+  TEST_ASSERT_TRUE(participatingNoteIsMoved(state));
+  TEST_ASSERT_TRUE(participatingNoteHasShorterDuration(state));
+  TEST_ASSERT_FALSE(participatingNoteIsRightTailShortened(state));
+  TEST_ASSERT_TRUE(participatingNoteShortenedVsCommitted(state.currentSpan, state.committedSpan) ==
+                   participatingNoteIsRightTailShortened(state));
 }
 
 void test_hidden_participant_does_not_project() {
@@ -30,10 +197,9 @@ void test_hidden_participant_does_not_project() {
   row.presence = NoteEditPresenceType::Hidden;
 
   const ParticipatingNoteState state = buildParticipatingNoteState(row);
-  TEST_ASSERT_EQUAL(static_cast<int>(ParticipatingNotePhase::Hidden),
-                    static_cast<int>(state.phase));
-  TEST_ASSERT_FALSE(state.projectsToStore);
-  TEST_ASSERT_TRUE(state.shortenedVsCommitted);
+  TEST_ASSERT_FALSE(state.visible);
+  TEST_ASSERT_FALSE(participatingNoteIsVisible(state));
+  TEST_ASSERT_TRUE(participatingNoteIsRightTailShortened(state));
 
   const ParticipatingNoteInvariantResult inv = verifyParticipatingNoteInvariants(state);
   TEST_ASSERT_TRUE(inv.passed);
@@ -47,8 +213,9 @@ void test_visible_shortened_tail_projects_when_visible() {
   row.presence = NoteEditPresenceType::Visible;
 
   const ParticipatingNoteState state = buildParticipatingNoteState(row);
-  TEST_ASSERT_TRUE(state.projectsToStore);
-  TEST_ASSERT_TRUE(state.shortenedVsCommitted);
+  TEST_ASSERT_TRUE(state.visible);
+  TEST_ASSERT_TRUE(participatingNoteIsVisible(state));
+  TEST_ASSERT_TRUE(participatingNoteIsRightTailShortened(state));
   TEST_ASSERT_TRUE(verifyParticipatingNoteInvariants(state).passed);
 }
 
@@ -68,7 +235,7 @@ void test_session_builds_from_current_state_and_selection() {
       buildParticipatingNoteSession(selection, currentState);
   TEST_ASSERT_EQUAL_UINT32(3u, session.primaryNoteId);
   TEST_ASSERT_EQUAL(2, static_cast<int>(session.participatingNotes.size()));
-  TEST_ASSERT_TRUE(session.participatingNotes.at(17).shortenedVsCommitted);
+  TEST_ASSERT_TRUE(participatingNoteIsRightTailShortened(session.participatingNotes.at(17)));
   TEST_ASSERT_TRUE(verifyParticipatingSessionInvariants(session).passed);
 }
 
@@ -77,8 +244,8 @@ void test_primary_driver_must_project() {
   session.primaryNoteId = 17;
   ParticipatingNoteState hidden{};
   hidden.noteId = 17;
-  hidden.phase = ParticipatingNotePhase::Hidden;
-  hidden.projectsToStore = false;
+  hidden.visible = false;
+  hidden.lifecycle = NoteEditLifecycleType::Existing;
   hidden.committedSpan = {88, 100, 3216, 3743};
   hidden.currentSpan = {88, 100, 3216, 3263};
   session.participatingNotes.emplace(17, hidden);
@@ -109,7 +276,8 @@ void test_collect_overlap_participant_ids_from_current_state() {
 void test_participating_leave_restore_hidden_qualifies() {
   ParticipatingNoteState hidden{};
   hidden.noteId = 17;
-  hidden.phase = ParticipatingNotePhase::Hidden;
+  hidden.visible = false;
+  hidden.lifecycle = NoteEditLifecycleType::Existing;
   hidden.committedSpan = {88, 100, 3216, 3743};
   hidden.currentSpan = {88, 100, 3216, 3263};
   TEST_ASSERT_TRUE(participatingNoteQualifiesForLeaveRestoreTarget(hidden, 3));
@@ -122,10 +290,10 @@ void test_participating_leave_restore_hidden_qualifies() {
 void test_participating_visible_shortened_does_not_qualify_for_leave_restore() {
   ParticipatingNoteState visibleShortened{};
   visibleShortened.noteId = 9;
-  visibleShortened.phase = ParticipatingNotePhase::Visible;
+  visibleShortened.visible = true;
+  visibleShortened.lifecycle = NoteEditLifecycleType::Existing;
   visibleShortened.committedSpan = {88, 100, 2016, 3078};
   visibleShortened.currentSpan = {88, 100, 2016, 2303};
-  visibleShortened.shortenedVsCommitted = true;
   TEST_ASSERT_FALSE(participatingNoteQualifiesForLeaveRestoreTarget(visibleShortened, 13));
   TEST_ASSERT_FALSE(participatingNoteNeedsFullCommittedLeaveRestore(visibleShortened));
   const NoteBaseline storage{88, 100, 2016, 3078};
@@ -136,10 +304,10 @@ void test_participating_visible_shortened_does_not_qualify_for_leave_restore() {
 void test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore() {
   ParticipatingNoteState sealedShortened{};
   sealedShortened.noteId = 9;
-  sealedShortened.phase = ParticipatingNotePhase::Visible;
+  sealedShortened.visible = true;
+  sealedShortened.lifecycle = NoteEditLifecycleType::Existing;
   sealedShortened.committedSpan = {88, 100, 1776, 2063};
   sealedShortened.currentSpan = {88, 100, 1776, 1823};
-  sealedShortened.shortenedVsCommitted = true;
   const NoteBaseline storage{88, 100, 1776, 3078};
   TEST_ASSERT_TRUE(
       participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(sealedShortened, storage, 13));
@@ -148,10 +316,10 @@ void test_participating_sealed_visible_shortened_qualifies_for_committed_leave_r
 void test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_flag_set() {
   ParticipatingNoteState sealedShortened{};
   sealedShortened.noteId = 9;
-  sealedShortened.phase = ParticipatingNotePhase::Visible;
+  sealedShortened.visible = true;
+  sealedShortened.lifecycle = NoteEditLifecycleType::Existing;
   sealedShortened.committedSpan = {88, 100, 2016, 2255};
   sealedShortened.currentSpan = {88, 100, 2016, 2063};
-  sealedShortened.shortenedVsCommitted = true;
   sealedShortened.visibleOverlapShortenSealed = true;
   const NoteBaseline storage{88, 100, 2016, 2255};
   TEST_ASSERT_TRUE(
@@ -162,7 +330,8 @@ void test_participating_deleted_does_not_qualify_for_leave_restore_022849() {
   // Stage 7.5.E2: sealed Deleted after deselect must not leave-restore.
   ParticipatingNoteState deleted{};
   deleted.noteId = 11;
-  deleted.phase = ParticipatingNotePhase::Deleted;
+  deleted.visible = false;
+  deleted.lifecycle = NoteEditLifecycleType::Deleted;
   deleted.committedSpan = {88, 100, 1584, 1631};
   deleted.currentSpan = {88, 100, 1584, 1631};
   TEST_ASSERT_FALSE(participatingNoteQualifiesForLeaveRestoreTarget(deleted, 7));
@@ -257,7 +426,8 @@ void test_shorten_reactivates_overlap_participation_after_ended() {
 void test_overlap_closure_active_and_cleared() {
   ParticipatingNoteState hidden{};
   hidden.noteId = 17;
-  hidden.phase = ParticipatingNotePhase::Hidden;
+  hidden.visible = false;
+  hidden.lifecycle = NoteEditLifecycleType::Existing;
   hidden.committedSpan = {88, 100, 1488, 1936};
   hidden.currentSpan = {88, 100, 1488, 1631};
 
@@ -272,7 +442,15 @@ void test_overlap_closure_active_and_cleared() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
-  RUN_TEST(test_participating_phase_maps_from_presence);
+  RUN_TEST(test_current_state_row_visibility_maps_from_presence);
+  RUN_TEST(test_participating_note_is_visible_matches_current_state);
+  RUN_TEST(test_row_is_visible_matches_row_projects_to_store);
+  RUN_TEST(test_current_state_row_lifecycle_maps_from_presence);
+  RUN_TEST(test_lifecycle_independent_from_visibility);
+  RUN_TEST(test_row_lifecycle_matches_current_state);
+  RUN_TEST(test_span_geometry_predicates_plan_table);
+  RUN_TEST(test_current_state_row_geometry_predicates);
+  RUN_TEST(test_participating_note_geometry_predicates_match_spans);
   RUN_TEST(test_hidden_participant_does_not_project);
   RUN_TEST(test_visible_shortened_tail_projects_when_visible);
   RUN_TEST(test_session_builds_from_current_state_and_selection);

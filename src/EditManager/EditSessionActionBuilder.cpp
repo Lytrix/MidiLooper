@@ -134,10 +134,10 @@ NOTE_EDIT_MEM bool overlapClosureActiveForTarget(NoteId targetNoteId, const Edit
   }
   ParticipatingNoteState fromBaseline{};
   fromBaseline.noteId = targetNoteId;
-  fromBaseline.phase = ParticipatingNotePhase::Visible;
   fromBaseline.committedSpan = baselineIt->second;
   fromBaseline.currentSpan = baselineIt->second;
-  fromBaseline.projectsToStore = true;
+  fromBaseline.visible = true;
+  fromBaseline.lifecycle = NoteEditLifecycleType::Existing;
   return participatingNoteOverlapClosureActive(fromBaseline, *causingSpan);
 }
 
@@ -188,15 +188,17 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
                                        constrained.endTick};
           actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
         } else if (closureActive && liveReadable &&
-                   participatingNoteShortenedVsCommitted(live, baseline)) {
+                   participatingSpanIsRightTailShortened(live, baseline)) {
           // Stage 7.5.E1 (022849): CompleteCover of already-shortened stubs must HideNote.
-          // Keep 202538 skip for partial cover (mover does not completely cover committed).
           if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
             actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
           } else if (constrainedShortensTail && live.endTick != constrained.endTick) {
             const NoteBaseline shortened{baseline.pitch, baseline.velocity, baseline.startTick,
                                          constrained.endTick};
             actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+          } else {
+            // Partial-cover OverlapNoteOn Hide: keep live stub span (session_20260808_110111).
+            actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, live));
           }
         } else {
           actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
@@ -212,7 +214,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
     if (!livePresent) {
       if (currentState != nullptr) {
         const NoteEditCurrentNoteState* sealedRow = currentState->find(liveNoteId);
-        if (sealedRow != nullptr && sealedRow->presence == NoteEditPresenceType::Deleted) {
+        if (sealedRow != nullptr && currentStateRowLifecycleIsDeleted(*sealedRow)) {
           continue;
         }
       }

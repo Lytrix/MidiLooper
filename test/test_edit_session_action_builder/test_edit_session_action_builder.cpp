@@ -557,8 +557,9 @@ void test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920() {
       actionsContainTypeForNote(actions, EditSessionActionType::RestoreNote, kPriorId));
 }
 
-void test_builder_closure_active_shortened_skips_hide_on_invisible_constrained() {
-  // session_20260807_202538: re-entry L→R must not HideNote full baseline over shortened participant.
+void test_builder_closure_active_shortened_hides_stub_on_invisible_constrained() {
+  // session_20260807_202538 + session_20260808_110111: partial-cover OverlapNoteOn Hide must
+  // HideNote with live stub span — not skip (no action) and not re-inflate to committed length.
   constexpr NoteId kOverlapId = 13;
   constexpr NoteId kMoverId = 9;
   constexpr uint8_t kPitch = 88;
@@ -599,8 +600,68 @@ void test_builder_closure_active_shortened_skips_hide_on_invisible_constrained()
   const EditSessionActions actions =
       buildEditSessionActions({constrained}, edited, focus.baselineMap, focus.baselineMap,
                               NoteIdList{}, store, kChannel, focus, kLoopLength, &currentState);
-  TEST_ASSERT_FALSE(
+  TEST_ASSERT_TRUE(
       actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kOverlapId));
+  for (const EditSessionAction& action : actions) {
+    if (action.type == EditSessionActionType::HideNote && action.targetNoteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(stub.endTick, action.endTick);
+      TEST_ASSERT_NOT_EQUAL(committed.endTick, action.endTick);
+    }
+  }
+}
+
+void test_builder_partial_cover_hides_shortened_stub_110111() {
+  // session_20260808_110111 @44.425: pitch onto lane 89, then overlap back over visible stub.
+  constexpr NoteId kOverlapId = 9;
+  constexpr NoteId kMoverId = 7;
+  constexpr uint8_t kPitch = 89;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline committed{kPitch, 100, 1008, 1151};
+  const NoteBaseline stub{kPitch, 100, 1008, 1044};
+  const NoteBaseline kMoverSpan{kPitch, 100, 997, 1103};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kOverlapId] = committed;
+  focus.baselineMap[kMoverId] = kMoverSpan;
+  focus.last = kMoverSpan;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, committed, stub, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, kMoverSpan, kMoverSpan, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  ConstrainedNoteGeometry constrained{};
+  constrained.noteId = kOverlapId;
+  constrained.visible = false;
+  constrained.pitch = kPitch;
+  constrained.startTick = committed.startTick;
+  constrained.endTick = committed.endTick;
+
+  EditedGeometry edited{};
+  edited.selection.primaryNote = kMoverId;
+  edited.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = kMoverSpan;
+  edited.causingSpans.push_back(causing);
+
+  const EditSessionActions actions =
+      buildEditSessionActions({constrained}, edited, focus.baselineMap, focus.baselineMap,
+                              NoteIdList{}, store, kChannel, focus, kLoopLength, &currentState);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kOverlapId));
+  for (const EditSessionAction& action : actions) {
+    if (action.type == EditSessionActionType::HideNote && action.targetNoteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(stub.startTick, action.startTick);
+      TEST_ASSERT_EQUAL_UINT32(stub.endTick, action.endTick);
+      TEST_ASSERT_EQUAL_UINT8(kPitch, action.pitch);
+    }
+  }
 }
 
 void test_builder_advance_with_overlap_closure_shorten_not_restore_193632() {
@@ -1026,7 +1087,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_reads_current_span_for_overlap_shorten_021939);
   RUN_TEST(test_builder_ltr_shorten_shortened_overlap_stub_181859);
   RUN_TEST(test_builder_overlay_baseline_blocks_prior_mover_baseline_snap_141920);
-  RUN_TEST(test_builder_closure_active_shortened_skips_hide_on_invisible_constrained);
+  RUN_TEST(test_builder_closure_active_shortened_hides_stub_on_invisible_constrained);
+  RUN_TEST(test_builder_partial_cover_hides_shortened_stub_110111);
   RUN_TEST(test_builder_advance_with_overlap_closure_shorten_not_restore_193632);
   RUN_TEST(test_builder_skips_restore_visible_overlap_tail_224633);
   RUN_TEST(test_builder_emits_restore_for_pitch_vacated_hidden_020050);

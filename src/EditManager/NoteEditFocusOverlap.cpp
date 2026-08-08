@@ -76,7 +76,8 @@ NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
       continue;
     }
     const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-    if (participant.phase != ParticipatingNotePhase::Visible || !participant.shortenedVsCommitted) {
+    if (!participatingNoteIsExistingAndVisible(participant) ||
+        !participatingNoteIsRightTailShortened(participant)) {
       continue;
     }
     if (participant.overlapParticipation == NoteEditOverlapParticipationType::Ended) {

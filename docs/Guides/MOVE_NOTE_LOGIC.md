@@ -294,6 +294,7 @@ Non-session pitch (no open NOTE_EDIT): `applySimplePitchChange` when safe; other
 | Current-state ownership | DEC-029 — shipped through OpenSpec phases 1–7 |
 | Participation / latch removal | DEC-030 + §11 steps 5.1–5.5 — shipped; smoke HITL `025807`, `030432`, `032118` |
 | Display projection | `projectNoteEditDisplayNotes` sole active NOTE_EDIT producer |
+| Orthogonal representation | Plan §12 **R1–R5 complete** — `ParticipatingNotePhase` removed; `NoteEditPresenceType` row encoding retained |
 | Full edit HITL matrix | Still open (interim: `edit_minimal` / manual smoke) |
 
 **Further reading:** [`FADER_STATE_SYSTEM.md`](FADER_STATE_SYSTEM.md), [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md) (display wrap only), [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md) (commit / undo / storage).

@@ -13,19 +13,9 @@
 
 namespace {
 
-NOTE_EDIT_MEM bool projectsToSessionStore(NoteEditPresenceType presence) {
-  return presence == NoteEditPresenceType::Visible || presence == NoteEditPresenceType::Added;
-}
-
 NOTE_EDIT_MEM bool spansEqual(const NoteBaseline& left, const NoteBaseline& right) {
   return left.pitch == right.pitch && left.velocity == right.velocity &&
          left.startTick == right.startTick && left.endTick == right.endTick;
-}
-
-NOTE_EDIT_MEM bool overlapInventoryMaskedTail(const NoteBaseline& span,
-                                              const NoteBaseline& committed) {
-  return span.pitch == committed.pitch && span.startTick == committed.startTick &&
-         span.endTick < committed.endTick;
 }
 
 }  // namespace
@@ -90,7 +80,7 @@ NOTE_EDIT_MEM void NoteEditCurrentState::projectToSessionStore(MidiEventVec& sto
               store.end());
 
   for (const auto& [noteId, row] : rows_) {
-    if (!projectsToSessionStore(row.presence)) {
+    if (!currentStateRowIsVisible(row)) {
       continue;
     }
     const NoteBaseline& span = row.currentSpan;
@@ -123,7 +113,7 @@ NOTE_EDIT_MEM NoteEditCurrentStateVerifyResult NoteEditCurrentState::verifyProje
     const MidiEventVec& store, uint8_t channel) const {
   NoteEditCurrentStateVerifyResult result = verifyInvariants();
   for (const auto& [noteId, row] : rows_) {
-    if (projectsToSessionStore(row.presence)) {
+    if (currentStateRowIsVisible(row)) {
       NoteBaseline live{};
       if (!readLiveLinearSpan(store, noteId, channel, live) ||
           !spansEqual(live, row.currentSpan)) {
@@ -145,12 +135,24 @@ NOTE_EDIT_MEM bool NoteEditCurrentState::hasRow(NoteId noteId) const {
   return find(noteId) != nullptr;
 }
 
-NOTE_EDIT_MEM bool NoteEditCurrentState::rowProjectsToStore(NoteId noteId) const {
+NOTE_EDIT_MEM bool NoteEditCurrentState::rowIsVisible(NoteId noteId) const {
   const NoteEditCurrentNoteState* row = find(noteId);
   if (row == nullptr) {
     return false;
   }
-  return projectsToSessionStore(row->presence);
+  return currentStateRowIsVisible(*row);
+}
+
+NOTE_EDIT_MEM NoteEditLifecycleType NoteEditCurrentState::rowLifecycle(NoteId noteId) const {
+  const NoteEditCurrentNoteState* row = find(noteId);
+  if (row == nullptr) {
+    return NoteEditLifecycleType::Existing;
+  }
+  return currentStateRowLifecycle(*row);
+}
+
+NOTE_EDIT_MEM bool NoteEditCurrentState::rowProjectsToStore(NoteId noteId) const {
+  return rowIsVisible(noteId);
 }
 
 NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(NoteId noteId) const {
@@ -158,10 +160,10 @@ NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(NoteId
   if (row == nullptr) {
     return false;
   }
-  if (!projectsToSessionStore(row->presence)) {
+  if (!currentStateRowIsVisible(*row)) {
     return false;
   }
-  return !overlapInventoryMaskedTail(row->currentSpan, row->committedSpan);
+  return !participatingSpanIsRightTailShortened(row->currentSpan, row->committedSpan);
 }
 
 NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(
@@ -170,7 +172,7 @@ NOTE_EDIT_MEM bool NoteEditCurrentState::rowIncludedInSelectableInventory(
   if (row == nullptr) {
     return false;
   }
-  if (!projectsToSessionStore(row->presence)) {
+  if (!currentStateRowIsVisible(*row)) {
     return false;
   }
   return !visibleShortenedOverlapTailInventoryMasked(*row, focus, selectedNoteIdx);
@@ -182,7 +184,7 @@ NOTE_EDIT_MEM bool NoteEditCurrentState::isRowHiddenOrDeleted(NoteId noteId) con
     return false;
   }
   return row->presence == NoteEditPresenceType::Hidden ||
-         row->presence == NoteEditPresenceType::Deleted;
+         currentStateRowLifecycleIsDeleted(*row);
 }
 
 NOTE_EDIT_MEM bool NoteEditCurrentState::readCurrentSpan(NoteId noteId, NoteBaseline& out) const {
@@ -209,12 +211,12 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
       }
       row->overlapParticipation = NoteEditOverlapParticipationType::Active;
       row->currentSpan = span;
-      if (overlapInventoryMaskedTail(span, row->committedSpan)) {
+      if (participatingSpanIsRightTailShortened(span, row->committedSpan)) {
         row->presence = NoteEditPresenceType::Hidden;
         return;
       }
       if (row->presence == NoteEditPresenceType::Hidden ||
-          row->presence == NoteEditPresenceType::Deleted) {
+          currentStateRowLifecycleIsDeleted(*row)) {
         row->presence = NoteEditPresenceType::Visible;
       }
       return;
@@ -225,12 +227,12 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
       }
       row->overlapParticipation = NoteEditOverlapParticipationType::Active;
       row->currentSpan = span;
-      if (participatingNoteShortenedVsCommitted(span, row->committedSpan)) {
+      if (participatingSpanIsRightTailShortened(span, row->committedSpan)) {
         // A tail below the sealed baseline is itself unsealed until the next macro commit.
         row->visibleOverlapShortenSealed = false;
       }
       if (row->presence == NoteEditPresenceType::Hidden) {
-        if (overlapInventoryMaskedTail(span, row->committedSpan)) {
+        if (participatingSpanIsRightTailShortened(span, row->committedSpan)) {
           row->presence = NoteEditPresenceType::Visible;
         }
         return;
@@ -311,7 +313,7 @@ NOTE_EDIT_MEM void NoteEditCurrentState::removeRow(NoteId noteId) {
 NOTE_EDIT_MEM void NoteEditCurrentState::syncProjectingRowsFromSessionStore(
     const MidiEventVec& store, uint8_t channel) {
   for (auto& [noteId, row] : rows_) {
-    if (!projectsToSessionStore(row.presence)) {
+    if (!currentStateRowIsVisible(row)) {
       continue;
     }
     NoteBaseline span{};
