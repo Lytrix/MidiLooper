@@ -2,15 +2,15 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (Stage 7.5 slice C select-fader seal)
+Last updated: 2026-08-08 (Stage 7.5.D shipped; 7.5.E documented from 022849)
 
 ---
 
 ## Now implementing
 
-### Note edit resolver authority contracts — Stage 7.5 slice C shipped (`note_edit_resolver_authority_contracts_refinement`)
+### Note edit resolver authority contracts — Stage 7.5.E next (`note_edit_resolver_authority_contracts_refinement`)
 
-**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11
+**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) § Stage 7.5 slice E
 
 | Step | Status |
 |------|--------|
@@ -18,11 +18,12 @@ Last updated: 2026-08-08 (Stage 7.5 slice C select-fader seal)
 | 2 — C9 contract tests | **Done** (`ea39f1c`) |
 | 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
 | 4 — Stage 8 sidebar/snapshot projection (C5) | **Done** — HITL `224633` PASS |
-| 4.5 — Stage 7.5 overlap restore + macro-commit geometry | **Done** (native) — HITL pending |
-| 4.5.C — Stage 7.5 select-fader seal on every F1 move | **Done** — HITL `020050` PASS (vs `013500` flash) |
-| 5 — semantic cleanup | **Next** |
+| 4.5.A–C — Stage 7.5 premature restore / seal / deselect | **Done** (native; C HITL `020050`) |
+| 4.5.D — pitch + LTR leave-restore to `committedSpan` | **Done** (native + HITL `021407`/`022151`) |
+| 4.5.E — multi-note Hide + post-deselect restore | **Documented** (`022849`) — next |
+| 5 — semantic cleanup | After E |
 
-**Stage 7.5 shipped (native):** `participatingNoteVisibleOverlapTailInProgress` — defers leave-restore (`224633`) and macro-commit seal (`225025`) while visible same-start shorten tail is still growing. **`macroCommitPendingEditsBeforeSelectNav`** — empty-step deselect now seals before participation clear (`004532`). HITL gate: `222418` / `224633` / `225025` / `004532`.
+**E (open):** elongated mover covering ≥2 notes misses Hide/Shorten actions (`022849` @70.446); after deselect with `storeNoteOns=10`, reselect + pass restores sealed-hidden notes (`022849` @92.329).
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 

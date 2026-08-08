@@ -1,7 +1,8 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** architectural migration in progress — Stages 0–2, 4–8, and **7.5 (native)** **shipped**; Stage 3
-(participating-note model) **shipped**; §11 step 5 semantic cleanup **next**; Stage 7.5 HITL pending.
+**Status:** architectural migration in progress — Stages 0–2, 4–8 shipped; Stage 7.5 **A–D** shipped
+(native; C HITL `020050`; D HITL pitch/LTR `021407`/`022151`); **7.5.E open** — multi-note
+Hide/remove + post-deselect restore (`022849`). §11 step 5 after E. Stage 3 **shipped**.
 **Remaining work:** §11 approved five-step sequence; orthogonal model §12 (conceptual; code post–Stage 8).
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
@@ -286,24 +287,29 @@ Hide/shorten beats stale restore while overlap classified. Evidence: `163621` ~4
 
 Hidden → full committed baseline restore → Visible via participating-note leave-restore contract. Evidence: `163621`, `175858`. Projection contracts shipped (`220917`, `221717`). **Remaining geometry bugs** → Stage **7.5** (not projection).
 
-### Stage 7.5 — overlap restore and macro-commit geometry — **SHIPPED** (native); HITL pending
+### Stage 7.5 — overlap restore and macro-commit geometry — **partial** (A–D shipped; **E open**)
 
-Extension of Stage 7. Two independent failure modes in geometry/apply — **not** Stage 8 display projection.
+Extension of Stage 7. Geometry/apply failure modes — **not** Stage 8 display projection. **Do not start §11 step 5 until slice E is fixed.**
 
 | Slice | Symptom | Captures | Primary fix owner |
 |-------|---------|----------|-------------------|
-| **A — premature leave-restore** | `RestoreNote` fires on pipeline `interactions=0` while overlap closure still active → stationary note jumps to full `committedSpan` | `222418`, `224633`, `223447` | `determineConstrainedGeometryTargetNoteIds` (`ResolveConstrainedGeometry.cpp`); `EditSessionActionBuilder`; `applyEditSessionAction` (`RestoreNote` branch) |
-| **B — macro commit seals elongated span** | F1 macro commit writes overlap-elongated `currentSpan` onto stationary participant via `overlap_baseline_diff` → select shows full length (e.g. DNTE `len=287`) instead of shorten stub | `225025` | `buildCommitOverlapRowsFromCurrentState` (`NoteEditFocusPreCommit.cpp`); `participatingLeaveRestoreCommittedSpan` semantics |
+| **A — premature leave-restore** | `RestoreNote` fires on pipeline `interactions=0` while overlap closure still active → stationary note jumps to full `committedSpan` | `222418`, `224633`, `223447` | `determineConstrainedGeometryTargetNoteIds`; `EditSessionActionBuilder` |
+| **B — macro commit seals elongated span** | F1 macro commit writes overlap-elongated `currentSpan` onto stationary participant | `225025` | `buildCommitOverlapRowsFromCurrentState` |
+| **C — select-fader seal** | Empty-step deselect skipped seal / painted previous length | `004532`, `013500`, `020050` PASS | `isMacroCommitAlignedWithSelectTarget`; `syncCommittedSpan`; projection `currentSpan` only |
+| **D — leave without restore** | Pitch + time-axis leave after Hide/Shorten: **fixed** (`RestoreNote` to `committedSpan`). Slice A still defers while closure active. | `020050`, `021407`, `022151` | `determineConstrainedGeometryTargetNoteIds` |
+| **E — multi-note hide + post-deselect restore** | Elongated/shortened mover covering multiple notes fails to Hide/remove all; after deselect, moving past restores sealed-hidden participants | `022849` | TBD — document-first (see slice E) |
 
-**Native test homes (fix slice A first, then B):**
+**Native test homes:**
 
 | Suite | Slice | Fixture target |
 |-------|-------|----------------|
-| `test_resolve_constrained_geometry` | A | No restore target while `participatingNoteOverlapClosureActive` — extend `test_closure_active_suppresses_leave_restore_target_193632` with `222418` / `224633` |
+| `test_resolve_constrained_geometry` | A | No restore target while closure active |
 | `test_edit_session_action_builder` | A | No `RestoreNote` on `interactions=0` + active closure |
-| `test_note_edit_current_state` | B | Macro commit must not seal elongated span while closure active — `225025` slice; adjacent: `test_sync_committed_span_leave_restore_uses_sealed_position_200656` |
+| `test_note_edit_current_state` | B/C | Macro seal / deselect contracts |
+| `test_resolve_constrained_geometry` | **D** | Pitch leave after Hide/Shorten → vacated restore; LTR time-axis Shorten leave → restore when closure cleared |
+| TBD | **E** | Multi-participant Hide while mover covers ≥2; no Restore of sealed-hidden after deselect when re-entering span |
 
-HITL gate after native: overlap shorten → mover clear or macro commit → select stationary note (`222418` / `224633` / `225025` chains). Plan artifact: extend [`note_edit_overlap_restore_span_bugfix.md`](note_edit_overlap_restore_span_bugfix.md) § RC9g or dedicated Stage 7.5 slice doc.
+HITL gate: A/B pending; C `020050` PASS; D `021407`/`022151`; E required before step 5.
 
 ### Stage 8 — unified display projection (C5) — **DONE**
 
@@ -459,6 +465,103 @@ Geometry/apply layer — **not** Stage 8 projection. See §7 Stage 7.5 summary t
 
 **Not the fix location:** Stage 8 sidebar/paint (`SidebarAndInfo`, `liveEditDisplayNoteAtSelect`) — symptom in `225025` is wrong committed span after macro commit, not projection read path.
 
+**Slice D — leave without restore** (**shipped native**; HITL next):
+
+Constrain works; leave (pitch or time) must restore. Evidence: `020050` / `021407` (pitch), `022151` (LTR).
+
+#### D1 — Pitch leave after Hide (vacated lane) — shipped
+
+| Capture | Evidence |
+|---------|----------|
+| `020050` fail → D1 fix | Hide on lane 88 then pitch-away had no `RestoreNote`; HITL `021407`/`022151` Hide restore OK |
+| Time-axis contrast | Same-pitch Hide leave already restored (`020050` @24.992s) |
+
+#### D2 — Pitch leave after Shorten (vacated lane) — shipped (`021407`)
+
+Vacated-lane path accepts Visible + `shortenedVsCommitted`; restore geometry = `committedSpan`.
+
+#### D2b — LTR time-axis leave after Shorten — shipped (`022151`)
+
+| Time (`022151`) | Pipeline | Actions |
+|-----------------|----------|---------|
+| 123.928s | LTR shorten | `ShortenNote` type=1 note **9** end→2868 + `MoveNote` |
+| 124.241s (pre-fix) | `interactions=0 constrained=0 actions=1` | **only** `MoveNote` — **no `RestoreNote`** |
+
+Root: third leave-restore branch skipped unsealed Visible shortened (prior seal-owned decision). Fix: remove that skip; keep slice A `visibleOverlapTailInProgress` deferral while closure active.
+
+#### Root cause (code — proven)
+
+**Shared owner:** `determineConstrainedGeometryTargetNoteIds` (`ResolveConstrainedGeometry.cpp`).
+
+**Pitch:** vacated-lane path (Hidden/Deleted or Visible shortened) after `ChangePitch` away. Without `currentState`, `011115` still excludes vacated spam.
+
+**Time-axis:** third branch now leave-restores Visible shortened once interaction cleared; sealed path still restores to sealed `committedSpan`.
+
+#### Intended contract (slice D)
+
+```text
+HideNote / ShortenNote applied by mover M on participant P
+  → when M leaves P’s overlap closure (time clear OR pitch vacate of P’s lane)
+  → emit RestoreNote for P to committedSpan
+```
+
+Must **preserve** RC9i / `000657` and slice A premature-restore deferral.
+
+#### Solution (implemented)
+
+Vacated-lane + same-lane cleared Visible shortened targets; `constrainedGeometryFromRestoreCandidate` returns `committedSpan` for Visible shortened leave-restore candidates.
+
+#### Slice D checklist
+
+- [x] 7.5.D0 Documented (`020050` / `021407` / `022151` anchors)
+- [x] 7.5.D1 Native: pitch Hide → pitch-away → leave-restore — `test_pitch_vacated_lane_hidden_leave_restore_target_020050`
+- [x] 7.5.D2 Native: pitch Shorten → pitch-away → leave-restore — `test_pitch_vacated_lane_visible_shortened_leave_restore_021407`
+- [x] 7.5.D2b Native: LTR Shorten leave → restore — `test_ltr_time_axis_visible_shortened_leave_restore_022151`
+- [x] 7.5.D3 Legacy `011115` without currentState still excludes vacated spam
+- [x] 7.5.D4 Builder `RestoreNote` — Hidden / pitch shortened / LTR shortened fixtures
+- [x] 7.5.D5 HITL pitch leave-restore (`021407` / `022151`); LTR leave-restore (`022151`)
+
+**Slice E — multi-note hide + post-deselect restore** (document-first; `022849`; **no firmware yet**):
+
+Moving an elongated mover (here note **7**, length 363 after lengthen) across multiple overlap participants breaks multi-note Hide/remove, then incorrectly restores those notes after deselect.
+
+#### E1 — Multi-participant constrain incomplete
+
+| Time (`022849`) | Pipeline | Actions |
+|-----------------|----------|---------|
+| 70.189s | `overlapNotes=1` → `interactions=2 constrained=2 actions=2` | `ShortenNote` note **12** only + mover `MoveNote` — second participant not fully constrained |
+| 70.446s | `overlapNotes=2`, `interactions=2 constrained=2 actions=1` | **only** mover `MoveNote` — **no** Hide/Shorten for covered notes |
+| 70.868s | still multi-constrained | `RestoreNote` type=0 note **11** while covering siblings |
+
+`storeNoteOns` often stays 12 while both participants should be Hidden/Shortened; when Hide does fire, one participant is restored while the other is still covered.
+
+#### E2 — Restore after deselect when moving past sealed-hidden notes
+
+| Time (`022849`) | Evidence |
+|-----------------|----------|
+| 88.061s | `NOTE_EDIT commit` (deselect) with participants still absent — `storeNoteOns=10` |
+| 90.653s+ | Reselect mover **7**; `changed=0`, `storeNoteOns=10` while scrubbing |
+| 92.045s | Re-enter note **11** → `ShortenNote` (reinsert stub) |
+| 92.329s | Leave → `RestoreNote` note **11** full span — sealed-hidden note returns |
+| 93.931s / 94.080s | Same for notes **11**/**12** after further passes |
+
+**Intended contract (slice E):**
+
+```text
+When mover M completely covers participants P1…Pn → Hide (or Shorten) each Pi
+When M leaves a Pi that was only session-constrained (unsealed) → RestoreNote to committedSpan
+When F1/deselect seals Pi as Hidden/Deleted → later reselect + move past must NOT RestoreNote Pi
+```
+
+**Investigation owners (pin before coding):** `resolveAllConstrainedGeometry` / `EditSessionActionBuilder` multi-target emit; macro seal vs leave-restore eligibility after commit (`changedOverlapNoteIds` / presence after deselect).
+
+#### Slice E checklist
+
+- [x] 7.5.E0 Documented (`022849` anchors)
+- [ ] 7.5.E1 Native: elongated mover covering ≥2 → Hide/Shorten actions for each interaction target
+- [ ] 7.5.E2 Native: after deselect with sealed Hidden, reselect + pass must not RestoreNote
+- [ ] 7.5.E3 HITL `022849` replay
+
 ### Stage 8 — display projection (was interim Stage 4 sidebar) — **DONE** (code; HITL 8.4 logged)
 
 - [x] 8.1 Sidebar `DNTE` / LEN via paint-cache participant span for `selection.primaryNote` (fixes **V5** flicker — `SidebarAndInfo::drawNoteInfo`).
@@ -531,8 +634,8 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 | **2** | **Contract test C9** — projection/inventory independence | Visible shortened: **paint shortened stub**; inventory **may mask**. Complements step 1 (hidden: neither paints). | Proves paint ≠ inventory | **Shipped** (native) |
 | **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending |
 | **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence | **Done** (code + HITL `224633`) |
-| **4.5** | **Stage 7.5** overlap restore + macro-commit geometry | Slice A: no premature `RestoreNote` while visible same-start tail in progress. Slice B: macro commit must not seal overlap bridge span. Slice C: every F1 select move seals before participation clear. | Geometry/apply only — not projection | **Shipped** (native 931+); HITL `222418`/`224633`/`225025`/`004532` pending |
-| **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior | **Next** (or after 4.5) |
+| **4.5** | **Stage 7.5** overlap restore + macro-commit geometry | A–D shipped; **E** multi-note hide + post-deselect restore open (`022849`). | Geometry/apply only — not projection | **Partial** — E next |
+| **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior | After E |
 
 ### Step 1 — projection gate (strong invariant)
 
