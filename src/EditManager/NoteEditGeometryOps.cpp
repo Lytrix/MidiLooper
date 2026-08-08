@@ -153,70 +153,18 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::deleteSelectedNote(Track& track,
                 static_cast<unsigned long>(deleteTargetNoteId), notePitch, noteStart, noteEnd);
 
     const uint8_t channel = track.getMidiChannel();
-  NoteEditCurrentState& currentState = editSession.noteEditCurrentState;
-  if (!currentState.empty()) {
+    NoteEditCurrentState& currentState = editSession.noteEditCurrentState;
+    if (currentState.empty()) {
+        currentState =
+            NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(), channel);
+    }
     const NoteEditCurrentNoteState* row = currentState.find(deleteTargetNoteId);
     if (row != nullptr && currentStateRowLifecycleIsAdded(*row)) {
-      currentState.removeRow(deleteTargetNoteId);
+        currentState.removeRow(deleteTargetNoteId);
     } else {
-      currentState.markRowDeleted(deleteTargetNoteId);
+        currentState.markRowDeleted(deleteTargetNoteId);
     }
     refreshNoteEditSessionProjection(channel);
-  } else {
-    // NOTE_EDIT_PROJECTED_STORE_COMPAT: legacy projected-store delete until open always builds current state.
-    auto& midiEvents = track.editAwareMidiEvents();
-    MidiEvent* noteOnEvent = nullptr;
-    for (MidiEvent& e : midiEvents) {
-        if (e.type == midi::NoteOn && e.data.noteData.velocity > 0 &&
-            e.data.noteData.note == notePitch && e.tick == noteStart) {
-            noteOnEvent = &e;
-            break;
-        }
-    }
-
-    MidiEvent* noteOffEvent = nullptr;
-    if (noteOnEvent != nullptr) {
-        noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(midiEvents, noteOnEvent,
-                                                                   notePitch, noteStart, noteEnd);
-    }
-
-    int deletedCount = 0;
-    auto eraseByPointer = [&](MidiEvent* needle) {
-        if (needle == nullptr) {
-            return;
-        }
-        for (auto it = midiEvents.begin(); it != midiEvents.end(); ++it) {
-            if (&(*it) == needle) {
-                midiEvents.erase(it);
-                ++deletedCount;
-                return;
-            }
-        }
-    };
-    if (noteOnEvent != nullptr || noteOffEvent != nullptr) {
-        eraseByPointer(noteOffEvent);
-        eraseByPointer(noteOnEvent);
-    } else {
-        auto it = midiEvents.begin();
-        while (it != midiEvents.end()) {
-            const bool matchOn =
-                (it->type == midi::NoteOn && it->data.noteData.velocity > 0 &&
-                 it->data.noteData.note == notePitch && it->tick == noteStart);
-            const bool matchOff =
-                ((it->type == midi::NoteOff ||
-                  (it->type == midi::NoteOn && it->data.noteData.velocity == 0)) &&
-                 it->data.noteData.note == notePitch && it->tick == noteEnd);
-            if (matchOn || matchOff) {
-                it = midiEvents.erase(it);
-                ++deletedCount;
-            } else {
-                ++it;
-            }
-        }
-    }
-
-    logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
-  }
 
     applyDeleteNoteOverlapRestore(track);
 

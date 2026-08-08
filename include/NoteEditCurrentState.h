@@ -67,10 +67,6 @@ struct NoteEditCurrentStateVerifyResult {
   bool hiddenOrDeletedProjected = false;
 };
 
-/// Marker for direct projected-store mutation during migration.
-/// Removal: openspec/changes/note-edit-current-state/tasks.md §5–7.
-#define NOTE_EDIT_PROJECTED_STORE_COMPAT 1
-
 /// Authoritative NOTE_EDIT editable note state keyed by NoteId.
 class NoteEditCurrentState {
  public:

@@ -1,0 +1,190 @@
+# Codebase consistency & maintainability refinement
+
+**Kind:** refinement  
+**Date:** 2026-08-08  
+**Status:** Active — Phase **1.1 complete** (1.1d); next **1.2** selection tick SoT  
+**GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
+**Branch:** `refactor/note-edit-projected-store-retire` (off `dev`)  
+**Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
+**Naming authority:** [NAMING.md](../Authority/NAMING.md)  
+**Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) · [GITHUB_WORK_TRACKING.md](../Authority/GITHUB_WORK_TRACKING.md)
+
+---
+
+## One-line goal
+
+Bring code representation into alignment with the already-established authority and ownership model **without reopening product behavior**.
+
+---
+
+## Findings (audit)
+
+| Artifact | Role |
+|----------|------|
+| Interactive report | Cursor canvas `codebase-consistency-audit` (session 2026-08-08; not in-repo) |
+| Prior naming debt | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) |
+| Vocabulary policy | [NAMING.md](../Authority/NAMING.md) |
+| Refactor index | [refactor_priority_backlog.md](refactor_priority_backlog.md) |
+
+Audit date: **2026-08-08**. Read-only; no code changed in the audit pass.
+
+---
+
+## Work order
+
+One **conceptual migration per implementation step**. Refine call sites and verification **immediately before coding** each checkbox (Plan-Pre-Implementation-Review).
+
+### Phase 1 — Authority
+
+Align live code with declared owners. Highest risk; native + HITL where edit/persist paths are touched.
+
+| Step | Item | Evidence anchor | Must not change |
+|------|------|-----------------|-----------------|
+| 1.1 | Retire projected-store mutations | `NOTE_EDIT_PROJECTED_STORE_COMPAT` still `1`; `sessionMidiEvents` / `mutEditProjection*` | Commit/HITL edit semantics |
+| 1.2 | Establish selection tick SoT | `EditManager.selectedTick` + `EditorSelection.selectedTick` | Fader/motor select behavior |
+| 1.3 | Complete `admit*` migration | ~18 `markCurrentSet*Dirty` vs ~2 `admit*` call sites | When SD work is queued |
+
+**Architecture note:** 1.1 completes DEC-029 / `note-edit-current-state` removal trigger. **Pinned:** retire now (option 1); persistence stays queued.
+
+#### Phase 1.1 — projected-store mutation retirement (sliced)
+
+Declared owner: mutate `NoteEditCurrentState` → `projectToSessionStore` / `refreshNoteEditSessionProjection`. Store remains projection + audition flat, not an independent editor SoT.
+
+| Slice | Concept | Status |
+|-------|---------|--------|
+| **1.1a** | Geometry apply never uses live-store-only path — always pass non-const current state into `applyEditSessionActions` from `NoteGeometryResolver` | **Done** (this branch) |
+| **1.1b** | Retire NoteMovementUtils reverse sync (`mutate store` → `syncProjectingRowsFromSessionStore`) after resolve | **Done** (this branch) |
+| **1.1c** | FaderDependentSnapshot / commit normalize: store normalize via projection owner (`normalizeNoteEditClosureProjection` / `normalizeNoteEditSessionProjectionForCommit`) | **Done** (this branch) |
+| **1.1d** | Delete empty-currentState delete fallback; remove `NOTE_EDIT_PROJECTED_STORE_COMPAT` + `mut*Compat` APIs | **Done** (this branch) |
+
+**Architecture checkpoint (1.1 overall):** Ownership — completing approved DEC-029 transfer (not a new owner). Transitions — no new session/mode transitions. Behavior-preserving per slice unless a bypass was already violating declared authority.
+
+### Phase 2 — API and vocabulary
+
+Touch-and-rename / API unification. No rename-only mega-PRs ([NAMING.md](../Authority/NAMING.md) § Migration policy).
+
+| Step | Item | Evidence anchor | Must not change |
+|------|------|-----------------|-----------------|
+| 2.1 | Selectable-display API | Four live names; NAMING cites deleted `filterSelectableDisplayNotes` | Projected note list contents |
+| 2.2 | Geometry vocabulary | `NoteGeometryResolver` shipped; `pipelineApplied`, `GEOM_APPLY,pipeline`, log strings | Resolver apply results; HITL matchers if keyed on CAP tokens |
+| 2.3 | `published` → `committed` | ~35 `published` hits for committed material | Wire formats / CAP tokens unless proven unused |
+| 2.4 | Playing vs Playback terminology | `PendingPlayingGeometry`, `isPlayingBack`, merge-cache “window” naming | Transport vs machinery meanings |
+
+### Phase 3 — Structural cleanup
+
+Low risk after Phases 1–2 stabilize call sites.
+
+| Step | Item | Evidence anchor | Must not change |
+|------|------|-----------------|-----------------|
+| 3.1 | Dead helpers | Unused NoteMovement / IntervalProjection / MidiHandler / SyncDrain / ControlSurface mappers | Behavior (delete dead only) |
+| 3.2 | Duplicate selection writes | `applySelectNav` vs `applySelectionFromGeometryEdit` | Selection outcomes |
+| 3.3 | Legacy / twin cleanup | Monolith quarantine twins; leftover deprecated wrappers after 1.3 | Quarantine/SD outcomes |
+
+### Phase 4 — Investigation only
+
+**No splits by LOC.** Produce a short pin-down note before any extraction proposal.
+
+| Target | Why investigate | Do not |
+|--------|-----------------|--------|
+| `TrackManager.cpp` (~1386) | Largest remaining coordination TU | Split without a named process boundary |
+| `NoteMovementUtils.cpp` (~1069) | Pure helpers mixed with mutate-with-overlap | Abstract “getNotes” across layers |
+| `DisplayNoteResolve.cpp` (~864) | Mode tree + cache policy | Merge all note sources into one API |
+| `NoteEditFocus.h` (~423) | Kitchen-sink public API header | Move ownership; header hygiene only if boundaries clear |
+
+---
+
+## Rules
+
+1. **Behavior-preserving** unless explicitly approved otherwise.
+2. **No arbitrary LOC-driven splitting.**
+3. **No abstraction solely for DRY.**
+4. **One conceptual migration per implementation step.**
+5. **Refine implementation details immediately before coding** (pre-implementation review + architecture checkpoint on Phase 1).
+6. **Native / HITL verification** where behavior could be affected:
+
+| Phase | Minimum verification |
+|-------|----------------------|
+| 1.1 / 1.2 | `pio test -e native` (note-edit suites) + HITL edit path (`edit_full` or edit baseline) |
+| 1.3 | `pio test -e native` (persistence) + optional load/save / boot smoke |
+| 2.x | `pio test -e native`; HITL only if CAP/matcher strings change |
+| 3.x | `pio run -e teensy41-capture-serial` + `pio test -e native` |
+| 4.x | Docs / design note only |
+
+7. Branch/PR default: short-lived `refactor/<scope>` → PR → `dev` ([GITHUB_WORK_TRACKING.md](../Authority/GITHUB_WORK_TRACKING.md) §10).
+8. Do **not** mix this change with product persistence/overlay hardening unless user merges scopes.
+
+---
+
+## Explicit non-goals
+
+- Splitting `RevisionCommit` / `RevisionLoad` / `StorageLoopIo` by size alone.
+- Further StorageManager façade micro-slices as priority work (root ~422; PR #17).
+- Mass rename of outbound motor **Pipeline** without design (may be legitimate async Pipeline per NAMING).
+- Collapsing `reconstructNotes` / `projectNoteEditDisplayNotes` / `editAwareMidiEvents` into one “getNotes”.
+- Reopening NOTE_EDIT product behavior or overlap resolution design.
+
+---
+
+## Suggested GitHub shape
+
+| Type | Scope |
+|------|--------|
+| **Task** (parent) | Codebase consistency & maintainability refinement |
+| Sub-issue / checklist | Optional: one per phase (not per checkbox) |
+
+Project board: [Work](https://github.com/users/Lytrix/projects/1) — **NOW** (#18).
+
+---
+
+## Pre-implementation review (Phase 1.1a)
+
+### Ready
+- Owner path exists: `NoteEditCurrentState::applyEditSessionAction` → `projectToSessionStore` inside `applyEditSessionActions` when `currentState != nullptr`.
+- Open session builds current state (`NoteEditSessionLifecycle`).
+- DEC-029 already transferred authority; 1.1 completes removal trigger.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Persist vs COMPAT retire | Retire COMPAT now (user option 1) |
+| First code slice | **1.1a** — `NoteGeometryResolver` always passes non-const `&currentState` |
+
+### Open before later slices
+1. 1.1b reverse-sync in `NoteMovementUtils` after resolve
+2. 1.1c normalize paths (fader latch / commit)
+3. 1.1d flag flip + delete `mut*Compat`
+
+### Architecture gate (1.1a)
+- Owner: `NoteGeometryResolver::resolve` → `applyEditSessionActions`
+- Invariant: geometry apply mutates current state then projects; no production live-store-only apply path
+- Ownership change: NO (closes bypass of declared owner)
+- Transition change: NO
+- Reuse: YES — extend resolve call site only
+
+### Proceed?
+- YES — 1.1a
+
+### HITL smoke (Phase 1.1)
+| Capture | Scope | Result |
+|---------|-------|--------|
+| [`session_20260808_161219.log`](../../captures/session_20260808_161219.log) | 1.1a–b — move + overlap + pitch + commit (~53s); boot recovery | **PASS** |
+| [`session_20260808_162038.log`](../../captures/session_20260808_162038.log) | 1.1c — loaded workspace + move/overlap/pitch + projection-owner normalize (~61s) | **PASS** — all `commit parity ok`; `NoteEditPassClosed edits=4` |
+
+---
+
+## Exit criteria
+
+- Phase 1: projected-store compat retired or explicitly PARKED with rationale; selection SoT single; production paths use `admit*` (dirty wrappers unused or Legacy Retirement).
+- Phase 2: selectable-display has one canonical public name; NAMING.md matches code; geometry/published/Playing debt reduced on touched files.
+- Phase 3: confirmed-dead helpers removed; selection write helper or documented intentional twins.
+- Phase 4: investigation notes filed; no unplanned extractions.
+- Parent Task closed after docs closeout ([DOCUMENTATION_CLOSEOUT.md](../Authority/DOCUMENTATION_CLOSEOUT.md)).
+
+---
+
+## References
+
+- [refactor_priority_backlog.md](refactor_priority_backlog.md)
+- [legacy_api_retirement_tu_extraction_refinement.md](legacy_api_retirement_tu_extraction_refinement.md)
+- OpenSpec `note-edit-current-state` (DEC-029) — current-state authority
+- OpenSpec `note-edit-current-state` (DEC-029) — COMPAT removal shipped Phase 1.1d (#18)
