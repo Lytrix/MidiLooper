@@ -253,8 +253,7 @@ public:
   MidiEventVec& legacyMidiEventsFromCommitted();
   const MidiEventVec& legacyMidiEventsFromCommitted() const;
 
-  /// Note-edit session store when active, else legacy committed scratch.
-  /// NOTE_EDIT_PROJECTED_STORE_COMPAT: mut routes to compat projection path until tasks.md §5–7.
+  /// Note-edit session projection store when active, else legacy committed scratch.
   MidiEventVec& editAwareMidiEvents();
   const MidiEventVec& editAwareMidiEvents() const;
 

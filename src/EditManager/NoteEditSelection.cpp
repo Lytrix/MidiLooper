@@ -67,7 +67,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectionFromGeometryEdit(Track& tr
     }
     sessionState.selection.trackId = static_cast<TrackId>(trackManager.getSelectedTrackIndex());
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
-    this->selectedTick = sessionState.selection.selectedTick;
     const int prevSelectedIdx = selectedNoteIdx;
     syncSelectedNoteIdxToFilteredInventory(track);
     if (selectionChanged) {
@@ -78,7 +77,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectionFromGeometryEdit(Track& tr
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncGeometrySelectionToUi(Track& track) {
-    selectedTick = sessionState.selection.selectedTick;
     displayManager.requestNoteInfoRefresh(track);
 }
 
@@ -130,7 +128,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditSessionStateToUi(Track& trac
     } else {
         selectedNoteIdx = -1;
     }
-    selectedTick = sessionState.selection.selectedTick;
     if (editorSelectionHasNote(sessionState.selection)) {
         if (sessionState.selection.primaryNote != kInvalidNoteId) {
             setLastFader1SelectNoteId(sessionState.selection.primaryNote);
@@ -177,7 +174,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditSessionStateToUi(Track& trac
         }
         currentState = targetState;
         if (currentState) {
-            currentState->onEnter(*this, track, selectedTick);
+            currentState->onEnter(*this, track, getSelectedTick());
         }
     }
     sendEditModeProgram(mode);
@@ -187,7 +184,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& 
                                                                          uint32_t transportTick) {
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
-        selectedTick = 0;
         selectedNoteIdx = -1;
         clearLastFader1SelectNoteId();
         sessionState.kind = NoteEditKind::Select;
@@ -198,10 +194,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& 
     const Loop& loop = trackManager.getSelectedLoop(track);
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
     const uint32_t playheadPhase = tickPhaseInLoop(transportTick, loop.startLoopTick, loopLength);
-    selectedTick = SelectNavigation::noteRelativeTick(playheadPhase, loopStartTick, loopLength);
-    selectNoteAtBracket(track, selectedTick);
+    const uint32_t bracketTick =
+        SelectNavigation::noteRelativeTick(playheadPhase, loopStartTick, loopLength);
+    selectNoteAtBracket(track, bracketTick);
     if (selectedNoteIdx < 0) {
-        selectClosestNote(track, selectedTick);
+        selectClosestNote(track, bracketTick);
     }
 
     NoteId primaryNote = kInvalidNoteId;
@@ -216,7 +213,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& 
     }
 
     sessionState.kind = NoteEditKind::Select;
-    sessionState.selection.selectedTick = selectedTick;
+    sessionState.selection.selectedTick = getSelectedTick();
     sessionState.selection.primaryNote = primaryNote;
     sessionState.selection.selectedNotes.clear();
     if (primaryNote != kInvalidNoteId) {
@@ -226,7 +223,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& 
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
     syncNoteEditSessionStateToUi(track);
     if (selectedNoteIdx >= 0) {
-        syncReferenceStepFromSelectedTick(selectedTick);
+        syncReferenceStepFromSelectedTick(getSelectedTick());
     }
 }
 

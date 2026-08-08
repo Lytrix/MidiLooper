@@ -29,7 +29,9 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         return false;
     }
 
-    // NOTE_EDIT_PROJECTED_STORE_COMPAT: geometry pipeline mutates projected store until tasks.md §5.1.
+    // Projection flat for audition/read helpers; geometry mutations go through currentState
+    // (applyEditSessionActions → projectToSessionStore). Always pass non-const currentState so
+    // an empty map builds from the store instead of taking the live-store-only apply path.
     MidiEventVec& liveStore = track.editAwareMidiEvents();
     NoteEditFocus& focus = manager.getEditSession().focus;
     NoteEditCurrentState& currentState = manager.getEditSession().noteEditCurrentState;
@@ -154,7 +156,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
 
     applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
                             &manager.getEditSession().applyOwnedEditPassRows,
-                            currentStateReader);
+                            &currentState);
     manager.bumpSessionPreviewRevision();
     track.invalidateCaches(refreshPlaybackPreview);
     return true;

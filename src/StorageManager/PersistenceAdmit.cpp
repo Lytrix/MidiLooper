@@ -189,16 +189,55 @@ void StorageManager::admitGlobalMeta() {
 #endif
 }
 
-void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex) {
+void StorageManager::markLoopSlotMaterialDirty(uint8_t trackIndex, uint8_t slotIndex) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)trackIndex;
     (void)slotIndex;
     return;
 #endif
     StorageManagerInternal::markCurrentSetLoopSlotDirtyInternal(trackIndex, slotIndex);
+}
+
+void StorageManager::markTrackSlotsMaterialDirty(uint8_t trackIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    return;
+#endif
+    StorageManagerInternal::markCurrentSetTrackDirtyInternal(trackIndex);
+}
+
+void StorageManager::admitLoopSlotPersist(uint8_t trackIndex, uint8_t slotIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    (void)slotIndex;
+    return;
+#else
     admitSlotMeta(trackIndex, slotIndex);
     PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist,
-                                  persistKeyForSlot(trackIndex, slotIndex));
+                                    persistKeyForSlot(trackIndex, slotIndex));
+#endif
+}
+
+void StorageManager::admitTrackSlotPersistence(uint8_t trackIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    return;
+#else
+    admitTrackMeta(trackIndex);
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+        admitLoopSlotPersist(trackIndex, slot);
+    }
+#endif
+}
+
+void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    (void)slotIndex;
+    return;
+#endif
+    markLoopSlotMaterialDirty(trackIndex, slotIndex);
+    admitLoopSlotPersist(trackIndex, slotIndex);
 }
 
 void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
@@ -206,13 +245,8 @@ void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
     (void)trackIndex;
     return;
 #endif
-    StorageManagerInternal::markCurrentSetTrackDirtyInternal(trackIndex);
-    admitTrackMeta(trackIndex);
-    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-        PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist,
-                                        persistKeyForSlot(trackIndex, slot));
-        admitSlotMeta(trackIndex, slot);
-    }
+    markTrackSlotsMaterialDirty(trackIndex);
+    admitTrackSlotPersistence(trackIndex);
 }
 
 void StorageManager::markAllCurrentSetLoopSlotsDirty() {
@@ -221,12 +255,7 @@ void StorageManager::markAllCurrentSetLoopSlotsDirty() {
 #endif
     StorageManagerInternal::markAllCurrentSetLoopSlotsDirtyInternal();
     for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
-        admitTrackMeta(track);
-        for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-            PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist,
-                                            persistKeyForSlot(track, slot));
-            admitSlotMeta(track, slot);
-        }
+        admitTrackSlotPersistence(track);
     }
 }
 
@@ -250,7 +279,10 @@ void StorageManager::processEditAutosave(const LooperState& state) {
             }
             for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
                 if (track.getLoop(s).isEditStateDirty()) {
-                    StorageManager::markCurrentSetLoopSlotDirty(t, s);
+                    const uint8_t trackIndex = t;
+                    const uint8_t slotIndex = s;
+                    StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
+                    StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
                 }
             }
         }
@@ -284,7 +316,10 @@ void StorageManager::processEditAutosave(const LooperState& state) {
         }
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             if (track.getLoop(s).isEditStateDirty()) {
-                StorageManager::markCurrentSetLoopSlotDirty(t, s);
+                const uint8_t trackIndex = t;
+                const uint8_t slotIndex = s;
+                StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
+                StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
             }
         }
     }

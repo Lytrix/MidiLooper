@@ -598,10 +598,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         return true;
     }
 
-    // Use the note-edit session store (when active) so live pitch edits share the same
-    // source-of-truth buffer as move/length edits; getMidiEvents() re-materializes from
-    // takes+edits and would diverge from the live session flat.
-    // NOTE_EDIT_PROJECTED_STORE_COMPAT: move/length/pitch via projected store until tasks.md §5.2.
+    // Session store when a note-edit session is active (matches move/length live paths).
     auto& midiEvents = track.editAwareMidiEvents();
     const uint32_t loopLength = manager.noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
@@ -649,12 +646,6 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
         noteStart = focus.last.startTick;
         noteEnd = focus.last.endTick;
-
-        NoteUtils::removeDuplicateNotePairsAtSpan(midiEvents, newNoteValue, noteStart, noteEnd);
-        NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(midiEvents, newNoteValue, noteStart);
-        if (!manager.noteEditCurrentState().empty()) {
-          manager.noteEditCurrentStateMut().syncProjectingRowsFromSessionStore(midiEvents, channel);
-        }
 
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
         const uint32_t bracketDisplay =
@@ -790,7 +781,6 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
                                 uint32_t targetTick, int delta,
                                 bool refreshPlaybackPreview) {
     // Session store when a note-edit session is active (matches move/length live paths).
-    // NOTE_EDIT_PROJECTED_STORE_COMPAT: move/length/pitch via projected store until tasks.md §5.2.
     auto& midiEvents = track.editAwareMidiEvents();
     const uint32_t loopLength = manager.noteEditLoopLengthTicks(track);
 
@@ -903,7 +893,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
                                      const NoteUtils::DisplayNote& currentNote,
                                      uint32_t targetEndTick,
                                      bool refreshPlaybackPreview) {
-    // NOTE_EDIT_PROJECTED_STORE_COMPAT: move/length/pitch via projected store until tasks.md §5.2.
     auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     manager.ensureNoteEditFocusForLiveEdit(track, currentNote);

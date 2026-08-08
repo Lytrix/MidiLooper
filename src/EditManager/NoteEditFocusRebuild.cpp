@@ -277,7 +277,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncSelectedNoteIdxToFilteredInventory(T
                 storageBracketTick, loopStartTick, loopLength);
             if (sessionState.selection.selectedTick != correctedTick) {
                 sessionState.selection.selectedTick = correctedTick;
-                selectedTick = correctedTick;
             }
             matchIdx = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
                 sessionState.selection, filtered, focus, loopStartTick, loopLength, lengthBracket);
