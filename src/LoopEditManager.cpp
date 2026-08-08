@@ -45,8 +45,10 @@ void LoopEditManager::captureSessionBaseline(Track& track) {
 
 void LoopEditManager::applyLoopStartTick(Track& track, uint32_t startTick) {
     applyLoopStartPreview(track, startTick);
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
-                                                selectedSlotForTrack(track));
+    const uint8_t persistTrackIndex = resolveTrackIndex(track);
+    const uint8_t persistSlotIndex = selectedSlotForTrack(track);
+    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
 }
 
 void LoopEditManager::applyLoopStartPreview(Track& track, uint32_t startTick) {
@@ -99,7 +101,8 @@ void LoopEditManager::commitPendingLoopGeometry(Track& track) {
                static_cast<unsigned long>(beforeLength),
                static_cast<unsigned long>(sessionBaselineLoopLength_));
 
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track), slotIndex);
+    StorageManager::markLoopSlotMaterialDirty(resolveTrackIndex(track), slotIndex);
+    StorageManager::admitLoopSlotPersist(resolveTrackIndex(track), slotIndex);
     scheduleDebouncedLoopEditSave();
 }
 
@@ -127,15 +130,19 @@ void LoopEditManager::applyLoopLength(Track& track, uint32_t loopLengthTicks) {
         return;
     }
     loop.loopLengthTicks = loopLengthTicks;
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
-                                                selectedSlotForTrack(track));
+    const uint8_t persistTrackIndex = resolveTrackIndex(track);
+    const uint8_t persistSlotIndex = selectedSlotForTrack(track);
+    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
     track.invalidateCaches();
 }
 
 void LoopEditManager::applyLoopLengthWithWrapping(Track& track, uint32_t newLoopLength) {
     applyLoopLengthPreview(track, newLoopLength);
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
-                                                selectedSlotForTrack(track));
+    const uint8_t persistTrackIndex = resolveTrackIndex(track);
+    const uint8_t persistSlotIndex = selectedSlotForTrack(track);
+    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
 }
 
 void LoopEditManager::applyLoopLengthPreview(Track& track, uint32_t newLoopLength) {
@@ -187,7 +194,8 @@ void LoopEditManager::flushPendingLoopEditWork(Track& track) {
         return;
     }
     pendingLoopEditSaveAtMs = 0;
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track), selectedSlotForTrack(track));
+    StorageManager::markLoopSlotMaterialDirty(resolveTrackIndex(track), selectedSlotForTrack(track));
+    StorageManager::admitLoopSlotPersist(resolveTrackIndex(track), selectedSlotForTrack(track));
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
     logger.log(CAT_MIDI, LOG_DEBUG, "State save queued (loop edit depart flush)");
 }
@@ -560,8 +568,9 @@ void LoopEditManager::update() {
         if ((int32_t)(now - pendingLoopEditSaveAtMs) >= 0) {
             pendingLoopEditSaveAtMs = 0;
             const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
-            StorageManager::markCurrentSetLoopSlotDirty(trackIndex,
-                                                        trackManager.getSelectedSlotIndex(trackIndex));
+            const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIndex);
+            StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
+            StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
             StorageManager::requestDeferredSaveState(looperState.getLooperState());
             logger.log(CAT_MIDI, LOG_DEBUG, "State save queued (debounced after loop edit)");
         }

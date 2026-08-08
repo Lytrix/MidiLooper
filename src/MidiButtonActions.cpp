@@ -732,7 +732,8 @@ void MidiButtonActions::handleClearTrack() {
     trackManager.setLayeredSlotHeld(tidx, slot, false);
 
     track.clear();
-    StorageManager::markCurrentSetTrackDirty(tidx);
+    StorageManager::markTrackSlotsMaterialDirty(tidx);
+    StorageManager::admitTrackSlotPersistence(tidx);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
     logger.info("MIDI: Clear selected slot %u", static_cast<unsigned>(slot) + 1u);
 
