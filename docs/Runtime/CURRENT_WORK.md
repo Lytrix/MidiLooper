@@ -16,7 +16,7 @@ Last updated: 2026-08-08 (Phase 1.1 committed `b759fc6`; 1.2 SoT in progress)
 
 | Phase | Status |
 |-------|--------|
-| 1 — Authority | **In progress** — **1.1 done** (`b759fc6`); **1.2** selection tick SoT (native 969/969) |
+| 1 — Authority | **In progress** — **1.1–1.2 done**; **1.3** admit* migration (domain call sites migrated) |
 | 2–4 | Queued |
 
 **Phase 1.1 pin:** Retire projected-store mutation bypasses (option 1). Persistence stays queued.

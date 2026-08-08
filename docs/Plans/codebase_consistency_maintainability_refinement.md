@@ -2,7 +2,7 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **1.2** selection tick SoT (in progress); **1.1 complete**  
+**Status:** Active — Phase **1.3** admit* migration (in progress); **1.2 complete** (`a93e205`)  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
 **Branch:** `refactor/note-edit-projected-store-retire` (off `dev`)  
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
@@ -176,6 +176,16 @@ Project board: [Work](https://github.com/users/Lytrix/projects/1) — **NOW** (#
 | Commit / focus rebuild / undo | Drop redundant member mirrors |
 
 **Architecture gate (1.2):** Owner — `EditorSelection` in `NoteEditSessionState`; accessors on `EditManager`. Ownership change: NO. Transition change: NO. Behavior-preserving: YES. Native: **969/969**. HITL: **PASS** [`162859`](../../captures/session_20260808_162859.log) + [`163043`](../../captures/session_20260808_163043.log).
+
+### Phase 1.3 — admit* migration (domain call sites)
+
+| API | Role |
+|-----|------|
+| `markLoopSlotMaterialDirty` | Workspace dirty bit + material anchor (no queue admit) |
+| `admitLoopSlotPersist` | `admitSlotMeta` + slot-keyed `LoopPersist` work item |
+| `markTrackSlotsMaterialDirty` / `admitTrackSlotPersistence` | Clear-track / track-wide paths |
+
+Deprecated `markCurrentSet*Dirty` wrappers forward to the split APIs. **18** production call sites migrated (Track capture/stop, loop geometry, loop edit, undo, slot clear). Native: **969/969**.
 
 ### HITL smoke (Phase 1.1)
 | Capture | Scope | Result |

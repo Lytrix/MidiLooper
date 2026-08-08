@@ -551,8 +551,9 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
             } else {
                 logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
             }
-            StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
-                                                        slotIndex);
+            const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
+            StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
+            StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
             StorageManager::admitLoopUndoHistory(resolveTrackIndexForPersistence(track), slotIndex);
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
@@ -615,8 +616,9 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
             } else {
                 logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
             }
-            StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
-                                                        slotIndex);
+            const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
+            StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
+            StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
             StorageManager::admitLoopUndoHistory(resolveTrackIndexForPersistence(track), slotIndex);
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
