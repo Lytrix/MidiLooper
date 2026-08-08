@@ -2,7 +2,7 @@
 
 **Status:** Phase 0 **shipped**. Phase A **shipped** (2026-07-02). Phase B **shipped** (2026-07-02) — NoteId schema, EditorSelection, SD v6, post-Phase B co-location (`NoteId` → `MidiEvent.h`, `TrackId` → `NoteEditSessionState.h`, `EntityIds.h` deleted).
 
-**Phase A HITL evidence:** `captures/host_midi_automation_baseline_20260702_011228.json` (PASS), `captures/phase_a_slow_fader_sweep_20260702_011229_serial.log` (59 slots, `select_ignored_rate=0`). Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md).
+**Phase A HITL evidence:** `captures/host_midi_automation_baseline_20260702_011228.json` (PASS), `captures/phase_a_slow_fader_sweep_20260702_011229_serial.log` (59 slots, `select_ignored_rate=0`). Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../../docs/Plans/archive/handoff/note_edit_stable_note_id_phase_a_handoff.md).
 
 **Gate:** Phase B implementation starts only after Phase A exit criteria in [design.md](./design.md) pass (`note-edit-fader-feedback-regression` selection-driven refactor stable).
 

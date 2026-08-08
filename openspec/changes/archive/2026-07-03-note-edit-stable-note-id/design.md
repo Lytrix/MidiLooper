@@ -307,7 +307,7 @@ Invalidate caches on store mutation; never treat cache index as `NoteId`.
 
 ## Phase A exit / acceptance (prerequisite for Phase B)
 
-**Status: satisfied** (2026-07-02, commit `d3d5798`). Evidence: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md).
+**Status: satisfied** (2026-07-02, commit `d3d5798`). Evidence: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/Plans/archive/handoff/note_edit_stable_note_id_phase_a_handoff.md).
 
 Phase B NoteId work starts only when all pass **and** D0a (`EntityIds.h` scope) is resolved with explicit user scope.
 

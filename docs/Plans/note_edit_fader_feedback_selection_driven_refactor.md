@@ -3,8 +3,8 @@
 **Date:** 2026-07-01 (updated 2026-07-02 — Phase A HITL PASS)  
 **Branch:** `load-save-sets-loops`  
 **OpenSpec change:** [`openspec/changes/note-edit-fader-feedback-regression/`](../../openspec/changes/note-edit-fader-feedback-regression/)  
-**Prior handoff:** [`docs/Plans/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md`](note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)  
-**Phase A complete:** [`note_edit_stable_note_id_phase_a_handoff.md`](note_edit_stable_note_id_phase_a_handoff.md) — start next chat here for NoteId Phase B or fader Phase 8 RC11  
+**Prior handoff:** [`docs/Plans/archive/handoff/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md`](archive/handoff/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)  
+**Phase A complete:** [`note_edit_stable_note_id_phase_a_handoff.md`](archive/handoff/note_edit_stable_note_id_phase_a_handoff.md) — start next chat here for NoteId Phase B or fader Phase 8 RC11  
 **Build env:** `teensy41-capture-serial`  
 **Capture port:** `/dev/cu.usbmodem154944801`
 

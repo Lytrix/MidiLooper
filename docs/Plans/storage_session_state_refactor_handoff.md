@@ -135,7 +135,7 @@ Replace imperative `setBrowserOverlayPersistencePhase` assignments with policy o
 - `src/StorageManager/FileIo.cpp` — `writeRaw`/`readRaw`, `storageIoFromFile*`, deferred stage-name strings
 - Step 2 job FSM TUs: `src/StorageManager/WorkspaceSave.cpp`, `RevisionCommit.cpp`, `RevisionLoad.cpp` — **not yet extracted**; see [`storage-session-state-refactor` tasks](../../openspec/changes/storage-session-state-refactor/tasks.md)
 
-**Remaining (before `transport.bin` / `global.bin`):** see **[storage_session_state_refactor_open_items_handoff.md](storage_session_state_refactor_open_items_handoff.md)** and OpenSpec **`storage-session-state-refactor`**.
+**Remaining (before `transport.bin` / `global.bin`):** see **[storage_session_state_refactor_open_items_handoff.md](archive/handoff/storage_session_state_refactor_open_items_handoff.md)** (closed) and OpenSpec **`storage-session-state-refactor`** archive.
 
 ---
 
