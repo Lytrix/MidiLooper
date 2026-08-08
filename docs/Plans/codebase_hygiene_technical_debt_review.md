@@ -92,7 +92,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 | # | Finding | Status |
 |---|---------|--------|
 | 17 | `PROJECT_STATE` deferred-job-scheduler archive link | **Done** |
-| 18 | ~157 `docs/Plans/` + historical `docs/Refinements/` | **Partial** — hygiene sprint plans marked Done + indexed in [README.md](README.md#hygiene-sprint-chorecodebase-hygiene-sprint1); mass purge/move of historical Cursor exports still queued |
+| 18 | ~157 `docs/Plans/` + historical `docs/Refinements/` | **Done** — Cursor exports + Refinements archived under `Plans/archive/` (Phase 2a/2d) |
 
 ---
 

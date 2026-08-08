@@ -56,7 +56,7 @@ Always load first:
 
 **Avoid (unless bisecting history)**
 
-- Pre-passes migration plans in `Refinements/`
+- Pre-passes migration plans in `Plans/archive/refinements/`
 - Phase 3 jam capture specs (not implemented)
 
 ---
@@ -141,7 +141,7 @@ Always load first:
 
 **Avoid**
 
-- v2/v3 migration summaries in `Refinements/` as current format truth
+- v2/v3 migration summaries in `Plans/archive/refinements/` (historical; verify against code)
 
 ---
 

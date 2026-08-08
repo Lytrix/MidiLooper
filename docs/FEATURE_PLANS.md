@@ -9,4 +9,4 @@ The full list of **Guides** vs **Refinements** lives in **[Documentation index](
 - One topic per file. Prefer descriptive names (kebab-case for new files; older files keep their historical names).
 - When a plan is superseded, **keep the old file** and add a new one or append a dated section at the top (e.g. `## 2025-03-14 — revision`).
 - For full Cursor plan exports, prefer committing copies under **`docs/Plans/`** (see [Plans/README.md](Plans/README.md)).
-- New **Guides** and **Refinements**: add the file under `docs/Guides/` or `docs/Refinements/` and add a row in [README.md](README.md).
+- New **Guides**: add under `docs/Guides/` and a row in [README.md](README.md). New **refinement / implementation logs**: active work in `docs/Plans/`; historical in `docs/Plans/archive/refinements/`.
