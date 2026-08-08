@@ -18,7 +18,7 @@ Rebuild `host_midi_hitl` as a layered framework with explicit ownership, a regre
 | Phase | Authority |
 |-------|-----------|
 | During migration | This change + [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md) (staging Part I) |
-| After Phase 1 | [`docs/Architecture/HITL_ARCHITECTURE.md`](../../../docs/Architecture/HITL_ARCHITECTURE.md) |
+| After Phase 1 | [`docs/00-authority/Architecture/HITL_ARCHITECTURE.md`](../../../docs/00-authority/Architecture/HITL_ARCHITECTURE.md) |
 | After Phase 5 | Archive this change; architecture + guides only |
 
 Major post-migration HITL architecture changes: OpenSpec change + DEC per §12.5 in architecture doc.

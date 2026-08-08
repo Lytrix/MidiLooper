@@ -31,7 +31,7 @@ isProject: false
 
 **Document role:** This file is the **temporary migration plan** (implementation schedule + staging architecture). It is **not** the permanent architecture reference — see [Documentation structure](#documentation-structure) below.
 
-**Staging note:** Part I below is the source for [`docs/Architecture/HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md). Extract it in Phase 1; contributor and regression guides follow in Phase 4. Archive this plan when migration completes (Phase 5).
+**Staging note:** Part I below is the source for [`docs/00-authority/Architecture/HITL_ARCHITECTURE.md`](../00-authority/Architecture/HITL_ARCHITECTURE.md). Extract it in Phase 1; contributor and regression guides follow in Phase 4. Archive this plan when migration completes (Phase 5).
 
 ---
 
@@ -734,7 +734,7 @@ Deterministic scenarios greatly increase the long-term value of the regression c
 
 ### 12.5 Architectural evolution
 
-After migration completes, **major** changes to the long-lived HITL architecture should be introduced through **architectural decision records** (OpenSpec change + append to [`DECISION_LOG.md`](../DECISION_LOG.md)), not by silently editing [`HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md).
+After migration completes, **major** changes to the long-lived HITL architecture should be introduced through **architectural decision records** (OpenSpec change + append to [`DECISION_LOG.md`](../DECISION_LOG.md)), not by silently editing [`HITL_ARCHITECTURE.md`](../00-authority/Architecture/HITL_ARCHITECTURE.md).
 
 | Artifact | Role |
 |----------|------|
@@ -759,7 +759,7 @@ This keeps `HITL_ARCHITECTURE.md` trustworthy six months later: the doc shows wh
 
 # Part II — Migration
 
-Migration phases are **scheduling only**. Implementation authority during migration: `openspec/changes/hitl-cli-rebuild/tasks.md` (created Phase 0). When complete, Part I lives in [`HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md); this doc and the OpenSpec change are archived.
+Migration phases are **scheduling only**. Implementation authority during migration: `openspec/changes/hitl-cli-rebuild/tasks.md` (created Phase 0). When complete, Part I lives in [`HITL_ARCHITECTURE.md`](../00-authority/Architecture/HITL_ARCHITECTURE.md); this doc and the OpenSpec change are archived.
 
 ## Phase 0 — Inventory + doc scaffold (no production code)
 
@@ -833,7 +833,7 @@ Migration phases are **scheduling only**. Implementation authority during migrat
 
 **Status:** complete (2026-08-04).
 
-1. **Extract Part I** → [`docs/Architecture/HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md).
+1. **Extract Part I** → [`docs/00-authority/Architecture/HITL_ARCHITECTURE.md`](../00-authority/Architecture/HITL_ARCHITECTURE.md).
 2. `HitlConfig`, `bootstrap.py`, `session.py`, `ActionContext`, `ScenarioContext`, `ScenarioResult`, `VerificationResult` + `VerificationFailure`.
 3. `foundation_runner.py` orchestration (`run_layered_preset`); `reporting.py` skeleton.
 4. `layered_registry.py` — `LayeredScenarioSpec`, `PresetSpec`, verifier lookup (parallel to legacy `registry.py`).

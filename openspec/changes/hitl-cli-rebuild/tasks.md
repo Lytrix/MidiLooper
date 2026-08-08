@@ -13,7 +13,7 @@
 
 ## Phase 1 — Foundation
 
-- [x] 1.1 Extract Part I → `docs/Architecture/HITL_ARCHITECTURE.md`
+- [x] 1.1 Extract Part I → `docs/00-authority/Architecture/HITL_ARCHITECTURE.md`
 - [x] 1.2 `HitlConfig`, `bootstrap.py`, `session.py`, contexts, types
 - [x] 1.3 `foundation_runner.py` (no `ScenarioRunner`), `reporting.py` skeleton
 - [x] 1.4 `layered_registry.py` — `LayeredScenarioSpec`, `PresetSpec`, verifier lookup

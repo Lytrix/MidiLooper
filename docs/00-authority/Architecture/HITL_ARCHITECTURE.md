@@ -1,6 +1,6 @@
 # HITL architecture
 
-Canonical long-lived reference for the layered HITL framework. Migration plan: [`docs/plans/hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md). Major changes after migration: OpenSpec + DEC (§12.5).
+Canonical long-lived reference for the layered HITL framework. Migration plan: [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../plans/hitl_cli_rebuild_enhancement.md). Major changes after migration: OpenSpec + DEC (§12.5).
 
 ## 1. Stable invariants vs implementation
 
@@ -415,7 +415,7 @@ Presets compose **scenarios**, not CLI flags:
 | `edit_minimal` | `record_seed`, `edit_minimal` |
 | `uip_5_5` | `record_seed`, `edit_minimal`, `long_loop_display_window`, `slot_queued_start` |
 
-`base` id retained for [HITL-Test-Flow.mdc](../../.cursor/rules/HITL-Test-Flow.mdc).
+`base` id retained for [HITL-Test-Flow.mdc](../../../.cursor/rules/HITL-Test-Flow.mdc).
 
 ---
 
@@ -528,7 +528,7 @@ The regression corpus is immutable historical evidence:
 
 This preserves behavioural history for regression analysis and git bisect investigations.
 
-**Migration note:** flat `session_*.log` files from [`capture_session.py`](../../scripts/capture_session.py) remain valid during transition; new runs use bundle directories. `.current_session` can point at bundle `serial.log` or a shim path until Mode B is updated.
+**Migration note:** flat `session_*.log` files from [`capture_session.py`](../../../scripts/capture_session.py) remain valid during transition; new runs use bundle directories. `.current_session` can point at bundle `serial.log` or a shim path until Mode B is updated.
 
 ### 11.4 Developer & agent guidance
 
@@ -542,7 +542,7 @@ When a scenario has previously passed:
 
 **Evidence priority:** report JSON, serial logs, captured artifacts, and metadata are primary evidence — not memory or abbreviated console output.
 
-Document these rules in [`HITL_REGRESSION_WORKFLOW.md`](../Guides/HITL_REGRESSION_WORKFLOW.md) (Phase 4) and reinforce via slim [HITL-Test-Flow.mdc](../../.cursor/rules/HITL-Test-Flow.mdc).
+Document these rules in [`HITL_REGRESSION_WORKFLOW.md`](../../Guides/HITL_REGRESSION_WORKFLOW.md) (Phase 4) and reinforce via slim [HITL-Test-Flow.mdc](../../../.cursor/rules/HITL-Test-Flow.mdc).
 
 ### 11.5 Long-term objective
 
@@ -613,7 +613,7 @@ Deterministic scenarios greatly increase the long-term value of the regression c
 
 ### 12.5 Architectural evolution
 
-After migration completes, **major** changes to the long-lived HITL architecture should be introduced through **architectural decision records** (OpenSpec change + append to [`DECISION_LOG.md`](../DECISION_LOG.md)), not by silently editing [`HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md).
+After migration completes, **major** changes to the long-lived HITL architecture should be introduced through **architectural decision records** (OpenSpec change + append to [`DECISION_LOG.md`](../../DECISION_LOG.md)), not by silently editing [`HITL_ARCHITECTURE.md`](HITL_ARCHITECTURE.md).
 
 | Artifact | Role |
 |----------|------|
