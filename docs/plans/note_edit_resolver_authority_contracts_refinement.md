@@ -1,7 +1,6 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** Behavioral and authority migration **complete**. Stages 0–8 and §11 steps 5.1–5.5
-shipped and HITL-verified. **Remaining work:** §12 orthogonal-state refactor **complete** (R1–R5). Optional: targeted HITL smoke per plan §14.
+**Status:** **Complete** — behavioral and authority migration, §11 steps 5.1–5.5, and §12 R1–R5 orthogonal representation shipped and HITL-verified. Optional: targeted HITL smoke per plan §14.
 **Goal of remaining work:** make the code representation accurately express the authority model
 already proven — **without reopening resolver behavior or redesigning the edit pipeline.**
 **Living guide:** [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md).

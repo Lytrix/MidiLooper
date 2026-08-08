@@ -1,6 +1,6 @@
 # Phase 3: Multi-loop slots + jam recording — requirements
 
-**Status (updated Jun 2026):** Partially shipped. The **multi-loop slot infrastructure** (Loop struct, 8 slots per track, per-slot record/overdub/clear/undo, quantized switching, storage v3) is implemented on `feature/track-multi-looping`. **Jam capture (D13–D15) and Scenes are not implemented.** Depends on **Phase 1** (jam state) and **Phase 2** (`jamTick` / `getEffectivePlaybackTick`) — both done. Current overview: [../DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md).  
+**Status (updated Aug 2026):** Partially shipped. The **multi-loop slot infrastructure** (Loop struct, 8 slots per track, per-slot record/overdub/clear/undo, quantized switching, storage v4) is implemented on **`dev`**. **Jam capture (D13–D15) and Scenes are not implemented.** Depends on **Phase 1** (jam state) and **Phase 2** (`jamTick` / `getEffectivePlaybackTick`) — both done. Current overview: [../DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md).  
 **Related:** [dual-tick_view_override_architecture_856310b1.plan.md](dual-tick_view_override_architecture_856310b1.plan.md) (historical architecture).  
 **Implementation:** Combined deliverables and refinements → [multi-loop_leds_and_droid_lfo_3a62f325.plan.md](multi-loop_leds_and_droid_lfo_3a62f325.plan.md) §0.
 

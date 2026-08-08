@@ -214,10 +214,10 @@ Always load first:
 
 **Optional**
 
-- [plans/note_edit_resolver_authority_contracts_refinement.md](plans/note_edit_resolver_authority_contracts_refinement.md) — behavioral migration DONE; remaining §12 R1–R5 representation only
+- [plans/note_edit_resolver_authority_contracts_refinement.md](plans/note_edit_resolver_authority_contracts_refinement.md) — **complete** (DEC-029/030; §12 R1–R5)
 - `openspec/specs/edit-session-action-geometry/`
 - `openspec/specs/note-edit-modification-session/`
-- `openspec/changes/note-edit-current-state/` (active until archive)
+- `openspec/specs/note-edit-current-state/` — archived change [`2026-08-08-note-edit-current-state`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/)
 - Overlap BUG archives under `openspec/changes/archive/`
 
 **Avoid**

@@ -2,9 +2,9 @@
 
 > Project goal and decision log: [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
 
-## Shipped vs Next (updated Jul 2026)
+## Shipped vs Next (updated Aug 2026)
 
-**Shipped** (in firmware on `feature/track-multi-looping`):
+**Shipped** (in firmware on `dev`):
 
 - 8 tracks × 8 loop slots: per-slot record, overdub, clear, mute, quantized switching, multi-slot hold layering (`Track`, `TrackManager`, `SlotStateMachine`)
 - Undo/redo per slot (overdub, clear, loop start) — memory-aware depth (`PREFERRED_UNDO_DEPTH` 99, `MIN_UNDO_DEPTH` 8, `ABSOLUTE_MAX_UNDO_ENTRIES` 512; `trimGlobalUndoStackForMemory` in `PassReclaim` / `TrackUndo`). Redo branch preserved after full undo until a new pass pushes.
@@ -18,6 +18,8 @@
 - DROID USB host MIDI buttons/faders (`MidiHandler`, `MidiButtonManager`, `MidiFaderManager`)
 - **Commit-centered lazy slot load (DEC-026/027, Jul 2026):** Phase A archived `2026-07-18-unified-commit-lazy-slot-load` (gates [`224607`](../captures/session_20260718_224607.log), [`230145`](../captures/session_20260718_230145.log)). **Phase B DeferredJobScheduler** archived `2026-07-19-deferred-job-scheduler` (gates [`231510`](../captures/session_20260718_231510.log), [`022107`](../captures/session_20260719_022107.log)); normative `openspec/specs/deferred-job-scheduler/`.
 - **NoteEditCurrentState ownership (DEC-029, Aug 2026):** NOTE_EDIT editable geometry keyed by `NoteId`; `EditSession.store` is projection only. OpenSpec archived `2026-08-08-note-edit-current-state`; normative `openspec/specs/note-edit-current-state/`; HITL [`112202`](../captures/session_20260808_112202.log), [`115120`](../captures/session_20260808_115120.log), [`032118`](../captures/session_20260808_032118.log).
+- **Sticky overlap participation (DEC-030, Aug 2026):** `NoteEditOverlapParticipationType` on current state; `ParticipatingNotePhase` removed; §12 R1–R5 orthogonal representation complete. Plan: [`note_edit_resolver_authority_contracts_refinement.md`](plans/note_edit_resolver_authority_contracts_refinement.md).
+- **Playing move/length playback audition (Aug 2026):** `refreshPlaybackPreview` forwarded through move/length geometry paths (`15c5750`). HITL [`113626`](../captures/session_20260808_113626.log), [`115120`](../captures/session_20260808_115120.log). Bugfix: [`note_edit_playing_move_audition_bugfix.md`](plans/note_edit_playing_move_audition_bugfix.md).
 
 **Not in firmware** (docs may suggest otherwise):
 

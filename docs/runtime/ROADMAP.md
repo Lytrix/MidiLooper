@@ -4,7 +4,7 @@
 
 For shipped vs next in firmware: [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md). For OpenSpec process: [DELIVERY_RULES.md](../00-authority/DELIVERY_RULES.md).
 
-Last updated: 2026-06-29
+Last updated: 2026-08-08 (doc hygiene review)
 
 ---
 
