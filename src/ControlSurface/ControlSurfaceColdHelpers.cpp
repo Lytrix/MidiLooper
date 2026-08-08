@@ -35,19 +35,6 @@ NOTE_EDIT_MEM void applyLengthEndTargetRules(uint32_t noteStart, uint32_t curren
     }
 }
 
-NOTE_EDIT_MEM int16_t lengthEditLoopTickToCoarsePitchbend(uint32_t tick, uint32_t loopLength) {
-    if (loopLength <= 1) {
-        return MidiConfig::Pitchbend::CENTER;
-    }
-    tick %= loopLength;
-    const float normalizedPos =
-        static_cast<float>(tick) / static_cast<float>(loopLength - 1);
-    const int16_t pitchbend = static_cast<int16_t>(
-        MidiConfig::Pitchbend::MIN +
-        normalizedPos * static_cast<float>(MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
-    return constrain(pitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
-}
-
 NOTE_EDIT_MEM uint32_t lengthEditCoarsePitchbendToLoopTick(int16_t pitchValue, uint32_t loopLength) {
     if (loopLength <= 1) {
         return 0;
@@ -81,10 +68,4 @@ NOTE_EDIT_MEM int32_t lengthEditFineOffsetFromCc(uint8_t ccValue) {
     const int32_t halfRange = static_cast<int32_t>(Config::TICKS_PER_16TH_STEP);
     const int32_t rawOffset = static_cast<int32_t>(ccValue) - 64;
     return constrain(rawOffset, -halfRange, halfRange);
-}
-
-NOTE_EDIT_MEM uint8_t lengthEditFineCcFromOffset(int32_t offsetFromAnchor) {
-    const int32_t halfRange = static_cast<int32_t>(Config::TICKS_PER_16TH_STEP);
-    const int32_t clampedOffset = constrain(offsetFromAnchor, -halfRange, halfRange);
-    return static_cast<uint8_t>(constrain(64 + clampedOffset, 0, 127));
 }

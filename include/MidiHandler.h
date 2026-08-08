@@ -21,9 +21,8 @@ enum InputSource {
  * Reads incoming MIDI messages from USB or Serial sources, parses them, and
  * dispatches to internal handlers (note on/off, control change, pitch bend,
  * aftertouch, program change, clock, start/stop/continue). Output methods
- * provide a unified API (sendMidiEvent/sendNoteOn/sendClock/etc.) with
- * configurable routing to USB and/or Serial ports via setOutputUSB()
- * and setOutputSerial().
+ * provide a unified API (sendMidiEvent/sendNoteOn/sendClock/etc.) with USB and
+ * Serial routing controlled by internal outputUSB/outputSerial flags.
  */
 class MidiHandler {
 public:
@@ -52,14 +51,12 @@ public:
   void sendLedFeedbackNoteOff(uint8_t note);
   void sendControlChange(uint8_t channel, uint8_t control, uint8_t value);
   void sendPitchBend(uint8_t channel, int16_t value);
-  void sendAfterTouch(uint8_t channel, uint8_t pressure);
   void sendProgramChange(uint8_t channel, uint8_t program);
 
   // --- Clock / Transport Output ---
   void sendClock();
   void sendStart();
   void sendStop();
-  void sendContinueMIDI();
 
   /** Drain paced LED feedback queue to DROID USB host (call from main loop). */
   void processDroidUsbHostOutbound();
@@ -67,10 +64,6 @@ public:
   /** When true, LED queue drain is paused and fader motor outbound skips MIN_PACKET_GAP pacing. */
   void setDroidMotorOutboundPriority(bool active);
 
-  // --- Output Routing ---
-  void setOutputUSB(bool enable);
-  void setOutputSerial(bool enable);
-  bool isOutputUSBEnabled() const;
   bool isOutputSerialEnabled() const;
 
   // --- Static USB Host MIDI Callbacks ---

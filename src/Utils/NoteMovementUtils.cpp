@@ -57,38 +57,6 @@ MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t 
 
 } // namespace
 
-NOTE_EDIT_MEM bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength) {
-    // Convert to unwrapped positions for comparison
-    uint32_t unwrappedEnd1 = end1;
-    uint32_t unwrappedEnd2 = end2;
-    
-    // Check if notes are wrapped (end < start means wrapped)
-    bool wrapped1 = (end1 < start1);
-    bool wrapped2 = (end2 < start2);
-    
-    if (wrapped1) {
-        unwrappedEnd1 = end1 + loopLength;
-    }
-    if (wrapped2) {
-        unwrappedEnd2 = end2 + loopLength;
-    }
-    
-    // Now check overlap using unwrapped positions
-    // Note1: [start1, unwrappedEnd1], Note2: [start2, unwrappedEnd2]
-    bool overlap = (start1 < unwrappedEnd2) && (start2 < unwrappedEnd1);
-    
-    // If both notes are unwrapped, also check for loop-wrapped overlaps
-    if (!wrapped1 && !wrapped2) {
-        // Check if note1 wraps around and overlaps with note2
-        bool note1WrapsAndOverlaps = (start1 + loopLength < unwrappedEnd2) && (start2 < end1 + loopLength);
-        // Check if note2 wraps around and overlaps with note1
-        bool note2WrapsAndOverlaps = (start2 + loopLength < unwrappedEnd1) && (start1 < end2 + loopLength);
-        overlap = overlap || note1WrapsAndOverlaps || note2WrapsAndOverlaps;
-    }
-    
-    return overlap;
-}
-
 NOTE_EDIT_MEM bool linearStorageSpansOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2) {
     return start1 < end2 && start2 < end1;
 }
