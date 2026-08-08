@@ -127,7 +127,8 @@ NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
         return geometry;
       }
       // Visible shortened leave-restore paints committedSpan (021407 pitch vacate after ShortenNote).
-      if (participant.phase == ParticipatingNotePhase::Visible && participant.shortenedVsCommitted) {
+      if (participatingNoteIsExistingAndVisible(participant) &&
+          participatingNoteIsRightTailShortened(participant)) {
         const NoteBaseline committed = participant.committedSpan;
         geometry.startTick = committed.startTick;
         geometry.endTick = committed.endTick;
@@ -251,8 +252,8 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
       const ParticipatingNoteState vacatedParticipant = buildParticipatingNoteState(*vacatedRow);
       const bool hiddenLeave = participatingNoteQualifiesForLeaveRestoreTarget(
           vacatedParticipant, focus.movingNoteId);
-      const bool shortenedLeave = vacatedParticipant.phase == ParticipatingNotePhase::Visible &&
-                                  vacatedParticipant.shortenedVsCommitted;
+      const bool shortenedLeave = participatingNoteIsExistingAndVisible(vacatedParticipant) &&
+                                  participatingNoteIsRightTailShortened(vacatedParticipant);
       if (!hiddenLeave && !shortenedLeave) {
         continue;
       }

@@ -16,24 +16,112 @@ void sortParticipatingNoteIdList(NoteIdList& noteIds) {
 
 }  // namespace
 
-ParticipatingNotePhase participatingPhaseFromPresence(NoteEditPresenceType presence) {
-  switch (presence) {
-    case NoteEditPresenceType::Visible:
-      return ParticipatingNotePhase::Visible;
-    case NoteEditPresenceType::Hidden:
-      return ParticipatingNotePhase::Hidden;
-    case NoteEditPresenceType::Deleted:
-      return ParticipatingNotePhase::Deleted;
+bool currentStateRowIsVisible(const NoteEditCurrentNoteState& row) {
+  return row.presence == NoteEditPresenceType::Visible ||
+         row.presence == NoteEditPresenceType::Added;
+}
+
+bool participatingNoteIsVisible(const ParticipatingNoteState& state) {
+  return state.visible;
+}
+
+NoteEditLifecycleType currentStateRowLifecycle(const NoteEditCurrentNoteState& row) {
+  switch (row.presence) {
     case NoteEditPresenceType::Added:
-      return ParticipatingNotePhase::Added;
+      return NoteEditLifecycleType::Added;
+    case NoteEditPresenceType::Deleted:
+      return NoteEditLifecycleType::Deleted;
+    case NoteEditPresenceType::Visible:
+    case NoteEditPresenceType::Hidden:
+      return NoteEditLifecycleType::Existing;
   }
-  return ParticipatingNotePhase::Visible;
+  return NoteEditLifecycleType::Existing;
+}
+
+bool currentStateRowLifecycleIsDeleted(const NoteEditCurrentNoteState& row) {
+  return currentStateRowLifecycle(row) == NoteEditLifecycleType::Deleted;
+}
+
+bool currentStateRowLifecycleIsAdded(const NoteEditCurrentNoteState& row) {
+  return currentStateRowLifecycle(row) == NoteEditLifecycleType::Added;
+}
+
+NoteEditLifecycleType participatingNoteLifecycle(const ParticipatingNoteState& state) {
+  return state.lifecycle;
+}
+
+bool currentStateRowIsExistingAndVisible(const NoteEditCurrentNoteState& row) {
+  return currentStateRowIsVisible(row) &&
+         currentStateRowLifecycle(row) == NoteEditLifecycleType::Existing;
+}
+
+bool participatingNoteIsExistingAndVisible(const ParticipatingNoteState& state) {
+  return participatingNoteIsVisible(state) &&
+         participatingNoteLifecycle(state) == NoteEditLifecycleType::Existing;
+}
+
+uint32_t participatingSpanDurationTicks(const NoteBaseline& span) {
+  if (span.endTick <= span.startTick) {
+    return 0;
+  }
+  return span.endTick - span.startTick;
+}
+
+bool participatingSpanIsRightTailShortened(const NoteBaseline& current,
+                                             const NoteBaseline& committed) {
+  return current.pitch == committed.pitch && current.startTick == committed.startTick &&
+         current.endTick < committed.endTick;
+}
+
+bool participatingSpanIsMoved(const NoteBaseline& current, const NoteBaseline& committed) {
+  return current.startTick != committed.startTick;
+}
+
+bool participatingSpanHasShorterDuration(const NoteBaseline& current,
+                                           const NoteBaseline& committed) {
+  return participatingSpanDurationTicks(current) < participatingSpanDurationTicks(committed);
+}
+
+bool participatingSpanHasOriginalLength(const NoteBaseline& current,
+                                            const NoteBaseline& committed) {
+  return participatingSpanDurationTicks(current) == participatingSpanDurationTicks(committed);
+}
+
+bool currentStateRowIsRightTailShortened(const NoteEditCurrentNoteState& row) {
+  return participatingSpanIsRightTailShortened(row.currentSpan, row.committedSpan);
+}
+
+bool currentStateRowIsMoved(const NoteEditCurrentNoteState& row) {
+  return participatingSpanIsMoved(row.currentSpan, row.committedSpan);
+}
+
+bool currentStateRowHasShorterDuration(const NoteEditCurrentNoteState& row) {
+  return participatingSpanHasShorterDuration(row.currentSpan, row.committedSpan);
+}
+
+bool currentStateRowHasOriginalLength(const NoteEditCurrentNoteState& row) {
+  return participatingSpanHasOriginalLength(row.currentSpan, row.committedSpan);
+}
+
+bool participatingNoteIsRightTailShortened(const ParticipatingNoteState& state) {
+  return participatingSpanIsRightTailShortened(state.currentSpan, state.committedSpan);
+}
+
+bool participatingNoteIsMoved(const ParticipatingNoteState& state) {
+  return participatingSpanIsMoved(state.currentSpan, state.committedSpan);
+}
+
+bool participatingNoteHasShorterDuration(const ParticipatingNoteState& state) {
+  return participatingSpanHasShorterDuration(state.currentSpan, state.committedSpan);
+}
+
+bool participatingNoteHasOriginalLength(const ParticipatingNoteState& state) {
+  return participatingSpanHasOriginalLength(state.currentSpan, state.committedSpan);
 }
 
 bool participatingNoteShortenedVsCommitted(const NoteBaseline& current,
                                              const NoteBaseline& committed) {
-  return current.pitch == committed.pitch && current.startTick == committed.startTick &&
-         current.endTick < committed.endTick;
+  return participatingSpanIsRightTailShortened(current, committed);
 }
 
 bool currentStateRowGeometryDiffersFromCommitted(const NoteEditCurrentNoteState& row) {
@@ -46,8 +134,7 @@ bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row) {
   if (row.overlapParticipation == NoteEditOverlapParticipationType::Ended) {
     return false;
   }
-  if (row.presence == NoteEditPresenceType::Hidden ||
-      row.presence == NoteEditPresenceType::Deleted) {
+  if (currentStateRowLifecycleIsDeleted(row) || !currentStateRowIsVisible(row)) {
     return true;
   }
   return currentStateRowGeometryDiffersFromCommitted(row);
@@ -116,7 +203,8 @@ bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteStat
     return false;
   }
   // Session-unsealed Hidden only. Sealed Deleted after deselect must not leave-restore (022849 E2).
-  return participant.phase == ParticipatingNotePhase::Hidden;
+  return !participatingNoteIsVisible(participant) &&
+         participatingNoteLifecycle(participant) == NoteEditLifecycleType::Existing;
 }
 
 bool participatingNoteCommittedSpanSealedBelowStorageBaseline(
@@ -134,7 +222,8 @@ bool participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(
   if (participant.noteId == kInvalidNoteId || participant.noteId == movingNoteId) {
     return false;
   }
-  if (participant.phase != ParticipatingNotePhase::Visible || !participant.shortenedVsCommitted) {
+  if (!participatingNoteIsExistingAndVisible(participant) ||
+      !participatingNoteIsRightTailShortened(participant)) {
     return false;
   }
   if (participant.visibleOverlapShortenSealed) {
@@ -148,13 +237,13 @@ bool participatingNoteUsesCommittedBaselineDuringOverlapClosure(
   if (participant.noteId == kInvalidNoteId || participant.noteId == movingNoteId) {
     return false;
   }
-  return participant.phase == ParticipatingNotePhase::Hidden ||
-         participant.phase == ParticipatingNotePhase::Deleted ||
-         participant.shortenedVsCommitted;
+  return !participatingNoteIsVisible(participant) ||
+         participatingNoteIsRightTailShortened(participant);
 }
 
 bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant) {
-  return participant.phase == ParticipatingNotePhase::Hidden;
+  return !participatingNoteIsVisible(participant) &&
+         participatingNoteLifecycle(participant) == NoteEditLifecycleType::Existing;
 }
 
 NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState& participant) {
@@ -180,15 +269,15 @@ bool participatingNoteOverlapInteractionCleared(const ParticipatingNoteState& pa
 
 bool participatingNoteVisibleOverlapTailInProgress(const ParticipatingNoteState& participant,
                                                    const NoteBaseline& causingSpan) {
-  return participant.phase == ParticipatingNotePhase::Visible &&
-         participant.shortenedVsCommitted &&
+  return participatingNoteIsExistingAndVisible(participant) &&
+         participatingNoteIsRightTailShortened(participant) &&
          participatingNoteOverlapClosureActive(participant, causingSpan);
 }
 
 bool visibleShortenedOverlapTailInventoryMasked(const NoteEditCurrentNoteState& row,
                                               const NoteEditFocus& focus,
                                               int selectedNoteIdx) {
-  if (!participatingNoteShortenedVsCommitted(row.currentSpan, row.committedSpan)) {
+  if (!currentStateRowIsRightTailShortened(row)) {
     return false;
   }
   if (selectedNoteIdx < 0 || !focus.active || focus.movingNoteId == kInvalidNoteId) {
@@ -217,23 +306,12 @@ const NoteBaseline* findCausingSpanForMover(NoteId movingNoteId,
 ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteState& row) {
   ParticipatingNoteState out{};
   out.noteId = row.noteId;
-  out.phase = participatingPhaseFromPresence(row.presence);
   out.currentSpan = row.currentSpan;
   out.committedSpan = row.committedSpan;
   out.overlapParticipation = row.overlapParticipation;
-  out.shortenedVsCommitted =
-      participatingNoteShortenedVsCommitted(row.currentSpan, row.committedSpan);
   out.visibleOverlapShortenSealed = row.visibleOverlapShortenSealed;
-  switch (row.presence) {
-    case NoteEditPresenceType::Visible:
-    case NoteEditPresenceType::Added:
-      out.projectsToStore = true;
-      break;
-    case NoteEditPresenceType::Hidden:
-    case NoteEditPresenceType::Deleted:
-      out.projectsToStore = false;
-      break;
-  }
+  out.visible = currentStateRowIsVisible(row);
+  out.lifecycle = currentStateRowLifecycle(row);
   return out;
 }
 
@@ -263,19 +341,13 @@ ParticipatingNoteInvariantResult verifyParticipatingNoteInvariants(
     result.passed = false;
     result.missingCommittedSpan = true;
   }
-  if (state.phase == ParticipatingNotePhase::Hidden ||
-      state.phase == ParticipatingNotePhase::Deleted) {
-    if (state.projectsToStore) {
-      result.passed = false;
-      result.driverNotProjecting = true;
-    }
+  if (state.lifecycle == NoteEditLifecycleType::Deleted && state.visible) {
+    result.passed = false;
+    result.driverNotProjecting = true;
   }
-  if (state.phase == ParticipatingNotePhase::Visible ||
-      state.phase == ParticipatingNotePhase::Added) {
-    if (!state.projectsToStore) {
-      result.passed = false;
-      result.driverNotProjecting = true;
-    }
+  if (state.lifecycle == NoteEditLifecycleType::Added && !state.visible) {
+    result.passed = false;
+    result.driverNotProjecting = true;
   }
   return result;
 }
@@ -288,7 +360,7 @@ ParticipatingSessionInvariantResult verifyParticipatingSessionInvariants(
     if (primaryIt == session.participatingNotes.end()) {
       result.passed = false;
       result.primaryMissingFromParticipants = true;
-    } else if (!primaryIt->second.projectsToStore) {
+    } else if (!primaryIt->second.visible) {
       result.passed = false;
       result.actionTargetWouldDependOnProjection = true;
     }

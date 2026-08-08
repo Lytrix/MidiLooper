@@ -10,6 +10,7 @@
 #include "EditSessionStoreInvariant.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -618,7 +619,8 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
             {
               const NoteEditCurrentNoteState* row = currentState->find(action.targetNoteId);
               const OverlapNoteStoreState scratchState =
-                  (row != nullptr && row->presence == NoteEditPresenceType::Hidden)
+                  (row != nullptr && !currentStateRowIsVisible(*row) &&
+                   !currentStateRowLifecycleIsDeleted(*row))
                       ? OverlapNoteStoreState::Hidden
                       : OverlapNoteStoreState::Visible;
               recordOverlapGeometryScratchFromCurrentState(focus, action.targetNoteId, *currentState,
@@ -634,7 +636,7 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
         const auto baselineIt = focus.baselineMap.find(action.targetNoteId);
         const NoteEditCurrentNoteState* row = currentState->find(action.targetNoteId);
         if (baselineIt != focus.baselineMap.end() && row != nullptr &&
-            row->presence == NoteEditPresenceType::Visible &&
+            currentStateRowIsExistingAndVisible(*row) &&
             row->currentSpan.pitch == baselineIt->second.pitch &&
             row->currentSpan.startTick == baselineIt->second.startTick &&
             row->currentSpan.endTick == baselineIt->second.endTick) {

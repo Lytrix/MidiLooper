@@ -20,6 +20,17 @@ enum class NoteEditPresenceType : uint8_t {
   Added,
 };
 
+/// Row storage encoding for visibility + lifecycle (§12 R5). Use `currentStateRowIsVisible` and
+/// `currentStateRowLifecycle` for semantics — not direct reads outside mutation/upsert paths.
+
+/// Mutation/commit lifecycle for a current-state row (§12 R2). Orthogonal to visibility:
+/// Hidden notes are Existing + not visible; Added notes may be visible; Deleted notes are not visible.
+enum class NoteEditLifecycleType : uint8_t {
+  Existing,
+  Added,
+  Deleted,
+};
+
 /// Sticky overlap-participation membership on a current-state row (§11 step 5.3).
 /// Orthogonal to `NoteEditPresenceType`: a Visible shortened stub may be Ended without
 /// rewriting geometry or becoming Hidden.
@@ -88,6 +99,10 @@ class NoteEditCurrentState {
                                                     uint8_t channel) const;
 
   bool hasRow(NoteId noteId) const;
+  /// Explicit visibility — eligible for display projection and session-store projection (§12 R1).
+  bool rowIsVisible(NoteId noteId) const;
+  /// Explicit lifecycle — mutation/commit semantics, not projection (§12 R2).
+  NoteEditLifecycleType rowLifecycle(NoteId noteId) const;
   bool rowProjectsToStore(NoteId noteId) const;
   /// Visible/Added rows whose overlap tail is inventory-masked are excluded from selectable inventory
   /// but remain semantically shortened (not Hidden). Without focus/selection context, reports whether

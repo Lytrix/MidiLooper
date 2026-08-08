@@ -1,22 +1,25 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** Stages 0–8 + Stage 7.5 **A–E** shipped (HITL `024301`). **§11 step 5 shipped**
-(5.1–5.5; smoke `025807` / `030432` / `032118`). Stage 3 **shipped**.
-**Remaining work:** orthogonal model §12 (conceptual; code representation post–Stage 8);
-`NOTE_EDIT_PROJECTED_STORE_COMPAT` separate track.
-**Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
-not a parallel bugfix sequence or an upfront state-machine rewrite.
-**Living guide:** [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md) — workflow after latch removal.
+**Status:** Behavioral and authority migration **complete**. Stages 0–8 and §11 steps 5.1–5.5
+shipped and HITL-verified. **Remaining work:** §12 orthogonal-state refactor **complete** (R1–R5). Optional: targeted HITL smoke per plan §14.
+**Goal of remaining work:** make the code representation accurately express the authority model
+already proven — **without reopening resolver behavior or redesigning the edit pipeline.**
+**Living guide:** [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md).
 **OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
-ownership transfer. `/opsx:sync` when Stage 2 shipped.
+ownership transfer. Separate track: `NOTE_EDIT_PROJECTED_STORE_COMPAT`.
 **Supersedes:** patch-by-patch RC10 fixes in
 [note_edit_leave_restore_current_state_bugfix.md](note_edit_leave_restore_current_state_bugfix.md)
 (RC10h and the RC10g sidebar remainder map onto stages below).
 **Authority basis:** OpenSpec `note-edit-current-state` (design + tasks) — `NoteEditCurrentState`
 owns editable geometry and presence; everything else is a derived reader or a gated writer.
-**Evidence:** `captures/session_20260807_151441.log`, `captures/session_20260807_153739.log`,
-`captures/session_20260807_162713.log`, `captures/session_20260807_163621.log`,
-commit `d29abf7`.
+**Evidence:** Stages 0–8 / §11 — see HITL anchors in §7–§11; smoke `025807` / `030432` / `032118`.
+
+### Architectural stop rule
+
+> **Do not refactor toward the model after the model has already become correct. Refactor only
+> where the code representation obscures the model.**
+
+No further architectural migration is planned after §12 R5.
 
 ---
 
@@ -598,7 +601,7 @@ return participant.currentSpan;
 
 ## 10. Authority test matrix
 
-Contract matrix for implementation and native tests — not a bug anthology. **Today:** map `visible` from `presence != Hidden && != Deleted` until §12 lands in code.
+Contract matrix for implementation and native tests — not a bug anthology. **Today:** map `visible` from presence until §12 R1 lands an explicit visibility query.
 
 | Scenario | Participant | Visible | Current geometry | Paint | Inventory |
 |----------|-------------|---------|------------------|-------|-----------|
@@ -618,7 +621,7 @@ Contract matrix for implementation and native tests — not a bug anthology. **T
 | Hidden + committed geometry | **NO** | **NO** |
 | Visible + shortened geometry | **PAINT SHORTENED** | **MAY MASK** |
 
-Step 1 native test must prove the hidden row with: `currentSpan != committedSpan`, `committedSpan` present, `visualCache` contains note, participant exists, inventory excludes — **grid paint still excludes** (independent of `visualCache`). Sidebar projection same rule when step 4 unifies paths.
+Native tests must prove the hidden row with: `currentSpan != committedSpan`, `committedSpan` present, `visualCache` contains note, participant exists, inventory excludes — **grid paint still excludes** (independent of `visualCache`). Sidebar projection same rule.
 
 ---
 
@@ -633,7 +636,8 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 | **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending |
 | **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence | **Done** (code + HITL `224633`) |
 | **4.5** | **Stage 7.5** overlap restore + macro-commit geometry | A–E shipped; E HITL `024301` PASS. | Geometry/apply only — not projection | **Done** |
-| **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Latch/geometry query pin (5.1); full latch removal needs design session (5.3) | No new behavior in 5.1–5.2 | **In progress** |
+| **5** | **Semantic cleanup** (latch/cache removal) | Latch/geometry query pin; sticky `Ended`; remove `changedOverlapNoteIds` | DEC-030; no new behavior | **Done** (5.1–5.5) |
+| **R1–R5** | **Orthogonal-state representation** (§12) | R1–R5 **complete** | Representation only | **Done** |
 
 ### Step 1 — projection gate (strong invariant)
 
@@ -727,46 +731,167 @@ Focus `changedOverlapNoteIds` **removed** (5.5) — participation is current-sta
 
 ---
 
-## 12. Model refinement — orthogonal dimensions (design direction)
+## 12. Final refactor — orthogonal-state representation (R1–R5)
 
-**Status:** conceptual contract for steps 1–4; **code representation** (`bool visible`, lifecycle enum) — **post–Stage 8** refactor. Do **not** mix §12 into step 1 implementation.
+**Status:** Remaining work only. Behavioral contracts above are **stable** — protect with tests; do not reopen.
 
-### Four orthogonal dimensions (not three)
+This is a **representation cleanup**, not a new behavioral migration.
 
-| Dimension | Question |
-|-----------|----------|
-| **Participation** | Membership in `ParticipatingNoteSession` |
-| **Visibility** | Should this participant **project**? |
-| **Geometry** | `currentSpan` vs `committedSpan` |
-| **Lifecycle** | Existing / **Added** / **Deleted** — mutation and commit semantics |
+### Decision
 
-**Do not collapse `Deleted` into `visible == false`.** Deleted and temporarily hidden must stay distinguishable for mutation/commit. **Added** is lifecycle, not projection.
+Do **not** continue the original migration as if another architectural boundary remains to be established.
 
-Eventually:
+Remove **misleading state representation** only:
 
-```cpp
-bool visible;
-LifecycleState lifecycle;  // Existing, Added, Deleted
-```
+* visibility must mean whether a participant projects;
+* geometry must be represented by `currentSpan` vs `committedSpan`;
+* participation must be represented by session membership;
+* lifecycle must be represented independently from visibility;
+* geometry predicates must be derived from spans;
+* live-store projection must not regain semantic authority.
 
-### Visibility vs geometry
+### Explicit non-goals
 
-`NoteEditPresenceType` and `ParticipatingNotePhase` currently overload visibility and geometry. **Moved is not a presence state** — it is `currentSpan.start != committedSpan.start`.
+Do **not**:
 
-Leave-overlap = two changes (often simultaneous):
+* rewrite `NoteGeometryResolver`;
+* redesign `EditSessionActionBuilder`;
+* replace the participating-note model again;
+* change overlap / commit / handoff / projection behavior;
+* reintroduce a new latch/cache to replace an old one;
+* perform broad helper cleanup merely for aesthetics;
+* refactor unrelated note-edit code.
+
+### Established contracts (do not reopen)
 
 ```text
-visibility:  hidden → visible
-geometry:    current constrained span → committedSpan
+EditorSelection
+      ↓
+NoteEditCurrentState / ParticipatingNoteSession
+      ↓
+NoteGeometryResolver
+      ↓
+EditSessionActions
+      ↓
+NoteEditCurrentState mutation
+      ↓
+Display projection
+      ↓
+Inventory filtering
 ```
 
-### Primary invariant
+1. `NoteEditCurrentState` is authoritative for editable geometry.
+2. `currentSpan` is the geometry that projects while visible.
+3. `committedSpan` is the session baseline.
+4. Participation comes from current/session state, not the live store.
+5. Focus is a derived interaction driver, not session authority.
+6. Inventory is a filtered consumer of projection.
+7. Projection is independent of inventory.
+8. Hidden participants do not project.
+9. Visible shortened participants project their shortened `currentSpan`.
+10. Leave/restore geometry is resolved by mutation/action semantics, not projection.
+11. `changedOverlapNoteIds` is removed.
+12. `readStoreLinearBaseline` is removed.
+13. `rowProjectsToStore` is not allowed to regain session-semantic authority.
+14. Deleted and temporarily hidden notes remain semantically distinct.
 
-- **Visibility** → whether a participant projects
-- **`currentSpan`** → what geometry projects when visible
-- **`committedSpan`** → session baseline for comparison and restoration; immutable within an edit interval, sealed on commit/handoff (per-note invariant 3)
+### Four independent dimensions
 
-### Target read model (proposed — post–Stage 8)
+```text
+Participation → member of ParticipatingNoteSession
+Visibility    → visible (eligible for projection) / hidden (no projection)
+Geometry      → currentSpan / committedSpan
+Lifecycle     → Existing / Added / Deleted
+```
+
+Do **not** collapse these into a single enum.
+
+Example — right-tail shortened and visible:
+
+```text
+committed = [100, 200]
+current   = [100, 150]
+visible   = true
+```
+
+means: participant yes, visible yes, geometry right-tail shortened, lifecycle Existing.
+It does **not** require a special “Shortened presence state”.
+
+Same spans with `visible = false`: participant yes, visible no, geometry constrained, lifecycle Existing.
+
+### Revised roadmap
+
+| Phase | Purpose | Status |
+|-------|---------|--------|
+| Stages 0–8 | Behavioral authority migration | **DONE** |
+| §11 5.1–5.5 | Remove transitional latch/cache semantics | **DONE** |
+| **R1** | Explicit visibility semantics | **Done** (native) |
+| **R2** | Explicit lifecycle semantics | **Done** (native 965/965) |
+| **R3** | Derived geometry predicates | **Done** (native 968/968) |
+| **R4** | Incremental consumer migration | **Done** (native 968/968) |
+| **R5** | Remove obsolete overloaded state | **Done** (native 967/967) |
+| Final verification | Native pass; HITL smoke optional | **Native done** |
+| Further architecture work | — | **STOP** |
+
+---
+
+### R1 — Explicit visibility semantics — **Done**
+
+**Shipped:** `currentStateRowIsVisible`, `participatingNoteIsVisible`, `ParticipatingNoteState::visible`,
+`NoteEditCurrentState::rowIsVisible`. Display projection and session-store projection route through
+visibility; `rowProjectsToStore` delegates to `rowIsVisible` (compat alias until R4). Presence remains
+the implementation detail mapping until R5.
+
+---
+
+### R2 — Explicit lifecycle — **Done**
+
+**Shipped:** `NoteEditLifecycleType` (`Existing`, `Added`, `Deleted`);
+`currentStateRowLifecycle`, `currentStateRowLifecycleIsDeleted`, `currentStateRowLifecycleIsAdded`,
+`participatingNoteLifecycle`, `ParticipatingNoteState::lifecycle`, `NoteEditCurrentState::rowLifecycle`.
+Commit/lifecycle consumers (`EditSessionInteraction`, `EditSessionActionBuilder`,
+`NoteEditFocusPreCommit`, `NoteEditGeometryOps`) route Deleted/Added through lifecycle queries.
+Hidden = `Existing` + not visible. Presence remains implementation detail until R5.
+
+---
+
+### R3 — Derived geometry predicates — **Done**
+
+**Shipped:** `participatingSpanIsRightTailShortened`, `participatingSpanIsMoved`,
+`participatingSpanHasShorterDuration`, `participatingSpanHasOriginalLength`, plus row/participant
+wrappers (`currentStateRowIsRightTailShortened`, `participatingNoteIsMoved`, …).
+`participatingNoteShortenedVsCommitted` aliases right-tail shortened. Internal paths in
+`ParticipatingNoteSession`, `NoteEditCurrentState`, and display projection use span predicates;
+`shortenedVsCommitted` field remains derived cache until R4.
+
+---
+
+### R4 — Incremental consumer migration — **Done**
+
+**Shipped:** projection (`currentStateRowIsExistingAndVisible`), resolver predicates
+(`participatingNoteQualifiesForLeaveRestoreTarget`, overlap tail/closure helpers),
+action-builder (`ResolveConstrainedGeometry`, `EditSessionActionBuilder`, `NoteEditFocusOverlap`),
+apply/commit (`ApplyEditSessionActions`). Semantic queries use `visible` / `lifecycle` / span
+predicates instead of `phase` / `shortenedVsCommitted` / presence checks. `phase`,
+`shortenedVsCommitted`, and `NoteEditPresenceType` remain on rows for mutation + R5 evaluation.
+
+---
+
+### R5 — Remove overloaded state — **Done**
+
+**Removed:** `ParticipatingNotePhase`, `participatingPhaseFromPresence`, and from `ParticipatingNoteState`:
+`phase`, `shortenedVsCommitted`, `projectsToStore`.
+
+**Kept (row storage encoding):** `NoteEditPresenceType` on `NoteEditCurrentNoteState` — mutation and
+`upsertRow` paths still write presence; all semantic reads go through `currentStateRowIsVisible`,
+`currentStateRowLifecycle`, and span predicates. A future storage migration may replace presence with
+explicit `visible` + `lifecycle` fields on the row struct.
+
+**Compat alias kept:** `participatingNoteShortenedVsCommitted` → `participatingSpanIsRightTailShortened`.
+
+---
+
+### R5 evaluation — `NoteEditPresenceType` (retained)
 
 ```cpp
 struct ParticipatingNoteState {
@@ -778,55 +903,131 @@ struct ParticipatingNoteState {
 };
 ```
 
-Derive geometry predicates — **do not store** when spans are authoritative:
+Participation = membership in `ParticipatingNoteSession`. Geometry classification derived from spans.
+
+**Do not force this exact struct** if it causes unnecessary copying, memory growth, or firmware
+layout pressure. The contract matters more than the exact C++ representation.
+
+**Code anchors today:** `include/NoteEditCurrentState.h`, `include/ParticipatingNoteSession.h`,
+`NoteEditFocusDisplayProjection.cpp` (`projectNoteEditDisplayNotes`).
+
+---
+
+### Authority rules after refactor
+
+| Question | Authority |
+|----------|-----------|
+| Is this note participating? | `ParticipatingNoteSession` |
+| What is its editable geometry? | `currentSpan` |
+| What is its committed baseline? | `committedSpan` |
+| Should it project? | explicit visibility |
+| Is it Added/Existing/Deleted? | lifecycle |
+| Is it moved / right-tail shortened / shorter duration? | current vs committed span |
+| Who drives the current interaction? | `NoteEditFocus` |
+| What geometry action should occur? | `NoteGeometryResolver` |
+| What mutation occurs? | `EditSessionActions` |
+| What gets painted? | projection |
+| What is selectable? | inventory filter |
+
+**Forbidden semantic authorities:** live store projection, `visualCache`, selectable inventory,
+`changedOverlapNoteIds`, `focus.last` as session authority, `committedSpan` fallback inside
+projection. `focus.last` may remain a driver/baseline cache where the interaction pipeline requires it.
+
+### Projection contract (unchanged)
 
 ```cpp
-bool isRightTailShortened() const {
-    return currentSpan.startTick == committedSpan.startTick &&
-           currentSpan.endTick < committedSpan.endTick;
-}
-bool isMoved() const {
-    return currentSpan.startTick != committedSpan.startTick;
-}
-bool hasShorterDuration() const {
-    return (currentSpan.endTick - currentSpan.startTick) <
-           (committedSpan.endTick - committedSpan.startTick);
-}
-bool hasOriginalLength() const {
-    return (currentSpan.endTick - currentSpan.startTick) ==
-           (committedSpan.endTick - committedSpan.startTick);
-}
+if (!participant.visible)
+    return {};
+return participant.currentSpan;
 ```
 
-`isRightTailShortened` = overlap-tail shortening (current interaction). `hasShorterDuration` = broader “shorter than committed” (e.g. moved + shorter end). Do not encode interaction implementation into a single `isShortened()` name.
+Projection must not decide overlap activity, restore need, shortening, deletion, or committed-span
+replacement. Those belong upstream.
 
-### Examples
+### Inventory contract (C9 — unchanged)
 
-| committed | current | visible | Meaning |
-|-----------|---------|---------|---------|
-| [100, 200] | [120, 220] | true | visible + moved + original duration |
-| [100, 200] | [100, 150] | true | visible + right-tail shortened |
-| [100, 200] | [120, 170] | true | visible + moved + shorter duration (not `isRightTailShortened`) |
-| [100, 200] | [100, 150] | false | hidden + constrained geometry retained |
-| [100, 200] | [100, 200] | false | hidden + full original geometry retained |
+```text
+projection → filter editable/selectable rows
+```
 
-### Bugs in this framing
+Visible + shortened → paint shortened span; inventory may mask.
+Hidden → no paint; no inventory.
 
-**Full-overlap Hide (`203805`):** `visible == false` → projection must emit nothing (step 1).
+---
 
-**Shortened overlap (`203805` shorten — step 2):** `visible == true`, shortened `currentSpan` → paint stub; inventory may mask.
+### Testing strategy
 
-### Migration policy
+**Native (heavy):** hidden → no projection; visible shortened → `currentSpan`; Deleted ≠ merely
+hidden; geometry predicates from spans; Focus rebuild does not change membership; inventory filter
+does not change paint.
 
-| When | Action |
-|------|--------|
-| Steps 1–4 | Keep `NoteEditPresenceType` + `ParticipatingNotePhase`; implement **visibility projection contract** in code |
-| Stage 8 | Single projection path: `visible` + `currentSpan` |
-| Step 5 | `bool visible` + `LifecycleState`; remove phase enum; derive predicates |
-| Step 5 | Remove helpers that infer participation/presence/session semantics from live-store projection |
+**HITL (light smoke only — no new campaign):** normal edit; overlap shorten; overlap hide;
+leave/restore; handoff/commit; multi-note hide/delete. Purpose: prove representation refactor did
+not alter behavior. Existing captures are the behavioral baseline.
 
-**Principle:** do not encode span relationships as state enums when spans are authoritative.
+---
 
-**Code anchors today:** `include/NoteEditCurrentState.h`, `include/ParticipatingNoteSession.h`, `NoteEditFocusDisplayProjection.cpp` (`projectNoteEditDisplayNotes`).
+### Stop condition (R1–R5 complete)
+
+* [x] Visibility has one explicit semantic source.
+* [x] Lifecycle is independent from visibility.
+* [x] Geometry predicates are derived from `currentSpan` / `committedSpan`.
+* [x] Projection uses visibility + `currentSpan`.
+* [x] Inventory remains a filtered projection consumer.
+* [x] No live-store inference answers participation questions.
+* [x] No `changedOverlapNoteIds` replacement cache has been introduced.
+* [x] No resolver rewrite was required.
+* [x] Native tests remain green (967/967).
+* [ ] Targeted HITL smoke remains green (optional — user session).
+* [x] Overloaded presence/phase enums are either removed or demonstrably still necessary.
+
+**Then stop.** Do not create another architecture phase.
+
+### Final invariant
+
+```text
+State is authoritative.
+Focus is derived.
+Resolver decides.
+Actions mutate.
+Projection displays.
+Inventory filters.
+Live storage persists.
+```
+
+```text
+                    EditorSelection
+                           │
+                           ▼
+              ParticipatingNoteSession
+                           │
+             ┌─────────────┴─────────────┐
+             │                           │
+             ▼                           ▼
+       participant state              Focus
+             │                           │
+      ┌──────┼──────┐                    │
+      ▼      ▼      ▼                    │
+ visibility geometry lifecycle           │
+             │                           │
+      current / committed                │
+             │                           │
+             └────────────┬──────────────┘
+                          ▼
+                NoteGeometryResolver
+                          │
+                          ▼
+                 EditSessionActions
+                          │
+                          ▼
+                  CurrentState mutation
+                          │
+                          ▼
+                   Display projection
+                          │
+                 ┌────────┴────────┐
+                 ▼                 ▼
+               Paint           Inventory
+```
 
 ---

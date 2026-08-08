@@ -31,7 +31,7 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
     // pre-shorten length on deselect (session_20260808_013500).
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
-        (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
+        (noteId == focus.movingNoteId || currentState->rowIsVisible(noteId))) {
       pitch = current.pitch;
       velocity = current.velocity;
       startTick = current.startTick;
@@ -114,19 +114,13 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
       focus.baselineMap.find(noteId) == focus.baselineMap.end()) {
     return false;
   }
-  const NoteBaseline& committed = row->committedSpan;
-  if (row->presence == NoteEditPresenceType::Hidden ||
-      row->presence == NoteEditPresenceType::Deleted) {
+  if (!currentStateRowIsVisible(*row)) {
     return true;
   }
-  if (row->presence != NoteEditPresenceType::Visible) {
+  if (!currentStateRowIsExistingAndVisible(*row)) {
     return false;
   }
-  const NoteBaseline& current = row->currentSpan;
-  if (current.pitch != committed.pitch) {
-    return false;
-  }
-  if (current.startTick == committed.startTick && current.endTick < committed.endTick) {
+  if (currentStateRowIsRightTailShortened(*row)) {
     // Visible shortened stub: paint currentSpan until macro commit syncs committedSpan.
     return false;
   }
@@ -135,7 +129,7 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
 
 bool nonVisibleParticipantSuppressedFromProjection(const NoteEditCurrentState& currentState,
                                                    NoteId noteId) {
-  return noteId != kInvalidNoteId && currentState.isRowHiddenOrDeleted(noteId);
+  return noteId != kInvalidNoteId && !currentState.rowIsVisible(noteId);
 }
 
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
@@ -223,7 +217,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   }
   if (currentState != nullptr) {
     for (const auto& [noteId, row] : currentState->rows()) {
-      if (noteId == kInvalidNoteId || !currentState->rowProjectsToStore(noteId)) {
+      if (noteId == kInvalidNoteId || !currentState->rowIsVisible(noteId)) {
         continue;
       }
       if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
@@ -262,7 +256,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     NoteBaseline live{};
     if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
                                      loopLength)) {
-      if (currentState != nullptr && currentState->rowProjectsToStore(noteId)) {
+      if (currentState != nullptr && currentState->rowIsVisible(noteId)) {
         continue;
       }
       hiddenParticipants.insert(noteId);

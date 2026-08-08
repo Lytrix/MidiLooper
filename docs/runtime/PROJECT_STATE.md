@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-07 (Stage 7.5 native shipped)
+Last updated: 2026-08-08 (§12 R1–R5 + pitch-overlap bugfix shipped)
 
 ---
 
 ## Current branch
 
-**Active work:** **note-edit resolver contracts** — Stage 7.5 **native shipped**; HITL `222418`/`224633`/`225025` pending; next: step 5 semantic cleanup. Plan: [`note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md).
+**Active work:** **note-edit resolver** — §12 orthogonal-state refactor **complete** (R1–R5); pitch-then-overlap stub Hide bugfix **shipped** ([`note_edit_pitch_overlap_hide_skip_bugfix.md`](../plans/note_edit_pitch_overlap_hide_skip_bugfix.md), HITL `session_20260808_112202`).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

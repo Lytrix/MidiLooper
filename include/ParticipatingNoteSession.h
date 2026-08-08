@@ -13,30 +13,21 @@
 #include "NoteEditSessionState.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
-/// Session phase for a participating note — evidence-backed mapping from
-/// `NoteEditPresenceType` and span relationship. Not a parallel FSM yet; derived read model
-/// for migration (contracts plan Stage 3).
-enum class ParticipatingNotePhase : uint8_t {
-  Visible,
-  Hidden,
-  Deleted,
-  Added,
-};
-
+/// Session read model for a participating note (§12 R1–R3). Visibility, lifecycle, and geometry
+/// predicates are explicit; row storage still uses `NoteEditPresenceType` on `NoteEditCurrentNoteState`.
 struct ParticipatingNoteState {
   NoteId noteId = kInvalidNoteId;
-  ParticipatingNotePhase phase = ParticipatingNotePhase::Visible;
   NoteBaseline currentSpan{};
   NoteBaseline committedSpan{};
   /// Sticky end-of-participation from `NoteEditCurrentNoteState` (§11 step 5.3).
   NoteEditOverlapParticipationType overlapParticipation =
       NoteEditOverlapParticipationType::Active;
-  /// `currentSpan` is a same-start shortened tail vs `committedSpan` (overlap inventory mask).
-  bool shortenedVsCommitted = false;
   /// Prior macro sealed a visible overlap shorten into `committedSpan`.
   bool visibleOverlapShortenSealed = false;
-  /// Whether this participant may appear in projecting session store / selectable inventory.
-  bool projectsToStore = false;
+  /// Explicit projection eligibility (§12 R1). When false, display projection emits no row.
+  bool visible = true;
+  /// Mutation/commit lifecycle (§12 R2). Independent from `visible`.
+  NoteEditLifecycleType lifecycle = NoteEditLifecycleType::Existing;
 };
 
 template <typename T>
@@ -70,8 +61,60 @@ struct ParticipatingSessionInvariantResult {
   bool actionTargetWouldDependOnProjection = false;
 };
 
-ParticipatingNotePhase participatingPhaseFromPresence(NoteEditPresenceType presence);
+ParticipatingNoteSession buildParticipatingNoteSession(const EditorSelection& selection,
+                                                       const NoteEditCurrentState& currentState);
+/// Hidden and Deleted do not. Implementation maps from `NoteEditPresenceType` until R5.
+bool currentStateRowIsVisible(const NoteEditCurrentNoteState& row);
 
+/// Participant-boundary visibility query (§12 R1).
+bool participatingNoteIsVisible(const ParticipatingNoteState& state);
+
+/// Lifecycle authority for current-state rows (§12 R2). Maps from `NoteEditPresenceType` until R5.
+NoteEditLifecycleType currentStateRowLifecycle(const NoteEditCurrentNoteState& row);
+
+bool currentStateRowLifecycleIsDeleted(const NoteEditCurrentNoteState& row);
+
+bool currentStateRowLifecycleIsAdded(const NoteEditCurrentNoteState& row);
+
+/// Participant-boundary lifecycle query (§12 R2).
+NoteEditLifecycleType participatingNoteLifecycle(const ParticipatingNoteState& state);
+
+/// Visible + Existing lifecycle — legacy `NoteEditPresenceType::Visible` semantics (§12 R4).
+bool currentStateRowIsExistingAndVisible(const NoteEditCurrentNoteState& row);
+
+bool participatingNoteIsExistingAndVisible(const ParticipatingNoteState& state);
+
+/// Span geometry predicates (§12 R3) — derived from authoritative spans only.
+uint32_t participatingSpanDurationTicks(const NoteBaseline& span);
+
+bool participatingSpanIsRightTailShortened(const NoteBaseline& current,
+                                           const NoteBaseline& committed);
+
+bool participatingSpanIsMoved(const NoteBaseline& current, const NoteBaseline& committed);
+
+bool participatingSpanHasShorterDuration(const NoteBaseline& current,
+                                         const NoteBaseline& committed);
+
+bool participatingSpanHasOriginalLength(const NoteBaseline& current,
+                                        const NoteBaseline& committed);
+
+bool currentStateRowIsRightTailShortened(const NoteEditCurrentNoteState& row);
+
+bool currentStateRowIsMoved(const NoteEditCurrentNoteState& row);
+
+bool currentStateRowHasShorterDuration(const NoteEditCurrentNoteState& row);
+
+bool currentStateRowHasOriginalLength(const NoteEditCurrentNoteState& row);
+
+bool participatingNoteIsRightTailShortened(const ParticipatingNoteState& state);
+
+bool participatingNoteIsMoved(const ParticipatingNoteState& state);
+
+bool participatingNoteHasShorterDuration(const ParticipatingNoteState& state);
+
+bool participatingNoteHasOriginalLength(const ParticipatingNoteState& state);
+
+/// Same as `participatingSpanIsRightTailShortened` — retained for call-site compat until R4.
 bool participatingNoteShortenedVsCommitted(const NoteBaseline& current,
                                            const NoteBaseline& committed);
 
