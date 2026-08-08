@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-08 (§12 R1–R5 + pitch-overlap bugfix shipped)
+Last updated: 2026-08-08 (note-edit-current-state archived)
 
 ---
 
 ## Current branch
 
-**Active work:** **note-edit resolver** — §12 orthogonal-state refactor **complete** (R1–R5); pitch-then-overlap stub Hide bugfix **shipped** ([`note_edit_pitch_overlap_hide_skip_bugfix.md`](../plans/note_edit_pitch_overlap_hide_skip_bugfix.md), HITL `session_20260808_112202`).
+**Active work:** OpenSpec **`note-edit-current-state`** archived 2026-08-08 → `openspec/specs/note-edit-current-state/`. Playing position-move audition on `dev` (`15c5750`).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
@@ -67,7 +67,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
-| **`note-edit-current-state`** | **Active** — NoteEditCurrentState ownership transfer; preflight + DEC-029 done; foundation next |
+| **`note-edit-current-state`** | **Archived** 2026-08-08 → `openspec/specs/note-edit-current-state/`; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md) |
 | **`hitl-cli-rebuild`** | **Phase 1 done** — `foundation_runner`, `layered_registry`, actions/flows/protocol; Phase 2 UIP gate |
 | **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |

@@ -89,6 +89,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Validation:** Native tests for 021939, 021022, repeated A/B move undo/redo commit, selection reorder, hidden/deleted/added rows, projection invariant, accessor gate, undo snapshot invariant, and commit parity; then firmware build and user-approved HITL edit retest.
 
+**Completion (2026-08-08):** Phase 8 closeout — native 969/969; HITL PASS via capture matrix in [`openspec/changes/note-edit-current-state/PHASE8_CLOSEOUT.md`](../../openspec/changes/note-edit-current-state/PHASE8_CLOSEOUT.md). Archive pending.
+
 ---
 
 ## DEC-028 — EditSessionAction geometry pipeline (Phase 1 native)
