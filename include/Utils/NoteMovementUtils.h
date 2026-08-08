@@ -37,7 +37,7 @@ bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind 
 
 bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                                  const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
-                                 int delta);
+                                 int delta, bool refreshPlaybackPreview = true);
 
     /**
      * Lengthen or shorten a note end with the same overlap-note handling as movement.
@@ -46,7 +46,8 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
      */
     void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
                                          const NoteUtils::DisplayNote& currentNote,
-                                         uint32_t targetEndTick);
+                                         uint32_t targetEndTick,
+                                         bool refreshPlaybackPreview = true);
 
     /**
      * Apply a pitch change using the edit-session geometry pipeline for overlap hide/restore.

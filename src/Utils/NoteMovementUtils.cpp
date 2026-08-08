@@ -787,7 +787,8 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
 NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                                 const NoteUtils::DisplayNote& currentNote,
-                                uint32_t targetTick, int delta) {
+                                uint32_t targetTick, int delta,
+                                bool refreshPlaybackPreview) {
     // Session store when a note-edit session is active (matches move/length live paths).
     // NOTE_EDIT_PROJECTED_STORE_COMPAT: move/length/pitch via projected store until tasks.md §5.2.
     auto& midiEvents = track.editAwareMidiEvents();
@@ -868,7 +869,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     const bool pipelineApplied =
         NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId, editedSpan,
                                                      focus.last, targetTick, movingNotePitch,
-                                                     false);
+                                                     refreshPlaybackPreview);
 
     bool movedNoteEvents = pipelineApplied;
     if (pipelineApplied) {
@@ -893,13 +894,15 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     }
 
     finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart,
-                              displayEndForBracket, loopLength, bracketDisplay, false);
+                              displayEndForBracket, loopLength, bracketDisplay,
+                              refreshPlaybackPreview);
     return movedNoteEvents;
 }
 
 NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
                                      const NoteUtils::DisplayNote& currentNote,
-                                     uint32_t targetEndTick) {
+                                     uint32_t targetEndTick,
+                                     bool refreshPlaybackPreview) {
     // NOTE_EDIT_PROJECTED_STORE_COMPAT: move/length/pitch via projected store until tasks.md §5.2.
     auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
@@ -969,7 +972,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     const bool pipelineApplied =
         NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId,
                                                      editedSpan, focus.last, std::nullopt,
-                                                     notePitch, false);
+                                                     notePitch, refreshPlaybackPreview);
 
     if (!pipelineApplied) {
         logger.log(CAT_MIDI, LOG_DEBUG,
@@ -987,7 +990,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
   manager.setSelectedTick(lengthBracketDisplay);
 
     finalReconstructAndSelect(track, midiEvents, manager, notePitch, newStart, newEnd, loopLength,
-                              lengthBracketDisplay, false);
+                              lengthBracketDisplay, refreshPlaybackPreview);
 
     NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
 }
@@ -1049,9 +1052,11 @@ NOTE_EDIT_MEM bool applyNoteEditChange(Track& track, EditManager& manager, NoteE
                          bool refreshPlaybackPreview) {
     switch (kind) {
         case NoteEditChangeKind::Move:
-            return moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta);
+            return moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta,
+                                               refreshPlaybackPreview);
         case NoteEditChangeKind::Length:
-            changeLengthWithOverlapHandling(track, manager, currentNote, targetEndTick);
+            changeLengthWithOverlapHandling(track, manager, currentNote, targetEndTick,
+                                            refreshPlaybackPreview);
             return true;
         case NoteEditChangeKind::Pitch:
             inOutStart = currentNote.startTick;

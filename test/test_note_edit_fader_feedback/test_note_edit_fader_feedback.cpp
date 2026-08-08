@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include <type_traits>
 #include <unity.h>
 
 #include "MidiEvent.h"
@@ -13,6 +14,7 @@
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "Utils/SelectNavigation.h"
+#include "Utils/NoteMovementUtils.h"
 #include "NoteEditSessionState.h"
 #include "MidiConfig.h"
 #include "Globals.h"
@@ -1164,6 +1166,17 @@ void test_dependent_snapshot_length_mode_maps_coarse_to_end_tick() {
     TEST_ASSERT_EQUAL_UINT8(64, snapshot.fineCc);
 }
 
+void test_move_length_forward_refresh_playback_preview_parameter() {
+    using MoveFn =
+        bool (*)(Track&, EditManager&, const NoteUtils::DisplayNote&, uint32_t, int, bool);
+    using LengthFn =
+        void (*)(Track&, EditManager&, const NoteUtils::DisplayNote&, uint32_t, bool);
+    TEST_ASSERT_TRUE(
+        (std::is_same_v<decltype(&NoteMovementUtils::moveNoteWithOverlapHandling), MoveFn>));
+    TEST_ASSERT_TRUE((std::is_same_v<decltype(&NoteMovementUtils::changeLengthWithOverlapHandling),
+                                     LengthFn>));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -1261,6 +1274,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dependent_snapshot_select_target_projected_phase_not_double_converted);
     RUN_TEST(test_fader_reselect_resolves_post_commit_index_by_note_id_161117);
     RUN_TEST(test_dependent_snapshot_length_mode_maps_coarse_to_end_tick);
+    RUN_TEST(test_move_length_forward_refresh_playback_preview_parameter);
     RUN_TEST(test_motor_value_changed_includes_f3_fine_cc);
     return UNITY_END();
 }
