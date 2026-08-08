@@ -121,10 +121,9 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
 OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId);
 const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId);
 
-/// Transitional latch membership (`changedOverlapNoteIds`). Prefer
-/// `overlapParticipationLatchActive` at call sites migrating toward §11 step 5 queries.
-/// Geometry-derived membership is `currentStateRowIsOverlapParticipant` — these diverge after
-/// sticky clear (`clearChangedOverlapParticipationWhenInteractionCleared`).
+/// Transitional latch membership (`changedOverlapNoteIds`) — dual-write until §11 step 5.5.
+/// Participation authority is `NoteEditCurrentNoteState::overlapParticipation` /
+/// `currentStateRowIsOverlapParticipant`.
 bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
 void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
@@ -132,8 +131,10 @@ void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
                                                  uint8_t channel, uint32_t loopLength,
                                                  const NoteEditCurrentState* currentState = nullptr);
 void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
+/// Sticky end-of-participation: mark Visible shortened rows Ended and forget latch dual-write.
+/// Does not rewrite currentSpan (session_20260807_232118).
 void clearChangedOverlapParticipationWhenInteractionCleared(
-    NoteEditFocus& focus, const NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
+    NoteEditFocus& focus, NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
     NoteId movingNoteId);
 void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, NoteId noteId,
                                         const NoteBaseline& baseline);

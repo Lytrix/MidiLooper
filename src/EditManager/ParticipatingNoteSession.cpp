@@ -36,14 +36,21 @@ bool participatingNoteShortenedVsCommitted(const NoteBaseline& current,
          current.endTick < committed.endTick;
 }
 
+bool currentStateRowGeometryDiffersFromCommitted(const NoteEditCurrentNoteState& row) {
+  return row.currentSpan.pitch != row.committedSpan.pitch ||
+         row.currentSpan.startTick != row.committedSpan.startTick ||
+         row.currentSpan.endTick != row.committedSpan.endTick;
+}
+
 bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row) {
+  if (row.overlapParticipation == NoteEditOverlapParticipationType::Ended) {
+    return false;
+  }
   if (row.presence == NoteEditPresenceType::Hidden ||
       row.presence == NoteEditPresenceType::Deleted) {
     return true;
   }
-  return row.currentSpan.pitch != row.committedSpan.pitch ||
-         row.currentSpan.startTick != row.committedSpan.startTick ||
-         row.currentSpan.endTick != row.committedSpan.endTick;
+  return currentStateRowGeometryDiffersFromCommitted(row);
 }
 
 NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
@@ -62,7 +69,23 @@ NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
 }
 
 bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId) {
-  return hasChangedOverlapNote(focus, noteId);
+  // Inline latch membership so ParticipatingNoteSession does not hard-link NoteEditFocusOverlap
+  // (native suites that include this TU without overlap.cpp).
+  return std::find(focus.changedOverlapNoteIds.begin(), focus.changedOverlapNoteIds.end(),
+                   noteId) != focus.changedOverlapNoteIds.end();
+}
+
+bool overlapParticipationEndedWhileGeometryDiffers(const NoteEditCurrentState& currentState,
+                                                   NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  const NoteEditCurrentNoteState* row = currentState.find(noteId);
+  if (row == nullptr ||
+      row->overlapParticipation != NoteEditOverlapParticipationType::Ended) {
+    return false;
+  }
+  return currentStateRowGeometryDiffersFromCommitted(*row);
 }
 
 bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& focus,
@@ -71,11 +94,7 @@ bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& f
   if (noteId == kInvalidNoteId || overlapParticipationLatchActive(focus, noteId)) {
     return false;
   }
-  const NoteEditCurrentNoteState* row = currentState.find(noteId);
-  if (row == nullptr) {
-    return false;
-  }
-  return currentStateRowIsOverlapParticipant(*row);
+  return overlapParticipationEndedWhileGeometryDiffers(currentState, noteId);
 }
 
 bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,
@@ -173,8 +192,8 @@ bool visibleShortenedOverlapTailInventoryMasked(const NoteEditCurrentNoteState& 
   if (selectedNoteIdx < 0 || !focus.active || focus.movingNoteId == kInvalidNoteId) {
     return false;
   }
-  // Inventory mask follows the transitional latch (cleared on sticky end-of-participation).
-  if (!overlapParticipationLatchActive(focus, row.noteId)) {
+  // Inventory mask follows current-state participation (Ended on sticky clear).
+  if (!currentStateRowIsOverlapParticipant(row)) {
     return false;
   }
   const ParticipatingNoteState participant = buildParticipatingNoteState(row);
@@ -199,6 +218,7 @@ ParticipatingNoteState buildParticipatingNoteState(const NoteEditCurrentNoteStat
   out.phase = participatingPhaseFromPresence(row.presence);
   out.currentSpan = row.currentSpan;
   out.committedSpan = row.committedSpan;
+  out.overlapParticipation = row.overlapParticipation;
   out.shortenedVsCommitted =
       participatingNoteShortenedVsCommitted(row.currentSpan, row.committedSpan);
   out.visibleOverlapShortenSealed = row.visibleOverlapShortenSealed;

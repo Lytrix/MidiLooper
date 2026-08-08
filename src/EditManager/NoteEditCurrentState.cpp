@@ -54,6 +54,7 @@ NOTE_EDIT_MEM NoteEditCurrentNoteState& NoteEditCurrentState::upsertRow(
   row.committedSpan = committedSpan;
   row.currentSpan = currentSpan;
   row.presence = presence;
+  row.overlapParticipation = NoteEditOverlapParticipationType::Active;
   return row;
 }
 
@@ -206,6 +207,7 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         upsertRow(action.targetNoteId, span, span, NoteEditPresenceType::Visible);
         return;
       }
+      row->overlapParticipation = NoteEditOverlapParticipationType::Active;
       row->currentSpan = span;
       if (overlapInventoryMaskedTail(span, row->committedSpan)) {
         row->presence = NoteEditPresenceType::Hidden;
@@ -221,6 +223,7 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         upsertRow(action.targetNoteId, span, span, NoteEditPresenceType::Visible);
         return;
       }
+      row->overlapParticipation = NoteEditOverlapParticipationType::Active;
       row->currentSpan = span;
       if (participatingNoteShortenedVsCommitted(span, row->committedSpan)) {
         // A tail below the sealed baseline is itself unsealed until the next macro commit.
@@ -240,6 +243,7 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         upsertRow(action.targetNoteId, span, span, NoteEditPresenceType::Hidden);
         return;
       }
+      row->overlapParticipation = NoteEditOverlapParticipationType::Active;
       row->currentSpan = span;
       row->presence = NoteEditPresenceType::Hidden;
       return;
@@ -275,12 +279,29 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
   }
 }
 
+NOTE_EDIT_MEM void NoteEditCurrentState::markOverlapParticipationEnded(NoteId noteId) {
+  NoteEditCurrentNoteState* row = find(noteId);
+  if (row == nullptr) {
+    return;
+  }
+  row->overlapParticipation = NoteEditOverlapParticipationType::Ended;
+}
+
+NOTE_EDIT_MEM void NoteEditCurrentState::markOverlapParticipationActive(NoteId noteId) {
+  NoteEditCurrentNoteState* row = find(noteId);
+  if (row == nullptr) {
+    return;
+  }
+  row->overlapParticipation = NoteEditOverlapParticipationType::Active;
+}
+
 NOTE_EDIT_MEM void NoteEditCurrentState::markRowDeleted(NoteId noteId) {
   NoteEditCurrentNoteState* row = find(noteId);
   if (row == nullptr) {
     return;
   }
   row->presence = NoteEditPresenceType::Deleted;
+  row->overlapParticipation = NoteEditOverlapParticipationType::Active;
 }
 
 NOTE_EDIT_MEM void NoteEditCurrentState::removeRow(NoteId noteId) {

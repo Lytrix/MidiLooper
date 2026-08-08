@@ -10,6 +10,7 @@
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 
+#include "EditSessionAction.h"
 #include "ParticipatingNoteSession.h"
 
 void test_participating_phase_maps_from_presence() {
@@ -168,9 +169,8 @@ void test_participating_deleted_does_not_qualify_for_leave_restore_022849() {
   TEST_ASSERT_FALSE(participatingNoteNeedsFullCommittedLeaveRestore(deleted));
 }
 
-void test_overlap_participation_latch_diverges_after_sticky_clear() {
-  // §11 step 5.1: clearChangedOverlapParticipationWhenInteractionCleared drops the latch while
-  // leaving Visible shortened currentSpan — geometry query remains true, latch false.
+void test_overlap_participation_ended_after_sticky_clear() {
+  // §11 step 5.3: sticky clear marks Ended — participation false, geometry unchanged, latch dual-write forgotten.
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 11;
   constexpr uint8_t kPitch = 88;
@@ -190,16 +190,48 @@ void test_overlap_participation_latch_diverges_after_sticky_clear() {
 
   TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
   TEST_ASSERT_TRUE(overlapParticipationLatchActive(focus, kOverlapId));
-  TEST_ASSERT_FALSE(
-      overlapParticipationLatchClearedWhileGeometryDiffers(focus, currentState, kOverlapId));
+  TEST_ASSERT_FALSE(overlapParticipationEndedWhileGeometryDiffers(currentState, kOverlapId));
 
   clearChangedOverlapParticipationWhenInteractionCleared(focus, currentState, kMoverPast,
                                                          kMoverId);
-  TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
+  const NoteEditCurrentNoteState* row = currentState.find(kOverlapId);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditOverlapParticipationType::Ended),
+                    static_cast<int>(row->overlapParticipation));
+  TEST_ASSERT_FALSE(currentStateRowIsOverlapParticipant(*row));
+  TEST_ASSERT_TRUE(currentStateRowGeometryDiffersFromCommitted(*row));
   TEST_ASSERT_FALSE(overlapParticipationLatchActive(focus, kOverlapId));
+  TEST_ASSERT_TRUE(overlapParticipationEndedWhileGeometryDiffers(currentState, kOverlapId));
   TEST_ASSERT_TRUE(
       overlapParticipationLatchClearedWhileGeometryDiffers(focus, currentState, kOverlapId));
-  TEST_ASSERT_EQUAL_UINT32(kStub.endTick, currentState.find(kOverlapId)->currentSpan.endTick);
+  TEST_ASSERT_EQUAL_UINT32(kStub.endTick, row->currentSpan.endTick);
+}
+
+void test_shorten_reactivates_overlap_participation_after_ended() {
+  constexpr NoteId kOverlapId = 9;
+  const NoteBaseline kCommitted{88, 100, 1488, 1966};
+  const NoteBaseline kStub{88, 100, 1488, 1774};
+  const NoteBaseline kShorter{88, 100, 1488, 1600};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, kCommitted, kStub, NoteEditPresenceType::Visible);
+  currentState.markOverlapParticipationEnded(kOverlapId);
+  TEST_ASSERT_FALSE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
+
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.pitch = kShorter.pitch;
+  shorten.velocity = kShorter.velocity;
+  shorten.startTick = kShorter.startTick;
+  shorten.endTick = kShorter.endTick;
+  currentState.applyEditSessionAction(shorten);
+
+  const NoteEditCurrentNoteState* row = currentState.find(kOverlapId);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditOverlapParticipationType::Active),
+                    static_cast<int>(row->overlapParticipation));
+  TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*row));
 }
 
 void test_overlap_closure_active_and_cleared() {
@@ -228,7 +260,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
   RUN_TEST(test_participating_leave_restore_hidden_qualifies);
   RUN_TEST(test_participating_deleted_does_not_qualify_for_leave_restore_022849);
-  RUN_TEST(test_overlap_participation_latch_diverges_after_sticky_clear);
+  RUN_TEST(test_overlap_participation_ended_after_sticky_clear);
+  RUN_TEST(test_shorten_reactivates_overlap_participation_after_ended);
   RUN_TEST(test_participating_visible_shortened_does_not_qualify_for_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_flag_set);

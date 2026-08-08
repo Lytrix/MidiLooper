@@ -20,11 +20,21 @@ enum class NoteEditPresenceType : uint8_t {
   Added,
 };
 
+/// Sticky overlap-participation membership on a current-state row (§11 step 5.3).
+/// Orthogonal to `NoteEditPresenceType`: a Visible shortened stub may be Ended without
+/// rewriting geometry or becoming Hidden.
+enum class NoteEditOverlapParticipationType : uint8_t {
+  Active,
+  Ended,
+};
+
 struct NoteEditCurrentNoteState {
   NoteId noteId = kInvalidNoteId;
   NoteBaseline committedSpan{};
   NoteBaseline currentSpan{};
   NoteEditPresenceType presence = NoteEditPresenceType::Visible;
+  NoteEditOverlapParticipationType overlapParticipation =
+      NoteEditOverlapParticipationType::Active;
   /// Visible overlap shorten sealed into committedSpan (overlap_baseline_diff or equivalent).
   /// Enables leave-restore to committed on later overlap clears when committed == storage.
   bool visibleOverlapShortenSealed = false;
@@ -89,6 +99,8 @@ class NoteEditCurrentState {
   bool readCurrentSpan(NoteId noteId, NoteBaseline& out) const;
 
   void applyEditSessionAction(const EditSessionAction& action);
+  void markOverlapParticipationEnded(NoteId noteId);
+  void markOverlapParticipationActive(NoteId noteId);
   void markRowDeleted(NoteId noteId);
   void removeRow(NoteId noteId);
   void syncProjectingRowsFromSessionStore(const MidiEventVec& store, uint8_t channel);
