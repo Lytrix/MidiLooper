@@ -227,13 +227,13 @@ Derived event representation (materialized passes ± active capture; NOTE_EDIT u
 
 ## Note edit
 
-**Building blocks:** `EditManager` / `NoteEditSession`, `ControlSurfaceManager` (NOTE_EDIT hardware), `NoteEditFocus` + overlap notes, `EditApply`, fader/button FSM (`EditNoteState`)
+**Building blocks:** `EditManager` / `NoteEditSession`, `NoteEditCurrentState` (geometry + presence + `overlapParticipation`), `NoteGeometryResolver` → `EditSessionAction` apply, `NoteEditFocus` (driver + `baselineMap`; `overlapNotes` scratch only), `ControlSurfaceManager` (NOTE_EDIT hardware), fader/button FSM (`EditNoteState`)
 
-Faders drive geometry on the live session store; committed rows become `passes.editPasses[]`. Materialize overlays editPasses onto capture passes for playback and display. Consumers still go through Runtime Request (session store or materialized passes × interval), not raw chunk walks.
+Faders drive the geometry pipeline; apply mutates current state then projects to the session store. Macro commit seals into `passes.editPasses[]`. Display uses `projectNoteEditDisplayNotes`. Guide: [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md).
 
 **Owner:** `EditManager` owns live RAM, session lifecycle, and edit geometry. `ControlSurfaceManager` owns NOTE_EDIT hardware ingress/egress (faders, motor sync, audition) and reacts to `EditEvent` notifications — no edit state.
 
-**Gap:** derived overlap / move geometry pipeline (`edit-session-action-geometry`) still paused behind UIP HITL.
+**Gap:** full layered edit HITL matrix still open; interim smoke / `edit_minimal`.
 
 ---
 

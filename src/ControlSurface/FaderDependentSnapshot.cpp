@@ -44,13 +44,17 @@ NoteEditDependentFaderBuildInput ControlSurfaceManager::makeDependentFaderBuildI
             if (selectTarget->noteIdx < static_cast<int>(notes.size())) {
                 const NoteUtils::DisplayNote& note =
                     notes[static_cast<size_t>(selectTarget->noteIdx)];
-                input.selectNoteStartTick = note.startTick;
-                if (editManager.isNoteEditActive() && editManager.getEditSession().focus.active) {
-                    input.selectNotePitch =
-                        editManager.liveEditDisplayNoteAtSelect(track).note;
-                } else {
-                    input.selectNotePitch = note.note;
+                NoteUtils::DisplayNote spanNote = note;
+                const NoteUtils::DisplayNoteVec& paint =
+                    editManager.projectedNoteEditDisplayNotes(track);
+                for (const NoteUtils::DisplayNote& dn : paint) {
+                    if (dn.noteId == note.noteId) {
+                        spanNote = dn;
+                        break;
+                    }
                 }
+                input.selectNoteStartTick = spanNote.startTick;
+                input.selectNotePitch = spanNote.note;
                 input.hasSelectNote = true;
             }
         }
@@ -238,6 +242,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::publishDependentFaderLatch(Track& trac
     if (editManager.isNoteEditActive() && loopLength > 0) {
         const NoteEditFocus& focus = editManager.getEditSession().focus;
         if (focus.active) {
+            // NOTE_EDIT_PROJECTED_STORE_COMPAT: closure normalize on projected store until tasks.md §5.5.
             MidiEventVec& store = editManager.sessionMidiEvents();
             std::unordered_set<NoteId> closure =
                 buildEditClosureNoteIds(focus, store, track.getMidiChannel(), loopLength);

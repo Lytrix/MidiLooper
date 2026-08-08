@@ -5,14 +5,12 @@
 
 #include <Arduino.h>
 
-#include "ClockManager.h"
-#include "DisplayManager.h"
 #include "EditManager.h"
 #include "Globals.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "TrackManager.h"
-#include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
 
 using DisplayNote = NoteUtils::DisplayNote;
@@ -27,57 +25,57 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::selectableDisplayNo
 
 EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::projectedNoteEditDisplayNotes(
     const Track& track) const {
-    return filteredSelectableDisplayNotesForNoteEdit(track);
+    ensureNoteEditDisplayProjectionCachesBuilt(track);
+    return noteEditPaintDisplayCacheNotes_;
 }
 
 EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableDisplayNotesForNoteEdit(
     const Track& track) const {
+    ensureNoteEditDisplayProjectionCachesBuilt(track);
+    return noteEditSelectableDisplayCacheNotes_;
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBuilt(
+    const Track& track) const {
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (!editSession.active || loopLength == 0) {
-        return {};
+        noteEditPaintDisplayCacheNotes_.clear();
+        noteEditSelectableDisplayCacheNotes_.clear();
+        return;
     }
     const NoteEditFocus& focus = editSession.focus;
-    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
-    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIndex);
     Loop& loop = const_cast<Loop&>(trackManager.getSelectedLoop(track));
     const uint32_t playbackRevision = loop.playbackRevision;
     const uint32_t previewRevision = sessionPreviewRevision_;
-    const uint32_t displayFingerprint = noteEditDisplayCacheFingerprint(focus);
+    const uint32_t displayFingerprint =
+        noteEditDisplayCacheFingerprint(focus, &editSession.noteEditCurrentState);
     if (previewRevision == noteEditSelectableDisplayCachePreviewRevision_ &&
         displayFingerprint == noteEditSelectableDisplayCacheFingerprint_ &&
         loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
         playbackRevision == noteEditSelectableDisplayCachePlaybackRevision_ &&
-        !noteEditSelectableDisplayCacheNotes_.empty()) {
-        return noteEditSelectableDisplayCacheNotes_;
+        selectedNoteIdx == noteEditSelectableDisplayCacheSelectedNoteIdx_ &&
+        !noteEditPaintDisplayCacheNotes_.empty()) {
+        return;
     }
 
-    NoteUtils::DisplayNoteVec committedBase;
-    if (loop.shouldAvoidFullVisualRebuild(loopLength)) {
-        const uint32_t currentTick = clockManager.getCurrentTick();
-        const DetailedWindowContext window =
-            displayManager.resolveDetailedWindow(track, displaySlot, currentTick);
-        if (!loop.visualCache.notes.empty()) {
-            committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-        } else {
-            loop.ensureVisualCacheBuilt();
-            committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-        }
-        if (window.active) {
-            committedBase = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                committedBase, window.window, loopLength);
-        }
-    } else {
-        loop.ensureVisualCacheBuilt();
-        committedBase.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-    }
+    NoteUtils::DisplayNoteVec committedBase = NoteUtils::reconstructDisplayNotes(
+        const_cast<EditManager*>(this)->materializedLoopEventsForNoteEditFocus(
+            const_cast<Track&>(track)),
+        loopLength, false);
 
     noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
     noteEditSelectableDisplayCacheLoopLength_ = loopLength;
     noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
-    noteEditSelectableDisplayCacheNotes_ = projectNoteEditDisplayNotes(
-        committedBase, track.editAwareMidiEvents(), focus, track.getMidiChannel(), loopLength);
-    return noteEditSelectableDisplayCacheNotes_;
+    noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
+    noteEditPaintDisplayCacheNotes_ =
+        projectNoteEditDisplayNotes(committedBase, track.editAwareMidiEvents(), focus,
+                                    track.getMidiChannel(), loopLength,
+                                    &editSession.noteEditCurrentState);
+    noteEditSelectableDisplayCacheNotes_ =
+        filterProjectingSelectableDisplayNotes(noteEditPaintDisplayCacheNotes_,
+                                               &editSession.noteEditCurrentState, focus,
+                                               selectedNoteIdx);
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache() const {
@@ -87,6 +85,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     noteEditSelectableDisplayCacheLoopLength_ = 0;
     noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
+    noteEditPaintDisplayCacheNotes_.clear();
     noteEditSelectableDisplayCacheNotes_.clear();
 }
 
@@ -123,12 +123,33 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsFor
 }
 
 EDIT_MANAGER_IMPL_MEM DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
-    if (isNoteEditActive() && editSession.focus.active &&
-        editorSelectionMatchesDriverNote(sessionState.selection, editSession.focus.movingNoteId)) {
-        const NoteBaseline& last = editSession.focus.last;
-        return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
-                last.endTick};
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (isNoteEditActive() && editSession.focus.active && loopLength > 0) {
+        const bool driverValid = !editSession.noteEditCurrentState.empty()
+                                     ? isLiveEditDriverValidFromCurrentState(
+                                           sessionState.selection, editSession.focus,
+                                           editSession.noteEditCurrentState)
+                                     : isLiveEditDriverValid(sessionState.selection,
+                                                             editSession.focus, sessionMidiEvents(),
+                                                             track.getMidiChannel(), loopLength);
+        if (driverValid &&
+            editorSelectionMatchesDriverNote(sessionState.selection, editSession.focus.movingNoteId)) {
+            const NoteBaseline& last = editSession.focus.last;
+            return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
+                    last.endTick};
+        }
     }
+
+    // Stage 8 / C5: fader + snapshot consumers use paint-cache participant span (same as grid).
+    if (isNoteEditActive() && editorSelectionHasNote(sessionState.selection)) {
+        const NoteUtils::DisplayNoteVec& paint = projectedNoteEditDisplayNotes(track);
+        for (const NoteUtils::DisplayNote& dn : paint) {
+            if (dn.noteId == sessionState.selection.primaryNote) {
+                return dn;
+            }
+        }
+    }
+
     const int idx = getSelectedNoteIdx();
     const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
     if (idx < 0 || idx >= static_cast<int>(notes.size())) {

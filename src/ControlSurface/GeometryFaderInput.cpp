@@ -108,8 +108,13 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
     
     const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
+    if (selectedIdx >= static_cast<int>(notes.size()) && selectedIdx >= 0 &&
+        editorSelectionHasNote(editManager.getNoteEditSessionState().selection)) {
+        editManager.syncSelectedNoteIdxToFilteredInventory(track);
+        selectedIdx = editManager.getSelectedNoteIdx();
+    }
     
-    if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
+    if (selectedIdx >= 0 && selectedIdx < static_cast<int>(notes.size())) {
         NoteUtils::DisplayNote currentNote = editManager.liveEditDisplayNoteAtSelect(track);
         uint32_t currentNoteStartTick = currentNote.startTick;
         const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);

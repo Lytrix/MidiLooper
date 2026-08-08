@@ -2,13 +2,45 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-06 (firmware ownership lifetime review — closed)
+Last updated: 2026-08-08 (§12 R1–R5 + pitch-overlap bugfix closed)
 
 ---
 
 ## Now implementing
 
-Confirm next slice with user — candidates: dedicated **HITL refactor** (layered **`base`** gate), persistence/overlay hardening, HITL CLI Phase 3 device PASS.
+### Note edit resolver — orthogonal-state representation (§12) — **complete**
+
+**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §12  
+**Decision:** DEC-030; behavioral migration **complete**
+
+| Phase | Status |
+|-------|--------|
+| Stages 0–8 + §11 5.1–5.5 | **Done** |
+| R1–R5 orthogonal representation | **Done** (native 968/968) |
+| Pitch-then-overlap stub Hide skip | **Done** — HITL [`session_20260808_112202`](../../captures/session_20260808_112202.log) @88.669 |
+
+`ParticipatingNotePhase` removed. `NoteEditPresenceType` retained as row storage encoding. `NOTE_EDIT_PROJECTED_STORE_COMPAT` remains a separate track.
+
+Confirm next with user — `note-edit-current-state` Phase 8 archive prep, or persistence/overlay hardening.
+
+### Note edit current state — ownership transfer (`note-edit-current-state`)
+
+**OpenSpec:** [`openspec/changes/note-edit-current-state/`](../../openspec/changes/note-edit-current-state/)  
+**Preflight:** [`PREFLIGHT.md`](../../openspec/changes/note-edit-current-state/PREFLIGHT.md)  
+**Decision:** DEC-029
+
+| Phase | Status |
+|-------|--------|
+| 1 — Architecture gate and preflight | **Done** (2026-08-07) |
+| 2 — Current-state foundation (read-only build + projection) | **Done** (2026-08-07) |
+| 3 — API split and compatibility gates | **Done** (2026-08-07) |
+| 4 — Reader migration | **Done** (2026-08-07) |
+| 5 — Writer migration | **Done** (2026-08-07) |
+| 6 — Undo/redo and folded capture | **Done** (2026-08-07) |
+| 7 — Commit and compatibility removal | **Done** (2026-08-07) |
+| 8 — Verification and archive prep | Next |
+
+Confirm next slice with user when parallel work conflicts — candidates: HITL CLI Phase 3, persistence/overlay hardening.
 
 ### Firmware ownership / lifetime review — **closed (2026-08-06)**
 

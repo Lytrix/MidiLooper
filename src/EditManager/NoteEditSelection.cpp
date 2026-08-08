@@ -68,11 +68,13 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectionFromGeometryEdit(Track& tr
     sessionState.selection.trackId = static_cast<TrackId>(trackManager.getSelectedTrackIndex());
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
     this->selectedTick = sessionState.selection.selectedTick;
-    if (!selectionChanged) {
-        return;
-    }
-    syncGeometrySelectionToUi(track);
+    const int prevSelectedIdx = selectedNoteIdx;
     syncSelectedNoteIdxToFilteredInventory(track);
+    if (selectionChanged) {
+        syncGeometrySelectionToUi(track);
+    } else if (prevSelectedIdx != selectedNoteIdx) {
+        displayManager.requestNoteInfoRefresh(track);
+    }
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncGeometrySelectionToUi(Track& track) {

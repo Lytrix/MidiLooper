@@ -6,6 +6,9 @@
 #include <algorithm>
 
 #include "EditSessionLiveStoreSpan.h"
+#include "NoteEditCurrentState.h"
+#include "NoteEditFocus.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
@@ -90,35 +93,116 @@ NOTE_EDIT_MEM bool causingSpanCompletelyCoversBaseline(const EditedGeometry& edi
   return false;
 }
 
+NOTE_EDIT_MEM bool editableRowProjectsToStore(NoteId noteId, const MidiEventVec& liveStore,
+                                              uint8_t channel,
+                                              const NoteEditCurrentState* currentState) {
+  if (currentState != nullptr && currentState->hasRow(noteId)) {
+    return currentState->rowProjectsToStore(noteId);
+  }
+  return liveStoreHasNotePair(liveStore, noteId, channel);
+}
+
+NOTE_EDIT_MEM bool readEditableCurrentSpan(NoteId noteId, const MidiEventVec& liveStore,
+                                           uint8_t channel, const NoteEditCurrentState* currentState,
+                                           NoteBaseline& out) {
+  if (currentState != nullptr && currentState->readCurrentSpan(noteId, out)) {
+    return true;
+  }
+  return readLiveLinearSpan(liveStore, noteId, channel, out);
+}
+
+NOTE_EDIT_MEM bool overlapClosureActiveForTarget(NoteId targetNoteId, const EditedGeometry& editedGeometry,
+                                                 const NoteEditFocus& focus,
+                                                 const NoteEditCurrentState* currentState) {
+  if (focus.movingNoteId == kInvalidNoteId) {
+    return false;
+  }
+  const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
+  if (causingSpan == nullptr) {
+    return false;
+  }
+  if (currentState != nullptr) {
+    const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
+    if (row != nullptr) {
+      const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+      return participatingNoteOverlapClosureActive(participant, *causingSpan);
+    }
+  }
+  const auto baselineIt = focus.baselineMap.find(targetNoteId);
+  if (baselineIt == focus.baselineMap.end()) {
+    return false;
+  }
+  ParticipatingNoteState fromBaseline{};
+  fromBaseline.noteId = targetNoteId;
+  fromBaseline.committedSpan = baselineIt->second;
+  fromBaseline.currentSpan = baselineIt->second;
+  fromBaseline.visible = true;
+  fromBaseline.lifecycle = NoteEditLifecycleType::Existing;
+  return participatingNoteOverlapClosureActive(fromBaseline, *causingSpan);
+}
+
 NOTE_EDIT_MEM void appendOverlapTargetActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
-    const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
+    const EditedGeometry& editedGeometry, const BaselineMap& projectedTransactionBaseline,
+    const BaselineMap& storageTransactionBaseline, const NoteIdList& leaveRestoreTargetNoteIds,
     const MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
-    EditSessionActions& actions) {
+    EditSessionActions& actions, const NoteEditCurrentState* currentState) {
   for (const ConstrainedNoteGeometry& constrained : constrainedGeometry) {
+    const bool leaveRestore =
+        std::find(leaveRestoreTargetNoteIds.begin(), leaveRestoreTargetNoteIds.end(),
+                  constrained.noteId) != leaveRestoreTargetNoteIds.end();
+    const BaselineMap& transactionBaseline =
+        leaveRestore ? storageTransactionBaseline : projectedTransactionBaseline;
     const auto baselineIt = transactionBaseline.find(constrained.noteId);
     if (baselineIt == transactionBaseline.end()) {
       continue;
     }
     const NoteBaseline& baseline = baselineIt->second;
     NoteId liveNoteId = constrained.noteId;
-    if (!liveStoreHasNotePair(liveStore, liveNoteId, channel)) {
+    if (!editableRowProjectsToStore(liveNoteId, liveStore, channel, currentState)) {
       const NoteId resolvedId =
           findLiveNoteIdForPitchStart(liveStore, channel, baseline.pitch, baseline.startTick);
       if (resolvedId != kInvalidNoteId && resolvedId != focus.movingNoteId &&
-          liveStoreHasNotePair(liveStore, resolvedId, channel)) {
+          editableRowProjectsToStore(resolvedId, liveStore, channel, currentState)) {
         liveNoteId = resolvedId;
       }
     }
-    const bool livePresent = liveStoreHasNotePair(liveStore, liveNoteId, channel);
+    const bool livePresent = editableRowProjectsToStore(liveNoteId, liveStore, channel, currentState);
     NoteBaseline live{};
     const bool liveReadable =
-        livePresent && readLiveLinearSpan(liveStore, liveNoteId, channel, live);
+        livePresent && readEditableCurrentSpan(liveNoteId, liveStore, channel, currentState, live);
+
+    const bool overlapClosureActive =
+        overlapClosureActiveForTarget(constrained.noteId, editedGeometry, focus, currentState);
+    const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
 
     if (!constrained.visible) {
       if (livePresent) {
-        actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
+        const bool closureActive =
+            overlapClosureActiveForTarget(constrained.noteId, editedGeometry, focus, currentState);
+        const bool constrainedShortensTail =
+            constrained.endTick >= baseline.startTick && constrained.endTick < baseline.endTick;
+        if (closureActive && constrainedShortensTail) {
+          const NoteBaseline shortened{baseline.pitch, baseline.velocity, baseline.startTick,
+                                       constrained.endTick};
+          actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+        } else if (closureActive && liveReadable &&
+                   participatingSpanIsRightTailShortened(live, baseline)) {
+          // Stage 7.5.E1 (022849): CompleteCover of already-shortened stubs must HideNote.
+          if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
+            actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
+          } else if (constrainedShortensTail && live.endTick != constrained.endTick) {
+            const NoteBaseline shortened{baseline.pitch, baseline.velocity, baseline.startTick,
+                                         constrained.endTick};
+            actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+          } else {
+            // Partial-cover OverlapNoteOn Hide: keep live stub span (session_20260808_110111).
+            actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, live));
+          }
+        } else {
+          actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
+        }
       }
       continue;
     }
@@ -126,10 +210,31 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
     // After CompleteCover Hide, L→R that only OverlapNoteOff-shortens must reinsert the
     // stub (≥ noteMinLengthTicks). ShortenNote no-ops when the pair is absent
     // (session_20260804_220842). Never reinsert while a causing span still 100% covers the
-    // baseline (session_20260804_223208).
+    // baseline (session_20260804_223208). Sealed Deleted after deselect must not reinsert (022849 E2).
     if (!livePresent) {
+      if (currentState != nullptr) {
+        const NoteEditCurrentNoteState* sealedRow = currentState->find(liveNoteId);
+        if (sealedRow != nullptr && currentStateRowLifecycleIsDeleted(*sealedRow)) {
+          continue;
+        }
+      }
       if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
         continue;
+      }
+      if (overlapClosureActive) {
+        const NoteBaseline shortened{constrained.pitch, baseline.velocity, constrained.startTick,
+                                     constrained.endTick};
+        actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
+        continue;
+      }
+      if (currentState != nullptr && causingSpan != nullptr) {
+        const NoteEditCurrentNoteState* row = currentState->find(liveNoteId);
+        if (row != nullptr) {
+          const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+          if (participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+            continue;
+          }
+        }
       }
       const NoteBaseline reinsert{constrained.pitch, baseline.velocity, constrained.startTick,
                                   constrained.endTick};
@@ -139,10 +244,21 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
 
     if (constrainedMatchesBaseline(constrained, baseline)) {
       if (!liveReadable || !baselineSpansEqual(live, baseline)) {
-        if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
+        if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline) || overlapClosureActive) {
           continue;
         }
-        actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, baseline));
+        if (currentState != nullptr && causingSpan != nullptr) {
+          const NoteEditCurrentNoteState* row = currentState->find(constrained.noteId);
+          if (row != nullptr) {
+            const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
+            if (participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
+              continue;
+            }
+          }
+        }
+        const NoteBaseline restoreSpan{constrained.pitch, baseline.velocity, constrained.startTick,
+                                     constrained.endTick};
+        actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, restoreSpan));
       }
       continue;
     }
@@ -155,20 +271,6 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       }
     }
   }
-}
-
-NOTE_EDIT_MEM bool readStoreLinearBaseline(MidiEventVec& liveStore, NoteId noteId, uint8_t channel,
-                                           uint32_t preferredStartTick, uint32_t loopLength,
-                                           NoteBaseline& out) {
-  if (findLinearNoteSpanForNoteId(liveStore, noteId, channel, out, preferredStartTick,
-                                  loopLength)) {
-    return true;
-  }
-  if (preferredStartTick != UINT32_MAX &&
-      findLinearNoteSpanForNoteId(liveStore, noteId, channel, out, UINT32_MAX, loopLength)) {
-    return true;
-  }
-  return false;
 }
 
 NOTE_EDIT_MEM bool causingNoteHasOrphanOnForAction(const NoteEditFocus& focus,
@@ -184,19 +286,21 @@ NOTE_EDIT_MEM bool causingNoteHasOrphanOnForAction(const NoteEditFocus& focus,
 NOTE_EDIT_MEM void appendCausingNoteActions(const EditedGeometry& editedGeometry,
                                             MidiEventVec& liveStore, const NoteEditFocus& focus,
                                             uint8_t channel, uint32_t loopLength,
-                                            EditSessionActions& actions) {
+                                            EditSessionActions& actions,
+                                            const NoteEditCurrentState* currentState) {
   for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
-    NoteBaseline storeSpan{};
-    const bool hasStoreSpan = readStoreLinearBaseline(liveStore, causing.noteId, channel,
-                                                      causing.span.startTick, loopLength, storeSpan);
+    NoteBaseline editableSpan{};
+    const bool hasEditableSpan =
+        readEditableCurrentSpan(causing.noteId, liveStore, channel, currentState, editableSpan);
+    const bool projectsToStore =
+        editableRowProjectsToStore(causing.noteId, liveStore, channel, currentState);
 
-    // Store is authoritative for skip. focus.last fallback is only for orphan-on emit
-    // (session_20260804_231426) — never skip when the live store span still differs.
-    if (hasStoreSpan && baselineSpansEqual(causing.span, storeSpan)) {
+    if (hasEditableSpan && projectsToStore &&
+        baselineSpansEqual(causing.span, editableSpan)) {
       continue;
     }
 
-    if (!hasStoreSpan) {
+    if (!hasEditableSpan || !projectsToStore) {
       if (!causingNoteHasOrphanOnForAction(focus, liveStore, causing.noteId, channel,
                                            loopLength)) {
         continue;
@@ -206,7 +310,8 @@ NOTE_EDIT_MEM void appendCausingNoteActions(const EditedGeometry& editedGeometry
       }
     }
 
-    const NoteBaseline& live = hasStoreSpan ? storeSpan : focus.last;
+    const NoteBaseline& live =
+        (hasEditableSpan && projectsToStore) ? editableSpan : focus.last;
 
     if (causing.span.pitch != live.pitch) {
       actions.push_back(makeAction(EditSessionActionType::ChangePitch, causing.noteId,
@@ -243,13 +348,16 @@ NOTE_EDIT_MEM void logEditSessionActions(const EditSessionActions& actions) {
 NOTE_EDIT_MEM EditSessionActions buildEditSessionActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
-    const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
-    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
-    uint32_t loopLength) {
+    const EditedGeometry& editedGeometry, const BaselineMap& projectedTransactionBaseline,
+    const BaselineMap& storageTransactionBaseline, const NoteIdList& leaveRestoreTargetNoteIds,
+    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus, uint32_t loopLength,
+    const NoteEditCurrentState* currentState) {
   EditSessionActions actions;
-  appendOverlapTargetActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore,
-                             channel, focus, actions);
-  appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions);
+  appendOverlapTargetActions(constrainedGeometry, editedGeometry, projectedTransactionBaseline,
+                             storageTransactionBaseline, leaveRestoreTargetNoteIds, liveStore,
+                             channel, focus, actions, currentState);
+  appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions,
+                           currentState);
 
   sortEditSessionActions(actions);
   return actions;

@@ -22,6 +22,7 @@
 #include "Loop.h"
 #include "LoopEventStore.h"
 #include "EditSession.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
 #include "../test_support/NoteIdTestFixtures.h"
@@ -46,9 +47,11 @@ bool pushKindBoundaryUndo(NoteEditSessionUndoStack& stack, KindBoundaryUndoState
   if (session.isEventsDirty()) {
     session.syncEventsToStore();
   }
+  const NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(session.readEvents(), channel);
   const SessionUndoEntry entry =
       buildSessionUndoEntry(focus, selection, session.readEvents(), channel, loopLength,
-                            editPassIds);
+                            editPassIds, &currentState);
   if (!stack.pushEntry(entry)) {
     return false;
   }
@@ -183,9 +186,11 @@ void test_session_undo_entry_matches_clone_restore() {
 
   const auto cloneSnap = session.readStore().cloneShared();
   const EditPassIdList noEditPasses{};
+  const NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(session.readEvents(), 5);
   const SessionUndoEntry entry =
       buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks,
-                            noEditPasses);
+                            noEditPasses, &currentState);
 
   MidiEventVec& flat = session.mutEvents();
   applyMoveToSession(focus, flat, 5, 58);
@@ -195,7 +200,7 @@ void test_session_undo_entry_matches_clone_restore() {
   viaClone.restoreFromSnapshot(cloneSnap);
 
   CowLoopEventStore viaEntry;
-  applySessionUndoEntry(loop, viaEntry, entry, loop.loopLengthTicks, noEditPasses);
+  applySessionUndoEntry(loop, viaEntry, entry, loop.loopLengthTicks, 5, noEditPasses);
 
   TEST_ASSERT_TRUE(sessionUndoStoresMatch(viaClone.readStore(), viaEntry.readStore()));
 }
@@ -236,12 +241,12 @@ void test_session_redo_entry_restores_after_state() {
   undoEntry.redoEditPassIds = noEditPasses;
   undoEntry.hasRedoPayload = true;
 
-  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, noEditPasses);
+  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, 5, noEditPasses);
   CowLoopEventStore baseline;
   loop.rematerializeEditView(baseline.mutStore());
   TEST_ASSERT_TRUE(sessionUndoStoresMatch(baseline.readStore(), session.readStore()));
 
-  applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, noEditPasses);
+  applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, 5, noEditPasses);
   CowLoopEventStore moved;
   moved.restoreFromSnapshot(movedSnap);
   TEST_ASSERT_TRUE(sessionUndoStoresMatch(moved.readStore(), session.readStore()));
@@ -406,7 +411,7 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
   TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 106, 154));
 
   const EditPassIdList currentIds{addId, moveId};
-  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, currentIds);
+  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, 5, currentIds);
   TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 48, 96));
   TEST_ASSERT_FALSE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 106, 154));
 }
@@ -484,11 +489,11 @@ void test_session_undo_live_capture_during_note_edit() {
   entry.hasRedoPayload = true;
   TEST_ASSERT_FALSE(entry.redoEditRows.empty());
 
-  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, EditPassIdList{});
+  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, 5, EditPassIdList{});
   TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 60, 10, 58));
   TEST_ASSERT_FALSE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
 
-  applySessionRedoEntry(loop, session, entry, loop.loopLengthTicks, EditPassIdList{});
+  applySessionRedoEntry(loop, session, entry, loop.loopLengthTicks, 5, EditPassIdList{});
   TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
 }
 
@@ -725,6 +730,197 @@ void test_session_undo_entry_trims_baseline_map_to_overlap_closure() {
   TEST_ASSERT_EQUAL(40u, focus.baselineMap.size());
 }
 
+void test_current_state_undo_restore_parity_with_clone() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardEventsCache();
+
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+
+  NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(session.readEvents(), 5);
+  const auto cloneSnap = session.readStore().cloneShared();
+  const SessionUndoEntry entry =
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks,
+                            EditPassIdList{}, &currentState);
+  TEST_ASSERT_TRUE(entry.hasUndoCurrentState);
+
+  NoteEditCurrentNoteState* row = currentState.find(focus.movingNoteId);
+  TEST_ASSERT_NOT_NULL(row);
+  row->currentSpan.startTick = 58;
+  row->currentSpan.endTick = 106;
+  currentState.projectToSessionStore(session.mutEvents(), 5);
+  session.syncEventsToStore();
+
+  CowLoopEventStore viaClone;
+  viaClone.restoreFromSnapshot(cloneSnap);
+
+  CowLoopEventStore viaCurrentState;
+  applySessionUndoEntry(loop, viaCurrentState, entry, loop.loopLengthTicks, 5, EditPassIdList{});
+  TEST_ASSERT_TRUE(sessionUndoStoresMatch(viaClone.readStore(), viaCurrentState.readStore()));
+}
+
+void test_current_state_live_capture_undo_redo() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardEventsCache();
+
+  NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(session.readEvents(), 5);
+  const NoteEditCurrentState beforeFold = currentState.clone();
+  currentState.projectToSessionStore(session.mutEvents(), 5);
+  session.syncEventsToStore();
+
+  MidiEventVec captureFlat;
+  MidiEvent captureOn = MidiEvent::NoteOn(100, 5, 72, 100);
+  captureOn.noteId = 3;
+  captureFlat.push_back(captureOn);
+  MidiEvent captureOff = MidiEvent::NoteOff(148, 5, 72, 0);
+  captureOff.noteId = 3;
+  captureFlat.push_back(captureOff);
+  currentState.mergeCaptureNotesAsAdded(captureFlat, 5, loop.loopLengthTicks);
+  currentState.projectToSessionStore(session.mutEvents(), 5);
+  session.syncEventsToStore();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
+
+  SessionUndoEntry entry;
+  entry.undoCurrentState = beforeFold;
+  entry.hasUndoCurrentState = true;
+  entry.redoCurrentState = currentState.clone();
+  entry.hasRedoCurrentState = true;
+  entry.hasRedoPayload = true;
+
+  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, 5, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 60, 10, 58));
+  TEST_ASSERT_FALSE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
+
+  applySessionRedoEntry(loop, session, entry, loop.loopLengthTicks, 5, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
+}
+
+void test_current_state_move_ab_undo_redo_chain() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr NoteId kNoteA = 1;
+  constexpr NoteId kNoteB = 2;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kCh = 5;
+  constexpr uint32_t kLoopLen = 768;
+
+  MidiEventVec storeFlat;
+  MidiEvent onA = MidiEvent::NoteOn(100, kCh, kPitch, 100);
+  onA.noteId = kNoteA;
+  storeFlat.push_back(onA);
+  MidiEvent offA = MidiEvent::NoteOff(148, kCh, kPitch, 0);
+  offA.noteId = kNoteA;
+  storeFlat.push_back(offA);
+  MidiEvent onB = MidiEvent::NoteOn(200, kCh, kPitch, 100);
+  onB.noteId = kNoteB;
+  storeFlat.push_back(onB);
+  MidiEvent offB = MidiEvent::NoteOff(248, kCh, kPitch, 0);
+  offB.noteId = kNoteB;
+  storeFlat.push_back(offB);
+
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+
+  CowLoopEventStore session;
+  session.mutEvents() = storeFlat;
+  session.syncEventsToStore();
+
+  NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(session.readEvents(), kCh);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kNoteA;
+  focus.commitBaseline = {kPitch, 100, 100, 148};
+  focus.last = focus.commitBaseline;
+
+  SessionUndoEntry entryA =
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), kCh, kLoopLen,
+                            EditPassIdList{}, &currentState);
+
+  NoteEditCurrentNoteState* rowA = currentState.find(kNoteA);
+  TEST_ASSERT_NOT_NULL(rowA);
+  rowA->currentSpan.startTick = 300;
+  rowA->currentSpan.endTick = 348;
+  currentState.projectToSessionStore(session.mutEvents(), kCh);
+  session.syncEventsToStore();
+
+  focus.movingNoteId = kNoteB;
+  focus.commitBaseline = {kPitch, 100, 200, 248};
+  focus.last = focus.commitBaseline;
+  SessionUndoEntry entryB =
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), kCh, kLoopLen,
+                            EditPassIdList{}, &currentState);
+
+  NoteEditCurrentNoteState* rowB = currentState.find(kNoteB);
+  TEST_ASSERT_NOT_NULL(rowB);
+  rowB->currentSpan.startTick = 50;
+  rowB->currentSpan.endTick = 98;
+  currentState.projectToSessionStore(session.mutEvents(), kCh);
+  session.syncEventsToStore();
+
+  rowA->currentSpan.startTick = 100;
+  rowA->currentSpan.endTick = 148;
+  currentState.projectToSessionStore(session.mutEvents(), kCh);
+  session.syncEventsToStore();
+
+  SessionUndoEntry entryA2 =
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), kCh, kLoopLen,
+                            EditPassIdList{}, &currentState);
+
+  rowB->currentSpan.startTick = 200;
+  rowB->currentSpan.endTick = 248;
+  currentState.projectToSessionStore(session.mutEvents(), kCh);
+  session.syncEventsToStore();
+
+  focus.movingNoteId = kNoteB;
+  SessionUndoEntry entryB2 =
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), kCh, kLoopLen,
+                            EditPassIdList{}, &currentState);
+
+  rowB->currentSpan.startTick = 60;
+  rowB->currentSpan.endTick = 108;
+  currentState.projectToSessionStore(session.mutEvents(), kCh);
+  session.syncEventsToStore();
+
+  applySessionUndoEntry(loop, session, entryB2, kLoopLen, kCh, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), kLoopLen, kPitch, 200, 248));
+
+  entryB2.redoCurrentState = currentState.clone();
+  entryB2.hasRedoCurrentState = true;
+  entryB2.hasRedoPayload = true;
+  applySessionRedoEntry(loop, session, entryB2, kLoopLen, kCh, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), kLoopLen, kPitch, 60, 108));
+
+  applySessionUndoEntry(loop, session, entryA2, kLoopLen, kCh, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), kLoopLen, kPitch, 100, 148));
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), kLoopLen, kPitch, 50, 98));
+  (void)entryA;
+  (void)entryB;
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
@@ -745,5 +941,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_kind_boundary_select_nav_no_push);
   RUN_TEST(test_session_undo_entry_trims_baseline_map_to_overlap_closure);
   RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
+  RUN_TEST(test_current_state_undo_restore_parity_with_clone);
+  RUN_TEST(test_current_state_live_capture_undo_redo);
+  RUN_TEST(test_current_state_move_ab_undo_redo_chain);
   return UNITY_END();
 }

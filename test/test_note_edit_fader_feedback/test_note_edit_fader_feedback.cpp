@@ -619,6 +619,17 @@ void test_geometry_hold_ignored_only_without_selection_change() {
                                                                                    false));
 }
 
+void test_geometry_hold_blocks_empty_step_deselect() {
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldBlockEmptyStepSelectDuringGeometryHold(true, true, true));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldBlockEmptyStepSelectDuringGeometryHold(true, true, false));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldBlockEmptyStepSelectDuringGeometryHold(false, true, true));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldBlockEmptyStepSelectDuringGeometryHold(true, false, true));
+}
+
 void test_relatch_sync_dismiss_requires_select_fader_idle() {
     static constexpr uint32_t kIdleMs = 300;
     const uint32_t lastInput = 10000;
@@ -1214,6 +1225,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_coarse_allows_when_f1_divergent_but_geometry_driver_active);
     RUN_TEST(test_coarse_allows_when_f1_aligned);
     RUN_TEST(test_geometry_hold_ignored_only_without_selection_change);
+    RUN_TEST(test_geometry_hold_blocks_empty_step_deselect);
     RUN_TEST(test_relatch_sync_dismiss_requires_select_fader_idle);
     RUN_TEST(test_ref_driven_motor_sync_ignores_index_only_change);
     RUN_TEST(test_select_dependent_settle_blocks_motor_flush_until_expired);

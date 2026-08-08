@@ -154,8 +154,7 @@ EDIT_MANAGER_IMPL_MEM std::vector<std::pair<NoteId, NoteBaseline>> collectCommit
     std::vector<std::pair<NoteId, NoteBaseline>> updates;
     for (const EditPass& row : rows) {
         if (row.actionType != EditActionType::Update || row.targetNoteId == kInvalidNoteId ||
-            row.targetNoteId == focus.movingNoteId ||
-            !hasChangedOverlapNote(focus, row.targetNoteId)) {
+            row.targetNoteId == focus.movingNoteId) {
             continue;
         }
         if (row.propertyType != EditPropertyType::Length &&

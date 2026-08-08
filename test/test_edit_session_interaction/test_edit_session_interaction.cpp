@@ -5,14 +5,18 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "Utils/NoteEditMem.h"
 #include "EditSessionInteraction.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "ResolveConstrainedGeometry.h"
 
 #include "../../src/EditManager/EditSessionInteraction.cpp"
+#include "../../src/EditManager/NoteEditCurrentState.cpp"
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -38,18 +42,52 @@ BaselineMap makeTargetBaseline(NoteId targetId, uint32_t start, uint32_t end, ui
 
 }  // namespace
 
-void test_orchestrator_skips_intra_selection_pair() {
+void test_orchestrator_skips_intra_selection_pair_when_co_moving() {
   EditorSelection selection{};
   selection.selectedNotes = {10, 20};
   TEST_ASSERT_TRUE(isIntraSelectionPair(10, 20, selection));
   TEST_ASSERT_FALSE(isIntraSelectionPair(10, 30, selection));
 
-  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {10};
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changedBoth = {10, 20};
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets = {20, 30};
+  const auto coMovePairs = determineEligiblePairs(selection, changedBoth, targets);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(coMovePairs.size()));
+  for (const CausingTargetPair& pair : coMovePairs) {
+    TEST_ASSERT_FALSE(pair.causingNoteId == 10u && pair.targetNoteId == 20u);
+    TEST_ASSERT_FALSE(pair.causingNoteId == 20u && pair.targetNoteId == 10u);
+  }
+}
+
+void test_orchestrator_includes_stationary_selected_sibling_overlap_111955() {
+  // session_20260807_111955: notes 7+17 selected; coarse fader moves 17 only over 7 at 2064.
+  constexpr NoteId kMover = 17;
+  constexpr NoteId kStationarySibling = 7;
+  constexpr uint8_t kPitch = 88;
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes = {kMover, kStationarySibling};
+
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = {kPitch, 100, 2064, 2591};
+  geometry.causingSpans.push_back(causing);
+
+  BaselineMap baseline;
+  baseline[kStationarySibling] = {kPitch, 100, 2064, 2111};
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMover};
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets = {kStationarySibling};
   const auto pairs = determineEligiblePairs(selection, changed, targets);
   TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
-  TEST_ASSERT_EQUAL_UINT32(10u, pairs[0].causingNoteId);
-  TEST_ASSERT_EQUAL_UINT32(30u, pairs[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(kMover, pairs[0].causingNoteId);
+  TEST_ASSERT_EQUAL_UINT32(kStationarySibling, pairs[0].targetNoteId);
+
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(InteractionType::CompleteCover, interactions[0].type);
 }
 
 void test_geometry_changed_this_tick_detects_span_delta() {
@@ -277,7 +315,7 @@ void test_project_note_baseline_for_edit_analysis_wrap_parity() {
 
   const NoteBaseline wrapped{60, 100, 900, 1080};
   const NoteBaseline linear =
-      projectNoteBaselineForEditAnalysis(selection, wrapped, 42, kLoopLength);
+      projectNoteBaselineForEditAnalysis(selection, wrapped, 42, kLoopLength, 900);
   TEST_ASSERT_EQUAL_UINT32(900u, linear.startTick);
   TEST_ASSERT_EQUAL_UINT32(1080u, linear.endTick);
 }
@@ -316,7 +354,7 @@ void test_evaluation_scope_excludes_cross_lane_notes() {
 
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, 13);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 13);
   TEST_ASSERT_EQUAL(1, static_cast<int>(scope.size()));
   TEST_ASSERT_TRUE(scopeContains(scope, kSameLaneId));
   TEST_ASSERT_FALSE(scopeContains(scope, kCrossLaneId));
@@ -336,14 +374,14 @@ void test_evaluation_scope_without_lane_includes_all_notes() {
   MidiEventVec liveStore;
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, std::nullopt);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, std::nullopt);
   TEST_ASSERT_EQUAL(2, static_cast<int>(scope.size()));
   TEST_ASSERT_TRUE(scopeContains(scope, 2));
   TEST_ASSERT_TRUE(scopeContains(scope, 3));
 }
 
 /// Source-lane restore after a pitch change: the note hidden on lane 13 is absent from the live
-/// store and off the new lane 16, so only its changedOverlapNoteIds membership keeps it in
+/// store and off the new lane 16, so current-state Active Hidden participation keeps it in
 /// scope. Without the sticky rule the restore action could never be generated.
 void test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change() {
   constexpr uint8_t kChannel = 5;
@@ -361,11 +399,12 @@ void test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change() {
   liveStore.push_back(taggedNoteOn(144, kChannel, 16, kMoverId));
   liveStore.push_back(taggedNoteOn(600, kChannel, 16, kDestLaneId));
 
-  NoteIdList changed;
-  changed.push_back(kHiddenOnSourceLane);
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenOnSourceLane, baseline[kHiddenOnSourceLane],
+                         baseline[kHiddenOnSourceLane], NoteEditPresenceType::Hidden);
 
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, changed, kMoverId, 16);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 16, &currentState);
   TEST_ASSERT_TRUE(scopeContains(scope, kDestLaneId));
   TEST_ASSERT_TRUE(scopeContains(scope, kHiddenOnSourceLane));
 
@@ -375,7 +414,7 @@ void test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change() {
   selection.primaryNote = kMoverId;
   selection.selectedNotes.push_back(kMoverId);
   const BaselineMap projected = projectTransactionBaselineForEvaluationScope(
-      selection, baseline, scope, kMoverId, 2304);
+      selection, baseline, scope, kMoverId, 2304, 144);
   TEST_ASSERT_EQUAL(3, static_cast<int>(projected.size()));
   TEST_ASSERT_TRUE(projected.count(kMoverId) > 0);
   TEST_ASSERT_TRUE(projected.count(kHiddenOnSourceLane) > 0);
@@ -401,7 +440,7 @@ void test_evaluation_scope_ignores_store_channel() {
 
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, 26);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 26);
   TEST_ASSERT_EQUAL(1, static_cast<int>(scope.size()));
   TEST_ASSERT_TRUE(scopeContains(scope, kSameLaneId));
 }
@@ -421,7 +460,7 @@ void test_projected_baseline_drops_cross_lane_keeps_mover() {
   selection.primaryNote = kMoverId;
   selection.selectedNotes.push_back(kMoverId);
   const BaselineMap projected =
-      projectTransactionBaselineForEvaluationScope(selection, baseline, scope, kMoverId, 2304);
+      projectTransactionBaselineForEvaluationScope(selection, baseline, scope, kMoverId, 2304, 480);
   TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
   TEST_ASSERT_TRUE(projected.count(kMoverId) > 0);
   TEST_ASSERT_TRUE(projected.count(2) > 0);
@@ -456,7 +495,7 @@ void test_ensure_baseline_fills_scope_gap_enables_pitch_lane_interactions() {
 
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(focus.baselineMap, liveStore, noneChanged, kMoverId, kLane);
+      collectEvaluationScopeNoteIds(focus.baselineMap, liveStore, kMoverId, kLane);
   TEST_ASSERT_TRUE(scopeContains(scope, kLaneTarget));
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kLaneTarget)));
 
@@ -472,7 +511,7 @@ void test_ensure_baseline_fills_scope_gap_enables_pitch_lane_interactions() {
   geometry.causingSpans.push_back(causing);
 
   const BaselineMap projected = projectTransactionBaselineForEvaluationScope(
-      geometry.selection, focus.baselineMap, scope, kMoverId, 2304);
+      geometry.selection, focus.baselineMap, scope, kMoverId, 2304, 1152);
   TEST_ASSERT_TRUE(projected.count(kLaneTarget) > 0);
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
@@ -524,9 +563,13 @@ void test_delete_causing_restore_candidate_without_incoming() {
   NoteEditFocus focus{};
   focus.active = true;
   focus.movingNoteId = kDeletedCausingId;
+  focus.last = {60, 100, 100, 200};
   focus.baselineMap[kDeletedCausingId] = {60, 100, 100, 200};
   focus.baselineMap[kHiddenNeighborId] = {60, 100, 120, 180};
-  focus.changedOverlapNoteIds.push_back(kHiddenNeighborId);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenNeighborId, focus.baselineMap[kHiddenNeighborId],
+                         focus.baselineMap[kHiddenNeighborId], NoteEditPresenceType::Hidden);
 
   EditorSelection selection{};
   selection.primaryNote = kDeletedCausingId;
@@ -534,6 +577,10 @@ void test_delete_causing_restore_candidate_without_incoming() {
 
   EditedGeometry editedGeometry{};
   editedGeometry.selection = selection;
+  EditedNoteSpan deletedCausing{};
+  deletedCausing.noteId = kDeletedCausingId;
+  deletedCausing.span = {60, 100, 0, 119};
+  editedGeometry.causingSpans.push_back(deletedCausing);
 
   EditSessionInteractionsByTarget grouped{};
   MidiEventVec liveStore;
@@ -541,8 +588,8 @@ void test_delete_causing_restore_candidate_without_incoming() {
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, focus.baselineMap, liveStore, kChannel,
-                                                loopLength, selection, editedGeometry,
-                                                focus.changedOverlapNoteIds);
+                                                loopLength, selection, editedGeometry, focus,
+                                                &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targetIds.size()));
   TEST_ASSERT_EQUAL_UINT32(kHiddenNeighborId, targetIds[0]);
 
@@ -555,9 +602,419 @@ void test_delete_causing_restore_candidate_without_incoming() {
   TEST_ASSERT_EQUAL_UINT32(180u, constrained.endTick);
 }
 
+/// session_20260807_004127: shared edit projection originTick aligns wrapped overlap target
+/// with causing note so classification is OverlapNoteOff (tail shorten) not spurious OverlapNoteOn.
+void test_shared_edit_projection_origin_tail_shorten_only_004127() {
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kMoverId = 3;
+  constexpr NoteId kTargetId = 14;
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedTick = 3888;
+  selection.selectedNotes.push_back(kMoverId);
+
+  const NoteBaseline causingSpan{94, 100, 3888, 4031};
+  const NoteBaseline wrappedTarget{94, 100, 2880, 4000};
+
+  const int32_t bootstrapOrigin = static_cast<int32_t>(causingSpan.startTick);
+  const int32_t sharedOrigin =
+      static_cast<int32_t>(
+          projectNoteBaselineForEditAnalysis(selection, causingSpan, kMoverId, kLoopLength,
+                                             bootstrapOrigin)
+              .startTick);
+
+  const NoteBaseline sharedTarget =
+      projectNoteBaselineForEditAnalysis(selection, wrappedTarget, kTargetId, kLoopLength,
+                                         sharedOrigin);
+  const NoteBaseline sharedCausing =
+      projectNoteBaselineForEditAnalysis(selection, causingSpan, kMoverId, kLoopLength,
+                                         sharedOrigin);
+
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::OverlapNoteOff),
+                    static_cast<int>(
+                        classifyEditSessionInteraction(sharedCausing.startTick, sharedCausing.endTick,
+                                                       sharedTarget.startTick, sharedTarget.endTick)));
+
+  BaselineMap sharedBaseline;
+  sharedBaseline[kTargetId] = sharedTarget;
+  EditedGeometry sharedEdited{};
+  sharedEdited.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = sharedCausing;
+  sharedEdited.causingSpans.push_back(causing);
+
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kMoverId, kTargetId}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, sharedEdited, sharedBaseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::OverlapNoteOff),
+                    static_cast<int>(interactions[0].type));
+
+  const EditSessionInteractionsByTarget grouped =
+      groupEditSessionInteractionsByTarget(interactions);
+  const ConstrainedNoteGeometry constrained =
+      resolveConstrainedGeometry(kTargetId, sharedBaseline[kTargetId], grouped.groups[0].incoming,
+                                 kLoopLength, 12, true);
+  TEST_ASSERT_TRUE(constrained.visible);
+  TEST_ASSERT_EQUAL_UINT32(sharedTarget.startTick, constrained.startTick);
+  TEST_ASSERT_EQUAL_UINT32(3887u, constrained.endTick);
+}
+
+/// session_20260807_011618: geometry pipeline classifies on storage baselineMap — local L→R overlap
+/// must not wait on projected k-shift copies.
+void test_storage_overlap_analyze_tail_shorten_only_004127() {
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kMoverId = 3;
+  constexpr NoteId kTargetId = 14;
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedTick = 3888;
+  selection.selectedNotes.push_back(kMoverId);
+
+  const NoteBaseline causingSpan{94, 100, 3888, 4031};
+  const NoteBaseline wrappedTarget{94, 100, 2880, 4000};
+
+  BaselineMap storageBaseline;
+  storageBaseline[kTargetId] = wrappedTarget;
+
+  EditedGeometry edited{};
+  edited.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = causingSpan;
+  edited.causingSpans.push_back(causing);
+
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kMoverId, kTargetId}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, edited, storageBaseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::OverlapNoteOff),
+                    static_cast<int>(interactions[0].type));
+
+  const EditSessionInteractionsByTarget grouped =
+      groupEditSessionInteractionsByTarget(interactions);
+  const ConstrainedNoteGeometry constrained =
+      resolveConstrainedGeometry(kTargetId, storageBaseline[kTargetId], grouped.groups[0].incoming,
+                                 kLoopLength, 12, true);
+  TEST_ASSERT_TRUE(constrained.visible);
+  TEST_ASSERT_EQUAL_UINT32(wrappedTarget.startTick, constrained.startTick);
+  TEST_ASSERT_EQUAL_UINT32(3887u, constrained.endTick);
+}
+
+void test_storage_overlap_analyze_ltr_complete_cover_hides_short_target() {
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kMoverId = 3;
+  constexpr NoteId kTargetId = 4;
+
+  BaselineMap baseline;
+  baseline[kTargetId] = {94, 100, 1200, 1247};
+
+  EditedGeometry edited{};
+  edited.selection.primaryNote = kMoverId;
+  edited.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = {94, 100, 1104, 1247};
+  edited.causingSpans.push_back(causing);
+
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kMoverId, kTargetId}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::CompleteCover),
+                    static_cast<int>(interactions[0].type));
+
+  const EditSessionInteractionsByTarget grouped =
+      groupEditSessionInteractionsByTarget(interactions);
+  const ConstrainedNoteGeometry constrained =
+      resolveConstrainedGeometry(kTargetId, baseline[kTargetId], grouped.groups[0].incoming,
+                                 kLoopLength, 12, true);
+  TEST_ASSERT_FALSE(constrained.visible);
+}
+
+void test_analyze_ignores_session_moved_overlap_at_live_span_020105() {
+  // session_20260807_020105: note 17 moved 3600→1248; later same-pitch move must not shorten 17 at 3600.
+  constexpr NoteId kPriorMoverId = 17;
+  constexpr NoteId kNewMoverId = 25;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  BaselineMap baseline;
+  baseline[kPriorMoverId] = {kPitch, 100, 3600, 4127};
+  baseline[kNewMoverId] = {kPitch, 100, 3504, 4031};
+
+  MidiEventVec liveStore;
+  MidiEvent priorOn = MidiEvent::NoteOn(1248, kChannel, kPitch, 100);
+  priorOn.noteId = kPriorMoverId;
+  liveStore.push_back(priorOn);
+  MidiEvent priorOff = MidiEvent::NoteOff(1775, kChannel, kPitch, 0);
+  priorOff.noteId = kPriorMoverId;
+  liveStore.push_back(priorOff);
+
+  NoteIdList changedOverlap;
+  changedOverlap.push_back(kPriorMoverId);
+
+  const BaselineMap analysis =
+      overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kNewMoverId, liveStore, kChannel,
+                                                     5376u, nullptr, nullptr);
+  const auto analysisIt = analysis.find(kPriorMoverId);
+  TEST_ASSERT_TRUE(analysisIt != analysis.end());
+  TEST_ASSERT_EQUAL_UINT32(1248u, analysisIt->second.startTick);
+
+  EditorSelection selection{};
+  selection.primaryNote = kNewMoverId;
+  selection.selectedNotes.push_back(kNewMoverId);
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kNewMoverId;
+  causing.span = {kPitch, 100, 3744, 4175};
+  geometry.causingSpans.push_back(causing);
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kNewMoverId};
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> scope = {kPriorMoverId, kNewMoverId};
+  const auto pairs = determineEligiblePairs(selection, changed, scope);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
+
+  const auto staleInteractions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(staleInteractions.size()));
+  TEST_ASSERT_EQUAL_UINT32(kPriorMoverId, staleInteractions[0].targetNoteId);
+
+  const auto liveInteractions = analyzeEditSessionInteractions(pairs, geometry, analysis);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(liveInteractions.size()));
+}
+
+void test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600() {
+  // session_20260807_020600: note 17 at 1488 after move; not in changedOverlapNoteIds on reselect.
+  constexpr NoteId kPriorMoverId = 17;
+  constexpr NoteId kNewMoverId = 25;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  BaselineMap baseline;
+  baseline[kPriorMoverId] = {kPitch, 100, 3600, 4127};
+  baseline[kNewMoverId] = {kPitch, 100, 3504, 4031};
+
+  MidiEventVec liveStore;
+  MidiEvent priorOn = MidiEvent::NoteOn(1488, kChannel, kPitch, 100);
+  priorOn.noteId = kPriorMoverId;
+  liveStore.push_back(priorOn);
+  MidiEvent priorOff = MidiEvent::NoteOff(2063, kChannel, kPitch, 0);
+  priorOff.noteId = kPriorMoverId;
+  liveStore.push_back(priorOff);
+
+  const BaselineMap analysis =
+      overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kNewMoverId, liveStore, kChannel,
+                                                     5376u, nullptr, nullptr);
+  const auto analysisIt = analysis.find(kPriorMoverId);
+  TEST_ASSERT_TRUE(analysisIt != analysis.end());
+  TEST_ASSERT_EQUAL_UINT32(1488u, analysisIt->second.startTick);
+
+  EditorSelection selection{};
+  selection.primaryNote = kNewMoverId;
+  selection.selectedNotes.push_back(kNewMoverId);
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kNewMoverId;
+  causing.span = {kPitch, 100, 3600, 4031};
+  geometry.causingSpans.push_back(causing);
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kNewMoverId};
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> scope = {kPriorMoverId, kNewMoverId};
+  const auto pairs = determineEligiblePairs(selection, changed, scope);
+
+  const auto staleInteractions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(staleInteractions.size()));
+
+  const auto liveInteractions = analyzeEditSessionInteractions(pairs, geometry, analysis);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(liveInteractions.size()));
+}
+
+void test_overlap_analyze_uses_current_span_not_stale_baseline_021939() {
+  // session_20260807_021939: mover 25 overlaps note 17 at current span 1392, not stale 3600.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kPriorId = 17;
+  constexpr NoteId kMoverId = 25;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  BaselineMap baseline;
+  baseline[kPriorId] = {kPitch, 100, 3600, 4127};
+  baseline[kMoverId] = {kPitch, 100, 3504, 4031};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kPriorId, baseline[kPriorId], {kPitch, 100, 1392, 1919},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, baseline[kMoverId], baseline[kMoverId],
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  NoteIdList changedOverlap;
+  changedOverlap.push_back(kPriorId);
+
+  const BaselineMap analysis =
+      overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kMoverId, liveStore, kChannel,
+                                                     kLoopLength, &currentState, nullptr);
+  const auto analysisIt = analysis.find(kPriorId);
+  TEST_ASSERT_TRUE(analysisIt != analysis.end());
+  TEST_ASSERT_EQUAL_UINT32(1392u, analysisIt->second.startTick);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = {kPitch, 100, 1400, 2000};
+  geometry.causingSpans.push_back(causing);
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kPitch,
+                                    &currentState);
+  const auto pairs = determineEligiblePairs(selection, changed, scope);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
+
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, analysis);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL_UINT32(kPriorId, interactions[0].targetNoteId);
+}
+
+void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
+  // session_20260807_181859: overlap note 9 shortened to stub 2152–2207; L→R mover start 2256 must
+  // still classify OverlapNoteOff against committed 2152–2543 (not BoundaryTouch on stub end).
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 9;
+  constexpr NoteId kMoverId = 26;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  const NoteBaseline committed{kPitch, 100, 2152, 2543};
+  const NoteBaseline stub{kPitch, 100, 2152, 2207};
+  const NoteBaseline moverCommitted{kPitch, 100, 2016, 2111};
+
+  BaselineMap baseline;
+  baseline[kOverlapId] = committed;
+  baseline[kMoverId] = moverCommitted;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, committed, stub, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, moverCommitted, moverCommitted, NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditedNoteSpan causingSpan{};
+  causingSpan.noteId = kMoverId;
+  causingSpan.span = {kPitch, 100, 2256, 2351};
+
+  const BaselineMap analysis =
+      overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kMoverId, liveStore, kChannel,
+                                                     kLoopLength, &currentState, &causingSpan.span);
+  const auto analysisIt = analysis.find(kOverlapId);
+  TEST_ASSERT_TRUE(analysisIt != analysis.end());
+  TEST_ASSERT_EQUAL_UINT32(committed.startTick, analysisIt->second.startTick);
+  TEST_ASSERT_EQUAL_UINT32(committed.endTick, analysisIt->second.endTick);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  geometry.causingSpans.push_back(causingSpan);
+
+  NoteIdList changedOverlap;
+  changedOverlap.push_back(kOverlapId);
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kPitch,
+                                    &currentState);
+  const auto pairs = determineEligiblePairs(selection, changed, scope);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
+
+  BaselineMap stubOverlay = baseline;
+  stubOverlay[kOverlapId] = stub;
+  const auto stubInteractions = analyzeEditSessionInteractions(pairs, geometry, stubOverlay);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(stubInteractions.size()));
+
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, analysis);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL_UINT32(kOverlapId, interactions[0].targetNoteId);
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::OverlapNoteOff),
+                    static_cast<int>(interactions[0].type));
+}
+
+void test_evaluation_scope_excludes_ended_participation_even_with_stale_latch() {
+  // §11 step 5.4: when current state is present, sticky off-lane membership follows Ended, not latch.
+  constexpr NoteId kMoverId = 11;
+  constexpr NoteId kEndedId = 9;
+  constexpr NoteId kOnLaneId = 13;
+  constexpr uint8_t kLane = 88;
+  constexpr uint8_t kOtherLane = 60;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {kLane, 100, 1200, 1247};
+  baseline[kEndedId] = {kOtherLane, 100, 1488, 1966};
+  baseline[kOnLaneId] = {kLane, 100, 2000, 2100};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, baseline[kMoverId], baseline[kMoverId],
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kEndedId, baseline[kEndedId], {kOtherLane, 100, 1488, 1774},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOnLaneId, baseline[kOnLaneId], baseline[kOnLaneId],
+                         NoteEditPresenceType::Visible);
+  currentState.markOverlapParticipationEnded(kEndedId);
+
+  NoteIdList staleLatch;
+  staleLatch.push_back(kEndedId);
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, 5);
+
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kLane, &currentState);
+  TEST_ASSERT_TRUE(scopeContains(scope, kOnLaneId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kEndedId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kMoverId));
+}
+
+void test_evaluation_scope_excludes_sealed_deleted_022849() {
+  // Stage 7.5.E2: Deleted rows must not re-enter evaluation scope after deselect seal.
+  constexpr NoteId kMoverId = 7;
+  constexpr NoteId kDeletedId = 11;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {kPitch, 100, 1621, 1984};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kDeletedId, {kPitch, 100, 1584, 1631}, {kPitch, 100, 1584, 1631},
+                         NoteEditPresenceType::Deleted);
+  currentState.upsertRow(kMoverId, baseline[kMoverId], baseline[kMoverId],
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+  NoteIdList noneChanged;
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kPitch,
+                                    &currentState);
+  TEST_ASSERT_TRUE(std::find(scope.begin(), scope.end(), kDeletedId) == scope.end());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
-  RUN_TEST(test_orchestrator_skips_intra_selection_pair);
+  RUN_TEST(test_orchestrator_skips_intra_selection_pair_when_co_moving);
+  RUN_TEST(test_orchestrator_includes_stationary_selected_sibling_overlap_111955);
   RUN_TEST(test_evaluation_scope_excludes_cross_lane_notes);
   RUN_TEST(test_evaluation_scope_without_lane_includes_all_notes);
   RUN_TEST(test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change);
@@ -582,5 +1039,14 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_group_interactions_by_target_orders_deterministically);
   RUN_TEST(test_compute_shortened_end_tick_uses_causing_start_minus_one);
   RUN_TEST(test_project_note_baseline_for_edit_analysis_wrap_parity);
+  RUN_TEST(test_shared_edit_projection_origin_tail_shorten_only_004127);
+  RUN_TEST(test_storage_overlap_analyze_tail_shorten_only_004127);
+  RUN_TEST(test_storage_overlap_analyze_ltr_complete_cover_hides_short_target);
+  RUN_TEST(test_analyze_ignores_session_moved_overlap_at_live_span_020105);
+  RUN_TEST(test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600);
+  RUN_TEST(test_overlap_analyze_uses_current_span_not_stale_baseline_021939);
+  RUN_TEST(test_overlay_committed_span_shortened_stub_ltr_overlap_181859);
+  RUN_TEST(test_evaluation_scope_excludes_ended_participation_even_with_stale_latch);
+  RUN_TEST(test_evaluation_scope_excludes_sealed_deleted_022849);
   return UNITY_END();
 }
