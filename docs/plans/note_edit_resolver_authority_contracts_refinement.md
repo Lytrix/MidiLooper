@@ -1,10 +1,12 @@
 # Note edit resolver authority contracts — refinement plan
 
-**Status:** architectural migration in progress — Stages 0–2, 4–8 shipped; Stage 7.5 **A–E** shipped
-(HITL `024301` PASS). **§11 step 5 in progress** (5.1 latch/geometry query pin). Stage 3 **shipped**.
-**Remaining work:** §11 step 5 cleanup slices; orthogonal model §12 (conceptual; code post–Stage 8).
+**Status:** Stages 0–8 + Stage 7.5 **A–E** shipped (HITL `024301`). **§11 step 5 shipped**
+(5.1–5.5; smoke `025807` / `030432` / `032118`). Stage 3 **shipped**.
+**Remaining work:** orthogonal model §12 (conceptual; code representation post–Stage 8);
+`NOTE_EDIT_PROJECTED_STORE_COMPAT` separate track.
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
+**Living guide:** [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md) — workflow after latch removal.
 **OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
 ownership transfer. `/opsx:sync` when Stage 2 shipped.
 **Supersedes:** patch-by-patch RC10 fixes in
@@ -26,10 +28,10 @@ Each stage lists its owner and the only inputs it is allowed to trust in the end
 |---|-------|-------|---------------------------|
 | 1 | Identity | `EditorSelection` (`primaryNote`, `selectedTick`) | user select events |
 | 2 | State authority | `NoteEditCurrentState` (`currentSpan`, `committedSpan`, `presence`) | see **writers** below — not “Stage 8 only” for all fields |
-| 3 | Derived latch | `NoteEditFocus` (`movingNoteId`, `last`, `commitBaseline`, `baselineMap`, `changedOverlapNoteIds`) | stages 1 + 2 — **transitional cache** until Stage 8; then derived query |
+| 3 | Focus driver / baseline | `NoteEditFocus` (`movingNoteId`, `last`, `commitBaseline`, `baselineMap`) | stages 1 + 2 — **no** `changedOverlapNoteIds` (removed §11 step 5.5) |
 | 4 | Display projection | `projectNoteEditDisplayNotes` / `resolveParticipantDisplaySpan` | stages 2 + 3, committed passes |
 | 5 | Selectable inventory | `selectableDisplayNotesForEditUi` | stage 4, filtered to editable rows |
-| 6 | Driver gate | `isLiveEditDriverValidFromCurrentState` / `ensureNoteEditFocusForLiveEdit` | stages 1 + 2 + 3 |
+| 6 | Driver gate | validate/rebuild Focus before geometry — see [§ Driver gate](#driver-gate-stage-6) | stages 1 + 2 + 3 |
 | 7 | Geometry resolution | `NoteGeometryResolver` → `buildEditSessionActions` | participating-note input + `baselineMap` |
 | 8 | Apply / write | `applyEditSessionActions` → current-state mutation → projection refresh | stage 7 actions only |
 | 9 | Commit | macro commit / `commitNoteEditPass` | stage 2 vs committed baseline |
@@ -58,6 +60,15 @@ Inventory consumers (all read stage 5): `SelectFaderInput`, `GeometryFaderInput`
 `EditSelectNoteState`, `EditNoteStateCoordinator`, `NoteEditFocusRebuild`, `SidebarAndInfo`.
 
 Whatever stage 5 offers **will** become a driver — that is the contract pressure point.
+
+### Driver gate (stage 6)
+
+Before live move/length/pitch, Focus’s cached driver `(movingNoteId, focus.last)` must still match selection + current state. That check-and-repair is the **driver gate**:
+
+- **`isLiveEditDriverValidFromCurrentState`** — true only when Focus is active, selection primary matches `movingNoteId`, the row projects (`rowProjectsToStore`), and `currentSpan` equals `focus.last`.
+- **`ensureNoteEditFocusForLiveEdit`** — if invalid and a note is selected, rebuild Focus; if valid, reuse Focus and proceed to geometry.
+
+It does not pick participants or emit actions. Full prose: [`MOVE_NOTE_LOGIC.md` — Driver gate](../Guides/MOVE_NOTE_LOGIC.md#driver-gate-stage-6).
 
 ---
 
@@ -101,7 +112,7 @@ question can be answered by the explicit state model or an invariant.
 | `NoteEditCurrentNoteState.currentSpan` | `ParticipatingNoteState.currentSpan` |
 | `NoteEditCurrentNoteState.committedSpan` | `ParticipatingNoteState.committedSpan` |
 | `NoteEditPresenceType` / span diff | visibility + lifecycle + derived geometry predicates (§12) |
-| `changedOverlapNoteIds` | **Stage 4:** membership authority from current state when rebuilding focus; **post–Stage 8:** derived query, cache removed |
+| `changedOverlapNoteIds` | **Removed** (§11 step 5.5) — use `currentStateRowIsOverlapParticipant` / `Ended` |
 | `focus.baselineMap` | explicit baseline decision at session boundary |
 | `selectableDisplayNotesForEditUi` | derived UI inventory |
 | live session store | persistence representation — **not** session state |
