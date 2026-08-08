@@ -2,11 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (§12 R1–R5 + pitch-overlap bugfix closed)
+Last updated: 2026-08-08 (playing move audition bugfix)
 
 ---
 
 ## Now implementing
+
+### Playing position-move playback audition — **complete**
+
+**Plan:** [`.cursor/plans/playing_move_audition_fix_818fdd99.plan.md`](../../.cursor/plans/playing_move_audition_fix_818fdd99.plan.md)  
+**Bugfix doc:** [`docs/plans/note_edit_playing_move_audition_bugfix.md`](../plans/note_edit_playing_move_audition_bugfix.md)  
+**Capture anchor:** [`session_20260808_113626`](../../captures/session_20260808_113626.log) @34–35s
+
+| Item | Status |
+|------|--------|
+| Thread `refreshPlaybackPreview` through move/length | **Done** |
+| Native signature contract test | **Done** — `test_move_length_forward_refresh_playback_preview_parameter` |
+| HITL span-crossing audition | **PASS** — [`session_20260808_115120`](../../captures/session_20260808_115120.log) @93s, @102–103s |
+
+Move/length geometry now forward `refreshPlaybackPreview` (default `true`) into `NoteGeometryResolver` and `finalReconstructAndSelect`, matching pitch. While PLAYING, `Track::invalidateCaches(true)` schedules deferred playback preview refresh (~80 ms).
 
 ### Note edit resolver — orthogonal-state representation (§12) — **complete**
 

@@ -197,6 +197,11 @@ public:
     void scheduleDeferredNoteEditDisplayRefresh();
     void processDeferredNoteEditDisplayRefresh(Track& track);
     void flushDeferredNoteEditDisplayRefresh(Track& track);
+#if defined(PIO_UNIT_TEST_NATIVE)
+    bool isDeferredNoteEditDisplayRefreshPendingForTest() const {
+        return deferredNoteEditDisplayRefreshPending_;
+    }
+#endif
     /// Pre-build kind-boundary undo after fader-1 selection (idle frame, not fader path).
     void processKindBoundaryUndoWarm(Track& track);
 
