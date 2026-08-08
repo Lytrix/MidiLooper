@@ -3,6 +3,7 @@
 
 #include "EditStates/EditSelectNoteState.h"
 #include "EditManager.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "EditPass.h"
 #include "Track.h"
@@ -93,7 +94,7 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
 
         // Push undo snapshot before creating note
         manager.beginGeometryMutation(track, NoteEditKind::Add, false);
-        const std::array<MidiEvent, 2> created = createDefaultNote(track, storageTick);
+        const std::array<MidiEvent, 2> created = createDefaultNote(track, manager, storageTick);
         NoteUtils::DisplayNote createdDisplay{};
         createdDisplay.noteId = created[0].noteId;
         createdDisplay.note = created[0].data.noteData.note;
@@ -169,7 +170,8 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
     }
 }
 
-std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
+std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, EditManager& manager,
+                                                                uint32_t tick) const {
     // Create a 32nd note (TICKS_PER_16TH_STEP / 2 = 24 ticks for a 32nd note)
     uint32_t noteLength = Config::TICKS_PER_16TH_STEP / 2; // 32nd note
     uint32_t endTick = (tick + noteLength) % track.getLoopLength();
@@ -178,47 +180,32 @@ std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, ui
     uint8_t defaultNote = 60; // C3
     uint8_t defaultVelocity = 80;
     
-    auto& midiEvents = track.editAwareMidiEvents();
-    
     const uint8_t outCh = track.getMidiChannel();
     Loop& loop = track.getActiveLoop();
-    // Create Note On event
-    MidiEvent noteOn;
-    noteOn.type = midi::NoteOn;
-    noteOn.tick = tick;
-    noteOn.channel = outCh;
-    noteOn.data.noteData.note = defaultNote;
-    noteOn.data.noteData.velocity = defaultVelocity;
-    noteOn.noteId = loop.allocateNoteId();
-    midiEvents.push_back(noteOn);
-    
-    // Create Note Off event
-    MidiEvent noteOff;
-    noteOff.type = midi::NoteOff;
-    noteOff.tick = endTick;
-    noteOff.channel = outCh;
-    noteOff.data.noteData.note = defaultNote;
-    noteOff.data.noteData.velocity = 0;
-    noteOff.noteId = noteOn.noteId;
-    midiEvents.push_back(noteOff);
-    
-    // Sort events to maintain order
-    std::sort(midiEvents.begin(), midiEvents.end(),
-              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    const NoteId noteId = loop.allocateNoteId();
+    const NoteBaseline span{defaultNote, defaultVelocity, tick, endTick};
+
+    NoteEditCurrentState& currentState = manager.noteEditCurrentStateMut();
+    currentState.upsertRow(noteId, span, span, NoteEditPresenceType::Added);
+    manager.refreshNoteEditSessionProjection(outCh);
+
+    MidiEvent noteOn = MidiEvent::NoteOn(tick, outCh, defaultNote, defaultVelocity);
+    noteOn.noteId = noteId;
+    MidiEvent noteOff = MidiEvent::NoteOff(endTick, outCh, defaultNote, 0);
+    noteOff.noteId = noteId;
 
     track.invalidateCaches();
 
     logger.info(
         "EditSelectNoteState: Created 32nd note (noteId=%lu, pitch=%d, tick=%lu-%lu, length=%lu)",
-        static_cast<unsigned long>(noteOn.noteId), defaultNote, tick, endTick, noteLength);
-    // Return the exact created events: after the sort above they are not necessarily the
-    // last two entries, so callers must use these to record an AddNote edit.
+        static_cast<unsigned long>(noteId), defaultNote, tick, endTick, noteLength);
     return {noteOn, noteOff};
 }
 
-std::array<MidiEvent, 2> EditSelectNoteState::createNoteAtTick(Track& track, uint32_t tick) {
+std::array<MidiEvent, 2> EditSelectNoteState::createNoteAtTick(Track& track, EditManager& manager,
+                                                               uint32_t tick) {
     EditSelectNoteState helper;
-    return helper.createDefaultNote(track, tick);
+    return helper.createDefaultNote(track, manager, tick);
 }
 
 bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& track,

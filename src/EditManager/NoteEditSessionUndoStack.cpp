@@ -46,6 +46,12 @@ void logUndoWarmSummary(const char* kind, uint32_t totalStartUs, size_t baseline
 
 constexpr size_t kBaselineMapEntryOverheadBytes = 40;
 constexpr size_t kOverlapNoteMapEntryOverheadBytes = 48;
+constexpr size_t kCurrentStateRowOverheadBytes = 48;
+
+size_t estimatedNoteEditCurrentStateBytes(const NoteEditCurrentState& state) {
+  return state.size() * (sizeof(NoteId) + sizeof(NoteEditCurrentNoteState) +
+                         kCurrentStateRowOverheadBytes);
+}
 
 EditPass makeSessionStoreRow(EditActionType actionType, EditPropertyType propertyType) {
   EditPass row{};
@@ -96,14 +102,12 @@ size_t estimatedSessionUndoInternalBytes(const SessionUndoEntry& entry) {
     bytes += row.addedEvents.size() * sizeof(MidiEvent);
   }
   bytes += entry.editPassIdsAtPush.size() * sizeof(EditPassId);
-  bytes += entry.focus.changedOverlapNoteIds.size() * sizeof(NoteId);
   if (entry.hasRedoPayload) {
     bytes += entry.redoEditRows.size() * sizeof(EditPass);
     for (const EditPass& row : entry.redoEditRows) {
       bytes += row.addedEvents.size() * sizeof(MidiEvent);
     }
     bytes += entry.redoEditPassIds.size() * sizeof(EditPassId);
-    bytes += entry.redoFocus.changedOverlapNoteIds.size() * sizeof(NoteId);
   }
   return bytes;
 }
@@ -113,11 +117,17 @@ size_t estimatedSessionUndoExternalBytes(const SessionUndoEntry& entry) {
                  (sizeof(NoteId) + sizeof(NoteBaseline) + kBaselineMapEntryOverheadBytes);
   bytes += entry.focus.overlapNotes.size() *
            (sizeof(NoteId) + sizeof(OverlapNote) + kOverlapNoteMapEntryOverheadBytes);
+  if (entry.hasUndoCurrentState) {
+    bytes += estimatedNoteEditCurrentStateBytes(entry.undoCurrentState);
+  }
   if (entry.hasRedoPayload) {
     bytes += entry.redoFocus.baselineMap.size() *
              (sizeof(NoteId) + sizeof(NoteBaseline) + kBaselineMapEntryOverheadBytes);
     bytes += entry.redoFocus.overlapNotes.size() *
              (sizeof(NoteId) + sizeof(OverlapNote) + kOverlapNoteMapEntryOverheadBytes);
+    if (entry.hasRedoCurrentState) {
+      bytes += estimatedNoteEditCurrentStateBytes(entry.redoCurrentState);
+    }
   }
   return bytes;
 }
@@ -145,7 +155,8 @@ template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,
                                        uint8_t channel, uint32_t loopLength,
-                                       const EditPassIdList& editPassIdsAtPush) {
+                                       const EditPassIdList& editPassIdsAtPush,
+                                       const NoteEditCurrentState* currentStateAtPush) {
 #if defined(SESSION_CAPTURE)
   const uint32_t totalStartUs = micros();
   const size_t baselineCount = focus.baselineMap.size();
@@ -160,6 +171,10 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
   entry.selection = selection;
   entry.focus = snapshotFocusForSessionUndo(focus);
   entry.editPassIdsAtPush = editPassIdsAtPush;
+  if (currentStateAtPush != nullptr && !currentStateAtPush->empty()) {
+    entry.undoCurrentState = currentStateAtPush->clone();
+    entry.hasUndoCurrentState = true;
+  }
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("focus_snap", phaseStartUs, baselineCount, sessionEventCount);
 #endif
@@ -173,8 +188,8 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
   phaseStartUs = micros();
 #endif
-  const bool needsBaselineMapDiff =
-      noteEditFocusHasPendingBaselineMapDiff(focus, sessionFlat, channel, loopLength);
+  const bool needsBaselineMapDiff = noteEditFocusHasPendingBaselineMapDiff(
+      focus, sessionFlat, channel, loopLength, currentStateAtPush);
   const bool needsOverlapResolve = needsBaselineMapDiff && !focus.overlapNotes.empty();
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("baseline_probe", phaseStartUs, baselineCount, sessionEventCount,
@@ -208,8 +223,8 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
   phaseStartUs = micros();
 #endif
-  entry.editRows =
-      buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength);
+  entry.editRows = buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength,
+                                            currentStateAtPush);
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("edit_rows", phaseStartUs, baselineCount, sessionEventCount);
   logUndoWarmSummary("build", totalStartUs, baselineCount, sessionEventCount, entry.editRows.size());
@@ -219,10 +234,10 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 
 template SessionUndoEntry buildSessionUndoEntry<InternalHeapFirstAllocator<MidiEvent>>(
     const NoteEditFocus&, EditorSelection, const MidiEventVec&, uint8_t, uint32_t,
-    const EditPassIdList&);
+    const EditPassIdList&, const NoteEditCurrentState*);
 template SessionUndoEntry buildSessionUndoEntry<ExternalMemoryFirstAllocator<MidiEvent>>(
     const NoteEditFocus&, EditorSelection, const SessionMidiEventVec&, uint8_t, uint32_t,
-    const EditPassIdList&);
+    const EditPassIdList&, const NoteEditCurrentState*);
 
 template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntryAfterLiveCaptureDuringNoteEdit(
@@ -368,15 +383,33 @@ void applySessionEditRows(Loop& loop, CowLoopEventStore& store, const EditPassVe
 
 }  // namespace
 
+void restoreSessionStoreFromCurrentState(CowLoopEventStore& store,
+                                         const NoteEditCurrentState& currentState,
+                                         uint8_t channel) {
+  MidiEventVec& flat = store.mutEvents();
+  currentState.projectToSessionStore(flat, channel);
+  store.syncEventsToStore();
+}
+
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
-                           uint32_t loopLength, const EditPassIdList& currentEditPassIds) {
+                           uint32_t loopLength, uint8_t channel,
+                           const EditPassIdList& currentEditPassIds) {
+  if (entry.hasUndoCurrentState) {
+    restoreSessionStoreFromCurrentState(store, entry.undoCurrentState, channel);
+    return;
+  }
   applySessionEditRows(loop, store, entry.editRows, loopLength, currentEditPassIds,
                        entry.editPassIdsAtPush);
 }
 
 void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
-                           uint32_t loopLength, const EditPassIdList& currentEditPassIds) {
+                           uint32_t loopLength, uint8_t channel,
+                           const EditPassIdList& currentEditPassIds) {
   if (!entry.hasRedoPayload) {
+    return;
+  }
+  if (entry.hasRedoCurrentState) {
+    restoreSessionStoreFromCurrentState(store, entry.redoCurrentState, channel);
     return;
   }
   applySessionEditRows(loop, store, entry.redoEditRows, loopLength, currentEditPassIds,

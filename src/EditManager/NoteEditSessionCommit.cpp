@@ -11,6 +11,7 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "NoteEditFocus.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
 #include "TrackManager.h"
@@ -29,13 +30,16 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         return;
     }
 
+    // NOTE_EDIT_PROJECTED_STORE_COMPAT: commit normalizes projected flat until tasks.md §7.1.
     MidiEventVec& sessionStoreEvents = sessionMidiEvents();
     const bool hasPendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
     const bool hasPendingApplyOwnedRows = !editSession.applyOwnedEditPassRows.empty();
     const bool hasPendingOverlapCommit =
         hasPendingApplyOwnedRows ||
-        noteEditFocusHasPendingBaselineMapDiff(editSession.focus, sessionStoreEvents, channel,
-                                               loopLength);
+        noteEditFocusHasPendingBaselineMapDiff(
+            editSession.focus, sessionStoreEvents, channel, loopLength,
+            editSession.noteEditCurrentState.empty() ? nullptr
+                                                     : &editSession.noteEditCurrentState);
     if (!hasPendingMoverCommit && !hasPendingOverlapCommit) {
         return;
     }
@@ -54,8 +58,26 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
     LoopTickNormalize::normalizeAll(sessionStoreEvents, loopLength);
+    if (!editSession.noteEditCurrentState.empty()) {
+        editSession.noteEditCurrentState.syncProjectingRowsFromSessionStore(sessionStoreEvents,
+                                                                            channel);
+    }
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
+
+    if (!isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionStoreEvents,
+                               channel, loopLength)) {
+#if defined(SESSION_CAPTURE)
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "NOTE_EDIT macro commit skipped: driver invalid (moving=%lu primary=%lu "
+                   "focus_last=%lu-%lu)",
+                   static_cast<unsigned long>(editSession.focus.movingNoteId),
+                   static_cast<unsigned long>(sessionState.selection.primaryNote),
+                   static_cast<unsigned long>(editSession.focus.last.startTick),
+                   static_cast<unsigned long>(editSession.focus.last.endTick));
+#endif
+        return;
+    }
 
     const LoopEventValidation::LoopEventValidationResult macroInvariantResult =
         LoopEventValidation::validateLoopEvents(sessionStoreEvents, loopLength,
@@ -69,8 +91,20 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
 #if defined(SESSION_CAPTURE)
     const EditPassVec applyOwnedRows = editSession.applyOwnedEditPassRows;
 #endif
-    EditPassVec rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents,
-                                                loopLength);
+    EditPassVec rows;
+    if (!editSession.noteEditCurrentState.empty()) {
+        rows = buildCommitRowsFromCurrentState(editSession.focus, editSession.noteEditCurrentState,
+                                               channel, loopLength);
+#if defined(SESSION_CAPTURE)
+        const EditPassVec parityRows = buildPreCommitEditPasses(
+            editSession.focus, channel, &sessionStoreEvents, loopLength,
+            &editSession.noteEditCurrentState);
+        logApplyOwnedCommitParity(rows, parityRows);
+#endif
+    } else {
+        rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength,
+                                        nullptr);
+    }
     editSession.applyOwnedEditPassRows.clear();
 #if defined(SESSION_CAPTURE)
     if (!applyOwnedRows.empty()) {
@@ -88,7 +122,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         collectCommittedOverlapDeleteIds(editSession.focus, rows);
     const std::vector<std::pair<NoteId, NoteBaseline>> committedOverlapUpdateBaselines =
         collectCommittedOverlapUpdateBaselines(editSession.focus, rows);
-    const EditPassId id = commitEditAction(track, std::move(rows));
+    const EditPassId id = commitEditAction(track, std::move(rows), false);
     if (id == kInvalidEditPassId) {
         return;
     }
@@ -99,11 +133,29 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     editSession.focus.commitBaseline = editSession.focus.last;
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
+    if (!editSession.noteEditCurrentState.empty()) {
+        for (const auto& [noteId, baseline] : committedOverlapUpdateBaselines) {
+            editSession.noteEditCurrentState.syncCommittedSpan(noteId, baseline);
+        }
+        if (editSession.focus.movingNoteId != kInvalidNoteId) {
+            editSession.noteEditCurrentState.syncCommittedSpan(editSession.focus.movingNoteId,
+                                                               editSession.focus.commitBaseline);
+        }
+        refreshNoteEditSessionProjection(channel);
+        bumpSessionPreviewRevision();
+    }
     for (const auto& [noteId, baseline] : committedOverlapUpdateBaselines) {
         applyCommittedOverlapUpdateToFocus(editSession.focus, noteId, baseline);
     }
+    // Stage 7.5.E2 (022849): seal committed overlap Deletes in currentState so reselect cannot
+    // reinsert/RestoreNote sealed-hidden participants when the mover passes again.
+    for (NoteId noteId : committedOverlapDeleteIds) {
+        editSession.noteEditCurrentState.markRowDeleted(noteId);
+    }
     clearCommittedOverlapDeleteIdsFromFocus(editSession.focus, committedOverlapDeleteIds);
     clearCommittedOverlapScratchExceptHidden(editSession.focus);
+
+    invalidateNoteEditDerivedCaches();
 
     // Commit rebuilds projection / filtered ordering; resync index from NoteId + focus.last.
     if (editorSelectionHasNote(sessionState.selection) && editSession.focus.active &&
@@ -116,7 +168,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
             storageBracketTick, noteEditLoopStartTick(track), loopLength);
         sessionState.selection.selectedTick = displayBracket;
         selectedTick = displayBracket;
-        invalidateNoteEditDerivedCaches();
         syncSelectedNoteIdxToFilteredInventory(track);
     }
 }
@@ -211,7 +262,8 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
     return savedRows;
 }
 
-EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
+EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows,
+                                                              bool applySessionOverlay) {
     if (!editSession.active || rows.empty()) {
         return kInvalidEditPassId;
     }
@@ -295,11 +347,13 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     loop.mergeActiveCapturePasses(takeOnlyFlat);
     logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch, homeStart);
 
-    const EditPassVec sessionOverlay =
-        buildSessionStoreEditPasses(loopMidiEventsFromPasses, sessionSnapshot,
-                                    track.getMidiChannel(), loopLength);
-    if (!sessionOverlay.empty()) {
-        applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loopLength);
+    if (applySessionOverlay) {
+        const EditPassVec sessionOverlay =
+            buildSessionStoreEditPasses(loopMidiEventsFromPasses, sessionSnapshot,
+                                        track.getMidiChannel(), loopLength);
+        if (!sessionOverlay.empty()) {
+            applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loopLength);
+        }
     }
 
     editSession.store.mutStore().loadFromEvents(loopMidiEventsFromPasses);

@@ -890,11 +890,11 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   undoEntry.redoSelection = redoPayload.selection;
   undoEntry.hasRedoPayload = true;
 
-  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, EditPassIdList{});
+  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, 5, EditPassIdList{});
   TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 8));
   TEST_ASSERT_EQUAL(0, countMatching(session.readEvents(), true, 60, 496));
 
-  applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, EditPassIdList{});
+  applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, 5, EditPassIdList{});
   TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 496));
 }
 

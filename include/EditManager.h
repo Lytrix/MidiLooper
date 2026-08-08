@@ -79,7 +79,8 @@ public:
     void closeNoteEditPass(Track& track);
     /// Push **NoteEditPassClosed** when committed **editPass** rows have become durable (SD, depart).
     void markCurrentEditBatchDurable(Track& track);
-    EditPassId commitEditAction(Track& track, EditPassVec rows);
+    EditPassId commitEditAction(Track& track, EditPassVec rows,
+                                bool applySessionOverlay = true);
     bool pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
     void foldLiveCaptureIntoNoteEditSession(Track& track);
     void restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry);
@@ -133,6 +134,11 @@ public:
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
     void commitAllPendingNoteEditActions(Track& track);
+    /// True when live edit driver satisfies D19a (NoteId + store linear span).
+    bool isLiveEditDriverValidForTrack(const Track& track) const;
+    /// True when select bracket matches **focus.last** for the same mover (RC7b).
+    bool isMacroCommitAlignedWithSelectTargetForTrack(const Track& track, NoteId selectNoteId,
+                                                      uint32_t selectBracketTick) const;
     /// Drop pending apply-owned Delete row for a note the user is navigating to via fader-1.
     void cancelPendingDeleteForSelectNote(NoteId noteId);
     /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.
@@ -149,7 +155,7 @@ public:
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
     /// Filtered select inventory during note edit; else cached notes (encoder + fader).
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
-    /// Single cached NOTE_EDIT display projection (session store + focus).
+    /// Single cached NOTE_EDIT display projection (session store + focus) for grid paint.
     NoteUtils::DisplayNoteVec projectedNoteEditDisplayNotes(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (session reconstruction minus Hidden overlap).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
@@ -168,6 +174,20 @@ public:
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     /// Refresh **focus.last** start/end from the live session store note-on/off pair.
     void syncNoteEditFocusLastFromSessionStore(Track& track);
+    /// Clear visible shortened overlap participation before empty-step deselect so display does
+    /// not flash committed leave-restore length (session_20260808_002309).
+    void clearVisibleOverlapParticipationBeforeDeselect();
+    /// Read-only canonical projection of note edit current state during NOTE_EDIT.
+    const MidiEventVec& noteEditSessionProjectionEvents() const;
+    /// Projection owner: rebuild EditSession.store from noteEditCurrentState.
+    void refreshNoteEditSessionProjection(uint8_t channel);
+    NoteEditCurrentState& noteEditCurrentStateMut();
+    const NoteEditCurrentState& noteEditCurrentState() const;
+#if NOTE_EDIT_PROJECTED_STORE_COMPAT
+    /// Compat direct projected-store mutation — remove after tasks.md §5–7 writer migration.
+    MidiEventVec& mutNoteEditSessionProjectionEventsCompat();
+    MidiEventVec& mutEditProjectionEventsCompat(Track& track);
+#endif
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
     void bumpSessionPreviewRevision();
@@ -273,6 +293,7 @@ private:
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
+    void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     void emitEditEvent(EditEvent event);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
@@ -305,6 +326,8 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    mutable int noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
+    mutable NoteUtils::DisplayNoteVec noteEditPaintDisplayCacheNotes_;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;
     mutable uint32_t noteEditDisplayInvalidateEpoch_ = 0;
     mutable uint32_t noteEditDisplayPaintedEpoch_ = 0;

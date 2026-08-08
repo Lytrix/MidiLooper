@@ -58,7 +58,8 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::pushSessionUndoOnKindChange(Track& track
 #endif
         entry = buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
                                       track.getMidiChannel(), noteEditLoopLengthTicks(track),
-                                      editSession.editPassIds);
+                                      editSession.editPassIds,
+                                      &editSession.noteEditCurrentState);
 #if defined(SESSION_CAPTURE)
         logger.info("#CAP,%lu,UNDO_WARM,push,cache_miss,%lu,%zu,%u",
                     static_cast<unsigned long>(micros()),
@@ -115,7 +116,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track
     kindBoundaryUndoCache_ =
         buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
                               track.getMidiChannel(), noteEditLoopLengthTicks(track),
-                              editSession.editPassIds);
+                              editSession.editPassIds, &editSession.noteEditCurrentState);
     kindBoundaryUndoCacheValid_ = true;
     kindBoundaryUndoCacheRevision_ = sessionPreviewRevision_;
 #if defined(SESSION_CAPTURE)
@@ -129,9 +130,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track
 
 EDIT_MANAGER_IMPL_MEM void EditManager::restoreSessionUndoEntry(Track& track,
                                                                 const SessionUndoEntry& entry) {
-    Loop& loop = trackManager.getSelectedLoop(track);
-    applySessionUndoEntry(loop, editSession.store, entry, noteEditLoopLengthTicks(track),
-                          editSession.editPassIds);
+    const uint8_t channel = track.getMidiChannel();
+    if (entry.hasUndoCurrentState) {
+        editSession.noteEditCurrentState.assignFrom(entry.undoCurrentState);
+        refreshNoteEditSessionProjection(channel);
+    } else {
+        Loop& loop = trackManager.getSelectedLoop(track);
+        applySessionUndoEntry(loop, editSession.store, entry, noteEditLoopLengthTicks(track),
+                              channel, editSession.editPassIds);
+    }
     editSession.focus = entry.focus;
     sessionState.selection = entry.selection;
     syncNoteEditSessionStateToUi(track);
@@ -183,7 +190,8 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::sessionUndo(Track& track) {
     SessionUndoEntry redoPayload =
         buildSessionUndoEntry(editSession.focus, sessionState.selection,
                               editSession.store.readEvents(), track.getMidiChannel(),
-                              noteEditLoopLengthTicks(track), editSession.editPassIds);
+                              noteEditLoopLengthTicks(track), editSession.editPassIds,
+                              &editSession.noteEditCurrentState);
     SessionUndoEntry* entry = editSession.undoStack.popUndoTarget();
     if (entry == nullptr) {
         return false;
@@ -191,11 +199,19 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::sessionUndo(Track& track) {
     const bool liveCaptureEntry =
         entry->hasRedoPayload && entry->editRows.empty() && !entry->redoEditRows.empty();
     if (liveCaptureEntry) {
+        if (!entry->hasRedoCurrentState && !editSession.noteEditCurrentState.empty()) {
+            entry->redoCurrentState = editSession.noteEditCurrentState.clone();
+            entry->hasRedoCurrentState = true;
+        }
         entry->redoFocus = editSession.focus;
         entry->redoSelection = sessionState.selection;
         entry->redoEditPassIds = editSession.editPassIds;
     } else {
         entry->redoEditPassIds = editSession.editPassIds;
+        if (!editSession.noteEditCurrentState.empty()) {
+            entry->redoCurrentState = editSession.noteEditCurrentState.clone();
+            entry->hasRedoCurrentState = true;
+        }
         entry->redoEditRows = std::move(redoPayload.editRows);
         entry->redoFocus = std::move(redoPayload.focus);
         entry->redoSelection = redoPayload.selection;
@@ -242,8 +258,14 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::sessionRedo(Track& track) {
     Loop& loop = trackManager.getSelectedLoop(track);
     loop.enableEditPasses(entry->redoEditPassIds);
     editSession.editPassIds = entry->redoEditPassIds;
-    applySessionRedoEntry(loop, editSession.store, *entry, noteEditLoopLengthTicks(track),
-                          editSession.editPassIds);
+    const uint8_t channel = track.getMidiChannel();
+    if (entry->hasRedoCurrentState) {
+        editSession.noteEditCurrentState.assignFrom(entry->redoCurrentState);
+        refreshNoteEditSessionProjection(channel);
+    } else {
+        applySessionRedoEntry(loop, editSession.store, *entry, noteEditLoopLengthTicks(track),
+                              channel, editSession.editPassIds);
+    }
     editSession.focus = entry->redoFocus;
     sessionState.selection = entry->redoSelection;
     editSession.undoStack.advanceRedoCursor();

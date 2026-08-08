@@ -108,7 +108,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCreateNoteAtBracket(Track& track
     editManager.setSelectedNoteIdx(-1);
     editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
     const std::array<MidiEvent, 2> created =
-        EditSelectNoteState::createNoteAtTick(track, storageTick);
+        EditSelectNoteState::createNoteAtTick(track, editManager, storageTick);
     NoteUtils::DisplayNote createdDisplay{};
     createdDisplay.noteId = created[0].noteId;
     createdDisplay.note = created[0].data.noteData.note;

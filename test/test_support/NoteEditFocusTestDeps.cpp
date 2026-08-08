@@ -6,9 +6,11 @@
 #pragma once
 
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/NoteEditCurrentState.cpp"
 #include "../../src/EditManager/NoteEditFocusLinearSpan.cpp"
 #include "../../src/EditManager/NoteEditFocusBaseline.cpp"
 #include "../../src/EditManager/NoteEditFocusOverlap.cpp"
 #include "../../src/EditManager/NoteEditFocusState.cpp"
 #include "../../src/EditManager/NoteEditFocusPreCommit.cpp"
 #include "../../src/EditManager/NoteEditFocusDisplayProjection.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"

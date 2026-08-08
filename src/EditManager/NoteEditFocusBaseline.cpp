@@ -170,6 +170,14 @@ NOTE_EDIT_MEM bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, M
   return projectCanonicalBaselineForEdit(noteId, canonical, originTick, loopLength, out);
 }
 
+NOTE_EDIT_FOCUS_INTERNAL_MEM bool isPlausibleOverlapDiffLiveBaseline(const NoteBaseline& live,
+                                                                     uint32_t loopLength) {
+  if (loopLength == 0) {
+    return live.endTick > live.startTick;
+  }
+  return isPlausibleStorageSpan(live.startTick, live.endTick, loopLength);
+}
+
 template <typename Alloc>
 NOTE_EDIT_FOCUS_INTERNAL_MEM bool readLiveBaselineForOverlapDiff(
     const std::vector<MidiEvent, Alloc>& sessionEvents, NoteId noteId, const NoteBaseline& baseline,
@@ -177,7 +185,8 @@ NOTE_EDIT_FOCUS_INTERNAL_MEM bool readLiveBaselineForOverlapDiff(
   std::vector<MidiEvent, Alloc>& mutableEvents =
       const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
   if (noteId != kInvalidNoteId &&
-      findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, out, UINT32_MAX, loopLength)) {
+      findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, out, UINT32_MAX, loopLength) &&
+      isPlausibleOverlapDiffLiveBaseline(out, loopLength)) {
     return true;
   }
   NoteId resolvedId = kInvalidNoteId;
@@ -209,8 +218,16 @@ NOTE_EDIT_FOCUS_INTERNAL_MEM bool readLiveBaselineForOverlapDiff(
   if (movingNoteId != kInvalidNoteId && resolvedId == movingNoteId) {
     return false;
   }
-  return findLinearNoteSpanForNoteId(mutableEvents, resolvedId, channel, out, baseline.startTick,
-                                     loopLength);
+  if (findLinearNoteSpanForNoteId(mutableEvents, resolvedId, channel, out, UINT32_MAX, loopLength) &&
+      isPlausibleOverlapDiffLiveBaseline(out, loopLength)) {
+    return true;
+  }
+  if (findLinearNoteSpanForNoteId(mutableEvents, resolvedId, channel, out, baseline.startTick,
+                                  loopLength) &&
+      isPlausibleOverlapDiffLiveBaseline(out, loopLength)) {
+    return true;
+  }
+  return false;
 }
 
 template bool readLiveBaselineForOverlapDiff<InternalHeapFirstAllocator<MidiEvent>>(

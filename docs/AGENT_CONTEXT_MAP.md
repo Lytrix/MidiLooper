@@ -205,21 +205,26 @@ Always load first:
 
 **Required**
 
-- [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md)
+- [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) — current geometry / participation / leave-restore / commit workflow
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
-- `EditManager`, `ControlSurfaceManager`, `EditStates/`
+- `EditManager`, `NoteGeometryResolver`, `NoteEditCurrentState`, `ControlSurfaceManager`, `EditStates/`
 - [NAMING.md](00-authority/NAMING.md)
 - `.cursor/rules/HITL-Edit-Test-Flow.mdc`
+- DEC-029 / DEC-030 in [DECISION_LOG.md](DECISION_LOG.md)
 
 **Optional**
 
+- [plans/note_edit_resolver_authority_contracts_refinement.md](plans/note_edit_resolver_authority_contracts_refinement.md) — behavioral migration DONE; remaining §12 R1–R5 representation only
+- `openspec/specs/edit-session-action-geometry/`
 - `openspec/specs/note-edit-modification-session/`
-- `openspec/specs/change-length-commit-rematerialize/`
+- `openspec/changes/note-edit-current-state/` (active until archive)
 - Overlap BUG archives under `openspec/changes/archive/`
 
 **Avoid**
 
-- Pre-NoteEditSession overlap docs that predate `overlapNotes` on focus
+- Treating Focus `changedOverlapNoteIds` as authority (removed — DEC-030 / §11 step 5.5)
+- Pre-`NoteEditCurrentState` overlap docs that infer session semantics from live store alone
+- Imperative `findOverlaps` / restore-first chains as the live geometry engine
 
 ---
 

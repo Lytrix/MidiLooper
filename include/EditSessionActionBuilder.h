@@ -8,6 +8,7 @@
 
 #include "EditSessionAction.h"
 #include "MidiEvent.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 
 /// Edit session action builder — observes constrained geometry + edited geometry + baseline +
@@ -15,9 +16,11 @@
 EditSessionActions buildEditSessionActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
-    const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
-    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
-    uint32_t loopLength);
+    const EditedGeometry& editedGeometry, const BaselineMap& projectedTransactionBaseline,
+    const BaselineMap& storageTransactionBaseline,
+    const NoteIdList& leaveRestoreTargetNoteIds, MidiEventVec& liveStore, uint8_t channel,
+    const NoteEditFocus& focus, uint32_t loopLength,
+    const NoteEditCurrentState* currentState = nullptr);
 
 #if defined(SESSION_CAPTURE)
 void logEditSessionActions(const EditSessionActions& actions);
