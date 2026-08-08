@@ -234,6 +234,8 @@ Everything else belongs in the appropriate archive category.
 
 ### Batch 2a — Cursor exports
 
+**Status:** **Done** (2026-08-08) — 43 files → `docs/Plans/archive/cursor-exports/`; 4 retained at root (live refs).
+
 **Scope:** Move historical `*.plan.md` to `docs/Plans/archive/cursor-exports/`.
 
 **Safety gate:** Do not blindly move every `*.plan.md`.
@@ -263,7 +265,7 @@ Historical exports that have no live dependency can be moved mechanically.
 
 Do not rewrite the contents merely because they are being archived.
 
-**Exit:** Normally `ls docs/Plans/*.plan.md` should be empty. Exceptions require an explicit reason that the file remains an active working document.
+**Exit:** Normally `ls docs/Plans/*.plan.md` lists only explicitly retained working documents. **Done 2026-08-08:** 4 retained — `multi-loop_leds_and_droid_lfo_3a62f325`, `dual-tick_view_override_architecture_856310b1`, `exclude_led_channels_from_all_notes_off_1fca1ecd`, `reduce_undo_and_lazy_loop_b89758a6`.
 
 ---
 

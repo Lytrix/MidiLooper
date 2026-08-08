@@ -39,7 +39,7 @@ Switching between filled slots (old D5) cannot be tested until multiple slots ca
 
 ## Plan file changes
 
-Update [multi-loop_leds_and_droid_lfo_3a62f325.plan.md](multi-loop_leds_and_droid_lfo_3a62f325.plan.md):
+Update [multi-loop_leds_and_droid_lfo_3a62f325.plan.md](../../multi-loop_leds_and_droid_lfo_3a62f325.plan.md):
 
 - **Remove D5** as a standalone deliverable; its switch logic is absorbed into D11
 - **D11 dependency:** D10 only (remove D5)

@@ -30,7 +30,9 @@ When a plan is no longer active, `git mv` into `docs/Plans/archive/`:
 
 | Subfolder | Contents |
 |-----------|----------|
-| `cursor-exports/` | Historical `*.plan.md` |
+| `cursor-exports/` | Historical `*.plan.md` (43 archived 2026-08-08) |
+
+**Retained at `Plans/` root (live references):** `multi-loop_leds_and_droid_lfo_3a62f325.plan.md`, `dual-tick_view_override_architecture_856310b1.plan.md`, `exclude_led_channels_from_all_notes_off_1fca1ecd.plan.md`, `reduce_undo_and_lazy_loop_b89758a6.plan.md`.
 | `handoff/` | Superseded `*_handoff.md` |
 | `bugfix/` | `Status: FROZEN` bugfixes |
 | `refinements/` | Optional home for historical `docs/Refinements/` |
