@@ -705,7 +705,7 @@ Focus `changedOverlapNoteIds` **removed** (5.5) — participation is current-sta
 | **5.2** | Migrate display/inventory readers to named latch/geometry queries; dual-assert where safe | **Shipped** (folded into 5.3/5.4) |
 | **5.3** | Encode sticky end-of-participation as `NoteEditOverlapParticipationType::{Active,Ended}` on current state; clear → Ended; Shorten/Hide/Restore → Active | **Shipped** (native) — DEC-030; smoke HITL `025807` |
 | **5.4** | Geometry pipeline + pre-commit use derived participation only | **Shipped** (native); smoke HITL `030432` |
-| **5.5** | Delete `changedOverlapNoteIds`; drop `reconcileChangedOverlapNoteIdsFromLiveStore` / latch writers; OpenSpec compat flag separate | **Shipped** (native) |
+| **5.5** | Delete `changedOverlapNoteIds`; drop `reconcileChangedOverlapNoteIdsFromLiveStore` / latch writers; OpenSpec compat flag separate | **Shipped** (native + smoke HITL `032118`) |
 
 - `readStoreLinearBaseline` — already removed from tree
 - `NOTE_EDIT_PROJECTED_STORE_COMPAT` / `rowProjectsToStore` semantic uses — **still separate** (not part of step 5)

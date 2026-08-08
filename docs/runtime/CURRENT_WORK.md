@@ -16,9 +16,9 @@ Last updated: 2026-08-08 (§11 step 5.5 latch removed — step 5 complete)
 | Step | Status |
 |------|--------|
 | 1–4.5 | **Done** (7.5.E HITL `024301`) |
-| 5.1–5.5 | **Done** (native; smoke `025807` / `030432` for 5.3/5.4) |
+| 5.1–5.5 | **Done** (native; smoke `025807` / `030432` / `032118`) |
 
-**5.5 shipped:** `NoteEditFocus::changedOverlapNoteIds` and latch reconcile/writers removed. Overlap participation is `NoteEditCurrentNoteState.overlapParticipation` + geometry/presence only. `NOTE_EDIT_PROJECTED_STORE_COMPAT` remains a separate track.
+**5.5 shipped:** `NoteEditFocus::changedOverlapNoteIds` and latch reconcile/writers removed. Overlap participation is `NoteEditCurrentNoteState.overlapParticipation` + geometry/presence only. Smoke HITL [`session_20260808_032118.log`](../../captures/session_20260808_032118.log). `NOTE_EDIT_PROJECTED_STORE_COMPAT` remains a separate track.
 
 Confirm next with user — candidates: `note-edit-current-state` Phase 8 archive prep, HITL edit retest after 5.5 firmware flash.
 
