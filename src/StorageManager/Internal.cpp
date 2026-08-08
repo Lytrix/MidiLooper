@@ -39,6 +39,11 @@ char restoredSetBundlePath_[80] = {};
 std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
 bool undoSnapshotsPending_ = false;
+
+void clearAutoSaveBeforeLoadFolderPending() {
+    autoSaveBeforeLoadFolderPending[0] = '\0';
+    autoSaveBeforeLoadFolderPendingValid = false;
+}
 // Cold persistence job aggregate — OCRAM/RAM2. Not on the MIDI clock / ISR hot path.
 // Size ~5.5 KB; DTCM is reserved for midiHandler / trackManager / playback.
 DMAMEM StorageSession storageSession;
