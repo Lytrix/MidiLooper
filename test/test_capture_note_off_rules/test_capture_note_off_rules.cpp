@@ -341,7 +341,7 @@ void test_capture_has_note_off_after_detects_real_release() {
   TEST_ASSERT_FALSE(loop.captureHasNoteOffAfter(4, 23, 384));
 }
 
-void test_overdub_overlap_restore_triggered_by_close_tick_inside_published_note() {
+void test_overdub_overlap_restore_triggered_by_close_tick_inside_committed_note() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -354,12 +354,12 @@ void test_overdub_overlap_restore_triggered_by_close_tick_inside_published_note(
 
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1344, 4, 12, 100)));
-  // Simulate overdub stop close tick inside published note (1152..1248).
+  // Simulate overdub stop close tick inside committed note (1152..1248).
   // Restore behavior should drop the pending capture note-on (not append F@1184).
   TEST_ASSERT_TRUE(loop.removeOpenCaptureNoteOn(4, 12));
 }
 
-void test_overdub_overlap_stop_restore_preserves_published_note() {
+void test_overdub_overlap_stop_restore_preserves_committed_note() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -429,8 +429,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_performer_release_after_stop_ignored);
   RUN_TEST(test_remove_open_capture_note_on_drops_pending_on);
   RUN_TEST(test_capture_has_note_off_after_detects_real_release);
-  RUN_TEST(test_overdub_overlap_restore_triggered_by_close_tick_inside_published_note);
-  RUN_TEST(test_overdub_overlap_stop_restore_preserves_published_note);
+  RUN_TEST(test_overdub_overlap_restore_triggered_by_close_tick_inside_committed_note);
+  RUN_TEST(test_overdub_overlap_stop_restore_preserves_committed_note);
   RUN_TEST(test_overdub_stop_finalize_off_truncates_overlap_grid_note_without_restore);
   return UNITY_END();
 }

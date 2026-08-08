@@ -31,7 +31,7 @@ void test_getTrackState_armed_when_record_queued_on_empty_selected_slot() {
                                                           false, false, false, true));
 }
 
-void test_getTrackState_not_armed_when_record_queued_on_slot_with_published_midi() {
+void test_getTrackState_not_armed_when_record_queued_on_slot_with_committed_midi() {
   TEST_ASSERT_EQUAL(TRACK_PLAYING,
                     resolveDisplayTrackState(TRACK_PLAYING, SlotOpState::SLOT_OP_IDLE, true, true,
                                              false, true));
@@ -47,6 +47,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_getTrackState_empty_selected_slot);
   RUN_TEST(test_getTrackState_recording_on_selected_slot);
   RUN_TEST(test_getTrackState_armed_when_record_queued_on_empty_selected_slot);
-  RUN_TEST(test_getTrackState_not_armed_when_record_queued_on_slot_with_published_midi);
+  RUN_TEST(test_getTrackState_not_armed_when_record_queued_on_slot_with_committed_midi);
   return UNITY_END();
 }

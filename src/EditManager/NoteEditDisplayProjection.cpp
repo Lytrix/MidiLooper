@@ -73,7 +73,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
                                     track.getMidiChannel(), loopLength,
                                     &editSession.noteEditCurrentState);
     noteEditSelectableDisplayCacheNotes_ =
-        filterProjectingSelectableDisplayNotes(noteEditPaintDisplayCacheNotes_,
+        filterSelectableDisplayNotes(noteEditPaintDisplayCacheNotes_,
                                                &editSession.noteEditCurrentState, focus,
                                                selectedNoteIdx);
 }

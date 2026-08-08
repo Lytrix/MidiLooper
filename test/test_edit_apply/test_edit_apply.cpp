@@ -34,12 +34,12 @@ RecordPass makeRecordPassWithNote(PassId id, uint32_t tick, uint8_t channel = 1)
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, tick, channel, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, channel, 60, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -48,13 +48,13 @@ OverdubPass makeOverdubPassWithNote(PassId id, uint32_t tick, uint8_t pitch) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, tick, 1, pitch, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, 1, pitch, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   OverdubPass pass{};
   pass.id = id;
   pass.mergeSequence = 1;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -76,12 +76,12 @@ RecordPass makeRecordPassWithTwoNotes(PassId id, uint32_t startA, uint32_t endA,
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(endA, 1, pitch, 0)));
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, startB, 1, pitch, 100, 2));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(endB, 1, pitch, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -98,12 +98,12 @@ RecordPass makeEditRecordFixtureRecordPass(PassId id) {
   appendFixtureNotePair(store, 201, 297, 1, 64, 2);
   appendFixtureNotePair(store, 392, 488, 1, 67, 3);
   appendFixtureNotePair(store, 584, 680, 1, 60, 4);
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -112,12 +112,12 @@ RecordPass makeEditRecordFixtureRecordPassCh5(PassId id) {
   LoopEventStore store;
   appendFixtureNotePair(store, 8, 104, 5, 60, 1);
   appendFixtureNotePair(store, 585, 680, 5, 60, 2);
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -128,12 +128,12 @@ RecordPass makeEditRecordFixtureRecordPassCh5_195830(PassId id) {
   appendFixtureNotePair(store, 232, 328, 5, 64, 2);
   appendFixtureNotePair(store, 424, 520, 5, 67, 3);
   appendFixtureNotePair(store, 616, 712, 5, 60, 4);
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -378,13 +378,13 @@ void test_save_edit_appends_without_collapsing_takes() {
     LoopEventStore odStore;
     TEST_ASSERT_TRUE(storeAppendNoteOn(odStore, 100, 1, 60, 100, 2));
     TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(110, 1, 60, 0)));
-    CommittedChunkIdList publishedIds;
-    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(odStore, publishedIds));
+    CommittedChunkIdList committedChunkIds;
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(odStore, committedChunkIds));
     OverdubPass overdub{};
     overdub.id = 2;
     overdub.mergeSequence = 1;
     overdub.state = CapturePassState::Active;
-    overdub.committedChunkIds = std::move(publishedIds);
+    overdub.committedChunkIds = std::move(committedChunkIds);
     loop.passes.overdubPasses.push_back(std::move(overdub));
   }
   loop.nextPassId_ = 3;
@@ -562,9 +562,9 @@ void test_move_note_uses_track_channel() {
   resetNoteIdCounter();
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 5, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(106, 5, 60, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
-  passes.recordPass.committedChunkIds = std::move(publishedIds);
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  passes.recordPass.committedChunkIds = std::move(committedChunkIds);
 
   pushEditPassRow(passes, 1, makeNoteRangeRow(1, 10, 106, 58, 154));
 
@@ -599,9 +599,9 @@ void test_lengthen_commit_rematerialize_hitl_fixture() {
     appendFixtureNotePair(store, 200, 296, 5, 64, 2);
     appendFixtureNotePair(store, 392, 488, 5, 67, 3);
     appendFixtureNotePair(store, 585, 680, 5, 60, 4);
-    CommittedChunkIdList publishedIds;
-    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
-    loop.passes.recordPass.committedChunkIds = std::move(publishedIds);
+    CommittedChunkIdList committedChunkIds;
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+    loop.passes.recordPass.committedChunkIds = std::move(committedChunkIds);
   }
 
   const EditPassId id = loop.saveNoteEditPass(0, makeLengthRow(1, 8, 104, 680));

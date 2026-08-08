@@ -47,7 +47,7 @@ EDIT_MANAGER_IMPL_MEM void logGeomApplyUndo(bool ok, uint32_t elapsedUs, NoteEdi
 
 EDIT_MANAGER_IMPL_MEM void logGeomApplyFocus(uint32_t elapsedUs, NoteEditKind kind);
 
-EDIT_MANAGER_IMPL_MEM void logGeomApplyPipeline(uint32_t elapsedUs, bool applied, NoteEditKind kind);
+EDIT_MANAGER_IMPL_MEM void logGeomApplyResolve(uint32_t elapsedUs, bool applied, NoteEditKind kind);
 
 EDIT_MANAGER_IMPL_MEM void logApplyOwnedCommitParity(const EditPassVec& canonicalRows,
                                                      const EditPassVec& applyOwnedRows);

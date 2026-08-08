@@ -73,9 +73,9 @@ PersistedLoopSnapshot makeSampleLoopSnapshot() {
   record.state = CapturePassState::Active;
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(0, 1, 60, 100)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
-  record.committedChunkIds = std::move(publishedIds);
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
+  record.committedChunkIds = std::move(committedChunkIds);
   snapshot.passes.recordPass = std::move(record);
   return snapshot;
 }

@@ -12,7 +12,7 @@ Architectural vocabulary for MidiLooper — a **ubiquitous language** that docum
 
 1. **Naming is architecture** — vocabulary communicates responsibilities, not implementation mechanics.
 2. **One concept, one term** — avoid synonyms for the same architectural idea.
-3. **Action + scope** — identifiers name what code does and what it applies to (`commitCapturePass`, `filterSelectableDisplayNotes`).
+3. **Action + scope** — identifiers name what code does and what it applies to (`commitCapturePass`, `filterSelectableDisplayNotes`, `selectableDisplayNotesForEditUi`).
 4. **Responsibility over implementation** — files and modules describe *what they own*, not *how they work internally*.
 5. **Predictable over clever** — reuse established repo nouns before inventing new ones.
 6. **Incremental convergence** — adopt preferred terms when touching a subsystem; no repository-wide rename-only commits.
@@ -261,7 +261,7 @@ Avoid `projectNoteGeometryBaseline()` inside `NoteGeometryResolver`; avoid `note
 | `EditedGeometry` | Evaluate `EditedNoteGeometry` | Phase 7+ when `EditSessionAction.h` touched |
 | `ConstrainedNoteGeometry` | **Keep** — already explicit | — |
 | `GeometryFaderInput.cpp` | Evaluate `NoteGeometryFaderInput.cpp` | Next ControlSurface note-edit fader work |
-| `PlayingGeometryDefer.cpp` | Evaluate `PlayingNoteGeometryDefer.cpp` | With playing-transport defer refactor |
+| `PlayingEditGeometryDefer.cpp` | **Done** — was `PlayingGeometryDefer.cpp` | Playing-transport note-edit geometry defer |
 | `isGeometryDriverActive`, `finishGeometryDriverSideEffects`, … | Evaluate **NoteGeometryDriver** vocabulary | ControlSurface boundary — disambiguate from UI/display geometry |
 | `EditEvent::GeometryChanged` | Evaluate `NoteGeometryChanged` | When `EditEvent` consumers refactored |
 | `beginGeometryMutation`, `isGeometryEditKind`, … | **Keep** concise — `EditManager` / `NoteEditKind` context is sufficient | — |
@@ -294,7 +294,7 @@ public:
 
 **TU:** [`src/EditManager/NoteGeometryResolver.cpp`](../../src/EditManager/NoteGeometryResolver.cpp), [`include/NoteGeometryResolver.h`](../../include/NoteGeometryResolver.h).
 
-**Legacy debt:** `runEditSessionGeometryPipeline` / `RunEditSessionGeometryPipeline.*` — migrate in [EditManager TU split Phase 7](Plans/editmanager_translation_unit_extraction_refinement.md). Do not introduce new `*Pipeline*` identifiers for this algorithm.
+**Legacy debt:** `runEditSessionGeometryPipeline` / `RunEditSessionGeometryPipeline.*` — migrated to `NoteGeometryResolver` (EditManager TU split Phase 7). Do not introduce new `*Pipeline*` identifiers for synchronous geometry resolution. **Capture telemetry:** `#CAP,…,GEOM_APPLY,resolve,…` (was `pipeline`); helper `logGeomApplyResolve`.
 
 **Inner steps** (already named): `resolveConstrainedGeometry`, `resolveAllConstrainedGeometry`, `applyEditSessionActions` — evaluate **NoteGeometry** promotion per § Note geometry public symbol review. **Future** (optional): private phase methods on `NoteGeometryResolver` (`validate`, `prepareEvaluationScope`, `analyzeInteractions`, …) — not required for the initial rename.
 
@@ -306,7 +306,7 @@ public:
 |------|-----|-------|
 | MIDI pairs during edit | **NoteEditSession.store** / `editAwareMidiEvents()` | “audible”, “live layer” |
 | Reconstructed notes | **`NoteUtils::reconstructNotes`** → **`DisplayNote`** | `audibleNotes`, `sessionNotes` |
-| Fader-1 + display list excluding Hidden overlap | **`filterSelectableDisplayNotes`** | `NoteEditSessionView`, `selectableNotes()` as a type |
+| Fader-1 + display list excluding Hidden overlap | **`filterSelectableDisplayNotes`** on **`projectNoteEditDisplayNotes`**; **`EditManager::selectableDisplayNotesAtEditSelect`** (full loop) and **`selectableDisplayNotesForEditUi`** (windowed UI) | `NoteEditSessionView`, `selectableNotes()` as a type, `filterProjectingSelectableDisplayNotes` |
 | Bracket / delete target | **`NoteRef`** + select navigation index | cache index without **NoteRef** |
 
 Prefer helpers on **`NoteEditFocus`** or **`SelectNavigation`** — not new `*View` / `*Inventory` types without approval.

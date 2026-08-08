@@ -374,7 +374,7 @@ ProjectionContext buildDisplayProjectionContext(uint32_t loopLength, TickInterva
     return context;
 }
 
-TickInterval makeFullLoopPlaybackWindow(uint32_t loopLength) {
+TickInterval makeFullLoopPlaybackProjectionInterval(uint32_t loopLength) {
     return TickInterval{0, static_cast<int32_t>(loopLength)};
 }
 

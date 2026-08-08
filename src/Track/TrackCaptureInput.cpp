@@ -283,7 +283,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 }
 
 void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
-  if (isPlayingBack) return;  // Ignore playback-triggered MIDI events
+  if (ignorePlaybackMidiInput) return;  // Ignore playback-triggered MIDI events
 
   if (trackState == TRACK_ARMED) {
     armedPreRollNotes[{note, channel}] = PendingNote{note, channel, tick, velocity};
@@ -299,7 +299,7 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
 }
 
 void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
-  if (isPlayingBack) return;
+  if (ignorePlaybackMidiInput) return;
 
   if (trackState == TRACK_ARMED) {
     armedPreRollNotes.erase({note, channel});

@@ -2,9 +2,9 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **1.3** admit* migration (in progress); **1.2 complete** (`a93e205`)  
+**Status:** Active — Phase **1 shipped** (PR [#19](https://github.com/Lytrix/MidiLooper/pull/19) merged); **Phase 2** API/vocabulary on `refactor/codebase-consistency-phase-2`  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
-**Branch:** `refactor/note-edit-projected-store-retire` (off `dev`)  
+**Branch:** `refactor/codebase-consistency-phase-2` (off `dev`); Phase 1 landed via `refactor/authority-cleanup` → PR #19
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
 **Naming authority:** [NAMING.md](../Authority/NAMING.md)  
 **Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) · [GITHUB_WORK_TRACKING.md](../Authority/GITHUB_WORK_TRACKING.md)
@@ -65,9 +65,9 @@ Touch-and-rename / API unification. No rename-only mega-PRs ([NAMING.md](../Auth
 
 | Step | Item | Evidence anchor | Must not change |
 |------|------|-----------------|-----------------|
-| 2.1 | Selectable-display API | Four live names; NAMING cites deleted `filterSelectableDisplayNotes` | Projected note list contents |
-| 2.2 | Geometry vocabulary | `NoteGeometryResolver` shipped; `pipelineApplied`, `GEOM_APPLY,pipeline`, log strings | Resolver apply results; HITL matchers if keyed on CAP tokens |
-| 2.3 | `published` → `committed` | ~35 `published` hits for committed material | Wire formats / CAP tokens unless proven unused |
+| 2.1 | Selectable-display API | Four live names; NAMING cites deleted `filterSelectableDisplayNotes` | Projected note list contents | **Done** — `filterSelectableDisplayNotes`; cache helper private |
+| 2.2 | Geometry vocabulary | `NoteGeometryResolver` shipped; `pipelineApplied`, `GEOM_APPLY,pipeline`, log strings | Resolver apply results; HITL matchers if keyed on CAP tokens | **Done** — `geometryResolved`, `GEOM_APPLY,resolve`, `logGeomApplyResolve` |
+| 2.3 | `published` → `committed` | ~35 `published` hits for committed material | Wire formats / CAP tokens unless proven unused | **Done** — locals/tests; CAP `published` outcome retained |
 | 2.4 | Playing vs Playback terminology | `PendingPlayingGeometry`, `isPlayingBack`, merge-cache “window” naming | Transport vs machinery meanings |
 
 ### Phase 3 — Structural cleanup
@@ -196,7 +196,83 @@ Deprecated `markCurrentSet*Dirty` wrappers forward to the split APIs. **18** pro
 | [`session_20260808_163043.log`](../../captures/session_20260808_163043.log) | 1.2 extended — length bracket, overlap chain, chord select (~48s active; tail continuation) | **PASS** — length end-tick motor sync; 20+ overlap moves; `ChangeLength` commit; `NoteEditPassClosed edits=4` |
 | [`session_20260808_163904.log`](../../captures/session_20260808_163904.log) | Phase 1 gate — boot load + select/move/pitch (~50s) post 1.1–1.3 | **PASS** — `UNDO_PUSH,admit_ok`; move+pitch commits; `NoteEditPassClosed edits=4` |
 
----
+### Phase 2.1 — selectable-display API (vocabulary)
+
+**Goal:** One filter name aligned with NAMING; two public `EditManager` entry points; cached helper private.
+
+| Layer | Symbol | Role |
+|-------|--------|------|
+| Filter | `filterSelectableDisplayNotes` | Paint projection → selectable rows (was `filterProjectingSelectableDisplayNotes`) |
+| Public | `selectableDisplayNotesAtEditSelect` | Full-loop select inventory (or cached notes outside NOTE_EDIT) |
+| Public | `selectableDisplayNotesForEditUi` | Windowed UI inventory |
+| Private | `filteredSelectableDisplayNotesForNoteEdit` | Cached selectable slice |
+
+**Architecture gate (2.1):** Owner — `NoteEditFocus` filter + `EditManager` cache. Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
+
+**Verification:** `pio test -e native` (note-edit suites).
+
+**HITL smoke (Phase 2.1)**
+
+| Capture | Scope | Result |
+|---------|-------|--------|
+| [`session_20260808_170709.log`](../../captures/session_20260808_170709.log) | Boot load + select/move/overlap/pitch + exit (~47s) | **PASS** — 133× `GEOM_APPLY,pipeline,*,1,*`; `NoteEditPassClosed edits=4`; bracket `DNTE` tracks mover |
+
+### Phase 2.2 — geometry vocabulary
+
+**Goal:** Align geometry CAP tokens and locals with `NoteGeometryResolver` / Resolution vocabulary. No automated HITL matchers keyed on `GEOM_APPLY,pipeline` (verified: none in `scripts/` or `test/`).
+
+| Before | After |
+|--------|-------|
+| `pipelineApplied` locals | `geometryResolved` |
+| `logGeomApplyPipeline` | `logGeomApplyResolve` |
+| `#CAP,…,GEOM_APPLY,pipeline,…` | `#CAP,…,GEOM_APPLY,resolve,…` |
+| `GeometryPipeline:` debug prefix | `NoteGeometryResolver:` |
+
+**Architecture gate (2.2):** Owner — `NoteGeometryResolver`. Ownership change: NO. Transition change: NO. Behavior-preserving: YES (log token rename only).
+
+**Verification:** `pio test -e native`; post-flash captures use `GEOM_APPLY,resolve` (pre-2.2 captures such as [`170709`](../../captures/session_20260808_170709.log) still show `pipeline`).
+
+**HITL smoke (Phase 2.2)**
+
+| Capture | Scope | Result |
+|---------|-------|--------|
+| [`session_20260808_173010.log`](../../captures/session_20260808_173010.log) | Boot load + playing-transport move/pitch + overlap (~80s) | **PASS** — 81× `GEOM_APPLY,resolve,*,1,*`; 0× `pipeline`; 81/81 `done,1` with `transport=1` on queue |
+| [`session_20260808_173332.log`](../../captures/session_20260808_173332.log) | Playing-transport move/length + overlap + clean exit (~13s continuation) | **PASS** — 44× `resolve`; 29 Move + 15 Length queue; `NoteEditPassClosed edits=2` |
+
+**Phase 2 HITL gate (2.1–2.4 combined):** **PASS** — [`173010`](../../captures/session_20260808_173010.log) covers boot + move/pitch/overlap while playing; [`173332`](../../captures/session_20260808_173332.log) covers length while playing + session close. Pre-2.2 reference: [`170709`](../../captures/session_20260808_170709.log) (`GEOM_APPLY,pipeline`).
+
+### Phase 2.3 — published → committed (vocabulary)
+
+**Goal:** Remove `published` from production identifiers for committed material; retain documented CAP wire tokens.
+
+| Area | Change |
+|------|--------|
+| Locals | `publishedIds` → `committedChunkIds`; `PendingCapturePass published` → `pendingPass`; materialize scratch → `committedEvents` / `committedLoopMidi` |
+| `SC_DISP` | Parameter `published` → `hasCommittedPasses` (wire field unchanged — same int position) |
+| Tests | `publishedIds` + test symbol renames |
+| **Retained** | `commitResultLabel(Committed)` → `"published"` — HITL `legacy_record_baseline` `completed_outcomes` |
+
+**Architecture gate (2.3):** Owner — Loop/Track capture commit paths. Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
+
+**Verification:** `pio test -e native`; HITL gate above.
+
+### Phase 2.4 — Playing vs Playback (vocabulary)
+
+**Goal:** Disambiguate transport **Playing** from runtime **Playback** machinery; clarify note-edit geometry deferred while transport runs vs merge-cache gather window.
+
+| Before | After |
+|--------|-------|
+| `PendingPlayingGeometry*` / `queuePendingPlaying*` / `processPendingPlayingGeometry` | `PendingPlayingEditGeometry*` / `queuePendingPlayingEdit*` / `processPendingPlayingEditGeometry` |
+| `applyPlayingPitchGeometry` | `applyPlayingEditPitchGeometry` |
+| `PlayingGeometryDefer.cpp` | `PlayingEditGeometryDefer.cpp` |
+| `isPlayingBack` | `ignorePlaybackMidiInput` (overdub capture ignores playback-echo MIDI) |
+| `playbackWindowBuildInProgress` | `mergedMidiEventsBuildInProgress` |
+| `kPlaybackWindowBars` | `kMergedMidiEventsGatherBars` |
+| `makeFullLoopPlaybackWindow` | `makeFullLoopPlaybackProjectionInterval` (full-loop `TickInterval` for projection — not domain `PlaybackWindow`) |
+
+**Architecture gate (2.4):** Owner — `ControlSurfaceManager` defer queue; `Track` capture ingress; `TrackPlaybackWindowBuild` merge cache. Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
+
+**Verification:** `pio test -e native`; HITL gate above.
 
 ## Exit criteria
 

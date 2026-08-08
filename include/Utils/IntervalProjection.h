@@ -146,7 +146,7 @@ NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
                                               uint32_t playheadTick = UINT32_MAX);
 
 /// v1 playback analysis frame — full loop `[0, loopLength)`.
-TickInterval makeFullLoopPlaybackWindow(uint32_t loopLength);
+TickInterval makeFullLoopPlaybackProjectionInterval(uint32_t loopLength);
 
 /// Playback projection context — `originTick` is global transport / effective playback tick.
 ProjectionContext buildPlaybackProjectionContext(uint32_t loopLength, TickInterval window,

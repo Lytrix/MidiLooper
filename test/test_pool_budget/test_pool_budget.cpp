@@ -28,12 +28,12 @@ namespace {
 OverdubPass makeOverdubPass(PassId id, CapturePassState state) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   OverdubPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   pass.mergeSequence = id;
   return pass;
 }
@@ -41,12 +41,12 @@ OverdubPass makeOverdubPass(PassId id, CapturePassState state) {
 RecordPass makeRecordPass(PassId id) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 

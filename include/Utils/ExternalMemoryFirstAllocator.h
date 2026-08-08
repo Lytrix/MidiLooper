@@ -88,7 +88,7 @@ class ExternalMemoryFirstAllocator {
 };
 
 /**
- * Cold-path allocator for published chunk-id lists (seal / publish / SD load).
+ * Cold-path allocator for committed chunk-id lists (seal / commit / SD load).
  * Same routing as ExternalMemoryFirstAllocator but never abort() — callers
  * must pre-check headroom and treat null allocate as failure.
  */

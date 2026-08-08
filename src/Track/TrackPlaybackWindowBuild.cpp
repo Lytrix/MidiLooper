@@ -58,7 +58,7 @@ uint32_t capturePlaybackStreamPhase(const MidiEvent& evt, const ProjectionContex
 ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
   return IntervalProjection::buildPlaybackProjectionContext(
       loop.loopLengthTicks,
-      IntervalProjection::makeFullLoopPlaybackWindow(loop.loopLengthTicks),
+      IntervalProjection::makeFullLoopPlaybackProjectionInterval(loop.loopLengthTicks),
       static_cast<int32_t>(currentTick), track.getProjectionCycleStartTick(),
       static_cast<int32_t>(loop.loopStartTick), track.hasQueuedPlaybackStart(),
       track.getQueuedStartTick());
@@ -89,8 +89,8 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   // materialized underlay. Outside NOTE_EDIT and live capture, chunk-ref merge only (DEC-016).
   // Long loops use windowed gather — full-loop gather after LoadLoopJob Commit hard-faults
   // (session_20260718_210532 / 210001).
-  static bool playbackWindowBuildInProgress = false;
-  if (playbackWindowBuildInProgress) {
+  static bool mergedMidiEventsBuildInProgress = false;
+  if (mergedMidiEventsBuildInProgress) {
     return;
   }
   const bool noteEditPreview = editManager.isNoteEditActive() &&
@@ -121,7 +121,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     }
   }
 
-  playbackWindowBuildInProgress = true;
+  mergedMidiEventsBuildInProgress = true;
   const uint32_t playbackBuildStartUs = micros();
   DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   if (noteEditPreview) {
@@ -131,8 +131,8 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else if (longLoop) {
     // Two bars centered on playhead — enough for LoopEnd launch + clock catch-up.
-    constexpr uint32_t kPlaybackWindowBars = 2;
-    const uint32_t winLen = kPlaybackWindowBars * Config::TICKS_PER_BAR;
+    constexpr uint32_t kMergedMidiEventsGatherBars = 2;
+    const uint32_t winLen = kMergedMidiEventsGatherBars * Config::TICKS_PER_BAR;
     uint32_t winStart = playhead > (winLen / 2) ? playhead - (winLen / 2) : 0;
     if (winStart + winLen > loop.loopLengthTicks) {
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
@@ -157,7 +157,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
   DIAG_TIMING_RECORD(PlaybackBuild, micros() - playbackBuildStartUs);
-  playbackWindowBuildInProgress = false;
+  mergedMidiEventsBuildInProgress = false;
 }
 void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
                           const ProjectionContext& playbackContext) {

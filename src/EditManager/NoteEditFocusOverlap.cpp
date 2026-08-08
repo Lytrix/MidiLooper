@@ -139,7 +139,7 @@ NOTE_EDIT_MEM bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, N
          baseline.pitch == focus.commitBaseline.pitch;
 }
 
-/// Phase 4 geometry pipeline hides/shortens without writing overlapNotes scratch. Leaving that
+/// Phase 4 geometry resolution hides/shortens without writing overlapNotes scratch. Leaving that
 /// pitch must take the full path so RestoreNote can reinsert/extend from baselineMap.
 NOTE_EDIT_FOCUS_INTERNAL_MEM bool baselineMapPitchLaneNeedsRestore(const NoteEditFocus& focus,
                                                     const MidiEventVec& liveStore, uint8_t channel,

@@ -1073,12 +1073,12 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   store.append(MidiEvent::NoteOff(488, 1, 67, 0));
   storeAppendNoteOn(store, 584, 1, 60, 100, 3);
   store.append(MidiEvent::NoteOff(680, 1, 60, 0));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass record{};
   record.id = 1;
   record.state = CapturePassState::Active;
-  record.committedChunkIds = std::move(publishedIds);
+  record.committedChunkIds = std::move(committedChunkIds);
   LoopPasses passes;
   passes.recordPass = std::move(record);
 
@@ -1125,12 +1125,12 @@ void test_reselect_keeps_commit_baseline_with_pending_length() {
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(104, 5, 60, 0)));
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, 585, 5, 60, 100, 2));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(680, 5, 60, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass record{};
   record.id = 1;
   record.state = CapturePassState::Active;
-  record.committedChunkIds = std::move(publishedIds);
+  record.committedChunkIds = std::move(committedChunkIds);
   passes.recordPass = std::move(record);
 
   MidiEventVec committed;

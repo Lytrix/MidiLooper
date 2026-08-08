@@ -59,7 +59,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         ++liveNoteOnCount;
         if (evt.noteId == kInvalidNoteId) {
             logger.log(CAT_MIDI, LOG_WARNING,
-                       "GeometryPipeline: note-on missing noteId tick=%lu pitch=%u (session open "
+                       "NoteGeometryResolver: note-on missing noteId tick=%lu pitch=%u (session open "
                        "should have assigned)",
                        static_cast<unsigned long>(evt.tick),
                        static_cast<unsigned>(evt.data.noteData.note));
@@ -140,7 +140,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
                       .size())
             : 0u;
     logger.log(CAT_MIDI, LOG_DEBUG,
-               "GeometryPipeline: storeNoteOns=%u baselineMap=%u lane=%d changed=%u candidates=%u "
+               "NoteGeometryResolver: storeNoteOns=%u baselineMap=%u lane=%d changed=%u candidates=%u "
                "pairs=%u interactions=%u constrained=%u actions=%u",
                static_cast<unsigned>(liveNoteOnCount),
                static_cast<unsigned>(transactionBaselineAfterEnsure.size()),

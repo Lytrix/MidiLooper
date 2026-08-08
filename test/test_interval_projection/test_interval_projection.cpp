@@ -284,7 +284,7 @@ void test_project_edit_intervals_for_analysis_forces_edit_type() {
 
 void test_playback_linear_off_at_loop_head() {
     constexpr uint32_t loopLength = 1536;
-    const TickInterval window = IntervalProjection::makeFullLoopPlaybackWindow(loopLength);
+    const TickInterval window = IntervalProjection::makeFullLoopPlaybackProjectionInterval(loopLength);
     ProjectionContext context =
         IntervalProjection::buildPlaybackProjectionContext(loopLength, window, 0, 0, 0, false, 0);
 
@@ -293,7 +293,7 @@ void test_playback_linear_off_at_loop_head() {
 
 void test_playback_order_linear_off_before_in_loop() {
     constexpr uint32_t loopLength = 1536;
-    const TickInterval window = IntervalProjection::makeFullLoopPlaybackWindow(loopLength);
+    const TickInterval window = IntervalProjection::makeFullLoopPlaybackProjectionInterval(loopLength);
     ProjectionContext context =
         IntervalProjection::buildPlaybackProjectionContext(loopLength, window, 0, 0, 0, false, 0);
 
@@ -304,7 +304,7 @@ void test_playback_order_linear_off_before_in_loop() {
 
 void test_build_playback_projection_context_fields() {
     constexpr uint32_t loopLength = 960;
-    const TickInterval window = IntervalProjection::makeFullLoopPlaybackWindow(loopLength);
+    const TickInterval window = IntervalProjection::makeFullLoopPlaybackProjectionInterval(loopLength);
     const ProjectionContext context = IntervalProjection::buildPlaybackProjectionContext(
         loopLength, window, 5000, 4800, 120, true, 240);
 

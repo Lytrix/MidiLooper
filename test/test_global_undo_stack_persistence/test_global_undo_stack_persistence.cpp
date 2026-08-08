@@ -263,12 +263,12 @@ RecordPass makeRecordPass() {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(0, 1, 60, 100)));
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOff(48, 1, 60, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
