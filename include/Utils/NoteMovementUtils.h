@@ -66,8 +66,6 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     /**
      * Helper functions extracted from EditStartNoteState
      */
-    bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength);
-
     /** Linear storage interval overlap — no loop-wrap phantom extension. */
     bool linearStorageSpansOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2);
 

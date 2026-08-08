@@ -23,8 +23,9 @@
  *
  * Provides static methods to serialize the current LooperState to external memory (e.g., SD card
  * or flash) and to reload it on startup. Domain code should admit stale persistence work via
- * admitLoopPersist() / admitTrackMeta() / … — not markCurrentSet*Dirty(). requestDeferredSaveState()
- * wakes the legacy deferred writer until the work-item scheduler retires the monolith (B4).
+ * admitLoopPersist() / admitTrackMeta() / markLoopSlotMaterialDirty() + admitLoopSlotPersist().
+ * requestDeferredSaveState() wakes the legacy deferred writer until the work-item scheduler
+ * retires the monolith (B4).
  */
 class StorageManager {
 public:
@@ -100,12 +101,6 @@ public:
     static bool readSavedSetMetadataForFolder(const char* folderName,
                                               SavedSetCatalog::SavedSetMetadata& metadata);
     static bool readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMetadata& metadata);
-    /// @deprecated Prefer admitLoopPersist() + admitSlotMeta().
-    static void markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex);
-    /// @deprecated Prefer admitTrackMeta() + per-loop admitLoopPersist().
-    static void markCurrentSetTrackDirty(uint8_t trackIndex);
-    /// @deprecated Prefer targeted admit* at transition boundaries.
-    static void markAllCurrentSetLoopSlotsDirty();
     static DeferredSaveDisplayStatus getDeferredSaveDisplayStatus(uint32_t nowMs);
     static DeferredSaveDisplayStatus getDeferredLoadDisplayStatus(uint32_t nowMs);
     static uint16_t getRevisionLoadDisplayTargetSetId();

@@ -230,35 +230,6 @@ void StorageManager::admitTrackSlotPersistence(uint8_t trackIndex) {
 #endif
 }
 
-void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)trackIndex;
-    (void)slotIndex;
-    return;
-#endif
-    markLoopSlotMaterialDirty(trackIndex, slotIndex);
-    admitLoopSlotPersist(trackIndex, slotIndex);
-}
-
-void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)trackIndex;
-    return;
-#endif
-    markTrackSlotsMaterialDirty(trackIndex);
-    admitTrackSlotPersistence(trackIndex);
-}
-
-void StorageManager::markAllCurrentSetLoopSlotsDirty() {
-#if BYPASS_STOP_UNDO_SAVE
-    return;
-#endif
-    StorageManagerInternal::markAllCurrentSetLoopSlotsDirtyInternal();
-    for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
-        admitTrackSlotPersistence(track);
-    }
-}
-
 void StorageManager::processEditAutosave(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
