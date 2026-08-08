@@ -18,8 +18,7 @@ std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineConstrainedGeom
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
-    const NoteIdList& changedOverlapNoteIds, const NoteEditFocus& focus,
-    const NoteEditCurrentState* currentState = nullptr);
+    const NoteEditFocus& focus, const NoteEditCurrentState* currentState = nullptr);
 
 ConstrainedNoteGeometry resolveConstrainedGeometry(
     NoteId targetNoteId, const NoteBaseline& baseline,
@@ -33,5 +32,5 @@ resolveAllConstrainedGeometry(
     const BaselineMap& storageTransactionBaseline, const MidiEventVec& liveStore, uint8_t channel,
     uint32_t loopLength, uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
-    const NoteIdList& changedOverlapNoteIds, const NoteEditFocus& focus,
-    NoteIdList& leaveRestoreTargetNoteIds, const NoteEditCurrentState* currentState = nullptr);
+    const NoteEditFocus& focus, NoteIdList& leaveRestoreTargetNoteIds,
+    const NoteEditCurrentState* currentState = nullptr);

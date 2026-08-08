@@ -633,9 +633,6 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
             }
         }
 
-        recordBaselinePitchLaneRestoreOverlapCandidates(focus, midiEvents, channel,
-                                                        currentNoteValue);
-
         const NoteBaseline priorLatch{currentNoteValue, focus.last.velocity, noteStart, noteEnd};
         const NoteBaseline editedSpan{newNoteValue, focus.last.velocity, noteStart, noteEnd};
         const bool pipelineApplied = NoteGeometryResolver::resolveForCausingNote(
@@ -678,9 +675,6 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         (void)refreshPlaybackPreview;
         return true;
     }
-
-    recordBaselinePitchLaneRestoreOverlapCandidates(focus, midiEvents, channel,
-                                                    currentNoteValue);
 
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
         NoteBaseline moverSpan;

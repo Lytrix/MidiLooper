@@ -102,14 +102,12 @@ size_t estimatedSessionUndoInternalBytes(const SessionUndoEntry& entry) {
     bytes += row.addedEvents.size() * sizeof(MidiEvent);
   }
   bytes += entry.editPassIdsAtPush.size() * sizeof(EditPassId);
-  bytes += entry.focus.changedOverlapNoteIds.size() * sizeof(NoteId);
   if (entry.hasRedoPayload) {
     bytes += entry.redoEditRows.size() * sizeof(EditPass);
     for (const EditPass& row : entry.redoEditRows) {
       bytes += row.addedEvents.size() * sizeof(MidiEvent);
     }
     bytes += entry.redoEditPassIds.size() * sizeof(EditPassId);
-    bytes += entry.redoFocus.changedOverlapNoteIds.size() * sizeof(NoteId);
   }
   return bytes;
 }
@@ -190,8 +188,8 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
   phaseStartUs = micros();
 #endif
-  const bool needsBaselineMapDiff =
-      noteEditFocusHasPendingBaselineMapDiff(focus, sessionFlat, channel, loopLength);
+  const bool needsBaselineMapDiff = noteEditFocusHasPendingBaselineMapDiff(
+      focus, sessionFlat, channel, loopLength, currentStateAtPush);
   const bool needsOverlapResolve = needsBaselineMapDiff && !focus.overlapNotes.empty();
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("baseline_probe", phaseStartUs, baselineCount, sessionEventCount,
@@ -225,8 +223,8 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
   phaseStartUs = micros();
 #endif
-  entry.editRows =
-      buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength);
+  entry.editRows = buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength,
+                                            currentStateAtPush);
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("edit_rows", phaseStartUs, baselineCount, sessionEventCount);
   logUndoWarmSummary("build", totalStartUs, baselineCount, sessionEventCount, entry.editRows.size());

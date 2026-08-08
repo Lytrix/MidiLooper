@@ -55,77 +55,10 @@ NOTE_EDIT_MEM const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus
   return it == focus.overlapNotes.end() ? nullptr : &it->second;
 }
 
-NOTE_EDIT_MEM bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId) {
-  return std::find(focus.changedOverlapNoteIds.begin(), focus.changedOverlapNoteIds.end(),
-                   noteId) != focus.changedOverlapNoteIds.end();
-}
-
-NOTE_EDIT_MEM void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId) {
-  if (noteId == kInvalidNoteId || hasChangedOverlapNote(focus, noteId)) {
-    return;
-  }
-  focus.changedOverlapNoteIds.push_back(noteId);
-}
-
-NOTE_EDIT_MEM void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
-                                                               const MidiEventVec& sessionEvents,
-                                                               uint8_t channel,
-                                                               uint32_t loopLength,
-                                                               const NoteEditCurrentState* currentState) {
-  if (!focus.active || loopLength == 0) {
-    return;
-  }
-  const bool useCurrentState = currentState != nullptr && !currentState->empty();
-  for (const auto& [noteId, baseline] : focus.baselineMap) {
-    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
-      continue;
-    }
-    if (useCurrentState) {
-      const NoteEditCurrentNoteState* row = currentState->find(noteId);
-      if (row != nullptr) {
-        if (currentStateRowIsOverlapParticipant(*row)) {
-          recordChangedOverlapNote(focus, noteId);
-        } else {
-          forgetChangedOverlapNote(focus, noteId);
-        }
-        continue;
-      }
-    }
-    NoteBaseline live{};
-    const bool hasLive =
-        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength,
-                                       focus.movingNoteId, live);
-    if (!hasLive) {
-      // Missing session rows on a fresh select (baselineMap from committed passes, empty store)
-      // are not overlap mutations — only scratch / prior overlap membership marks hide/shorten.
-      if (focus.overlapNotes.find(noteId) != focus.overlapNotes.end() ||
-          hasChangedOverlapNote(focus, noteId)) {
-        recordChangedOverlapNote(focus, noteId);
-      } else {
-        forgetChangedOverlapNote(focus, noteId);
-      }
-      continue;
-    }
-    if (live.pitch != baseline.pitch || live.startTick != baseline.startTick ||
-        live.endTick != baseline.endTick) {
-      recordChangedOverlapNote(focus, noteId);
-    } else {
-      forgetChangedOverlapNote(focus, noteId);
-    }
-  }
-}
-
-NOTE_EDIT_MEM void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId) {
-  const auto it = std::find(focus.changedOverlapNoteIds.begin(),
-                            focus.changedOverlapNoteIds.end(), noteId);
-  if (it != focus.changedOverlapNoteIds.end()) {
-    focus.changedOverlapNoteIds.erase(it);
-  }
-}
-
 NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
     NoteEditFocus& focus, NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
     NoteId movingNoteId) {
+  (void)focus;
   if (movingNoteId == kInvalidNoteId) {
     return;
   }
@@ -147,7 +80,6 @@ NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
       continue;
     }
     if (participant.overlapParticipation == NoteEditOverlapParticipationType::Ended) {
-      forgetChangedOverlapNote(focus, noteId);
       continue;
     }
     if (!participatingNoteOverlapInteractionCleared(participant, causingSpan)) {
@@ -155,9 +87,8 @@ NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
     }
     // End overlap participation on deselect without mutating currentSpan — restoring committed
     // geometry here flashes full pre-shorten length when committedSpan lags macro commit
-    // (session_20260807_232118). Authority is Ended on current state; latch is dual-write.
+    // (session_20260807_232118).
     currentState.markOverlapParticipationEnded(noteId);
-    forgetChangedOverlapNote(focus, noteId);
   }
 }
 
@@ -168,7 +99,6 @@ NOTE_EDIT_MEM void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, Note
   }
   focus.baselineMap[noteId] = baseline;
   focus.overlapNotes.erase(noteId);
-  forgetChangedOverlapNote(focus, noteId);
 }
 
 NOTE_EDIT_MEM void clearCommittedOverlapDeleteIdsFromFocus(NoteEditFocus& focus,
@@ -179,7 +109,6 @@ NOTE_EDIT_MEM void clearCommittedOverlapDeleteIdsFromFocus(NoteEditFocus& focus,
     }
     focus.baselineMap.erase(noteId);
     focus.overlapNotes.erase(noteId);
-    forgetChangedOverlapNote(focus, noteId);
   }
 }
 
@@ -266,29 +195,6 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
     }
   }
   return true;
-}
-
-NOTE_EDIT_MEM void recordBaselinePitchLaneRestoreOverlapCandidates(NoteEditFocus& focus,
-                                                                   const MidiEventVec& liveStore,
-                                                                   uint8_t channel,
-                                                                   uint8_t pitch) {
-  for (const auto& [noteId, baseline] : focus.baselineMap) {
-    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
-      continue;
-    }
-    if (baseline.pitch != pitch) {
-      continue;
-    }
-    NoteBaseline live{};
-    if (!readLiveLinearSpan(liveStore, noteId, channel, live)) {
-      recordChangedOverlapNote(focus, noteId);
-      continue;
-    }
-    if (live.pitch != baseline.pitch || live.startTick != baseline.startTick ||
-        live.endTick != baseline.endTick) {
-      recordChangedOverlapNote(focus, noteId);
-    }
-  }
 }
 
 template <typename Alloc>

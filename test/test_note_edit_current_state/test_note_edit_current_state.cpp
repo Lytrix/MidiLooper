@@ -226,8 +226,6 @@ void test_display_projection_inactive_focus_masks_hidden_overlaps() {
   focus.active = false;
   focus.baselineMap[kOverlapA] = {kPitch, 100, 2256, 2303};
   focus.baselineMap[kOverlapB] = {kPitch, 100, 2640, 2783};
-  recordChangedOverlapNote(focus, kOverlapA);
-  recordChangedOverlapNote(focus, kOverlapB);
 
   const NoteUtils::DisplayNoteVec withoutMask =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength, nullptr);
@@ -300,7 +298,6 @@ void test_hide_then_shorten_stays_hidden_and_masks_on_deselect() {
   NoteEditFocus focus;
   focus.active = false;
   focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 2783};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -347,7 +344,6 @@ void test_shorten_overlap_tail_stays_visible_shortened_and_masks_inventory_on_de
   focus.last = {kPitch, 100, 2736, 3263};
   focus.movingNoteRange = {2736, 3263};
   focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec projectedWhileOverlap =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -450,7 +446,6 @@ void test_leave_restore_inventory_masked_tail_stays_hidden() {
   focus.movingNoteRange = {2736, 3263};
   focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
   focus.baselineMap[kMoverId] = {kPitch, 100, 2736, 3263};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec projectedWhileCovered =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -538,7 +533,6 @@ void test_commit_rows_from_current_state_overlap_shorten() {
   focus.commitBaseline = {88, 100, 3600, 4127};
   focus.last = focus.commitBaseline;
   focus.baselineMap[kOverlapId] = {88, 100, 3600, 4127};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   NoteEditCurrentState state;
   state.upsertRow(kMoverId, focus.commitBaseline, focus.last, NoteEditPresenceType::Visible);
@@ -577,7 +571,6 @@ void test_commit_skips_overlap_length_while_visible_tail_active_225025() {
   focus.last = kMoverSpan;
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = kCommitted;
-  recordChangedOverlapNote(focus, kOverlapId);
 
   NoteEditCurrentState state;
   state.upsertRow(kMoverId, kCommitted, kMoverSpan, NoteEditPresenceType::Visible);
@@ -605,7 +598,6 @@ void test_deselect_clears_overlap_participation_without_geometry_restore_232118(
   focus.active = true;
   focus.movingNoteId = kMoverId;
   focus.baselineMap[kOverlapId] = kCommitted;
-  recordChangedOverlapNote(focus, kOverlapId);
 
   NoteEditCurrentState state;
   state.upsertRow(kOverlapId, kCommitted, kTail, NoteEditPresenceType::Visible);
@@ -618,7 +610,6 @@ void test_deselect_clears_overlap_participation_without_geometry_restore_232118(
   TEST_ASSERT_EQUAL(static_cast<int>(NoteEditOverlapParticipationType::Ended),
                     static_cast<int>(row->overlapParticipation));
   TEST_ASSERT_FALSE(currentStateRowIsOverlapParticipant(*row));
-  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
 }
 
 void test_sync_committed_span_marks_visible_overlap_shorten_sealed() {
@@ -779,7 +770,6 @@ void test_display_projection_leave_restore_paints_baseline_when_mover_left_overl
   focus.movingNoteRange = {1920, 2447};
   focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
   focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec visibleShortenedWhileMoverLeft =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -929,7 +919,6 @@ void test_projected_paint_includes_shortened_overlap_inventory_excludes() {
   focus.movingNoteRange = {1776, 1823};
   focus.baselineMap[kOverlapId] = {kPitch, 100, 1728, 2364};
   focus.baselineMap[kMoverId] = {kPitch, 100, 1296, 1391};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec paint =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1026,7 +1015,6 @@ void test_selectable_inventory_excludes_paint_only_hidden_row() {
   focus.movingNoteRange = {1920, 2447};
   focus.baselineMap[kOverlapId] = {kPitch, 100, 2640, 3167};
   focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1197,7 +1185,6 @@ void test_full_overlap_hide_excludes_paint_while_visual_cache_retains_note() {
   focus.movingNoteRange = {kMoverCurrent.startTick, kMoverCurrent.endTick};
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1212,7 +1199,7 @@ void test_full_overlap_hide_excludes_paint_while_visual_cache_retains_note() {
 }
 
 void test_full_overlap_hide_excludes_paint_after_commit_rebuild_clears_focus_latch() {
-  // session_20260807_203805 ~30.1s: post-commit focus rebuild clears changedOverlapNoteIds
+  // session_20260807_203805 ~30.1s: post-commit focus rebuild — Hidden participants still project-gated
   // while overlap row stays Hidden in current state — paint must still exclude.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
@@ -1241,7 +1228,6 @@ void test_full_overlap_hide_excludes_paint_after_commit_rebuild_clears_focus_lat
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
   // Post-commit rebuild: overlap latch cleared.
-  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.changedOverlapNoteIds.size()));
 
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1285,7 +1271,6 @@ void test_reselect_span_matched_mover_projects_current_not_visual_cache() {
   focus.movingNoteRange = {kMovedSpan.startTick, kMovedSpan.endTick};
   focus.baselineMap[kMoverId] = kOriginalCommitted;
   focus.baselineMap[kHiddenOverlapId] = kMovedSpan;
-  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.changedOverlapNoteIds.size()));
 
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1339,8 +1324,6 @@ void test_contract_c9_projection_inventory_independence() {
   focus.baselineMap[kShortenedId] = kShortenedCommitted;
   focus.baselineMap[kHiddenId] = kHiddenCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 3648, 4127};
-  recordChangedOverlapNote(focus, kShortenedId);
-  recordChangedOverlapNote(focus, kHiddenId);
 
   const NoteUtils::DisplayNoteVec paint =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1410,7 +1393,6 @@ void test_contract_c9_203805_shorten_paint_stub_inventory_masked() {
   focus.movingNoteRange = {1824, 1871};
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 3648, 4127};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec paint =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1458,7 +1440,6 @@ void test_shortened_visible_selectable_after_deselect_233447() {
   NoteEditFocus focus;
   focus.active = false;
   focus.baselineMap[kOverlapId] = kCommitted;
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec paint =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1506,7 +1487,6 @@ void test_visible_shortened_paints_stub_after_ltr_overlap_cleared_232700() {
   focus.movingNoteRange = {3120, 3167};
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 3024, 3071};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   focus.last = {kPitch, 100, 3600, 3647};
   focus.movingNoteRange = {3600, 3647};
@@ -1571,7 +1551,6 @@ void test_sealed_visible_shortened_paints_current_stub_after_second_overlap_clea
   focus.movingNoteRange = {1823, 1871};
   focus.baselineMap[kOverlapId] = kStorage;
   focus.baselineMap[kMoverId] = {kPitch, 100, 2112, 2159};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec duringOverlap =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1635,7 +1614,6 @@ void test_sealed_visible_shortened_paints_current_stub_rtl_after_mover_exits_lef
   focus.movingNoteRange = {1968, 2015};
   focus.baselineMap[kOverlapId] = kSealed;
   focus.baselineMap[kMoverId] = {kPitch, 100, 1968, 2015};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec afterRtlExit =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1685,7 +1663,6 @@ void test_sealed_visible_shortened_paints_stub_after_deselect_clears_participati
   focus.movingNoteRange = {1344, 1391};
   focus.baselineMap[kOverlapId] = kStorage;
   focus.baselineMap[kMoverId] = {kPitch, 100, 1680, 1727};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec whileActive =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1832,7 +1809,6 @@ void test_second_overlap_shorten_commits_before_deselect_clears_participation_00
   focus.last = {kPitch, 100, 1200, 1247};
   focus.baselineMap[kOverlapId] = kStorage;
   focus.baselineMap[kMoverId] = {kPitch, 100, 1200, 1247};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const EditPassVec rowsWhileParticipating =
       buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength);
@@ -1853,13 +1829,11 @@ void test_second_overlap_shorten_commits_before_deselect_clears_participation_00
   for (const EditPass& row : rowsAfterParticipationCleared) {
     TEST_ASSERT_FALSE(row.targetNoteId == kOverlapId);
   }
-  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
   TEST_ASSERT_EQUAL(static_cast<int>(NoteEditOverlapParticipationType::Ended),
                     static_cast<int>(overlapRow->overlapParticipation));
   TEST_ASSERT_EQUAL_UINT32(kSecondPass.endTick, overlapRow->currentSpan.endTick);
 
   // §11 step 5.4: stale latch must not re-authorize commit after Ended.
-  recordChangedOverlapNote(focus, kOverlapId);
   const EditPassVec rowsWithStaleLatch =
       buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength);
   for (const EditPass& row : rowsWithStaleLatch) {
@@ -1899,7 +1873,6 @@ void test_visible_shortened_paints_stub_while_overlap_closure_active_221717() {
   focus.movingNoteRange = {2976, 3023};
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 2640, 2687};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec whileClosureActive =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -1942,7 +1915,6 @@ void test_contract_c7_leave_restore_visible_paints_after_apply_175858() {
   focus.movingNoteRange = {1920, 2447};
   focus.baselineMap[kOverlapId] = kCommitted;
   focus.baselineMap[kMoverId] = {kPitch, 100, 3600, 4127};
-  recordChangedOverlapNote(focus, kOverlapId);
 
   const NoteUtils::DisplayNoteVec hiddenPaint =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,

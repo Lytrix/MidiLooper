@@ -135,7 +135,6 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
 
 NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transactionBaseline,
                                                       const MidiEventVec& liveStore,
-                                                      const NoteIdList& changedOverlapNoteIds,
                                                       NoteId movingNoteId,
                                                       std::optional<uint8_t> overlapPitchLane,
                                                       const NoteEditCurrentState* currentState) {
@@ -143,14 +142,13 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
   const auto inLane = [&](uint8_t pitch) {
     return !overlapPitchLane.has_value() || pitch == overlapPitchLane.value();
   };
-  // §11 step 5.4: sticky off-lane membership from current-state participation when present.
+  // §11 step 5.5: sticky off-lane membership from current-state participation only.
   const auto isSticky = [&](NoteId noteId) {
-    if (currentState != nullptr && !currentState->empty()) {
-      const NoteEditCurrentNoteState* row = currentState->find(noteId);
-      return row != nullptr && currentStateRowIsOverlapParticipant(*row);
+    if (currentState == nullptr || currentState->empty()) {
+      return false;
     }
-    return std::find(changedOverlapNoteIds.begin(), changedOverlapNoteIds.end(), noteId) !=
-           changedOverlapNoteIds.end();
+    const NoteEditCurrentNoteState* row = currentState->find(noteId);
+    return row != nullptr && currentStateRowIsOverlapParticipant(*row);
   };
   const auto addToScope = [&](NoteId noteId, uint8_t pitch) {
     if (noteId == kInvalidNoteId || noteId == movingNoteId) {

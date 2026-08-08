@@ -107,12 +107,6 @@ NOTE_EDIT_MEM bool interactionsAreBoundaryTouchOnly(
   return true;
 }
 
-NOTE_EDIT_MEM bool isChangedOverlapParticipant(NoteId noteId,
-                                               const NoteIdList& changedOverlapNoteIds) {
-  return std::find(changedOverlapNoteIds.begin(), changedOverlapNoteIds.end(), noteId) !=
-         changedOverlapNoteIds.end();
-}
-
 NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
     NoteId targetNoteId, const NoteBaseline& transactionBaseline, const MidiEventVec& liveStore,
     uint8_t channel, const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
@@ -209,8 +203,7 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
-    const NoteIdList& changedOverlapNoteIds, const NoteEditFocus& focus,
-    const NoteEditCurrentState* currentState) {
+    const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
   const uint8_t overlapLanePitch = resolveOverlapLanePitchForTargets(editedGeometry, focus);
   std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets;
   for (const TargetNoteInteractionGroup& group : grouped.groups) {
@@ -233,13 +226,12 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
     if (hasIncomingInteraction(noteId, grouped)) {
       continue;
     }
-    // §11 step 5.4: leave-restore / sticky targets from current-state participation when present.
-    if (currentState != nullptr && !currentState->empty()) {
-      const NoteEditCurrentNoteState* participantRow = currentState->find(noteId);
-      if (participantRow == nullptr || !currentStateRowIsOverlapParticipant(*participantRow)) {
-        continue;
-      }
-    } else if (!isChangedOverlapParticipant(noteId, changedOverlapNoteIds)) {
+    // §11 step 5.5: leave-restore / sticky targets from current-state participation only.
+    if (currentState == nullptr || currentState->empty()) {
+      continue;
+    }
+    const NoteEditCurrentNoteState* participantRow = currentState->find(noteId);
+    if (participantRow == nullptr || !currentStateRowIsOverlapParticipant(*participantRow)) {
       continue;
     }
     const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
@@ -403,13 +395,13 @@ resolveAllConstrainedGeometry(
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
     uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
-    const NoteIdList& changedOverlapNoteIds, const NoteEditFocus& focus,
-    NoteIdList& leaveRestoreTargetNoteIds, const NoteEditCurrentState* currentState) {
+    const NoteEditFocus& focus, NoteIdList& leaveRestoreTargetNoteIds,
+    const NoteEditCurrentState* currentState) {
   leaveRestoreTargetNoteIds.clear();
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, storageTransactionBaseline, liveStore,
                                                 channel, loopLength, selection, editedGeometry,
-                                                changedOverlapNoteIds, focus, currentState);
+                                                focus, currentState);
 
   std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>> out;
   for (NoteId targetNoteId : targetIds) {

@@ -37,9 +37,7 @@ std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineChangedCausingN
 /// cannot disagree about scope. Without a lane the scope is every note (pre-lane behaviour).
 /// Membership is NoteId + pitch lane; the track's output channel is not an identity key.
 NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transactionBaseline,
-                                         const MidiEventVec& liveStore,
-                                         const NoteIdList& changedOverlapNoteIds,
-                                         NoteId movingNoteId,
+                                         const MidiEventVec& liveStore, NoteId movingNoteId,
                                          std::optional<uint8_t> overlapPitchLane,
                                          const NoteEditCurrentState* currentState = nullptr);
 

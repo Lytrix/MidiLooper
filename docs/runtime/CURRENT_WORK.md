@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (§11 step 5.4 geometry/pre-commit derived participation)
+Last updated: 2026-08-08 (§11 step 5.5 latch removed — step 5 complete)
 
 ---
 
@@ -16,13 +16,11 @@ Last updated: 2026-08-08 (§11 step 5.4 geometry/pre-commit derived participatio
 | Step | Status |
 |------|--------|
 | 1–4.5 | **Done** (7.5.E HITL `024301`) |
-| 5.1 — latch vs geometry query pin | **Done** (native) |
-| 5.2 — migrate safe readers | **Done** (with 5.3/5.4 current-state readers) |
-| 5.3 — encode sticky end-of-participation (`Ended`) | **Done** (native + smoke HITL `025807`) |
-| 5.4 — geometry/pre-commit derived participation | **Done** (native) |
-| 5.5 — remove `changedOverlapNoteIds` | Next |
+| 5.1–5.5 | **Done** (native; smoke `025807` / `030432` for 5.3/5.4) |
 
-**5.4:** When `NoteEditCurrentState` is non-empty, evaluation scope, constrained targets, commit overlap rows, projection participants, and restore-only entry use `currentStateRowIsOverlapParticipant` / `hasOverlapParticipants`. Latch remains dual-write until 5.5.
+**5.5 shipped:** `NoteEditFocus::changedOverlapNoteIds` and latch reconcile/writers removed. Overlap participation is `NoteEditCurrentNoteState.overlapParticipation` + geometry/presence only. `NOTE_EDIT_PROJECTED_STORE_COMPAT` remains a separate track.
+
+Confirm next with user — candidates: `note-edit-current-state` Phase 8 archive prep, HITL edit retest after 5.5 firmware flash.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 

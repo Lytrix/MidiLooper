@@ -597,18 +597,6 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
   }
 
   for (const EditSessionAction& action : actions) {
-    // Geometry actions are the only writers of changedOverlapNoteIds. Membership is what
-    // authorises a pre-commit Delete row, so a baseline lookup miss can never remove a note.
-    if (action.targetNoteId != kInvalidNoteId && action.targetNoteId != focus.movingNoteId) {
-      switch (action.type) {
-        case EditSessionActionType::ShortenNote:
-        case EditSessionActionType::HideNote:
-          recordChangedOverlapNote(focus, action.targetNoteId);
-          break;
-        default:
-          break;
-      }
-    }
     if (useCurrentState) {
       currentState->applyEditSessionAction(action);
       applyFocusSideEffectsForCurrentStateAction(action, focus, loopLength);
@@ -650,7 +638,6 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
             row->currentSpan.pitch == baselineIt->second.pitch &&
             row->currentSpan.startTick == baselineIt->second.startTick &&
             row->currentSpan.endTick == baselineIt->second.endTick) {
-          forgetChangedOverlapNote(focus, action.targetNoteId);
           focus.overlapNotes.erase(action.targetNoteId);
         }
       }
@@ -658,15 +645,6 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
       switch (action.type) {
         case EditSessionActionType::RestoreNote:
           applyRestoreNote(action, liveStore, focus, channel, loopLength);
-          if (action.targetNoteId != kInvalidNoteId && action.targetNoteId != focus.movingNoteId) {
-            const auto baselineIt = focus.baselineMap.find(action.targetNoteId);
-            if (baselineIt != focus.baselineMap.end() &&
-                action.pitch == baselineIt->second.pitch &&
-                action.startTick == baselineIt->second.startTick &&
-                action.endTick == baselineIt->second.endTick) {
-              forgetChangedOverlapNote(focus, action.targetNoteId);
-            }
-          }
           break;
         case EditSessionActionType::ShortenNote:
           applyShortenNote(action, liveStore, focus, channel, loopLength);

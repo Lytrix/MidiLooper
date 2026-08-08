@@ -36,8 +36,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     const bool hasPendingApplyOwnedRows = !editSession.applyOwnedEditPassRows.empty();
     const bool hasPendingOverlapCommit =
         hasPendingApplyOwnedRows ||
-        noteEditFocusHasPendingBaselineMapDiff(editSession.focus, sessionStoreEvents, channel,
-                                               loopLength);
+        noteEditFocusHasPendingBaselineMapDiff(
+            editSession.focus, sessionStoreEvents, channel, loopLength,
+            editSession.noteEditCurrentState.empty() ? nullptr
+                                                     : &editSession.noteEditCurrentState);
     if (!hasPendingMoverCommit && !hasPendingOverlapCommit) {
         return;
     }
@@ -94,12 +96,14 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         rows = buildCommitRowsFromCurrentState(editSession.focus, editSession.noteEditCurrentState,
                                                channel, loopLength);
 #if defined(SESSION_CAPTURE)
-        const EditPassVec parityRows =
-            buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength);
+        const EditPassVec parityRows = buildPreCommitEditPasses(
+            editSession.focus, channel, &sessionStoreEvents, loopLength,
+            &editSession.noteEditCurrentState);
         logApplyOwnedCommitParity(rows, parityRows);
 #endif
     } else {
-        rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength);
+        rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength,
+                                        nullptr);
     }
     editSession.applyOwnedEditPassRows.clear();
 #if defined(SESSION_CAPTURE)

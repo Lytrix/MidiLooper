@@ -70,29 +70,20 @@ NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
 
 bool noteIsOverlapParticipant(NoteId noteId, const NoteEditFocus& focus,
                               const NoteEditCurrentState* currentState) {
-  if (noteId == kInvalidNoteId) {
+  (void)focus;
+  if (noteId == kInvalidNoteId || currentState == nullptr || currentState->empty()) {
     return false;
   }
-  if (currentState != nullptr && !currentState->empty()) {
-    const NoteEditCurrentNoteState* row = currentState->find(noteId);
-    return row != nullptr && currentStateRowIsOverlapParticipant(*row);
-  }
-  return overlapParticipationLatchActive(focus, noteId);
+  const NoteEditCurrentNoteState* row = currentState->find(noteId);
+  return row != nullptr && currentStateRowIsOverlapParticipant(*row);
 }
 
 bool hasOverlapParticipants(const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
-  if (currentState != nullptr && !currentState->empty()) {
-    return !collectOverlapParticipantNoteIdsFromCurrentState(*currentState, focus.movingNoteId)
-                .empty();
+  if (currentState == nullptr || currentState->empty()) {
+    return false;
   }
-  return !focus.changedOverlapNoteIds.empty();
-}
-
-bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId) {
-  // Inline latch membership so ParticipatingNoteSession does not hard-link NoteEditFocusOverlap
-  // (native suites that include this TU without overlap.cpp).
-  return std::find(focus.changedOverlapNoteIds.begin(), focus.changedOverlapNoteIds.end(),
-                   noteId) != focus.changedOverlapNoteIds.end();
+  return !collectOverlapParticipantNoteIdsFromCurrentState(*currentState, focus.movingNoteId)
+              .empty();
 }
 
 bool overlapParticipationEndedWhileGeometryDiffers(const NoteEditCurrentState& currentState,
@@ -106,15 +97,6 @@ bool overlapParticipationEndedWhileGeometryDiffers(const NoteEditCurrentState& c
     return false;
   }
   return currentStateRowGeometryDiffersFromCommitted(*row);
-}
-
-bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& focus,
-                                                          const NoteEditCurrentState& currentState,
-                                                          NoteId noteId) {
-  if (noteId == kInvalidNoteId || overlapParticipationLatchActive(focus, noteId)) {
-    return false;
-  }
-  return overlapParticipationEndedWhileGeometryDiffers(currentState, noteId);
 }
 
 bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,

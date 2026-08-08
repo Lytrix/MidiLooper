@@ -128,13 +128,14 @@ void test_determine_constrained_targets_includes_restore_candidate() {
   edited.causingSpans.push_back(causing);
 
   const EditSessionInteractionsByTarget emptyGrouped;
-  NoteIdList changed;
-  changed.push_back(kTarget);
   NoteEditFocus focus{};
   focus.active = true;
   focus.last = {60, 100, 0, 100};
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kTarget, {60, 100, 100, 200}, {60, 100, 100, 150},
+                         NoteEditPresenceType::Visible);
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, changed, focus);
+      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, focus, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kTarget, targets[0]);
 }
@@ -168,14 +169,15 @@ void test_determine_constrained_targets_excludes_selected_moved_causing_note() {
   edited.causingSpans.push_back(causing);
 
   const EditSessionInteractionsByTarget emptyGrouped;
-  NoteIdList changed;
-  changed.push_back(kOverlap);
   NoteEditFocus focus{};
   focus.active = true;
   focus.movingNoteId = kMover;
   focus.last = {64, 100, 1098, 1247};
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, baseline[kOverlap], baseline[kOverlap],
+                         NoteEditPresenceType::Hidden);
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, changed, focus);
+      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, focus, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, targets[0]);
 }
@@ -223,8 +225,7 @@ void test_determine_constrained_targets_excludes_unrelated_baseline_diff_153123(
   focus.movingNoteId = kMoverId;
   focus.last = {12, 100, 1584, 1775};
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, noneChanged,
-      focus);
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
@@ -268,7 +269,7 @@ void test_resolve_all_constrained_empty_without_interactions_or_changed_overlap_
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, noneChanged, emptyFocus, leaveRestore);
+      edited, emptyFocus, leaveRestore);
   TEST_ASSERT_EQUAL(0, static_cast<int>(constrained.size()));
 }
 
@@ -399,6 +400,7 @@ void test_resolve_overlap_note_off_inside_target_tail_shortens_or_min_length_hid
 
 void test_resolve_restore_candidate_uses_overlap_scratch_not_full_baseline() {
   constexpr NoteId kOuterId = 3;
+  constexpr NoteId kMoverId = 99;
   constexpr uint8_t kChannel = 1;
   BaselineMap baseline;
   baseline[kOuterId] = {65, 100, 609, 959};
@@ -406,7 +408,8 @@ void test_resolve_restore_candidate_uses_overlap_scratch_not_full_baseline() {
   MidiEventVec liveStore;
   NoteEditFocus focus;
   focus.active = true;
-  focus.last = {65, 100, 609, 659};
+  focus.movingNoteId = kMoverId;
+  focus.last = {65, 100, 700, 750};
   focus.baselineMap = baseline;
   OverlapNote shortened{};
   shortened.noteId = kOuterId;
@@ -414,16 +417,21 @@ void test_resolve_restore_candidate_uses_overlap_scratch_not_full_baseline() {
   shortened.state = OverlapNoteStoreState::Hidden;
   shortened.shortenedEndTick = 659;
   focus.overlapNotes[kOuterId] = shortened;
-  NoteIdList changed;
-  changed.push_back(kOuterId);
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOuterId, {65, 100, 609, 659}, {65, 100, 609, 659},
+                         NoteEditPresenceType::Hidden);
 
   const EditSessionInteractionsByTarget emptyGrouped;
   EditorSelection selection{};
   EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = focus.last;
+  edited.causingSpans.push_back(causing);
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, 1536, 12, true, selection, edited,
-      changed, focus, leaveRestore);
+      focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL_UINT32(609u, constrained[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(659u, constrained[0].endTick);
@@ -463,7 +471,7 @@ void test_determine_constrained_targets_excludes_cross_pitch_changed_overlap() {
   NoteIdList changed;
   changed.push_back(kCrossPitchOverlap);
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, changed, focus);
+      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, focus);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
@@ -502,7 +510,7 @@ void test_determine_targets_excludes_vacated_lane_on_pitch_change_011115() {
   NoteIdList changed;
   changed.push_back(kOverlapOnOldLane);
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, changed, focus);
+      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited, focus);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
@@ -532,8 +540,9 @@ void test_resolve_leave_restore_head_trimmed_live_uses_storage_baseline_010415()
   focus.last = {94, 100, 1000, 1100};
   focus.baselineMap = storageBaseline;
 
-  NoteIdList changed;
-  changed.push_back(kTarget);
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kTarget, storageBaseline[kTarget], projectedBaseline[kTarget],
+                         NoteEditPresenceType::Visible);
 
   const EditSessionInteractionsByTarget emptyGrouped;
   EditorSelection selection{};
@@ -541,7 +550,7 @@ void test_resolve_leave_restore_head_trimmed_live_uses_storage_baseline_010415()
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, projectedBaseline, storageBaseline, liveStore, kChannel, 1536, 12, true,
-      selection, edited, changed, focus, leaveRestore);
+      selection, edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL_UINT32(2880u, constrained[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(3071u, constrained[0].endTick);
@@ -587,7 +596,7 @@ void test_determine_targets_excludes_session_moved_overlap_diff_020105() {
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus);
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
@@ -632,7 +641,7 @@ void test_determine_targets_excludes_session_moved_current_state_145011() {
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
@@ -681,7 +690,7 @@ void test_determine_targets_includes_selected_hidden_overlap_leave_restore_11195
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kSelectedOverlap, targets[0]);
@@ -738,7 +747,7 @@ void test_determine_targets_hidden_full_span_sticky_scope_113010() {
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kHiddenOverlap, targets[0]);
@@ -784,7 +793,7 @@ void test_leave_restore_constrained_uses_session_baseline_hidden_full_span_11301
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, focus.baselineMap, focus.baselineMap, liveStore, kChannel, kLoopLength, 12, true,
-      selection, edited, changed, focus, leaveRestore, &currentState);
+      selection, edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
   TEST_ASSERT_EQUAL_UINT32(kHiddenOverlap, constrained[0].noteId);
@@ -845,7 +854,7 @@ void test_leave_restore_hidden_live_stub_uses_committed_span_175858() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, focus.baselineMap, focus.baselineMap, liveStore, kChannel, kLoopLength, 12,
-      true, selection, edited, changed, focus, leaveRestore, &currentState);
+      true, selection, edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL_UINT32(kCommitted.startTick, constrained[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(kCommitted.endTick, constrained[0].endTick);
@@ -892,7 +901,7 @@ void test_closure_active_suppresses_leave_restore_target_193632() {
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
@@ -939,7 +948,7 @@ void test_leave_restore_deferred_visible_overlap_tail_224633() {
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
@@ -990,7 +999,7 @@ void test_sealed_visible_shortened_leave_restore_after_mover_clears_234904() {
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, targets[0]);
@@ -998,7 +1007,7 @@ void test_sealed_visible_shortened_leave_restore_after_mover_clears_234904() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, changed, focus, leaveRestore, &currentState);
+      edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, constrained[0].endTick);
 }
@@ -1048,7 +1057,7 @@ void test_sealed_visible_shortened_leave_restore_rtl_after_mover_exits_left_2357
 
   const EditSessionInteractionsByTarget emptyGrouped;
   const auto targets = determineConstrainedGeometryTargetNoteIds(
-      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, changed, focus,
+      emptyGrouped, baseline, liveStore, kChannel, kLoopLength, selection, edited, focus,
       &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, targets[0]);
@@ -1056,7 +1065,7 @@ void test_sealed_visible_shortened_leave_restore_rtl_after_mover_exits_left_2357
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, changed, focus, leaveRestore, &currentState);
+      edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, constrained[0].endTick);
 }
@@ -1113,7 +1122,7 @@ void test_leave_restore_after_repositioned_macro_sealed_overlap_001226() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, analysisBaseline, storageBaseline, liveStore, kChannel, kLoopLength, 12, true,
-      selection, edited, changed, focus, leaveRestore, &currentState);
+      selection, edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
   TEST_ASSERT_EQUAL_UINT32(kSealed.startTick, constrained[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, constrained[0].endTick);
@@ -1164,7 +1173,7 @@ void test_leave_restore_after_overlap_closure_cleared_224633() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, changed, focus, leaveRestore, &currentState);
+      edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, leaveRestore[0]);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
@@ -1217,7 +1226,7 @@ void test_ltr_time_axis_visible_shortened_leave_restore_022151() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, changed, focus, leaveRestore, &currentState);
+      edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, leaveRestore[0]);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
@@ -1274,7 +1283,7 @@ void test_pitch_vacated_lane_hidden_leave_restore_target_020050() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, changed, focus, leaveRestore, &currentState);
+      edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, leaveRestore[0]);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
@@ -1331,7 +1340,7 @@ void test_pitch_vacated_lane_visible_shortened_leave_restore_021407() {
   NoteIdList leaveRestore;
   const auto constrained = resolveAllConstrainedGeometry(
       emptyGrouped, baseline, baseline, liveStore, kChannel, kLoopLength, 12, true, selection,
-      edited, changed, focus, leaveRestore, &currentState);
+      edited, focus, leaveRestore, &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
   TEST_ASSERT_EQUAL_UINT32(kOverlap, leaveRestore[0]);
   TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
@@ -1384,7 +1393,7 @@ void test_determine_targets_excludes_ended_participation_even_with_stale_latch()
 
   const auto targets = determineConstrainedGeometryTargetNoteIds(
       EditSessionInteractionsByTarget{}, baseline, liveStore, kChannel, kLoopLength, selection,
-      edited, staleLatch, focus, &currentState);
+      edited, focus, &currentState);
   TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
 }
 
