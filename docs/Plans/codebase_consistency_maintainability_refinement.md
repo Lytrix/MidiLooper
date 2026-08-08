@@ -2,9 +2,9 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **1 shipped** (PR [#19](https://github.com/Lytrix/MidiLooper/pull/19) merged); **Phase 2** API/vocabulary on `refactor/codebase-consistency-phase-2`  
+**Status:** Active — Phase **2 shipped** (PR [#20](https://github.com/Lytrix/MidiLooper/pull/20)); **Phase 3** structural cleanup on `refactor/codebase-consistency-phase-3`  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
-**Branch:** `refactor/codebase-consistency-phase-2` (off `dev`); Phase 1 landed via `refactor/authority-cleanup` → PR #19
+**Branch:** `refactor/codebase-consistency-phase-3` (off `dev`); Phase 2 landed via PR #20
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
 **Naming authority:** [NAMING.md](../Authority/NAMING.md)  
 **Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) · [GITHUB_WORK_TRACKING.md](../Authority/GITHUB_WORK_TRACKING.md)
@@ -68,17 +68,29 @@ Touch-and-rename / API unification. No rename-only mega-PRs ([NAMING.md](../Auth
 | 2.1 | Selectable-display API | Four live names; NAMING cites deleted `filterSelectableDisplayNotes` | Projected note list contents | **Done** — `filterSelectableDisplayNotes`; cache helper private |
 | 2.2 | Geometry vocabulary | `NoteGeometryResolver` shipped; `pipelineApplied`, `GEOM_APPLY,pipeline`, log strings | Resolver apply results; HITL matchers if keyed on CAP tokens | **Done** — `geometryResolved`, `GEOM_APPLY,resolve`, `logGeomApplyResolve` |
 | 2.3 | `published` → `committed` | ~35 `published` hits for committed material | Wire formats / CAP tokens unless proven unused | **Done** — locals/tests; CAP `published` outcome retained |
-| 2.4 | Playing vs Playback terminology | `PendingPlayingGeometry`, `isPlayingBack`, merge-cache “window” naming | Transport vs machinery meanings |
+| 2.4 | Playing vs Playback terminology | `PendingPlayingGeometry`, `isPlayingBack`, merge-cache “window” naming | Transport vs machinery meanings | **Done** |
 
 ### Phase 3 — Structural cleanup
 
 Low risk after Phases 1–2 stabilize call sites.
 
-| Step | Item | Evidence anchor | Must not change |
-|------|------|-----------------|-----------------|
-| 3.1 | Dead helpers | Unused NoteMovement / IntervalProjection / MidiHandler / SyncDrain / ControlSurface mappers | Behavior (delete dead only) |
-| 3.2 | Duplicate selection writes | `applySelectNav` vs `applySelectionFromGeometryEdit` | Selection outcomes |
-| 3.3 | Legacy / twin cleanup | Monolith quarantine twins; leftover deprecated wrappers after 1.3 | Quarantine/SD outcomes |
+| Step | Item | Evidence anchor | Must not change | Status |
+|------|------|-----------------|-----------------|--------|
+| 3.1 | Dead helpers | Unused NoteMovement / IntervalProjection / MidiHandler / SyncDrain / ControlSurface mappers | Behavior (delete dead only) | **Done** — 8 symbols removed (see below) |
+| 3.2 | Duplicate selection writes | `applySelectNav` vs `applySelectionFromGeometryEdit` | Selection outcomes | **Done** — intentional twins documented on `EditManager` |
+| 3.3 | Legacy / twin cleanup | Monolith quarantine twins; leftover deprecated wrappers after 1.3 | Quarantine/SD outcomes | **Done** — removed unused `markCurrentSet*Dirty` public API |
+
+#### Phase 3.1 — removed dead helpers
+
+| Symbol | Module |
+|--------|--------|
+| `NoteMovementUtils::notesOverlap` | superseded by `NoteUtils::notesOverlap` |
+| `lengthEditLoopTickToCoarsePitchbend`, `lengthEditFineCcFromOffset` | superseded by `NoteEditLengthFaderMapping` / `NoteEditDependentFaderSnapshot` |
+| `MidiHandler::sendAfterTouch`, `sendContinueMIDI`, `setOutputUSB`, `setOutputSerial`, `isOutputUSBEnabled` | unused; routing via `sendMidiEvent` / internal flags |
+
+**Architecture gate (3.x):** Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
+
+**Verification:** `pio test -e native`; `pio run -e teensy41-capture-serial`.
 
 ### Phase 4 — Investigation only
 

@@ -8,18 +8,19 @@ Last updated: 2026-08-08 (#18 Phase 2 branch; Phase 1 merged PR #19)
 
 ## Now implementing
 
-### Codebase consistency & maintainability — Phase 2 (API / vocabulary)
+### Codebase consistency & maintainability — Phase 3 (structural cleanup)
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
 **Plan:** [`docs/Plans/codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)  
-**Branch:** `refactor/codebase-consistency-phase-2` → PR into `dev`  
-**Phase 1:** merged [PR #19](https://github.com/Lytrix/MidiLooper/pull/19) — projected-store compat, selection tick SoT, admit* migration
+**Branch:** `refactor/codebase-consistency-phase-3` → PR into `dev`  
+**Phase 2:** merged [PR #20](https://github.com/Lytrix/MidiLooper/pull/20)
 
 | Phase | Status |
 |-------|--------|
-| 1 — Authority | **Shipped** — PR #19 merged to `dev` |
-| **2 — API / vocabulary** | **Shipped** — 2.1–2.4 done (selectable-display, geometry, committed, Playing vs Playback) |
-| 3–4 | **Next** — dead helpers, selection writes, investigation |
+| 1 — Authority | **Shipped** — PR #19 |
+| 2 — API / vocabulary | **Shipped** — PR #20 |
+| **3 — Structural cleanup** | **In progress** — 3.1–3.3 on branch |
+| 4 | Queued — investigation only |
 
 ### StorageManager TU extraction — shipped (PR #17)
 

@@ -736,10 +736,6 @@ void MidiHandler::sendPitchBend(uint8_t channel, int16_t value) {
     sendMidiEvent(MidiEvent::PitchBend(0, channel, value));
 }
 
-void MidiHandler::sendAfterTouch(uint8_t channel, uint8_t pressure) {
-    sendMidiEvent(MidiEvent::ChannelAftertouch(0, channel, pressure));
-}
-
 void MidiHandler::sendProgramChange(uint8_t channel, uint8_t program) {
     sendMidiEvent(MidiEvent::ProgramChange(0, channel, program));
 }
@@ -760,24 +756,6 @@ void MidiHandler::sendStop() {
   if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Stop);
   if (outputSerial) MIDIserial.sendRealTime(midi::Stop);
   logger.log(CAT_MIDI, LOG_INFO, "OUT MIDI Stop (DIN=%d USB=%d)", outputSerial ? 1 : 0, outputUSB ? 1 : 0);
-}
-
-void MidiHandler::sendContinueMIDI() {
-  if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Continue);
-  if (outputSerial) MIDIserial.sendRealTime(midi::Continue);
-}
-
-// --- Output Routing ---
-void MidiHandler::setOutputUSB(bool enable) {
-  outputUSB = enable;
-}
-
-void MidiHandler::setOutputSerial(bool enable) {
-  outputSerial = enable;
-}
-
-bool MidiHandler::isOutputUSBEnabled() const {
-  return outputUSB;
 }
 
 bool MidiHandler::isOutputSerialEnabled() const {
