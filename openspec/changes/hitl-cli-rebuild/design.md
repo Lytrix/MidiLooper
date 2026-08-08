@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-04  
 **Status:** Phase 3 in progress — active layered presets locked to `base` + `edit_full`  
-**Architecture (canonical after Phase 1):** [`docs/00-authority/Architecture/HITL_ARCHITECTURE.md`](../../../docs/00-authority/Architecture/HITL_ARCHITECTURE.md)
-**Staging copy (until archive):** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md) Part I
+**Architecture (canonical after Phase 1):** [`docs/Authority/Architecture/HITL_ARCHITECTURE.md`](../../../docs/Authority/Architecture/HITL_ARCHITECTURE.md)
+**Staging copy (until archive):** [`docs/Plans/hitl_cli_rebuild_enhancement.md`](../../../docs/Plans/hitl_cli_rebuild_enhancement.md) Part I
 
 ---
 
@@ -12,7 +12,7 @@
 Split by purpose and lifetime:
 
 ```text
-docs/00-authority/Architecture/HITL_ARCHITECTURE.md     long-lived — what the system is
+docs/Authority/Architecture/HITL_ARCHITECTURE.md     long-lived — what the system is
 docs/Guides/HITL_DEVELOPER_GUIDE.md        long-lived — how to extend
 docs/Guides/HITL_REGRESSION_WORKFLOW.md    long-lived — regression investigation
 docs/Guides/HITL_TEST_SCENARIOS.md         long-lived — scenario catalogue
@@ -21,7 +21,7 @@ openspec/changes/hitl-cli-rebuild/         temporary — this migration
 
 .cursor/rules/HITL-Test-Flow.mdc           short agent rules + links
 
-docs/plans/hitl_cli_rebuild_enhancement.md  temporary — archive Phase 5
+docs/Plans/hitl_cli_rebuild_enhancement.md  temporary — archive Phase 5
 ```
 
 | Document | Responsibility |
@@ -58,7 +58,7 @@ registry.py → ScenarioSpec, PresetSpec, verifier lookup
 
 ## Helper inventory
 
-Full table: [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md) § Phase 0.
+Full table: [`docs/Plans/hitl_cli_rebuild_enhancement.md`](../../../docs/Plans/hitl_cli_rebuild_enhancement.md) § Phase 0.
 
 **`capture_transitions.py` consolidation:** merge into `verify/transitions.py` + `serial/protocol.py` parsers; delete duplicate `_latest_track_state`, `_wait_for_transition_count`, `_wait_for_state_entry_count` after port.
 

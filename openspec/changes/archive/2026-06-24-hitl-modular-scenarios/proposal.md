@@ -35,4 +35,4 @@ exiting NOTE_EDIT.
 - `scripts/hitl/`, `scripts/host_midi_hitl.py`
 - Legacy wrappers: `host_midi_automation_baseline.py`, `host_midi_automation_edit_baseline.py`
 - Firmware: `NoteEditSessionUndo`, `EditManager`, `TrackUndo`
-- `.cursor/rules/HITL-*-Test-Flow.mdc`, `docs/plans/hitl_modular_scenarios_enhancement.md`
+- `.cursor/rules/HITL-*-Test-Flow.mdc`, `docs/Plans/hitl_modular_scenarios_enhancement.md`

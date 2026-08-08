@@ -2,7 +2,7 @@
 
 Loop slot switching today splits **UI focus** (`selectedSlotIndex`) from **playback/capture focus** (`activeLoopIndex`) without a single orchestrator. NOTE_EDIT rematerialises on slot change; LOOP_EDIT and future session types do not share one path — the piano roll can show stale MIDI. `selectedSlotIndex` is not persisted independently in the SD footer. This change introduces the canonical **Departure → Transition → Arrival** focus lifecycle for slot selection (extensible to track, editor, and window focus), parallel to UIP — it does not block UIP Phase 5 HITL.
 
-Brownfield: [`docs/plans/slot_selection_orchestration_refinement.md`](../../docs/plans/slot_selection_orchestration_refinement.md), [`multi-loop-slots`](../../specs/multi-loop-slots/spec.md), UIP Phase 4 `queuedStartTick` ([`unified-interval-projection`](../unified-interval-projection/proposal.md)).
+Brownfield: [`docs/Plans/slot_selection_orchestration_refinement.md`](../../docs/Plans/slot_selection_orchestration_refinement.md), [`multi-loop-slots`](../../specs/multi-loop-slots/spec.md), UIP Phase 4 `queuedStartTick` ([`unified-interval-projection`](../unified-interval-projection/proposal.md)).
 
 ## What Changes
 
@@ -27,7 +27,7 @@ Brownfield: [`docs/plans/slot_selection_orchestration_refinement.md`](../../docs
 
 - **Primary files:** `TrackManager.cpp/h`, `EditManager.cpp/h`, `LoopEditManager.cpp/h`, `DisplayManager.cpp/h`, `MidiButtonActions.cpp`, `StorageManager/WorkspaceSave.cpp`, `StorageManager.cpp`
 - **Tests:** new `test_slot_switch_edit_sessions` + repeated slot stress; footer round-trip
-- **Docs:** `docs/plans/slot_selection_orchestration_refinement.md`, `CURRENT_WORK.md` (parallel track)
+- **Docs:** `docs/Plans/slot_selection_orchestration_refinement.md`, `CURRENT_WORK.md` (parallel track)
 - **Dependencies:** UIP Phase 4 `queuedStartTick` / `requestSlotSwitch` (consume only — no UIP engine changes)
 - **Non-blocking:** UIP Phase 5.5 HITL; `edit-session-action-geometry` overlap pipeline
 

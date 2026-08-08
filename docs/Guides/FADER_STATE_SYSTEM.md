@@ -1,6 +1,6 @@
 # Fader State System Documentation
 
-> **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `ControlSurfaceManager` (see § NOTE_EDIT motor feedback below).
+> **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../Plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `ControlSurfaceManager` (see § NOTE_EDIT motor feedback below).
 >
 > **Compile-time feedback gate:** `ControlSurfaceManager::kNoteEditFaderFeedbackEnabled` — see § NOTE_EDIT fader feedback on vs off. Default in firmware today: **`false`** (inbound geometry works; outbound motor sync off).
 
@@ -200,7 +200,7 @@ After F1 note select, F2–F4 motors wait until display and settle gates pass. *
 
 **Scheduling:** `scheduleSelectDependentMotorSync` arms pending flush + required paint epoch; does not send motors immediately on select.
 
-See [`note_edit_select_relatch_after_geometry_refinement.md`](../plans/note_edit_select_relatch_after_geometry_refinement.md) for geometry-hold relatch (orthogonal to settle).
+See [`note_edit_select_relatch_after_geometry_refinement.md`](../Plans/note_edit_select_relatch_after_geometry_refinement.md) for geometry-hold relatch (orthogonal to settle).
 
 ### Geometry edit kinds (Move / Length / Pitch / Add / Delete)
 

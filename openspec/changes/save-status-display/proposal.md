@@ -2,7 +2,7 @@
 
 After record or overdub stop, deferred save runs in the background while transport may stay in **PLAYING** for minutes. There is no on-device feedback that the loop is safely on SD. Users need a lightweight, non-blocking indicator that save is queued, writing, or finished.
 
-Brownfield context: [`docs/plans/workspace_session_persistence_handoff.md`](../../../docs/plans/workspace_session_persistence_handoff.md), [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](../../../docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md).
+Brownfield context: [`docs/Plans/workspace_session_persistence_handoff.md`](../../../docs/Plans/workspace_session_persistence_handoff.md), [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](../../../docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md).
 
 ## What Changes
 

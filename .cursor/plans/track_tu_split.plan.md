@@ -43,7 +43,7 @@ isProject: false
 
 # Track translation-unit extraction
 
-**Authoritative plan:** [docs/plans/track_translation_unit_extraction_refinement.md](../../docs/plans/track_translation_unit_extraction_refinement.md)
+**Authoritative plan:** [docs/Plans/track_translation_unit_extraction_refinement.md](../../docs/Plans/track_translation_unit_extraction_refinement.md)
 
 **Branch:** `refactor/track` (from `dev`)
 

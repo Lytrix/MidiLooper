@@ -2,7 +2,7 @@
 
 **Last updated:** 2025-03-13 (repo snapshot)
 
-Indexed under **Guides** in [Documentation index](../README.md). Conventions and Phase 3 pointer: [FEATURE_PLANS.md](../FEATURE_PLANS.md). Architecture (Phases 1–2 done): [plans/dual-tick_view_override_architecture_856310b1.plan.md](../plans/dual-tick_view_override_architecture_856310b1.plan.md). **Phase 3 spec:** [plans/phase-3-multi-loop.md](../plans/phase-3-multi-loop.md).
+Indexed under **Guides** in [Documentation index](../README.md). Conventions and Phase 3 pointer: [FEATURE_PLANS.md](../FEATURE_PLANS.md). Architecture (Phases 1–2 done): [plans/dual-tick_view_override_architecture_856310b1.plan.md](../Plans/dual-tick_view_override_architecture_856310b1.plan.md). **Phase 3 spec:** [plans/phase-3-multi-loop.md](../Plans/phase-3-multi-loop.md).
 
 ## Phase 1 (jam state on Track) — done
 
@@ -44,7 +44,7 @@ These are bug/UX passes on top of Phase 2, not separate numbered phases:
 
 ## Optional next work (not in Phase 2)
 
-- **Multi-loop / 8 slots + jam recording:** [plans/phase-3-multi-loop.md](../plans/phase-3-multi-loop.md).
+- **Multi-loop / 8 slots + jam recording:** [plans/phase-3-multi-loop.md](../Plans/phase-3-multi-loop.md).
 - **Note-edit mode** using jam state — follow-up when bar/16th apply there.
 
 ---

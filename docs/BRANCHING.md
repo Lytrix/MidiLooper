@@ -35,7 +35,7 @@ dev           (v3 — integration, default)
 
 **Planned sequence (2026-07-14):**
 
-1. `feature/persistence-work-queue` — B1–B5 from [`plans/current_set_persist_work_item_queue_enhancement.md`](plans/current_set_persist_work_item_queue_enhancement.md)
+1. `feature/persistence-work-queue` — B1–B5 from [`Plans/current_set_persist_work_item_queue_enhancement.md`](Plans/current_set_persist_work_item_queue_enhancement.md)
 2. `feature/loop-owned-undo-phase2` — DEC-024 Phase 2 (after queue merges)
 3. `feature/set-revision-loop-picker` — overlay 4.8–4.10 (after queue + undo stable)
 
@@ -69,7 +69,7 @@ git diff continuous-saving..dev -- path/to/file
 git cherry-pick <sha>
 ```
 
-Historical handoffs under [`plans/`](plans/README.md) may cite these branch names; firmware code lives on `dev`.
+Historical handoffs under [`Plans/`](Plans/README.md) may cite these branch names; firmware code lives on `dev`.
 
 ---
 

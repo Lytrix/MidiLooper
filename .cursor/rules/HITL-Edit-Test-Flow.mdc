@@ -58,6 +58,6 @@ Use `--no-m8-pass-verify` only for pre-M8 capture replay. **`--require-m8-span-v
 
 ## Reference
 
-- Fixture and fader policy: [`docs/plans/m8_edit_note_edit_hitl_automation_refinement.md`](docs/plans/m8_edit_note_edit_hitl_automation_refinement.md)
-- Modular scenarios and **`edit_overdub_during_note_edit`**: [`docs/plans/hitl_modular_scenarios_enhancement.md`](docs/plans/hitl_modular_scenarios_enhancement.md)
+- Fixture and fader policy: [`docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md`](docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md)
+- Modular scenarios and **`edit_overdub_during_note_edit`**: [`docs/Plans/hitl_modular_scenarios_enhancement.md`](docs/Plans/hitl_modular_scenarios_enhancement.md)
 - Record/overdub baseline (separate): [HITL-Test-Flow.mdc](HITL-Test-Flow.mdc)

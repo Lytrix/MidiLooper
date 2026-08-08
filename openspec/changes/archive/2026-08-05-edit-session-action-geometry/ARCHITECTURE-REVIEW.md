@@ -5,7 +5,7 @@
 **Status:** Active — use this file before and after **each phase** of the transaction-baseline ownership rebuild  
 
 **Related:** [proposal.md](proposal.md), [design.md](design.md), [tasks.md](tasks.md),
-[`docs/plans/note_edit_session_action_geometry_transaction_baseline_bugfix.md`](../../../docs/plans/note_edit_session_action_geometry_transaction_baseline_bugfix.md)
+[`docs/Plans/note_edit_session_action_geometry_transaction_baseline_bugfix.md`](../../../docs/Plans/note_edit_session_action_geometry_transaction_baseline_bugfix.md)
 
 ---
 
@@ -392,7 +392,7 @@ particular: one extra `std::unordered_*` type in a hot translation unit is enoug
 
 ## Phase A — Single display projection (2026-08-05)
 
-**Plan:** [`docs/plans/note_edit_display_commit_stream_refactor_refinement.md`](../../../docs/plans/note_edit_display_commit_stream_refactor_refinement.md)  
+**Plan:** [`docs/Plans/note_edit_display_commit_stream_refactor_refinement.md`](../../../docs/Plans/note_edit_display_commit_stream_refactor_refinement.md)  
 **Evidence:** `captures/session_20260805_141706.log` — geometry `ShortenNote` / `HideNote` rows apply to the live
 store, but OLED/DNTE still derive mover and overlap geometry through parallel paths.
 
@@ -420,7 +420,7 @@ store, but OLED/DNTE still derive mover and overlap geometry through parallel pa
 
 ## Commit stream review (Phase 4.9 — 2026-08-05)
 
-**Plan:** [`docs/plans/note_edit_commit_stream_review_refinement.md`](../../../docs/plans/note_edit_commit_stream_review_refinement.md)  
+**Plan:** [`docs/Plans/note_edit_commit_stream_review_refinement.md`](../../../docs/Plans/note_edit_commit_stream_review_refinement.md)  
 **Evidence:** `captures/session_20260805_134610.log`
 
 | Question | Answer |
@@ -441,7 +441,7 @@ store, but OLED/DNTE still derive mover and overlap geometry through parallel pa
 
 ## Phase 4.10f — Canonical commit serialization
 
-**Plan:** [`docs/plans/note_edit_singular_commit_pipeline_refinement.md`](../../../docs/plans/note_edit_singular_commit_pipeline_refinement.md)  
+**Plan:** [`docs/Plans/note_edit_singular_commit_pipeline_refinement.md`](../../../docs/Plans/note_edit_singular_commit_pipeline_refinement.md)  
 **Evidence:** `captures/session_20260805_171134.log` — commit serializes overlap
 `Delete noteId=31` plus mover `NoteRange noteId=36`, then selection resolves to an unrelated
 pitch-60 note at tick 960 and empty-step deselect clears focus without a deselect

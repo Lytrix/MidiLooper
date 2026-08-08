@@ -175,7 +175,7 @@ It answers: *“What MIDI pairs are actually in the edit session right now?”*
 
 **Contrast with edited geometry:** Edited geometry = what the user is driving. Live store = what RAM actually contains, including side-effects from earlier ticks in this session.
 
-**Playback audition (brownfield, shipped):** During NOTE_EDIT, edited pairs are **not** sent as immediate MIDI note-on per fader gesture. `Track::invalidateCaches()` bumps `sessionPreviewRevision_`; `ensurePlaybackWindowBuilt` uses `sessionMidiEvents()` while transport plays — see `loop-wrap-projection` Tier 2 and [`note_edit_geometry_wrap_regression_bugfix.md`](../../../docs/plans/note_edit_geometry_wrap_regression_bugfix.md). Pipeline **`applyEditSessionActions`** MUST keep calling **`track.invalidateCaches()`** (task 3.6).
+**Playback audition (brownfield, shipped):** During NOTE_EDIT, edited pairs are **not** sent as immediate MIDI note-on per fader gesture. `Track::invalidateCaches()` bumps `sessionPreviewRevision_`; `ensurePlaybackWindowBuilt` uses `sessionMidiEvents()` while transport plays — see `loop-wrap-projection` Tier 2 and [`note_edit_geometry_wrap_regression_bugfix.md`](../../../docs/Plans/note_edit_geometry_wrap_regression_bugfix.md). Pipeline **`applyEditSessionActions`** MUST keep calling **`track.invalidateCaches()`** (task 3.6).
 
 ### Brownfield interim fixes (pre-pipeline, 2026-07-04)
 
@@ -634,7 +634,7 @@ Interaction → **`groupEditSessionInteractionsByTarget`** → **`resolveConstra
 
 **Q7:** **Locked A** — D10 off-at-on−1 for non-same-tick boundary touch as well.
 
-**Follow-on OpenSpec (accepted):** Record/overdub capture cleanup — **`capture-pass-boundary-materialization`** (boundary split + **NoteMinLength** hot stop per Q16). See [`capture_pass_note_min_length_refinement.md`](../../../docs/plans/capture_pass_note_min_length_refinement.md).
+**Follow-on OpenSpec (accepted):** Record/overdub capture cleanup — **`capture-pass-boundary-materialization`** (boundary split + **NoteMinLength** hot stop per Q16). See [`capture_pass_note_min_length_refinement.md`](../../../docs/Plans/capture_pass_note_min_length_refinement.md).
 
 ### D11 — Chunk-scoped baseline (deferred)
 
@@ -894,7 +894,7 @@ Requires new **`EditSessionActionType`**, macro **`EditPass`** diff rules, and u
 
 ## References
 
-- [`docs/plans/note_edit_session_action_geometry_enhancement.md`](../../../docs/plans/note_edit_session_action_geometry_enhancement.md)
+- [`docs/Plans/note_edit_session_action_geometry_enhancement.md`](../../../docs/Plans/note_edit_session_action_geometry_enhancement.md)
 - [`linear-loop-tick-storage`](../linear-loop-tick-storage/design.md) D3–D4 normalize
 - [`note-edit-stable-note-id`](../../specs/note-edit-stable-note-id/spec.md) **EditorSelection**
-- BUG: 144458, 152335, 231310; handoffs in `docs/plans/note_edit_geometry_*`
+- BUG: 144458, 152335, 231310; handoffs in `docs/Plans/note_edit_geometry_*`

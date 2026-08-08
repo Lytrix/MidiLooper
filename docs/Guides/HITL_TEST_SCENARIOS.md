@@ -230,7 +230,7 @@ and/or `QUIET_REFRESH` after user-classified quiet.
 
 ### `note_edit_select_dependent_faders` (F2/F3/F4 motor sync on F1 select)
 
-Runs **`base`** then **`note_edit_select_dependent_faders`** (same pattern as `revision_load_record`). Runner aborts if base fails. Plan: [`note_edit_select_dependent_faders_hitl_enhancement.md`](../plans/note_edit_select_dependent_faders_hitl_enhancement.md).
+Runs **`base`** then **`note_edit_select_dependent_faders`** (same pattern as `revision_load_record`). Runner aborts if base fails. Plan: [`note_edit_select_dependent_faders_hitl_enhancement.md`](../Plans/note_edit_select_dependent_faders_hitl_enhancement.md).
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_select_dependent_faders \
@@ -252,7 +252,7 @@ After geometry-driven F1 motor flush, inbound F1 must not trigger `select_apply`
 .venv/bin/python scripts/test_note_edit_geometry_fader1_serial_verify.py
 ```
 
-Manual: move note with F2/F3 in Move kind; confirm F1 follows and selection/kind stay on moving note. Plan: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md).
+Manual: move note with F2/F3 in Move kind; confirm F1 follows and selection/kind stay on moving note. Plan: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../Plans/note_edit_geometry_f1_selection_guard_bugfix.md).
 
 ---
 
@@ -270,7 +270,7 @@ Run `pio test -e native` before push/merge. Run relevant HITL preset when changi
 
 ## Manual regression (firmware invariant review)
 
-Hardware steps from [`firmware_ownership_lifetime_review.md`](../plans/firmware_ownership_lifetime_review.md). Archive capture as `captures/MT-<id>_<date>.log`.
+Hardware steps from [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md). Archive capture as `captures/MT-<id>_<date>.log`.
 
 | ID | Covers | Status |
 |----|--------|--------|
@@ -288,7 +288,7 @@ Hardware steps from [`firmware_ownership_lifetime_review.md`](../plans/firmware_
 1. NOTE_EDIT → in-edit overdub stop near loop end → **E:** undo/redo of overdub layer only → exit → global undo.
 2. Archive capture as `captures/MT-P1_fold_in_edit_overdub_<date>.log`.
 
-**Layered `base` HITL:** **parked** — dedicated HITL refactor ([`hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md)); not a gate for firmware ownership review closeout.
+**Layered `base` HITL:** **parked** — dedicated HITL refactor ([`hitl_cli_rebuild_enhancement.md`](../Plans/hitl_cli_rebuild_enhancement.md)); not a gate for firmware ownership review closeout.
 
 `--preset edit_overdub_during_note_edit` is **not** registered in `registry.py`; do not use until wired.
 
@@ -296,7 +296,7 @@ Hardware steps from [`firmware_ownership_lifetime_review.md`](../plans/firmware_
 
 ## Related docs
 
-- Implementation notes: [`docs/plans/hitl_modular_scenarios_enhancement.md`](../plans/hitl_modular_scenarios_enhancement.md)
+- Implementation notes: [`docs/Plans/hitl_modular_scenarios_enhancement.md`](../Plans/hitl_modular_scenarios_enhancement.md)
 - DROID motorfader pitchbend / probe timing: [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md)
 - Cursor rule (canonical `base` command): [`.cursor/rules/HITL-Test-Flow.mdc`](../../.cursor/rules/HITL-Test-Flow.mdc)
 - Undo/redo storage rules: [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md)

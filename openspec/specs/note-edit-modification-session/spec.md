@@ -11,7 +11,7 @@ Supersedes restore-first **`applyNoteEditChange`** overlap chains.
 [`docs/Guides/NOTE_WRAPPING_LOGIC.md`](../../docs/Guides/NOTE_WRAPPING_LOGIC.md).
 
 **HITL:** Full D14 per-interaction regression matrix is **parked** —
-[`docs/plans/m8_edit_note_edit_hitl_automation_refinement.md`](../../docs/plans/m8_edit_note_edit_hitl_automation_refinement.md).
+[`docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md`](../../docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md).
 Interim smoke: `edit_minimal` preset.
 
 ## Requirements

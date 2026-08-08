@@ -11,15 +11,15 @@ The current stopgap excludes session-moved targets and skips overlap actions for
 
 Authority checked before this design:
 
-- `docs/00-authority/ARCHITECTURE_RULES.md`
-- `docs/00-authority/NAMING.md`
+- `docs/Authority/ARCHITECTURE_RULES.md`
+- `docs/Authority/NAMING.md`
 - `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`
 - `docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`
 - `openspec/specs/edit-session-action-geometry/spec.md`
 - `openspec/specs/note-edit-modification-session/spec.md`
 - `openspec/specs/note-edit-session-undo/spec.md`
 
-Reference plan: `docs/plans/note_edit_session_current_state_refinement.md`.
+Reference plan: `docs/Plans/note_edit_session_current_state_refinement.md`.
 
 ## Goals / Non-Goals
 
@@ -73,7 +73,7 @@ struct NoteEditCurrentNoteState {
 
 Rationale:
 
-- `State` matches `docs/00-authority/NAMING.md` for mutable ownership.
+- `State` matches `docs/Authority/NAMING.md` for mutable ownership.
 - `GeometryIndex` was rejected because it reads as a cache and narrows future note edit scope.
 - `committedSpan`, `currentSpan`, and `presence` are sufficient; moved, resized, pitch-changed, hidden, restored, and delete/create diffs are derived.
 

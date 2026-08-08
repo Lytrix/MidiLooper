@@ -37,10 +37,10 @@ are locked with testable acceptance criteria.
 - **Code:** `Track`, `TrackManager`, `SlotStateMachine`, jam state on `Track`,
   `ClockManager` tick sources (`currentTick` vs `jamTick`), `DisplayManager`,
   `TrackUndo`, `StorageManager` (if capture affects save format).
-- **Docs:** Supersedes ad-hoc slices in `docs/plans/phase-3-multi-loop.md` §8–9 for
+- **Docs:** Supersedes ad-hoc slices in `docs/Plans/phase-3-multi-loop.md` §8–9 for
   new work; keep `docs/DELIVERABLE_TRACKING.md` in sync on archive.
 - **Tests:** New native scenarios for slot routing; HITL baseline extensions for
   capture timing; phase-3 §6 mode checklists.
 - **Dependencies:** R1–R5 open decisions in
-  `docs/plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` §0.2 must be resolved
+  `docs/Plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` §0.2 must be resolved
   in delta specs before `/opsx:apply`.

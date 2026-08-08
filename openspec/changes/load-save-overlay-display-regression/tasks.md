@@ -37,5 +37,5 @@
 
 ## 7. Closeout
 
-- [ ] 7.1 Update `docs/plans/set_revision_persistence_handoff.md` regression note.
+- [ ] 7.1 Update `docs/Plans/set_revision_persistence_handoff.md` regression note.
 - [ ] 7.2 Archive or merge deltas into `set-revision-persistence` on green HITL.

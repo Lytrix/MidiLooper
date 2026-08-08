@@ -5,13 +5,13 @@ alwaysApply: true
 
 # Plan pre-implementation review
 
-When a **plan exists** (Cursor plan, `docs/plans/*`, OpenSpec design, or approved architect output) and the next step is **implementation**, agents **must** review the plan against the codebase **before the first production edit**.
+When a **plan exists** (Cursor plan, `docs/Plans/*`, OpenSpec design, or approved architect output) and the next step is **implementation**, agents **must** review the plan against the codebase **before the first production edit**.
 
 **Does not replace:** [OpenSpec-Phase-Gate.mdc](OpenSpec-Phase-Gate.mdc) (phase architecture gate), [architecture-checkpoint-bugfix.mdc](architecture-checkpoint-bugfix.mdc) (bugfix ownership/transitions), or user plan approval in plan mode.
 
 ## When required
 
-- User approved a plan and asked to implement, `/opsx:apply`, or builder handoff from [architect.md](docs/agents/architect.md)
+- User approved a plan and asked to implement, `/opsx:apply`, or builder handoff from [architect.md](docs/Agents/architect.md)
 - Agent produced a plan in plan mode and user moved to execution
 
 ## When skipped
@@ -50,6 +50,6 @@ If **NO**, update the plan and re-review; do not edit firmware until blockers ar
 
 ## Plan doc hygiene
 
-When the plan file lives in-repo (`docs/plans/` or `.cursor/plans/`), append or update a **Pre-implementation review** section with resolved + open items so the next session inherits context.
+When the plan file lives in-repo (`docs/Plans/` or `.cursor/plans/`), append or update a **Pre-implementation review** section with resolved + open items so the next session inherits context.
 
-Authority: [Agent-Context-Workflow.mdc](Agent-Context-Workflow.mdc), [DELIVERY_RULES.md](docs/00-authority/DELIVERY_RULES.md).
+Authority: [Agent-Context-Workflow.mdc](Agent-Context-Workflow.mdc), [DELIVERY_RULES.md](docs/Authority/DELIVERY_RULES.md).

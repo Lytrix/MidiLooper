@@ -6,7 +6,7 @@
 
 **Related:** [proposal.md](proposal.md), [design.md](design.md), [tasks.md](tasks.md), [RUNTIME_STORAGE_AND_PERSISTENCE.md](../../../docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md)
 
-Restores the per-change **architecture + implementation review** pattern. Global templates: [`PREFLIGHT.md`](../../../docs/templates/PREFLIGHT.md), [`reviewer.md`](../../../docs/agents/reviewer.md).
+Restores the per-change **architecture + implementation review** pattern. Global templates: [`PREFLIGHT.md`](../../../docs/Templates/PREFLIGHT.md), [`reviewer.md`](../../../docs/Agents/reviewer.md).
 
 **Orthogonal:** [DEC-023 `unified-capture-commit-owner`](../unified-capture-commit-owner/ARCHITECTURE-REVIEW.md) — capture **commit** at stop; this change owns **persistence scheduling** and **recovery load**. Commit owner must not block mid-pass slices.
 
@@ -206,11 +206,11 @@ Formal archive checklist still open.
 
 ## Agent workflow (each remaining phase)
 
-1. Load [CURRENT_WORK](../../../docs/runtime/CURRENT_WORK.md), this file, `tasks.md`, [RUNTIME_STORAGE_AND_PERSISTENCE.md](../../../docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md).
+1. Load [CURRENT_WORK](../../../docs/Runtime/CURRENT_WORK.md), this file, `tasks.md`, [RUNTIME_STORAGE_AND_PERSISTENCE.md](../../../docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md).
 2. Complete **Architecture gate** for target phase.
 3. Implement; do not expand into DEC-023 commit-owner scope.
 4. Run verification matrix row.
-5. [reviewer.md](../../../docs/agents/reviewer.md) checklist → APPROVE / REQUEST CHANGES.
+5. [reviewer.md](../../../docs/Agents/reviewer.md) checklist → APPROVE / REQUEST CHANGES.
 6. Check off `tasks.md`.
 
 ---

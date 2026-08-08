@@ -2,6 +2,6 @@
 
 Canonical project intent moved to the authority hierarchy:
 
-**[docs/00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md)**
+**[docs/Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md)**
 
-Authority index: [docs/00-authority/README.md](00-authority/README.md).
+Authority index: [docs/Authority/README.md](Authority/README.md).

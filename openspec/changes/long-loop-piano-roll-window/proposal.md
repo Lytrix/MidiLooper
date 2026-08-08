@@ -2,7 +2,7 @@
 
 Loops longer than 16 bars compress the full loop onto the piano-roll width in `DisplayManager::drawPianoRoll`, making notes unreadable and forcing the display path to work with more note data than the 32-row framebuffer can usefully show. Display scaling was deferred from `record-stop-64-bar-crash` (archived) because the RAM2 crash fix (`long-record-memory-headroom`, **shipped**) had to land first.
 
-Brownfield plan: [docs/plans/long_loop_piano_roll_overview_enhancement.md](../../../docs/plans/long_loop_piano_roll_overview_enhancement.md).
+Brownfield plan: [docs/Plans/long_loop_piano_roll_overview_enhancement.md](../../../docs/Plans/long_loop_piano_roll_overview_enhancement.md).
 
 ## What Changes
 

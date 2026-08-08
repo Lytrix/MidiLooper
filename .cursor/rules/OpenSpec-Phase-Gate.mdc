@@ -9,13 +9,13 @@ When an **active** OpenSpec change under `openspec/changes/<name>/` (exclude `ar
 
 **Does not replace** [architecture-checkpoint-bugfix](architecture-checkpoint-bugfix.mdc) — both apply on stop-path / capture-commit work.
 
-Authority: [`docs/00-authority/DELIVERY_RULES.md`](docs/00-authority/DELIVERY_RULES.md) § OpenSpec phase gate.
+Authority: [`docs/Authority/DELIVERY_RULES.md`](docs/Authority/DELIVERY_RULES.md) § OpenSpec phase gate.
 
 ---
 
 ## Mandatory load order (before firmware)
 
-1. [`docs/runtime/CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md) — confirm active change and phase
+1. [`docs/Runtime/CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md) — confirm active change and phase
 2. `openspec/changes/<name>/ARCHITECTURE-REVIEW.md` — **§ Per-phase gates** for target phase
 3. `openspec/changes/<name>/tasks.md` — only unchecked items for **this phase**
 4. `openspec/changes/<name>/design.md` — when phase touches ownership or transitions
@@ -78,7 +78,7 @@ Extending an **existing** method on the documented owner for the **current phase
 
 ## Implementation review (before merge / phase checkoff)
 
-Before marking phase tasks done in `tasks.md`, complete the phase **Implementation review** checklist in `ARCHITECTURE-REVIEW.md` and use [`docs/agents/reviewer.md`](docs/agents/reviewer.md) output format.
+Before marking phase tasks done in `tasks.md`, complete the phase **Implementation review** checklist in `ARCHITECTURE-REVIEW.md` and use [`docs/Agents/reviewer.md`](docs/Agents/reviewer.md) output format.
 
 Builder sessions must include:
 

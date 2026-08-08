@@ -89,8 +89,8 @@ Open a **new** plan or stage when:
 
 | State | Location |
 |-------|----------|
-| Closed RC layer | `docs/plans/*_bugfix.md` — **FROZEN**, final validation section |
+| Closed RC layer | `docs/Plans/*_bugfix.md` — **FROZEN**, final validation section |
 | Active RC | New or sibling plan — debugging boundary at top |
 | Index only | Short follow-up doc linking frozen + active work |
 
-Reference: [`note_edit_focus_driver_drift_bugfix.md`](docs/plans/note_edit_focus_driver_drift_bugfix.md) (frozen), [`note_edit_projection_ownership_bugfix.md`](docs/plans/note_edit_projection_ownership_bugfix.md), [`note_edit_overlap_projection_followup.md`](docs/plans/note_edit_overlap_projection_followup.md).
+Reference: [`note_edit_focus_driver_drift_bugfix.md`](docs/Plans/note_edit_focus_driver_drift_bugfix.md) (frozen), [`note_edit_projection_ownership_bugfix.md`](docs/Plans/note_edit_projection_ownership_bugfix.md), [`note_edit_overlap_projection_followup.md`](docs/Plans/note_edit_overlap_projection_followup.md).

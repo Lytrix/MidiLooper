@@ -9,7 +9,7 @@ Before changing loop event storage, capture/commit, stop-path validation, undo, 
 
 **[`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)**
 
-Related guides: [`NOTE_WRAPPING_LOGIC.md`](docs/Guides/NOTE_WRAPPING_LOGIC.md) (display only), plans [`overdub_undo_baseline_phase1_refinement.md`](docs/plans/overdub_undo_baseline_phase1_refinement.md) and [`memory_scalability_refactor_enhancement.md`](docs/plans/memory_scalability_refactor_enhancement.md).
+Related guides: [`NOTE_WRAPPING_LOGIC.md`](docs/Guides/NOTE_WRAPPING_LOGIC.md) (display only), plans [`overdub_undo_baseline_phase1_refinement.md`](docs/Plans/overdub_undo_baseline_phase1_refinement.md) and [`memory_scalability_refactor_enhancement.md`](docs/Plans/memory_scalability_refactor_enhancement.md).
 
 ## Non-negotiable constraints
 

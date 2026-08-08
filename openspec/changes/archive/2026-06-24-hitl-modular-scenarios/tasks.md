@@ -27,7 +27,7 @@
 
 ## 5. Track D — Docs
 
-- [x] 5.1 `docs/plans/hitl_modular_scenarios_enhancement.md`
+- [x] 5.1 `docs/Plans/hitl_modular_scenarios_enhancement.md`
 - [x] 5.2 Update HITL cursor rules
 - [x] 5.3 Merge `note-edit-session-undo` delta to main spec
 - [x] 5.4 `openspec validate hitl-modular-scenarios`; `pio test -e native`

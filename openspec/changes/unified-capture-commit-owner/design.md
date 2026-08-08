@@ -152,7 +152,7 @@ or (2) representation/projection — **DEC-016**. Phase 2 acceptance: record and
 post-commit helper (`invalidatePlaybackWindow`, projection update, display snapshot, save request)
 after `commitCaptureForStop` publishes; no duplicate hooks in overdub FSM complete stage.
 
-Detail: [`docs/plans/unified_capture_stop_driver_refinement.md`](../../../docs/plans/unified_capture_stop_driver_refinement.md) § Relationship to DEC-016.
+Detail: [`docs/Plans/unified_capture_stop_driver_refinement.md`](../../../docs/Plans/unified_capture_stop_driver_refinement.md) § Relationship to DEC-016.
 
 ## Relationship to slot-performance-interaction
 

@@ -1,7 +1,7 @@
 # Architecture review — deferred-job-scheduler (Phase B)
 
 **Change:** `deferred-job-scheduler`  
-**North star:** [`docs/plans/deferred_job_scheduler_architecture.md`](../../../docs/plans/deferred_job_scheduler_architecture.md)  
+**North star:** [`docs/Plans/deferred_job_scheduler_architecture.md`](../../../docs/Plans/deferred_job_scheduler_architecture.md)  
 **DEC:** [DEC-027](../../../docs/DECISION_LOG.md#dec-027-deferred-job-scheduler-north-star)
 
 ## North star

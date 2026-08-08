@@ -9,7 +9,7 @@ Runtime already has:
 - `SlotLoadSession`, `needsSlotLoad`, `processDeferredLoopSlotRestore`, `isAudibleBootSlot`
 - Deferred save FSM as the budgeted-process pattern
 
-Architecture (frozen plans under `docs/plans/unified_publish_pipeline_*`) centers **Commit**, not Publish-as-visibility and not Load-as-a-special-subsystem.
+Architecture (frozen plans under `docs/Plans/unified_publish_pipeline_*`) centers **Commit**, not Publish-as-visibility and not Load-as-a-special-subsystem.
 
 Primary files: `Loop.cpp` / `Loop.h`, `StorageManager.cpp`, `SlotLoadSession.h`, `main.cpp`, `BootLoopSlotRestore.h`, `DisplayManager.cpp` (gates on published/committed presence).
 

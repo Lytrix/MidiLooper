@@ -50,4 +50,4 @@ Affected code areas:
 - `src/Utils/NoteMovementUtils.cpp`, `src/EditStates/EditSelectNoteState.cpp`, `src/ControlSurface/FaderDependentSnapshot.cpp` — remove direct NOTE_EDIT projected-store writes/normalization after owner APIs exist.
 - Native tests for current-state projection, reader/writer gates, repeated same-pitch moves, hidden/deleted/added rows, undo/redo, and commit parity.
 
-Reference plan: `docs/plans/note_edit_session_current_state_refinement.md`.
+Reference plan: `docs/Plans/note_edit_session_current_state_refinement.md`.

@@ -7,38 +7,38 @@ alwaysApply: true
 
 Lightweight governance for coding agents. **Does not change firmware behavior** — documentation and process only.
 
-**Default: continue implementation.** Use the [decision ladder](docs/00-authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder). Stop only on [formal triggers](docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers).
+**Default: continue implementation.** Use the [decision ladder](docs/Authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder). Stop only on [formal triggers](docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers).
 
 ## Before coding
 
-1. Read [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md) and [`docs/runtime/CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md)
-2. [`docs/runtime/ROADMAP.md`](docs/runtime/ROADMAP.md) — optional; never sole authority
-3. Skim [`docs/plans/runtime_process_building_blocks_overview.md`](docs/plans/runtime_process_building_blocks_overview.md) § For agents — owners, hard don'ts, jump table (orientation only; not authority)
+1. Read [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md) and [`docs/Runtime/CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md)
+2. [`docs/Runtime/ROADMAP.md`](docs/Runtime/ROADMAP.md) — optional; never sole authority
+3. Skim [`docs/Plans/runtime_process_building_blocks_overview.md`](docs/Plans/runtime_process_building_blocks_overview.md) § For agents — owners, hard don'ts, jump table (orientation only; not authority)
 4. Determine **domain** ([`docs/AGENT_CONTEXT_MAP.md`](docs/AGENT_CONTEXT_MAP.md))
 5. Skim authority + [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) for the topic (quick `rg` — not a stop)
 6. **Decision ladder:** extend owner → reuse extension point → follow DEC-### → if [formal trigger](docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers) → reassess (max **one** per session) → else **implement**
 7. **Authority conflict** (OpenSpec vs architecture) is a formal trigger — STOP only then
 8. Confirm task is in **CURRENT_WORK** § Now implementing — if not, ask user or update CURRENT_WORK
-9. **Preflight:** brief inline summary for normal extension work; full [`PREFLIGHT.md`](docs/templates/PREFLIGHT.md) only if a formal trigger fired
+9. **Preflight:** brief inline summary for normal extension work; full [`PREFLIGHT.md`](docs/Templates/PREFLIGHT.md) only if a formal trigger fired
 10. Proceed with implementation — state preferred path and confidence when alternatives exist; do not block on vagueness
 
-Authority: [`docs/00-authority/README.md`](docs/00-authority/README.md). OpenSpec: [`.cursor/rules/OpenSpec-Workflow.mdc`](OpenSpec-Workflow.mdc).
+Authority: [`docs/Authority/README.md`](docs/Authority/README.md). OpenSpec: [`.cursor/rules/OpenSpec-Workflow.mdc`](OpenSpec-Workflow.mdc).
 
 ## After coding
 
-1. Update [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md) and [`docs/runtime/CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md)
+1. Update [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md) and [`docs/Runtime/CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md)
 2. Update [`docs/DELIVERABLE_TRACKING.md`](docs/DELIVERABLE_TRACKING.md) when something ships
 3. Update OpenSpec `tasks.md` for the active change
 4. Run `pio test -e native` before push/merge (see Testing-Workflow rule)
 
 ## Session closeout
 
-When design or exclusions were discussed: [`SESSION_CLOSEOUT.md`](docs/templates/SESSION_CLOSEOUT.md), update runtime docs, append [`DECISION_LOG.md`](docs/DECISION_LOG.md).
+When design or exclusions were discussed: [`SESSION_CLOSEOUT.md`](docs/Templates/SESSION_CLOSEOUT.md), update runtime docs, append [`DECISION_LOG.md`](docs/DECISION_LOG.md).
 
 ## Roles (optional)
 
-- Plan: [`docs/agents/architect.md`](docs/agents/architect.md)
-- Implement: [`docs/agents/builder.md`](docs/agents/builder.md)
-- Verify: [`docs/agents/reviewer.md`](docs/agents/reviewer.md)
+- Plan: [`docs/Agents/architect.md`](docs/Agents/architect.md)
+- Implement: [`docs/Agents/builder.md`](docs/Agents/builder.md)
+- Verify: [`docs/Agents/reviewer.md`](docs/Agents/reviewer.md)
 
-Delivery: [`docs/00-authority/DELIVERY_RULES.md`](docs/00-authority/DELIVERY_RULES.md).
+Delivery: [`docs/Authority/DELIVERY_RULES.md`](docs/Authority/DELIVERY_RULES.md).

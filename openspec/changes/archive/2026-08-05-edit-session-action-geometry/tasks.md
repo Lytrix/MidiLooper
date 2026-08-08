@@ -5,11 +5,11 @@
 ## 0. OpenSpec and docs
 
 - [x] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md` (this change)
-- [x] 0.2 Handoff [`docs/plans/note_edit_session_action_geometry_enhancement.md`](../../docs/plans/note_edit_session_action_geometry_enhancement.md)
-- [x] 0.3 Mark [`note_edit_overlap_invariant_matrix_enhancement.md`](../../docs/plans/note_edit_overlap_invariant_matrix_enhancement.md) superseded
+- [x] 0.2 Handoff [`docs/Plans/note_edit_session_action_geometry_enhancement.md`](../../docs/Plans/note_edit_session_action_geometry_enhancement.md)
+- [x] 0.3 Mark [`note_edit_overlap_invariant_matrix_enhancement.md`](../../docs/Plans/note_edit_overlap_invariant_matrix_enhancement.md) superseded
 - [x] 0.4 User approval of D1–D22 + **`EditSessionAction`** / **`InteractionType`** vocabulary (2026-08-04)
 - [x] 0.5 Append DECISION_LOG when implementation starts
-- [x] 0.7 Prior art decisions → [`edit_session_action_geometry_prior_art_refinement.md`](../../docs/plans/edit_session_action_geometry_prior_art_refinement.md)
+- [x] 0.7 Prior art decisions → [`edit_session_action_geometry_prior_art_refinement.md`](../../docs/Plans/edit_session_action_geometry_prior_art_refinement.md)
 - [x] 0.8 LOOP_MIDI guide NOTE_EDIT pairing paragraph (Q10)
 - [x] 0.9 Park follow-on OpenSpec **`capture-pass-boundary-materialization`** (Q9 + Q16 NoteMinLength hot stop) — [`PARKED.md`](../../openspec/changes/capture-pass-boundary-materialization/PARKED.md)
 - [x] 0.10 Brownfield interim fixes documented in `design.md` § Brownfield interim (NOTELEN fader block, empty-step F2–F4, playback audition, `edit_minimal` HITL smoke) — preserve on pipeline wire
@@ -115,7 +115,7 @@
       their `overlapNotes` / `changedOverlapNoteIds` authority after `commitEditAction` succeeds;
       committed shortened overlaps become the active baseline for later moves
       (`test_committed_overlap_update_promotes_shortened_focus_baseline`)
-- [x] 4.9 Commit stream review (`docs/plans/note_edit_commit_stream_review_refinement.md`):
+- [x] 4.9 Commit stream review (`docs/Plans/note_edit_commit_stream_review_refinement.md`):
       authority decision (interim `buildPreCommitEditPasses`; former target apply-owned `editPass`
       rows superseded by 4.10f canonical commit serialization);
       row-level `NOTE_EDIT pre-commit row` logging before `commitEditAction`; native regression
@@ -125,7 +125,7 @@
 
 ## 4.10 Display/commit stream refactor (Phase A/B/C)
 
-**Plan:** [`docs/plans/note_edit_display_commit_stream_refactor_refinement.md`](../../docs/plans/note_edit_display_commit_stream_refactor_refinement.md)
+**Plan:** [`docs/Plans/note_edit_display_commit_stream_refactor_refinement.md`](../../docs/Plans/note_edit_display_commit_stream_refactor_refinement.md)
 
 ### Phase A — single display projection (complete)
 
@@ -162,7 +162,7 @@
 
 ## 5. HITL + archive (Phase 5)
 
-- [ ] 5.1 Capture **base + 2× overdub** loop fixture; HITL per-interaction presets (D14) — **parked** [`m8_edit_note_edit_hitl_automation_refinement.md`](../../docs/plans/m8_edit_note_edit_hitl_automation_refinement.md)
+- [ ] 5.1 Capture **base + 2× overdub** loop fixture; HITL per-interaction presets (D14) — **parked** [`m8_edit_note_edit_hitl_automation_refinement.md`](../../docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md)
 - [ ] 5.2 HITL regression matrix (move, length, pitch, wrap, 144458 home move) — **parked** (build edit HITL from scratch; `edit_minimal` interim smoke only)
 - [x] 5.2 Update NOTE_WRAPPING_LOGIC / modification-session guide pointers — [`NOTE_WRAPPING_LOGIC.md`](../../docs/Guides/NOTE_WRAPPING_LOGIC.md), [`openspec/specs/note-edit-modification-session/spec.md`](../../openspec/specs/note-edit-modification-session/spec.md)
 - [x] 5.3 `/opsx:archive` → `openspec/specs/edit-session-action-geometry/` (2026-08-05)

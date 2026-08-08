@@ -10,10 +10,10 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 
 | Bucket | Location | Role |
 |--------|----------|------|
-| **Authority** | [`00-authority/`](00-authority/README.md) | What the system is — intent, architecture, naming, delivery rules |
-| **Runtime** | [`runtime/`](runtime/CURRENT_WORK.md) | **What to work on now** — [`CURRENT_WORK.md`](runtime/CURRENT_WORK.md) is the sole implementation queue |
+| **Authority** | [`Authority/`](Authority/README.md) | What the system is — intent, architecture, naming, delivery rules |
+| **Runtime** | [`Runtime/`](Runtime/CURRENT_WORK.md) | **What to work on now** — [`CURRENT_WORK.md`](Runtime/CURRENT_WORK.md) is the sole implementation queue |
 | **Guides** | [`Guides/`](Guides/) | Living behavior and how-to (shipped firmware) |
-| **Plans** | [`plans/`](plans/README.md) | Proposed or historical design — **not** implementation authority |
+| **Plans** | [`Plans/`](Plans/README.md) | Proposed or historical design — **not** implementation authority |
 
 **Deliverable tracking:** [`DELIVERABLE_TRACKING.md`](DELIVERABLE_TRACKING.md) records shipped vs next at deliverable level; it does **not** set implementation priority (use `CURRENT_WORK`).
 
@@ -27,20 +27,20 @@ Does **not** change firmware — process and documentation for coding agents.
 
 | Document | Role |
 |----------|------|
-| [**00-authority/**](00-authority/README.md) | Authority hierarchy: intent → architecture → naming → delivery |
-| [00-authority/NAMING.md](00-authority/NAMING.md) | Architectural vocabulary, concept boundaries, migration policy |
-| [runtime/PROJECT_STATE.md](runtime/PROJECT_STATE.md) | Execution context — **load first** |
-| [runtime/CURRENT_WORK.md](runtime/CURRENT_WORK.md) | Implementation scope (now / not now) — **required before coding** |
+| [**Authority/**](Authority/README.md) | Authority hierarchy: intent → architecture → naming → delivery |
+| [Authority/NAMING.md](Authority/NAMING.md) | Architectural vocabulary, concept boundaries, migration policy |
+| [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md) | Execution context — **load first** |
+| [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) | Implementation scope (now / not now) — **required before coding** |
 | [BRANCHING.md](BRANCHING.md) | v1 / v2 / v3 branches, feature workflow, local archive refs |
-| [runtime/ROADMAP.md](runtime/ROADMAP.md) | Future milestones — informational only |
+| [Runtime/ROADMAP.md](Runtime/ROADMAP.md) | Future milestones — informational only |
 | [DECISION_LOG.md](DECISION_LOG.md) | Accepted / superseded decisions — **search before new abstractions** |
-| [templates/DECISION_REVIEW.md](templates/DECISION_REVIEW.md) | Mandatory historical review before firmware implementation |
+| [Templates/DECISION_REVIEW.md](Templates/DECISION_REVIEW.md) | Mandatory historical review before firmware implementation |
 | [AGENT_CONTEXT_MAP.md](AGENT_CONTEXT_MAP.md) | Domain → required docs |
 | [ARCHITECTURE_REASSESSMENT.md](ARCHITECTURE_REASSESSMENT.md) | When to pause for design review |
-| [templates/PREFLIGHT.md](templates/PREFLIGHT.md) | Planning template before implementation |
-| [templates/OWNERSHIP_TRANSFER.md](templates/OWNERSHIP_TRANSFER.md) | Ownership move proposal (with removal schedule) |
-| [templates/SESSION_CLOSEOUT.md](templates/SESSION_CLOSEOUT.md) | Before closing design-heavy chats |
-| [agents/](agents/architect.md) | Architect / builder / reviewer roles |
+| [Templates/PREFLIGHT.md](Templates/PREFLIGHT.md) | Planning template before implementation |
+| [Templates/OWNERSHIP_TRANSFER.md](Templates/OWNERSHIP_TRANSFER.md) | Ownership move proposal (with removal schedule) |
+| [Templates/SESSION_CLOSEOUT.md](Templates/SESSION_CLOSEOUT.md) | Before closing design-heavy chats |
+| [agents/](Agents/architect.md) | Architect / builder / reviewer roles |
 
 Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 
@@ -50,9 +50,9 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 
 | Document | Summary |
 |----------|---------|
-| [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Module map; suffix naming → [NAMING.md](00-authority/NAMING.md) |
+| [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Module map; suffix naming → [NAMING.md](Authority/NAMING.md) |
 | [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Capture / passes (record, overdub, edit), commitCapturePass, validation tiers, undo stacks, SD v4** — read before touching Loop/Track undo or stop paths |
-| [**record_overdub_memory_display_timeline_enhancement.md**](plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
+| [**record_overdub_memory_display_timeline_enhancement.md**](Plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
 | [DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Central deferred save routing and chunk-bounded SD writer stages |
 | [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables (**v3 / `dev` default DROID mapping**) |
 | [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display (**v3 only**) |
@@ -102,10 +102,10 @@ Add new topical guides under `Guides/` and extend this table.
 
 | Document | Role |
 |----------|------|
-| [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
+| [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
 | [FEATURES.md](FEATURES.md) | Technical feature checklist (reference — not the implementation queue) |
 | [FEATURE_PLANS.md](FEATURE_PLANS.md) | Plan conventions; Phase 3 / multi-loop pointer |
 | [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Shipped vs next (deliverable level — not the implementation queue) |
-| [plans/README.md](plans/README.md) | Design history conventions; points to `CURRENT_WORK` |
+| [Plans/README.md](Plans/README.md) | Design history conventions; points to `CURRENT_WORK` |
 
 When you add new guides, place them in `Guides/` or `Refinements/` and add a row to the matching table above.

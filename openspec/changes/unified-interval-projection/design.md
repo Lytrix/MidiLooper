@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-05 (refined)  
 **Status:** Design session — blocks `edit-session-action-geometry` until full-stack migration ships  
-**Handoff:** [`docs/plans/unified_interval_projection_enhancement.md`](../../docs/plans/unified_interval_projection_enhancement.md)
+**Handoff:** [`docs/Plans/unified_interval_projection_enhancement.md`](../../docs/Plans/unified_interval_projection_enhancement.md)
 
 ---
 
@@ -23,7 +23,7 @@ Today wrap math is duplicated:
 
 **Core principle:** Storage is global; projection is local. Changing viewport, playback window, or edit window must not require changing stored notes or downstream algorithms — only **`ProjectionContext`**.
 
-**Runtime architecture (permanent):** [docs/00-authority/Architecture/RuntimeArchitecture.md](../../docs/00-authority/Architecture/RuntimeArchitecture.md) — derived representations, interval projection, runtime requests, revision chain. Investigation docs (e.g. 64-bar PLAYING-window) stay in `docs/plans/`. **DEC-016.**
+**Runtime architecture (permanent):** [docs/Authority/Architecture/RuntimeArchitecture.md](../../docs/Authority/Architecture/RuntimeArchitecture.md) — derived representations, interval projection, runtime requests, revision chain. Investigation docs (e.g. 64-bar PLAYING-window) stay in `docs/Plans/`. **DEC-016.**
 
 ---
 
@@ -706,7 +706,7 @@ Same class of brownfield debt as **`PlaybackCursor`**: duplicate window fields, 
 
 **Slot switch:** After grid commit, **`commitQueuedPlaybackStart`** re-anchors **`projectionCycleStartTick`** while **`startLoopTick`** stays at record origin — using **`startLoopTick`** for OLED playhead after switch caused a sustained offset (often ~1 bar on short loops). Evidence: [`captures/session_20260706_014145.log`](../../../captures/session_20260706_014145.log).
 
-**NOTE_EDIT selection bracket (2026-07-06):** Geometry paths SHALL write **`EditorSelection.selectedTick`** in **display phase** (`bracketDisplayTickFromStorage` / `displayStartTickFromStorage` with **`loopStartTick`**), not storage ticks at origin 0. Highlight and note-info resolve by **`primaryNote`** + display-phase bracket on the drawn note list. Plan: [`docs/plans/unified_interval_projection_note_edit_selection_bugfix.md`](../../../docs/plans/unified_interval_projection_note_edit_selection_bugfix.md).
+**NOTE_EDIT selection bracket (2026-07-06):** Geometry paths SHALL write **`EditorSelection.selectedTick`** in **display phase** (`bracketDisplayTickFromStorage` / `displayStartTickFromStorage` with **`loopStartTick`**), not storage ticks at origin 0. Highlight and note-info resolve by **`primaryNote`** + display-phase bracket on the drawn note list. Plan: [`docs/Plans/unified_interval_projection_note_edit_selection_bugfix.md`](../../../docs/Plans/unified_interval_projection_note_edit_selection_bugfix.md).
 
 ### D15 — loopStartTick vs selectedTick (naming)
 
@@ -816,7 +816,7 @@ Third-party sequencers validate the **generate → select** split; none ship one
 
 **In-repo parity (not external research):** `test_note_edit_focus`, `test_noteutils_reconstruct` after consumer wire.
 
-Detail + links: [`docs/plans/unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/plans/unified_interval_projection_sequencer_prior_research_refinement.md).
+Detail + links: [`docs/Plans/unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/Plans/unified_interval_projection_sequencer_prior_research_refinement.md).
 
 ---
 
@@ -825,7 +825,7 @@ Detail + links: [`docs/plans/unified_interval_projection_sequencer_prior_researc
 - [`linear-loop-tick-storage`](../linear-loop-tick-storage/design.md)
 - [`edit-session-action-geometry`](../edit-session-action-geometry/design.md) D20
 - [`docs/Guides/NOTE_WRAPPING_LOGIC.md`](../../docs/Guides/NOTE_WRAPPING_LOGIC.md)
-- [`docs/plans/note_edit_geometry_wrap_regression_bugfix.md`](../../docs/plans/note_edit_geometry_wrap_regression_bugfix.md)
+- [`docs/Plans/note_edit_geometry_wrap_regression_bugfix.md`](../../docs/Plans/note_edit_geometry_wrap_regression_bugfix.md)
 - [`long-loop-piano-roll-window`](../long-loop-piano-roll-window/proposal.md)
-- [`docs/plans/unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/plans/unified_interval_projection_sequencer_prior_research_refinement.md)
-- [`docs/plans/dual-tick_view_override_architecture_856310b1.plan.md`](../../docs/plans/dual-tick_view_override_architecture_856310b1.plan.md) — D12 global / jam phase hook
+- [`docs/Plans/unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/Plans/unified_interval_projection_sequencer_prior_research_refinement.md)
+- [`docs/Plans/dual-tick_view_override_architecture_856310b1.plan.md`](../../docs/Plans/dual-tick_view_override_architecture_856310b1.plan.md) — D12 global / jam phase hook

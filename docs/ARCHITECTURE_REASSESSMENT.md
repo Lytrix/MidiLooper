@@ -1,6 +1,6 @@
 # Architecture reassessment gates
 
-**Default: continue implementation.** Reassess only when a [formal trigger](#formal-triggers) fires. See [progress bias and decision ladder](00-authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder).
+**Default: continue implementation.** Reassess only when a [formal trigger](#formal-triggers) fires. See [progress bias and decision ladder](Authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder).
 
 This document does not replace the mandatory bugfix checkpoint in `.cursor/rules/architecture-checkpoint-bugfix.mdc` — run both when applicable.
 
@@ -13,13 +13,13 @@ Pause and run a **design review** when **one or more** are true:
 | Trigger | Examples in this repo |
 |---------|----------------------|
 | **New owner introduced** | New `*Manager`, new module owning mutable domain state |
-| **Ownership transfer required** | Logic moves between modules — [ownership transfer protocol](00-authority/ARCHITECTURE_RULES.md#ownership-transfer-protocol) |
+| **Ownership transfer required** | Logic moves between modules — [ownership transfer protocol](Authority/ARCHITECTURE_RULES.md#ownership-transfer-protocol) |
 | **Persistent state model changes** | New canonical model for overlay index, dirty flags, pass timeline — not a field on existing owner |
 | **Storage schema changes** | Loop v4+ layout, CurrentSet version, REVPK revision pack |
 | **>3 files changed AND ownership crossed** | e.g. `Track` + `StorageManager` + `DisplayManager` with responsibility shift — not mere call-site edits |
 | **Undo semantics change** | New undo kind, reorder `handleUndo`, snapshot shape |
 | **Timing model changes** | Tick quantization, `updateAllTracks` contract, clock pulse handling |
-| **OpenSpec conflicts architecture** | Spec requires structure forbidden by ARCHITECTURE_RULES or PROJECT_INTENT — [conflict resolution](00-authority/README.md#conflict-resolution) |
+| **OpenSpec conflicts architecture** | Spec requires structure forbidden by ARCHITECTURE_RULES or PROJECT_INTENT — [conflict resolution](Authority/README.md#conflict-resolution) |
 | **No reusable extension point found** | After ladder steps 1–3, only path is new owner or duplicated state |
 
 ### Explicitly not triggers
@@ -85,18 +85,18 @@ If reassessment is **rejected** or user chooses “extend owner” → **return 
 
 _Use when a formal trigger fired — not for every task._
 
-- [ ] Conflicts with [PROJECT_INTENT](00-authority/PROJECT_INTENT.md) litmus tests?
-- [ ] Authority conflict resolved per [00-authority/README](00-authority/README.md#conflict-resolution)?
-- [ ] Violates [ARCHITECTURE_RULES](00-authority/ARCHITECTURE_RULES.md) forbidden patterns?
-- [ ] Ownership transfer proposal if scope moves? ([OWNERSHIP_TRANSFER](../templates/OWNERSHIP_TRANSFER.md))
+- [ ] Conflicts with [PROJECT_INTENT](Authority/PROJECT_INTENT.md) litmus tests?
+- [ ] Authority conflict resolved per [Authority/README](Authority/README.md#conflict-resolution)?
+- [ ] Violates [ARCHITECTURE_RULES](Authority/ARCHITECTURE_RULES.md) forbidden patterns?
+- [ ] Ownership transfer proposal if scope moves? ([OWNERSHIP_TRANSFER](../Templates/OWNERSHIP_TRANSFER.md))
 - [ ] OpenSpec `tasks.md` updated when applicable?
-- [ ] [DECISION_REVIEW](../templates/DECISION_REVIEW.md) + DECISION_LOG for firmware?
+- [ ] [DECISION_REVIEW](../Templates/DECISION_REVIEW.md) + DECISION_LOG for firmware?
 - [ ] Native / HITL tests identified?
 - [ ] `PROJECT_STATE.md` and `CURRENT_WORK.md` updated?
 
 ---
 
-If reassessment produced rejected alternatives, append to [DECISION_LOG.md](../DECISION_LOG.md) ([SESSION_CLOSEOUT.md](../templates/SESSION_CLOSEOUT.md)).
+If reassessment produced rejected alternatives, append to [DECISION_LOG.md](../DECISION_LOG.md) ([SESSION_CLOSEOUT.md](../Templates/SESSION_CLOSEOUT.md)).
 
 ## Escalation
 
@@ -106,4 +106,4 @@ If reassessment blocks progress:
 2. Do **not** land a workaround in production paths to "unblock."
 3. If user declines redesign → extend existing owner and implement.
 
-Related: [templates/PREFLIGHT.md](templates/PREFLIGHT.md), [agents/architect.md](agents/architect.md).
+Related: [Templates/PREFLIGHT.md](Templates/PREFLIGHT.md), [Agents/architect.md](Agents/architect.md).

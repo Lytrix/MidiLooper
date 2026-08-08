@@ -22,7 +22,7 @@ JamAction** (D3 persisted actions), not slot MIDI capture first.
 Do not continue this folder as-is. When ready:
 
 - Resolve R1 (merge model A vs B) and R3–R5 from
-  `docs/plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` §0.2
+  `docs/Plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` §0.2
 - `/opsx:propose jam-recorder` per timeline Workstream E, or a new D13 change after M10
 
 Artifacts here are kept for reference only.

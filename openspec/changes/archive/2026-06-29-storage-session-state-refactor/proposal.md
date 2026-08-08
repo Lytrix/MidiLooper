@@ -10,7 +10,7 @@ high-risk. OpenSpec is needed now to turn the handoff's coarse steps into ordere
 with explicit helper-export prerequisites — **without changing FSM step semantics**.
 
 Brownfield: [DEC-012](../../docs/DECISION_LOG.md#dec-012-storagesession-persistence-state-model),
-[storage_session_state_refactor_open_items_handoff.md](../../docs/plans/storage_session_state_refactor_open_items_handoff.md),
+[storage_session_state_refactor_open_items_handoff.md](../../docs/Plans/storage_session_state_refactor_open_items_handoff.md),
 [set-revision-persistence](../set-revision-persistence/proposal.md) (behavior already shipped).
 
 ## What Changes
@@ -68,7 +68,7 @@ Brownfield: [DEC-012](../../docs/DECISION_LOG.md#dec-012-storagesession-persiste
 | Policy | `include/RevisionLoadPolicy.h`, `src/RevisionLoadPolicy.cpp` |
 | Callers | `src/DisplayManager.cpp`, `src/MidiButtonActions.cpp` |
 | Tests | `test/test_set_revision_persistence/` |
-| Runtime docs | `docs/runtime/CURRENT_WORK.md`, `docs/runtime/PROJECT_STATE.md` |
-| Handoff | `docs/plans/storage_session_state_refactor_open_items_handoff.md` |
+| Runtime docs | `docs/Runtime/CURRENT_WORK.md`, `docs/Runtime/PROJECT_STATE.md` |
+| Handoff | `docs/Plans/storage_session_state_refactor_open_items_handoff.md` |
 
 Tracking: [docs/DELIVERABLE_TRACKING.md](../../docs/DELIVERABLE_TRACKING.md).

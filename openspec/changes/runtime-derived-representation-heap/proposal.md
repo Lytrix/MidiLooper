@@ -6,7 +6,7 @@ July 2026 HITL on `derived-note-overlap-logic` proved the 16-bar hang and 64-bar
 - **64+64** overdub completes on device but HITL verifier misses `#CAP,ST,OVERDUBBING,PLAYING` when the capture ring drops tier-A lines under MO burst (`RING,overflow`).
 - **`passesMaterializedStore_`** published flat still lazy-flattens to **internal heap** on `Loop::midiEvents()` — the main RAM1 drain for long loops after Phase B idle seed.
 
-This change consolidates the never-shipped Cursor plan `64bar_regression_commit_analysis_b1378b37`, July heap-recovery work, and [`docs/plans/64bar_regression_commit_analysis_enhancement.md`](../../../docs/plans/64bar_regression_commit_analysis_enhancement.md) into one OpenSpec track aligned with **DEC-016** four-layer derived views.
+This change consolidates the never-shipped Cursor plan `64bar_regression_commit_analysis_b1378b37`, July heap-recovery work, and [`docs/Plans/64bar_regression_commit_analysis_enhancement.md`](../../../docs/Plans/64bar_regression_commit_analysis_enhancement.md) into one OpenSpec track aligned with **DEC-016** four-layer derived views.
 
 **Not in scope (M1–M4):** long-loop display window (`long-loop-piano-roll-window`), NOTE_EDIT geometry, bisect script revival (DEC-017 parked).
 
@@ -22,7 +22,7 @@ This change consolidates the never-shipped Cursor plan `64bar_regression_commit_
 
 Phase A→C + `cdd9c2b` capture-serial ring work is **done**; tasks mark complete with commit cites.
 
-**M6 (2026-07-14):** Complete DEC-016 derived-representation policy across runtime playback paths (legacy callsite migration — **not** streaming playback). Phase 0 audit complete; additional legacy paths documented in plan. Exit criteria: no unintended hot-path materialize, manual + HITL gates PASS. `#CAP,DIAG,heap` cancelled (~50 KB RAM1). Plan: [`docs/plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/plans/multi_track_playback_pressure_closure_refinement.md).
+**M6 (2026-07-14):** Complete DEC-016 derived-representation policy across runtime playback paths (legacy callsite migration — **not** streaming playback). Phase 0 audit complete; additional legacy paths documented in plan. Exit criteria: no unintended hot-path materialize, manual + HITL gates PASS. `#CAP,DIAG,heap` cancelled (~50 KB RAM1). Plan: [`docs/Plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/Plans/multi_track_playback_pressure_closure_refinement.md).
 
 ## Capabilities
 
@@ -42,4 +42,4 @@ Phase A→C + `cdd9c2b` capture-serial ring work is **done**; tasks mark complet
 - Guides: `DEFERRED_RUNTIME_PERSISTENCE.md`, `LOOP_MIDI_STORAGE_AND_VALIDATION.md` (admission paragraph).
 - Verification: `pio test -e native`; HITL 64-bar record-only and 64+64 with floor=0.
 - Supersedes: Cursor plans `64bar_regression_commit_analysis_b1378b37`, `heap_recovery_16bar_ebfaa9cd` (user-local `.cursor/plans/`).
-- Brownfield: [`docs/00-authority/Architecture/DerivedViews.md`](../../../docs/00-authority/Architecture/DerivedViews.md), DEC-016/017/018.
+- Brownfield: [`docs/Authority/Architecture/DerivedViews.md`](../../../docs/Authority/Architecture/DerivedViews.md), DEC-016/017/018.

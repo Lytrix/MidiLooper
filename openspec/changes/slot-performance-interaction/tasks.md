@@ -1,6 +1,6 @@
 # Tasks — slot-performance-interaction
 
-**Prerequisite:** Read [`design.md`](design.md), [`proposal.md`](proposal.md), [`docs/plans/slot_playback_window_interaction_architecture.md`](../../../docs/plans/slot_playback_window_interaction_architecture.md).
+**Prerequisite:** Read [`design.md`](design.md), [`proposal.md`](proposal.md), [`docs/Plans/slot_playback_window_interaction_architecture.md`](../../../docs/Plans/slot_playback_window_interaction_architecture.md).
 
 ## −1. Rename merge cache (first)
 
@@ -12,10 +12,10 @@
 
 ## 0. OpenSpec and docs
 
-- [x] 0.1 Architecture plan [`slot_playback_window_interaction_architecture.md`](../../../docs/plans/slot_playback_window_interaction_architecture.md)
+- [x] 0.1 Architecture plan [`slot_playback_window_interaction_architecture.md`](../../../docs/Plans/slot_playback_window_interaction_architecture.md)
 - [ ] 0.2 `openspec validate slot-performance-interaction --strict`
 - [ ] 0.3 Update [`docs/Guides/control-surface/Loops.md`](../../../docs/Guides/control-surface/Loops.md)
-- [ ] 0.4 Cross-link in [`docs/plans/openspec_integration_overview.md`](../../../docs/plans/openspec_integration_overview.md)
+- [ ] 0.4 Cross-link in [`docs/Plans/openspec_integration_overview.md`](../../../docs/Plans/openspec_integration_overview.md)
 
 ## 1. SlotActionQueue (Phase 0)
 

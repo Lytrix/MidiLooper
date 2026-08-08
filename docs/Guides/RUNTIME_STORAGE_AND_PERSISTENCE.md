@@ -11,7 +11,7 @@ Agent-oriented map of how loop MIDI lives in RAM (chunk pool + passes) and how i
 | [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md) | Deferred writer FSM, SAVE tokens, call sites, chunk-bounded SD write |
 | [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) | Internal heap vs external memory pool routing |
 
-**Active architecture change (proposed):** OpenSpec [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) — invariant-driven, cooperative budget-driven capture-chunk persistence. Status: see [`docs/runtime/PROJECT_STATE.md`](../runtime/PROJECT_STATE.md).
+**Active architecture change (proposed):** OpenSpec [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) — invariant-driven, cooperative budget-driven capture-chunk persistence. Status: see [`docs/Runtime/PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md).
 
 ### Core architectural invariants
 
@@ -399,7 +399,7 @@ Not an architectural dependency. Primary bottleneck is SD flash latency, not RAM
 
 ## Related
 
-- [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](../plans/record_overdub_memory_display_timeline_enhancement.md)
-- [`docs/plans/64bar_regression_commit_analysis_enhancement.md`](../plans/64bar_regression_commit_analysis_enhancement.md)
+- [`docs/Plans/record_overdub_memory_display_timeline_enhancement.md`](../Plans/record_overdub_memory_display_timeline_enhancement.md)
+- [`docs/Plans/64bar_regression_commit_analysis_enhancement.md`](../Plans/64bar_regression_commit_analysis_enhancement.md)
 - `openspec/specs/long-record-memory-headroom/spec.md`
 - OpenSpec: [`openspec/changes/continuous-runtime-persistence/`](../../openspec/changes/continuous-runtime-persistence/)

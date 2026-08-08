@@ -4,7 +4,7 @@ Agent-oriented rules for **where** allocations live on Teensy 4.1 and **how** ad
 
 > **Different axis:** this guide covers the malloc heap (internal RAM2) vs PSRAM. For **RAM1 linker overflow** (`free for local variables: -N`) — a DTCM/ITCM 32 KB bank-quantization problem solved by moving globals to `DMAMEM` — see [`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc).
 
-**Shipped:** 2026-07-06 (`b1260ce`). Refinement log: [`internal_heap_psram_routing_refinement.md`](../plans/internal_heap_psram_routing_refinement.md). OpenSpec: [`openspec/specs/internal-heap-external-memory-routing/spec.md`](../../openspec/specs/internal-heap-external-memory-routing/spec.md).
+**Shipped:** 2026-07-06 (`b1260ce`). Refinement log: [`internal_heap_psram_routing_refinement.md`](../Plans/internal_heap_psram_routing_refinement.md). OpenSpec: [`openspec/specs/internal-heap-external-memory-routing/spec.md`](../../openspec/specs/internal-heap-external-memory-routing/spec.md).
 
 ---
 
@@ -121,7 +121,7 @@ Binary diagnostic records complement `[Memory]` prose lines. They use the same `
 .venv/bin/python scripts/parse_diag_trace.py captures/session_*.log
 ```
 
-**NOTE_EDIT open path:** `DIAG_EVENT` only on inner steps — no `DIAG_MEMORY` or `logStatus` inside `openNoteEditSession`. See [`memory_diagnostics_optimization_enhancement.md`](../plans/memory_diagnostics_optimization_enhancement.md).
+**NOTE_EDIT open path:** `DIAG_EVENT` only on inner steps — no `DIAG_MEMORY` or `logStatus` inside `openNoteEditSession`. See [`memory_diagnostics_optimization_enhancement.md`](../Plans/memory_diagnostics_optimization_enhancement.md).
 
 Allocator audit (Phase 4):
 
@@ -146,8 +146,8 @@ PSRAM pool totals are **not** comparable across arbitrary sessions (SD load, chu
 ## Related
 
 - [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md) — chunk pool, stop path, undo  
-- [`record_overdub_memory_display_timeline_enhancement.md`](../plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline  
+- [`record_overdub_memory_display_timeline_enhancement.md`](../Plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline  
 - [`FADER_STATE_SYSTEM.md`](FADER_STATE_SYSTEM.md) — `kNoteEditFaderFeedbackEnabled` on/off  
 - [`openspec/specs/long-record-memory-headroom/spec.md`](../../openspec/specs/long-record-memory-headroom/spec.md)  
 - [`openspec/specs/note-edit-session-undo/spec.md`](../../openspec/specs/note-edit-session-undo/spec.md)
-- [`memory_diagnostics_optimization_enhancement.md`](../plans/memory_diagnostics_optimization_enhancement.md) — diagnostics platform + Phase 1–5 order
+- [`memory_diagnostics_optimization_enhancement.md`](../Plans/memory_diagnostics_optimization_enhancement.md) — diagnostics platform + Phase 1–5 order

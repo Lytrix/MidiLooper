@@ -59,7 +59,7 @@ How to remap channels, notes, and CCs for your own controller. The looper is **c
 | Notes | Role |
 |-------|------|
 | 48–63 (ch2) | Track 1–16: select (short), mute (long), solo (double) |
-| 60–67 (ch16) | Track 1–8 in multi-loop plan — see **`docs/plans/`** |
+| 60–67 (ch16) | Track 1–8 in multi-loop plan — see **`docs/Plans/`** |
 
 ### Faders
 

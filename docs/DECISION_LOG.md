@@ -2,12 +2,12 @@
 
 Persistent record of **accepted architectural and implementation decisions**. Not a changelog, roadmap, or meeting notes.
 
-**Agents:** run [DECISION_REVIEW.md](templates/DECISION_REVIEW.md) before implementation; append new decisions at [session closeout](templates/SESSION_CLOSEOUT.md).
+**Agents:** run [DECISION_REVIEW.md](Templates/DECISION_REVIEW.md) before implementation; append new decisions at [session closeout](Templates/SESSION_CLOSEOUT.md).
 
 | Rule | Meaning |
 |------|---------|
 | Append only | Never delete; supersede with a new entry (`Status: Superseded`) |
-| Search before design | `rg` this file + active OpenSpec + relevant `docs/plans/` |
+| Search before design | `rg` this file + active OpenSpec + relevant `docs/Plans/` |
 | Challenge via reassessment | Redesign is allowed through [ARCHITECTURE_REASSESSMENT.md](ARCHITECTURE_REASSESSMENT.md) + new log entry |
 
 ## Index
@@ -51,7 +51,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-08-08  
 **Status:** Accepted  
-**Plan:** [`note_edit_resolver_authority_contracts_refinement`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5.3
+**Plan:** [`note_edit_resolver_authority_contracts_refinement`](../Plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5.3
 
 **Context:** Sticky deselect cleared Focus `changedOverlapNoteIds` while leaving Visible shortened `currentSpan` (no flash restore). Participation membership could not be derived from geometry alone; the latch was a second authority.
 
@@ -116,7 +116,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 **Decision:**
 
 1. **North star:** **`DeferredJobScheduler`** owns execution of all non-realtime, interruptible, resumable firmware work. Domain managers submit jobs and own job logic.  
-2. **Phase A (now):** implement time-budgeted resumable **`LoadLoopJob`** under `StorageManager::runDeferredFrame()` — no new top-level scheduler type yet. See [`deferred_storage_time_budget_scheduler_enhancement.md`](plans/deferred_storage_time_budget_scheduler_enhancement.md).  
+2. **Phase A (now):** implement time-budgeted resumable **`LoadLoopJob`** under `StorageManager::runDeferredFrame()` — no new top-level scheduler type yet. See [`deferred_storage_time_budget_scheduler_enhancement.md`](Plans/deferred_storage_time_budget_scheduler_enhancement.md).  
 3. **Phase B:** introduce `DeferredJobScheduler::runFrame()` and migrate execution ownership out of StorageManager (formal ownership trigger; OpenSpec before firmware).  
 4. **Focus change:** demote jobs; do not cancel (preserves SD/parser progress). Cancel only for memory pressure discard, SD failure, unload, set close.  
 5. **Commit:** atomic only — job execution state → Commit → published loop. No partial loop states. Job owns its unpublished fields until Commit (no separate Workspace/Context/Scratch type for job temp).  
@@ -126,7 +126,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Consequences:** Phase A may ship without a new Manager. Phase B requires an OpenSpec change + architecture gate before `DeferredJobScheduler` lands. Extends DEC-026 Commit model; does not replace it. DEC-020 “cooperative budget-driven” persistence remains shipped history; the unified deferred owner type name is `DeferredJobScheduler`.
 
-**References:** [`deferred_job_scheduler_architecture.md`](plans/deferred_job_scheduler_architecture.md), DEC-026, DEC-020 (persistence budgets as prior art).
+**References:** [`deferred_job_scheduler_architecture.md`](Plans/deferred_job_scheduler_architecture.md), DEC-026, DEC-020 (persistence budgets as prior art).
 
 ---
 
@@ -141,11 +141,11 @@ Persistent record of **accepted architectural and implementation decisions**. No
 1. All runtime-visible loop changes occur through **Commit** (semantics, not a single helper).  
 2. Hydration lifecycle `UNLOADED → HEADER_READY → COMMITTED → DERIVED_READY` is architectural; storage flexible. COMMITTED is sufficient for play/edit/display; DERIVED_READY optional.  
 3. Boot sync-commits audible set only; MVP may keep existing sync load. Runtime priorities: audible + explicitly requested. No speculative prefetch. Load-while-PLAYING interactive = later phase.  
-4. OpenSpec change: `unified-commit-lazy-slot-load`. Architecture plans frozen under `docs/plans/unified_publish_pipeline_*`.
+4. OpenSpec change: `unified-commit-lazy-slot-load`. Architecture plans frozen under `docs/Plans/unified_publish_pipeline_*`.
 
 **Consequences:** New branch for firmware; Phase 1 rename Publish→Commit; Phase 2 audible boot before cooperative session requirement.
 
-**References:** [`unified-commit-lazy-slot-load`](../openspec/changes/unified-commit-lazy-slot-load/), [`unified_publish_pipeline_deferred_lazy_loading_architecture.md`](plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md), DEC-021 (audible-ready gate amends full-set boot drain practice).
+**References:** [`unified-commit-lazy-slot-load`](../openspec/changes/unified-commit-lazy-slot-load/), [`unified_publish_pipeline_deferred_lazy_loading_architecture.md`](Plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md), DEC-021 (audible-ready gate amends full-set boot drain practice).
 
 ---
 
@@ -164,7 +164,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Consequences:** `U:` reflects selected loop pass-undo depth. Slot/Record gestures remain thin wrappers. Phase 2 touches persistence footer, `PassReclaim`, and redo tests.
 
-**Reference:** [`docs/plans/loop_undo_ownership_refinement.md`](plans/loop_undo_ownership_refinement.md)
+**Reference:** [`docs/Plans/loop_undo_ownership_refinement.md`](Plans/loop_undo_ownership_refinement.md)
 
 ---
 
@@ -263,7 +263,7 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 - Supersedes workspace-session-persistence non-goal “all 8×8 at boot” for stack safety.
 - Play entry uses `loop.midiEvents()` in `ensurePlaybackWindowBuilt`; transport start skips `updateAllTracks(0)` when no capture is pending.
 
-**References:** DEC-019, [`m5_sd_load_extmem_routing_handoff.md`](plans/m5_sd_load_extmem_routing_handoff.md), `loadCurrentSetBundleAndActiveLoopSlots`. **Amendment:** DEC-025, [`slot-performance-interaction`](../openspec/changes/slot-performance-interaction/) D21.
+**References:** DEC-019, [`m5_sd_load_extmem_routing_handoff.md`](Plans/m5_sd_load_extmem_routing_handoff.md), `loadCurrentSetBundleAndActiveLoopSlots`. **Amendment:** DEC-025, [`slot-performance-interaction`](../openspec/changes/slot-performance-interaction/) D21.
 
 ---
 
@@ -306,7 +306,7 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 - Spec delta ADDED scenarios under `internal-heap-external-memory-routing` (marked spike).
 - Implementation tasks tracked in `tasks.md` § M5.
 
-**References:** DEC-016, DEC-018, [`spike_sd_load_extmem_routing.md`](../../openspec/changes/runtime-derived-representation-heap/spike_sd_load_extmem_routing.md), [`64bar_regression_commit_analysis_enhancement.md`](plans/64bar_regression_commit_analysis_enhancement.md).
+**References:** DEC-016, DEC-018, [`spike_sd_load_extmem_routing.md`](../../openspec/changes/runtime-derived-representation-heap/spike_sd_load_extmem_routing.md), [`64bar_regression_commit_analysis_enhancement.md`](Plans/64bar_regression_commit_analysis_enhancement.md).
 
 ---
 
@@ -328,7 +328,7 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 
 **Consequences:**
 
-- [`docs/plans/64bar_regression_commit_analysis_enhancement.md`](plans/64bar_regression_commit_analysis_enhancement.md) links to the OpenSpec change.
+- [`docs/Plans/64bar_regression_commit_analysis_enhancement.md`](Plans/64bar_regression_commit_analysis_enhancement.md) links to the OpenSpec change.
 - User-local Cursor plans marked superseded (not deleted).
 
 **References:** DEC-016, DEC-017, commit `cdd9c2b`, [`openspec/changes/runtime-derived-representation-heap/`](../../openspec/changes/runtime-derived-representation-heap/).
@@ -338,7 +338,7 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 ## DEC-017 — Skip long HITL/capture gates; implement runtime redesign
 
 **Date:** 2026-07-07  
-**Owner:** runtime architecture track (`docs/00-authority/Architecture/`, Phase A→C in [64bar_regression_commit_analysis_enhancement.md](plans/64bar_regression_commit_analysis_enhancement.md))  
+**Owner:** runtime architecture track (`docs/Authority/Architecture/`, Phase A→C in [64bar_regression_commit_analysis_enhancement.md](Plans/64bar_regression_commit_analysis_enhancement.md))  
 **Status:** Accepted
 
 **Context:** 64+64 commit bisect and serial capture gates are slow, unreliable across SD/firmware version mismatches, and duplicate evidence already in archived `captures/` (June PASS vs July FAIL). Partial Phase A shipped in `d635296` (boot + 16-bar record). Remaining blocker is playback materialize on PLAYING entry (H6) — an architecture/scheduling fix, not another bisect loop.
@@ -347,23 +347,23 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 
 1. **Skip** as implementation gates: save-bypass HITL, commit bisect at anchor SHAs, `validate-64x64` HITL, UIP Phase 5.5 HITL matrix — until runtime Phase A→C is complete.
 2. **Keep** archived serial evidence in `captures/` and investigation plans as **historical** reference only; do not block progress on new long captures.
-3. **Implement** runtime invariants per DEC-016: Phase A → Phase B → Phase C (see [64bar_regression_commit_analysis_enhancement.md](plans/64bar_regression_commit_analysis_enhancement.md)).
+3. **Implement** runtime invariants per DEC-016: Phase A → Phase B → Phase C (see [64bar_regression_commit_analysis_enhancement.md](Plans/64bar_regression_commit_analysis_enhancement.md)).
 4. **Verify** with `pio test -e native` and short manual smoke (boot, 16-bar record); re-open long HITL only after Phase C if needed.
 
 **Consequences:**
 
-- [CURRENT_WORK.md](runtime/CURRENT_WORK.md) priority is runtime redesign, not bisect.
+- [CURRENT_WORK.md](Runtime/CURRENT_WORK.md) priority is runtime redesign, not bisect.
 - Bisect helper `scripts/run_64bar_bisect_anchor.sh` is parked, not maintained.
 - UIP Phase 6 / overlap resume stays blocked until runtime phases ship.
 
-**References:** DEC-016, [next_session_handoff_overdub_uip_architecture.md](plans/next_session_handoff_overdub_uip_architecture.md), commit `d635296`.
+**References:** DEC-016, [next_session_handoff_overdub_uip_architecture.md](Plans/next_session_handoff_overdub_uip_architecture.md), commit `d635296`.
 
 ---
 
 ## DEC-016 — Runtime architecture four-layer model
 
 **Date:** 2026-07-07  
-**Owner:** `docs/00-authority/Architecture/` (conceptual); brownfield build owners per layer (`Loop`, `Track`, `EditManager`, `DisplayManager`, `IntervalProjection`)  
+**Owner:** `docs/Authority/Architecture/` (conceptual); brownfield build owners per layer (`Loop`, `Track`, `EditManager`, `DisplayManager`, `IntervalProjection`)  
 **Status:** Accepted
 
 **Context:** The 64-bar PLAYING-window regression investigation showed display, playback, and LED paths each deciding when to rebuild timeline data. UIP (DEC-015) unified interval math but not representation ownership, revision chains, or consumer scheduling. Investigation detail must not live in permanent architecture docs.
@@ -376,16 +376,16 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 4. **Revision chain:** storage mutation → event representation → downstream display/playback representations. Consumers validate staleness; they do not call peer rebuild APIs on hot paths (e.g. `ensureVisualCacheBuilt` from `MidiLedManager` during PLAYING).
 5. **Scheduling:** document **responsibilities** (owner, policy, defer vs immediate). A dedicated scheduler is optional implementation — not an architectural requirement.
 6. **NOTE_EDIT exception:** `NoteEditSession.store` is a live overlay on passes during edit (Tier-2 playback audition via `sessionMidiEvents()` / `sessionPreviewRevision_`) — not folded into a single loop event representation.
-7. **Doc split:** permanent model in `docs/00-authority/Architecture/`; regression bisect/evidence in `docs/plans/*_bugfix.md`; concrete patches in `docs/plans/*_refinement.md`.
+7. **Doc split:** permanent model in `docs/Authority/Architecture/`; regression bisect/evidence in `docs/Plans/*_bugfix.md`; concrete patches in `docs/Plans/*_refinement.md`.
 
 **Consequences:**
 
-- Agents load [RuntimeArchitecture.md](00-authority/Architecture/RuntimeArchitecture.md) for display/playback/LED read paths before changing rebuild behavior.
-- PLAYING/overdub hot-path work defers full display representation rebuild (see [overdub_start_playing_window_hot_path_refinement.md](plans/overdub_start_playing_window_hot_path_refinement.md)).
+- Agents load [RuntimeArchitecture.md](Authority/Architecture/RuntimeArchitecture.md) for display/playback/LED read paths before changing rebuild behavior.
+- PLAYING/overdub hot-path work defers full display representation rebuild (see [overdub_start_playing_window_hot_path_refinement.md](Plans/overdub_start_playing_window_hot_path_refinement.md)).
 - Future features (clip launch, multi-window, LTS) add a representation, an interval source, or a consumer — not parallel cache systems.
-- Code rename (`VisualCache` → representation naming) is deferred; docs use architecture terms with brownfield mapping table in [DerivedViews.md](00-authority/Architecture/DerivedViews.md).
+- Code rename (`VisualCache` → representation naming) is deferred; docs use architecture terms with brownfield mapping table in [DerivedViews.md](Authority/Architecture/DerivedViews.md).
 
-**References:** DEC-015, [unified-interval-projection/design.md](../openspec/changes/unified-interval-projection/design.md), [overdub_start_64bar_playing_window_regression_bugfix.md](plans/overdub_start_64bar_playing_window_regression_bugfix.md).
+**References:** DEC-015, [unified-interval-projection/design.md](../openspec/changes/unified-interval-projection/design.md), [overdub_start_64bar_playing_window_regression_bugfix.md](Plans/overdub_start_64bar_playing_window_regression_bugfix.md).
 
 ---
 
@@ -513,7 +513,7 @@ Matches **EditSession + EditManager** pattern (session struct + coordinator) wit
 
 ### Migration notes
 
-Handoff: [`docs/plans/storage_session_state_refactor_handoff.md`](plans/storage_session_state_refactor_handoff.md). Builder starts Tier 0.
+Handoff: [`docs/Plans/storage_session_state_refactor_handoff.md`](Plans/storage_session_state_refactor_handoff.md). Builder starts Tier 0.
 
 ---
 
@@ -564,7 +564,7 @@ Supersedes implicit “always stop for 3+ files” interpretation.
 ## DEC-010 — Ownership evolution protocol
 
 **Date:** 2026-06-29  
-**Owner:** Process (`docs/00-authority/ARCHITECTURE_RULES.md`)  
+**Owner:** Process (`docs/Authority/ARCHITECTURE_RULES.md`)  
 **Status:** Accepted
 
 ### Problem
@@ -608,7 +608,7 @@ Example path: surface-agnostic Actions (DEC-005) should use this protocol when m
 ## DEC-009 — Runtime state vs roadmap split
 
 **Date:** 2026-06-29  
-**Owner:** Process (`docs/runtime/`)  
+**Owner:** Process (`docs/Runtime/`)  
 **Status:** Accepted
 
 ### Problem
@@ -617,7 +617,7 @@ Example path: surface-agnostic Actions (DEC-005) should use this protocol when m
 
 ### Decision
 
-Split `docs/runtime/` into **PROJECT_STATE** (execution context), **CURRENT_WORK** (now / not now / completion), **ROADMAP** (future only, never implementation authority). Agents load PROJECT_STATE + CURRENT_WORK before planning; ROADMAP optional.
+Split `docs/Runtime/` into **PROJECT_STATE** (execution context), **CURRENT_WORK** (now / not now / completion), **ROADMAP** (future only, never implementation authority). Agents load PROJECT_STATE + CURRENT_WORK before planning; ROADMAP optional.
 
 ### Rationale
 
@@ -651,7 +651,7 @@ Post-M7 sequence moved from PROJECT_STATE to ROADMAP.md.
 ## DEC-008 — Authority conflict resolution
 
 **Date:** 2026-06-29  
-**Owner:** Process (`docs/00-authority/README.md`)  
+**Owner:** Process (`docs/Authority/README.md`)  
 **Status:** Accepted
 
 ### Problem
@@ -660,7 +660,7 @@ Authority ordering defined precedence but not conflict handling. Example: OpenSp
 
 ### Decision
 
-Explicit conflict matrix in `00-authority/README.md`. OpenSpec owns **behavior**; ARCHITECTURE_RULES owns **structure**. On conflict: **STOP**, architecture reassessment, user approval, update docs, then code. Prefer extending existing owner over new Manager.
+Explicit conflict matrix in `Authority/README.md`. OpenSpec owns **behavior**; ARCHITECTURE_RULES owns **structure**. On conflict: **STOP**, architecture reassessment, user approval, update docs, then code. Prefer extending existing owner over new Manager.
 
 ### Rationale
 
@@ -732,7 +732,7 @@ N/A
 
 ### Migration notes
 
-`docs/runtime/DECISION_LOG.md` redirects here. Entries DEC-001–DEC-006 migrated to structured format.
+`docs/Runtime/DECISION_LOG.md` redirects here. Entries DEC-001–DEC-006 migrated to structured format.
 
 ---
 
@@ -954,7 +954,7 @@ Reopen when surface-agnostic Actions refactor is explicitly scheduled.
 ## DEC-006 — Agent context harness vs chat history
 
 **Date:** 2026-06-29  
-**Owner:** Process (`docs/00-authority/`, `docs/runtime/`)  
+**Owner:** Process (`docs/Authority/`, `docs/Runtime/`)  
 **Status:** Accepted
 
 ### Problem

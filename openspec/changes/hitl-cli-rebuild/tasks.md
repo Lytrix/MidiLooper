@@ -1,6 +1,6 @@
 # Tasks — hitl-cli-rebuild
 
-**Prerequisite:** Read [`design.md`](design.md), [`proposal.md`](proposal.md), [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md).
+**Prerequisite:** Read [`design.md`](design.md), [`proposal.md`](proposal.md), [`docs/Plans/hitl_cli_rebuild_enhancement.md`](../../../docs/Plans/hitl_cli_rebuild_enhancement.md).
 
 ## Phase 0 — Inventory + doc scaffold
 
@@ -13,7 +13,7 @@
 
 ## Phase 1 — Foundation
 
-- [x] 1.1 Extract Part I → `docs/00-authority/Architecture/HITL_ARCHITECTURE.md`
+- [x] 1.1 Extract Part I → `docs/Authority/Architecture/HITL_ARCHITECTURE.md`
 - [x] 1.2 `HitlConfig`, `bootstrap.py`, `session.py`, contexts, types
 - [x] 1.3 `foundation_runner.py` (no `ScenarioRunner`), `reporting.py` skeleton
 - [x] 1.4 `layered_registry.py` — `LayeredScenarioSpec`, `PresetSpec`, verifier lookup

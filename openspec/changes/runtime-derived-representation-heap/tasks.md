@@ -41,7 +41,7 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] 64-bar record-only PASS (`20260707_184646`, seal heap=57344, PERS ok)
 - [ ] 64+64 track 2/slot 1 — partial (`20260707_192649`); HITL **blocked on M6** manual gates
 - [x] `pio test -e native` (baseline at last M5 merge)
-- [x] Update `docs/runtime/CURRENT_WORK.md`, `PROJECT_STATE.md` (prior milestones)
+- [x] Update `docs/Runtime/CURRENT_WORK.md`, `PROJECT_STATE.md` (prior milestones)
 - [ ] Archive change when M6 manual + HITL gates pass (`/opsx:archive`)
 
 ### M4 manual gates (before HITL 64+64)
@@ -66,7 +66,7 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 
 ## M6 — DEC-016 completion: legacy callsite migration (2026-07-14) — **NEXT**
 
-**Plan:** [`docs/plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/plans/multi_track_playback_pressure_closure_refinement.md)  
+**Plan:** [`docs/Plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/Plans/multi_track_playback_pressure_closure_refinement.md)  
 **Framing:** Complete approved DEC-016 architecture — not a new playback model  
 **Evidence:** manual `174731` PASS vs `175327` FAIL; HITL `163446` RECORDING stall  
 **Cancelled:** `#CAP,DIAG,heap` firmware (RAM1 ~−50 KB on `teensy41-capture-serial`)
@@ -118,16 +118,16 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 
 ### Phase 4 — Close docs + scripts + exit criteria
 
-- [ ] **Follow-on:** [`memory_pressure_reclaim_refinement.md`](../../../docs/plans/memory_pressure_reclaim_refinement.md) — `MemoryPressureLevel` + ownership-driven reclaim (branch `feature/memory-pressure-reclaim`)
+- [ ] **Follow-on:** [`memory_pressure_reclaim_refinement.md`](../../../docs/Plans/memory_pressure_reclaim_refinement.md) — `MemoryPressureLevel` + ownership-driven reclaim (branch `feature/memory-pressure-reclaim`)
 - [ ] Ship persistence row parser + baseline wiring (if not merged)
-- [ ] Update [`long_record_capture_heap_investigation_refinement.md`](../../../docs/plans/long_record_capture_heap_investigation_refinement.md) → point to M6 plan
+- [ ] Update [`long_record_capture_heap_investigation_refinement.md`](../../../docs/Plans/long_record_capture_heap_investigation_refinement.md) → point to M6 plan
 - [ ] Verify M6 exit criteria: audit, hot-path `rg`, **architecture counter snapshot**, manual gates, native tests
 - [ ] Re-run `pio test -e native`; optional HITL 2+2; then M4 64+64 HITL regression
 - [ ] `/opsx:archive` when exit criteria met
 
 ## M7 — Published capture / builder split (2026-07-15) — **NEXT (Phase 1 firmware)**
 
-**Plan:** [`docs/plans/published_pass_capture_builder_split_refinement.md`](../../../docs/plans/published_pass_capture_builder_split_refinement.md)  
+**Plan:** [`docs/Plans/published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)  
 **Spec:** [`specs/published-capture-pass-split/spec.md`](specs/published-capture-pass-split/spec.md)  
 **Review:** [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § M7  
 **Primary goal:** ownership split (RAM secondary). **Supersedes** reverted Phase 2A typedef routing.

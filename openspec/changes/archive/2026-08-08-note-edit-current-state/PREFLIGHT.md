@@ -21,7 +21,7 @@ Note edit — `EditManager` / `EditSession` / NOTE_EDIT geometry pipeline.
 ### Search locations
 
 - [x] [`docs/DECISION_LOG.md`](../../docs/DECISION_LOG.md)
-- [x] `docs/plans/` — [`note_edit_session_current_state_refinement.md`](../../docs/plans/note_edit_session_current_state_refinement.md)
+- [x] `docs/Plans/` — [`note_edit_session_current_state_refinement.md`](../../docs/Plans/note_edit_session_current_state_refinement.md)
 - [x] Active OpenSpec — `openspec/changes/note-edit-current-state/`
 - [x] `openspec/specs/edit-session-action-geometry/`, `note-edit-modification-session/`, `note-edit-session-undo/`
 
@@ -60,16 +60,16 @@ A geometry index or live-store overlay would keep `EditSession.store` as implici
 
 ## Loaded docs
 
-- [x] `docs/runtime/PROJECT_STATE.md`
-- [x] `docs/runtime/CURRENT_WORK.md` — updated to list this change as now implementing
+- [x] `docs/Runtime/PROJECT_STATE.md`
+- [x] `docs/Runtime/CURRENT_WORK.md` — updated to list this change as now implementing
 - [x] `docs/DECISION_LOG.md` — DEC-028, DEC-010, DEC-014
-- [x] `docs/00-authority/PROJECT_INTENT.md` (via ARCHITECTURE_RULES)
-- [x] `docs/00-authority/ARCHITECTURE_RULES.md`
-- [x] `docs/00-authority/DELIVERY_RULES.md`
+- [x] `docs/Authority/PROJECT_INTENT.md` (via ARCHITECTURE_RULES)
+- [x] `docs/Authority/ARCHITECTURE_RULES.md`
+- [x] `docs/Authority/DELIVERY_RULES.md`
 - [x] `openspec/changes/note-edit-current-state/tasks.md`
 - [x] `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`
 - [x] `docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`
-- [x] `docs/00-authority/NAMING.md`
+- [x] `docs/Authority/NAMING.md`
 
 ## Extension point (implementation)
 

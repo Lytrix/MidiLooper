@@ -161,7 +161,7 @@ class FixtureNote:
     gate_steps: int = 2
 
 
-# See docs/plans/m8_edit_note_edit_hitl_automation_refinement.md
+# See docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md
 EDIT_RECORD_FIXTURE: tuple[FixtureNote, ...] = (
     FixtureNote(0, 60),
     FixtureNote(4, 64),
