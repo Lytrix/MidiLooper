@@ -93,7 +93,8 @@ NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
 bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,
                                                       const NoteBaseline& current);
 
-/// Overlap participant (not mover) that may receive leave-restore when interactions clear.
+/// Session-unsealed Hidden overlap participant (not mover) that may leave-restore when cleared.
+/// Sealed Deleted after deselect does not qualify (022849 E2).
 bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteState& participant,
                                                      NoteId movingNoteId);
 
@@ -107,7 +108,7 @@ bool participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(
     NoteId movingNoteId);
 
 /// Interaction overlay uses committed geometry while overlap closure is active (includes visible
-/// shortened tails). Leave-restore RestoreNote remains hidden/deleted only.
+/// shortened tails). Leave-restore RestoreNote remains session-unsealed Hidden only.
 bool participatingNoteUsesCommittedBaselineDuringOverlapClosure(
     const ParticipatingNoteState& participant, NoteId movingNoteId);
 

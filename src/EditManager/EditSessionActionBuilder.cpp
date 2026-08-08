@@ -189,7 +189,11 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
           actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
         } else if (closureActive && liveReadable &&
                    participatingNoteShortenedVsCommitted(live, baseline)) {
-          if (constrainedShortensTail && live.endTick != constrained.endTick) {
+          // Stage 7.5.E1 (022849): CompleteCover of already-shortened stubs must HideNote.
+          // Keep 202538 skip for partial cover (mover does not completely cover committed).
+          if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
+            actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
+          } else if (constrainedShortensTail && live.endTick != constrained.endTick) {
             const NoteBaseline shortened{baseline.pitch, baseline.velocity, baseline.startTick,
                                          constrained.endTick};
             actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
@@ -204,8 +208,14 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
     // After CompleteCover Hide, L→R that only OverlapNoteOff-shortens must reinsert the
     // stub (≥ noteMinLengthTicks). ShortenNote no-ops when the pair is absent
     // (session_20260804_220842). Never reinsert while a causing span still 100% covers the
-    // baseline (session_20260804_223208).
+    // baseline (session_20260804_223208). Sealed Deleted after deselect must not reinsert (022849 E2).
     if (!livePresent) {
+      if (currentState != nullptr) {
+        const NoteEditCurrentNoteState* sealedRow = currentState->find(liveNoteId);
+        if (sealedRow != nullptr && sealedRow->presence == NoteEditPresenceType::Deleted) {
+          continue;
+        }
+      }
       if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
         continue;
       }

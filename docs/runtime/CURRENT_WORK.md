@@ -2,15 +2,15 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (Stage 7.5.D shipped; 7.5.E documented from 022849)
+Last updated: 2026-08-08 (Stage 7.5.E HITL `024301` PASS)
 
 ---
 
 ## Now implementing
 
-### Note edit resolver authority contracts — Stage 7.5.E next (`note_edit_resolver_authority_contracts_refinement`)
+### Note edit resolver authority contracts — Stage 7.5 done; §11 step 5 next (`note_edit_resolver_authority_contracts_refinement`)
 
-**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) § Stage 7.5 slice E
+**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5
 
 | Step | Status |
 |------|--------|
@@ -18,12 +18,10 @@ Last updated: 2026-08-08 (Stage 7.5.D shipped; 7.5.E documented from 022849)
 | 2 — C9 contract tests | **Done** (`ea39f1c`) |
 | 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
 | 4 — Stage 8 sidebar/snapshot projection (C5) | **Done** — HITL `224633` PASS |
-| 4.5.A–C — Stage 7.5 premature restore / seal / deselect | **Done** (native; C HITL `020050`) |
-| 4.5.D — pitch + LTR leave-restore to `committedSpan` | **Done** (native + HITL `021407`/`022151`) |
-| 4.5.E — multi-note Hide + post-deselect restore | **Documented** (`022849`) — next |
-| 5 — semantic cleanup | After E |
+| 4.5.A–E — Stage 7.5 geometry | **Done** — E HITL `024301` PASS |
+| 5 — semantic cleanup | **Next** |
 
-**E (open):** elongated mover covering ≥2 notes misses Hide/Shorten actions (`022849` @70.446); after deselect with `storeNoteOns=10`, reselect + pass restores sealed-hidden notes (`022849` @92.329).
+**E HITL (`024301` vs `022849`):** @70.076 `interactions=2 actions=3` Hide **11** + Shorten **12**; @70.117 Hide **12** → `storeNoteOns=10`. After commit @71.582, reselect uses `baselineMap=10` (not 12); no `RestoreNote` for sealed **11**/**12**. Session leave-restore still OK earlier (@48.900 / @50.795).
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 
