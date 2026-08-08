@@ -100,14 +100,28 @@ Historical implementation logs — archived 2026-08-08. See [`Refinements/README
 
 ---
 
+## Root-level docs (roles)
+
+These files sit at `docs/` for discoverability. **Only [`Runtime/CURRENT_WORK.md`](Runtime/CURRENT_WORK.md) sets implementation priority.**
+
+| Document | Role | Not |
+|----------|------|-----|
+| [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md) | Canonical **why** — product identity, litmus tests | Implementation queue |
+| [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) | **What to work on now** | Deliverable history |
+| [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Shipped vs next at **deliverable** level | Second work queue |
+| [FEATURES.md](FEATURES.md) | Technical capability **checklist** (onboarding / README) | Authority; verify behavior in Guides |
+| [FEATURE_PLANS.md](FEATURE_PLANS.md) | Plan **conventions**; Phase 3 pointer | Implementation queue |
+| [PROJECT_INTENT.md](PROJECT_INTENT.md) | Redirect stub → `Authority/PROJECT_INTENT.md` | Duplicate intent source |
+| [Plans/README.md](Plans/README.md) | Design history conventions; archive policy | Plan manifest or index |
+
+---
+
 ## Also in this folder
 
 | Document | Role |
 |----------|------|
-| [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
-| [FEATURES.md](FEATURES.md) | Technical feature checklist (reference — not the implementation queue) |
-| [FEATURE_PLANS.md](FEATURE_PLANS.md) | Plan conventions; Phase 3 / multi-loop pointer |
-| [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Shipped vs next (deliverable level — not the implementation queue) |
-| [Plans/README.md](Plans/README.md) | Design history conventions; points to `CURRENT_WORK` |
+| [DECISION_LOG.md](DECISION_LOG.md) | Accepted / superseded decisions — search before new abstractions |
+| [ARCHITECTURE_REASSESSMENT.md](ARCHITECTURE_REASSESSMENT.md) | When to pause for design review |
+| [AGENT_CONTEXT_MAP.md](AGENT_CONTEXT_MAP.md) | Domain → required docs |
 
-When you add new guides, place them in `Guides/` and add a row to the matching table above. New implementation summaries belong in `Plans/` (active) or `Plans/archive/refinements/` (historical).
+When you add new guides, place them in `Guides/` and add a row to the Guides table above. New implementation summaries belong in `Plans/` (active) or `Plans/archive/refinements/` (historical).

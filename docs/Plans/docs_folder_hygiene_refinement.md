@@ -1,6 +1,6 @@
 # Docs folder hygiene — refinement plan
 
-**Status:** Proposed — **Phase 1 Done** (2026-08-08); **Phase 1.5 Done** (2026-08-08)  
+**Status:** **Complete** (2026-08-08) — Phases 1, 1.5, 2a–2d, 3 shipped.  
 **Goal:** Reduce `docs/` clutter without creating a second live queue, duplicate index, or new documentation-management mechanism.  
 **Supersedes:** Hygiene review item 18 remainder ([`codebase_hygiene_technical_debt_review.md`](codebase_hygiene_technical_debt_review.md) §18).
 
@@ -319,19 +319,19 @@ Fix references before committing. **One commit per batch.**
 
 ## Phase 3 — Optional root trim
 
-Only if confusion remains after Phases 1–2.
+**Status:** **Done** (2026-08-08) — root doc roles clarified; `PROJECT_INTENT.md` redirect stub retained; 3.3 deferred.
 
 ### 3.1 `docs/PROJECT_INTENT.md`
 
-Keep if useful; minimal redirect if inbound refs exist; remove after fixing refs if it duplicates authority. Do not create another source of project priority.
+**Done** — minimal redirect stub → `Authority/PROJECT_INTENT.md`; points to `CURRENT_WORK` for priority.
 
 ### 3.2 `FEATURES.md` / `FEATURE_PLANS.md`
 
-Clarify role in `docs/README.md` (checklist vs historical vs queue). If either acts as implementation queue, redirect to `CURRENT_WORK.md`. No merge unless clear benefit.
+**Done** — role table in `docs/README.md` § Root-level docs; banners in `FEATURES.md` and `FEATURE_PLANS.md`.
 
 ### 3.3 `CURRENT_WORK.md` history
 
-Consider `docs/Runtime/HISTORY.md` only if `CURRENT_WORK.md` becomes hard to use. Defer otherwise.
+**Deferred** — `CURRENT_WORK.md` still usable; no `HISTORY.md` split.
 
 ---
 
@@ -352,7 +352,7 @@ Consider `docs/Runtime/HISTORY.md` only if `CURRENT_WORK.md` becomes hard to use
 2. **Phase 1.5** — uniform PascalCase `docs/` folder names; `Authority/` → `Authority/`.
 3. **Phase 2a** — historical Cursor exports (under `docs/Plans/archive/`).
 4. **Phase 2b–2d** — archive handoffs, bugfixes, and refinements as lifecycle is clear.
-5. **Phase 3** — only if confusion remains.
+5. **Phase 3** — only if confusion remains. **Done** (2026-08-08).
 
 Do not combine Phase 1.5 with Phase 2 archive batches. Do not combine Phase 1 with large-scale archival.
 
