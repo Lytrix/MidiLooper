@@ -2,9 +2,9 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **1.3** admit* migration (in progress); **1.2 complete** (`a93e205`)  
+**Status:** Active — Phase **1 shipped** (PR [#19](https://github.com/Lytrix/MidiLooper/pull/19) merged); **Phase 2** API/vocabulary on `refactor/codebase-consistency-phase-2`  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
-**Branch:** `refactor/note-edit-projected-store-retire` (off `dev`)  
+**Branch:** `refactor/codebase-consistency-phase-2` (off `dev`); Phase 1 landed via `refactor/authority-cleanup` → PR #19
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
 **Naming authority:** [NAMING.md](../Authority/NAMING.md)  
 **Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) · [GITHUB_WORK_TRACKING.md](../Authority/GITHUB_WORK_TRACKING.md)
