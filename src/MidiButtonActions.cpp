@@ -72,7 +72,7 @@ void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, u
     track.queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick), now);
     track.commitQueuedPlaybackStart(now);
   }
-  trackManager.forceLedUpdate(now);
+  trackManager.forceMidiLedUpdate(now);
 }
 
 uint32_t overlayPlayStopFirstShortAtMs = 0;
@@ -290,7 +290,7 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                                 track.queuePlaybackStartAtGrid(
                                     static_cast<int32_t>(targetLoop.loopStartTick), now);
                                 track.commitQueuedPlaybackStart(now);
-                                trackManager.forceLedUpdate(now);
+                                trackManager.forceMidiLedUpdate(now);
                                 logger.info("Loop %d: long-press switch (transport stopped)",
                                             slot + 1);
                             }
@@ -303,7 +303,7 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                                 trackManager.setSlotMuted(tidx, s, false);
                             }
                             track.startPlaying(now);
-                            trackManager.forceLedUpdate(now);
+                            trackManager.forceMidiLedUpdate(now);
                             logger.info("Loop %d: long-press start (not playing)", slot + 1);
                         }
                     }
@@ -438,7 +438,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                         track.resetPlaybackStateForSlot(slotIndex, now);
                     }
                 }
-                trackManager.forceLedUpdate(now);
+                trackManager.forceMidiLedUpdate(now);
                 return;
             }
         } else {
@@ -459,7 +459,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         editManager.isLoopEditSession() || editManager.isNoteEditActive();
     if (!track.isPlaying() && !track.isRecording() && !track.isOverdubbing() && slotHasData &&
         slotSelectionChanged && editFocusSlotChange) {
-        trackManager.forceLedUpdate(now);
+        trackManager.forceMidiLedUpdate(now);
         return;
     }
 
@@ -492,7 +492,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 ensureActiveLoopForRecord(trackIdx, track, slotIndex);
                 trackManager.startRecordingTrack(trackIdx, now);
             }
-            trackManager.forceLedUpdate(now);
+            trackManager.forceMidiLedUpdate(now);
             return;
         }
 
@@ -502,7 +502,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
     } else if (slotCanArmForRecord) {
         if (handleArmedRecordPress(trackIdx)) {
-            trackManager.forceLedUpdate(now);
+            trackManager.forceMidiLedUpdate(now);
             return;
         }
         if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
@@ -522,7 +522,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
             ensureActiveLoopForRecord(trackIdx, track, slotIndex);
             trackManager.startRecordingTrack(trackIdx, now);
         }
-        trackManager.forceLedUpdate(now);
+        trackManager.forceMidiLedUpdate(now);
     } else {
         logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
         if (track.isPlaying()) {
@@ -535,7 +535,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 track.startPlaying(now);
             }
         }
-        trackManager.forceLedUpdate(now);
+        trackManager.forceMidiLedUpdate(now);
     }
 }
 
@@ -747,7 +747,7 @@ void MidiButtonActions::handleSoloTrack(uint8_t trackNumber) {
     }
     trackManager.toggleSoloTrack(trackNumber);
     logger.info("Track %u: solo toggled (exclusive)", static_cast<unsigned>(trackNumber) + 1u);
-    trackManager.forceLedUpdate(getCurrentTick());
+    trackManager.forceMidiLedUpdate(getCurrentTick());
 }
 
 void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
