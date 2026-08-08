@@ -21,49 +21,17 @@ bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
                                    std::vector<MidiEvent, Alloc>& sessionEvents, uint8_t channel,
                                    uint32_t loopLength, uint8_t& pitch, uint8_t& velocity,
                                    uint32_t& startTick, uint32_t& endTick,
-                                   const NoteEditCurrentState* currentState,
-                                   const NoteBaseline* storageCommittedBaseline = nullptr) {
+                                   const NoteEditCurrentState* currentState) {
   if (noteId == kInvalidNoteId) {
     return false;
   }
   if (currentState != nullptr) {
+    // C5 / §8 projection contract: visibility gates the row, currentSpan is the geometry.
+    // Restoring committedSpan belongs to apply/mutation — projection reading it repainted the
+    // pre-shorten length on deselect (session_20260808_013500).
     NoteBaseline current{};
     if (currentState->readCurrentSpan(noteId, current) &&
         (noteId == focus.movingNoteId || currentState->rowProjectsToStore(noteId))) {
-      const NoteEditCurrentNoteState* row = currentState->find(noteId);
-      if (row != nullptr && row->presence == NoteEditPresenceType::Visible &&
-          participatingNoteShortenedVsCommitted(current, row->committedSpan)) {
-        const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-        const NoteBaseline causingSpan{focus.last.pitch, focus.last.velocity, focus.last.startTick,
-                                       focus.last.endTick};
-        const bool interactionCleared =
-            !focus.active ||
-            participatingNoteOverlapInteractionCleared(participant, causingSpan);
-        const bool sealedBelowStorage =
-            storageCommittedBaseline != nullptr &&
-            participatingNoteCommittedSpanSealedBelowStorageBaseline(participant,
-                                                                     *storageCommittedBaseline);
-        const bool qualifiesSealed =
-            participant.visibleOverlapShortenSealed || sealedBelowStorage;
-        const bool activeSealedLeaveRestorePaint =
-            focus.active && focus.movingNoteId != kInvalidNoteId &&
-            noteId != focus.movingNoteId && hasChangedOverlapNote(focus, noteId);
-        const bool inactiveMacroSealedPaint =
-            !focus.active && participant.visibleOverlapShortenSealed;
-        if (interactionCleared && qualifiesSealed &&
-            (activeSealedLeaveRestorePaint || inactiveMacroSealedPaint)) {
-          pitch = row->committedSpan.pitch;
-          velocity = row->committedSpan.velocity;
-          startTick = row->committedSpan.startTick;
-          endTick = row->committedSpan.endTick;
-          return true;
-        }
-        pitch = current.pitch;
-        velocity = current.velocity;
-        startTick = current.startTick;
-        endTick = current.endTick;
-        return true;
-      }
       pitch = current.pitch;
       velocity = current.velocity;
       startTick = current.startTick;
@@ -356,22 +324,12 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       continue;
     }
 
-    const NoteBaseline* storageCommittedBaseline = nullptr;
-    NoteBaseline storageCommittedSpan{};
-    for (const NoteUtils::DisplayNote& baseDn : committedBaseNotes) {
-      if (baseDn.noteId == noteId) {
-        storageCommittedSpan = {baseDn.note, baseDn.velocity, baseDn.startTick, baseDn.endTick};
-        storageCommittedBaseline = &storageCommittedSpan;
-        break;
-      }
-    }
-
     NoteUtils::DisplayNote participantDn{};
     participantDn.noteId = noteId;
     if (!resolveParticipantDisplaySpan(focus, noteId, mutableEvents, channel, loopLength,
                                        participantDn.note, participantDn.velocity,
-                                       participantDn.startTick, participantDn.endTick, currentState,
-                                       storageCommittedBaseline)) {
+                                       participantDn.startTick, participantDn.endTick,
+                                       currentState)) {
       continue;
     }
 

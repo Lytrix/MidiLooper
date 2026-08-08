@@ -41,7 +41,7 @@ Each stage lists its owner and the only inputs it is allowed to trust in the end
 | **`currentSpan`** | Interactive edit-session **apply** pipeline (Stage 8 path) | `HideNote`, `ShortenNote`, `MoveNote`, `RestoreNote` via `applyEditSessionActions` |
 | **`committedSpan`** | **Commit / handoff sealing** (separate lifecycle) | `commitNoteEditPass`, `syncCommittedSpan` after macro commit (`200656`) |
 
-Interactive geometry mutation goes through apply; commit updates the committed baseline. `syncCommittedSpan` does **not** violate the authority model — it seals `committedSpan` on handoff, not interactive `currentSpan` edits.
+Interactive geometry mutation goes through apply; commit updates the committed baseline. `syncCommittedSpan` seals `committedSpan` on handoff and aligns `currentSpan` to that sealed geometry (Stage 7.5.C4 / `013500`) so projection (`currentSpan` only) cannot flash a stale stub or previous length.
 
 ### Identity terminology (do not conflate)
 
@@ -444,12 +444,18 @@ Geometry/apply layer — **not** Stage 8 projection. See §7 Stage 7.5 summary t
 | Capture | Anchor |
 |---------|--------|
 | `004532` | second overlap shorten pass → geometry `noteId=9 end=1774` (**287 ticks**); empty-step deselect showed stale **47** until re-select |
+| `010657` | post-seal correct @1296 (**143**); F1 scrub @1440 briefly flashed stale stub **47** from `currentSpan` after `syncCommittedSpan` |
+| `013500` | empty-step deselect skipped seal (`macro commit skipped` @38.2s / @54.3s); projection leave-restore painted previous `committedSpan` → brief old-length flash |
 
-**Invariant:** every F1 select move (note **or** empty step) runs `macroCommitPendingEditsBeforeSelectNav` **before** `clearVisibleOverlapParticipationBeforeDeselect` / focus rebuild.
+**Invariant:** every F1 select move (note **or** empty step) runs `macroCommitPendingEditsBeforeSelectNav` **before** `clearVisibleOverlapParticipationBeforeDeselect` / focus rebuild. Projection paints **`currentSpan` only** (C5) — never leave-restores `committedSpan` on the paint path.
 
 - [x] 7.5.C1 `macroCommitPendingEditsBeforeSelectNav` shared by note and empty-step branches (`SelectFaderInput.cpp`).
 - [x] 7.5.C2 Native: `test_second_overlap_shorten_commits_before_deselect_clears_participation_004532`.
+- [x] 7.5.C4 `syncCommittedSpan` aligns `currentSpan` + `refreshNoteEditSessionProjection` after macro commit — native `test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657`. **RC:** `commitEditAction` session overlay re-applied pre-commit stub from `sessionSnapshot` (`011855`).
+- [x] 7.5.C6 Empty-step deselect seals when `focus.last` matches mover `currentSpan` (`isMacroCommitAlignedWithSelectTarget` + current state); projection drop of sealed leave-restore paint (`013500`). Native: focus handoff empty-deselect cases + stub-after-clear projection contracts.
 - [ ] 7.5.C3 HITL: `004532` second-pass shorten → any F1 move away → DNTE **287** without re-select.
+- [ ] 7.5.C5 HITL: `010657` post-seal F1 scrub — no stub **47** flash on overlap note grid/sidebar.
+- [x] 7.5.C7 HITL: `020050` PASS vs `013500` — empty deselect seals (`pre-commit` @21.5s / @42.7s); **0** `macro commit skipped` (was 2); post-seal DNTE sealed lengths **335** then **191** with no previous-length flash.
 
 **Not the fix location:** Stage 8 sidebar/paint (`SidebarAndInfo`, `liveEditDisplayNoteAtSelect`) — symptom in `225025` is wrong committed span after macro commit, not projection read path.
 

@@ -222,6 +222,10 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
         return;
       }
       row->currentSpan = span;
+      if (participatingNoteShortenedVsCommitted(span, row->committedSpan)) {
+        // A tail below the sealed baseline is itself unsealed until the next macro commit.
+        row->visibleOverlapShortenSealed = false;
+      }
       if (row->presence == NoteEditPresenceType::Hidden) {
         if (overlapInventoryMaskedTail(span, row->committedSpan)) {
           row->presence = NoteEditPresenceType::Visible;
@@ -308,6 +312,8 @@ NOTE_EDIT_MEM void NoteEditCurrentState::syncCommittedSpan(NoteId noteId,
     row->visibleOverlapShortenSealed = true;
   }
   row->committedSpan = committedSpan;
+  // Macro seal makes committed geometry authoritative for live span and session projection.
+  row->currentSpan = committedSpan;
 }
 
 NOTE_EDIT_MEM NoteEditCurrentState NoteEditCurrentState::clone() const {

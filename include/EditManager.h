@@ -79,7 +79,8 @@ public:
     void closeNoteEditPass(Track& track);
     /// Push **NoteEditPassClosed** when committed **editPass** rows have become durable (SD, depart).
     void markCurrentEditBatchDurable(Track& track);
-    EditPassId commitEditAction(Track& track, EditPassVec rows);
+    EditPassId commitEditAction(Track& track, EditPassVec rows,
+                                bool applySessionOverlay = true);
     bool pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
     void foldLiveCaptureIntoNoteEditSession(Track& track);
     void restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry);

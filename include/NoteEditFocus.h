@@ -236,12 +236,16 @@ NOTE_EDIT_MEM void syncNoteEditFocusLastFromCurrentState(NoteEditFocus& focus, N
 /// True when fader-1 select may macro-commit pending mover geometry for **selectNoteId** at
 /// **selectBracketTick**. Re-selecting the same **NoteId** at a bracket that disagrees with
 /// **focus.last** must not commit (stale mover_focus row — RC7b). Selecting a **different**
-/// **NoteId** (mover handoff) always allows commit (Stage 6.5 (3)).
+/// **NoteId** (mover handoff) always allows commit (Stage 6.5 (3)). Deselect to an empty step
+/// seals pending geometry (Stage 7.5 slice C) unless **focus.last** disagrees with the
+/// authoritative mover span in @p currentState (session_20260807_014541).
 bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
                                                         uint32_t selectBracketTick,
                                                         const NoteEditFocus& focus,
                                                         uint32_t loopStartTick,
-                                                        uint32_t loopLength, bool lengthBracket);
+                                                        uint32_t loopLength, bool lengthBracket,
+                                                        const NoteEditCurrentState* currentState =
+                                                            nullptr);
 
 /// Session-open pairing aid: stamp each note-on's noteId onto its LIFO-paired note-off when the
 /// off still has kInvalidNoteId. Safe only on non-overlapping same-pitch stores (canonical MIDI).
