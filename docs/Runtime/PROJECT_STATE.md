@@ -8,7 +8,7 @@ Last updated: 2026-08-08 (Phase 4 extraction design #18)
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 4 — `refactor/trackmanager` Phase 0 scaffold
+**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — `refactor/trackmanager` extraction **complete** locally; HITL base before merge.
 
 **Branch tip (local):** `refactor/trackmanager` — Phase 0 `TrackManagerInternal` scaffold; `dev` has Phase 3 merged PR #21.
 

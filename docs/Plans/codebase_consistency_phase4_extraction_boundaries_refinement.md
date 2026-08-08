@@ -386,7 +386,7 @@ Reference HITL gates: Phase 2 [`173010`/`173332`](codebase_consistency_maintaina
 - [x] NoteEditFocus.h — header hygiene path documented
 - [x] Prior splits inventory + cross-domain table
 - [x] Naming / rename step — Phase 0 table, per-branch Phase RN, LR shims ([NAMING.md](../Authority/NAMING.md), no new abbreviations)
-- [ ] **Implementation** — `refactor/trackmanager` Phase 0 scaffold **done** (local); Phase RN + extraction PRs pending
+- [x] **Implementation** — `refactor/trackmanager` Phase 0–8 + coordinator trim **done** (local); HITL base gate before merge
 
 ---
 
