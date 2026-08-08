@@ -44,6 +44,7 @@ dev           (v3 — integration, default)
 - Merge feature branches to `dev` when native + HITL gates pass.
 - Never merge `dev` → `main` or `midi-faders` without an explicit release decision.
 - v2 critical fixes: cherry-pick from `dev` onto `midi-faders`, tag `v2.x.y`.
+- **Default for tracked Issues (including refinements/Tasks):** short-lived branch + PR into `dev`. A PR always requires a branch ≠ `dev`. Direct commits on `dev` only by explicit exception — see [Authority/GITHUB_WORK_TRACKING.md](Authority/GITHUB_WORK_TRACKING.md) § Branches and pull requests.
 
 ---
 

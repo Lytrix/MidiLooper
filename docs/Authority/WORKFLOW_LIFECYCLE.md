@@ -27,7 +27,8 @@
 | [../Guides/HITL_TEST_SCENARIOS.md](../Guides/HITL_TEST_SCENARIOS.md) | HITL presets / verifiers (when HITL is a gate) |
 | `.cursor/rules/OpenSpec-Workflow.mdc` | OpenSpec Cursor workflow |
 | `.cursor/rules/Multi-Stage-Bugfix-Workflow.mdc` | Multi-RC bugfix discipline (RC ≠ GitHub structure) |
-| [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) | Issue types, Project NOW/NEXT/PARKED, Bug-after-understanding, RC vs sub-issue rules |
+| [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) | Issue types, Project NOW/NEXT/PARKED, branches/PRs → `dev`, Bug-after-understanding, RC vs sub-issue rules |
+| [../BRANCHING.md](../BRANCHING.md) | `dev` integration; short-lived `feature/` / `refactor/` branches |
 | [DOCUMENTATION_CLOSEOUT.md](DOCUMENTATION_CLOSEOUT.md) | Which durable artifact owns resulting truth after a behavioral change |
 | `.cursor/rules/HITL-Test-Flow.mdc` / `HITL-Edit-Test-Flow.mdc` | HITL command contracts |
 
@@ -487,6 +488,10 @@ DECIDE
           IMPLEMENT
                 │
                 ▼
+      BRANCH + PR → dev
+      (default; see GITHUB_WORK_TRACKING §10)
+                │
+                ▼
            VERIFY
                 │
                 ▼
@@ -498,6 +503,8 @@ DECIDE
                 ▼
         CLOSE / ARCHIVE
 ```
+
+Default delivery for firmware/docs under a tracked Issue: short-lived branch off `dev`, PR into `dev` ([GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) § Branches and pull requests). Direct commits on `dev` only by explicit exception.
 
 ---
 
