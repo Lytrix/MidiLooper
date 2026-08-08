@@ -49,7 +49,7 @@ User-confirmed 2026-07-01. Brownfield: [`docs/DELIVERABLE_TRACKING.md`](../../do
 
 ## Open Decisions (TBD)
 
-- **Phase A exit gate** — **Satisfied** (2026-07-02): HITL slow fader-1 sweep PASS — 59 nav slots, `select_ignored_rate=0`, sibling sync OK. Handoff: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md). Phase B starts only after D0a resolution + explicit user scope.
+- **Phase A exit gate** — **Satisfied** (2026-07-02): HITL slow fader-1 sweep PASS — 59 nav slots, `select_ignored_rate=0`, sibling sync OK. Handoff: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/Plans/archive/handoff/note_edit_stable_note_id_phase_a_handoff.md). Phase B starts only after D0a resolution + explicit user scope.
 - **`EntityIds.h` scope and naming** — **Resolved (2026-07-02):** **(C) document-only** + post-Phase B co-location. Temporary hub during Phase B; after Phase B, move `NoteId` → `MidiEvent.h`, `TrackId` → `NoteEditSessionState.h`, delete `EntityIds.h`. PassId/LoopId/undo/storage ids stay domain-local.
 
 ## Delivery Sequence

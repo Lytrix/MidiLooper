@@ -271,6 +271,8 @@ Do not rewrite the contents merely because they are being archived.
 
 ### Batch 2b — Superseded handoffs
 
+**Status:** **Done** (2026-08-08) — 10 files → `docs/Plans/archive/handoff/`; 16 retained at root (active or ambiguous lifecycle).
+
 **Scope:** Archive `*_handoff.md` when superseded by shipped work.
 
 **Gate:** `Status: Done` or explicit superseded/completed note near the top; not linked from `CURRENT_WORK.md`. If lifecycle status is ambiguous, resolve before moving. Do **not** bulk-edit handoffs solely to add a `Status:` field.

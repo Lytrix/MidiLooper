@@ -99,7 +99,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 **Archived (2026-07-03):** `note-edit-stable-note-id` → `openspec/changes/archive/2026-07-03-note-edit-stable-note-id/`; normative spec `openspec/specs/note-edit-stable-note-id/`.
 
-**Handoffs (shipped):** [note_edit_fader_feedback_next_steps_handoff.md](../Plans/note_edit_fader_feedback_next_steps_handoff.md), [note_edit_stable_note_id_phase_a_handoff.md](../Plans/note_edit_stable_note_id_phase_a_handoff.md)
+**Handoffs (shipped):** [note_edit_fader_feedback_next_steps_handoff.md](../Plans/archive/handoff/note_edit_fader_feedback_next_steps_handoff.md), [note_edit_stable_note_id_phase_a_handoff.md](../Plans/archive/handoff/note_edit_stable_note_id_phase_a_handoff.md)
 
 Parked (not active): `currentset-savedset-storage-layout`
 

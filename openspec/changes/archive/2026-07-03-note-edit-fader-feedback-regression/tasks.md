@@ -6,7 +6,7 @@
 
 **Evidence:** [BUG.md](./BUG.md) — § Stale code inventory (Phase 12–13)  
 **Design:** [design.md](./design.md) — live path: `requestFaderOutbound` / `processFaderOutbound` (Phase 3).  
-**Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md)
+**Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/Plans/archive/handoff/note_edit_stable_note_id_phase_a_handoff.md)
 
 ---
 
@@ -198,7 +198,7 @@
 ### 7.10 Option D aggressive refresh — superseded
 
 **Superseded by:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/Plans/note_edit_fader_feedback_selection_driven_refactor.md) (2026-07-01)  
-**Prior handoff:** [note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md](../../../docs/Plans/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)
+**Prior handoff:** [note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md](../../../docs/Plans/archive/handoff/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)
 
 Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by selection-driven synchronous `sendDependentFaderFeedbackNow` on bracket/note change.
 
@@ -293,7 +293,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 ### 7.16 Phase A NoteRef selection refactor (stable NoteId prerequisite)
 
 **Shipped:** 2026-07-02 (`d3d5798`) — cross-change with [`note-edit-stable-note-id`](../note-edit-stable-note-id/) Phase A.  
-**Handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md)
+**Handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/Plans/archive/handoff/note_edit_stable_note_id_phase_a_handoff.md)
 
 - [x] 7.16.1 `shouldApplySelectionOnNoteRefChange` + `noteEditSelectionTargetChanged` — apply/motor sync gated on **NoteRef**, not list index alone
 - [x] 7.16.2 Drop persisted `displayIdx` from `NoteEditSelection`; derive `selectedNoteIdx` via `NoteEditDisplaySnapshot`
