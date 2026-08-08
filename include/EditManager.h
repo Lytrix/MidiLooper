@@ -90,9 +90,17 @@ public:
 
     NoteEditSessionState& getNoteEditSessionState() { return sessionState; }
     const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
+    /**
+     * User-driven selection (F1, encoder, bar-step): sets Select kind, full UI sync, optional
+     * SelectionChanged event + dependent motor scheduling. Use for explicit nav only.
+     */
     void applySelectNav(Track& track, uint32_t selectedTick, NoteId primaryNote,
                         bool requestFaderSync = false, bool skipFader1Outbound = false);
-    /** Geometry edit: refresh EditorSelection + UI immediately; no dependent motor scheduling. */
+    /**
+     * Geometry-driven bracket sync after move/length/pitch: updates EditorSelection and
+     * display; does not emit SelectionChanged or reset geometry kind. Intentional twin of
+     * applySelectNav — see FADER_STATE_SYSTEM.md § geometry outbound.
+     */
     void applySelectionFromGeometryEdit(Track& track, uint32_t selectedTick, NoteId primaryNote);
     /// Geometry edit: refresh bracket + display only; preserve selectedNoteIdx and edit state.
     void syncGeometrySelectionToUi(Track& track);
