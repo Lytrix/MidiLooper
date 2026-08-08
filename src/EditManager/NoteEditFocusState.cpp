@@ -90,15 +90,22 @@ NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
                                                         uint32_t selectBracketTick,
                                                         const NoteEditFocus& focus,
                                                         uint32_t loopStartTick,
-                                                        uint32_t loopLength, bool lengthBracket) {
+                                                        uint32_t loopLength, bool lengthBracket,
+                                                        const NoteEditCurrentState* currentState) {
   if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
     return true;
   }
   if (selectNoteId == kInvalidNoteId) {
-    if (noteEditFocusHasPendingCommit(focus)) {
-      return false;
+    // Deselect seals pending geometry so committedSpan is current before participation clears
+    // (session_20260808_013500: seal skipped, overlap repainted its pre-shorten length).
+    // Only a mover span that disagrees with current state blocks the seal (014541).
+    NoteBaseline moverCurrent{};
+    if (currentState != nullptr && currentState->readCurrentSpan(focus.movingNoteId, moverCurrent)) {
+      return moverCurrent.pitch == focus.last.pitch &&
+             moverCurrent.startTick == focus.last.startTick &&
+             moverCurrent.endTick == focus.last.endTick;
     }
-    return true;
+    return !noteEditFocusHasPendingCommit(focus);
   }
   if (selectNoteId != focus.movingNoteId) {
     // Mover handoff: seal prior mover + overlap participants before rebuilding focus.

@@ -3483,10 +3483,22 @@ void test_macro_commit_allows_mover_handoff_while_mover_pending_195514() {
 
   TEST_ASSERT_TRUE(isMacroCommitAlignedWithSelectTarget(kHandoffId, 3600u, focus, kLoopStart,
                                                         kLoopLength, false));
+  // Without currentState, empty-step deselect still blocks while mover geometry is pending.
   TEST_ASSERT_FALSE(isMacroCommitAlignedWithSelectTarget(kInvalidNoteId, 3600u, focus, kLoopStart,
                                                          kLoopLength, false));
   TEST_ASSERT_TRUE(isMacroCommitAlignedWithSelectTarget(kMoverId, 3504u, focus, kLoopStart,
                                                         kLoopLength, false));
+
+  // session_20260808_013500: empty-step deselect seals when focus.last matches mover currentSpan.
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, focus.commitBaseline, focus.last, NoteEditPresenceType::Visible);
+  TEST_ASSERT_TRUE(isMacroCommitAlignedWithSelectTarget(kInvalidNoteId, 3600u, focus, kLoopStart,
+                                                        kLoopLength, false, &currentState));
+  NoteBaseline drifted = focus.last;
+  drifted.endTick += 48;
+  currentState.upsertRow(kMoverId, focus.commitBaseline, drifted, NoteEditPresenceType::Visible);
+  TEST_ASSERT_FALSE(isMacroCommitAlignedWithSelectTarget(kInvalidNoteId, 3600u, focus, kLoopStart,
+                                                         kLoopLength, false, &currentState));
 }
 
 void test_resolve_macro_commit_select_target_handoff_at_bracket_195514() {

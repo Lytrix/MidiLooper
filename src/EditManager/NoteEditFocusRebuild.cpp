@@ -402,5 +402,8 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isMacroCommitAlignedWithSelectTargetForT
     const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
     return isMacroCommitAlignedWithSelectTarget(selectNoteId, selectBracketTick, editSession.focus,
                                                 noteEditLoopStartTick(track), loopLength,
-                                                lengthBracket);
+                                                lengthBracket,
+                                                editSession.noteEditCurrentState.empty()
+                                                    ? nullptr
+                                                    : &editSession.noteEditCurrentState);
 }

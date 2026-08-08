@@ -19,7 +19,7 @@ Last updated: 2026-08-08 (Stage 7.5 slice C select-fader seal)
 | 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
 | 4 — Stage 8 sidebar/snapshot projection (C5) | **Done** — HITL `224633` PASS |
 | 4.5 — Stage 7.5 overlap restore + macro-commit geometry | **Done** (native) — HITL pending |
-| 4.5.C — Stage 7.5 select-fader seal on every F1 move | **Done** (native) — HITL `004532` pending |
+| 4.5.C — Stage 7.5 select-fader seal on every F1 move | **Done** — HITL `020050` PASS (vs `013500` flash) |
 | 5 — semantic cleanup | **Next** |
 
 **Stage 7.5 shipped (native):** `participatingNoteVisibleOverlapTailInProgress` — defers leave-restore (`224633`) and macro-commit seal (`225025`) while visible same-start shorten tail is still growing. **`macroCommitPendingEditsBeforeSelectNav`** — empty-step deselect now seals before participation clear (`004532`). HITL gate: `222418` / `224633` / `225025` / `004532`.

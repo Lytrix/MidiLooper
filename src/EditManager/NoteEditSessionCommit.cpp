@@ -118,7 +118,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         collectCommittedOverlapDeleteIds(editSession.focus, rows);
     const std::vector<std::pair<NoteId, NoteBaseline>> committedOverlapUpdateBaselines =
         collectCommittedOverlapUpdateBaselines(editSession.focus, rows);
-    const EditPassId id = commitEditAction(track, std::move(rows));
+    const EditPassId id = commitEditAction(track, std::move(rows), false);
     if (id == kInvalidEditPassId) {
         return;
     }
@@ -137,6 +137,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
             editSession.noteEditCurrentState.syncCommittedSpan(editSession.focus.movingNoteId,
                                                                editSession.focus.commitBaseline);
         }
+        refreshNoteEditSessionProjection(channel);
+        bumpSessionPreviewRevision();
     }
     for (const auto& [noteId, baseline] : committedOverlapUpdateBaselines) {
         applyCommittedOverlapUpdateToFocus(editSession.focus, noteId, baseline);
@@ -251,7 +253,8 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
     return savedRows;
 }
 
-EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
+EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows,
+                                                              bool applySessionOverlay) {
     if (!editSession.active || rows.empty()) {
         return kInvalidEditPassId;
     }
@@ -335,11 +338,13 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     loop.mergeActiveCapturePasses(takeOnlyFlat);
     logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch, homeStart);
 
-    const EditPassVec sessionOverlay =
-        buildSessionStoreEditPasses(loopMidiEventsFromPasses, sessionSnapshot,
-                                    track.getMidiChannel(), loopLength);
-    if (!sessionOverlay.empty()) {
-        applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loopLength);
+    if (applySessionOverlay) {
+        const EditPassVec sessionOverlay =
+            buildSessionStoreEditPasses(loopMidiEventsFromPasses, sessionSnapshot,
+                                        track.getMidiChannel(), loopLength);
+        if (!sessionOverlay.empty()) {
+            applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loopLength);
+        }
     }
 
     editSession.store.mutStore().loadFromEvents(loopMidiEventsFromPasses);

@@ -630,6 +630,61 @@ void test_sync_committed_span_marks_visible_overlap_shorten_sealed() {
   TEST_ASSERT_NOT_NULL(row);
   TEST_ASSERT_TRUE(row->visibleOverlapShortenSealed);
   TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, row->committedSpan.endTick);
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, row->currentSpan.endTick);
+}
+
+void test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657() {
+  // session_20260808_010657: after macro seal, scrubbing select must not flash the overlap
+  // stub length from stale currentSpan while focus is on another note.
+  constexpr uint32_t kLoopLength = 5376;
+  constexpr NoteId kOverlapId = 9;
+  constexpr NoteId kMoverId = 11;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr NoteBaseline kStorage{kPitch, 100, 1200, 2398};
+  constexpr NoteBaseline kSealed{kPitch, 100, 1296, 1438};
+  constexpr NoteBaseline kStub{kPitch, 100, 1296, 1343};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 1440, 1487}, {kPitch, 100, 1440, 1487},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOverlapId, kSealed, kStub, NoteEditPresenceType::Visible);
+  NoteEditCurrentNoteState* overlapRow = currentState.find(kOverlapId);
+  TEST_ASSERT_NOT_NULL(overlapRow);
+  overlapRow->visibleOverlapShortenSealed = true;
+  currentState.syncCommittedSpan(kOverlapId, kSealed);
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, overlapRow->currentSpan.endTick);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+  NoteBaseline live{};
+  TEST_ASSERT_TRUE(readLiveLinearSpan(store, kOverlapId, kChannel, live));
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, live.endTick);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kOverlapId, kPitch, 100, kStorage.startTick, kStorage.endTick});
+  committedBase.push_back({kMoverId, kPitch, 100, 1440, 1487});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 1440, 1487};
+  focus.movingNoteRange = {1440, 1487};
+  focus.baselineMap[kOverlapId] = kStorage;
+  focus.baselineMap[kMoverId] = {kPitch, 100, 1440, 1487};
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  bool foundSealed = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, dn.endTick);
+      TEST_ASSERT_NOT_EQUAL(kStub.endTick, dn.endTick);
+      foundSealed = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundSealed);
 }
 
 void test_move_note_translates_committed_span() {
@@ -1477,13 +1532,15 @@ void test_visible_shortened_paints_stub_after_ltr_overlap_cleared_232700() {
   TEST_ASSERT_TRUE(foundStubDeselect);
 }
 
-void test_sealed_visible_shortened_paints_committed_after_second_overlap_cleared_234904() {
-  // session_20260807_234904 ~65s: macro-sealed note 9 (1776–2063) gets a second overlap stub;
-  // once mover 13 clears closure, display must paint sealed committed end (2063), not storage 3078.
+void test_sealed_visible_shortened_paints_current_stub_after_second_overlap_cleared_234904() {
+  // session_20260807_234904 / session_20260808_013500: after a second overlap stub, projection
+  // must keep painting currentSpan (1823). Painting sealed committed (2063) is the deselect
+  // flash of the previous length — leave-restore belongs to apply/seal, not projection (C5).
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 13;
   constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
   constexpr NoteBaseline kStorage{kPitch, 100, 1776, 3078};
   constexpr NoteBaseline kSealed{kPitch, 100, 1776, 2063};
   constexpr NoteBaseline kStub{kPitch, 100, 1776, 1823};
@@ -1529,22 +1586,26 @@ void test_sealed_visible_shortened_paints_committed_after_second_overlap_cleared
   const NoteUtils::DisplayNoteVec afterOverlapCleared =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
-  bool foundSealed = false;
+  bool foundCurrentStub = false;
   for (const NoteUtils::DisplayNote& dn : afterOverlapCleared) {
     if (dn.noteId == kOverlapId) {
-      TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, dn.endTick);
-      foundSealed = true;
+      TEST_ASSERT_EQUAL_UINT32(kStub.endTick, dn.endTick);
+      TEST_ASSERT_NOT_EQUAL(kSealed.endTick, dn.endTick);
+      TEST_ASSERT_NOT_EQUAL(kStorage.endTick, dn.endTick);
+      foundCurrentStub = true;
     }
   }
-  TEST_ASSERT_TRUE(foundSealed);
+  TEST_ASSERT_TRUE(foundCurrentStub);
 }
 
-void test_sealed_visible_shortened_paints_committed_rtl_after_mover_exits_left_235724() {
-  // session_20260807_235724 ~114s: display must paint sealed committed end after R→L mover exit.
+void test_sealed_visible_shortened_paints_current_stub_rtl_after_mover_exits_left_235724() {
+  // session_20260807_235724 / session_20260808_013500: R→L exit must not projection-paint the
+  // previous sealed committed end — keep currentSpan stub until apply/seal updates it.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 11;
   constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
   constexpr NoteBaseline kSealed{kPitch, 100, 2016, 2255};
   constexpr NoteBaseline kStub{kPitch, 100, 2016, 2063};
 
@@ -1575,18 +1636,20 @@ void test_sealed_visible_shortened_paints_committed_rtl_after_mover_exits_left_2
   const NoteUtils::DisplayNoteVec afterRtlExit =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
-  bool foundSealed = false;
+  bool foundCurrentStub = false;
   for (const NoteUtils::DisplayNote& dn : afterRtlExit) {
     if (dn.noteId == kOverlapId) {
-      TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, dn.endTick);
-      foundSealed = true;
+      TEST_ASSERT_EQUAL_UINT32(kStub.endTick, dn.endTick);
+      TEST_ASSERT_NOT_EQUAL(kSealed.endTick, dn.endTick);
+      foundCurrentStub = true;
     }
   }
-  TEST_ASSERT_TRUE(foundSealed);
+  TEST_ASSERT_TRUE(foundCurrentStub);
 }
 
 void test_sealed_visible_shortened_paints_stub_after_deselect_clears_participation_002309() {
-  // session_20260808_002309: deselect must not flash committed sealed length for active stub.
+  // session_20260808_002309 / 013500: even with visibleOverlapShortenSealed, projection paints
+  // currentSpan stub — never the previous sealed committed length (deselect flash).
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 11;
@@ -1623,14 +1686,15 @@ void test_sealed_visible_shortened_paints_stub_after_deselect_clears_participati
   const NoteUtils::DisplayNoteVec whileActive =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
-  bool foundSealedWhileActive = false;
+  bool foundStubWhileActive = false;
   for (const NoteUtils::DisplayNote& dn : whileActive) {
     if (dn.noteId == kOverlapId) {
-      TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, dn.endTick);
-      foundSealedWhileActive = true;
+      TEST_ASSERT_EQUAL_UINT32(kStub.endTick, dn.endTick);
+      TEST_ASSERT_NOT_EQUAL(kSealed.endTick, dn.endTick);
+      foundStubWhileActive = true;
     }
   }
-  TEST_ASSERT_TRUE(foundSealedWhileActive);
+  TEST_ASSERT_TRUE(foundStubWhileActive);
 
   clearChangedOverlapParticipationWhenInteractionCleared(focus, currentState, focus.last,
                                                         kMoverId);
@@ -1690,8 +1754,8 @@ void test_visible_shortened_paints_stub_after_inactive_focus_deselect_003330() {
 }
 
 void test_macro_sealed_shortened_paints_committed_after_inactive_focus_deselect_004136() {
-  // session_20260808_004136: after macro seal + empty-step deselect, display must settle on
-  // committedSpan — not hold the live overlap stub until the next note select.
+  // session_20260808_004136 / 013500: after macro seal, syncCommittedSpan aligns currentSpan;
+  // inactive deselect then paints the sealed length from currentSpan (not storage, not stub).
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 11;
@@ -1704,10 +1768,13 @@ void test_macro_sealed_shortened_paints_committed_after_inactive_focus_deselect_
   NoteEditCurrentState currentState;
   currentState.upsertRow(kMoverId, {kPitch, 100, 1200, 1247}, {kPitch, 100, 1200, 1247},
                          NoteEditPresenceType::Visible);
-  currentState.upsertRow(kOverlapId, kSealed, kStub, NoteEditPresenceType::Visible);
+  // Pre-seal: committed is still storage length; live stub is the active shorten.
+  currentState.upsertRow(kOverlapId, kStorage, kStub, NoteEditPresenceType::Visible);
   NoteEditCurrentNoteState* overlapRow = currentState.find(kOverlapId);
   TEST_ASSERT_NOT_NULL(overlapRow);
-  overlapRow->visibleOverlapShortenSealed = true;
+  currentState.syncCommittedSpan(kOverlapId, kSealed);
+  TEST_ASSERT_TRUE(overlapRow->visibleOverlapShortenSealed);
+  TEST_ASSERT_EQUAL_UINT32(kSealed.endTick, overlapRow->currentSpan.endTick);
 
   MidiEventVec store;
   currentState.projectToSessionStore(store, kChannel);
@@ -1931,8 +1998,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_contract_c9_203805_shorten_paint_stub_inventory_masked);
   RUN_TEST(test_shortened_visible_selectable_after_deselect_233447);
   RUN_TEST(test_visible_shortened_paints_stub_after_ltr_overlap_cleared_232700);
-  RUN_TEST(test_sealed_visible_shortened_paints_committed_after_second_overlap_cleared_234904);
-  RUN_TEST(test_sealed_visible_shortened_paints_committed_rtl_after_mover_exits_left_235724);
+  RUN_TEST(test_sealed_visible_shortened_paints_current_stub_after_second_overlap_cleared_234904);
+  RUN_TEST(test_sealed_visible_shortened_paints_current_stub_rtl_after_mover_exits_left_235724);
   RUN_TEST(test_sealed_visible_shortened_paints_stub_after_deselect_clears_participation_002309);
   RUN_TEST(test_visible_shortened_paints_stub_after_inactive_focus_deselect_003330);
   RUN_TEST(test_macro_sealed_shortened_paints_committed_after_inactive_focus_deselect_004136);
@@ -1947,6 +2014,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_commit_skips_overlap_length_while_visible_tail_active_225025);
   RUN_TEST(test_deselect_clears_overlap_participation_without_geometry_restore_232118);
   RUN_TEST(test_sync_committed_span_marks_visible_overlap_shorten_sealed);
+  RUN_TEST(test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657);
   RUN_TEST(test_move_note_translates_committed_span);
   RUN_TEST(test_sync_committed_span_leave_restore_uses_sealed_position_200656);
   return UNITY_END();
