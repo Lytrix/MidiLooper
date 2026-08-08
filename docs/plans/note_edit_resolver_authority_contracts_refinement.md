@@ -694,22 +694,23 @@ Pitch edit tail (~68s): note **9** `2256–2591`, DNTE stable `len=335` across F
 
 ### Step 5 — semantic cleanup (explicit refactor phase)
 
-**Invariant (pinned):** `currentStateRowIsOverlapParticipant` (geometry) and
-`overlapParticipationLatchActive` / `changedOverlapNoteIds` (latch) are **not** equivalent after
-`clearChangedOverlapParticipationWhenInteractionCleared` — latch drops, shortened `currentSpan` stays.
+**Invariant (pinned, 5.3):** sticky clear sets
+`NoteEditCurrentNoteState.overlapParticipation = Ended` without rewriting `currentSpan`.
+`currentStateRowIsOverlapParticipant` is false for Ended rows even when geometry still differs.
+Focus `changedOverlapNoteIds` is dual-write only until 5.5 — not participation authority.
 
 | Slice | Deliver | Status |
 |-------|---------|--------|
 | **5.1** | Query aliases + pin latch≠geometry divergence; inventory mask uses latch query | **Shipped** (native) |
-| **5.2** | Migrate display/inventory readers to named latch/geometry queries; dual-assert where safe | **Partial** (display mask + paint path) |
-| **5.3** | Encode sticky end-of-participation in current/participating state (replace latch forget) | **Design session** — ownership |
-| **5.4** | Geometry pipeline + pre-commit use derived participation only | Blocked on 5.3 |
-| **5.5** | Delete `changedOverlapNoteIds`; drop live-store membership reconcile; OpenSpec compat flag separate | Blocked on 5.3–5.4 |
+| **5.2** | Migrate display/inventory readers to named latch/geometry queries; dual-assert where safe | **Partial** → readers prefer current-state participation after 5.3 |
+| **5.3** | Encode sticky end-of-participation as `NoteEditOverlapParticipationType::{Active,Ended}` on current state; clear → Ended; Shorten/Hide/Restore → Active | **Shipped** (native) — DEC-030 |
+| **5.4** | Geometry pipeline + pre-commit use derived participation only | Next |
+| **5.5** | Delete `changedOverlapNoteIds`; drop live-store membership reconcile; OpenSpec compat flag separate | Blocked on 5.4 |
 
 - `readStoreLinearBaseline` — already removed from tree
 - `NOTE_EDIT_PROJECTED_STORE_COMPAT` / `rowProjectsToStore` semantic uses — separate track after latch removal
 
-**Not** part of steps 1–4. Full latch deletion requires encoding sticky end-of-participation (5.3).
+**5.3 encoding (Option A):** `Ended` is orthogonal to `NoteEditPresenceType` so Visible shortened stubs still project. `ParticipatingNoteState` mirrors `overlapParticipation`.
 
 ---
 

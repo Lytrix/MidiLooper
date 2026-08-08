@@ -7,6 +7,7 @@
 #include "NoteEditCurrentState.h"
 #include "MidiEvent.h"
 #include "NoteEditFocus.h"
+#include "ParticipatingNoteSession.h"
 #include "EditSessionAction.h"
 #include "NoteEditSessionState.h"
 #include "Utils/NoteUtils.h"
@@ -614,6 +615,9 @@ void test_deselect_clears_overlap_participation_without_geometry_restore_232118(
   const NoteEditCurrentNoteState* row = state.find(kOverlapId);
   TEST_ASSERT_NOT_NULL(row);
   TEST_ASSERT_EQUAL_UINT32(kTail.endTick, row->currentSpan.endTick);
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditOverlapParticipationType::Ended),
+                    static_cast<int>(row->overlapParticipation));
+  TEST_ASSERT_FALSE(currentStateRowIsOverlapParticipant(*row));
   TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
 }
 

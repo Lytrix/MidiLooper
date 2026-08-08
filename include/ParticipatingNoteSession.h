@@ -28,6 +28,9 @@ struct ParticipatingNoteState {
   ParticipatingNotePhase phase = ParticipatingNotePhase::Visible;
   NoteBaseline currentSpan{};
   NoteBaseline committedSpan{};
+  /// Sticky end-of-participation from `NoteEditCurrentNoteState` (§11 step 5.3).
+  NoteEditOverlapParticipationType overlapParticipation =
+      NoteEditOverlapParticipationType::Active;
   /// `currentSpan` is a same-start shortened tail vs `committedSpan` (overlap inventory mask).
   bool shortenedVsCommitted = false;
   /// Prior macro sealed a visible overlap shorten into `committedSpan`.
@@ -83,19 +86,25 @@ ParticipatingNoteInvariantResult verifyParticipatingNoteInvariants(
 ParticipatingSessionInvariantResult verifyParticipatingSessionInvariants(
     const ParticipatingNoteSession& session);
 
-/// Geometry-derived overlap participation: Hidden/Deleted or currentSpan ≠ committedSpan.
-/// After `clearChangedOverlapParticipationWhenInteractionCleared`, this can remain true while
-/// the transitional latch is false — latch remains pipeline authority until §11 step 5 encodes
-/// sticky end-of-participation in current/participating state (design session).
+/// True when currentSpan differs from committedSpan (pitch/start/end), ignoring presence.
+bool currentStateRowGeometryDiffersFromCommitted(const NoteEditCurrentNoteState& row);
+
+/// Overlap participation membership from current state: Active + (Hidden/Deleted or geometry
+/// differs). `Ended` is never a participant — sticky clear authority (§11 step 5.3).
 bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row);
 
 NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
     const NoteEditCurrentState& currentState, NoteId movingNoteId);
 
-/// Transitional latch membership (`NoteEditFocus::changedOverlapNoteIds`).
+/// Transitional latch membership (`NoteEditFocus::changedOverlapNoteIds`) — dual-write only;
+/// readers must prefer `currentStateRowIsOverlapParticipant`.
 bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId);
 
-/// True when geometry still differs from committed but the latch was cleared (sticky forget).
+/// True when row is Ended with geometry still differing (sticky clear without span rewrite).
+bool overlapParticipationEndedWhileGeometryDiffers(const NoteEditCurrentState& currentState,
+                                                   NoteId noteId);
+
+/// Legacy dual-assert: latch forgotten while geometry still differs (pre–Ended readers).
 bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& focus,
                                                           const NoteEditCurrentState& currentState,
                                                           NoteId noteId);

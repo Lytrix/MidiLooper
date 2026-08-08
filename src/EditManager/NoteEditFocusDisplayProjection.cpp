@@ -106,12 +106,12 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
     return false;
   }
-  if (!overlapParticipationLatchActive(focus, noteId) &&
-      focus.baselineMap.find(noteId) == focus.baselineMap.end()) {
-    return false;
-  }
   const NoteEditCurrentNoteState* row = currentState.find(noteId);
   if (row == nullptr) {
+    return false;
+  }
+  if (!currentStateRowIsOverlapParticipant(*row) &&
+      focus.baselineMap.find(noteId) == focus.baselineMap.end()) {
     return false;
   }
   const NoteBaseline& committed = row->committedSpan;
@@ -300,11 +300,14 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     }
     if (dn.noteId != kInvalidNoteId &&
         std::find(participants.begin(), participants.end(), dn.noteId) == participants.end() &&
-        overlapParticipationLatchActive(focus, dn.noteId)) {
-      NoteBaseline live{};
-      if (!findLinearNoteSpanForNoteId(mutableEvents, dn.noteId, channel, live, dn.startTick,
-                                       loopLength)) {
-        continue;
+        currentState != nullptr) {
+      const NoteEditCurrentNoteState* row = currentState->find(dn.noteId);
+      if (row != nullptr && currentStateRowIsOverlapParticipant(*row)) {
+        NoteBaseline live{};
+        if (!findLinearNoteSpanForNoteId(mutableEvents, dn.noteId, channel, live, dn.startTick,
+                                         loopLength)) {
+          continue;
+        }
       }
     }
     result.push_back(dn);

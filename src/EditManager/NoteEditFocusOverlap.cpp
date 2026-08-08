@@ -124,7 +124,7 @@ NOTE_EDIT_MEM void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId)
 }
 
 NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
-    NoteEditFocus& focus, const NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
+    NoteEditFocus& focus, NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
     NoteId movingNoteId) {
   if (movingNoteId == kInvalidNoteId) {
     return;
@@ -146,12 +146,17 @@ NOTE_EDIT_MEM void clearChangedOverlapParticipationWhenInteractionCleared(
     if (participant.phase != ParticipatingNotePhase::Visible || !participant.shortenedVsCommitted) {
       continue;
     }
+    if (participant.overlapParticipation == NoteEditOverlapParticipationType::Ended) {
+      forgetChangedOverlapNote(focus, noteId);
+      continue;
+    }
     if (!participatingNoteOverlapInteractionCleared(participant, causingSpan)) {
       continue;
     }
     // End overlap participation on deselect without mutating currentSpan — restoring committed
     // geometry here flashes full pre-shorten length when committedSpan lags macro commit
-    // (session_20260807_232118).
+    // (session_20260807_232118). Authority is Ended on current state; latch is dual-write.
+    currentState.markOverlapParticipationEnded(noteId);
     forgetChangedOverlapNote(focus, noteId);
   }
 }

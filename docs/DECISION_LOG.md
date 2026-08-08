@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-030](#dec-030-sticky-overlap-end-of-participation-on-current-state) | 2026-08-08 | Sticky overlap end-of-participation on NoteEditCurrentState | Accepted |
 | [DEC-029](#dec-029-noteeditcurrentstate-owns-note-edit-editable-note-state) | 2026-08-07 | NoteEditCurrentState owns NOTE_EDIT editable note state | Accepted |
 | [DEC-028](#dec-028-editsessionaction-geometry-pipeline-phase-1-native) | 2026-08-04 | EditSessionAction geometry pipeline Phase 1 native | Accepted |
 | [DEC-026](#dec-026-commit-centered-lazy-slot-load) | 2026-07-18 | Commit-centered lazy slot load (audible boot + on-demand hydrate) | Accepted |
@@ -44,7 +45,25 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-030 -->
+<!-- Append new entries below (newest first). Next ID: DEC-031 -->
+
+## DEC-030 — Sticky overlap end-of-participation on current state
+
+**Date:** 2026-08-08  
+**Status:** Accepted  
+**Plan:** [`note_edit_resolver_authority_contracts_refinement`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5.3
+
+**Context:** Sticky deselect cleared Focus `changedOverlapNoteIds` while leaving Visible shortened `currentSpan` (no flash restore). Participation membership could not be derived from geometry alone; the latch was a second authority.
+
+**Decision:** Encode sticky end-of-participation as `NoteEditOverlapParticipationType::{Active,Ended}` on `NoteEditCurrentNoteState` (mirrored on `ParticipatingNoteState`). `clearChangedOverlapParticipationWhenInteractionCleared` sets Ended without rewriting geometry. `currentStateRowIsOverlapParticipant` returns false for Ended. Shorten/Hide/Restore re-enters Active. Focus latch remains dual-write until §11 step 5.5 deletion.
+
+**Previous owner:** End-of-participation expressed only by forgetting `changedOverlapNoteIds`.
+
+**New owner:** `NoteEditCurrentNoteState.overlapParticipation`.
+
+**Validation:** Native fixtures for sticky clear → Ended, Shorten reactivates Active; display/inventory readers use current-state participation.
+
+---
 
 ## DEC-029 — NoteEditCurrentState owns NOTE_EDIT editable note state
 

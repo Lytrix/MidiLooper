@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (§11 step 5.1 latch/geometry query pin)
+Last updated: 2026-08-08 (§11 step 5.3 Ended overlap participation)
 
 ---
 
@@ -10,17 +10,19 @@ Last updated: 2026-08-08 (§11 step 5.1 latch/geometry query pin)
 
 ### Note edit resolver authority contracts — §11 step 5 (`note_edit_resolver_authority_contracts_refinement`)
 
-**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5
+**Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5  
+**Decision:** DEC-030
 
 | Step | Status |
 |------|--------|
 | 1–4.5 | **Done** (7.5.E HITL `024301`) |
 | 5.1 — latch vs geometry query pin | **Done** (native) |
-| 5.2 — migrate safe readers | Next |
-| 5.3 — encode sticky end-of-participation | Design session before coding |
-| 5.4–5.5 — remove `changedOverlapNoteIds` | Blocked on 5.3 |
+| 5.2 — migrate safe readers | **Partial** (display/inventory use current-state participation) |
+| 5.3 — encode sticky end-of-participation (`Ended`) | **Done** (native) |
+| 5.4 — geometry/pre-commit derived participation | Next |
+| 5.5 — remove `changedOverlapNoteIds` | Blocked on 5.4 |
 
-**5.1:** `overlapParticipationLatchActive` / `overlapParticipationLatchClearedWhileGeometryDiffers` pin that sticky clear drops the latch while shortened `currentSpan` remains. Full cache removal is not a drop-in derive.
+**5.3:** `NoteEditOverlapParticipationType::{Active,Ended}` on `NoteEditCurrentNoteState`. Sticky clear → Ended (no geometry rewrite); Shorten/Hide/Restore → Active. Latch dual-write only.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 
