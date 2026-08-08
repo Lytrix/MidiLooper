@@ -71,7 +71,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-08-07  
 **Status:** Accepted  
-**OpenSpec:** [`note-edit-current-state`](../../openspec/changes/note-edit-current-state/)
+**OpenSpec:** [`note-edit-current-state`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/) — normative [`openspec/specs/note-edit-current-state/`](../../openspec/specs/note-edit-current-state/)
 
 **Context:** Same-pitch NOTE_EDIT overlap captures (`session_20260807_021939`, `session_20260807_021022`) showed stable `NoteId` identity was correct, but current editable geometry was reconstructed from `EditSession.store`, `baselineMap`, focus fields, overlap scratch, display order, and live-store scans. Stale committed baseline geometry affected later edits; stopgap guards (`sessionMovedNoteSpans`, overlap skip guards) prevented correct current-span overlap edits.
 
@@ -89,7 +89,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Validation:** Native tests for 021939, 021022, repeated A/B move undo/redo commit, selection reorder, hidden/deleted/added rows, projection invariant, accessor gate, undo snapshot invariant, and commit parity; then firmware build and user-approved HITL edit retest.
 
-**Completion (2026-08-08):** Phase 8 closeout — native 969/969; HITL PASS via capture matrix in [`openspec/changes/note-edit-current-state/PHASE8_CLOSEOUT.md`](../../openspec/changes/note-edit-current-state/PHASE8_CLOSEOUT.md). Archive pending.
+**Completion (2026-08-08):** Phase 8 closeout — native 969/969; HITL PASS via capture matrix in [`PHASE8_CLOSEOUT.md`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md). **Archived** `2026-08-08-note-edit-current-state`.
 
 ---
 

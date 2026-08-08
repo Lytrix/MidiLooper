@@ -291,7 +291,7 @@ Non-session pitch (no open NOTE_EDIT): `applySimplePitchChange` when safe; other
 | Area | State |
 |------|--------|
 | Geometry pipeline | `NoteGeometryResolver` wired for move / length / pitch / add / delete |
-| Current-state ownership | DEC-029 — shipped through OpenSpec phases 1–7 |
+| Current-state ownership | DEC-029 — shipped through OpenSpec phases 1–8 |
 | Participation / latch removal | DEC-030 + §11 steps 5.1–5.5 — shipped; smoke HITL `025807`, `030432`, `032118` |
 | Display projection | `projectNoteEditDisplayNotes` sole active NOTE_EDIT producer |
 | Orthogonal representation | Plan §12 **R1–R5 complete** — `ParticipatingNotePhase` removed; `NoteEditPresenceType` row encoding retained |

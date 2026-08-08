@@ -2,13 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-08 (note-edit-current-state archived)
+Last updated: 2026-08-08 (doc hygiene review)
 
 ---
 
 ## Current branch
 
-**Active work:** OpenSpec **`note-edit-current-state`** archived 2026-08-08 → `openspec/specs/note-edit-current-state/`. Playing position-move audition on `dev` (`15c5750`).
+**Active work:** HITL CLI rebuild Phase 3; persistence/overlay hardening (candidate next — see [CURRENT_WORK.md](CURRENT_WORK.md)).
+
+**Recent on `dev`:** DEC-029 archive closeout (`3e9253e`); playing move/length audition (`15c5750`); DEC-030 §12 orthogonal state (PR #15).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
@@ -41,6 +43,9 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| `3e9253e` | DEC-029 archive + spec sync + Phase 8 closeout | DELIVERABLE_TRACKING, PHASE8_CLOSEOUT |
+| `15c5750` | Playing move/length `refreshPlaybackPreview` | note_edit_playing_move_audition_bugfix |
+| `7af8671` | DEC-030 §12 R1–R5 orthogonal state | note_edit_resolver_authority_contracts_refinement |
 | `5af41c7` | P1 fold wrap unify; NOTELEN exit bracket; HITL serial proxy | firmware_ownership_lifetime_review |
 | `85ae7d6` | P1 undo routing docs (session-gated **E:**) | LOOP_MIDI, ARCHITECTURE_RULES |
 | `d87d0c6` + [`010126`](../../captures/session_20260718_010126.log) | Windowed display + queued countdown; device gate PASS | boot_load_windowed plan |
@@ -67,14 +72,11 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
-| **`note-edit-current-state`** | **Archived** 2026-08-08 → `openspec/specs/note-edit-current-state/`; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md) |
-| **`hitl-cli-rebuild`** | **Phase 1 done** — `foundation_runner`, `layered_registry`, actions/flows/protocol; Phase 2 UIP gate |
-| **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
+| **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
-| **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
+| **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending |
 | **`unified-interval-projection`** | Phases 1–5 code shipped; native PASS; **5.5 HITL deferred** (DEC-017); Phase **6.1–6.2** synced with geometry (2026-08-04) |
-| **`edit-session-action-geometry`** | **Archived** 2026-08-05 — normative `openspec/specs/edit-session-action-geometry/` |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
 | `load-save-overlay-display-regression` | Overlay display fixes |
@@ -82,6 +84,14 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 | `long-loop-piano-roll-window` | 16-bar piano-roll window + overview; future `Timeline` projection consumer |
 | `note-edit-tick-coordinates-and-audition` | Geometry wrap regression: tick spaces + session-store playback preview |
 | `linear-loop-tick-storage` | Canonical linear storage + projection alias — prerequisite for UIP |
+
+## Archived OpenSpec (normative specs in `openspec/specs/`)
+
+| Change | Archived | Normative spec |
+|--------|----------|----------------|
+| **`note-edit-current-state`** | 2026-08-08 | [`note-edit-current-state/`](../../openspec/specs/note-edit-current-state/) — [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md) |
+| **`edit-session-action-geometry`** | 2026-08-05 | [`edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/) |
+| **`deferred-job-scheduler`** | 2026-07-19 | [`deferred-job-scheduler/`](../../openspec/specs/deferred-job-scheduler/) |
 
 **Side fix (2026-07-03):** `note-edit-tick-coordinates-and-audition` — long-loop pitch edit regression at loop wrap; handoff [note_edit_geometry_wrap_regression_bugfix.md](../plans/note_edit_geometry_wrap_regression_bugfix.md). HITL pending.
 
@@ -100,7 +110,8 @@ Parked (not active): `currentset-savedset-storage-layout`
 - Base module (encoder + 4 GPIO) capable in principle; DROID is extension only
 - Governance docs do not change firmware by themselves
 - Do not implement from [ROADMAP.md](ROADMAP.md) — scope is [CURRENT_WORK.md](CURRENT_WORK.md) only
-- **`edit-session-action-geometry`** — Phase 0 complete; Phase 1 native next (not blocked by UIP code)
+- **`edit-session-action-geometry`** — **archived** 2026-08-05; normative `openspec/specs/edit-session-action-geometry/`
+- **`note-edit-current-state`** — **archived** 2026-08-08; normative `openspec/specs/note-edit-current-state/`
 
 ## Current blockers
 
