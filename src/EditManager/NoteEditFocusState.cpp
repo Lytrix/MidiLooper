@@ -136,6 +136,7 @@ NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focu
       }
       fp ^= static_cast<uint32_t>(noteId) * 0x85EBCA6Bu;
       fp ^= static_cast<uint32_t>(row.presence) << 28;
+      fp ^= static_cast<uint32_t>(row.overlapParticipation) << 24;
       fp ^= row.currentSpan.startTick + (row.currentSpan.endTick << 1);
       fp ^= row.committedSpan.startTick + (row.committedSpan.endTick << 2);
       fp ^= row.visibleOverlapShortenSealed ? 0x6C078965u : 0u;

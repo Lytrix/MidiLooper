@@ -17,6 +17,7 @@
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "NoteGeometryResolver.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/NoteMovementUtils.h"
 #include "Utils/NoteUtils.h"
 
@@ -53,7 +54,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applyDeleteNoteOverlapRestore(Track& tra
     if (!editSession.active || !editSession.focus.active) {
         return;
     }
-    if (editSession.focus.changedOverlapNoteIds.empty()) {
+    if (!hasOverlapParticipants(editSession.focus,
+                                editSession.noteEditCurrentState.empty()
+                                    ? nullptr
+                                    : &editSession.noteEditCurrentState)) {
         return;
     }
 

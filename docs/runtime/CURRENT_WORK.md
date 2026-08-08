@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (§11 step 5.3 Ended overlap participation)
+Last updated: 2026-08-08 (§11 step 5.4 geometry/pre-commit derived participation)
 
 ---
 
@@ -17,12 +17,12 @@ Last updated: 2026-08-08 (§11 step 5.3 Ended overlap participation)
 |------|--------|
 | 1–4.5 | **Done** (7.5.E HITL `024301`) |
 | 5.1 — latch vs geometry query pin | **Done** (native) |
-| 5.2 — migrate safe readers | **Partial** (display/inventory use current-state participation) |
-| 5.3 — encode sticky end-of-participation (`Ended`) | **Done** (native) |
-| 5.4 — geometry/pre-commit derived participation | Next |
-| 5.5 — remove `changedOverlapNoteIds` | Blocked on 5.4 |
+| 5.2 — migrate safe readers | **Done** (with 5.3/5.4 current-state readers) |
+| 5.3 — encode sticky end-of-participation (`Ended`) | **Done** (native + smoke HITL `025807`) |
+| 5.4 — geometry/pre-commit derived participation | **Done** (native) |
+| 5.5 — remove `changedOverlapNoteIds` | Next |
 
-**5.3:** `NoteEditOverlapParticipationType::{Active,Ended}` on `NoteEditCurrentNoteState`. Sticky clear → Ended (no geometry rewrite); Shorten/Hide/Restore → Active. Latch dual-write only.
+**5.4:** When `NoteEditCurrentState` is non-empty, evaluation scope, constrained targets, commit overlap rows, projection participants, and restore-only entry use `currentStateRowIsOverlapParticipant` / `hasOverlapParticipants`. Latch remains dual-write until 5.5.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 

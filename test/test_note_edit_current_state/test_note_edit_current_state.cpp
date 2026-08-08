@@ -1854,7 +1854,17 @@ void test_second_overlap_shorten_commits_before_deselect_clears_participation_00
     TEST_ASSERT_FALSE(row.targetNoteId == kOverlapId);
   }
   TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
+  TEST_ASSERT_EQUAL(static_cast<int>(NoteEditOverlapParticipationType::Ended),
+                    static_cast<int>(overlapRow->overlapParticipation));
   TEST_ASSERT_EQUAL_UINT32(kSecondPass.endTick, overlapRow->currentSpan.endTick);
+
+  // §11 step 5.4: stale latch must not re-authorize commit after Ended.
+  recordChangedOverlapNote(focus, kOverlapId);
+  const EditPassVec rowsWithStaleLatch =
+      buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength);
+  for (const EditPass& row : rowsWithStaleLatch) {
+    TEST_ASSERT_FALSE(row.targetNoteId == kOverlapId);
+  }
 
   currentState.syncCommittedSpan(kOverlapId, kSecondPass);
   TEST_ASSERT_EQUAL_UINT32(kSecondPass.endTick, overlapRow->committedSpan.endTick);

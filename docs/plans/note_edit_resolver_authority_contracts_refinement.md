@@ -703,9 +703,9 @@ Focus `changedOverlapNoteIds` is dual-write only until 5.5 — not participation
 |-------|---------|--------|
 | **5.1** | Query aliases + pin latch≠geometry divergence; inventory mask uses latch query | **Shipped** (native) |
 | **5.2** | Migrate display/inventory readers to named latch/geometry queries; dual-assert where safe | **Partial** → readers prefer current-state participation after 5.3 |
-| **5.3** | Encode sticky end-of-participation as `NoteEditOverlapParticipationType::{Active,Ended}` on current state; clear → Ended; Shorten/Hide/Restore → Active | **Shipped** (native) — DEC-030 |
-| **5.4** | Geometry pipeline + pre-commit use derived participation only | Next |
-| **5.5** | Delete `changedOverlapNoteIds`; drop live-store membership reconcile; OpenSpec compat flag separate | Blocked on 5.4 |
+| **5.3** | Encode sticky end-of-participation as `NoteEditOverlapParticipationType::{Active,Ended}` on current state; clear → Ended; Shorten/Hide/Restore → Active | **Shipped** (native) — DEC-030; smoke HITL `025807` |
+| **5.4** | Geometry pipeline + pre-commit use derived participation only (`noteIsOverlapParticipant` / current-state when non-empty) | **Shipped** (native) |
+| **5.5** | Delete `changedOverlapNoteIds`; drop live-store membership reconcile; OpenSpec compat flag separate | Next |
 
 - `readStoreLinearBaseline` — already removed from tree
 - `NOTE_EDIT_PROJECTED_STORE_COMPAT` / `rowProjectsToStore` semantic uses — separate track after latch removal

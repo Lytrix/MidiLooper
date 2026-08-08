@@ -689,9 +689,11 @@ void test_determine_targets_includes_selected_hidden_overlap_leave_restore_11195
 
 void test_determine_targets_hidden_full_span_sticky_scope_113010() {
   // session_20260807_113010: Hide with currentSpan == baselineMap must still leave-restore (RC10a).
+  // §11 step 5.4: non-participant neighbor stays Visible (matching spans) — Hidden Active is
+  // participation, so a second Hidden row would also leave-restore.
   constexpr NoteId kMover = 17;
   constexpr NoteId kHiddenOverlap = 10;
-  constexpr NoteId kNotStickyHidden = 11;
+  constexpr NoteId kNonParticipantNeighbor = 11;
   constexpr uint8_t kPitch = 88;
   constexpr uint8_t kChannel = 5;
   constexpr uint32_t kLoopLength = 5376;
@@ -701,13 +703,13 @@ void test_determine_targets_hidden_full_span_sticky_scope_113010() {
   BaselineMap baseline;
   baseline[kMover] = {kPitch, 100, 3600, 4127};
   baseline[kHiddenOverlap] = kOverlapBaseline;
-  baseline[kNotStickyHidden] = {kPitch, 100, 2256, 2303};
+  baseline[kNonParticipantNeighbor] = {kPitch, 100, 2256, 2303};
 
   NoteEditCurrentState currentState;
   currentState.upsertRow(kHiddenOverlap, kOverlapBaseline, kOverlapBaseline,
                          NoteEditPresenceType::Hidden);
-  currentState.upsertRow(kNotStickyHidden, baseline[kNotStickyHidden], baseline[kNotStickyHidden],
-                         NoteEditPresenceType::Hidden);
+  currentState.upsertRow(kNonParticipantNeighbor, baseline[kNonParticipantNeighbor],
+                         baseline[kNonParticipantNeighbor], NoteEditPresenceType::Visible);
 
   MidiEventVec liveStore;
   MidiEvent moverOn = MidiEvent::NoteOn(1680, kChannel, kPitch, 100);
@@ -1338,6 +1340,54 @@ void test_pitch_vacated_lane_visible_shortened_leave_restore_021407() {
   TEST_ASSERT_NOT_EQUAL(kStub.endTick, constrained[0].endTick);
 }
 
+void test_determine_targets_excludes_ended_participation_even_with_stale_latch() {
+  // §11 step 5.4: Ended rows are not leave-restore targets even if Focus latch still lists them.
+  constexpr NoteId kMover = 7;
+  constexpr NoteId kOverlap = 9;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint32_t kLoopLength = 5376;
+
+  const NoteBaseline kCommitted{kPitch, 100, 2640, 2831};
+  const NoteBaseline kStub{kPitch, 100, 2640, 2772};
+  const NoteBaseline kMoverPast{kPitch, 100, 1200, 1247};
+
+  BaselineMap baseline;
+  baseline[kMover] = kMoverPast;
+  baseline[kOverlap] = kCommitted;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlap, kCommitted, kStub, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, kMoverPast, kMoverPast, NoteEditPresenceType::Visible);
+  currentState.markOverlapParticipationEnded(kOverlap);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = kMoverPast;
+  edited.causingSpans.push_back(causing);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.last = kMoverPast;
+  focus.baselineMap = baseline;
+
+  NoteIdList staleLatch;
+  staleLatch.push_back(kOverlap);
+
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      EditSessionInteractionsByTarget{}, baseline, liveStore, kChannel, kLoopLength, selection,
+      edited, staleLatch, focus, &currentState);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(targets.size()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_resolve_complete_hide_precedence_over_shorten);
@@ -1373,5 +1423,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_ltr_time_axis_visible_shortened_leave_restore_022151);
   RUN_TEST(test_pitch_vacated_lane_hidden_leave_restore_target_020050);
   RUN_TEST(test_pitch_vacated_lane_visible_shortened_leave_restore_021407);
+  RUN_TEST(test_determine_targets_excludes_ended_participation_even_with_stale_latch);
   return UNITY_END();
 }

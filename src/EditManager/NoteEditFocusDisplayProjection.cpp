@@ -182,24 +182,22 @@ NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(
   if (focus.movingNoteId != kInvalidNoteId) {
     participants.push_back(focus.movingNoteId);
   }
-  for (NoteId noteId : focus.changedOverlapNoteIds) {
-    if (noteId == kInvalidNoteId) {
-      continue;
+  if (currentState != nullptr && !currentState->empty()) {
+    // §11 step 5.4: paint participants from current-state membership (Ended excluded).
+    const NoteIdList fromState =
+        collectOverlapParticipantNoteIdsFromCurrentState(*currentState, focus.movingNoteId);
+    for (NoteId noteId : fromState) {
+      if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
+        participants.push_back(noteId);
+      }
     }
-    if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
-      participants.push_back(noteId);
-    }
-  }
-  if (currentState != nullptr) {
-    for (const auto& [noteId, row] : currentState->rows()) {
-      if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+  } else {
+    for (NoteId noteId : focus.changedOverlapNoteIds) {
+      if (noteId == kInvalidNoteId) {
         continue;
       }
-      if (row.presence == NoteEditPresenceType::Hidden ||
-          row.presence == NoteEditPresenceType::Deleted) {
-        if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
-          participants.push_back(noteId);
-        }
+      if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
+        participants.push_back(noteId);
       }
     }
   }
