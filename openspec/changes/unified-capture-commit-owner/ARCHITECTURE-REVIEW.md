@@ -4,9 +4,9 @@
 **Date:** 2026-07-08  
 **Status:** Active — use this file before and after **each phase** ships  
 
-**Related:** [proposal.md](proposal.md), [design.md](design.md), [tasks.md](tasks.md), [docs/plans/unified_capture_stop_driver_refinement.md](../../../docs/plans/unified_capture_stop_driver_refinement.md)
+**Related:** [proposal.md](proposal.md), [design.md](design.md), [tasks.md](tasks.md), [docs/Plans/unified_capture_stop_driver_refinement.md](../../../docs/Plans/unified_capture_stop_driver_refinement.md)
 
-This change restores the **per-change review artifact** pattern used in archived OpenSpec work (e.g. [`loop-ownership-hardening`](../../archive/2026-06-22-loop-ownership-hardening/ARCHITECTURE-REVIEW.md), [`overlap-hidden-note-select`](../../archive/2026-06-19-overlap-hidden-note-select/architecture-review.md)). Global templates remain in [`docs/templates/`](../../../docs/templates/) and [`docs/agents/reviewer.md`](../../../docs/agents/reviewer.md).
+This change restores the **per-change review artifact** pattern used in archived OpenSpec work (e.g. [`loop-ownership-hardening`](../../archive/2026-06-22-loop-ownership-hardening/ARCHITECTURE-REVIEW.md), [`overlap-hidden-note-select`](../../archive/2026-06-19-overlap-hidden-note-select/architecture-review.md)). Global templates remain in [`docs/Templates/`](../../../docs/Templates/) and [`docs/Agents/reviewer.md`](../../../docs/Agents/reviewer.md).
 
 ---
 
@@ -14,11 +14,11 @@ This change restores the **per-change review artifact** pattern used in archived
 
 | Layer | Artifact | When |
 |-------|----------|------|
-| **Architecture (formal trigger)** | [PREFLIGHT.md](../../../docs/templates/PREFLIGHT.md) full + [ARCHITECTURE_REASSESSMENT.md](../../../docs/ARCHITECTURE_REASSESSMENT.md) | Ownership / transition change (Phase 3+) |
+| **Architecture (formal trigger)** | [PREFLIGHT.md](../../../docs/Templates/PREFLIGHT.md) full + [ARCHITECTURE_REASSESSMENT.md](../../../docs/ARCHITECTURE_REASSESSMENT.md) | Ownership / transition change (Phase 3+) |
 | **Architecture (extension)** | [architecture-checkpoint-bugfix](../../../.cursor/rules/architecture-checkpoint-bugfix.mdc) — ownership? transitions? | Every phase — answer in phase gate below |
-| **Historical decisions** | [DECISION_REVIEW.md](../../../docs/templates/DECISION_REVIEW.md) | Before firmware; mandatory if formal trigger |
-| **Implementation** | [reviewer.md](../../../docs/agents/reviewer.md) output format | End of each phase before merge |
-| **Session** | [SESSION_CLOSEOUT.md](../../../docs/templates/SESSION_CLOSEOUT.md) | Design exclusions; DEC append |
+| **Historical decisions** | [DECISION_REVIEW.md](../../../docs/Templates/DECISION_REVIEW.md) | Before firmware; mandatory if formal trigger |
+| **Implementation** | [reviewer.md](../../../docs/Agents/reviewer.md) output format | End of each phase before merge |
+| **Session** | [SESSION_CLOSEOUT.md](../../../docs/Templates/SESSION_CLOSEOUT.md) | Design exclusions; DEC append |
 
 **What got lost in recent OpenSpec execution:** per-change **finding → task → verification matrix** linked from `tasks.md`. Phases shipped with gates in `tasks.md` only, without a standing review doc agents load each session.
 
@@ -101,7 +101,7 @@ Complete **Architecture gate** before coding the phase. Complete **Implementatio
 | Pipeline owns button/transport/quantize? | **NO** — must stay in stop entry |
 | New abstraction justified? | `commitCaptureForStop` only — orchestrator on existing owner |
 
-#### Implementation review ([reviewer.md](../../../docs/agents/reviewer.md))
+#### Implementation review ([reviewer.md](../../../docs/Agents/reviewer.md))
 
 | Check | Pass |
 |-------|------|
@@ -160,7 +160,7 @@ Complete **Architecture gate** before coding the phase. Complete **Implementatio
 |----------|-----------------|
 | Ownership change? | **YES** — one commit session owner |
 | State transition change? | **YES** — record stop latency / STOPPED_RECORDING tail |
-| Formal trigger? | **YES** — full [PREFLIGHT](../../../docs/templates/PREFLIGHT.md) or inline equivalent in PR |
+| Formal trigger? | **YES** — full [PREFLIGHT](../../../docs/Templates/PREFLIGHT.md) or inline equivalent in PR |
 | DECISION_REVIEW completed? | **YES** — cite DEC-023, DEC-004, DEC-020 |
 | Conflicts DEC-016 / DEC-020? | Document: commit owner does not block mid-pass persist |
 
@@ -247,11 +247,11 @@ Complete **Architecture gate** before coding the phase. Complete **Implementatio
 
 ## Agent workflow (each phase session)
 
-1. Load [PROJECT_STATE](../../../docs/runtime/PROJECT_STATE.md), [CURRENT_WORK](../../../docs/runtime/CURRENT_WORK.md), this file, `tasks.md`.
+1. Load [PROJECT_STATE](../../../docs/Runtime/PROJECT_STATE.md), [CURRENT_WORK](../../../docs/Runtime/CURRENT_WORK.md), this file, `tasks.md`.
 2. Answer **Architecture gate** for the target phase — stop if Phase 3+ trigger and no approval.
 3. Implement phase scope only (no drive-by).
 4. Run verification matrix row.
-5. Fill **Implementation review** checklist; output [reviewer.md](../../../docs/agents/reviewer.md) format in PR or session notes.
+5. Fill **Implementation review** checklist; output [reviewer.md](../../../docs/Agents/reviewer.md) format in PR or session notes.
 6. Check off `tasks.md`; update PROJECT_STATE if phase completes.
 
 ---

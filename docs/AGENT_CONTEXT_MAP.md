@@ -2,18 +2,18 @@
 
 Deterministic documentation loading per domain. **Before implementation:** detect domain → load required docs → write a short context summary → proceed.
 
-Authority order: [00-authority/README.md](00-authority/README.md).
+Authority order: [Authority/README.md](Authority/README.md).
 
 Always load first:
 
-- [runtime/PROJECT_STATE.md](runtime/PROJECT_STATE.md)
-- [runtime/CURRENT_WORK.md](runtime/CURRENT_WORK.md) — implementation scope; do not implement outside § Now implementing
-- [runtime/ROADMAP.md](runtime/ROADMAP.md) — optional; never sole authority for coding
-- [DECISION_LOG.md](DECISION_LOG.md) — search for topic; run [templates/DECISION_REVIEW.md](templates/DECISION_REVIEW.md) before firmware edits
-- [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md)
-- [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md)
+- [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md)
+- [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) — implementation scope; do not implement outside § Now implementing
+- [Runtime/ROADMAP.md](Runtime/ROADMAP.md) — optional; never sole authority for coding
+- [DECISION_LOG.md](DECISION_LOG.md) — search for topic; run [Templates/DECISION_REVIEW.md](Templates/DECISION_REVIEW.md) before firmware edits
+- [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md)
+- [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md)
 
-**Runtime orientation (agents — load early for firmware work):** [plans/runtime_process_building_blocks_overview.md](plans/runtime_process_building_blocks_overview.md) — high-level logic, owners, hard don'ts (not authority; then follow domain sections below).
+**Runtime orientation (agents — load early for firmware work):** [plans/runtime_process_building_blocks_overview.md](Plans/runtime_process_building_blocks_overview.md) — high-level logic, owners, hard don'ts (not authority; then follow domain sections below).
 
 ---
 
@@ -21,14 +21,14 @@ Always load first:
 
 **Required**
 
-- [00-authority/DELIVERY_RULES.md](00-authority/DELIVERY_RULES.md) — commands, locked milestone order, hard guards, verification matrix
-- [runtime/PROJECT_STATE.md](runtime/PROJECT_STATE.md) — active OpenSpec list
-- [runtime/CURRENT_WORK.md](runtime/CURRENT_WORK.md) — **implementation scope**
+- [Authority/DELIVERY_RULES.md](Authority/DELIVERY_RULES.md) — commands, locked milestone order, hard guards, verification matrix
+- [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md) — active OpenSpec list
+- [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) — **implementation scope**
 - `openspec/changes/<active-name>/tasks.md` for the change you implement
 
 **Optional**
 
-- [plans/openspec_integration_overview.md](plans/openspec_integration_overview.md)
+- [plans/openspec_integration_overview.md](Plans/openspec_integration_overview.md)
 - `openspec/specs/` for archived normative behavior
 - `.cursor/rules/OpenSpec-Workflow.mdc`
 
@@ -45,7 +45,7 @@ Always load first:
 **Required**
 
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
-- [plans/record_overdub_memory_display_timeline_enhancement.md](plans/record_overdub_memory_display_timeline_enhancement.md)
+- [plans/record_overdub_memory_display_timeline_enhancement.md](Plans/record_overdub_memory_display_timeline_enhancement.md)
 - `openspec/specs/timeline-epochs/` (if present)
 - `Track`, `Loop`, `LoopEventStore` headers
 
@@ -65,8 +65,8 @@ Always load first:
 
 **Required**
 
-- [00-authority/Architecture/RuntimeArchitecture.md](00-authority/Architecture/RuntimeArchitecture.md) — layers and revision chain
-- [00-authority/Architecture/Playback.md](00-authority/Architecture/Playback.md)
+- [Authority/Architecture/RuntimeArchitecture.md](Authority/Architecture/RuntimeArchitecture.md) — layers and revision chain
+- [Authority/Architecture/Playback.md](Authority/Architecture/Playback.md)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
 - `TrackManager`, `LoopPasses` materialize APIs
 
@@ -85,15 +85,15 @@ Always load first:
 
 **Required**
 
-- [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md) — StorageManager ownership
+- [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) — StorageManager ownership
 - [Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md](Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md) — unified RAM + SD model; continuous persistence proposal
 - [Guides/DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md)
 - Active OpenSpec: `openspec/changes/continuous-runtime-persistence/` (DEC-020), `set-revision-persistence/`, `workspace-session-persistence/` (check `tasks.md`)
-- [plans/set_revision_persistence_handoff.md](plans/set_revision_persistence_handoff.md)
+- [plans/set_revision_persistence_handoff.md](Plans/set_revision_persistence_handoff.md)
 
 **Optional**
 
-- [plans/workspace_session_persistence_handoff.md](plans/workspace_session_persistence_handoff.md)
+- [plans/workspace_session_persistence_handoff.md](Plans/workspace_session_persistence_handoff.md)
 - `StorageManager.h`, `SetBrowserOverlayPolicy.h`
 
 **Avoid**
@@ -107,22 +107,22 @@ Always load first:
 
 **Required**
 
-- [00-authority/Architecture/RuntimeArchitecture.md](00-authority/Architecture/RuntimeArchitecture.md)
-- [00-authority/Architecture/Display.md](00-authority/Architecture/Display.md)
-- [00-authority/Architecture/DerivedViews.md](00-authority/Architecture/DerivedViews.md) — representation vs interval
+- [Authority/Architecture/RuntimeArchitecture.md](Authority/Architecture/RuntimeArchitecture.md)
+- [Authority/Architecture/Display.md](Authority/Architecture/Display.md)
+- [Authority/Architecture/DerivedViews.md](Authority/Architecture/DerivedViews.md) — representation vs interval
 - [Guides/control-surface/Display.md](Guides/control-surface/Display.md)
-- [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md) — DisplayManager ownership
+- [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) — DisplayManager ownership
 - `DisplayManager` for draw entry points
 
 **Optional**
 
 - `openspec/changes/long-loop-piano-roll-window/`
 - `openspec/changes/save-status-display/`
-- [plans/record_overdub_memory_display_timeline_enhancement.md](plans/record_overdub_memory_display_timeline_enhancement.md) (display section)
+- [plans/record_overdub_memory_display_timeline_enhancement.md](Plans/record_overdub_memory_display_timeline_enhancement.md) (display section)
 
 **Avoid**
 
-- Using `docs/plans/*display*.plan.md` from 2025 as authority over current `DisplayManager` behavior
+- Using `docs/Plans/*display*.plan.md` from 2025 as authority over current `DisplayManager` behavior
 
 ---
 
@@ -155,7 +155,7 @@ Always load first:
 
 **Optional**
 
-- [plans/reduce_undo_and_lazy_loop_b89758a6.plan.md](plans/reduce_undo_and_lazy_loop_b89758a6.plan.md) (historical)
+- [plans/reduce_undo_and_lazy_loop_b89758a6.plan.md](Plans/reduce_undo_and_lazy_loop_b89758a6.plan.md) (historical)
 
 **Avoid**
 
@@ -188,7 +188,7 @@ Always load first:
 **Required**
 
 - `ClockManager`
-- [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md)
+- [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md)
 
 **Optional**
 
@@ -208,13 +208,13 @@ Always load first:
 - [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) — current geometry / participation / leave-restore / commit workflow
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
 - `EditManager`, `NoteGeometryResolver`, `NoteEditCurrentState`, `ControlSurfaceManager`, `EditStates/`
-- [NAMING.md](00-authority/NAMING.md)
+- [NAMING.md](Authority/NAMING.md)
 - `.cursor/rules/HITL-Edit-Test-Flow.mdc`
 - DEC-029 / DEC-030 in [DECISION_LOG.md](DECISION_LOG.md)
 
 **Optional**
 
-- [plans/note_edit_resolver_authority_contracts_refinement.md](plans/note_edit_resolver_authority_contracts_refinement.md) — **complete** (DEC-029/030; §12 R1–R5)
+- [plans/note_edit_resolver_authority_contracts_refinement.md](Plans/note_edit_resolver_authority_contracts_refinement.md) — **complete** (DEC-029/030; §12 R1–R5)
 - `openspec/specs/edit-session-action-geometry/`
 - `openspec/specs/note-edit-modification-session/`
 - `openspec/specs/note-edit-current-state/` — archived change [`2026-08-08-note-edit-current-state`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/)
@@ -252,7 +252,7 @@ Always load first:
 
 **Optional**
 
-- [plans/phase-3-multi-loop.md](plans/phase-3-multi-loop.md) — roadmap only
+- [plans/phase-3-multi-loop.md](Plans/phase-3-multi-loop.md) — roadmap only
 
 **Avoid**
 
@@ -265,19 +265,19 @@ Always load first:
 **Required**
 
 - Active OpenSpec under `set-revision-persistence`, `workspace-session-persistence`
-- [plans/set_revision_persistence_handoff.md](plans/set_revision_persistence_handoff.md)
+- [plans/set_revision_persistence_handoff.md](Plans/set_revision_persistence_handoff.md)
 - `RevisionLoadPolicy`, catalog types in `include/`
 
 **Optional**
 
-- [plans/set_revision_persistence_architecture_enhancement.md](plans/set_revision_persistence_architecture_enhancement.md)
+- [plans/set_revision_persistence_architecture_enhancement.md](Plans/set_revision_persistence_architecture_enhancement.md)
 
 ---
 
 ## Agent procedure
 
 1. **Detect domain** from user request and touched file paths (`rg` / semantic search).
-2. Run [decision ladder](00-authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder) — default **implement** unless [formal trigger](ARCHITECTURE_REASSESSMENT.md#formal-triggers).
+2. Run [decision ladder](Authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder) — default **implement** unless [formal trigger](ARCHITECTURE_REASSESSMENT.md#formal-triggers).
 3. **Load required docs** for that domain (+ PROJECT_STATE, CURRENT_WORK).
-4. **Brief context summary** (owner, change, tests) — full [PREFLIGHT](templates/PREFLIGHT.md) only if triggered.
+4. **Brief context summary** (owner, change, tests) — full [PREFLIGHT](Templates/PREFLIGHT.md) only if triggered.
 5. **Implement** — propose path and confidence when alternatives exist; do not stop on vagueness alone.

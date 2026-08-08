@@ -29,5 +29,5 @@ This blocks long-session validation and risks losing the just-recorded pass afte
 - Affected firmware: `Track.cpp`, `TrackStateMachine.cpp`, `Loop.cpp`, `StorageManager.cpp`, `StorageLoopIo.cpp`, and stop-path verification hooks in capture logging.
 - Affected display path: `DisplayManager.cpp` bounded window and overview strip rendering for long loops.
 - Affected verification: `scripts/host_midi_automation_baseline.py` long-run assertions and related native tests.
-- Brownfield references: `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`, `docs/DELIVERABLE_TRACKING.md`, and `docs/plans/phase-3-multi-loop.md`.
+- Brownfield references: `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`, `docs/DELIVERABLE_TRACKING.md`, and `docs/Plans/phase-3-multi-loop.md`.
 - Non-goals: Jam D13 capture scope, scene workflow, and unrelated note-edit UX changes.

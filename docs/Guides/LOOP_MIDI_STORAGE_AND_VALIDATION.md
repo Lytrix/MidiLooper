@@ -2,7 +2,7 @@
 
 Agent-oriented map of how loop MIDI events are stored, cleaned up, snapshotted, and persisted. Read this before changing `Loop`, `Track`, `TrackUndo`, `StorageManager`, `StorageLoopIo`, or stop-path code.
 
-For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../plans/overdub_undo_baseline_phase1_refinement.md`](../plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../plans/memory_scalability_refactor_enhancement.md`](../plans/memory_scalability_refactor_enhancement.md). For internal heap vs external memory pool routing (NOTE_EDIT cold buffers, undo admission), see [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md). For the unified RAM + SD mental model and proposed continuous-runtime-persistence evolution, see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md). For central deferred SD save routing and chunk-bounded writer stages, see [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md). For a record/overdub timeline across memory, playback, display, and SD, see [`../plans/record_overdub_memory_display_timeline_enhancement.md`](../plans/record_overdub_memory_display_timeline_enhancement.md).
+For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../Plans/overdub_undo_baseline_phase1_refinement.md`](../Plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../Plans/memory_scalability_refactor_enhancement.md`](../Plans/memory_scalability_refactor_enhancement.md). For internal heap vs external memory pool routing (NOTE_EDIT cold buffers, undo admission), see [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md). For the unified RAM + SD mental model and proposed continuous-runtime-persistence evolution, see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md). For central deferred SD save routing and chunk-bounded writer stages, see [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md). For a record/overdub timeline across memory, playback, display, and SD, see [`../Plans/record_overdub_memory_display_timeline_enhancement.md`](../Plans/record_overdub_memory_display_timeline_enhancement.md).
 
 ---
 
@@ -134,7 +134,7 @@ After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is set on r
 1. **Playback is read-only** — `Track::playMidiEvents` / `playMidiEventsForSlot` must not append capture events, synthesize note-offs, or modify `pendingNotes`.
 2. **Linear storage is not playback order** — a wrapped note may be stored as `NoteOff@head` before `NoteOn@tail` in sorted tick order; `reconstructNotes` pairs them into display segments.
 3. **Single close pipeline** — open notes close at **record/overdub stop** via `finalizePendingNotes(currentTick)` then `LoopStopFinalize::finalizeWrapWindowOnStore` in `sealCapture` with the same playhead `closeTick`. No mid-wrap capture mutation.
-4. **Shared capture phase** — transport-active overdub and record-while-playing use `Track::capturePhaseTick` → `tickPhaseInProjectionCycle` (same frame as playback playhead); punch-in record uses linear offset from `startLoopTick`; `stopOverdubbing` / finalize use the same `capturePhaseTick` for `closeTick`. Stop must not use unwrapped absolute delta + L-1 clamp. Coordinate decision: [`capture_coordinate_canonical_decision_refinement.md`](../plans/capture_coordinate_canonical_decision_refinement.md).
+4. **Shared capture phase** — transport-active overdub and record-while-playing use `Track::capturePhaseTick` → `tickPhaseInProjectionCycle` (same frame as playback playhead); punch-in record uses linear offset from `startLoopTick`; `stopOverdubbing` / finalize use the same `capturePhaseTick` for `closeTick`. Stop must not use unwrapped absolute delta + L-1 clamp. Coordinate decision: [`capture_coordinate_canonical_decision_refinement.md`](../Plans/capture_coordinate_canonical_decision_refinement.md).
 5. **Finalize → seal ownership transition** — after `finalizePendingNotes` returns, each cleared pending key has a capture `NoteOff` at the same phase tick live capture would use; `sealCapture` must not close those notes again.
 6. **Wrapped head NoteOff is canonical** — when `tickRelative < prior tail NoteOn` and the key is still in `pendingNotes`, live overdub records the head off without monotonic bump. Normal pairs obey `NoteOn <= NoteOff`; wrap pairs intentionally do not.
 
@@ -181,7 +181,7 @@ Full-loop pass over merged active capture passes (materialized flat):
 
 - Uses **`LoopEventValidation::repairOrphanNoteEvents`** (wrap-aware) on a probe copy.
 - **v1 log-only:** reports orphan count; does **not** write back or call **`commitStopFinalizeFromStore`** (undo-safe).
-- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture`** hot stop — see [`capture_pass_note_min_length_refinement.md`](../plans/capture_pass_note_min_length_refinement.md).
+- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture`** hot stop — see [`capture_pass_note_min_length_refinement.md`](../Plans/capture_pass_note_min_length_refinement.md).
 
 **When it runs:**
 
@@ -205,7 +205,7 @@ Full-loop pass over merged active capture passes (materialized flat):
 | First piano-roll paint | `Loop` visualCache rebuild + `NoteUtils::reconstructNotes` (display pairing — tier 3, not storage mutate) |
 | Avoided on load (heap) | Full `materializeEditViewFromPasses` per restore slot — removed in `68ce6ad` after 42-slot boot exhausted RAM1 |
 
-For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_refinement.md](../plans/prioritized_boot_load_isolation_refinement.md) (slot load session, window-first display) — not reverting `15a35b4`.
+For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_refinement.md](../Plans/prioritized_boot_load_isolation_refinement.md) (slot load session, window-first display) — not reverting `15a35b4`.
 
 ### 3. Display reconstruction — not storage mutation
 
@@ -280,7 +280,7 @@ SEVT,F,384,4,23   // real off still exists
 DNTE,23,192,192,120,...
 ```
 
-NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **NoteMinLength** is a user-global pair-span gate at stop — see [`capture_pass_note_min_length_refinement.md`](../plans/capture_pass_note_min_length_refinement.md).
+NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **NoteMinLength** is a user-global pair-span gate at stop — see [`capture_pass_note_min_length_refinement.md`](../Plans/capture_pass_note_min_length_refinement.md).
 
 ---
 

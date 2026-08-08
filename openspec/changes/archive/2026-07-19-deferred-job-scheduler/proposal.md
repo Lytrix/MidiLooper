@@ -23,6 +23,6 @@ Phase A proved time-budgeted `LoadLoopJob` under `StorageManager::runDeferredFra
 ## Impact
 
 - Code: new `DeferredJobScheduler` (+ job registry/queue), `main.cpp` frame hook, `StorageManager` submit/step API surface.
-- Docs: [`deferred_job_scheduler_architecture.md`](../../../docs/plans/deferred_job_scheduler_architecture.md), Phase B enhancement plan.
+- Docs: [`deferred_job_scheduler_architecture.md`](../../../docs/Plans/deferred_job_scheduler_architecture.md), Phase B enhancement plan.
 - Tests: native demote/preemption/scheduler frame; device gate vs [`230145`](../../../captures/session_20260718_230145.log) smoothness.
 - Does **not** change Commit immutability, MIDI/playback ownership, or product Workspace/Slot vocabulary.

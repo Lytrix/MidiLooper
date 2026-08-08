@@ -13,7 +13,7 @@ For a 64-bar loop this compresses 64 bars into the same horizontal pixels as 2 b
 
 Display scaling was scoped in `record-stop-64-bar-crash` §6 but archived when the RAM2 root cause was identified. This change implements that display scope as a follow-on after **`long-record-memory-headroom` shipped**.
 
-**Not the same as playback `PlaybackWindow`:** `LoopPlaybackRuntime::primaryWindow` today flattens **all** active capture passes into `mergedEvents`; `effectiveWindowBars` / `windowStartBar` are scaffolding only (see [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](../../../docs/plans/record_overdub_memory_display_timeline_enhancement.md)). This change adds **OLED** detailed-window navigation only — it does not bar-slice playback merge yet.
+**Not the same as playback `PlaybackWindow`:** `LoopPlaybackRuntime::primaryWindow` today flattens **all** active capture passes into `mergedEvents`; `effectiveWindowBars` / `windowStartBar` are scaffolding only (see [`docs/Plans/record_overdub_memory_display_timeline_enhancement.md`](../../../docs/Plans/record_overdub_memory_display_timeline_enhancement.md)). This change adds **OLED** detailed-window navigation only — it does not bar-slice playback merge yet.
 
 **Locked product decisions (from plan):**
 - Detailed window is **fixed at loop start** (tick 0, bars 0–15) until the user moves it in LOOP_EDIT (M2); no auto-follow playhead.

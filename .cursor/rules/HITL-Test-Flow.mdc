@@ -12,7 +12,7 @@ Transition verification is always required for baseline validation in this repos
 
 **Default:** assume `teensy41-capture-serial` is already on the device. HITL does **not** build or upload unless you pass `--build-upload`.
 
-Preferred entry point: `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/plans/hitl_modular_scenarios_enhancement.md`](docs/plans/hitl_modular_scenarios_enhancement.md).
+Preferred entry point: `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/Plans/hitl_modular_scenarios_enhancement.md`](docs/Plans/hitl_modular_scenarios_enhancement.md).
 
 ### Default — managed dual-session (one command)
 

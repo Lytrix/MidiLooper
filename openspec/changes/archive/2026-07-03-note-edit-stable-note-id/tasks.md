@@ -2,7 +2,7 @@
 
 **Status:** Phase 0 **shipped**. Phase A **shipped** (2026-07-02). Phase B **shipped** (2026-07-02) — NoteId schema, EditorSelection, SD v6, post-Phase B co-location (`NoteId` → `MidiEvent.h`, `TrackId` → `NoteEditSessionState.h`, `EntityIds.h` deleted).
 
-**Phase A HITL evidence:** `captures/host_midi_automation_baseline_20260702_011228.json` (PASS), `captures/phase_a_slow_fader_sweep_20260702_011229_serial.log` (59 slots, `select_ignored_rate=0`). Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md).
+**Phase A HITL evidence:** `captures/host_midi_automation_baseline_20260702_011228.json` (PASS), `captures/phase_a_slow_fader_sweep_20260702_011229_serial.log` (59 slots, `select_ignored_rate=0`). Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md).
 
 **Gate:** Phase B implementation starts only after Phase A exit criteria in [design.md](./design.md) pass (`note-edit-fader-feedback-regression` selection-driven refactor stable).
 
@@ -17,8 +17,8 @@ Run `pio test -e native` before push.
 ## 0. Prerequisite — OpenSpec + plan backup
 
 - [x] 0.1 Create `openspec/changes/note-edit-stable-note-id/` with proposal, design, specs, tasks
-- [x] 0.2 Copy plan to [docs/plans/note_edit_stable_note_id_enhancement.md](../../docs/plans/note_edit_stable_note_id_enhancement.md)
-- [x] 0.3 Register change in [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md)
+- [x] 0.2 Copy plan to [docs/Plans/note_edit_stable_note_id_enhancement.md](../../docs/Plans/note_edit_stable_note_id_enhancement.md)
+- [x] 0.3 Register change in [PROJECT_STATE.md](../../docs/Runtime/PROJECT_STATE.md)
 
 ---
 
@@ -117,7 +117,7 @@ Run `pio test -e native` before push.
 
 - [x] 9.1 Allocation regression covered in extended `test_edit_apply` + `test_storage_loop_io` (`pio test -e native` 336 pass)
 - [x] 9.2 HITL edit fader sweep + baseline record/overdub — **PASS** §7.23.6 preset 2026-07-03 (2+2 base + 59-slot sweep)
-- [x] 9.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) and [CURRENT_WORK.md](../../docs/runtime/CURRENT_WORK.md)
+- [x] 9.3 Update [PROJECT_STATE.md](../../docs/Runtime/PROJECT_STATE.md) and [CURRENT_WORK.md](../../docs/Runtime/CURRENT_WORK.md)
 - [x] 9.4 Archive change after gates pass; merge specs into `openspec/specs/`
 
 ---
@@ -129,4 +129,4 @@ Run `pio test -e native` before push.
 | **C** | Record/overdub in edit + capture display merge |
 | **D** | `ControlChangeId` |
 
-See [design.md](./design.md) and [docs/plans/note_edit_stable_note_id_enhancement.md](../../docs/plans/note_edit_stable_note_id_enhancement.md).
+See [design.md](./design.md) and [docs/Plans/note_edit_stable_note_id_enhancement.md](../../docs/Plans/note_edit_stable_note_id_enhancement.md).

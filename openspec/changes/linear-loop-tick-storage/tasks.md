@@ -3,7 +3,7 @@
 ## 0. OpenSpec and docs
 
 - [x] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md`
-- [x] 0.2 Handoff [`docs/plans/linear_loop_tick_storage_enhancement.md`](../../docs/plans/linear_loop_tick_storage_enhancement.md)
+- [x] 0.2 Handoff [`docs/Plans/linear_loop_tick_storage_enhancement.md`](../../docs/Plans/linear_loop_tick_storage_enhancement.md)
 - [x] 0.3 Park `note-edit-tick-coordinates-and-audition` — [`PARKED.md`](../note-edit-tick-coordinates-and-audition/PARKED.md)
 - [x] 0.3.1 Spec gaps closed — dual normalize boundaries, edit closure set, projection separation, set-window fader rules
 - [x] 0.4 Append DECISION_LOG — [DEC-013](../docs/DECISION_LOG.md#dec-013-linear-loop-tick-validate-vs-normalize)

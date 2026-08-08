@@ -18,4 +18,4 @@
 
 ## Reference
 
-Product architecture: `docs/plans/set_revision_persistence_architecture_enhancement.md`
+Product architecture: `docs/Plans/set_revision_persistence_architecture_enhancement.md`

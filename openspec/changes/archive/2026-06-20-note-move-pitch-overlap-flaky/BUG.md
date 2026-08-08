@@ -125,7 +125,7 @@ Firmware: `teensy41-capture-serial`. Overlap case: `_run_overlap_round_trip_case
 
 ---
 
-**Related:** [MOVE_NOTE_LOGIC.md](../../../docs/Guides/MOVE_NOTE_LOGIC.md), [m8_edit_note_edit_hitl_automation_refinement.md](../../../docs/plans/m8_edit_note_edit_hitl_automation_refinement.md), OpenSpec **m8-edit** (NoteEditSession), global rule **architecture-checkpoint-bugfix**.
+**Related:** [MOVE_NOTE_LOGIC.md](../../../docs/Guides/MOVE_NOTE_LOGIC.md), [m8_edit_note_edit_hitl_automation_refinement.md](../../../docs/Plans/m8_edit_note_edit_hitl_automation_refinement.md), OpenSpec **m8-edit** (NoteEditSession), global rule **architecture-checkpoint-bugfix**.
 
 ---
 

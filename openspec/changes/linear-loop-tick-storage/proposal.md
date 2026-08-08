@@ -46,7 +46,7 @@ This is a **design-session change** (representation ownership + transaction boun
 - **SD / dev reset:** `StorageLoopIo.cpp`, `StorageManager.cpp`, `RevisionLoad.cpp`
 - **Tests:** new `test_loop_tick_normalize`; extend `test_noteutils_reconstruct`, `test_loop_stop_finalize`, `test_storage_loop_io`
 - **Storage:** Dev wipe required — **no SD migration**; pre-linear sets fail load or are removed by `!DEV_RESET_SD`
-- **Docs:** [`docs/plans/linear_loop_tick_storage_enhancement.md`](../../docs/plans/linear_loop_tick_storage_enhancement.md); update NOTE_WRAPPING_LOGIC + LOOP_MIDI guides on archive
+- **Docs:** [`docs/Plans/linear_loop_tick_storage_enhancement.md`](../../docs/Plans/linear_loop_tick_storage_enhancement.md); update NOTE_WRAPPING_LOGIC + LOOP_MIDI guides on archive
 
 ## Non-Goals
 
@@ -58,7 +58,7 @@ This is a **design-session change** (representation ownership + transaction boun
 
 ## Relationship to Active Work
 
-Orthogonal to `set-revision-persistence` overlay track ([`CURRENT_WORK.md`](../../docs/runtime/CURRENT_WORK.md)). Register in PROJECT_STATE when implementation starts; does not block revision overlay merge but shares `StorageManager` / `StorageLoopIo` touch points — coordinate dev reset with revision HITL cleanup patterns (`rev_nuke_sets`).
+Orthogonal to `set-revision-persistence` overlay track ([`CURRENT_WORK.md`](../../docs/Runtime/CURRENT_WORK.md)). Register in PROJECT_STATE when implementation starts; does not block revision overlay merge but shares `StorageManager` / `StorageLoopIo` touch points — coordinate dev reset with revision HITL cleanup patterns (`rev_nuke_sets`).
 
 ## Delivery Sequence
 

@@ -5,7 +5,7 @@ Capture MIDI is chunk-backed via **`LoopEventStore`** (global pool, `POOL_CHUNK_
 Global undo is per **track** (`GlobalUndoStack`); pass undos disable rows but today never free chunks.
 
 Fixed caps (`MAX_UNDO_HISTORY`, `MAX_CAPTURE_PASSES_PER_LOOP`) were reduced from 99 → 25 for heap
-pressure with 8×8 slots ([`docs/plans/reduce_undo_and_lazy_loop_b89758a6.plan.md`](../../../docs/plans/reduce_undo_and_lazy_loop_b89758a6.plan.md)).
+pressure with 8×8 slots ([`docs/Plans/reduce_undo_and_lazy_loop_b89758a6.plan.md`](../../../docs/Plans/reduce_undo_and_lazy_loop_b89758a6.plan.md)).
 That trades away valid edge cases when memory is available.
 
 Brownfield constraints ([`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)):

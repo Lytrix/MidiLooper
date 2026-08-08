@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-06  
 **Status:** Ready for implementation  
-**Architecture:** [`docs/plans/slot_playback_window_interaction_architecture.md`](../../../docs/plans/slot_playback_window_interaction_architecture.md)
+**Architecture:** [`docs/Plans/slot_playback_window_interaction_architecture.md`](../../../docs/Plans/slot_playback_window_interaction_architecture.md)
 
 ---
 
@@ -92,7 +92,7 @@ Record punch-in / arm queue on **Record button (36)** keeps existing paths — n
 
 **Decision:** `Track::silenceAudibleNotes()` wraps `sendAllNotesOff()` + clear per-slot `ActiveNoteLedger` on `TrackPlaybackRuntime`. Called from queue commit paths that mute, disable, delete, or relaunch with replacement.
 
-**Rationale:** All slots on a track share `midiChannel`; CC123 on output channels is correct and idempotent ([`exclude_led_channels_from_all_notes_off`](../../../docs/plans/exclude_led_channels_from_all_notes_off_1fca1ecd.plan.md)).
+**Rationale:** All slots on a track share `midiChannel`; CC123 on output channels is correct and idempotent ([`exclude_led_channels_from_all_notes_off`](../../../docs/Plans/exclude_led_channels_from_all_notes_off_1fca1ecd.plan.md)).
 
 **LOOP_EDIT boundary:** `applyLoopStartTick` / `setLoopStartTick` while playing SHALL call silence + queued restart (D4).
 

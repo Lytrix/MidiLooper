@@ -2,7 +2,7 @@
 
 Commit `d49e4c8` (2026-06-29) added deferred DROID fader feedback on NOTE_EDIT entry to prevent stale loop-edit motor positions from pulling the select bracket. That change regressed outbound sync: **fader1 may not reach the bracket motor**, **fader2 coarse often does not update on entry or note select** while **fader3 does**, and **NOTELEN length edit** is unusable when fader2 still reflects a prior loop-edit position. Inbound fader2 still moves notes — the failure is feedback scheduling, not edit store logic.
 
-This blocks trust in NOTE_EDIT on hardware and is orthogonal to active persistence/overlay work ([CURRENT_WORK.md](../../docs/runtime/CURRENT_WORK.md)).
+This blocks trust in NOTE_EDIT on hardware and is orthogonal to active persistence/overlay work ([CURRENT_WORK.md](../../docs/Runtime/CURRENT_WORK.md)).
 
 ## What Changes
 
@@ -29,7 +29,7 @@ This blocks trust in NOTE_EDIT on hardware and is orthogonal to active persisten
 - **Tests:** New native suite `test_note_edit_fader_feedback` (mapping + sync invariants); HITL edit baseline serial gates.
 - **Scripts:** `scripts/analyze_fader2_select_feedback.py`, `scripts/hitl/verify/note_edit_fader_select_refresh.py`.
 - **Brownfield:** [BUG.md](./BUG.md); related archived `edit-record-display-length-mode` (D3 length lifecycle — do not regress).
-- **Docs:** Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) when shipped.
+- **Docs:** Update [PROJECT_STATE.md](../../docs/Runtime/PROJECT_STATE.md) when shipped.
 
 ## Non-Goals
 
@@ -103,7 +103,7 @@ Diagnostic path (immediate F2–F4 + PC re-arm + millis settle + pitch deadband)
 - **D34 deferred to Phase 12:** Send-path honesty (bool return from send helpers); single motor-trigger owner.
 - **D35, D32, D33 parked to Phase 11:** Fine throttle, display refresh, rate-limit geometry SEND_F1.
 
-See [phase7 handoff](../../../docs/plans/note_edit_fader_feedback_phase7_handoff.md).
+See [phase7 handoff](../../../docs/Plans/note_edit_fader_feedback_phase7_handoff.md).
 
 ---
 

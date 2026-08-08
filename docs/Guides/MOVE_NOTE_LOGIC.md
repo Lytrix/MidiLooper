@@ -2,7 +2,7 @@
 
 Living guide for NOTE_EDIT move, length, pitch, overlap hide/shorten/restore, and commit.
 Normative OpenSpec: [`openspec/specs/edit-session-action-geometry/spec.md`](../../openspec/specs/edit-session-action-geometry/spec.md).
-Authority contracts plan: [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md).
+Authority contracts plan: [`docs/Plans/note_edit_resolver_authority_contracts_refinement.md`](../Plans/note_edit_resolver_authority_contracts_refinement.md).
 Decision: DEC-029 (`NoteEditCurrentState`), DEC-030 (sticky `Ended` participation).
 
 ---

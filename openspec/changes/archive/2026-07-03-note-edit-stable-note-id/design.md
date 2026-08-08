@@ -232,7 +232,7 @@ Included from public API headers (**`NoteEditSessionState.h`**, **`EditPass.h`**
 
 **Out of scope for any option:** Jam/M10 ids, storage catalog ids, stack-internal ids unless a separate OpenSpec says otherwise.
 
-**Naming reference:** [`docs/plans/note_edit_stable_note_id_enhancement.md`](../../docs/plans/note_edit_stable_note_id_enhancement.md) — `Id` vs `Ref` vs index; in-scope vs out-of-scope ids.
+**Naming reference:** [`docs/Plans/note_edit_stable_note_id_enhancement.md`](../../docs/Plans/note_edit_stable_note_id_enhancement.md) — `Id` vs `Ref` vs index; in-scope vs out-of-scope ids.
 
 **Chosen (2026-07-02):** **(C) + post-Phase B co-location** — temporary hub during Phase B; **complete:** `NoteId` in [`include/MidiEvent.h`](../../../include/MidiEvent.h), `TrackId` in [`include/NoteEditSessionState.h`](../../../include/NoteEditSessionState.h); `EntityIds.h` deleted.
 
@@ -307,7 +307,7 @@ Invalidate caches on store mutation; never treat cache index as `NoteId`.
 
 ## Phase A exit / acceptance (prerequisite for Phase B)
 
-**Status: satisfied** (2026-07-02, commit `d3d5798`). Evidence: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md).
+**Status: satisfied** (2026-07-02, commit `d3d5798`). Evidence: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md).
 
 Phase B NoteId work starts only when all pass **and** D0a (`EntityIds.h` scope) is resolved with explicit user scope.
 
@@ -419,4 +419,4 @@ Rollback: revert NoteId branch; dev wipe again if v6 files written.
 | **C** | Record/overdub in edit + capture display merge |
 | **D** | `ControlChangeId` |
 
-See backup plan [`docs/plans/note_edit_stable_note_id_enhancement.md`](../../../docs/plans/note_edit_stable_note_id_enhancement.md) for full touchpoint map and Phase C product rules.
+See backup plan [`docs/Plans/note_edit_stable_note_id_enhancement.md`](../../../docs/Plans/note_edit_stable_note_id_enhancement.md) for full touchpoint map and Phase C product rules.

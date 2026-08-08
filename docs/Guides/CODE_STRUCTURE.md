@@ -4,7 +4,7 @@ How the codebase is organized: **suffix naming** and the **button/fader pipeline
 
 ## Suffix naming
 
-Canonical suffix table and verb conventions: **[NAMING.md](../00-authority/NAMING.md)** § Module suffix vocabulary and § Verb conventions.
+Canonical suffix table and verb conventions: **[NAMING.md](../Authority/NAMING.md)** § Module suffix vocabulary and § Verb conventions.
 
 **Input pipelines** (buttons, faders) use **Manager → Processor + Actions**:
 

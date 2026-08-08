@@ -6,7 +6,7 @@
  * @brief Place note-edit cold-path code in flash on Teensy 4.1 to preserve RAM1/ITCM.
  *
  * Note-edit overlap, focus rebuild, and reconstructNotes run on fader/encoder paths —
- * not MIDI clock hot paths. See docs/plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md.
+ * not MIDI clock hot paths. See docs/Plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md.
  */
 #pragma once
 

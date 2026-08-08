@@ -94,7 +94,7 @@ display work with active `long-loop-piano-roll-window` (display-only; separate P
 
 **Brownfield references:** [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md),
 [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](../../../docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md),
-[`docs/plans/phase-3-multi-loop.md`](../../../docs/plans/phase-3-multi-loop.md).
+[`docs/Plans/phase-3-multi-loop.md`](../../../docs/Plans/phase-3-multi-loop.md).
 
 ## Open decisions (TBD)
 

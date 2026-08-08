@@ -196,7 +196,7 @@ until a dedicated reassessment. FSM TUs must not duplicate this block.
 ## Migration Plan
 
 1. Implement from `tasks.md` in order; mark `[x]` only after native green (and HITL when noted).
-2. Update `docs/runtime/PROJECT_STATE.md` + `CURRENT_WORK.md` at each session close.
+2. Update `docs/Runtime/PROJECT_STATE.md` + `CURRENT_WORK.md` at each session close.
 3. Archive change to `openspec/specs/` after Tier 3 complete and overlay HITL verified.
 4. Then unblock `transport.bin` / `global.bin` OpenSpec (separate change).
 

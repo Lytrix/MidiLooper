@@ -1,8 +1,8 @@
 # Tasks — unified-commit-lazy-slot-load
 
-Architecture (frozen): [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../../../docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
-Review resolutions: [`docs/plans/unified_publish_pipeline_review_resolutions_refinement.md`](../../../docs/plans/unified_publish_pipeline_review_resolutions_refinement.md)  
-Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinement.md`](../../../docs/plans/unified_publish_pipeline_commit_terminology_refinement.md)
+Architecture (frozen): [`docs/Plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../../../docs/Plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
+Review resolutions: [`docs/Plans/unified_publish_pipeline_review_resolutions_refinement.md`](../../../docs/Plans/unified_publish_pipeline_review_resolutions_refinement.md)  
+Rename table: [`docs/Plans/unified_publish_pipeline_commit_terminology_refinement.md`](../../../docs/Plans/unified_publish_pipeline_commit_terminology_refinement.md)
 
 **Branch:** create from `af1227c` (e.g. `feature/deferred-lazy-load`) before firmware.
 
@@ -49,7 +49,7 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 ## 6. Phase 5+ — Later (parked until MVP green)
 
 - [ ] 6.1 Derived rebuild off Commit critical path (DERIVED_READY optional polish) — **parked past archive**
-- [x] 6.2 Load while PLAYING interactive slices — focus High while PLAYING; Low when transport idle (`canRunBackgroundLoadLoopNow`); Phase A.6 timed parse + atomic publish; A.7 finalize headroom without PSRAM walk ([`deferred_storage_commit_parse_split_enhancement.md`](../../../docs/plans/deferred_storage_commit_parse_split_enhancement.md)); fail baselines [`220005`](../../../captures/session_20260718_220005.log) / [`223713`](../../../captures/session_20260718_223713.log)
+- [x] 6.2 Load while PLAYING interactive slices — focus High while PLAYING; Low when transport idle (`canRunBackgroundLoadLoopNow`); Phase A.6 timed parse + atomic publish; A.7 finalize headroom without PSRAM walk ([`deferred_storage_commit_parse_split_enhancement.md`](../../../docs/Plans/deferred_storage_commit_parse_split_enhancement.md)); fail baselines [`220005`](../../../captures/session_20260718_220005.log) / [`223713`](../../../captures/session_20260718_223713.log)
 - [ ] 6.3 Undo / import / paste documented on Commit contract (as those producers land) — **parked past archive**
 - [x] 6.2-device **Gate:** PASS [`224607`](../../../captures/session_20260718_224607.log) (interactive); A.7 confirm [`230145`](../../../captures/session_20260718_230145.log) — zero `#CAP,LLBG,parse_us` / `frame_us`; BTN 13/13; clean stop. Fail refs [`223713`](../../../captures/session_20260718_223713.log) / [`220005`](../../../captures/session_20260718_220005.log).
 - [x] 6.2b Phase A time-budgeted `LoadLoopJob` — `runDeferredFrame` + `LoadLoopBudget`; demote parks one in-flight job; load before display

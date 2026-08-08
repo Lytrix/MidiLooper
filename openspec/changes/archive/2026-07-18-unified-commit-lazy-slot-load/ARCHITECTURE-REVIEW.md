@@ -1,6 +1,6 @@
 # Architecture review — unified-commit-lazy-slot-load
 
-Per-phase gates before firmware for that phase. Authority: frozen plans under `docs/plans/unified_publish_pipeline_*`.
+Per-phase gates before firmware for that phase. Authority: frozen plans under `docs/Plans/unified_publish_pipeline_*`.
 
 ## North star
 

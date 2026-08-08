@@ -1,10 +1,10 @@
 ## 1. Architecture Gate And Preflight
 
-- [x] 1.1 Read `docs/runtime/PROJECT_STATE.md`, `docs/runtime/CURRENT_WORK.md`, `docs/00-authority/NAMING.md`, `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`, and `docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`.
-- [x] 1.2 Complete full preflight using `docs/templates/PREFLIGHT.md` because this change is an ownership-transfer formal trigger.
+- [x] 1.1 Read `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md`, `docs/Authority/NAMING.md`, `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`, and `docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`.
+- [x] 1.2 Complete full preflight using `docs/Templates/PREFLIGHT.md` because this change is an ownership-transfer formal trigger.
 - [x] 1.3 Write the preflight artifact at `openspec/changes/note-edit-current-state/PREFLIGHT.md`.
-- [x] 1.4 Include ownership-transfer fields from `docs/templates/OWNERSHIP_TRANSFER.md`: current owner, target owner, transfer needed = YES, compatibility removal trigger.
-- [x] 1.5 Complete decision review (`docs/templates/DECISION_REVIEW.md` or equivalent findings in the preflight).
+- [x] 1.4 Include ownership-transfer fields from `docs/Templates/OWNERSHIP_TRANSFER.md`: current owner, target owner, transfer needed = YES, compatibility removal trigger.
+- [x] 1.5 Complete decision review (`docs/Templates/DECISION_REVIEW.md` or equivalent findings in the preflight).
 - [x] 1.6 Append the accepted ownership decision to `docs/DECISION_LOG.md`.
 - [x] 1.7 Confirm final code identifiers for `NoteEditCurrentState`, `NoteEditCurrentNoteState`, and `NoteEditPresenceType`.
 - [x] 1.8 Confirm validation gates for later phases: native tests, firmware build, user-approved HITL edit retest, and removal trigger for `sessionMovedNoteSpans`, overlap skip guards, and live-store geometry authority.
@@ -69,4 +69,4 @@
 - [x] 8.3 Build firmware with `pio run -e teensy41-capture-serial`.
 - [x] 8.4 Ask before uploading firmware to Teensy. *(Skipped — device on `15c5750` lineage; exercised `session_20260808_115120` today.)*
 - [x] 8.5 After user-approved upload, run HITL edit retest for same-pitch moved-note overlap scenarios. *(PASS — see [PHASE8_CLOSEOUT.md](PHASE8_CLOSEOUT.md) capture matrix.)*
-- [x] 8.6 Update `docs/runtime/PROJECT_STATE.md`, `docs/runtime/CURRENT_WORK.md`, and implementation notes before archive.
+- [x] 8.6 Update `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md`, and implementation notes before archive.

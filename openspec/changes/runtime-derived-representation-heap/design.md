@@ -79,7 +79,7 @@ Proposed fixes (spike — implement in M5 after approval): extmem clone path, de
 
 ## M6 — DEC-016 completion: legacy callsite migration (2026-07-14)
 
-**Plan:** [`docs/plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/plans/multi_track_playback_pressure_closure_refinement.md)
+**Plan:** [`docs/Plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/Plans/multi_track_playback_pressure_closure_refinement.md)
 
 ### Framing
 
@@ -157,7 +157,7 @@ M6 is complete when: (1) audit complete and intentional materialize documented; 
 
 ## M7 — Published capture / builder split (2026-07-15)
 
-**Plan:** [`docs/plans/published_pass_capture_builder_split_refinement.md`](../../../docs/plans/published_pass_capture_builder_split_refinement.md)  
+**Plan:** [`docs/Plans/published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)  
 **Spec:** [`specs/published-capture-pass-split/spec.md`](specs/published-capture-pass-split/spec.md)  
 **Review:** [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § M7
 

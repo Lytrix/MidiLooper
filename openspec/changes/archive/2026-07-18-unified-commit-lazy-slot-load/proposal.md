@@ -4,7 +4,7 @@ Cold boot restores every SD loop slot before the instrument is interactive (~10.
 
 This change freezes the agreed Commit-centered model and delivers audible-first boot plus on-demand slot hydration without inventing a parallel load subsystem.
 
-Architecture authority (frozen): [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../../../docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md) and [review resolutions](../../../docs/plans/unified_publish_pipeline_review_resolutions_refinement.md).
+Architecture authority (frozen): [`docs/Plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../../../docs/Plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md) and [review resolutions](../../../docs/Plans/unified_publish_pipeline_review_resolutions_refinement.md).
 
 Brownfield: [`docs/DELIVERABLE_TRACKING.md`](../../../docs/DELIVERABLE_TRACKING.md), [`openspec/specs/timeline-passes`](../../specs/timeline-passes/spec.md), [`openspec/specs/multi-loop-slots`](../../specs/multi-loop-slots/spec.md), [`docs/Guides/BOOT_LOAD.md`](../../../docs/Guides/BOOT_LOAD.md).
 

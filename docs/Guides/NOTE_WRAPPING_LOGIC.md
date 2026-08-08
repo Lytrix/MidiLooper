@@ -219,7 +219,7 @@ Display reconstruction in this guide is **read-only** for piano roll / LEDs. **N
 
 **Edit projection (D20)** linearizes spans before overlap analysis; that is independent of the display wrap rules in §2 above.
 
-**HITL regression matrix (D14):** full per-interaction device matrix is **parked** — see [`m8_edit_note_edit_hitl_automation_refinement.md`](../plans/m8_edit_note_edit_hitl_automation_refinement.md). Interim smoke: `edit_minimal` preset only.
+**HITL regression matrix (D14):** full per-interaction device matrix is **parked** — see [`m8_edit_note_edit_hitl_automation_refinement.md`](../Plans/m8_edit_note_edit_hitl_automation_refinement.md). Interim smoke: `edit_minimal` preset only.
 
 ### Display System
 - **File**: `DisplayManager.cpp`

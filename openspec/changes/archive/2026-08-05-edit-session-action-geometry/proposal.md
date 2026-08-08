@@ -41,7 +41,7 @@ Brownfield: [`NoteEditFocus`](../../../include/NoteEditFocus.h), [`EditorSelecti
 - **Retire:** restore-first paths in `NoteMovementUtils.cpp`; **`overlapNotes`**; **`movingNoteRange`**
 - **Wire:** `NoteEditManager` / `EditManager` geometry entry points call pipeline
 - **Tests:** `test_edit_session_interaction`, `test_resolve_constrained_geometry`, `test_edit_session_action_builder`, `test_apply_edit_session_actions`
-- **Docs:** [`docs/plans/note_edit_session_action_geometry_enhancement.md`](../../../docs/plans/note_edit_session_action_geometry_enhancement.md)
+- **Docs:** [`docs/Plans/note_edit_session_action_geometry_enhancement.md`](../../../docs/Plans/note_edit_session_action_geometry_enhancement.md)
 
 ## Non-Goals
 

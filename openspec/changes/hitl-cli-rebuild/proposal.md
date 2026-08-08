@@ -17,8 +17,8 @@ Rebuild `host_midi_hitl` as a layered framework with explicit ownership, a regre
 
 | Phase | Authority |
 |-------|-----------|
-| During migration | This change + [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md) (staging Part I) |
-| After Phase 1 | [`docs/00-authority/Architecture/HITL_ARCHITECTURE.md`](../../../docs/00-authority/Architecture/HITL_ARCHITECTURE.md) |
+| During migration | This change + [`docs/Plans/hitl_cli_rebuild_enhancement.md`](../../../docs/Plans/hitl_cli_rebuild_enhancement.md) (staging Part I) |
+| After Phase 1 | [`docs/Authority/Architecture/HITL_ARCHITECTURE.md`](../../../docs/Authority/Architecture/HITL_ARCHITECTURE.md) |
 | After Phase 5 | Archive this change; architecture + guides only |
 
 Major post-migration HITL architecture changes: OpenSpec change + DEC per §12.5 in architecture doc.
@@ -45,6 +45,6 @@ Major post-migration HITL architecture changes: OpenSpec change + DEC per §12.5
 
 ## References
 
-- Migration plan (staging architecture): [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md)
+- Migration plan (staging architecture): [`docs/Plans/hitl_cli_rebuild_enhancement.md`](../../../docs/Plans/hitl_cli_rebuild_enhancement.md)
 - Design + doc map: [`design.md`](design.md)
 - Tasks: [`tasks.md`](tasks.md)

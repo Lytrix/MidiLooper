@@ -3,13 +3,13 @@
 **Change:** `runtime-derived-representation-heap` — **M7**  
 **Date:** 2026-07-15  
 **Status:** Active — Phase 0 doc gate **complete**; Phase 1 implementation **next**  
-**Plan:** [`docs/plans/published_pass_capture_builder_split_refinement.md`](../../../docs/plans/published_pass_capture_builder_split_refinement.md)
+**Plan:** [`docs/Plans/published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)
 
 **Related:** [design.md](design.md) § M7, [tasks.md](tasks.md) § M7, [specs/published-capture-pass-split/spec.md](specs/published-capture-pass-split/spec.md)
 
 **Orthogonal:** Capture **commit** owner ([DEC-023](../unified-capture-commit-owner/ARCHITECTURE-REVIEW.md)); persistence scheduling ([DEC-020](../continuous-runtime-persistence/ARCHITECTURE-REVIEW.md)). M7 does **not** change seal/publish FSM transitions — only **representation** at existing boundaries.
 
-**Supersedes:** Phase 2A blanket/split-tier typedef swaps (reverted — see [`memory_pressure_reclaim_conclusions_refinement.md`](../../../docs/plans/memory_pressure_reclaim_conclusions_refinement.md)).
+**Supersedes:** Phase 2A blanket/split-tier typedef swaps (reverted — see [`memory_pressure_reclaim_conclusions_refinement.md`](../../../docs/Plans/memory_pressure_reclaim_conclusions_refinement.md)).
 
 ---
 

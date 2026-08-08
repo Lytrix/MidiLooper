@@ -37,7 +37,7 @@ User-confirmed 2026-07-01. Brownfield: [`docs/DELIVERABLE_TRACKING.md`](../../do
 - **Firmware:** `Loop.h/cpp`, `MidiEvent.h`, `EditPass.h`, `EditApply.cpp`, `EditManager.cpp`, `NoteEditManager.cpp`, `NoteEditFocus.*`, `NoteUtils.*`, `SelectNavigation.*`, `Track.cpp` (record append), `StorageLoopIo.cpp`
 - **Tests:** New/extended `test_note_id_allocation` or `test_edit_apply`; update all native factories for `noteId`; HITL fader sweep after Phase A stable
 - **Storage:** **BREAKING** v6 — dev wipe and re-record; reject v5 slot files with old `EditPass` target size
-- **Docs:** Backup plan at [`docs/plans/note_edit_stable_note_id_enhancement.md`](../../docs/plans/note_edit_stable_note_id_enhancement.md); update `PROJECT_STATE` / `CURRENT_WORK` when registered
+- **Docs:** Backup plan at [`docs/Plans/note_edit_stable_note_id_enhancement.md`](../../docs/Plans/note_edit_stable_note_id_enhancement.md); update `PROJECT_STATE` / `CURRENT_WORK` when registered
 
 ## Non-Goals
 
@@ -49,7 +49,7 @@ User-confirmed 2026-07-01. Brownfield: [`docs/DELIVERABLE_TRACKING.md`](../../do
 
 ## Open Decisions (TBD)
 
-- **Phase A exit gate** — **Satisfied** (2026-07-02): HITL slow fader-1 sweep PASS — 59 nav slots, `select_ignored_rate=0`, sibling sync OK. Handoff: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md). Phase B starts only after D0a resolution + explicit user scope.
+- **Phase A exit gate** — **Satisfied** (2026-07-02): HITL slow fader-1 sweep PASS — 59 nav slots, `select_ignored_rate=0`, sibling sync OK. Handoff: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md). Phase B starts only after D0a resolution + explicit user scope.
 - **`EntityIds.h` scope and naming** — **Resolved (2026-07-02):** **(C) document-only** + post-Phase B co-location. Temporary hub during Phase B; after Phase B, move `NoteId` → `MidiEvent.h`, `TrackId` → `NoteEditSessionState.h`, delete `EntityIds.h`. PassId/LoopId/undo/storage ids stay domain-local.
 
 ## Delivery Sequence

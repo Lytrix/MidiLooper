@@ -11,7 +11,7 @@ This regression blocks reliable HITL for `load_save_overlay_load` and undermines
 `set-revision-persistence` overlay requirements. A focused fix is needed before extending overlay
 features (revision history drill-down, loop pick).
 
-Brownfield: [`docs/plans/set_revision_persistence_handoff.md`](../../../docs/plans/set_revision_persistence_handoff.md),
+Brownfield: [`docs/Plans/set_revision_persistence_handoff.md`](../../../docs/Plans/set_revision_persistence_handoff.md),
 active change [`set-revision-persistence`](../set-revision-persistence/proposal.md).
 
 ## What Changes
@@ -61,4 +61,4 @@ active change [`set-revision-persistence`](../set-revision-persistence/proposal.
 | Looper overlay lifecycle | `LooperState.cpp`, possibly `stepRevisionLoadComplete` |
 | Tests | `test_set_revision_persistence`, new overlay gate tests |
 | HITL | `scripts/hitl/scenarios/load_save_overlay_load.py`, `revision_load_dirty.py` |
-| Docs | `docs/plans/set_revision_persistence_handoff.md` (regression note on archive) |
+| Docs | `docs/Plans/set_revision_persistence_handoff.md` (regression note on archive) |

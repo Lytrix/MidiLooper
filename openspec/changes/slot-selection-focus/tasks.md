@@ -6,8 +6,8 @@
 
 - [x] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md`
 - [x] 0.2 UIP cross-link row in `unified-interval-projection/proposal.md` (Relationship table only — no UIP tasks)
-- [x] 0.3 Update `docs/runtime/CURRENT_WORK.md` — parallel track, not blocking UIP 5.5 HITL
-- [x] 0.4 Sync `docs/plans/slot_selection_orchestration_refinement.md` link to this change folder
+- [x] 0.3 Update `docs/Runtime/CURRENT_WORK.md` — parallel track, not blocking UIP 5.5 HITL
+- [x] 0.4 Sync `docs/Plans/slot_selection_orchestration_refinement.md` link to this change folder
 - [x] 0.5 Review amendments — default `SyncPlayback::Yes`, playing+edit `No`+queue, revision footer-then-fallback
 
 ## 1. TrackManager orchestrator

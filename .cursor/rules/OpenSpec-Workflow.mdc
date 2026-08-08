@@ -5,7 +5,7 @@ alwaysApply: true
 
 # OpenSpec workflow (MidiLooper)
 
-Spec-driven development for the **timeline data model** track and related changes. **Authoritative process detail:** [`docs/00-authority/DELIVERY_RULES.md`](docs/00-authority/DELIVERY_RULES.md). **Active change list:** [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md) + scope [`CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md). Roadmap: [`ROADMAP.md`](docs/runtime/ROADMAP.md) (not implementation authority).
+Spec-driven development for the **timeline data model** track and related changes. **Authoritative process detail:** [`docs/Authority/DELIVERY_RULES.md`](docs/Authority/DELIVERY_RULES.md). **Active change list:** [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md) + scope [`CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md). Roadmap: [`ROADMAP.md`](docs/Runtime/ROADMAP.md) (not implementation authority).
 
 ## Setup
 
@@ -13,7 +13,7 @@ Spec-driven development for the **timeline data model** track and related change
 - Project config: `openspec/config.yaml`
 - Source of truth: `openspec/specs/` (archived behavior after `/opsx:archive`)
 - Active work: `openspec/changes/<name>/` (proposal, specs deltas, design, tasks)
-- Navigation: `docs/plans/openspec_integration_overview.md`
+- Navigation: `docs/Plans/openspec_integration_overview.md`
 - Restart Cursor after `openspec init` / `openspec update` so slash commands appear
 
 ## Cursor commands
@@ -36,7 +36,7 @@ Post-M7 order (do not reorder without project decision):
 2. **Hardening** — playback-window polish
 3. **JamRecorder** — JamAction / D3 (**not** D13 MIDI capture)
 4. **M10** — full Jam entity + Scenes + SD
-5. **D13 arrangement capture** — only after R1–R5 in `docs/plans/phase-3-multi-loop.md`
+5. **D13 arrangement capture** — only after R1–R5 in `docs/Plans/phase-3-multi-loop.md`
 
 **Hard stop:** Do **not** start D13-style `jam-recording` before JamRecorder path. Parked: `openspec/changes/archive/20260617-parked-jam-recording-d13/`.
 
@@ -44,7 +44,7 @@ Post-M7 order (do not reorder without project decision):
 
 **Do not maintain a static list here** — it goes stale. Check:
 
-1. [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md)
+1. [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md)
 2. `ls openspec/changes/` (exclude `archive/`)
 3. `openspec/changes/<name>/tasks.md` before implementing
 
@@ -63,9 +63,9 @@ before implementation.
 
 If a formal trigger fired, complete a full preflight before firmware edits:
 
-- use `docs/templates/PREFLIGHT.md`;
+- use `docs/Templates/PREFLIGHT.md`;
 - include ownership-transfer fields when mutable ownership moves;
-- include `docs/templates/DECISION_REVIEW.md` or equivalent findings;
+- include `docs/Templates/DECISION_REVIEW.md` or equivalent findings;
 - create a repo artifact such as `openspec/changes/<name>/PREFLIGHT.md` when the OpenSpec
   itself carries the design/implementation handoff;
 - add explicit `tasks.md` items for preflight, decision log entry, compatibility removal trigger,
@@ -78,11 +78,11 @@ Cite in OpenSpec artifacts; do not duplicate wholesale (see DELIVERY_RULES):
 - `~/.cursor/plans/timeline_data_model_refactor_9cbaeb60.plan.md` — M1–M10 order
 - `docs/DELIVERABLE_TRACKING.md` — shipped vs next
 - `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo
-- `docs/plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
+- `docs/Plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
 
 ## Naming
 
-See `docs/00-authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer and global **action + scope** rule.
+See `docs/Authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer and global **action + scope** rule.
 Reuse **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline.
 
 ## Verification

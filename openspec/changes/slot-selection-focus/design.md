@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-05  
 **Status:** Ready for implementation — parallel to UIP Phase 5  
-**Plan:** [`docs/plans/slot_selection_orchestration_refinement.md`](../../docs/plans/slot_selection_orchestration_refinement.md)
+**Plan:** [`docs/Plans/slot_selection_orchestration_refinement.md`](../../docs/Plans/slot_selection_orchestration_refinement.md)
 
 ---
 

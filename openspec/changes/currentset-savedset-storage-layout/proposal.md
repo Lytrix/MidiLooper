@@ -52,5 +52,5 @@ Open decisions (TBD):
 Brownfield references:
 
 - `docs/DELIVERABLE_TRACKING.md`
-- `docs/plans/workspace_session_persistence_handoff.md`
+- `docs/Plans/workspace_session_persistence_handoff.md`
 - `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`

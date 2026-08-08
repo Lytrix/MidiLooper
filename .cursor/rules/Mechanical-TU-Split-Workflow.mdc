@@ -7,13 +7,13 @@ alwaysApply: false
 
 Use when shrinking a root `.cpp` by moving **behavior-preserving** method bodies into domain folders (`src/Loop/`, `src/EditManager/`, …).
 
-**Plan template:** [`docs/templates/translation_unit_extraction_plan_template.md`](../../docs/templates/translation_unit_extraction_plan_template.md)  
-**Legacy API retirement:** [`docs/plans/legacy_api_retirement_tu_extraction_refinement.md`](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)
+**Plan template:** [`docs/Templates/translation_unit_extraction_plan_template.md`](../../docs/Templates/translation_unit_extraction_plan_template.md)  
+**Legacy API retirement:** [`docs/Plans/legacy_api_retirement_tu_extraction_refinement.md`](../../docs/Plans/legacy_api_retirement_tu_extraction_refinement.md)
 
 ## Phase 0 (before first edit)
 
 1. **Prior splits inventory** — read shipped sibling plans (`track_tu_split`, `editmanager_tu_split`, `loop_tu_split`); list already-extracted TUs in this domain.
-2. **Naming pass** — table of strengthenings (action+scope per [NAMING.md](../../docs/00-authority/NAMING.md)); commit with moves when they clarify ownership; **do not delete legacy wrappers/aliases in extraction phases** (see Legacy Retirement below).
+2. **Naming pass** — table of strengthenings (action+scope per [NAMING.md](../../docs/Authority/NAMING.md)); commit with moves when they clarify ownership; **do not delete legacy wrappers/aliases in extraction phases** (see Legacy Retirement below).
 3. **Cross-domain placement table** — symbol → owner TU → rationale; flag misleading names.
 
 ## Risk tiers
@@ -35,7 +35,7 @@ High risk includes: capture stop/commit, persistence gating, pre-commit edit-pas
 
 1. `pio test -e native` (828/828)
 2. One upload offer (do not prompt every phase)
-3. Optional: [mechanical split hardware smoke](../../docs/plans/mechanical_split_hardware_smoke_checklist.md) on first split with a new model/domain
+3. Optional: [mechanical split hardware smoke](../../docs/Plans/mechanical_split_hardware_smoke_checklist.md) on first split with a new model/domain
 
 ## Handoff
 
@@ -57,7 +57,7 @@ Primary driver: **domain ownership**, not line count.
 - **Allowed:** rename moved symbols; fix misleading prefixes; action+scope in touched files; same commit as extraction.
 - **Blocked:** rename-only drive-bys; new domain nouns without user ask; repo-wide synonym hunts.
 
-See [NAMING.md](../../docs/00-authority/NAMING.md) § Migration policy.
+See [NAMING.md](../../docs/Authority/NAMING.md) § Migration policy.
 
 ## Legacy API retirement (move first, simplify later)
 
@@ -69,6 +69,6 @@ Legacy APIs remain until:
 - tests no longer depend on them;
 - no remaining extraction phase references them.
 
-Obsolete entry points are removed together in a dedicated **Legacy Retirement** phase after architectural ownership has stabilized ([legacy_api_retirement_tu_extraction_refinement.md](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)).
+Obsolete entry points are removed together in a dedicated **Legacy Retirement** phase after architectural ownership has stabilized ([legacy_api_retirement_tu_extraction_refinement.md](../../docs/Plans/legacy_api_retirement_tu_extraction_refinement.md)).
 
 Mark temporary wrappers with `TODO(refactor): Remove during Legacy Retirement` and `[[deprecated]]` where appropriate.

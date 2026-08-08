@@ -6,7 +6,7 @@
 
 **Evidence:** [BUG.md](./BUG.md) — § Stale code inventory (Phase 12–13)  
 **Design:** [design.md](./design.md) — live path: `requestFaderOutbound` / `processFaderOutbound` (Phase 3).  
-**Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md)
+**Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md)
 
 ---
 
@@ -48,7 +48,7 @@
 
 - [x] 6.1 `pio test -e native` — all pass.
 - [x] 6.2 Regression: NOTE_EDIT entry from LOOP_EDIT — bracket not pulled by stale loop-edit fader2 — **PASS** §7.17.8 (single F4 MO on entry; no spurious pitch edit)
-- [x] 6.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) active OpenSpec table when shipped; archive change after §7.18.5 / §8.3 gates pass — **bug-fix gates pass** 2026-07-03; RC11 §8.3–8.4 deferred; archive when user runs `/opsx:archive`
+- [x] 6.3 Update [PROJECT_STATE.md](../../docs/Runtime/PROJECT_STATE.md) active OpenSpec table when shipped; archive change after §7.18.5 / §8.3 gates pass — **bug-fix gates pass** 2026-07-03; RC11 §8.3–8.4 deferred; archive when user runs `/opsx:archive`
 
 ---
 
@@ -90,7 +90,7 @@
 - [x] 11.1 `pio test -e native` — all pass
 - [x] 11.2 Manual: fader1 across 3+ notes, wait 1 s, confirm F2/F3/F4 motors move — **superseded** §7.23.6 preset PASS 2026-07-03
 - [ ] 11.3 NOTELEN regression (Phase 1 task 4.2 still applies) — **parked** Phase 11
-- [x] 11.4 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) when Phase 2 shipped — **N/A** (Phase 2 superseded; PROJECT_STATE updated for Phase 3 + §7.24)
+- [x] 11.4 Update [PROJECT_STATE.md](../../docs/Runtime/PROJECT_STATE.md) when Phase 2 shipped — **N/A** (Phase 2 superseded; PROJECT_STATE updated for Phase 3 + §7.24)
 
 **Phase 2 status:** Superseded by Phase 3 (diagnostic path + partial coordinator reverted on hardware).
 
@@ -146,14 +146,14 @@
 
 - [x] 20.1 `pio test -e native` — all pass (305/305)
 - [ ] 20.2 NOTELEN regression (task 4.2) — **parked** Phase 11
-- [x] 20.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) when Phase 3 shipped — updated 2026-07-02 (Phase 3 + §7.24; archive pending §6.3)
+- [x] 20.3 Update [PROJECT_STATE.md](../../docs/Runtime/PROJECT_STATE.md) when Phase 3 shipped — updated 2026-07-02 (Phase 3 + §7.24; archive pending §6.3)
 
 ---
 
 ## Phase 7 — Bracket / send-path (partial)
 
 **Design:** [design.md](./design.md) Phase 7 — D31–D38  
-**Handoff:** [phase7 handoff](../../../docs/plans/note_edit_fader_feedback_phase7_handoff.md)
+**Handoff:** [phase7 handoff](../../../docs/Plans/note_edit_fader_feedback_phase7_handoff.md)
 
 - [x] 7.1 D31 — Bracket-tick → F1 pitchbend (shipped)
 - [x] 7.2 D36 — `commitBracketTickFromGeometry` session + legacy bracket (shipped)
@@ -163,7 +163,7 @@
 
 ### 7.6 Dependent outbound tuning (unified handoff — 2026-06-30)
 
-**Handoff:** [note_edit_fader_dependent_outbound_unified_handoff.md](../../../docs/plans/note_edit_fader_dependent_outbound_unified_handoff.md)  
+**Handoff:** [note_edit_fader_dependent_outbound_unified_handoff.md](../../../docs/Plans/note_edit_fader_dependent_outbound_unified_handoff.md)  
 **Base:** `3adb27b`
 
 - [x] 7.6.1 Pace-skip removed from `paceDroidUsbHostBeforeSend`; LED bypass kept (`droidMotorOutboundPriority_`)
@@ -197,8 +197,8 @@
 
 ### 7.10 Option D aggressive refresh — superseded
 
-**Superseded by:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/plans/note_edit_fader_feedback_selection_driven_refactor.md) (2026-07-01)  
-**Prior handoff:** [note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md](../../../docs/plans/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)
+**Superseded by:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/Plans/note_edit_fader_feedback_selection_driven_refactor.md) (2026-07-01)  
+**Prior handoff:** [note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md](../../../docs/Plans/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)
 
 Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by selection-driven synchronous `sendDependentFaderFeedbackNow` on bracket/note change.
 
@@ -211,7 +211,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 
 ### 7.12 Selection-driven fader refresh (Plan A)
 
-**Handoff:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/plans/note_edit_fader_feedback_selection_driven_refactor.md)
+**Handoff:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/Plans/note_edit_fader_feedback_selection_driven_refactor.md)
 
 - [x] 7.12.1 `sendDependentFaderFeedbackNow` — synchronous F2+F3+F4 burst on selection change; no `armSelectFaderFeedbackIgnore` on dependent sends
 - [x] 7.12.2 `handleSelectFaderInput` — `shouldApplySelectionOnTargetChange` gate → apply → `sendDependentFaderFeedbackNow`
@@ -293,7 +293,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 ### 7.16 Phase A NoteRef selection refactor (stable NoteId prerequisite)
 
 **Shipped:** 2026-07-02 (`d3d5798`) — cross-change with [`note-edit-stable-note-id`](../note-edit-stable-note-id/) Phase A.  
-**Handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md)
+**Handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../../../docs/Plans/note_edit_stable_note_id_phase_a_handoff.md)
 
 - [x] 7.16.1 `shouldApplySelectionOnNoteRefChange` + `noteEditSelectionTargetChanged` — apply/motor sync gated on **NoteRef**, not list index alone
 - [x] 7.16.2 Drop persisted `displayIdx` from `NoteEditSelection`; derive `selectedNoteIdx` via `NoteEditDisplaySnapshot`
@@ -440,7 +440,7 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 
 ### 7.22 HITL `note_edit_select_dependent_faders` (Phase 1 — host scenario)
 
-**Plan:** [`docs/plans/note_edit_select_dependent_faders_hitl_enhancement.md`](../../../docs/plans/note_edit_select_dependent_faders_hitl_enhancement.md)
+**Plan:** [`docs/Plans/note_edit_select_dependent_faders_hitl_enhancement.md`](../../../docs/Plans/note_edit_select_dependent_faders_hitl_enhancement.md)
 
 - [x] 7.22.1 Preset chain `base` → `note_edit_select_dependent_faders` (runner abort if base fails)
 - [x] 7.22.2 Verifier `scripts/hitl/verify/note_edit_select_dependent_faders.py` — composes triple_motor_ack + echo + outbound value gates
@@ -462,7 +462,7 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 ### 7.24 Geometry F1 selection guard (2026-07-02)
 
 **Evidence:** [`captures/session_20260702_183747.log`](../../../captures/session_20260702_183747.log) — `geometry_motor_sync sent=1` → F1 echo 11 ms later (`pb` diff 198 > 100) → `select_apply apply=1` → `Exited EditStartNoteState` → wrong note selected.  
-**Plan:** [`docs/plans/note_edit_geometry_f1_selection_guard_bugfix.md`](../../../docs/plans/note_edit_geometry_f1_selection_guard_bugfix.md)
+**Plan:** [`docs/Plans/note_edit_geometry_f1_selection_guard_bugfix.md`](../../../docs/Plans/note_edit_geometry_f1_selection_guard_bugfix.md)
 
 - [x] 7.24.1 ~~Block `handleSelectFaderInput` when `isGeometryEditKind`~~ — **reverted** `3348857` (blocked user F1 after geometry moves; see §7.24.8)
 - [x] 7.24.2 `shouldIgnoreFaderInput` FADER_SELECT — check `selectFaderFeedbackIgnoreUntilMs_` after value-echo (geometry motor landing off-threshold)

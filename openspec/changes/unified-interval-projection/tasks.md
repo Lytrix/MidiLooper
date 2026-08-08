@@ -3,18 +3,18 @@
 ## 0. OpenSpec and docs
 
 - [x] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md` (this change)
-- [x] 0.2 Handoff [`docs/plans/unified_interval_projection_enhancement.md`](../../docs/plans/unified_interval_projection_enhancement.md) — includes **Agent execution notes** (one chat per phase)
-- [x] 0.3 Update [`CURRENT_WORK.md`](../../docs/runtime/CURRENT_WORK.md) + [`PROJECT_STATE.md`](../../docs/runtime/PROJECT_STATE.md) — UIP active, overlap paused
-- [x] 0.4 Update [`derived_note_overlap_logic_handoff.md`](../../docs/plans/derived_note_overlap_logic_handoff.md) — dependency on UIP Phases 1–5
+- [x] 0.2 Handoff [`docs/Plans/unified_interval_projection_enhancement.md`](../../docs/Plans/unified_interval_projection_enhancement.md) — includes **Agent execution notes** (one chat per phase)
+- [x] 0.3 Update [`CURRENT_WORK.md`](../../docs/Runtime/CURRENT_WORK.md) + [`PROJECT_STATE.md`](../../docs/Runtime/PROJECT_STATE.md) — UIP active, overlap paused
+- [x] 0.4 Update [`derived_note_overlap_logic_handoff.md`](../../docs/Plans/derived_note_overlap_logic_handoff.md) — dependency on UIP Phases 1–5
 - [x] 0.5 OpenSpec refinement — D13–D16, tick vocabulary, naming (`loopStartTick`, `selectedTick`, `queuedStartTick`)
 - [x] 0.5a Coordinate model refinement — `TickInterval`, `window` interval, Stage 1/2 separation, identity invariant, Display projection vs rendering
 - [x] 0.6 Mark `edit-session-action-geometry` tasks blocked until Phase 6
-- [x] 0.7 Prior research appendix in `design.md` + [`unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/plans/unified_interval_projection_sequencer_prior_research_refinement.md)
+- [x] 0.7 Prior research appendix in `design.md` + [`unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/Plans/unified_interval_projection_sequencer_prior_research_refinement.md)
 - [x] 0.5b LTS architecture refinement — Start/End events, capture/storage/playback split, UIP integration, PlaybackTarget, Manager vs Track
 - [x] 0.5c D23 — window is **`TickInterval`** frame; never **`ProjectedNoteInterval`**
 - [x] 0.8 **Doc sync rule:** each phase task that adds/changes button or gesture logic includes a matching control-surface doc update (`README.md` cheat sheet + relevant `docs/Guides/control-surface/*.md`)
 - [x] 0.9 Memory routing docs — [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md), `openspec/specs/internal-heap-external-memory-routing/`, D25 in `design.md`
-- [x] 0.10 Runtime architecture docs — [`docs/00-authority/Architecture/`](../../docs/00-authority/Architecture/); 64-bar investigation split to `docs/plans/overdub_start_64bar_playing_window_regression_bugfix.md`
+- [x] 0.10 Runtime architecture docs — [`docs/Authority/Architecture/`](../../docs/Authority/Architecture/); 64-bar investigation split to `docs/Plans/overdub_start_64bar_playing_window_regression_bugfix.md`
 
 ## 1. Core engine (Phase 1)
 
@@ -63,7 +63,7 @@
 - [x] 5.2 Grep gate — no consumer-local wrap math outside `IntervalProjection` helpers
 - [x] 5.3 Migrate `MidiLedManager` / `SelectNavigation` phase modulo to centralized helpers
 - [x] 5.3a **Display playhead + LED alignment (D25)** — `resolvePlayheadInLoop` + `MidiLedManager` use **`projectionCycleStartTick`** when `displaySlot == activeLoopIndex` and playing/overdubbing; native `test_display_playhead_aligns_with_projection_cycle_after_slot_commit`; evidence [`captures/session_20260706_014145.log`](../../../captures/session_20260706_014145.log)
-- [x] 5.3b **NOTE_EDIT selection bracket display-phase** — geometry paths + highlight/note-info use `loopStartTick`-aware display ticks; plan [`unified_interval_projection_note_edit_selection_bugfix.md`](../../../docs/plans/unified_interval_projection_note_edit_selection_bugfix.md); commit `bed6697`
+- [x] 5.3b **NOTE_EDIT selection bracket display-phase** — geometry paths + highlight/note-info use `loopStartTick`-aware display ticks; plan [`unified_interval_projection_note_edit_selection_bugfix.md`](../../../docs/Plans/unified_interval_projection_note_edit_selection_bugfix.md); commit `bed6697`
 - [x] 5.3c **Slot-selection focus orchestration** — `SyncPlayback`, edit depart/arrive, SD footer, `invalidateForSlotChange`; change `slot-selection-focus`; commit `b8f5456`
 - [x] 5.4 `pio test -e native` full suite
 - [x] 5.5a Native session invariant — **NTS-U1** [`test_note_edit_track_switch`](../../test/test_note_edit_track_switch/) (departing session + new loop length regression; reopen rematerialize)
@@ -74,7 +74,7 @@
 
 - [x] 6.1 Sync `edit-session-action-geometry` delta specs — step 3 = Edit projection; remove task 1.2a `normalizeWrapToLinear` (2026-08-04)
 - [x] 6.2 Sync `edit-session-action-geometry/design.md` D20 → Edit projection reference (2026-08-04)
-- [ ] 6.3 Resume [`derived_note_overlap_logic_handoff.md`](../../docs/plans/derived_note_overlap_logic_handoff.md) at Phase 1 types
+- [ ] 6.3 Resume [`derived_note_overlap_logic_handoff.md`](../../docs/Plans/derived_note_overlap_logic_handoff.md) at Phase 1 types
 - [ ] 6.4 `/opsx:archive` → `openspec/specs/unified-interval-projection/`; absorb `loop-wrap-projection` alias language
 
 ## 7. LoopTriggerSequence (after core migration — Phase 7)
@@ -144,7 +144,7 @@ Firmware build (ask before upload): `pio run -e teensy41-capture-serial`
 
 ## TODO
 
-- [ ] **NOTE_EDIT track switch — integration test backlog** — plan: [`docs/plans/note_edit_track_switch_integration_test_list_enhancement.md`](../../docs/plans/note_edit_track_switch_integration_test_list_enhancement.md). Fix: `TrackManager::setSelectedTrack` → `editManager.beforeSelectedTrackChange` + `onTrackChanged` → `reopenNoteEditSession`. Evidence: `captures/session_20260705_213626.log`.
+- [ ] **NOTE_EDIT track switch — integration test backlog** — plan: [`docs/Plans/note_edit_track_switch_integration_test_list_enhancement.md`](../../docs/Plans/note_edit_track_switch_integration_test_list_enhancement.md). Fix: `TrackManager::setSelectedTrack` → `editManager.beforeSelectedTrackChange` + `onTrackChanged` → `reopenNoteEditSession`. Evidence: `captures/session_20260705_213626.log`.
   - [x] **NTS-U1** — native session invariant (`test_note_edit_track_switch`, 3 cases) — task **5.5a**
   - [ ] **NTS-I1–I6** — native stub harness: `setSelectedTrack` lifecycle, commit-on-depart, focus sync, display cache invalidation, LOOP_EDIT branch
   - [ ] **NTS-I7–I10** — playback / `editAwareMidiEvents` coupling; selected-track preview scoping (**NTS-I8** = `cdfa032` regression); **NTS-I9** / **NTS-I10** xfail until mid-play reanchor + STOPPED→play bugs fixed

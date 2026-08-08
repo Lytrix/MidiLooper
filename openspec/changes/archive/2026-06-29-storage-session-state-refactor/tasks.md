@@ -89,8 +89,8 @@
 ## 11. Verification and closeout
 
 - [x] 11.1 Manual hardware pass: dirty prompt, save-then-load, save-row background commit (HITL overlay MIDI matrix 2026-06-29)
-- [x] 11.2 Update `docs/runtime/PROJECT_STATE.md` + `docs/runtime/CURRENT_WORK.md`
-- [x] 11.3 Update `docs/plans/storage_session_state_refactor_open_items_handoff.md` — mark items done
+- [x] 11.2 Update `docs/Runtime/PROJECT_STATE.md` + `docs/Runtime/CURRENT_WORK.md`
+- [x] 11.3 Update `docs/Plans/storage_session_state_refactor_open_items_handoff.md` — mark items done
 - [x] 11.4 Update `docs/DELIVERABLE_TRACKING.md` when Tier 3 ships
 - [x] 11.5 `/opsx:archive` after all gates pass
 

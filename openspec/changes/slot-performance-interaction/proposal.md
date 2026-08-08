@@ -4,7 +4,7 @@ Loop slot buttons today mix performance, capture, and management gestures: mute 
 
 This change separates **slot performance** (launch, mute, restart) from **capture/history** (Record button only), wires **long press** to **`LoopTriggerSequence`** chain entry (UIP Phase 7), adds **SlotActionQueue**, and aligns **PlaybackWindow** vocabulary.
 
-Architecture: [`docs/plans/slot_playback_window_interaction_architecture.md`](../../../docs/plans/slot_playback_window_interaction_architecture.md).
+Architecture: [`docs/Plans/slot_playback_window_interaction_architecture.md`](../../../docs/Plans/slot_playback_window_interaction_architecture.md).
 
 ## Domain model
 

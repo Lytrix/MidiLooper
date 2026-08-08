@@ -2,7 +2,7 @@
 
 **Status:** Documented spike — not implemented  
 **OpenSpec change:** `runtime-derived-representation-heap`  
-**Related:** DEC-016 (derived views), DEC-018 (M1–M4), [`docs/plans/64bar_regression_commit_analysis_enhancement.md`](../../../docs/plans/64bar_regression_commit_analysis_enhancement.md)
+**Related:** DEC-016 (derived views), DEC-018 (M1–M4), [`docs/Plans/64bar_regression_commit_analysis_enhancement.md`](../../../docs/Plans/64bar_regression_commit_analysis_enhancement.md)
 
 ## Problem
 
@@ -111,4 +111,4 @@ M4 64+64 gate failure (missing ST line) is **capture ring** (M3). Post-failure *
 - [`tasks.md`](tasks.md) § M5
 - [`specs/internal-heap-external-memory-routing/spec.md`](specs/internal-heap-external-memory-routing/spec.md) — ADDED load-path scenarios
 - DEC-019 (load-path extmem routing spike)
-- **Handoff:** [`docs/plans/m5_sd_load_extmem_routing_handoff.md`](../../../docs/plans/m5_sd_load_extmem_routing_handoff.md)
+- **Handoff:** [`docs/Plans/m5_sd_load_extmem_routing_handoff.md`](../../../docs/Plans/m5_sd_load_extmem_routing_handoff.md)

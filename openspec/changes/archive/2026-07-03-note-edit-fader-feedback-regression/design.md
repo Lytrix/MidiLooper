@@ -209,7 +209,7 @@ stateDiagram
 
 ## Phase 7 — Bracket / send-path hygiene (2026-06-30)
 
-**Context:** After Phase 3 fixed F1↔F2 timing, hardware still showed bracket snap-back, display freeze on heavy F3, and send-path honesty issues. See [phase7 handoff](../../../docs/plans/note_edit_fader_feedback_phase7_handoff.md).
+**Context:** After Phase 3 fixed F1↔F2 timing, hardware still showed bracket snap-back, display freeze on heavy F3, and send-path honesty issues. See [phase7 handoff](../../../docs/Plans/note_edit_fader_feedback_phase7_handoff.md).
 
 ### D31 — Bracket-tick → F1 pitchbend
 

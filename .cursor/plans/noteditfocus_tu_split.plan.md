@@ -34,7 +34,7 @@ isProject: false
 
 # NoteEditFocus translation-unit extraction
 
-**Authoritative plan:** [docs/plans/noteditfocus_translation_unit_extraction_refinement.md](../../docs/plans/noteditfocus_translation_unit_extraction_refinement.md)
+**Authoritative plan:** [docs/Plans/noteditfocus_translation_unit_extraction_refinement.md](../../docs/Plans/noteditfocus_translation_unit_extraction_refinement.md)
 
 **Workflow:** [Mechanical-TU-Split-Workflow.mdc](../../.cursor/rules/Mechanical-TU-Split-Workflow.mdc)
 
@@ -56,4 +56,4 @@ NoteEditFocusRebuild.cpp            (existing) EditManager orchestration
 
 **Branch:** `refactor/noteditfocus` from `dev`
 
-**Legacy retirement:** [legacy_api_retirement_tu_extraction_refinement.md](../../docs/plans/legacy_api_retirement_tu_extraction_refinement.md)
+**Legacy retirement:** [legacy_api_retirement_tu_extraction_refinement.md](../../docs/Plans/legacy_api_retirement_tu_extraction_refinement.md)

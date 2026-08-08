@@ -2,7 +2,7 @@
 
 Phase A shipped time-budgeted `LoadLoopJob` under `StorageManager::runDeferredFrame` with demote-on-focus, atomic Commit, parse slicing, and PLAYING Low-skip ([`230145`](../../../captures/session_20260718_230145.log)). DEC-027 Phase B moves **execution ownership** to `DeferredJobScheduler` while domain managers keep job logic and Commit.
 
-North star: [`deferred_job_scheduler_architecture.md`](../../../docs/plans/deferred_job_scheduler_architecture.md).
+North star: [`deferred_job_scheduler_architecture.md`](../../../docs/Plans/deferred_job_scheduler_architecture.md).
 
 ## Goals / Non-Goals
 

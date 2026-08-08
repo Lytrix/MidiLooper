@@ -22,7 +22,7 @@
 
 - [x] 3.1 Run `pio test -e native`.
 - [ ] 3.2 Run HITL 32/64-bar display gates; store deterministic capture artifacts.
-- [x] 3.3 Cross-link from [docs/plans/long_loop_piano_roll_overview_enhancement.md](../../../docs/plans/long_loop_piano_roll_overview_enhancement.md) to this change when complete.
+- [x] 3.3 Cross-link from [docs/Plans/long_loop_piano_roll_overview_enhancement.md](../../../docs/Plans/long_loop_piano_roll_overview_enhancement.md) to this change when complete.
 - [ ] 3.4 Run `openspec validate long-loop-piano-roll-window` and prepare for `/opsx:apply`.
 
 **Note:** M1 display-only shipped 2026-06-24; M2 controls + HITL sign-off remain open in this change.

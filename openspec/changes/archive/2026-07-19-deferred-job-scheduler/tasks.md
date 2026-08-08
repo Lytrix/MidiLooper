@@ -1,7 +1,7 @@
 ## 1. OpenSpec / docs
 
 - [x] 1.1 Proposal, design, specs, tasks for `deferred-job-scheduler`
-- [x] 1.2 Phase B plan in `docs/plans/deferred_job_scheduler_phase_b_enhancement.md`
+- [x] 1.2 Phase B plan in `docs/Plans/deferred_job_scheduler_phase_b_enhancement.md`
 - [x] 1.3 Update `CURRENT_WORK.md` / `PROJECT_STATE.md` to Phase B
 
 ## 2. B.1 — Thin scheduler adapter (behavior-preserving)

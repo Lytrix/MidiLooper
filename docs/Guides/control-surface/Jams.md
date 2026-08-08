@@ -22,4 +22,4 @@ When capture exists, candidates include (**TBD** — not all are implemented yet
 | **`jamTick` resets** | Jam timeline / phase edits tied to `jamTick` (align vocabulary with [`jam-bar-step-phases.md`](../jam-bar-step-phases.md)) |
 | **Pitch transposing** | Live transpose / harmony moves during jam for replay or export |
 
-Track scope and MIDI mapping in **[`include/MidiConfig.h`](../../../include/MidiConfig.h)** and **[`../MIDI_CONFIG_GUIDE.md`](../MIDI_CONFIG_GUIDE.md)** when this ships. Roadmap: **[`../../FEATURE_PLANS.md`](../../FEATURE_PLANS.md)**, **[`../../plans/README.md`](../../plans/README.md)**.
+Track scope and MIDI mapping in **[`include/MidiConfig.h`](../../../include/MidiConfig.h)** and **[`../MIDI_CONFIG_GUIDE.md`](../MIDI_CONFIG_GUIDE.md)** when this ships. Roadmap: **[`../../FEATURE_PLANS.md`](../../FEATURE_PLANS.md)**, **[`../../Plans/README.md`](../../Plans/README.md)**.

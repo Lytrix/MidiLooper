@@ -14,27 +14,27 @@ context: |
 
   Milestone status (Jun 2026):
   - M1–M7 shipped; M8 edit + pool-budget + loop-ownership + long-record-memory-headroom **archived** → `openspec/specs/`
-  - **Active work:** persistence / overlay — see `docs/runtime/CURRENT_WORK.md` + `PROJECT_STATE.md`
-  - Post-persistence sequencing: `docs/runtime/ROADMAP.md` (informational — not implementation authority)
+  - **Active work:** persistence / overlay — see `docs/Runtime/CURRENT_WORK.md` + `PROJECT_STATE.md`
+  - Post-persistence sequencing: `docs/Runtime/ROADMAP.md` (informational — not implementation authority)
 
   Jam D13 arrangement capture is PARKED — see
   `openspec/changes/archive/20260617-parked-jam-recording-d13/PARKED.md`
 
   Authority (agents):
-  - `docs/00-authority/NAMING.md` — architectural vocabulary (canonical)
-  - `docs/00-authority/README.md` — hierarchy + conflict resolution (OpenSpec = behavior; architecture = structure)
-  - `docs/runtime/PROJECT_STATE.md` — execution context (load first)
-  - `docs/runtime/CURRENT_WORK.md` — implementation scope (required before coding)
-  - `docs/runtime/ROADMAP.md` — future milestones (optional; never sole authority)
+  - `docs/Authority/NAMING.md` — architectural vocabulary (canonical)
+  - `docs/Authority/README.md` — hierarchy + conflict resolution (OpenSpec = behavior; architecture = structure)
+  - `docs/Runtime/PROJECT_STATE.md` — execution context (load first)
+  - `docs/Runtime/CURRENT_WORK.md` — implementation scope (required before coding)
+  - `docs/Runtime/ROADMAP.md` — future milestones (optional; never sole authority)
   - `docs/DECISION_LOG.md` — search before new abstractions; append at closeout
-  - `docs/templates/DECISION_REVIEW.md` — mandatory before firmware implementation
+  - `docs/Templates/DECISION_REVIEW.md` — mandatory before firmware implementation
   - `openspec/specs/` — normative requirements after `/opsx:archive`
-  - `docs/plans/` — handoffs and historical context; do not treat as live queue
+  - `docs/Plans/` — handoffs and historical context; do not treat as live queue
 
   Brownfield docs (cite, do not duplicate wholesale):
-  - `docs/00-authority/DELIVERY_RULES.md` — OpenSpec process and guards
+  - `docs/Authority/DELIVERY_RULES.md` — OpenSpec process and guards
   - `docs/DELIVERABLE_TRACKING.md` — shipped vs next
-  - `docs/plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
+  - `docs/Plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
   - `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo constraints
   - `docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md` — internal heap vs external memory pool routing
   - `docs/Guides/FADER_STATE_SYSTEM.md` — NOTE_EDIT fader feedback on/off (`kNoteEditFaderFeedbackEnabled`)
@@ -42,7 +42,7 @@ context: |
 
   Conventions:
   - Reuse repo nouns: **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline
-  - See `docs/00-authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer
+  - See `docs/Authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer
   - Before push: `pio test -e native`; HITL when firmware timing/storage/edit changes
   - Do not upload Teensy firmware without user confirmation
 
@@ -51,11 +51,11 @@ context: |
 rules:
   proposal:
     - Link to `docs/DELIVERABLE_TRACKING.md` and relevant `openspec/specs/` when brownfield
-    - Check `docs/runtime/CURRENT_WORK.md` for implementation scope — not ROADMAP alone
+    - Check `docs/Runtime/CURRENT_WORK.md` for implementation scope — not ROADMAP alone
     - List open product decisions (TBD) explicitly; do not invent UX without flagging
     - Non-goals section when scope is easy to over-expand (jam vs scenes vs LFO)
   design:
-    - Respect ownership in `docs/00-authority/ARCHITECTURE_RULES.md`
+    - Respect ownership in `docs/Authority/ARCHITECTURE_RULES.md`
     - Ownership moves only via transfer protocol (reassessment, migration, compat removal trigger)
     - Name primary files (`Loop.cpp`, `EditManager.cpp`, `StorageManager.cpp`) and hot-path constraints
     - No full validate on record/overdub stop; deferred save via `requestDeferredSaveState`

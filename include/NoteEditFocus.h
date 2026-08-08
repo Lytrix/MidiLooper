@@ -65,7 +65,7 @@ using OverlapNoteMap = std::unordered_map<NoteId, OverlapNote, NoteIdHash, std::
 
 /// Sorted, unique NoteId list. Reuses the geometry pipeline's existing vector instantiation
 /// instead of adding a std::unordered_set — RAM1/ITCM has under 1.4 KB of headroom before a
-/// whole 32 KB block flips (docs/plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md),
+/// whole 32 KB block flips (docs/Plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md),
 /// and these lists hold a handful of ids, so linear search costs nothing measurable.
 using NoteIdList = std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>;
 

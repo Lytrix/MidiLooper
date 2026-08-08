@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Naming vocabulary (Teensy looper)
 
-**Canonical authority:** [`docs/00-authority/NAMING.md`](../../docs/00-authority/NAMING.md) — architectural vocabulary, concept boundaries, verb conventions, domain glossary, migration policy, and review checklist.
+**Canonical authority:** [`docs/Authority/NAMING.md`](../../docs/Authority/NAMING.md) — architectural vocabulary, concept boundaries, verb conventions, domain glossary, migration policy, and review checklist.
 
 Use with global **`naming-and-terminology`**: clear **action + scope** (ideal two words; longer when needed for completeness), no abbreviations.
 
@@ -15,6 +15,6 @@ Use with global **`naming-and-terminology`**: clear **action + scope** (ideal tw
 2. **Reuse** terms from NAMING.md concept boundaries and domain vocabulary — do not introduce synonyms.
 3. **No new top-level domain nouns** without explicit user approval — propose term, rationale, wait for agreement; record `DEC-###` in DECISION_LOG.
 4. **Pipeline / Queue / Flow** — do not use for synchronous deterministic algorithms; use **Resolution** (see NAMING.md § Geometry resolution).
-5. **Investigation and naming debt** — current-vs-preferred mapping in [`docs/plans/architecture_naming_authority_refinement.md`](../../docs/plans/architecture_naming_authority_refinement.md).
+5. **Investigation and naming debt** — current-vs-preferred mapping in [`docs/Plans/architecture_naming_authority_refinement.md`](../../docs/Plans/architecture_naming_authority_refinement.md).
 
 Archived OpenSpec baselines: **`m8-rename`**, **`m8-edit`**, **`pool-budget`** (see `openspec/specs/`).

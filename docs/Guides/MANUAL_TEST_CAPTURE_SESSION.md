@@ -1,6 +1,6 @@
 # Manual test: capture session for known bugs (Bucket 1 S1)
 
-Goal: reproduce bugs **B1–B4** from [`docs/plans/stabilization_known_bugs_bugfix.md`](../plans/stabilization_known_bugs_bugfix.md) once, on an instrumented build that records fixtures. The capture file is the deliverable — it lets the bugs be debugged and regression-tested offline without you at the hardware.
+Goal: reproduce bugs **B1–B4** from [`docs/Plans/stabilization_known_bugs_bugfix.md`](../Plans/stabilization_known_bugs_bugfix.md) once, on an instrumented build that records fixtures. The capture file is the deliverable — it lets the bugs be debugged and regression-tested offline without you at the hardware.
 
 ## Setup (once)
 

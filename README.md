@@ -8,7 +8,7 @@
 
 This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware serial timing via minijack midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
 
-The **base configuration** of this device is a minimal **encoder-and-4-buttons** module that must carry the full core workflow on its own (it exists physically but is currently dormant in the firmware — see [`docs/00-authority/PROJECT_INTENT.md`](docs/00-authority/PROJECT_INTENT.md) for the project goal and decision log).
+The **base configuration** of this device is a minimal **encoder-and-4-buttons** module that must carry the full core workflow on its own (it exists physically but is currently dormant in the firmware — see [`docs/Authority/PROJECT_INTENT.md`](docs/Authority/PROJECT_INTENT.md) for the project goal and decision log).
 
 ### Firmware versions
 
@@ -160,7 +160,7 @@ GPIO **encoder** (when enabled): rotate = scroll; **short press** = confirm (sam
 
 **Dirty workspace:** **Yes / No / Cancel** prompt — **Edit short** or **encoder short** confirms the highlighted choice; **Edit long** cancels.
 
-Detail panel shows Set id, revision, track/loop counts, BPM, bars, per-track slot bars, and **RTC date/time** when the revision was saved. More: [`docs/Guides/control-surface/Main-controls.md`](docs/Guides/control-surface/Main-controls.md), handoff [`docs/plans/set_revision_persistence_handoff.md`](docs/plans/set_revision_persistence_handoff.md).
+Detail panel shows Set id, revision, track/loop counts, BPM, bars, per-track slot bars, and **RTC date/time** when the revision was saved. More: [`docs/Guides/control-surface/Main-controls.md`](docs/Guides/control-surface/Main-controls.md), handoff [`docs/Plans/set_revision_persistence_handoff.md`](docs/Plans/set_revision_persistence_handoff.md).
 
 ## Faders
 
@@ -200,13 +200,13 @@ State persistence uses storage **version 4+** on loop slots (**passes** timeline
 
 ### Loop storage vocabulary (code)
 
-Canonical glossary: **[`docs/00-authority/NAMING.md`](docs/00-authority/NAMING.md)** § Domain vocabulary.
+Canonical glossary: **[`docs/Authority/NAMING.md`](docs/Authority/NAMING.md)** § Domain vocabulary.
 
 Quick reference — each **loop slot** (`Loop`) separates live **Capture** from committed timeline **passes** (`LoopPasses`: recordPass, overdubPasses, editPasses). Live note edit uses **NoteEditSession.store**; committed rows are **editPass** entries via `saveNoteEditPass()`. **merge** replays active capture passes; **materialize** replays full passes to a MIDI vector. Memory tiers: **internal heap** (fast RAM) and **external memory pool** (external RAM / PSRAM).
 
 Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
-**How the system works (record → memory → playback → display → SD):** [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](docs/plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (external memory pool chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
+**How the system works (record → memory → playback → display → SD):** [`docs/Plans/record_overdub_memory_display_timeline_enhancement.md`](docs/Plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (external memory pool chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
 
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 
@@ -214,13 +214,13 @@ Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Gui
 
 **Full capability list:** [`docs/FEATURES.md`](docs/FEATURES.md).
 
-**Naming authority:** [`docs/00-authority/NAMING.md`](docs/00-authority/NAMING.md). **Code layout:** [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
+**Naming authority:** [`docs/Authority/NAMING.md`](docs/Authority/NAMING.md). **Code layout:** [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
 
 **Build:** [PlatformIO](https://platformio.org/) — `platformio.ini`, board **Teensy 4.1**.
 
 **Documentation index:** [`docs/README.md`](docs/README.md) — guides, refinements, archived plans.
 
-**Feature conventions / Phase 3 pointer:** [`docs/FEATURE_PLANS.md`](docs/FEATURE_PLANS.md). Exported design plans: [`docs/plans/README.md`](docs/plans/README.md).
+**Feature conventions / Phase 3 pointer:** [`docs/FEATURE_PLANS.md`](docs/FEATURE_PLANS.md). Exported design plans: [`docs/Plans/README.md`](docs/Plans/README.md).
 
 ---
 

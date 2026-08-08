@@ -37,7 +37,7 @@ isProject: false
 
 # Loop translation-unit extraction
 
-**Authoritative plan:** [docs/plans/loop_translation_unit_extraction_refinement.md](../../docs/plans/loop_translation_unit_extraction_refinement.md)
+**Authoritative plan:** [docs/Plans/loop_translation_unit_extraction_refinement.md](../../docs/Plans/loop_translation_unit_extraction_refinement.md)
 
 ## Primary modules + coordinator
 

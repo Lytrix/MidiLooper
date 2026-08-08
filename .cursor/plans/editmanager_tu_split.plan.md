@@ -40,7 +40,7 @@ isProject: false
 
 # EditManager translation-unit extraction
 
-**Authoritative plan:** [docs/plans/editmanager_translation_unit_extraction_refinement.md](../../docs/plans/editmanager_translation_unit_extraction_refinement.md)
+**Authoritative plan:** [docs/Plans/editmanager_translation_unit_extraction_refinement.md](../../docs/Plans/editmanager_translation_unit_extraction_refinement.md)
 
 **Branch:** `refactor/editmanager` (from `dev`)
 

@@ -8,7 +8,7 @@ for **capture commit** progression after the user stops recording or overdubbing
 Arm-record regressions, empty live display during capture, and stop-path faults are difficult to
 bisect because extraction, scheduling, ownership, and API renames were attempted together.
 
-Agent plan: [`docs/plans/unified_capture_stop_driver_refinement.md`](../../../docs/plans/unified_capture_stop_driver_refinement.md).
+Agent plan: [`docs/Plans/unified_capture_stop_driver_refinement.md`](../../../docs/Plans/unified_capture_stop_driver_refinement.md).
 
 **Per-phase review:** [ARCHITECTURE-REVIEW.md](./ARCHITECTURE-REVIEW.md) (architecture + implementation gates each phase).
 

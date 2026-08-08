@@ -15,7 +15,7 @@ Q9 **boundary split** at capture pass edges is deferred; v1 ships incremental sa
 
 - **Files:** `src/Utils/CaptureIncrementalSanity.cpp`, `src/Track.cpp`, `src/Loop.cpp`, `src/main.cpp`, `src/Utils/LoopEventValidation.cpp`
 - **Guide:** [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
-- **Plan:** [`docs/plans/capture_pass_note_min_length_refinement.md`](../../../docs/plans/capture_pass_note_min_length_refinement.md)
+- **Plan:** [`docs/Plans/capture_pass_note_min_length_refinement.md`](../../../docs/Plans/capture_pass_note_min_length_refinement.md)
 
 ## Out of scope (v1)
 
