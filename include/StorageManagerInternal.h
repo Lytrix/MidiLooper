@@ -303,6 +303,7 @@ bool readSlotIndexEntriesFromRevisionFile(
 
 void resetTracksAfterFailedLoad();
 void clearCurrentSetLoadedFromFolder();
+void clearAutoSaveBeforeLoadFolderPending();
 void syncCurrentSetDirtyTrackingFromLoadedState();
 bool anyCurrentSetLoopSlotDirty();
 bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,

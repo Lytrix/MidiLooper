@@ -77,11 +77,6 @@ bool setCurrentSetLoadedFromFolder(const char* folderName) {
     return true;
 }
 
-void clearAutoSaveBeforeLoadFolderPending() {
-    autoSaveBeforeLoadFolderPending[0] = '\0';
-    autoSaveBeforeLoadFolderPendingValid = false;
-}
-
 LoopId loopIdForPersistSlot(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return kInvalidLoopId;
@@ -189,68 +184,6 @@ bool StorageManager::loadSetIntoCurrent(const char* savedSetFolderName) {
     return true;
 }
 
-uint32_t StorageManager::getCurrentSetLastActiveUnix() {
-    return currentSetLastActiveUnix;
-}
-
-bool StorageManager::isCurrentWorkspaceDirty() {
-    return CurrentWorkspaceStorage::isWorkspaceDirty(currentWorkspaceEpoch,
-                                                     lastCommittedWorkspaceEpoch);
-}
-
-bool StorageManager::shouldQueueCurrentWorkspaceSave() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    if (forceCurrentSetFullLoopWrite) {
-        return true;
-    }
-    if (anyCurrentSetLoopSlotDirty()) {
-        return true;
-    }
-    if (StorageManagerInternal::anyAllocatedLoopEditStateDirty()) {
-        return true;
-    }
-    return CurrentSetStorage::shouldAutoSaveBeforeLoadIntoCurrent(currentSetAnchorFields);
-#endif
-}
-
-uint32_t StorageManager::getCurrentWorkspaceEpoch() {
-    return currentWorkspaceEpoch;
-}
-
-uint32_t StorageManager::getLastCommittedWorkspaceEpoch() {
-    return lastCommittedWorkspaceEpoch;
-}
-
-uint16_t StorageManager::getCurrentWorkspaceDerivedSetId() {
-    return workspaceDerivedFromSetId;
-}
-
-uint16_t StorageManager::getCurrentWorkspaceDerivedRevisionId() {
-    return workspaceDerivedFromRevisionId;
-}
-
-bool StorageManager::copyCurrentSetLoadedFromFolder(char* out, size_t outSize) {
-    if (out == nullptr || outSize == 0 || currentSetLoadedFromFolder[0] == '\0') {
-        return false;
-    }
-    const int written = std::snprintf(out, outSize, "%s", currentSetLoadedFromFolder);
-    return written > 0 && static_cast<size_t>(written) < outSize;
-}
-
-bool StorageManager::consumeAutoSaveBeforeLoadFolder(char* out, size_t outSize) {
-    if (out == nullptr || outSize == 0 || !autoSaveBeforeLoadFolderPendingValid) {
-        return false;
-    }
-    const int written =
-        std::snprintf(out, outSize, "%s", autoSaveBeforeLoadFolderPending);
-    const bool copied =
-        written > 0 && static_cast<size_t>(written) < outSize;
-    clearAutoSaveBeforeLoadFolderPending();
-    return copied;
-}
-
 namespace StorageManagerInternal {
 
 STORAGE_PERSIST_MEM void maybeAdmitDeferredWorkspaceFooter() {
@@ -332,11 +265,6 @@ bool StorageManager::bootInteractiveReady() {
     return StorageManagerInternal::pendingLoopSlotRestoreCount() == 0 && !SlotLoadSession::isActive() &&
            !StorageManagerInternal::anyLoadLoopJobActive();
 }
-
-bool StorageManager::hasPendingUndoSnapshotHydrate() {
-    return undoSnapshotsPending_;
-}
-
 
 void StorageManager::requestCommitRevision() {
 #if BYPASS_STOP_UNDO_SAVE
