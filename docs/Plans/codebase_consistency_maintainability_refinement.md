@@ -194,6 +194,7 @@ Deprecated `markCurrentSet*Dirty` wrappers forward to the split APIs. **18** pro
 | [`session_20260808_162038.log`](../../captures/session_20260808_162038.log) | 1.1c — loaded workspace + move/overlap/pitch + projection-owner normalize (~61s) | **PASS** — all `commit parity ok`; `NoteEditPassClosed edits=4` |
 | [`session_20260808_162859.log`](../../captures/session_20260808_162859.log) | 1.2 — selection tick SoT + boot-loaded workspace (~37s) | **PASS** — select/motor bracket aligned; move+overlap+pitch; `NoteEditPassClosed edits=6` |
 | [`session_20260808_163043.log`](../../captures/session_20260808_163043.log) | 1.2 extended — length bracket, overlap chain, chord select (~48s active; tail continuation) | **PASS** — length end-tick motor sync; 20+ overlap moves; `ChangeLength` commit; `NoteEditPassClosed edits=4` |
+| [`session_20260808_163904.log`](../../captures/session_20260808_163904.log) | Phase 1 gate — boot load + select/move/pitch (~50s) post 1.1–1.3 | **PASS** — `UNDO_PUSH,admit_ok`; move+pitch commits; `NoteEditPassClosed edits=4` |
 
 ---
 
