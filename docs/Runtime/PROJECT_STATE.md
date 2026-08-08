@@ -30,7 +30,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **StorageManager TU remaining:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — HITL → `StorageManagerHitlSerial` done (uncommitted); next preamble/epilogue or status-query trim — [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md)
+- **StorageManager TU remaining:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) on `refactor/storagemanager-remaining` — HITL + preamble/epilogue done; next deferred-save status queries or park — [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md)
 - **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor
 - **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; layered **`base`** device PASS deferred to dedicated HITL refactor
 - **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)

@@ -19,9 +19,9 @@ Last updated: 2026-08-08 (StorageManager TU lifecycle + HITL extract)
 | Slice | Status |
 |-------|--------|
 | Phases 0–8 (primary extract) | **Done** (prior) |
-| HITL catalog / quarantine → `StorageManagerHitlSerial.cpp` | **Done** (2026-08-08) — build SUCCESS; native 969/969; **uncommitted** |
-| `readCurrentSetFilePreamble` / `Epilogue` | Next candidate |
-| Deferred-save status queries | Optional / park after next slice |
+| HITL catalog / quarantine → `StorageManagerHitlSerial.cpp` | **Done** (`3760387`) |
+| `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | **Done** (2026-08-08) — build SUCCESS; native 969/969 |
+| Deferred-save status queries | Next / park |
 
 **Exit:** remaining checklist on #16 complete or explicitly parked; plan follow-up table updated; issue closed after docs closeout.
 
