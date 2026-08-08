@@ -662,7 +662,7 @@ void test_shared_edit_projection_origin_tail_shorten_only_004127() {
   TEST_ASSERT_EQUAL_UINT32(3887u, constrained.endTick);
 }
 
-/// session_20260807_011618: geometry pipeline classifies on storage baselineMap — local L→R overlap
+/// session_20260807_011618: NoteGeometryResolver classifies on storage baselineMap — local L→R overlap
 /// must not wait on projected k-shift copies.
 void test_storage_overlap_analyze_tail_shorten_only_004127() {
   constexpr uint32_t kLoopLength = 5376;

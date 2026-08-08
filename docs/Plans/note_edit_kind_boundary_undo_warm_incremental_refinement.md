@@ -102,7 +102,7 @@ Add `SESSION_CAPTURE` lines (same pattern as `UNDO_WARM`):
 | `GEOM_APPLY,dequeue` | start of `processPendingPlayingGeometry` | queued age ms, kind |
 | `GEOM_APPLY,undo` | after `beginGeometryMutation` in apply path | ok/fail, elapsed µs |
 | `GEOM_APPLY,focus` | after `ensureNoteEditFocusForLiveEdit` in apply path | elapsed µs, kind |
-| `GEOM_APPLY,pipeline` | after `applyNoteEditChange` / length overlap | elapsed µs, applied, kind |
+| `GEOM_APPLY,resolve` | after `applyNoteEditChange` / length overlap | elapsed µs, applied, kind |
 | `GEOM_APPLY,done` | after `finishGeometryDriverSideEffects` | applied, display revision |
 
 Also log when `processPendingPlayingGeometry` returns early (`pending None`, transport stopped).

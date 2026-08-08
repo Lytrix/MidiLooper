@@ -417,8 +417,8 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
     return;
   }
 
-  CommittedChunkIdList publishedIds;
-  if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds)) {
+  CommittedChunkIdList committedChunkIds;
+  if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(committedChunkIds, captureIds)) {
     LoopEventStore::releaseChunkRefs(captureIds);
     return;
   }
@@ -432,7 +432,7 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
       nextPassId_ = rebuilt.id + 1;
     }
     rebuilt.state = CapturePassState::Active;
-    rebuilt.committedChunkIds = std::move(publishedIds);
+    rebuilt.committedChunkIds = std::move(committedChunkIds);
     passes.recordPass = rebuilt;
     lastCommittedPassId_ = rebuilt.id;
   } else {
@@ -443,7 +443,7 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
     }
     rebuilt.mergeSequence = preserveMergeSeq;
     rebuilt.state = CapturePassState::Active;
-    rebuilt.committedChunkIds = std::move(publishedIds);
+    rebuilt.committedChunkIds = std::move(committedChunkIds);
     passes.overdubPasses.push_back(rebuilt);
     lastCommittedPassId_ = rebuilt.id;
   }
@@ -465,8 +465,8 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
     discardPassesMaterializedCache();
     return;
   }
-  CommittedChunkIdList publishedIds;
-  if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds)) {
+  CommittedChunkIdList committedChunkIds;
+  if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(committedChunkIds, captureIds)) {
     LoopEventStore::releaseChunkRefs(captureIds);
     discardPassesMaterializedCache();
     return;
@@ -474,7 +474,7 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   RecordPass record{};
   record.id = nextPassId_++;
   record.state = CapturePassState::Active;
-  record.committedChunkIds = std::move(publishedIds);
+  record.committedChunkIds = std::move(committedChunkIds);
   passes.recordPass = std::move(record);
   lastCommittedPassId_ = passes.recordPass.id;
   ++playbackRevision;
@@ -633,24 +633,24 @@ bool Loop::commitPendingCapturePass() {
     return false;
   }
 
-  PendingCapturePass published = std::move(pendingCapturePass_);
-  if (published.phase == CapturePassPhase::Record) {
+  PendingCapturePass pendingPass = std::move(pendingCapturePass_);
+  if (pendingPass.phase == CapturePassPhase::Record) {
     RecordPass record{};
-    record.id = published.id;
+    record.id = pendingPass.id;
     record.state = CapturePassState::Active;
-    record.sealedAtTick = published.sealedAtTick;
-    record.committedChunkIds = std::move(published.committedChunkIds);
+    record.sealedAtTick = pendingPass.sealedAtTick;
+    record.committedChunkIds = std::move(pendingPass.committedChunkIds);
     passes.recordPass = std::move(record);
   } else {
     OverdubPass overdub{};
-    overdub.id = published.id;
-    overdub.mergeSequence = published.mergeSequence;
+    overdub.id = pendingPass.id;
+    overdub.mergeSequence = pendingPass.mergeSequence;
     overdub.state = CapturePassState::Active;
-    overdub.sealedAtTick = published.sealedAtTick;
-    overdub.committedChunkIds = std::move(published.committedChunkIds);
+    overdub.sealedAtTick = pendingPass.sealedAtTick;
+    overdub.committedChunkIds = std::move(pendingPass.committedChunkIds);
     passes.overdubPasses.push_back(std::move(overdub));
   }
-  lastCommittedPassId_ = published.id;
+  lastCommittedPassId_ = pendingPass.id;
 
   pendingCapturePass_ = PendingCapturePass{};
   hasPendingCapturePass_ = false;

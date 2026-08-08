@@ -9,7 +9,7 @@ Decision: DEC-029 (`NoteEditCurrentState`), DEC-030 (sticky `Ended` participatio
 
 ## Overview
 
-During NOTE_EDIT, editable geometry is owned by **`NoteEditCurrentState`**. The geometry pipeline analyzes interactions, resolves constrained geometry, builds `EditSessionAction`s, and applies them to current state (then projects to the session MIDI store). The moving note stays intact; overlap notes hide, shorten, or leave-restore around it.
+During NOTE_EDIT, editable geometry is owned by **`NoteEditCurrentState`**. **`NoteGeometryResolver`** analyzes interactions, resolves constrained geometry, builds `EditSessionAction`s, and applies them to current state (then projects to the session MIDI store). The moving note stays intact; overlap notes hide, shorten, or leave-restore around it.
 
 **Core principle:** the causing note (driver) is never modified by overlap resolution — other notes adapt.
 
@@ -25,7 +25,7 @@ Each stage lists its owner and the only inputs it may trust. Same table as contr
 | 2 | State authority | `NoteEditCurrentState` (`currentSpan`, `committedSpan`, `presence`, `overlapParticipation`) | apply writers + commit/handoff seal — see below |
 | 3 | Focus driver / baseline | `NoteEditFocus` (`movingNoteId`, `last`, `commitBaseline`, `baselineMap`) | stages 1 + 2 — **no** `changedOverlapNoteIds` |
 | 4 | Display projection | `projectNoteEditDisplayNotes` / `resolveParticipantDisplaySpan` | stages 2 + 3, committed passes |
-| 5 | Selectable inventory | selectable UI path / `filterProjectingSelectableDisplayNotes` | stage 4, filtered to editable rows |
+| 5 | Selectable inventory | `selectableDisplayNotesForEditUi` / `filterSelectableDisplayNotes` | stage 4, filtered to editable rows |
 | 6 | Driver gate | see [Driver gate](#driver-gate-stage-6) — validate/rebuild Focus before geometry | stages 1 + 2 + 3 |
 | 7 | Geometry resolution | `NoteGeometryResolver` → `buildEditSessionActions` | Active participants + `baselineMap` + `EditedGeometry` |
 | 8 | Apply / write | `applyEditSessionActions` → current-state mutation → store projection | stage 7 actions only |
@@ -35,7 +35,7 @@ Each stage lists its owner and the only inputs it may trust. Same table as contr
 
 | Field | Writer | Examples |
 |-------|--------|----------|
-| **`currentSpan`** | Interactive apply pipeline (stage 8) | `HideNote`, `ShortenNote`, `MoveNote`, `RestoreNote` via `applyEditSessionActions` |
+| **`currentSpan`** | Interactive apply path (stage 8) | `HideNote`, `ShortenNote`, `MoveNote`, `RestoreNote` via `applyEditSessionActions` |
 | **`committedSpan`** | Commit / handoff sealing | `commitNoteEditPass`, `syncCommittedSpan` after macro commit |
 | **`overlapParticipation`** | Sticky clear → `Ended`; Shorten/Hide/Restore → `Active` | `clearChangedOverlapParticipationWhenInteractionCleared`, `applyEditSessionAction` |
 
@@ -290,7 +290,7 @@ Non-session pitch (no open NOTE_EDIT): `applySimplePitchChange` when safe; other
 
 | Area | State |
 |------|--------|
-| Geometry pipeline | `NoteGeometryResolver` wired for move / length / pitch / add / delete |
+| Geometry resolution | `NoteGeometryResolver` wired for move / length / pitch / add / delete |
 | Current-state ownership | DEC-029 — shipped through OpenSpec phases 1–8 |
 | Participation / latch removal | DEC-030 + §11 steps 5.1–5.5 — shipped; smoke HITL `025807`, `030432`, `032118` |
 | Display projection | `projectNoteEditDisplayNotes` sole active NOTE_EDIT producer |

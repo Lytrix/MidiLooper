@@ -31,12 +31,12 @@ RecordPass makeRecordPassWithNote(PassId id, uint32_t tick, uint8_t channel = 1)
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, tick, channel, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, channel, 60, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -189,13 +189,13 @@ void test_multi_take_flatten_matches_live_event_count() {
   LoopEventStore odStore;
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(odStore, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(odStore, committedChunkIds));
   OverdubPass overdub{};
   overdub.id = 2;
   overdub.mergeSequence = 1;
   overdub.state = CapturePassState::Active;
-  overdub.committedChunkIds = std::move(publishedIds);
+  overdub.committedChunkIds = std::move(committedChunkIds);
   loop.passes.overdubPasses.push_back(std::move(overdub));
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
@@ -257,7 +257,7 @@ void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 67));
 }
 
-void test_reclaim_disabled_overdub_releases_published_chunks() {
+void test_reclaim_disabled_overdub_releases_committed_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -286,6 +286,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
   RUN_TEST(test_invalidateCaches_marks_materialize_stale_after_loop_length_change);
-  RUN_TEST(test_reclaim_disabled_overdub_releases_published_chunks);
+  RUN_TEST(test_reclaim_disabled_overdub_releases_committed_chunks);
   return UNITY_END();
 }

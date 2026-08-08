@@ -63,7 +63,7 @@ struct OverlapNoteRestore {
 using OverlapNoteMap = std::unordered_map<NoteId, OverlapNote, NoteIdHash, std::equal_to<NoteId>,
                                           ExternalMemoryUnorderedMapAllocator<OverlapNote>>;
 
-/// Sorted, unique NoteId list. Reuses the geometry pipeline's existing vector instantiation
+/// Sorted, unique NoteId list. Reuses NoteGeometryResolver's existing vector instantiation
 /// instead of adding a std::unordered_set — RAM1/ITCM has under 1.4 KB of headroom before a
 /// whole 32 KB block flips (docs/Plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md),
 /// and these lists hold a handful of ids, so linear search costs nothing measurable.
@@ -285,7 +285,7 @@ NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
 }
 
 /// Exclude display-only rows (Hidden/Deleted leave-restore paint) from selectable inventory.
-NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState,
     const NoteEditFocus& focus, int selectedNoteIdx);
 

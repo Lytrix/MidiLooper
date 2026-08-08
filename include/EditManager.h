@@ -105,7 +105,7 @@ public:
 
     /// Edit operations (moved from ControlSurfaceManager — Phase 1).
     bool deleteSelectedNote(Track& track, const NoteUtils::DisplayNoteVec& filteredNotes);
-    /// After **Create** — run geometry pipeline with the new note as causing (same-pitch overlap).
+    /// After **Create** — run NoteGeometryResolver with the new note as causing (same-pitch overlap).
     void applyCreatedNoteOverlapGeometry(Track& track, const NoteUtils::DisplayNote& createdNote);
     bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
                             uint32_t targetTick);
@@ -153,12 +153,10 @@ public:
     void rebuildNoteEditFocusForDisplayNote(Track& track, const NoteUtils::DisplayNote& liveSelected);
     /// Remap or clear **selectedNoteIdx** when filtered inventory no longer matches **focus.last**.
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
-    /// Filtered select inventory during note edit; else cached notes (encoder + fader).
+    /// Full-loop selectable inventory during note edit (Hidden overlap excluded); else cached notes.
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
     /// Single cached NOTE_EDIT display projection (session store + focus) for grid paint.
     NoteUtils::DisplayNoteVec projectedNoteEditDisplayNotes(const Track& track) const;
-    /// Cached NOTE_EDIT selectable inventory (session reconstruction minus Hidden overlap).
-    NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
     void invalidateProjectedNoteEditDisplayCache() const;
     uint32_t noteEditDisplayInvalidateEpoch() const { return noteEditDisplayInvalidateEpoch_; }
     uint32_t noteEditDisplayPaintedEpoch() const { return noteEditDisplayPaintedEpoch_; }
@@ -302,6 +300,8 @@ private:
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
     void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
+    /// Cached NOTE_EDIT selectable inventory (`filterSelectableDisplayNotes` on paint projection).
+    NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
     void emitEditEvent(EditEvent event);
     int selectedNoteIdx = -1; // -1 means no note selected
     uint32_t referenceStep_ = 0;

@@ -430,7 +430,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
         const NoteEditFocus& focus = manager.getEditSession().focus;
         const EditorSelection& selection = manager.getNoteEditSessionState().selection;
         const NoteUtils::DisplayNoteVec filtered =
-            manager.filteredSelectableDisplayNotesForNoteEdit(track);
+            manager.selectableDisplayNotesAtEditSelect(track);
 
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
         const bool lengthBracket = manager.isLengthBracketEditActive();
@@ -538,7 +538,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
 
 namespace {
 
-// Non-session pitch path: loop view or before NOTE_EDIT session applies overlap pipeline.
+// Non-session pitch path: loop view or before NOTE_EDIT session uses NoteGeometryResolver.
 // Active NOTE_EDIT pitch uses NoteGeometryResolver::resolveForCausingNote (Phase 4.10g).
 NOTE_EDIT_MEM bool applySimplePitchChange(MidiEventVec& midiEvents, EditManager& manager,
                                           Track& track, NoteEditFocus& focus, uint8_t channel,
@@ -632,12 +632,12 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
         const NoteBaseline priorLatch{currentNoteValue, focus.last.velocity, noteStart, noteEnd};
         const NoteBaseline editedSpan{newNoteValue, focus.last.velocity, noteStart, noteEnd};
-        const bool pipelineApplied = NoteGeometryResolver::resolveForCausingNote(
+        const bool geometryResolved = NoteGeometryResolver::resolveForCausingNote(
             track, manager, focus.movingNoteId, editedSpan, priorLatch, std::nullopt, newNoteValue,
             refreshPlaybackPreview);
-        if (!pipelineApplied) {
+        if (!geometryResolved) {
             logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Warning: edit session geometry pipeline did not apply pitch change for "
+                       "Warning: NoteGeometryResolver did not apply pitch change for "
                        "pitch=%u start=%lu",
                        static_cast<unsigned>(newNoteValue),
                        static_cast<unsigned long>(noteStart));
@@ -654,7 +654,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                                   focus.last.endTick, loopLength, bracketDisplay,
                                   refreshPlaybackPreview);
-        logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed via geometry pipeline: %d -> %d",
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed via NoteGeometryResolver: %d -> %d",
                    currentNoteValue, newNoteValue);
         return true;
     }
@@ -856,13 +856,13 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
 
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
     // Overlap scope is the mover's own lane — a move never changes pitch (Q14).
-    const bool pipelineApplied =
+    const bool geometryResolved =
         NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId, editedSpan,
                                                      focus.last, targetTick, movingNotePitch,
                                                      refreshPlaybackPreview);
 
-    bool movedNoteEvents = pipelineApplied;
-    if (pipelineApplied) {
+    bool movedNoteEvents = geometryResolved;
+    if (geometryResolved) {
       MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, editFocus(manager), channel,
                                                            movingNotePitch, newStart, loopLength);
       if (noteOnEvent != nullptr) {
@@ -871,7 +871,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
       }
     } else {
       logger.log(CAT_MIDI, LOG_DEBUG,
-                  "Warning: edit session geometry pipeline did not apply move for pitch=%u "
+                  "Warning: NoteGeometryResolver did not apply move for pitch=%u "
                   "start=%lu",
                   movingNotePitch, newStart);
     }
@@ -958,14 +958,14 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
         NoteMovementUtils::linearStorageOffTickForSpanEnd(newStart, noteLen);
 
     const NoteBaseline editedSpan{notePitch, focus.last.velocity, newStart, linearNewEnd};
-    const bool pipelineApplied =
+    const bool geometryResolved =
         NoteGeometryResolver::resolveForCausingNote(track, manager, focus.movingNoteId,
                                                      editedSpan, focus.last, std::nullopt,
                                                      notePitch, refreshPlaybackPreview);
 
-    if (!pipelineApplied) {
+    if (!geometryResolved) {
         logger.log(CAT_MIDI, LOG_DEBUG,
-                  "Warning: edit session geometry pipeline did not apply length for pitch=%d "
+                  "Warning: NoteGeometryResolver did not apply length for pitch=%d "
                   "start=%lu end=%lu",
                   notePitch, noteStart, newEnd);
     }
@@ -973,7 +973,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
     const uint32_t lengthBracketDisplay =
         bracketDisplayTickFromStorage(newEnd, loopStartTick, loopLength);
-  if (pipelineApplied && focus.active && focus.movingNoteId != kInvalidNoteId) {
+  if (geometryResolved && focus.active && focus.movingNoteId != kInvalidNoteId) {
     manager.applySelectionFromGeometryEdit(track, lengthBracketDisplay, focus.movingNoteId);
   }
   manager.setSelectedTick(lengthBracketDisplay);

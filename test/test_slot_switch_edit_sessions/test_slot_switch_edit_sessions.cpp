@@ -65,12 +65,12 @@ RecordPass makeRecordPassWithNoteCount(uint32_t loopLength, unsigned noteCount) 
     appendNotePair(store, onTick, onTick + 48u, static_cast<uint8_t>(60 + i),
                    static_cast<NoteId>(i + 1u));
   }
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 

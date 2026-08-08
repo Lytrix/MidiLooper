@@ -7,7 +7,7 @@
 // Track class implementation
 // -------------------------
 Track::Track() :
-  isPlayingBack(false),
+  ignorePlaybackMidiInput(false),
   muted(false),
   midiChannel(1),
   activeLoopIndex(0),
