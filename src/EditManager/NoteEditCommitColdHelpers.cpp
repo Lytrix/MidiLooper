@@ -88,8 +88,8 @@ EDIT_MANAGER_IMPL_MEM void logGeomApplyFocus(uint32_t elapsedUs, NoteEditKind ki
                 static_cast<unsigned long>(elapsedUs), static_cast<unsigned>(kind));
 }
 
-EDIT_MANAGER_IMPL_MEM void logGeomApplyPipeline(uint32_t elapsedUs, bool applied, NoteEditKind kind) {
-    logger.info("#CAP,%lu,GEOM_APPLY,pipeline,%lu,%u,%u,0", static_cast<unsigned long>(micros()),
+EDIT_MANAGER_IMPL_MEM void logGeomApplyResolve(uint32_t elapsedUs, bool applied, NoteEditKind kind) {
+    logger.info("#CAP,%lu,GEOM_APPLY,resolve,%lu,%u,%u,0", static_cast<unsigned long>(micros()),
                 static_cast<unsigned long>(elapsedUs), applied ? 1u : 0u,
                 static_cast<unsigned>(kind));
 }

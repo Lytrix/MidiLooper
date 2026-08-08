@@ -182,33 +182,33 @@ void test_transfer_capture_chunk_ids_to_published() {
   TEST_ASSERT_EQUAL(1u, captureIds.size());
   TEST_ASSERT_TRUE(store.empty());
 
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(committedChunkIds, captureIds));
   TEST_ASSERT_TRUE(captureIds.empty());
-  TEST_ASSERT_EQUAL(1u, publishedIds.size());
+  TEST_ASSERT_EQUAL(1u, committedChunkIds.size());
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(publishedIds, flat);
+  LoopEventStore::appendChunkRefEvents(committedChunkIds, flat);
   TEST_ASSERT_EQUAL(2u, flat.size());
-  LoopEventStore::releaseChunkRefs(publishedIds);
+  LoopEventStore::releaseChunkRefs(committedChunkIds);
 }
 
-void test_detach_chunks_to_published_seals_and_transfers() {
+void test_detach_chunks_to_committed_seals_and_transfers() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(5, 1, 60, 100)));
 
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(committedChunkIds));
   TEST_ASSERT_TRUE(store.empty());
-  TEST_ASSERT_EQUAL(1u, publishedIds.size());
+  TEST_ASSERT_EQUAL(1u, committedChunkIds.size());
   TEST_ASSERT_EQUAL(ChunkLifecycleState::Sealed,
-                    LoopEventStore::chunkLifecycleState(publishedIds[0]));
-  LoopEventStore::releaseChunkRefs(publishedIds);
+                    LoopEventStore::chunkLifecycleState(committedChunkIds[0]));
+  LoopEventStore::releaseChunkRefs(committedChunkIds);
 }
 
-void test_deep_clone_published_chunk_ids_duplicates_pool() {
+void test_deep_clone_committed_chunk_ids_duplicates_pool() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore store;
@@ -284,8 +284,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_index_for_bar_uses_bar_index);
   RUN_TEST(test_first_index_for_bar_skips_empty_bar);
   RUN_TEST(test_transfer_capture_chunk_ids_to_published);
-  RUN_TEST(test_detach_chunks_to_published_seals_and_transfers);
-  RUN_TEST(test_deep_clone_published_chunk_ids_duplicates_pool);
+  RUN_TEST(test_detach_chunks_to_committed_seals_and_transfers);
+  RUN_TEST(test_deep_clone_committed_chunk_ids_duplicates_pool);
   RUN_TEST(test_assign_missing_note_ids_in_chunks);
   return UNITY_END();
 }

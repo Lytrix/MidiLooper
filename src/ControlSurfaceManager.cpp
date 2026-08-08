@@ -82,7 +82,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::update() {
 
     processFaderOutbound();
     Track& selectedTrack = trackManager.getSelectedTrack();
-    processPendingPlayingGeometry(selectedTrack);
+    processPendingPlayingEditGeometry(selectedTrack);
     editManager.processDeferredNoteEditDisplayRefresh(selectedTrack);
     editManager.processKindBoundaryUndoWarm(selectedTrack);
 

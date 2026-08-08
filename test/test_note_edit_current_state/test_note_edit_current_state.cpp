@@ -360,7 +360,7 @@ void test_shorten_overlap_tail_stays_visible_shortened_and_masks_inventory_on_de
   TEST_ASSERT_TRUE(foundShortenedStub);
 
   const NoteUtils::DisplayNoteVec selectableWhileOverlap =
-      filterProjectingSelectableDisplayNotes(projectedWhileOverlap, &currentState, focus, 1);
+      filterSelectableDisplayNotes(projectedWhileOverlap, &currentState, focus, 1);
   TEST_ASSERT_EQUAL(1, static_cast<int>(selectableWhileOverlap.size()));
   TEST_ASSERT_EQUAL_UINT32(kMoverId, selectableWhileOverlap[0].noteId);
 
@@ -378,7 +378,7 @@ void test_shorten_overlap_tail_stays_visible_shortened_and_masks_inventory_on_de
   }
   TEST_ASSERT_TRUE(foundStubOnDeselect);
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(projected, &currentState, focus, -1);
+      filterSelectableDisplayNotes(projected, &currentState, focus, -1);
   TEST_ASSERT_EQUAL(2, static_cast<int>(selectable.size()));
   bool foundOverlapSelectable = false;
   for (const NoteUtils::DisplayNote& dn : selectable) {
@@ -924,7 +924,7 @@ void test_projected_paint_includes_shortened_overlap_inventory_excludes() {
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(paint, &currentState, focus, 1);
+      filterSelectableDisplayNotes(paint, &currentState, focus, 1);
 
   TEST_ASSERT_EQUAL(2, static_cast<int>(paint.size()));
   TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
@@ -1031,7 +1031,7 @@ void test_selectable_inventory_excludes_paint_only_hidden_row() {
   TEST_ASSERT_TRUE(foundOverlapPaint);
 
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(projected, &currentState, focus, 1);
+      filterSelectableDisplayNotes(projected, &currentState, focus, 1);
   TEST_ASSERT_EQUAL(2, static_cast<int>(selectable.size()));
   for (const NoteUtils::DisplayNote& dn : selectable) {
     TEST_ASSERT_TRUE(
@@ -1079,7 +1079,7 @@ void test_geometry_selection_resolves_mover_index_after_overlap_hidden() {
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(projected, &currentState, focus, 1);
+      filterSelectableDisplayNotes(projected, &currentState, focus, 1);
   TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
 
   EditorSelection selection;
@@ -1193,7 +1193,7 @@ void test_full_overlap_hide_excludes_paint_while_visual_cache_retains_note() {
   TEST_ASSERT_EQUAL_UINT32(kMoverId, projected[0].noteId);
 
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(projected, &currentState, focus, 0);
+      filterSelectableDisplayNotes(projected, &currentState, focus, 0);
   TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
   TEST_ASSERT_EQUAL_UINT32(kMoverId, selectable[0].noteId);
 }
@@ -1329,7 +1329,7 @@ void test_contract_c9_projection_inventory_independence() {
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(paint, &currentState, focus, 2);
+      filterSelectableDisplayNotes(paint, &currentState, focus, 2);
 
   TEST_ASSERT_TRUE(static_cast<int>(paint.size()) > static_cast<int>(selectable.size()));
 
@@ -1398,7 +1398,7 @@ void test_contract_c9_203805_shorten_paint_stub_inventory_masked() {
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(paint, &currentState, focus, 1);
+      filterSelectableDisplayNotes(paint, &currentState, focus, 1);
 
   TEST_ASSERT_EQUAL(2, static_cast<int>(paint.size()));
   TEST_ASSERT_EQUAL(1, static_cast<int>(selectable.size()));
@@ -1445,7 +1445,7 @@ void test_shortened_visible_selectable_after_deselect_233447() {
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
                                   &currentState);
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(paint, &currentState, focus, -1);
+      filterSelectableDisplayNotes(paint, &currentState, focus, -1);
 
   bool foundOverlap = false;
   for (const NoteUtils::DisplayNote& dn : selectable) {
@@ -1950,7 +1950,7 @@ void test_contract_c7_leave_restore_visible_paints_after_apply_175858() {
   TEST_ASSERT_TRUE(foundRestored);
 
   const NoteUtils::DisplayNoteVec selectable =
-      filterProjectingSelectableDisplayNotes(restoredPaint, &currentState, focus, -1);
+      filterSelectableDisplayNotes(restoredPaint, &currentState, focus, -1);
   TEST_ASSERT_EQUAL(2, static_cast<int>(selectable.size()));
 }
 

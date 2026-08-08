@@ -221,7 +221,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track,
     ensureNoteEditFocusForLiveEdit(track, currentNote);
 #if defined(SESSION_CAPTURE)
     logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Move);
-    const uint32_t pipelineStartUs = micros();
+    const uint32_t resolveStartUs = micros();
 #endif
     if (focus.active) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Overlap move bridge: pitch=%d, start=%lu, end=%lu",
@@ -235,7 +235,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track,
         track, *this, NoteMovementUtils::NoteEditChangeKind::Move, currentNote, targetTick,
         static_cast<int>(tickDifference), 0, 0, 0, dummyStart, dummyEnd);
 #if defined(SESSION_CAPTURE)
-    logGeomApplyPipeline(micros() - pipelineStartUs, applied, NoteEditKind::Move);
+    logGeomApplyResolve(micros() - resolveStartUs, applied, NoteEditKind::Move);
 #endif
     return applied;
 }
@@ -268,11 +268,11 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::changeNoteEndWithOverlapHandling(
     ensureNoteEditFocusForLiveEdit(track, currentNote);
 #if defined(SESSION_CAPTURE)
     logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Length);
-    const uint32_t pipelineStartUs = micros();
+    const uint32_t resolveStartUs = micros();
 #endif
     NoteMovementUtils::changeLengthWithOverlapHandling(track, *this, currentNote, targetEndTick);
 #if defined(SESSION_CAPTURE)
-    logGeomApplyPipeline(micros() - pipelineStartUs, true, NoteEditKind::Length);
+    logGeomApplyResolve(micros() - resolveStartUs, true, NoteEditKind::Length);
 #endif
     return true;
 }

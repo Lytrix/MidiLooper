@@ -5,7 +5,7 @@
 
 #include "LoopEventStore.h"
 
-/// Detach capture store chunk ids into a published list (seal-path transfer).
+/// Detach capture store chunk ids into a committed chunk-id list (seal-path transfer).
 inline bool transferCaptureStoreToCommittedChunkIds(LoopEventStore& store, CommittedChunkIdList& dest) {
   if (store.detachChunksToCommittedChunkIds(dest)) {
     return true;

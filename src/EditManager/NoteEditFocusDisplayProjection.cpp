@@ -374,7 +374,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
   return result;
 }
 
-NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterProjectingSelectableDisplayNotes(
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const NoteUtils::DisplayNoteVec& projected, const NoteEditCurrentState* currentState,
     const NoteEditFocus& focus, int selectedNoteIdx) {
   if (currentState == nullptr || currentState->empty()) {

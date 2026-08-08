@@ -554,8 +554,8 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(C
     return true;
   }
 
-  CommittedChunkIdList published;
-  if (!tryAssignCommittedChunkIds(published, chunkIds_.data(), count)) {
+  CommittedChunkIdList committedChunkIds;
+  if (!tryAssignCommittedChunkIds(committedChunkIds, chunkIds_.data(), count)) {
     return false;
   }
 
@@ -567,10 +567,10 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(C
   markBarIndexDirty();
   lastAppendedTick_ = 0;
 
-  for (uint16_t id : published) {
+  for (uint16_t id : committedChunkIds) {
     retainChunkReference(id);
   }
-  dest = std::move(published);
+  dest = std::move(committedChunkIds);
   return true;
 }
 

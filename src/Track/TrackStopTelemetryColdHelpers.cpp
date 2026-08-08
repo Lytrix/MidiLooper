@@ -44,13 +44,13 @@ TRACK_INTERNAL_MEM bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& l
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
     return false;
   }
-  SessionMidiEventVec published;
-  loop.passes.materializeToEventVector(published, loop.loopLengthTicks);
-  if (published.empty()) {
+  SessionMidiEventVec committedEvents;
+  loop.passes.materializeToEventVector(committedEvents, loop.loopLengthTicks);
+  if (committedEvents.empty()) {
     return false;
   }
   const NoteUtils::DisplayNoteVec reconstructed =
-      NoteUtils::reconstructDisplayNotes(published, loop.loopLengthTicks, false);
+      NoteUtils::reconstructDisplayNotes(committedEvents, loop.loopLengthTicks, false);
   if (isSamePitchSoundingAtTick(reconstructed, note, pendingOnPhaseTick)) {
     return true;
   }
@@ -87,7 +87,7 @@ TRACK_INTERNAL_MEM const char* commitResultLabel(CommitResult result) {
     case CommitResult::Skipped:
       return "skipped";
     case CommitResult::Committed:
-      return "published";
+      return "published";  // CAP wire token — HITL legacy_record_baseline completed_outcomes
     case CommitResult::SealFailed:
       return "seal_failed";
   }

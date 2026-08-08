@@ -44,13 +44,13 @@ RecordPass makeMultiChunkRecordPass() {
   CaptureChunkIdList captureIds;
   capture.detachChunksTo(captureIds);
   TEST_ASSERT_EQUAL(2u, captureIds.size());
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(committedChunkIds, captureIds));
 
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
