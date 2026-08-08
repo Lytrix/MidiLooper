@@ -161,7 +161,7 @@ public:
   /// Piano roll + loop LEDs when preview launch is queued or split focus is reaffirmed.
   void refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex);
   /// Bar/16th phase slot: playing slot while transport runs, preview slot when stopped.
-  uint8_t getLedPhaseSlotIndex(uint8_t trackIndex) const;
+  uint8_t getMidiLedPhaseSlotIndex(uint8_t trackIndex) const;
   /// After deferred SD slot restores finish — display, LOOP_EDIT faders, loop row LEDs.
   void onBootSlotLoadComplete();
   void clearPendingSlotSwitch(uint8_t trackIndex);
@@ -169,19 +169,19 @@ public:
   void queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick, uint32_t queuedAtTick);
 
   // --- LED Management ---
-  void updateLedsDeferred();   // Call from main loop - decoupled from clock path
-  void updateLeds(uint32_t currentTick);
-  void forceLedUpdate(uint32_t currentTick);
-  void clearLeds();
+  void updateMidiLedsDeferred();   // Call from main loop - decoupled from clock path
+  void updateMidiLeds(uint32_t currentTick);
+  void forceMidiLedUpdate(uint32_t currentTick);
+  void clearMidiLeds();
 
   /// Suppress LED/USB side effects while StorageManager applies boot load footer.
   void beginBootLoad();
   void endBootLoad();
 
 private:
-  /// Track row + loop row (notes 60–67, 50–57). Used from updateLedsDeferred and forceLedUpdate
+  /// Track row + loop row (notes 60–67, 50–57). Used from updateMidiLedsDeferred and forceMidiLedUpdate
   /// because MidiLedManager::updateLeds / clearAllLeds can turn off loop LEDs without this pass.
-  void refreshTrackAndLoopSelectLeds();
+  void refreshTrackAndLoopSelectMidiLeds();
   Track tracks[Config::NUM_TRACKS];
   MidiLedManager* ledManager;  // LED controller for Droid B32
   SlotStateMachine slotStateMachine;
