@@ -34,7 +34,9 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 
 | Item | Category | Impact | Risk | Trigger / timing | Source |
 |------|----------|--------|------|------------------|--------|
-| **Codebase consistency refinement** (authority → API → cleanup) | Structural | High — ownership language | Medium–High (Phase 1) | **NOW** #18 — Phase 1.1c next | [codebase_consistency_maintainability_refinement.md](codebase_consistency_maintainability_refinement.md) |
+| **TrackManager TU extraction** (process boundaries) | Structural | High — largest remaining monolith | Medium–High (transport/capture phases) | After #18 Phase 4 design — `refactor/trackmanager` first | [codebase_consistency_phase4_extraction_boundaries_refinement.md](codebase_consistency_phase4_extraction_boundaries_refinement.md) §1 |
+| **NoteMovementUtils TU split** (pair resolve vs geometry apply) | Structural | Medium — edit hot path clarity | Medium | After TrackManager or parallel low phases | Same doc §2 |
+| **DisplayNoteResolve second split** | Structural | Medium — display read path | Medium | After DisplayManager Phase 2 shipped | Same doc §3 |
 | **Persistence / overlay hardening** | Product | High — active milestone | High | CURRENT_WORK queue | [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md), [ROADMAP.md](../Runtime/ROADMAP.md) |
 | **Dedicated HITL refactor** (layered **`base`** gate device PASS) | Test infra | High — regression gate | Medium | Parked slice; confirm in CURRENT_WORK | [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md) |
 
@@ -70,6 +72,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 
 | Item | Shipped | Source |
 |------|---------|--------|
+| **Codebase consistency #18** Phases 1–3 + Phase 4 design | 2026-08-08 — PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [#20](https://github.com/Lytrix/MidiLooper/pull/20), [#21](https://github.com/Lytrix/MidiLooper/pull/21); [phase4 design](codebase_consistency_phase4_extraction_boundaries_refinement.md) | [codebase_consistency_maintainability_refinement.md](codebase_consistency_maintainability_refinement.md) |
 | **StorageManager** Phases 0–8 + remaining root trim (HITL, preamble/epilogue, status-query inlines); root ~422 LOC | 2026-08-08 — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (open); Task [#16](https://github.com/Lytrix/MidiLooper/issues/16) | [storagemanager_translation_unit_extraction_refinement.md](storagemanager_translation_unit_extraction_refinement.md) |
 | **`NoteEditFocus.cpp` TU extraction** (Phases 0–10 + LR) | Done — root TU removed | [noteditfocus_translation_unit_extraction_refinement.md](noteditfocus_translation_unit_extraction_refinement.md) |
 | **`Loop.cpp` TU extraction** (Phases 0–11) | Merged to `dev` | [loop_translation_unit_extraction_refinement.md](loop_translation_unit_extraction_refinement.md) |
