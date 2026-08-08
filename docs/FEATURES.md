@@ -1,4 +1,6 @@
-# Technical features (full list)
+# Technical features (reference checklist)
+
+**Not the implementation queue.** Shipped capability summary for onboarding and README cross-links. For what to build now, use [`Runtime/CURRENT_WORK.md`](Runtime/CURRENT_WORK.md). For deliverable-level shipped vs next, use [`DELIVERABLE_TRACKING.md`](DELIVERABLE_TRACKING.md). For current behavior, prefer [`Guides/`](Guides/).
 
 **Quick technical path:** Constants and channel/note layout live in [`include/MidiConfig.h`](../include/MidiConfig.h). To remap a controller, follow [`docs/Guides/MIDI_CONFIG_GUIDE.md`](Guides/MIDI_CONFIG_GUIDE.md) and keep [`droid/midilooper_v1.ini`](../droid/midilooper_v1.ini) in sync if you use the reference DROID patch.
 

@@ -1,7 +1,7 @@
 # Bucket 1 — Stabilization: known bugs + verification regime
 
 **Status:** Approved (Jun 12, 2026).
-**Intent anchor:** [../PROJECT_INTENT.md](../PROJECT_INTENT.md) — decision 3 (reliability first). Litmus tests 2 and 3 apply to every fix: the music keeps running, and fixes must not add distraction.
+**Intent anchor:** [Authority/PROJECT_INTENT.md](../Authority/PROJECT_INTENT.md) — decision 3 (reliability first). Litmus tests 2 and 3 apply to every fix: the music keeps running, and fixes must not add distraction.
 **Scope:** the four known bugs below, plus the start of the automated verification regime. No new features. No refactors beyond what a fix strictly requires (the fader/LED coupling observation is Bucket 2 scope).
 
 ## Reducing the at-the-hardware dependency

@@ -1,8 +1,17 @@
-# Feature plans and conventions
+# Feature plans — conventions and pointers
 
-The full list of **Guides** vs **Refinements** lives in **[Documentation index](README.md)**.
+**Not the implementation queue.** For what to build **now**, use [`Runtime/CURRENT_WORK.md`](Runtime/CURRENT_WORK.md). For deliverable-level shipped vs next, use [`DELIVERABLE_TRACKING.md`](DELIVERABLE_TRACKING.md).
 
-**Cursor-generated `.plan.md` files** are archived under **[`docs/Plans/`](Plans/README.md)**. **Phase 3 (multi-loop) requirements:** [Plans/phase-3-multi-loop.md](Plans/phase-3-multi-loop.md) — **Scope 1:** 8 loops per track; save/data design still anticipates **more slots** and **large per-loop storage**. Copy from `~/.cursor/plans/` when you add new exports.
+| Document | Role |
+|----------|------|
+| [`CURRENT_WORK.md`](Runtime/CURRENT_WORK.md) | **Sole implementation priority** — now / not now |
+| [`DELIVERABLE_TRACKING.md`](DELIVERABLE_TRACKING.md) | Shipped vs next at deliverable level (not a second queue) |
+| [`FEATURES.md`](FEATURES.md) | Technical capability checklist (reference — verify against Guides) |
+| **This file** | Plan naming conventions; Phase 3 / multi-loop pointer |
+| [`Plans/README.md`](Plans/README.md) | Design history conventions; archive policy |
+| [`README.md`](README.md) | Documentation index (Guides, Plans, Authority, Runtime) |
+
+**Cursor-generated `.plan.md` files** are archived under [`docs/Plans/archive/cursor-exports/`](Plans/archive/cursor-exports/). **Phase 3 (multi-loop) requirements:** [Plans/phase-3-multi-loop.md](Plans/phase-3-multi-loop.md) — **Scope 1:** 8 loops per track; save/data design still anticipates **more slots** and **large per-loop storage**. Copy from `~/.cursor/plans/` when you add new exports.
 
 ## Conventions
 

@@ -1,7 +1,9 @@
-# Project intent (relocated)
+# Project intent (redirect)
 
-Canonical project intent moved to the authority hierarchy:
+Canonical project intent lives in the authority hierarchy only:
 
-**[docs/Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md)**
+**[Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md)**
 
-Authority index: [docs/Authority/README.md](Authority/README.md).
+Do not add implementation priority here — use [`Runtime/CURRENT_WORK.md`](Runtime/CURRENT_WORK.md).
+
+Authority index: [Authority/README.md](Authority/README.md).
