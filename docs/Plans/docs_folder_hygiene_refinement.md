@@ -283,6 +283,8 @@ Do not rewrite the contents merely because they are being archived.
 
 ### Batch 2c — Closed bugfix plans
 
+**Status:** **Done** (2026-08-08) — 2 files → `docs/Plans/archive/bugfix/` (`Status: FROZEN` gate only; 28 retained at root).
+
 **Scope:** Archive `*_bugfix.md` when the relevant RC layer is closed.
 
 **Gate:** `Status: FROZEN` per [Multi-Stage-Bugfix-Workflow](../../.cursor/rules/Multi-Stage-Bugfix-Workflow.mdc). If clearly complete but lacks status, determine whether adding status is useful before archiving — do not auto-rewrite.

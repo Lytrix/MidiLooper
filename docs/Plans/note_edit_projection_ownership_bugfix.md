@@ -1,6 +1,6 @@
 # Note edit projection ownership — active investigation (RC6)
 
-**Prerequisite:** driver drift is **closed** — see [`note_edit_focus_driver_drift_bugfix.md`](note_edit_focus_driver_drift_bugfix.md) (FROZEN). Do not revisit RC1 unless new evidence shows `GEOM_APPLY,pipeline,…,0,3,0` or driver span mismatch before geometry.
+**Prerequisite:** driver drift is **closed** — see [`note_edit_focus_driver_drift_bugfix.md`](archive/bugfix/note_edit_focus_driver_drift_bugfix.md) (FROZEN). Do not revisit RC1 unless new evidence shows `GEOM_APPLY,pipeline,…,0,3,0` or driver span mismatch before geometry.
 
 **Primary captures:**
 
@@ -150,6 +150,6 @@ Overlap shorten emitting `type=1` Length rows in the store is **expected geometr
 
 ## Related docs
 
-- [`note_edit_focus_driver_drift_bugfix.md`](note_edit_focus_driver_drift_bugfix.md) — FROZEN RC1 investigation + `214302` final validation
+- [`note_edit_focus_driver_drift_bugfix.md`](archive/bugfix/note_edit_focus_driver_drift_bugfix.md) — FROZEN RC1 investigation + `214302` final validation
 - [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) — RC7 macro commit + RC8 reconstruction index
 - `docs/Plans/note_edit_scoped_display_handoff.md` — participant bind / display-count invariant

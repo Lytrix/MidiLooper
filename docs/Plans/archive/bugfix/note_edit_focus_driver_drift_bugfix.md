@@ -239,7 +239,7 @@ No new architectural ownership was introduced. Work stays within D19a owners: `E
 
 ## Related docs
 
-- [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) — **active** RC6 projection ownership (Phase 2)
+- [`note_edit_projection_ownership_bugfix.md`](../../note_edit_projection_ownership_bugfix.md) — **active** RC6 projection ownership (Phase 2)
 - [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) — RC7 macro commit + RC8 reconstruction (index)
 - `docs/Plans/note_edit_scoped_display_handoff.md` — projection duplicate / participant scope
 - `docs/Plans/note_edit_pitch_lane_highlight_bugfix.md` — highlight index vs `primaryNote`

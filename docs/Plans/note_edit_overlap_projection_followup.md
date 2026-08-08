@@ -1,6 +1,6 @@
 # Note edit post-geometry follow-up — index (RC7 / RC8)
 
-**Driver drift (RC1):** closed — [`note_edit_focus_driver_drift_bugfix.md`](note_edit_focus_driver_drift_bugfix.md) (FROZEN).
+**Driver drift (RC1):** closed — [`note_edit_focus_driver_drift_bugfix.md`](archive/bugfix/note_edit_focus_driver_drift_bugfix.md) (FROZEN).
 
 **Projection ownership (RC6):** active — [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md).
 
@@ -99,6 +99,6 @@ See [`note_edit_selection_index_stability_bugfix.md`](note_edit_selection_index_
 
 ## Related docs
 
-- [`note_edit_focus_driver_drift_bugfix.md`](note_edit_focus_driver_drift_bugfix.md) — FROZEN RC1
+- [`note_edit_focus_driver_drift_bugfix.md`](archive/bugfix/note_edit_focus_driver_drift_bugfix.md) — FROZEN RC1
 - [`note_edit_projection_ownership_bugfix.md`](note_edit_projection_ownership_bugfix.md) — active RC6
 - `docs/Plans/note_edit_scoped_display_handoff.md` — participant bind rules
