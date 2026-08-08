@@ -11,7 +11,7 @@ Last updated: 2026-08-08 (#18 Phase 3 merged PR #21)
 ### Codebase consistency & maintainability — Phase 4 (TrackManager extraction)
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)  
-Phases 1–3 shipped (PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [#20](https://github.com/Lytrix/MidiLooper/pull/20), [#21](https://github.com/Lytrix/MidiLooper/pull/21)). **Branch `refactor/trackmanager`** — Phase 0 scaffold + Phase RN (MidiLed rename) + PlaybackPolicy + MidiLedFeedback TUs shipped locally; root `TrackManager.cpp` ~1111 LOC; next: SlotMatrix → CaptureQueue → TransportTick.
+Phases 1–3 shipped (PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [#20](https://github.com/Lytrix/MidiLooper/pull/20), [#21](https://github.com/Lytrix/MidiLooper/pull/21)). **Branch `refactor/trackmanager`** — Phase 0–RN, PlaybackPolicy, MidiLedFeedback, SlotMatrix shipped locally; root ~828 LOC; next: CaptureQueue → TransportTick.
 
 ### StorageManager TU extraction — shipped (PR #17)
 
