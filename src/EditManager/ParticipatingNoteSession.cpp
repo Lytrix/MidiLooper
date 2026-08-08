@@ -61,6 +61,23 @@ NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
   return out;
 }
 
+bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId) {
+  return hasChangedOverlapNote(focus, noteId);
+}
+
+bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& focus,
+                                                          const NoteEditCurrentState& currentState,
+                                                          NoteId noteId) {
+  if (noteId == kInvalidNoteId || overlapParticipationLatchActive(focus, noteId)) {
+    return false;
+  }
+  const NoteEditCurrentNoteState* row = currentState.find(noteId);
+  if (row == nullptr) {
+    return false;
+  }
+  return currentStateRowIsOverlapParticipant(*row);
+}
+
 bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,
                                                       const NoteBaseline& current) {
   if (current.startTick == committed.startTick) {
@@ -156,8 +173,8 @@ bool visibleShortenedOverlapTailInventoryMasked(const NoteEditCurrentNoteState& 
   if (selectedNoteIdx < 0 || !focus.active || focus.movingNoteId == kInvalidNoteId) {
     return false;
   }
-  if (std::find(focus.changedOverlapNoteIds.begin(), focus.changedOverlapNoteIds.end(),
-                row.noteId) == focus.changedOverlapNoteIds.end()) {
+  // Inventory mask follows the transitional latch (cleared on sticky end-of-participation).
+  if (!overlapParticipationLatchActive(focus, row.noteId)) {
     return false;
   }
   const ParticipatingNoteState participant = buildParticipatingNoteState(row);

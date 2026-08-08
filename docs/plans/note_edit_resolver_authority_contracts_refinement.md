@@ -1,9 +1,8 @@
 # Note edit resolver authority contracts — refinement plan
 
 **Status:** architectural migration in progress — Stages 0–2, 4–8 shipped; Stage 7.5 **A–E** shipped
-(native; C HITL `020050`; D HITL `021407`/`022151`; E HITL `024301` PASS). §11 step 5 next.
-Stage 3 **shipped**.
-**Remaining work:** §11 approved five-step sequence; orthogonal model §12 (conceptual; code post–Stage 8).
+(HITL `024301` PASS). **§11 step 5 in progress** (5.1 latch/geometry query pin). Stage 3 **shipped**.
+**Remaining work:** §11 step 5 cleanup slices; orthogonal model §12 (conceptual; code post–Stage 8).
 **Purpose:** evidence-backed migration toward an explicit participating-note edit-session model —
 not a parallel bugfix sequence or an upfront state-machine rewrite.
 **OpenSpec disposition:** no new change. Contracts plan enforces `note-edit-current-state` without
@@ -197,7 +196,7 @@ edit interval
 |-------|------|--------|
 | **Stage 4 (shipped)** | **Membership authority** — participant set from `NoteEditCurrentState` so focus rebuild does not drop Hidden overlap participants (`161329`, `941d87a`) | **DONE** |
 | **Transitional** | `changedOverlapNoteIds` remains a **reconstructible Focus cache** filled from current state when non-empty — still touched by geometry/display until Stage 8 | **IN PROGRESS** |
-| **Post–Stage 8 cleanup (§11 step 5)** | Remove cache as stored semantic state; derive overlap-participant queries from participating-note model; drop `readStoreLinearBaseline` semantic inference | **NOT STARTED** |
+| **Post–Stage 8 cleanup (§11 step 5)** | Remove cache as stored semantic state; derive overlap-participant queries from participating-note model; drop `readStoreLinearBaseline` semantic inference | **In progress** (5.1 shipped; full removal blocked on 5.3 design) |
 
 Stage 4 **done** does **not** mean “do not touch `changedOverlapNoteIds`” — display projection (step 1) still migrates consumers; **removal** of the field waits until Stage 8 convergence.
 
@@ -623,7 +622,7 @@ Step 1 native test must prove the hidden row with: `currentSpan != committedSpan
 | **3** | **Stage 7.4 HITL** | Hidden → overlap cleared → geometry restored to `committedSpan` → **visible** → **paint restored** | Hidden = not displayable, not deleted | **Shipped** (native) — HITL `163621`/`175858` pending |
 | **4** | **Stage 8** | Grid + sidebar + snapshot — one **participant projection contract** (**C5**); separate rendering consumers | Final convergence | **Done** (code + HITL `224633`) |
 | **4.5** | **Stage 7.5** overlap restore + macro-commit geometry | A–E shipped; E HITL `024301` PASS. | Geometry/apply only — not projection | **Done** |
-| **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Derive membership from current state; `changedOverlapNoteIds` → query; remove live-store semantic inference; delete transitional caches/helpers; invariant assertions at authority boundary | No new behavior | **Next** |
+| **5** | **Semantic cleanup** (refactor phase — not behavioral migration) | Latch/geometry query pin (5.1); full latch removal needs design session (5.3) | No new behavior in 5.1–5.2 | **In progress** |
 
 ### Step 1 — projection gate (strong invariant)
 
@@ -695,13 +694,22 @@ Pitch edit tail (~68s): note **9** `2256–2591`, DNTE stable `len=335` across F
 
 ### Step 5 — semantic cleanup (explicit refactor phase)
 
-- Derive participant membership from current state / participating-note model
-- Derive changed-overlap queries; **remove** `changedOverlapNoteIds` cache
-- Remove `readStoreLinearBaseline` and similar **semantic** inference from live store
-- Delete transitional helpers (`rowProjectsToStore` semantic uses, etc.)
-- Assert invariants at authority boundary
+**Invariant (pinned):** `currentStateRowIsOverlapParticipant` (geometry) and
+`overlapParticipationLatchActive` / `changedOverlapNoteIds` (latch) are **not** equivalent after
+`clearChangedOverlapParticipationWhenInteractionCleared` — latch drops, shortened `currentSpan` stays.
 
-**Not** part of steps 1–4. Stage 4 membership authority is **shipped**; step 5 **removes** the transitional latch.
+| Slice | Deliver | Status |
+|-------|---------|--------|
+| **5.1** | Query aliases + pin latch≠geometry divergence; inventory mask uses latch query | **Shipped** (native) |
+| **5.2** | Migrate display/inventory readers to named latch/geometry queries; dual-assert where safe | **Partial** (display mask + paint path) |
+| **5.3** | Encode sticky end-of-participation in current/participating state (replace latch forget) | **Design session** — ownership |
+| **5.4** | Geometry pipeline + pre-commit use derived participation only | Blocked on 5.3 |
+| **5.5** | Delete `changedOverlapNoteIds`; drop live-store membership reconcile; OpenSpec compat flag separate | Blocked on 5.3–5.4 |
+
+- `readStoreLinearBaseline` — already removed from tree
+- `NOTE_EDIT_PROJECTED_STORE_COMPAT` / `rowProjectsToStore` semantic uses — separate track after latch removal
+
+**Not** part of steps 1–4. Full latch deletion requires encoding sticky end-of-participation (5.3).
 
 ---
 

@@ -106,7 +106,7 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
     return false;
   }
-  if (!hasChangedOverlapNote(focus, noteId) &&
+  if (!overlapParticipationLatchActive(focus, noteId) &&
       focus.baselineMap.find(noteId) == focus.baselineMap.end()) {
     return false;
   }
@@ -300,7 +300,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     }
     if (dn.noteId != kInvalidNoteId &&
         std::find(participants.begin(), participants.end(), dn.noteId) == participants.end() &&
-        hasChangedOverlapNote(focus, dn.noteId)) {
+        overlapParticipationLatchActive(focus, dn.noteId)) {
       NoteBaseline live{};
       if (!findLinearNoteSpanForNoteId(mutableEvents, dn.noteId, channel, live, dn.startTick,
                                        loopLength)) {

@@ -83,11 +83,22 @@ ParticipatingNoteInvariantResult verifyParticipatingNoteInvariants(
 ParticipatingSessionInvariantResult verifyParticipatingSessionInvariants(
     const ParticipatingNoteSession& session);
 
-/// Overlap closure participant: session-mutated overlap row (not the mover).
+/// Geometry-derived overlap participation: Hidden/Deleted or currentSpan ≠ committedSpan.
+/// After `clearChangedOverlapParticipationWhenInteractionCleared`, this can remain true while
+/// the transitional latch is false — latch remains pipeline authority until §11 step 5 encodes
+/// sticky end-of-participation in current/participating state (design session).
 bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row);
 
 NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
     const NoteEditCurrentState& currentState, NoteId movingNoteId);
+
+/// Transitional latch membership (`NoteEditFocus::changedOverlapNoteIds`).
+bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId);
+
+/// True when geometry still differs from committed but the latch was cleared (sticky forget).
+bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& focus,
+                                                          const NoteEditCurrentState& currentState,
+                                                          NoteId noteId);
 
 /// Same-start shortened tail or head-trimmed span that may leave-restore to committed baseline.
 bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,

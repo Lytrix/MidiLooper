@@ -168,6 +168,40 @@ void test_participating_deleted_does_not_qualify_for_leave_restore_022849() {
   TEST_ASSERT_FALSE(participatingNoteNeedsFullCommittedLeaveRestore(deleted));
 }
 
+void test_overlap_participation_latch_diverges_after_sticky_clear() {
+  // §11 step 5.1: clearChangedOverlapParticipationWhenInteractionCleared drops the latch while
+  // leaving Visible shortened currentSpan — geometry query remains true, latch false.
+  constexpr NoteId kOverlapId = 9;
+  constexpr NoteId kMoverId = 11;
+  constexpr uint8_t kPitch = 88;
+  const NoteBaseline kCommitted{kPitch, 100, 1488, 1966};
+  const NoteBaseline kStub{kPitch, 100, 1488, 1774};
+  const NoteBaseline kMoverPast{kPitch, 100, 1200, 1247};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, kCommitted, kStub, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, kMoverPast, kMoverPast, NoteEditPresenceType::Visible);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = kMoverPast;
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
+  TEST_ASSERT_TRUE(overlapParticipationLatchActive(focus, kOverlapId));
+  TEST_ASSERT_FALSE(
+      overlapParticipationLatchClearedWhileGeometryDiffers(focus, currentState, kOverlapId));
+
+  clearChangedOverlapParticipationWhenInteractionCleared(focus, currentState, kMoverPast,
+                                                         kMoverId);
+  TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
+  TEST_ASSERT_FALSE(overlapParticipationLatchActive(focus, kOverlapId));
+  TEST_ASSERT_TRUE(
+      overlapParticipationLatchClearedWhileGeometryDiffers(focus, currentState, kOverlapId));
+  TEST_ASSERT_EQUAL_UINT32(kStub.endTick, currentState.find(kOverlapId)->currentSpan.endTick);
+}
+
 void test_overlap_closure_active_and_cleared() {
   ParticipatingNoteState hidden{};
   hidden.noteId = 17;
@@ -194,6 +228,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
   RUN_TEST(test_participating_leave_restore_hidden_qualifies);
   RUN_TEST(test_participating_deleted_does_not_qualify_for_leave_restore_022849);
+  RUN_TEST(test_overlap_participation_latch_diverges_after_sticky_clear);
   RUN_TEST(test_participating_visible_shortened_does_not_qualify_for_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_flag_set);
