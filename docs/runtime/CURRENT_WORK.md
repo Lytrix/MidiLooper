@@ -2,26 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (Stage 7.5.E HITL `024301` PASS)
+Last updated: 2026-08-08 (§11 step 5.1 latch/geometry query pin)
 
 ---
 
 ## Now implementing
 
-### Note edit resolver authority contracts — Stage 7.5 done; §11 step 5 next (`note_edit_resolver_authority_contracts_refinement`)
+### Note edit resolver authority contracts — §11 step 5 (`note_edit_resolver_authority_contracts_refinement`)
 
 **Plan:** [`docs/plans/note_edit_resolver_authority_contracts_refinement.md`](../plans/note_edit_resolver_authority_contracts_refinement.md) §11 step 5
 
 | Step | Status |
 |------|--------|
-| 1 — full-overlap Hide paint | **Done** (`8596950`) |
-| 2 — C9 contract tests | **Done** (`ea39f1c`) |
-| 3 — Stage 7.4 projection leave-restore (native) | **Done** (`067dc71`) |
-| 4 — Stage 8 sidebar/snapshot projection (C5) | **Done** — HITL `224633` PASS |
-| 4.5.A–E — Stage 7.5 geometry | **Done** — E HITL `024301` PASS |
-| 5 — semantic cleanup | **Next** |
+| 1–4.5 | **Done** (7.5.E HITL `024301`) |
+| 5.1 — latch vs geometry query pin | **Done** (native) |
+| 5.2 — migrate safe readers | Next |
+| 5.3 — encode sticky end-of-participation | Design session before coding |
+| 5.4–5.5 — remove `changedOverlapNoteIds` | Blocked on 5.3 |
 
-**E HITL (`024301` vs `022849`):** @70.076 `interactions=2 actions=3` Hide **11** + Shorten **12**; @70.117 Hide **12** → `storeNoteOns=10`. After commit @71.582, reselect uses `baselineMap=10` (not 12); no `RestoreNote` for sealed **11**/**12**. Session leave-restore still OK earlier (@48.900 / @50.795).
+**5.1:** `overlapParticipationLatchActive` / `overlapParticipationLatchClearedWhileGeometryDiffers` pin that sticky clear drops the latch while shortened `currentSpan` remains. Full cache removal is not a drop-in derive.
 
 ### Note edit current state — ownership transfer (`note-edit-current-state`)
 

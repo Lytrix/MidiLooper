@@ -121,7 +121,10 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
 OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId);
 const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId);
 
-/// Delete authority for `changedOverlapNoteIds` — see the member comment on `NoteEditFocus`.
+/// Transitional latch membership (`changedOverlapNoteIds`). Prefer
+/// `overlapParticipationLatchActive` at call sites migrating toward §11 step 5 queries.
+/// Geometry-derived membership is `currentStateRowIsOverlapParticipant` — these diverge after
+/// sticky clear (`clearChangedOverlapParticipationWhenInteractionCleared`).
 bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
 void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
