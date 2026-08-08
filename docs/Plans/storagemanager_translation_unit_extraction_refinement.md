@@ -1,8 +1,8 @@
 # StorageManager translation-unit extraction
 
 **Kind:** refinement  
-**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — remaining root trim (work identity)  
-**Branch:** `refactor/storagemanager-remaining` (remaining slices → PR into `dev`); historical Phases 0–8 on `refactor/storagemanager`  
+**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — **closed** (PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) merged 2026-08-08)  
+**Branch:** `refactor/storagemanager-remaining` (merged); historical Phases 0–8 on `refactor/storagemanager`  
 **Parent context:** [storage_session_state_refactor_handoff.md](storage_session_state_refactor_handoff.md), [deferred_storage_commit_parse_split_enhancement.md](deferred_storage_commit_parse_split_enhancement.md), firmware audit P1-3  
 **Prerequisite merged:** PR #8 — loop-slot SD payload RAM cache (`hasLoopSlotPayloadOnSdInRam`)  
 **Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) — Decision = Refinement; plan is planning artifact; no OpenSpec (behavior-preserving)

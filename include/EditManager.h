@@ -181,13 +181,12 @@ public:
     const MidiEventVec& noteEditSessionProjectionEvents() const;
     /// Projection owner: rebuild EditSession.store from noteEditCurrentState.
     void refreshNoteEditSessionProjection(uint8_t channel);
+    /// Projection owner: project → micro-normalize closure → re-admit visible spans (fader latch).
+    bool normalizeNoteEditClosureProjection(Track& track);
+    /// Projection owner: project → closure normalize → normalizeAll → re-admit (macro commit).
+    void normalizeNoteEditSessionProjectionForCommit(Track& track);
     NoteEditCurrentState& noteEditCurrentStateMut();
     const NoteEditCurrentState& noteEditCurrentState() const;
-#if NOTE_EDIT_PROJECTED_STORE_COMPAT
-    /// Compat direct projected-store mutation — remove after tasks.md §5–7 writer migration.
-    MidiEventVec& mutNoteEditSessionProjectionEventsCompat();
-    MidiEventVec& mutEditProjectionEventsCompat(Track& track);
-#endif
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
     void bumpSessionPreviewRevision();

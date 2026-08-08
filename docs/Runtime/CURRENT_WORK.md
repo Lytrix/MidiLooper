@@ -2,28 +2,24 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (StorageManager TU lifecycle + HITL extract)
+Last updated: 2026-08-08 (PR #17 merged; #18 Phase 1.1b)
 
 ---
 
 ## Now implementing
 
-### StorageManager TU extraction — remaining root trim
+### Codebase consistency & maintainability refinement
 
-**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
-**Branch:** `refactor/storagemanager-remaining` → PR into `dev`  
-**Plan:** [`docs/Plans/storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md)  
-**Decision:** Refinement — behavior-preserving; ownership / transitions unchanged  
-**Lifecycle:** Discovery → investigation (root leftovers after Phases 0–8) → understand (HITL belongs with serial dispatch) → decide (refinement) → work item #16 → CURRENT_WORK → branch → implement
+**GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
+**Plan:** [`docs/Plans/codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)  
+**Branch:** `refactor/note-edit-projected-store-retire` → PR into `dev`
 
-| Slice | Status |
+| Phase | Status |
 |-------|--------|
-| Phases 0–8 (primary extract) | **Done** (prior) |
-| HITL catalog / quarantine → `StorageManagerHitlSerial.cpp` | **Done** (`3760387`) |
-| `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | **Done** (`ff3a5e2`) |
-| Deferred-save status queries → `StorageManagerStatusQueries.inl` | **Done** (2026-08-08) — build + native this slice |
+| 1 — Authority | **In progress** — **1.1 done**; next **1.2** selection tick SoT |
+| 2–4 | Queued |
 
-**Exit:** Implementation done — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev`; after merge: docs closeout, close #16.
+**Phase 1.1 pin:** Retire projected-store mutation bypasses (option 1). Persistence stays queued.
 
 ### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 
@@ -51,7 +47,7 @@ Last updated: 2026-08-08 (StorageManager TU lifecycle + HITL extract)
 
 **Parked hang hunt:** [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md).
 
-**Open choice:** `NOTE_EDIT_PROJECTED_STORE_COMPAT` removal vs persistence/overlay hardening — confirm with user.
+**Queued behind #18 Phase 1.1** (COMPAT retirement in progress).
 
 ---
 
@@ -60,6 +56,7 @@ Last updated: 2026-08-08 (StorageManager TU lifecycle + HITL extract)
 | Slice | Decision / commit | Evidence |
 |-------|-------------------|----------|
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
+| StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |
 | Playing move/length audition | `15c5750` | [`113626`](../../captures/session_20260808_113626.log), [`115120`](../../captures/session_20260808_115120.log); [bugfix doc](../Plans/note_edit_playing_move_audition_bugfix.md) |
 | Resolver §12 orthogonal state | DEC-030; `7af8671` | Native 969/969; HITL [`112202`](../../captures/session_20260808_112202.log) @88.669 |
 | Edit-session-action-geometry archive | 2026-08-05 | [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/) |

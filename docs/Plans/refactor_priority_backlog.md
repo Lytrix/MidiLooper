@@ -34,6 +34,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 
 | Item | Category | Impact | Risk | Trigger / timing | Source |
 |------|----------|--------|------|------------------|--------|
+| **Codebase consistency refinement** (authority → API → cleanup) | Structural | High — ownership language | Medium–High (Phase 1) | **NOW** #18 — Phase 1.1c next | [codebase_consistency_maintainability_refinement.md](codebase_consistency_maintainability_refinement.md) |
 | **Persistence / overlay hardening** | Product | High — active milestone | High | CURRENT_WORK queue | [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md), [ROADMAP.md](../Runtime/ROADMAP.md) |
 | **Dedicated HITL refactor** (layered **`base`** gate device PASS) | Test infra | High — regression gate | Medium | Parked slice; confirm in CURRENT_WORK | [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md) |
 
