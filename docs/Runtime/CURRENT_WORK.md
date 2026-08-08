@@ -23,7 +23,7 @@ Last updated: 2026-08-08 (StorageManager TU lifecycle + HITL extract)
 | `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | **Done** (`ff3a5e2`) |
 | Deferred-save status queries → `StorageManagerStatusQueries.inl` | **Done** (2026-08-08) — build + native this slice |
 
-**Exit:** #16 checklist complete — open PR → `dev`, docs closeout, close issue.
+**Exit:** Implementation done — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev`; after merge: docs closeout, close #16.
 
 ### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 
