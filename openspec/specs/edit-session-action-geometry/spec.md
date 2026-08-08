@@ -7,32 +7,31 @@ extensions use the same pipeline entry shape later.
 
 **Guides:** [`docs/Guides/MOVE_NOTE_LOGIC.md`](../../docs/Guides/MOVE_NOTE_LOGIC.md),
 [`docs/Guides/NOTE_WRAPPING_LOGIC.md`](../../docs/Guides/NOTE_WRAPPING_LOGIC.md) (display wrap vs live edit).
-
 ## Requirements
-
 ### Requirement: EditSessionAction geometry pipeline
 
 Live geometry edits (`EditSessionType::Note` first; Loop and ControlChange later) SHALL use a declarative pipeline:
 
-1. **Transaction baseline** — immutable **`baselineMap`** per **edit driver**; full loop in this change
-2. **Edited geometry** — **`EditorSelection`** plus one **linear `NoteBaseline` causing span** per selected note this tick (`focus.last` for **`primaryNote`**; see design § Edited geometry)
-3. **Edit projection** (D20) — **`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`** produce linear spans before analysis
-4. **Edit session geometry orchestrator** — determine **changed causing notes** and **eligible overlap pairs**; MUST NOT delegate selection or latch logic to analyze
-5. **`analyzeEditSessionInteractions`** — pure geometry facts for supplied causing notes; **positive interaction graph** only (omit non-overlapping pairs; no **None** enum)
-6. **`groupEditSessionInteractionsByTarget`** — group interactions **per target `NoteId`**; ephemeral; MUST NOT persist across ticks
-7. **`resolveConstrainedGeometry`** — for each **constrained geometry target note** (see Resolver scope): baseline + per-target interactions → **`ConstrainedNoteGeometry`**; MUST NOT know **`EditSessionActionType`**
-8. **`buildEditSessionActions`** — **edit session action builder**: inputs **`constrainedGeometry`**, **`editedGeometry`**, **`transactionBaseline`**, **`liveStore`**; compute minimal ordered **`EditSessionActions`**; **omit actions that would not change live store**; MUST NOT mutate live store; MUST NOT inspect **`EditSessionInteraction`** directly
-9. **`applyEditSessionActions`** — **edit session action apply**; the ONLY subsystem that mutates **live store** for live geometry (includes **boundary split** sub-step, D10); **`normalizeWindow`** is separate (edit closure only)
-10. **`normalizeWindow`** on edit closure — geometry tick path boundary (existing DEC-014)
-11. **Read-only projection** — MUST NOT write back to storage
+1. **Transaction baseline** — immutable **`baselineMap`** per **edit driver**.
+2. **Current note state** — current editable spans and presence from **NoteEditCurrentState** keyed by `NoteId`.
+3. **Edited geometry** — **`EditorSelection`** plus one **linear `NoteBaseline` causing span** per selected note this tick.
+4. **Edit projection** (D20) — **`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`** produce linear spans before analysis.
+5. **Edit session geometry orchestrator** — determine **changed causing notes** and **eligible overlap pairs**; MUST NOT delegate selection or latch logic to analyze.
+6. **`analyzeEditSessionInteractions`** — pure geometry facts for supplied causing notes and current-state target spans; **positive interaction graph** only (omit non-overlapping pairs; no **None** enum).
+7. **`groupEditSessionInteractionsByTarget`** — group interactions **per target `NoteId`**; ephemeral; MUST NOT persist across ticks.
+8. **`resolveConstrainedGeometry`** — for each **constrained geometry target note** (see Resolver scope): committed baseline + current-state span/presence + per-target interactions → **`ConstrainedNoteGeometry`**; MUST NOT know **`EditSessionActionType`**.
+9. **`buildEditSessionActions`** — **edit session action builder**: inputs **`constrainedGeometry`**, **`editedGeometry`**, **`transactionBaseline`**, and **current note state**; compute minimal ordered **`EditSessionActions`**; **omit actions that would not change current state**; MUST NOT mutate current state or projected store; MUST NOT inspect **`EditSessionInteraction`** directly.
+10. **`applyEditSessionActions`** — **edit session action apply**; the ONLY subsystem that mutates current note state for live geometry actions, then refreshes **`EditSession.store`** from canonical projection.
+11. **`normalizeWindow`** on edit closure — geometry tick path boundary (existing DEC-014).
+12. **Read-only projection** — MUST NOT write back to committed storage.
 
 The system MUST NOT use a restore-first prelude or persistent overlap scratch as the primary model. The system MUST NOT maintain a persistent **`ConstraintRegistry`** between geometry ticks. The system MUST NOT reintroduce **`ResolutionPolicy`** as a separate pipeline stage.
 
 #### Scenario: Geometry pipeline mutates only during apply
 
 - **WHEN** a NOTE_EDIT geometry update runs
-- **THEN** analysis, grouping, resolution, and action building do not mutate **live store**
-- **AND** **`applyEditSessionActions`** performs the storage mutation
+- **THEN** analysis, grouping, resolution, and action building do not mutate current note state or projected store
+- **AND** **`applyEditSessionActions`** performs the current-state mutation and projection refresh
 
 ### Requirement: Edited geometry
 
@@ -66,124 +65,48 @@ The system MUST NOT use a restore-first prelude or persistent overlap scratch as
 
 ### Requirement: Live store
 
-**Live store** (synonyms: **session store**, **current session store**) SHALL mean the in-RAM MIDI event buffer for the active NOTE_EDIT session — note on/off pairs as they exist at the current moment, before this tick’s **`applyEditSessionActions`**.
+**Live store** (synonyms: **session store**, **current session store**) SHALL mean the in-RAM MIDI event buffer projection for the active NOTE_EDIT session — note on/off pairs projected from current note state.
 
-- During NOTE_EDIT, live store SHALL be **`EditSession.store`** / **`EditManager::sessionMidiEvents()`**.
-- Analyze, group-by-target, and resolve stages MUST NOT mutate live store.
-- **`applyEditSessionActions`** SHALL be the only subsystem that mutates live store for live geometry.
-- **`buildEditSessionActions`** SHALL compare **constrained geometry** and **transaction baseline** against **live store** to emit actions.
-- Live store MUST NOT be confused with transaction baseline, edited geometry, committed loop passes, or **`overlapNotes`**.
+- During NOTE_EDIT, live store SHALL be **`EditSession.store`** / **`EditManager::sessionMidiEvents()`** as a canonical projection.
+- Analyze, group-by-target, resolve, and action-builder stages MUST NOT mutate live store.
+- **`applyEditSessionActions`** SHALL mutate current note state and refresh live store from projection.
+- **`buildEditSessionActions`** SHALL compare **constrained geometry** and **edited geometry** against current note state to emit actions.
+- Live store MUST NOT be confused with transaction baseline, edited geometry, committed loop passes, current note state, or **`overlapNotes`**.
+- Normal NOTE_EDIT geometry readers MUST NOT reconstruct editable current state from live-store event absence or pair scans.
 
 #### Scenario: Live store unchanged until apply
 
 - **WHEN** analyze, interaction grouping, constrained geometry resolution, and edit session action builder run
 - **THEN** live store event count and ticks are unchanged
-- **AND** live store updates only when **`applyEditSessionActions`** runs
+- **AND** live store updates only when **`applyEditSessionActions`** refreshes projection after current-state mutation
 
-#### Scenario: Edit session action builder reads live store for restore
+#### Scenario: Edit session action builder reads current state for restore
 
-- **GIVEN** **`ConstrainedNoteGeometry(A)`** matches baseline but live store still hides **A**
+- **GIVEN** **`ConstrainedNoteGeometry(A)`** resolves A to visible baseline geometry
+- **AND** current state marks **A** as `Hidden`
 - **WHEN** **`buildEditSessionActions`** runs
 - **THEN** **RestoreNote** is emitted for **A**
-- **AND** the comparison uses live store pairs, not **`overlapNotes`**
+- **AND** the comparison uses current-state presence and span, not projected live-store pair absence alone
 
-#### Scenario: Note edit pass commit compares baseline to final live store
+#### Scenario: Note edit pass commit compares baseline to current state
 
 - **WHEN** **`commitAllPendingNoteEditActions`** runs
-- **THEN** **`EditPass`** rows are derived from **transaction baseline compared to final live store**
-- **AND** not from **`overlapNotes`**
+- **THEN** **`EditPass`** rows are derived from **transaction baseline compared to note edit current state**
+- **AND** not from **`overlapNotes`** or projected live-store absence
 
-#### Scenario: Apply-owned rows are diagnostic only
+#### Scenario: Legacy store diff is diagnostic only
 
-- **GIVEN** **`applyOwnedEditPassRows`** exist during NOTE_EDIT migration
-- **WHEN** **`commitAllPendingNoteEditActions`** runs
-- **THEN** committed **`EditPass`** rows are derived from **transaction baseline compared to final live store**
-- **AND** **`applyOwnedEditPassRows`** MAY be compared for diagnostics / parity logging
-- **AND** **`applyOwnedEditPassRows`** MUST NOT change the committed **`EditPass`** output
+- **GIVEN** legacy live-store diff output exists during NOTE_EDIT migration
+- **WHEN** **`commitAllPendingNoteEditActions`** runs after current-state commit authority is active
+- **THEN** committed **`EditPass`** rows are derived from current state
+- **AND** legacy live-store diff output MAY be compared for diagnostics / parity logging
+- **AND** legacy live-store diff output MUST NOT change the committed **`EditPass`** output
 
-#### Scenario: Analyzer independent of edit-session state
+#### Scenario: Analyzer independent of edit-session projection mutation
 
 - **WHEN** `analyzeEditSessionInteractions` runs
-- **THEN** it receives only causing-note inputs and geometry spans passed by the orchestrator
-- **AND** it does not read encoder latches, **`EditorSelection`** emit policy, or prior-frame session state
-
-#### Scenario: Orchestrator determines changed causing notes
-
-- **GIVEN** selected note **B**'s span unchanged this tick (latch matches current geometry)
-- **WHEN** the geometry update pipeline runs
-- **THEN** **B** is not passed as a causing input to analyze unless another orchestrator rule applies (e.g. **Add**)
-- **AND** **`geometryChangedThisTick`** is evaluated only in the orchestrator, not inside analyze
-
-#### Scenario: Pitch change re-evaluates source lane
-
-- **GIVEN** causing note **B** hid/shortened notes on pitch **P0** earlier under the same edit driver
-- **WHEN** **B** changes pitch to **P1**
-- **THEN** analyze re-evaluates targets on **P1** (destination) and **P0** (source lane vacated)
-- **AND** former targets on **P0** may receive **RestoreNote** when interactions rebuild empty
-
-#### Scenario: Add uses move interaction logic
-
-- **GIVEN** the user adds a selected note overlapping an existing note on the same pitch
-- **WHEN** analyze runs for the new causing note
-- **THEN** the same **InteractionType** rules apply as for **Move** (**OverlapNoteOn** / **OverlapNoteOff** / **CompleteCover**)
-
-#### Scenario: Same-tick note-on and note-off
-
-- **GIVEN** causing **note-on** and target **note-off** share the same linear tick
-- **WHEN** **edit session action apply** runs **boundary split**
-- **THEN** **note-on** remains at that tick
-- **AND** target **note-off** moves to **`onTick − 1`**
-
-#### Scenario: Geometry parity classify fixtures
-
-- **WHEN** native parity fixtures run (internal swallow, head-on overlap, tail overlap, external cover, no overlap)
-- **THEN** **`InteractionType`** matches the locked classify order after **Edit projection** (D20)
-
-#### Scenario: Selected set is one editing domain
-
-- **GIVEN** notes **B** and **D** are both in **`EditorSelection.selectedNotes`**
-- **WHEN** the orchestrator builds analyze inputs
-- **THEN** **(B, D)** and **(D, B)** are not passed to analyze in this change
-
-#### Scenario: Add note triggers overlap
-
-- **GIVEN** the user adds a note on an existing note's span
-- **WHEN** the new note is selected and passed as causing input
-- **THEN** an **`EditSessionInteraction`** is produced with the new note as **causingNoteId**
-- **AND** the existing note is evaluated as target
-
-#### Scenario: Delete causing note restores hidden target
-
-- **GIVEN** selected note **B** caused **A** to be hidden
-- **WHEN** **B** is deleted and analyze rebuilds without **(B, A)**
-- **THEN** **`resolveConstrainedGeometry(A)`** matches baseline
-- **AND** **RestoreNote** is emitted by the edit session action builder when live store still hides **A**
-
-#### Scenario: Restore is consequence not imperative
-
-- **GIVEN** no active constraints remain for target **A**
-- **WHEN** **`resolveConstrainedGeometry(A)`** equals baseline but live store still reflects hide/shorten
-- **THEN** the edit session action builder emits **RestoreNote**
-- **AND** no restore history or reverse-restore chain is consulted
-
-#### Scenario: Wrapped target before analyze
-
-- **GIVEN** target **A** is a wrapped display note
-- **WHEN** analyze runs
-- **THEN** **Edit projection** has produced linear **`baselineSpan`** for **A** before **`InteractionType`** is classified
-
-#### Scenario: Causing selected, target not selected
-
-- **GIVEN** **B** ∈ **`selectedNotes`** and **A** ∉ **`selectedNotes`**
-- **WHEN** edited geometry for **B** overlaps **A**
-- **THEN** an **`EditSessionInteraction`** is produced for **(B, A)** as usual
-
-#### Scenario: Selected-to-selected overlap pairs skipped in this change
-
-- **GIVEN** notes **B** and **C** are both selected on the same pitch
-- **WHEN** a **Length** edit on **B** overlaps **C**
-- **THEN** **(B, C)** is **not** passed to analyze in this change
-- **AND** **selected-to-selected overlap when geometry changed** is **deferred** until future multi-select length editing
+- **THEN** it receives only causing-note inputs, current target spans/presence, and geometry spans passed by the orchestrator
+- **AND** it does not mutate current state or projected live store
 
 ### Requirement: Positive interaction graph
 
@@ -358,30 +281,22 @@ For baseline **B** and incoming interactions **I[]**:
 
 ### Requirement: Edit session action builder inputs
 
-**`buildEditSessionActions`** SHALL accept:
+**`buildEditSessionActions`** SHALL accept constrained geometry, edited geometry, transaction baseline, and a read-only view of note edit current state.
 
-```cpp
-EditSessionActions buildEditSessionActions(
-    span<const ConstrainedNoteGeometry> constrainedGeometry,
-    const EditedGeometry& editedGeometry,
-    const BaselineMap& transactionBaseline,
-    const MidiEventVec& liveStore);
-```
+The builder SHALL observe these inputs only; it SHALL compute **`EditSessionActions`**; it SHALL not mutate current state or projected live store.
 
-| Input | Authority |
-|-------|-----------|
-| **`constrainedGeometry`** | Desired overlap-target geometry from resolve |
-| **`editedGeometry`** | User intent this tick (causing spans) |
-| **`transactionBaseline`** | Original note geometry for this edit driver |
-| **`liveStore`** | Current session RAM state |
+Input authorities:
 
-The builder SHALL **observe** these inputs only (plus types above); it SHALL **compute** **`EditSessionActions`**; it SHALL **not mutate** live store.
+- **`constrainedGeometry`** — desired overlap-target geometry from resolve.
+- **`editedGeometry`** — user intent this tick for causing spans.
+- **`transactionBaseline`** — original note geometry for this edit driver.
+- **`NoteEditCurrentState`** — current editable span and presence for each `NoteId`.
 
 #### Scenario: Builder observes inputs without mutation
 
-- **WHEN** **`buildEditSessionActions`** receives constrained geometry, edited geometry, transaction baseline, and live store
+- **WHEN** **`buildEditSessionActions`** receives constrained geometry, edited geometry, transaction baseline, and current note state
 - **THEN** it emits **`EditSessionActions`**
-- **AND** live store remains unchanged until **`applyEditSessionActions`**
+- **AND** current note state and projected live store remain unchanged until **`applyEditSessionActions`**
 
 ### Requirement: Boundary split ownership
 
@@ -399,16 +314,16 @@ The builder SHALL **observe** these inputs only (plus types above); it SHALL **c
 
 **`ConstrainedNoteGeometry`** SHALL be the sole description of desired overlap-target geometry during a geometry update tick.
 
-**`buildEditSessionActions`** SHALL derive overlap-target actions from **constrained geometry**, **transaction baseline**, and **live store**; causing-note actions from **edited geometry** and **live store**.
+**`buildEditSessionActions`** SHALL derive overlap-target actions from **constrained geometry**, **transaction baseline**, and current note state; causing-note actions from **edited geometry** and current note state.
 
-**`buildEditSessionActions`** SHALL **omit actions that would not change live store** for that **`NoteId`**.
+**`buildEditSessionActions`** SHALL **omit actions that would not change current state** for that **`NoteId`**.
 
 **`buildEditSessionActions`** MUST NOT inspect **`EditSessionInteraction`** or **`EditSessionInteractionsByTarget`** directly.
 
 #### Scenario: Builder consumes constrained geometry, not interactions
 
 - **WHEN** overlap-target desired geometry is available as **`ConstrainedNoteGeometry`**
-- **THEN** **`buildEditSessionActions`** maps that geometry to store-changing actions
+- **THEN** **`buildEditSessionActions`** maps that geometry to current-state-changing actions
 - **AND** it does not inspect **`EditSessionInteraction`** rows
 
 ### Requirement: EditSessionAction types (NOTE_EDIT first implementation)
@@ -513,3 +428,4 @@ The pipeline entry points SHALL accept **`EditSessionType`** so Loop and Control
 - **WHEN** NOTE_EDIT calls the pipeline entry points
 - **THEN** the API carries **`EditSessionType::Note`**
 - **AND** future Loop or ControlChange extensions do not require renaming **`EditSessionAction`**
+

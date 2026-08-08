@@ -17,6 +17,7 @@
 - **StorageSession persistence refactor (DEC-012, Jun 2026):** job RAM on `storageSession`; FSM split `WorkspaceSave` / `RevisionCommit` / `RevisionLoad` + `Overlay.cpp`; revision-load request vocabulary; normative specs `revision-load`, `storage-session-jobs`, `storage-session-layout`
 - DROID USB host MIDI buttons/faders (`MidiHandler`, `MidiButtonManager`, `MidiFaderManager`)
 - **Commit-centered lazy slot load (DEC-026/027, Jul 2026):** Phase A archived `2026-07-18-unified-commit-lazy-slot-load` (gates [`224607`](../captures/session_20260718_224607.log), [`230145`](../captures/session_20260718_230145.log)). **Phase B DeferredJobScheduler** archived `2026-07-19-deferred-job-scheduler` (gates [`231510`](../captures/session_20260718_231510.log), [`022107`](../captures/session_20260719_022107.log)); normative `openspec/specs/deferred-job-scheduler/`.
+- **NoteEditCurrentState ownership (DEC-029, Aug 2026):** NOTE_EDIT editable geometry keyed by `NoteId`; `EditSession.store` is projection only. OpenSpec archived `2026-08-08-note-edit-current-state`; normative `openspec/specs/note-edit-current-state/`; HITL [`112202`](../captures/session_20260808_112202.log), [`115120`](../captures/session_20260808_115120.log), [`032118`](../captures/session_20260808_032118.log).
 
 **Not in firmware** (docs may suggest otherwise):
 

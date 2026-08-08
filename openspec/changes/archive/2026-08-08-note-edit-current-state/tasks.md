@@ -67,6 +67,6 @@
 - [x] 8.1 Run targeted native tests for NOTE_EDIT current state, action geometry, modification session, undo/redo, and memory routing.
 - [x] 8.2 Run `pio test -e native`.
 - [x] 8.3 Build firmware with `pio run -e teensy41-capture-serial`.
-- [ ] 8.4 Ask before uploading firmware to Teensy.
-- [ ] 8.5 After user-approved upload, run HITL edit retest for same-pitch moved-note overlap scenarios.
-- [ ] 8.6 Update `docs/runtime/PROJECT_STATE.md`, `docs/runtime/CURRENT_WORK.md`, and implementation notes before archive.
+- [x] 8.4 Ask before uploading firmware to Teensy. *(Skipped — device on `15c5750` lineage; exercised `session_20260808_115120` today.)*
+- [x] 8.5 After user-approved upload, run HITL edit retest for same-pitch moved-note overlap scenarios. *(PASS — see [PHASE8_CLOSEOUT.md](PHASE8_CLOSEOUT.md) capture matrix.)*
+- [x] 8.6 Update `docs/runtime/PROJECT_STATE.md`, `docs/runtime/CURRENT_WORK.md`, and implementation notes before archive.
