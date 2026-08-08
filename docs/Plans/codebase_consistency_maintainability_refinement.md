@@ -2,7 +2,7 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **3 shipped** (PR [#21](https://github.com/Lytrix/MidiLooper/pull/21)); **Phase 4** investigation queued  
+**Status:** Active — Phase **4 design shipped**; implementation queued on separate `refactor/*` branches  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
 **Branch:** `dev` — Phase 3 landed via PR #21; Phase 2 via PR #20
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
@@ -100,16 +100,20 @@ Low risk after Phases 1–2 stabilize call sites.
 
 **Phase 3 HITL gate:** **PASS** — combined move/pitch/length playing-transport defer + clean session exit on post–Phase 3 firmware.
 
-### Phase 4 — Investigation only
+### Phase 4 — Extraction boundaries (design)
 
-**No splits by LOC.** Produce a short pin-down note before any extraction proposal.
+**No firmware in Phase 4.** Produce pin-down notes before any extraction PR.
 
-| Target | Why investigate | Do not |
-|--------|-----------------|--------|
-| `TrackManager.cpp` (~1386) | Largest remaining coordination TU | Split without a named process boundary |
-| `NoteMovementUtils.cpp` (~1069) | Pure helpers mixed with mutate-with-overlap | Abstract “getNotes” across layers |
-| `DisplayNoteResolve.cpp` (~864) | Mode tree + cache policy | Merge all note sources into one API |
-| `NoteEditFocus.h` (~423) | Kitchen-sink public API header | Move ownership; header hygiene only if boundaries clear |
+| Target | Design outcome | Implementation plan |
+|--------|----------------|---------------------|
+| `TrackManager.cpp` (~1387) | Six process modules under `src/TrackManager/` (capture queue, transport tick, slot matrix, mix bus, LED, memory pressure) | [codebase_consistency_phase4_extraction_boundaries_refinement.md](codebase_consistency_phase4_extraction_boundaries_refinement.md) §1 |
+| `NoteMovementUtils.cpp` (~1026) | Pair resolution vs geometry apply; apply TUs under `src/EditManager/` | Same doc §2 |
+| `DisplayNoteResolve.cpp` (~864) | Second mechanical split by display read mode (behavioral split deferred) | Same doc §3 |
+| `NoteEditFocus.h` (~423) | Types vs API header split; bodies already shipped | Same doc §4 |
+
+**Phase 4 status:** **Design shipped** — implementation queued as separate `refactor/*` branches (recommended order: TrackManager → NoteMovementUtils → DisplayNoteResolve → header).
+
+### Phase 4 — Investigation only (superseded table)
 
 ---
 
@@ -299,7 +303,7 @@ Deprecated `markCurrentSet*Dirty` wrappers forward to the split APIs. **18** pro
 - Phase 1: projected-store compat retired or explicitly PARKED with rationale; selection SoT single; production paths use `admit*` (dirty wrappers unused or Legacy Retirement).
 - Phase 2: selectable-display has one canonical public name; NAMING.md matches code; geometry/published/Playing debt reduced on touched files.
 - Phase 3: confirmed-dead helpers removed; selection write helper or documented intentional twins.
-- Phase 4: investigation notes filed; no unplanned extractions.
+- Phase 4: extraction boundary design filed — [codebase_consistency_phase4_extraction_boundaries_refinement.md](codebase_consistency_phase4_extraction_boundaries_refinement.md); implementation as separate refactor branches.
 - Parent Task closed after docs closeout ([DOCUMENTATION_CLOSEOUT.md](../Authority/DOCUMENTATION_CLOSEOUT.md)).
 
 ---
