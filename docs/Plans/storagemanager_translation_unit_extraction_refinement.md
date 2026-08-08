@@ -1,9 +1,11 @@
 # StorageManager translation-unit extraction
 
 **Kind:** refinement  
-**Branch:** `refactor/storagemanager` (from `dev`)  
+**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — remaining root trim (work identity)  
+**Branch:** `refactor/storagemanager-remaining` (remaining slices → PR into `dev`); historical Phases 0–8 on `refactor/storagemanager`  
 **Parent context:** [storage_session_state_refactor_handoff.md](storage_session_state_refactor_handoff.md), [deferred_storage_commit_parse_split_enhancement.md](deferred_storage_commit_parse_split_enhancement.md), firmware audit P1-3  
-**Prerequisite merged:** PR #8 — loop-slot SD payload RAM cache (`hasLoopSlotPayloadOnSdInRam`)
+**Prerequisite merged:** PR #8 — loop-slot SD payload RAM cache (`hasLoopSlotPayloadOnSdInRam`)  
+**Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) — Decision = Refinement; plan is planning artifact; no OpenSpec (behavior-preserving)
 
 ---
 
@@ -17,7 +19,8 @@ Shrink `src/StorageManager.cpp` from a ~4.4k-line monolith into a thin façade b
 
 | Artifact | LOC / status |
 |----------|----------------|
-| `src/StorageManager.cpp` | **~1219** (root TU; was 4411) |
+| `src/StorageManager.cpp` | **~422** (root TU; was 4411; status queries inlined 2026-08-08) |
+| `src/StorageManager/StorageManagerHitlSerial.cpp` | **~531** (HITL follow-up) |
 | `src/StorageManager/SetBrowserRead.cpp` | **~470** (Phase 8b) |
 | `src/StorageManager/WallClockSdSync.cpp` | **~167** (Phase 8a) |
 | `src/StorageManager/PersistenceAdmit.cpp` | **~335** (Phase 7) |
@@ -339,8 +342,14 @@ Two TUs: `WallClockSdSync.cpp` + `SetBrowserRead.cpp`.
 
 | Item | LOC | Notes |
 |------|-----|-------|
-| `saveState` drain → `SyncDrainBudget.cpp` | ~80 | Pair with scheduler ownership review |
-| Deferred-save status queries | ~130 | Collapse to header inlines after root TU &lt; 1.5k |
+| `saveState` drain → `SyncDrainSaveState.cpp` | ~100 | **Done** — root `saveState` is thin delegate to `drainPersistenceWorkBlocking` |
+| HITL catalog / quarantine → `StorageManagerHitlSerial.cpp` | ~400 | **Done** (2026-08-08) — nuke/cleanup/quarantine + `hitlRevisionCommitBackup` colocated with serial dispatch; GitHub [#16](https://github.com/Lytrix/MidiLooper/issues/16) |
+
+### Documentation closeout (structural)
+
+No OpenSpec / DEC / guide rewrite — behavior unchanged. Durable truth for this refinement remains **this plan** + issue #16 checklist. Update [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) when slices ship or park; close #16 after remaining items done or explicitly deferred.
+| Deferred-save status queries → `StorageManagerStatusQueries.inl` | ~60 | **Done** (2026-08-08) — workspace dirty/epoch/save-queue getters + undo-hydrate pending; `clearAutoSaveBeforeLoadFolderPending` in Internal |
+| `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | ~155 | **Done** (2026-08-08) — colocated with track-slot metadata; undo-hydrate RAM promoted to `StorageManagerInternal` (`Internal.cpp`) |
 | `toggleSetRevisionCatalogFavorite` + revision catalog | — | Shipped in Phase 8b |
 | `StorageSession` colocation ([DEC-012](storage_session_state_refactor_handoff.md)) | — | **After** extractions stabilize file boundaries |
 

@@ -2,11 +2,28 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (doc hygiene review)
+Last updated: 2026-08-08 (StorageManager TU lifecycle + HITL extract)
 
 ---
 
 ## Now implementing
+
+### StorageManager TU extraction — remaining root trim
+
+**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
+**Branch:** `refactor/storagemanager-remaining` → PR into `dev`  
+**Plan:** [`docs/Plans/storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md)  
+**Decision:** Refinement — behavior-preserving; ownership / transitions unchanged  
+**Lifecycle:** Discovery → investigation (root leftovers after Phases 0–8) → understand (HITL belongs with serial dispatch) → decide (refinement) → work item #16 → CURRENT_WORK → branch → implement
+
+| Slice | Status |
+|-------|--------|
+| Phases 0–8 (primary extract) | **Done** (prior) |
+| HITL catalog / quarantine → `StorageManagerHitlSerial.cpp` | **Done** (`3760387`) |
+| `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | **Done** (`ff3a5e2`) |
+| Deferred-save status queries → `StorageManagerStatusQueries.inl` | **Done** (2026-08-08) — build + native this slice |
+
+**Exit:** Implementation done — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev`; after merge: docs closeout, close #16.
 
 ### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 

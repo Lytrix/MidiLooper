@@ -9,10 +9,12 @@
 
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
+#include "GlobalUndoStack.h"
 #include "Globals.h"
 #include "Loop.h"
 #include "LooperState.h"
 #include "PersistenceQueue.h"
+#include "SavedSetCatalog.h"
 #include "SlotLoadSession.h"
 #include "StorageLoopIo.h"
 #include "TrackManager.h"
@@ -338,6 +340,160 @@ bool readCurrentSetTrackSlotMetadata(File& file, uint8_t trackIndex, Track& trac
         trackManager.setSlotEnabled(trackIndex, s, slotEnabled);
         trackManager.setSlotMuted(trackIndex, s, slotMuted);
         track.getLoop(s).loopId = slotLoopId;
+    }
+    return true;
+}
+
+bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
+                                       uint32_t& masterLoopLengthOut, uint8_t& numTracksOut) {
+    if (!CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
+        if (!file.seek(0)) {
+            return false;
+        }
+    } else {
+        CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+        const StorageIo epochIo = storageIoFromFileRead(file);
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
+            Serial.println("[StorageManager] ERROR: Failed to read Current epoch header");
+            return false;
+        }
+        currentWorkspaceEpoch = epochHeader.epoch;
+        storageSession.currentWorkspaceSave.workspaceEpoch = epochHeader.epoch;
+    }
+
+    CurrentSetStorage::MetaHeader metaHeader{};
+    const StorageIo metaIo = storageIoFromFileRead(file);
+    if (!CurrentSetStorage::readMetaHeader(metaIo, metaHeader)) {
+        Serial.println("[StorageManager] ERROR: Failed to read CurrentSet meta header");
+        return false;
+    }
+    if (metaHeader.containerVersion != CurrentSetStorage::CONTAINER_VERSION) {
+        Serial.print("[StorageManager] ERROR: Unsupported CurrentSet version ");
+        Serial.println(metaHeader.containerVersion);
+        return false;
+    }
+    currentSetLastActiveUnix = metaHeader.lastActiveUnix;
+    currentSetAnchorFields = metaHeader.anchor;
+    if (currentSetAnchorFields.loadedFromSequence != 0) {
+        if (!StorageManagerInternal::resolveSavedSetFolderNameBySequence(
+                currentSetAnchorFields.loadedFromSequence,
+                                                 currentSetLoadedFromFolder,
+                                                 sizeof(currentSetLoadedFromFolder))) {
+            std::snprintf(currentSetLoadedFromFolder, sizeof(currentSetLoadedFromFolder),
+                          "%05lu",
+                          static_cast<unsigned long>(currentSetAnchorFields.loadedFromSequence));
+        }
+    } else {
+        clearCurrentSetLoadedFromFolder();
+    }
+
+    float savedBpm = 0;
+    if (!readRaw(file, &savedBpm, sizeof(savedBpm))) {
+        return false;
+    }
+    if (savedBpm >= 20.0f && savedBpm <= 300.0f) {
+        bpm = savedBpm;
+    }
+
+    uint32_t looperStateVal = 0;
+    if (!readRaw(file, &looperStateVal, sizeof(looperStateVal))) {
+        return false;
+    }
+    loadedLooperStateOut = sanitizeLooperStateForPersistence(static_cast<LooperState>(looperStateVal));
+
+    uint32_t masterLoopLength = 0;
+    if (!readRaw(file, &masterLoopLength, sizeof(masterLoopLength))) {
+        return false;
+    }
+    masterLoopLengthOut = masterLoopLength;
+
+    uint8_t numTracks = 0;
+    if (!readRaw(file, &numTracks, sizeof(numTracks)) || numTracks != Config::NUM_TRACKS) {
+        return false;
+    }
+    numTracksOut = numTracks;
+    return true;
+}
+
+bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
+                                       std::vector<uint8_t>& activeLoopIndex,
+                                       std::vector<uint8_t>& selectedSlotIndex,
+                                       uint8_t& selectedTrackIdxOut,
+                                       bool deferUndoSnapshotBodies) {
+    if (!readRaw(file, &selectedTrackIdxOut, sizeof(selectedTrackIdxOut))) {
+        return false;
+    }
+    activeLoopIndex.assign(numTracks, 0);
+    selectedSlotIndex.assign(numTracks, 0);
+    for (uint8_t t = 0; t < numTracks; ++t) {
+        if (!readRaw(file, &activeLoopIndex[t], sizeof(activeLoopIndex[t]))) {
+            return false;
+        }
+    }
+
+    uint32_t footerToken = 0;
+    if (!readRaw(file, &footerToken, sizeof(footerToken))) {
+        return false;
+    }
+    if (footerToken == kFooterSelectedSlotExtensionToken) {
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            if (!readRaw(file, &selectedSlotIndex[t], sizeof(selectedSlotIndex[t]))) {
+                return false;
+            }
+        }
+        if (!readRaw(file, &footerToken, sizeof(footerToken))) {
+            return false;
+        }
+    } else {
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            selectedSlotIndex[t] = activeLoopIndex[t];
+        }
+    }
+    if (footerToken != kGlobalUndoStackToken) {
+        Serial.print("[StorageManager] ERROR: CurrentSet runtime bundle footer token mismatch (got=0x");
+        Serial.print(footerToken, HEX);
+        Serial.print(" expected=0x");
+        Serial.print(kGlobalUndoStackToken, HEX);
+        Serial.print(" pos=");
+        Serial.println(static_cast<unsigned long>(file.position()));
+        return false;
+    }
+    undoSnapshotsPending_ = deferUndoSnapshotBodies;
+    undoHydrateTrackIndex_ = 0;
+    undoStackFileOffsets_.fill(0);
+    for (uint8_t t = 0; t < numTracks; ++t) {
+        undoStackFileOffsets_[t] = static_cast<uint32_t>(file.position());
+        if (deferUndoSnapshotBodies) {
+            if (!readGlobalUndoStackMetadataFromFile(file,
+                                                     trackManager.getTrack(t).getGlobalUndoStack())) {
+                return false;
+            }
+        } else if (!readGlobalUndoStackFromFile(file,
+                                                trackManager.getTrack(t).getGlobalUndoStack())) {
+            return false;
+        }
+    }
+
+    uint32_t tailMarker = 0;
+    if (!readRaw(file, &tailMarker, sizeof(tailMarker))) {
+        return false;
+    }
+    if (tailMarker == SavedSetCatalog::kSavedSetMetaTrailerMagic) {
+        if (!file.seek(file.position() - sizeof(uint32_t))) {
+            return false;
+        }
+        SavedSetCatalog::SavedSetMetadata ignoredMetadata{};
+        const StorageIo trailerIo = storageIoFromFileRead(file);
+        if (!SavedSetCatalog::readSavedSetMetadataTrailer(trailerIo, ignoredMetadata)) {
+            return false;
+        }
+        if (!readRaw(file, &tailMarker, sizeof(tailMarker))) {
+            return false;
+        }
+    }
+    if (tailMarker != CurrentSetStorage::kSaveFileToken) {
+        Serial.println("[StorageManager] ERROR: CurrentSet meta completion marker mismatch");
+        return false;
     }
     return true;
 }
