@@ -135,7 +135,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
       midiHandler.beginUsbHost();
       emitBootMilestone("usb_host", "begin");
     }
-    trackManager.clearLeds();
+    trackManager.clearMidiLeds();
     if (editManager.isLoopEditSession()) {
       midiHandler.sendLedFeedbackNoteOn(100, 64);
       midiHandler.sendLedFeedbackNoteOff(100);
@@ -296,7 +296,7 @@ void loop() {
   constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
   if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
     lastLedUpdate = now;
-    trackManager.updateLedsDeferred();
+    trackManager.updateMidiLedsDeferred();
     midiHandler.processDroidUsbHostOutbound();
   }
 

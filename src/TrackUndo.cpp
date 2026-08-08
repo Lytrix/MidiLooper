@@ -415,7 +415,7 @@ TRACK_COLD_MEM void applyClearSlotUndoSideEffects(Track& track, const UndoEntry&
         track.resetPlaybackStateForSlot(slotIndex, now);
         track.startPlaying(now);
     }
-    trackManager.forceLedUpdate(now);
+    trackManager.forceMidiLedUpdate(now);
 }
 
 TRACK_COLD_MEM void applyClearSlotRedoSideEffects(Track& track, uint8_t slotIndex) {
@@ -426,7 +426,7 @@ TRACK_COLD_MEM void applyClearSlotRedoSideEffects(Track& track, uint8_t slotInde
     trackManager.setLayeredSlotHeld(trackIndex, slotIndex, false);
     const uint32_t now = clockManager.getCurrentTick();
     restorePlaybackAfterSlotClear(trackIndex, track, now);
-    trackManager.forceLedUpdate(now);
+    trackManager.forceMidiLedUpdate(now);
 }
 
 }  // namespace

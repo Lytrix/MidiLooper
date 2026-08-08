@@ -122,5 +122,5 @@ void DisplayManager::applyWorkspaceDisplayRefreshPending(uint32_t currentTick) {
     // after the first good piano-roll paint (grid-only freeze).
     Track& selectedTrack = trackManager.getSelectedTrack();
     editManager.rematerializeNoteEditSessionAfterWorkspaceReload(selectedTrack);
-    trackManager.forceLedUpdate(currentTick);
+    trackManager.forceMidiLedUpdate(currentTick);
 }

@@ -106,7 +106,7 @@ Low risk after Phases 1–2 stabilize call sites.
 
 | Target | Design outcome | Implementation plan |
 |--------|----------------|---------------------|
-| `TrackManager.cpp` (~1387) | Six process modules under `src/TrackManager/` (capture queue, transport tick, slot matrix, mix bus, LED, memory pressure) | [codebase_consistency_phase4_extraction_boundaries_refinement.md](codebase_consistency_phase4_extraction_boundaries_refinement.md) §1 |
+| `TrackManager.cpp` (~1387) | Six process modules under `src/TrackManager/` (capture queue, transport tick, slot matrix, playback policy, Midi LED, memory pressure) | [codebase_consistency_phase4_extraction_boundaries_refinement.md](codebase_consistency_phase4_extraction_boundaries_refinement.md) §1 |
 | `NoteMovementUtils.cpp` (~1026) | Pair resolution vs geometry apply; apply TUs under `src/EditManager/` | Same doc §2 |
 | `DisplayNoteResolve.cpp` (~864) | Second mechanical split by display read mode (behavioral split deferred) | Same doc §3 |
 | `NoteEditFocus.h` (~423) | Types vs API header split; bodies already shipped | Same doc §4 |
