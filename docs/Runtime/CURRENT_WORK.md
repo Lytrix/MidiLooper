@@ -2,25 +2,16 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (#18 Phase 2 branch; Phase 1 merged PR #19)
+Last updated: 2026-08-08 (#18 Phase 3 merged PR #21)
 
 ---
 
 ## Now implementing
 
-### Codebase consistency & maintainability — Phase 3 (structural cleanup)
+### Codebase consistency & maintainability — Phase 4 (investigation)
 
-**GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
-**Plan:** [`docs/Plans/codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)  
-**Branch:** `refactor/codebase-consistency-phase-3` → PR into `dev`  
-**Phase 2:** merged [PR #20](https://github.com/Lytrix/MidiLooper/pull/20)
-
-| Phase | Status |
-|-------|--------|
-| 1 — Authority | **Shipped** — PR #19 |
-| 2 — API / vocabulary | **Shipped** — PR #20 |
-| **3 — Structural cleanup** | **In progress** — 3.1–3.3 on branch |
-| 4 | Queued — investigation only |
+**GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)  
+Phases 1–3 shipped (PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [#20](https://github.com/Lytrix/MidiLooper/pull/20), [#21](https://github.com/Lytrix/MidiLooper/pull/21)). Phase 4: pin-down notes for large TUs — no extractions without named process boundary.
 
 ### StorageManager TU extraction — shipped (PR #17)
 
