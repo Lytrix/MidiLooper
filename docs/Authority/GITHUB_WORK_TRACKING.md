@@ -199,9 +199,9 @@ When a Bug investigation becomes a broader ownership/model migration, create or 
 
 ## 6. GitHub Project fields
 
-Use **one** Project (name suggestion: **Work**).
+Use **one** Project: **[Work](https://github.com/users/Lytrix/projects/1)** (owner `Lytrix`, number `1`, linked to `Lytrix/MidiLooper`).
 
-### Status (board columns) — initial shape
+### Status (board columns)
 
 | Status | Meaning |
 |--------|---------|
@@ -315,7 +315,62 @@ See also [ARCHITECTURE_REASSESSMENT.md](../ARCHITECTURE_REASSESSMENT.md).
 
 ---
 
-## 10. Closing a GitHub issue
+## 10. Branches and pull requests
+
+GitHub Issues are **work identity**. Branches and PRs are how decided firmware/docs work lands on `dev`.
+
+Branch model authority: [`docs/BRANCHING.md`](../BRANCHING.md) — default integration branch is **`dev`**.
+
+### Default for refinements, Tasks, and Features
+
+```text
+dev
+  └── feature/<scope>  or  refactor/<scope>   (short-lived)
+        └── PR → dev
+```
+
+| Question | Answer |
+|----------|--------|
+| Do I need a **PR**? | **Default yes** for reviewable firmware or docs changes that ship under a tracked Issue. |
+| Does a **PR** require a branch? | **Yes.** Source branch ≠ `dev`. There is no PR from `dev` → `dev`. |
+| Does every **commit** need a PR? | No — but if you skip the PR, you are committing directly on `dev` by explicit choice, not by default. |
+| Does every **Issue** need its own branch? | No. Multiple small slices under one Task may share one short-lived branch/PR, or use one PR per shippable slice. |
+
+Naming:
+
+* `feature/<scope>` — product / capability work
+* `refactor/<scope>` — behavior-preserving structural work (TU extraction, DRY, hygiene)
+* `bugfix/<scope>` — optional for Bugs when a dedicated branch helps review
+
+Link the Issue from the PR (`Fixes #N` / `Refs #N`) so Project **Work** and git history stay traceable. A mechanical `closes #N` is not required on every PR (see [§11 Closing](#11-closing-a-github-issue)).
+
+### When a PR is optional
+
+Direct commits on `dev` are allowed only when you **explicitly** choose that path (e.g. tiny doc-only fix with no review need). They do not replace Issue identity or documentation closeout.
+
+Do **not** treat “small refinement” as automatic permission to skip a branch/PR. Prefer the short-lived branch → PR → `dev` path for TU extraction and similar Tasks.
+
+### Relation to Project status
+
+```text
+Issue on Project NOW
+    ↓
+CURRENT_WORK
+    ↓
+branch off dev
+    ↓
+implement + verify
+    ↓
+PR → merge to dev
+    ↓
+docs closeout → close Issue (or leave open for remaining checklist)
+```
+
+Project **NOW** / **NEXT** / **PARKED** does not create branches. Agents create the branch when implementation starts under CURRENT_WORK.
+
+---
+
+## 11. Closing a GitHub issue
 
 A work item is not complete merely because the code is merged.
 
@@ -356,7 +411,7 @@ A PR/commit does not need a mechanical `closes #123` in every case, but the work
 
 ---
 
-## 11. Enforcement
+## 12. Enforcement
 
 **Mode: both** — agent and human review apply the same gate.
 
@@ -365,15 +420,16 @@ Before substantial or behavior-changing implementation:
 * establish the relevant GitHub work item (or existing parent scope);
 * intended outcome;
 * applicable plan/OpenSpec when required;
-* current execution scope in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md).
+* current execution scope in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md);
+* short-lived branch off `dev` when a PR is the delivery path ([§10](#10-branches-and-pull-requests)).
 
 Tiny changes may ride an existing tracked Task; the requirement is **traceability to decided work**, not a new Issue for every edit.
 
-Human review should return work when there is no traceable work item, scope drifted without Issue update, or required docs/architecture gates were skipped.
+Human review should return work when there is no traceable work item, scope drifted without Issue update, required docs/architecture gates were skipped, or a reviewable refinement landed on `dev` without an agreed direct-commit exception.
 
 ---
 
-## 12. OpenSpec and Bugs
+## 13. OpenSpec and Bugs
 
 OpenSpec is **not** required for every Bug.
 
@@ -383,7 +439,7 @@ Without OpenSpec, the minimum durable record is: GitHub Bug + bugfix plan/invest
 
 ---
 
-## 13. Anti-patterns
+## 14. Anti-patterns
 
 Do not:
 
@@ -397,6 +453,7 @@ Do not:
 * create a second backlog in Markdown;
 * migrate all historical plans into GitHub merely for completeness;
 * adopt Epic → Story → Task hierarchy initially;
+* skip a short-lived branch/PR for reviewable refinements by defaulting to commits on `dev`;
 * auto-sync GitHub and `CURRENT_WORK.md`.
 
 GitHub should reduce coordination overhead, not create another documentation system.
