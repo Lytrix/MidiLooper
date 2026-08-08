@@ -295,6 +295,8 @@ Do not rewrite the contents merely because they are being archived.
 
 ### Batch 2d — Refinements
 
+**Status:** **Done** (2026-08-08) — 9 files → `docs/Plans/archive/refinements/`; `docs/Refinements/README.md` redirect index retained.
+
 **Scope:** Review `docs/Refinements/`. If historical, prefer `docs/Plans/archive/refinements/`. If retaining `docs/Refinements/` for discoverability, add a short README/banner identifying it as historical. No mass content rewrite.
 
 ---

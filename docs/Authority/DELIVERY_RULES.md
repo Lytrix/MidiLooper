@@ -12,7 +12,7 @@ Cursor rule (detail): `.cursor/rules/OpenSpec-Workflow.mdc`. Runtime: [PROJECT_S
 |------|-----------------|-------------------|
 | **Timeline / data model** | OpenSpec `openspec/changes/<name>/` → archive to `openspec/specs/` | `/opsx:archive` + native tests + HITL when specified |
 | **Feature / phase design** | `docs/Plans/*.md` handoffs and `FEATURE_PLANS.md` | Tasks in plan or OpenSpec `tasks.md` marked done |
-| **Bugfix / refinement** | `docs/Refinements/*_SUMMARY.md` or OpenSpec BUG specs | Summary updated; regression test if applicable |
+| **Bugfix / refinement** | `docs/Plans/*_refinement.md` or OpenSpec BUG specs | Summary updated; regression test if applicable |
 | **Shipped vs next overview** | [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md) | Row state updated when firmware ships |
 
 Historical `docs/Plans/*.plan.md` exports are **context** — they do not override OpenSpec or architecture rules.
@@ -178,7 +178,7 @@ Before closing a design-heavy chat without merging: run session closeout so excl
 |---------|----------|
 | Authority (why, architecture, delivery) | `docs/Authority/` |
 | Current behavior | `docs/Guides/` |
-| Implementation logs | `docs/Refinements/` |
+| Implementation logs | `docs/Plans/archive/refinements/` (historical); `docs/Refinements/README.md` index |
 | Design exports and handoffs | `docs/Plans/` |
 | Normative requirements (accepted) | `openspec/specs/` |
 | Session runtime | `docs/Runtime/` — PROJECT_STATE, CURRENT_WORK, ROADMAP |

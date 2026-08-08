@@ -35,7 +35,7 @@
 This repo uses two different “deliverable” styles in Markdown:
 
 1. **Main deliverables (plan slices)** are exported by Cursor into `Plans/*.plan.md`. These files usually include a `todos:` block with slice IDs and `status:` values.
-2. **Bug fix / refinement deliverables** are summarized in `Refinements/*.md` (typically `*_SUMMARY.md`), and their state is tracked manually.
+2. **Bug fix / refinement deliverables** — historical summaries in [`Plans/archive/refinements/`](Plans/archive/refinements/) (see [`Refinements/README.md`](Refinements/README.md)); active work in `Plans/`. State tracked manually or via OpenSpec.
 
 This file is meant to be the **single overview** you consult to avoid losing track between the “big” plan slices and the smaller implementation summaries.
 
@@ -71,7 +71,7 @@ The goal here is to map the concepts you listed to the codebase’s existing sub
 - When you complete a slice in the code, update the corresponding `status:` in the plan file (and then reflect it in this overview if you maintain an external table).
 
 ### Bug fix / refinement deliverables
-- Source files: `Refinements/*.md`
+- Source files: `Plans/archive/refinements/*.md` (historical); active `Plans/*_refinement.md`
 - Update the refinement file directly when the implementation is done.
 - Use this overview to link which refinement docs are “done” for which deliverable area.
 

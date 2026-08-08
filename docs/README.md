@@ -17,7 +17,7 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 
 **Deliverable tracking:** [`DELIVERABLE_TRACKING.md`](DELIVERABLE_TRACKING.md) records shipped vs next at deliverable level; it does **not** set implementation priority (use `CURRENT_WORK`).
 
-**Historical implementation logs:** [`Refinements/`](Refinements/) — may not match code line-for-line; prefer Guides for current behavior.
+**Historical implementation logs:** [`Refinements/`](Refinements/) (redirect index) → [`Plans/archive/refinements/`](Plans/archive/refinements/) — may not match code line-for-line; prefer Guides for current behavior.
 
 ---
 
@@ -84,17 +84,19 @@ Add new topical guides under `Guides/` and extend this table.
 
 ## Refinements
 
+Historical implementation logs — archived 2026-08-08. See [`Refinements/README.md`](Refinements/README.md) or [`Plans/archive/refinements/`](Plans/archive/refinements/).
+
 | Document | Summary |
 |----------|---------|
-| [LOOP_START_IMPLEMENTATION_SUMMARY.md](Refinements/LOOP_START_IMPLEMENTATION_SUMMARY.md) | Loop start feature — implementation phases and fixes |
-| [REDO_IMPLEMENTATION_SUMMARY.md](Refinements/REDO_IMPLEMENTATION_SUMMARY.md) | Redo (e.g. triple-press) — implementation summary |
-| [FADER_REFACTOR_SUMMARY.md](Refinements/FADER_REFACTOR_SUMMARY.md) | Fader subsystem refactor |
-| [MIDI_BUTTON_REFACTOR_SUMMARY.md](Refinements/MIDI_BUTTON_REFACTOR_SUMMARY.md) | MIDI button pipeline refactor |
-| [MIGRATION_TO_V2_SUMMARY.md](Refinements/MIGRATION_TO_V2_SUMMARY.md) | Migration to MidiButtonManager-style layout |
-| [COMPILATION_FIX_SUMMARY.md](Refinements/COMPILATION_FIX_SUMMARY.md) | Historical build / compile notes |
-| [DRY_REFACTORING_EXAMPLES.md](Refinements/DRY_REFACTORING_EXAMPLES.md) | DRY patterns / examples from refactors |
-| [OPTIMIZATION_ANALYSIS.md](Refinements/OPTIMIZATION_ANALYSIS.md) | Performance optimization notes |
-| [OPTIMIZATION_EXAMPLE.md](Refinements/OPTIMIZATION_EXAMPLE.md) | Optimization code example |
+| [LOOP_START_IMPLEMENTATION_SUMMARY.md](Plans/archive/refinements/LOOP_START_IMPLEMENTATION_SUMMARY.md) | Loop start feature — implementation phases and fixes |
+| [REDO_IMPLEMENTATION_SUMMARY.md](Plans/archive/refinements/REDO_IMPLEMENTATION_SUMMARY.md) | Redo (e.g. triple-press) — implementation summary |
+| [FADER_REFACTOR_SUMMARY.md](Plans/archive/refinements/FADER_REFACTOR_SUMMARY.md) | Fader subsystem refactor |
+| [MIDI_BUTTON_REFACTOR_SUMMARY.md](Plans/archive/refinements/MIDI_BUTTON_REFACTOR_SUMMARY.md) | MIDI button pipeline refactor |
+| [MIGRATION_TO_V2_SUMMARY.md](Plans/archive/refinements/MIGRATION_TO_V2_SUMMARY.md) | Migration to MidiButtonManager-style layout |
+| [COMPILATION_FIX_SUMMARY.md](Plans/archive/refinements/COMPILATION_FIX_SUMMARY.md) | Historical build / compile notes |
+| [DRY_REFACTORING_EXAMPLES.md](Plans/archive/refinements/DRY_REFACTORING_EXAMPLES.md) | DRY patterns / examples from refactors |
+| [OPTIMIZATION_ANALYSIS.md](Plans/archive/refinements/OPTIMIZATION_ANALYSIS.md) | Performance optimization notes |
+| [OPTIMIZATION_EXAMPLE.md](Plans/archive/refinements/OPTIMIZATION_EXAMPLE.md) | Optimization code example |
 
 ---
 
@@ -108,4 +110,4 @@ Add new topical guides under `Guides/` and extend this table.
 | [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Shipped vs next (deliverable level — not the implementation queue) |
 | [Plans/README.md](Plans/README.md) | Design history conventions; points to `CURRENT_WORK` |
 
-When you add new guides, place them in `Guides/` or `Refinements/` and add a row to the matching table above.
+When you add new guides, place them in `Guides/` and add a row to the matching table above. New implementation summaries belong in `Plans/` (active) or `Plans/archive/refinements/` (historical).
