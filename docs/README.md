@@ -1,10 +1,25 @@
 # Documentation index
 
-The **story and layout** of the looper start at the **[root `README.md`](../README.md)** (elevator pitch → how to play → reference grid → technical links). **Guides** (current behavior) live in **[`Guides/`](Guides/)**. **Refinements** (implementation logs) live in **[`Refinements/`](Refinements/)** and may not match the code line-for-line today.
+The **story and layout** of the looper start at the **[root `README.md`](../README.md)** (elevator pitch → how to play → reference grid → technical links).
 
 **Firmware versions:** v1 = `main`, v2 = `midi-faders`, v3 = `dev` (default). See [**BRANCHING.md**](BRANCHING.md). Control-surface guides are **v3 only**.
 
-**Cursor plan exports** and phased design archives: **[`plans/`](plans/README.md)**.
+---
+
+## Four documentation buckets
+
+| Bucket | Location | Role |
+|--------|----------|------|
+| **Authority** | [`00-authority/`](00-authority/README.md) | What the system is — intent, architecture, naming, delivery rules |
+| **Runtime** | [`runtime/`](runtime/CURRENT_WORK.md) | **What to work on now** — [`CURRENT_WORK.md`](runtime/CURRENT_WORK.md) is the sole implementation queue |
+| **Guides** | [`Guides/`](Guides/) | Living behavior and how-to (shipped firmware) |
+| **Plans** | [`plans/`](plans/README.md) | Proposed or historical design — **not** implementation authority |
+
+**Deliverable tracking:** [`DELIVERABLE_TRACKING.md`](DELIVERABLE_TRACKING.md) records shipped vs next at deliverable level; it does **not** set implementation priority (use `CURRENT_WORK`).
+
+**Historical implementation logs:** [`Refinements/`](Refinements/) — may not match code line-for-line; prefer Guides for current behavior.
+
+---
 
 ## Agent context harness (governance layer)
 
@@ -88,9 +103,9 @@ Add new topical guides under `Guides/` and extend this table.
 | Document | Role |
 |----------|------|
 | [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
-| [FEATURES.md](FEATURES.md) | Full technical feature checklist (also linked from root `README`) |
-| [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer |
-| [plans/README.md](plans/README.md) | Design exports and phase specs (`docs/plans/`) |
-| [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Single overview for main (plans) vs refinements |
+| [FEATURES.md](FEATURES.md) | Technical feature checklist (reference — not the implementation queue) |
+| [FEATURE_PLANS.md](FEATURE_PLANS.md) | Plan conventions; Phase 3 / multi-loop pointer |
+| [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Shipped vs next (deliverable level — not the implementation queue) |
+| [plans/README.md](plans/README.md) | Design history conventions; points to `CURRENT_WORK` |
 
 When you add new guides, place them in `Guides/` or `Refinements/` and add a row to the matching table above.

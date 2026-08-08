@@ -46,6 +46,7 @@ Last updated: 2026-08-08 (doc hygiene review)
 | Playing move/length audition | `15c5750` | [`113626`](../../captures/session_20260808_113626.log), [`115120`](../../captures/session_20260808_115120.log); [bugfix doc](../plans/note_edit_playing_move_audition_bugfix.md) |
 | Resolver §12 orthogonal state | DEC-030; `7af8671` | Native 969/969; HITL [`112202`](../../captures/session_20260808_112202.log) @88.669 |
 | Edit-session-action-geometry archive | 2026-08-05 | [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/) |
+| Docs folder hygiene Phase 1 | 2026-08-08 | Four-bucket `docs/README.md`; slim `plans/README.md`; `HITL_ARCHITECTURE` → `00-authority/Architecture/` — [`docs_folder_hygiene_refinement.md`](../plans/docs_folder_hygiene_refinement.md) |
 
 Normative specs: `note-edit-current-state`, `note-edit-modification-session`, `note-edit-session-undo`, `internal-heap-external-memory-routing`, `edit-session-action-geometry`.
 
