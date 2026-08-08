@@ -30,7 +30,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         return;
     }
 
-    // NOTE_EDIT_PROJECTED_STORE_COMPAT: commit normalizes projected flat until tasks.md §7.1.
+    // Projection flat for overlap pre-commit + validation; normalize via projection owner.
     MidiEventVec& sessionStoreEvents = sessionMidiEvents();
     const bool hasPendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
     const bool hasPendingApplyOwnedRows = !editSession.applyOwnedEditPassRows.empty();
@@ -46,22 +46,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     pruneOverlapNotesBeforePreCommit(editSession.focus, sessionStoreEvents, channel);
     resolveOverlapNotesForPreCommit(sessionStoreEvents, editSession.focus, channel, loopLength);
 
-    const std::unordered_set<NoteId> closure =
-        buildEditClosureNoteIds(editSession.focus, sessionStoreEvents, channel, loopLength);
-    if (!closure.empty()) {
-        LoopTickNormalize::NormalizeOptions microOptions;
-        microOptions.closeOpenTails = false;
-        LoopTickNormalize::normalize(sessionStoreEvents, loopLength,
-                                     LoopTickNormalize::NormalizeScope::noteIds(closure),
-                                     microOptions);
-    }
-    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
-                                            loopLength);
-    LoopTickNormalize::normalizeAll(sessionStoreEvents, loopLength);
-    if (!editSession.noteEditCurrentState.empty()) {
-        editSession.noteEditCurrentState.syncProjectingRowsFromSessionStore(sessionStoreEvents,
-                                                                            channel);
-    }
+    normalizeNoteEditSessionProjectionForCommit(track);
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
 
@@ -167,7 +152,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         const uint32_t displayBracket = NoteEditDisplaySnapshot::displayStartTickFromStorage(
             storageBracketTick, noteEditLoopStartTick(track), loopLength);
         sessionState.selection.selectedTick = displayBracket;
-        selectedTick = displayBracket;
         syncSelectedNoteIdxToFilteredInventory(track);
     }
 }

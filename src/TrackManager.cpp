@@ -667,7 +667,8 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     if (autoAlignEnabled) {
       t.setLoopLength(masterLoopLength);
     }
-    StorageManager::markCurrentSetLoopSlotDirty(trackIndex, captureSlot);
+    StorageManager::markLoopSlotMaterialDirty(trackIndex, captureSlot);
+    StorageManager::admitLoopSlotPersist(trackIndex, captureSlot);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();

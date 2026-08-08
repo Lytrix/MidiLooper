@@ -18,7 +18,6 @@
 #include "ControlSurfaceManager.h"
 #include "LoopEditManager.h"
 #include "NoteEditFocus.h"
-#include "NoteEditSessionUndo.h"
 #include "EditApply.h"
 #include "EditSession.h"
 #include "NoteEditSessionState.h"
@@ -96,6 +95,62 @@ EDIT_MANAGER_IMPL_MEM void EditManager::refreshNoteEditSessionProjection(uint8_t
     editSession.store.syncEventsToStore();
 }
 
+EDIT_MANAGER_IMPL_MEM bool EditManager::normalizeNoteEditClosureProjection(Track& track) {
+    if (!editSession.active || editSession.sessionType != EditSessionType::Note ||
+        editSession.noteEditCurrentState.empty() || !editSession.focus.active) {
+        return false;
+    }
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (loopLength == 0) {
+        return false;
+    }
+    refreshNoteEditSessionProjection(channel);
+    MidiEventVec& store = editSession.store.mutEvents();
+    const std::unordered_set<NoteId> closure =
+        buildEditClosureNoteIds(editSession.focus, store, channel, loopLength);
+    if (closure.empty()) {
+        return false;
+    }
+    LoopTickNormalize::NormalizeOptions microOptions;
+    microOptions.closeOpenTails = false;
+    const LoopTickNormalize::NormalizeResult normResult = LoopTickNormalize::normalize(
+        store, loopLength, LoopTickNormalize::NormalizeScope::noteIds(closure), microOptions);
+    if (normResult.wrapPairsMerged == 0 && normResult.synthOffsPromoted == 0 &&
+        normResult.openTailsClosed == 0) {
+        return false;
+    }
+    editSession.noteEditCurrentState.syncProjectingRowsFromSessionStore(store, channel);
+    editSession.store.syncEventsToStore();
+    return true;
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::normalizeNoteEditSessionProjectionForCommit(Track& track) {
+    if (!editSession.active || editSession.sessionType != EditSessionType::Note ||
+        editSession.noteEditCurrentState.empty()) {
+        return;
+    }
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (loopLength == 0) {
+        return;
+    }
+    refreshNoteEditSessionProjection(channel);
+    MidiEventVec& store = editSession.store.mutEvents();
+    const std::unordered_set<NoteId> closure =
+        buildEditClosureNoteIds(editSession.focus, store, channel, loopLength);
+    if (!closure.empty()) {
+        LoopTickNormalize::NormalizeOptions microOptions;
+        microOptions.closeOpenTails = false;
+        LoopTickNormalize::normalize(store, loopLength,
+                                     LoopTickNormalize::NormalizeScope::noteIds(closure),
+                                     microOptions);
+    }
+    LoopTickNormalize::normalizeAll(store, loopLength);
+    editSession.noteEditCurrentState.syncProjectingRowsFromSessionStore(store, channel);
+    editSession.store.syncEventsToStore();
+}
+
 EDIT_MANAGER_IMPL_MEM NoteEditCurrentState& EditManager::noteEditCurrentStateMut() {
     return editSession.noteEditCurrentState;
 }
@@ -104,25 +159,8 @@ EDIT_MANAGER_IMPL_MEM const NoteEditCurrentState& EditManager::noteEditCurrentSt
     return editSession.noteEditCurrentState;
 }
 
-#if NOTE_EDIT_PROJECTED_STORE_COMPAT
-EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::mutNoteEditSessionProjectionEventsCompat() {
-    return editSession.store.mutEvents();
-}
-
-EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::mutEditProjectionEventsCompat(Track& track) {
-    if (editSession.active) {
-        return mutNoteEditSessionProjectionEventsCompat();
-    }
-    return track.legacyMidiEventsFromCommitted();
-}
-#endif
-
 EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::sessionMidiEvents() {
-#if NOTE_EDIT_PROJECTED_STORE_COMPAT
-    return mutNoteEditSessionProjectionEventsCompat();
-#else
     return editSession.store.mutEvents();
-#endif
 }
 
 EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::sessionMidiEvents() const {
@@ -140,11 +178,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPlaybackPreviewRevision() {
 
 EDIT_MANAGER_IMPL_MEM MidiEventVec& EditManager::editMidiEvents(Track& track) {
     if (editSession.active) {
-#if NOTE_EDIT_PROJECTED_STORE_COMPAT
-        return mutEditProjectionEventsCompat(track);
-#else
         return sessionMidiEvents();
-#endif
     }
     return track.legacyMidiEventsFromCommitted();
 }

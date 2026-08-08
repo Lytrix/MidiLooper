@@ -149,7 +149,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applyUndoRedoLanding(Track& track) {
     encoderCycleNeedsAnchor_ = false;
     lastPushedGeometryKind_ = NoteEditKind::Select;
 
-    uint32_t bracket = selectedTick;
+    uint32_t bracket = getSelectedTick();
     NoteId primaryNote = kInvalidNoteId;
 
     const NoteEditFocus& focus = editSession.focus;
@@ -167,7 +167,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applyUndoRedoLanding(Track& track) {
             bracket = displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength);
         }
     } else if (!notes.empty()) {
-        selectClosestNote(track, selectedTick);
+        selectClosestNote(track, getSelectedTick());
         if (selectedNoteIdx >= 0) {
             const DisplayNote& dn = notes[static_cast<size_t>(selectedNoteIdx)];
             primaryNote = dn.noteId;

@@ -181,13 +181,12 @@ public:
     const MidiEventVec& noteEditSessionProjectionEvents() const;
     /// Projection owner: rebuild EditSession.store from noteEditCurrentState.
     void refreshNoteEditSessionProjection(uint8_t channel);
+    /// Projection owner: project → micro-normalize closure → re-admit visible spans (fader latch).
+    bool normalizeNoteEditClosureProjection(Track& track);
+    /// Projection owner: project → closure normalize → normalizeAll → re-admit (macro commit).
+    void normalizeNoteEditSessionProjectionForCommit(Track& track);
     NoteEditCurrentState& noteEditCurrentStateMut();
     const NoteEditCurrentState& noteEditCurrentState() const;
-#if NOTE_EDIT_PROJECTED_STORE_COMPAT
-    /// Compat direct projected-store mutation — remove after tasks.md §5–7 writer migration.
-    MidiEventVec& mutNoteEditSessionProjectionEventsCompat();
-    MidiEventVec& mutEditProjectionEventsCompat(Track& track);
-#endif
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
     void bumpSessionPreviewRevision();
@@ -217,8 +216,10 @@ public:
 
     // Getters
     EditNoteState* getCurrentState() const { return currentState; }
-    uint32_t getSelectedTick() const { return selectedTick; }
-    [[deprecated("use getSelectedTick")]] uint32_t getBracketTick() const { return selectedTick; }
+    uint32_t getSelectedTick() const { return sessionState.selection.selectedTick; }
+    [[deprecated("use getSelectedTick")]] uint32_t getBracketTick() const {
+        return sessionState.selection.selectedTick;
+    }
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
     /// Last successful fader-1 select **NoteId** (delete target when set).
     NoteId getLastFader1SelectNoteId() const { return lastFader1SelectNoteId; }
@@ -227,8 +228,10 @@ public:
     // Reset selection
     void resetSelection();
     void setSelectedNoteIdx(int idx);
-      void setSelectedTick(uint32_t tick) { selectedTick = tick; }
-    [[deprecated("use setSelectedTick")]] void setBracketTick(uint32_t tick) { selectedTick = tick; }
+    void setSelectedTick(uint32_t tick) { sessionState.selection.selectedTick = tick; }
+    [[deprecated("use setSelectedTick")]] void setBracketTick(uint32_t tick) {
+        sessionState.selection.selectedTick = tick;
+    }
     void setHasMovedBracket(bool moved) { hasMovedBracket = moved; }
 
     // Get state instances
@@ -300,7 +303,6 @@ private:
     void invalidateNoteEditDerivedCaches();
     void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     void emitEditEvent(EditEvent event);
-    uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
     uint32_t referenceStep_ = 0;
     bool lengthEditingMode_ = false;

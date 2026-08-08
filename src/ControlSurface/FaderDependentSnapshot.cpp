@@ -14,7 +14,6 @@
 #include "NoteEditFocus.h"
 #include "Track.h"
 #include "Utils/LoopEventValidation.h"
-#include "Utils/LoopTickNormalize.h"
 #include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "Utils/NoteEditFaderMotorTiming.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
@@ -242,20 +241,13 @@ NOTE_EDIT_MEM void ControlSurfaceManager::publishDependentFaderLatch(Track& trac
     if (editManager.isNoteEditActive() && loopLength > 0) {
         const NoteEditFocus& focus = editManager.getEditSession().focus;
         if (focus.active) {
-            // NOTE_EDIT_PROJECTED_STORE_COMPAT: closure normalize on projected store until tasks.md §5.5.
-            MidiEventVec& store = editManager.sessionMidiEvents();
+            if (editManager.normalizeNoteEditClosureProjection(track)) {
+                editManager.bumpSessionPreviewRevision();
+            }
+            const MidiEventVec& store = editManager.noteEditSessionProjectionEvents();
             std::unordered_set<NoteId> closure =
                 buildEditClosureNoteIds(focus, store, track.getMidiChannel(), loopLength);
             if (!closure.empty()) {
-                LoopTickNormalize::NormalizeOptions microOptions;
-                microOptions.closeOpenTails = false;
-                const LoopTickNormalize::NormalizeResult normResult = LoopTickNormalize::normalize(
-                    store, loopLength,
-                    LoopTickNormalize::NormalizeScope::noteIds(std::move(closure)), microOptions);
-                if (normResult.wrapPairsMerged > 0 || normResult.synthOffsPromoted > 0 ||
-                    normResult.openTailsClosed > 0) {
-                    editManager.bumpSessionPreviewRevision();
-                }
                 const MidiEventVec closureEvents = LoopEventValidation::extractEventsForNoteIds(
                     store, closure);
                 const LoopEventValidation::LoopEventValidationResult microInvariantResult =

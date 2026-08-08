@@ -43,6 +43,15 @@ public:
     /// Admit stale global looper meta (transport, BPM, master length).
     static void admitGlobalMeta();
 
+    /// Mark current-set slot for workspace body write (material-change anchor).
+    static void markLoopSlotMaterialDirty(uint8_t trackIndex, uint8_t slotIndex);
+    /// Mark all slots on a track dirty (does not admit persistence work).
+    static void markTrackSlotsMaterialDirty(uint8_t trackIndex);
+    /// Admit slot meta + slot-keyed loop payload persist for one slot.
+    static void admitLoopSlotPersist(uint8_t trackIndex, uint8_t slotIndex);
+    /// Admit track meta + slot-keyed loop persist for every slot on a track.
+    static void admitTrackSlotPersistence(uint8_t trackIndex);
+
     static bool saveState(const LooperState& state);
     static bool loadState(LooperState& state);
     static bool loadCurrentWorkspaceFromSd(LooperState& state);
