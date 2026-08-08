@@ -274,7 +274,7 @@ bool serialWriteRoom(size_t bytesNeeded) {
   // USB CDC Serial.println/printf can block indefinitely when the host TX
   // buffer is full. Under PLAYING + heavy LoadLoopJob CAP traffic that soft-
   // locks the main loop (session_20260719_012717: f_tel_done, no f_flush_done);
-  // clock-driven bar LEDs keep moving while 16th LEDs (updateLedsDeferred) stall.
+  // clock-driven bar LEDs keep moving while 16th LEDs (updateMidiLedsDeferred) stall.
   const int room = Serial.availableForWrite();
   return room < 0 || static_cast<size_t>(room) >= bytesNeeded;
 }

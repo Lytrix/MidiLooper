@@ -8,9 +8,9 @@ Last updated: 2026-08-08 (Phase 4 extraction design #18)
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 investigation queued; HITL CLI Phase 3 parallel.
+**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 4 — `refactor/trackmanager` Phase 0 scaffold
 
-**Branch tip (local):** `dev` — Phase 3 merged PR #21; Phase 2 PR #20; Phase 1 PR #19.
+**Branch tip (local):** `refactor/trackmanager` — Phase 0 `TrackManagerInternal` scaffold; `dev` has Phase 3 merged PR #21.
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
