@@ -60,10 +60,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::selectClosestNote(Track& track, uint32_t
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
     if (notes.empty() || loopLength == 0) {
-        selectedTick = loopLength > 0
-                          ? SelectNavigation::displayPhaseTick(startTick, loopLength)
-                          : 0;
-        applySelectNav(track, selectedTick, kInvalidNoteId);
+        const uint32_t navTick =
+            loopLength > 0 ? SelectNavigation::displayPhaseTick(startTick, loopLength) : 0;
+        applySelectNav(track, navTick, kInvalidNoteId);
         hasMovedBracket = true;
         return;
     }
@@ -82,8 +81,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::selectClosestNote(Track& track, uint32_t
         }
     }
     const DisplayNote& dn = notes[static_cast<size_t>(bestIdx)];
-    selectedTick = displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength);
-    applySelectNav(track, selectedTick, dn.noteId);
+    const uint32_t navTick =
+        displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength);
+    applySelectNav(track, navTick, dn.noteId);
     hasMovedBracket = true;
 }
 
@@ -102,8 +102,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::selectNoteAtBracket(Track& track, uint32
                                             loopLength);
         if (noteDisplay == bracket) {
             const DisplayNote& dn = notes[static_cast<size_t>(i)];
-            selectedTick = bracket;
-            applySelectNav(track, selectedTick, dn.noteId);
+            applySelectNav(track, bracket, dn.noteId);
             hasMovedBracket = true;
             return;
         }
@@ -121,15 +120,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::stepSelectNavSlot(Track& track, int delt
     }
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        buildSelectNavigationSlots(track, selectedTick, true);
+        buildSelectNavigationSlots(track, getSelectedTick(), true);
     if (slots.empty()) {
         return;
     }
 
     const EditorSelection& sel = sessionState.selection;
     int slotIdx = SelectNavigation::findSlotIndexForNoteId(
-        slots, selectableDisplayNotesForEditUi(track), sel.primaryNote,
-        selectedTick, loopLength);
+        slots, selectableDisplayNotesForEditUi(track), sel.primaryNote, getSelectedTick(),
+        loopLength);
     if (slotIdx < 0) {
         slotIdx = 0;
     }
@@ -160,9 +159,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::stepSelectNavSlot(Track& track, int delt
 EDIT_MANAGER_IMPL_MEM void EditManager::switchToNextState(Track& track) {
     // Example: cycle between noteState and startNoteState
     if (currentState == &noteHomeState) {
-        setState(&startNoteState, track, selectedTick);
+        setState(&startNoteState, track, getSelectedTick());
     } else {
-        setState(&noteHomeState, track, selectedTick);
+        setState(&noteHomeState, track, getSelectedTick());
     }
 }
 
@@ -209,7 +208,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::moveBracket(int delta, const Track& trac
 
     const uint32_t SNAP_WINDOW = 24;
     if (delta > 0) {
-        const uint32_t targetTick = (selectedTick + ticksPerStep) % loopLength;
+        const uint32_t targetTick = (getSelectedTick() + ticksPerStep) % loopLength;
         int snapIdx = -1;
         uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
@@ -233,7 +232,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::moveBracket(int delta, const Track& trac
         }
     } else if (delta < 0) {
         const uint32_t targetTick =
-            (selectedTick + loopLength - (ticksPerStep % loopLength)) % loopLength;
+            (getSelectedTick() + loopLength - (ticksPerStep % loopLength)) % loopLength;
         int snapIdx = -1;
         uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
@@ -267,7 +266,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::selectPrevNote(const Track& track) {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::enterPitchEditMode(Track& track) {
-    setState(&pitchNoteState, track, selectedTick);
+    setState(&pitchNoteState, track, getSelectedTick());
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::exitPitchEditMode(Track& track) {
