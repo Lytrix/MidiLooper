@@ -5,6 +5,7 @@
 #include "NoteEditSessionState.h"
 #include "NoteEditFocusInternal.h"
 #include "NoteEditCurrentState.h"
+#include "ParticipatingNoteSession.h"
 
 #include <vector>
 
@@ -120,14 +121,10 @@ NOTE_EDIT_MEM bool isMacroCommitAlignedWithSelectTarget(NoteId selectNoteId,
 
 NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus,
                                                        const NoteEditCurrentState* currentState) {
-  uint32_t fp = static_cast<uint32_t>(focus.changedOverlapNoteIds.size());
-  fp ^= focus.active ? 0xA5A5A5A5u : 0u;
+  uint32_t fp = focus.active ? 0xA5A5A5A5u : 0u;
   fp ^= focus.last.startTick + (focus.last.endTick << 1);
   fp ^= static_cast<uint32_t>(focus.last.pitch) << 16;
   fp ^= static_cast<uint32_t>(focus.overlapNotes.size()) << 8;
-  for (NoteId noteId : focus.changedOverlapNoteIds) {
-    fp ^= static_cast<uint32_t>(noteId) * 0x9E3779B9u;
-  }
   if (currentState != nullptr) {
     fp ^= static_cast<uint32_t>(currentState->rows().size()) << 12;
     for (const auto& [noteId, row] : currentState->rows()) {
@@ -244,12 +241,16 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focu
 template <typename Alloc>
 NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
     const NoteEditFocus& focus, const std::vector<MidiEvent, Alloc>& sessionEvents,
-    uint8_t channel, uint32_t loopLength) {
-  if (!focus.active || loopLength == 0) {
+    uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState) {
+  if (!focus.active || loopLength == 0 || currentState == nullptr || currentState->empty()) {
     return false;
   }
   for (const auto& [noteId, baseline] : focus.baselineMap) {
     if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    const NoteEditCurrentNoteState* stateRow = currentState->find(noteId);
+    if (stateRow == nullptr || !currentStateRowIsOverlapParticipant(*stateRow)) {
       continue;
     }
     NoteBaseline live{};
@@ -257,17 +258,9 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
         readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength,
                                        focus.movingNoteId, live);
     if (!hasLive) {
-      // Same rule as the pre-commit diff — an unresolved entry emits no row, so it must not
-      // mark the session dirty either.
-      if (hasChangedOverlapNote(focus, noteId)) {
-        return true;
-      }
-      continue;
+      return true;
     }
     if (live.pitch != baseline.pitch) {
-      continue;
-    }
-    if (!hasChangedOverlapNote(focus, noteId)) {
       continue;
     }
     if (live.startTick != baseline.startTick || live.endTick != baseline.endTick) {
@@ -278,9 +271,10 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
 }
 
 template bool noteEditFocusHasPendingBaselineMapDiff<InternalHeapFirstAllocator<MidiEvent>>(
-    const NoteEditFocus&, const MidiEventVec&, uint8_t, uint32_t);
+    const NoteEditFocus&, const MidiEventVec&, uint8_t, uint32_t, const NoteEditCurrentState*);
 template bool noteEditFocusHasPendingBaselineMapDiff<ExternalMemoryFirstAllocator<MidiEvent>>(
-    const NoteEditFocus&, const SessionMidiEventVec&, uint8_t, uint32_t);
+    const NoteEditFocus&, const SessionMidiEventVec&, uint8_t, uint32_t,
+    const NoteEditCurrentState*);
 
 NOTE_EDIT_MEM bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus) {
   if (!focus.active) {

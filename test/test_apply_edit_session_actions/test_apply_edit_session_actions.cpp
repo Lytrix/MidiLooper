@@ -12,6 +12,7 @@
 #include "EditSessionStoreInvariant.h"
 #include "MidiEvent.h"
 #include "NoteEditCurrentState.h"
+#include "ParticipatingNoteSession.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/NoteMovementWrap.h"
 
@@ -254,7 +255,6 @@ void test_apply_hide_removes_store_channel_target() {
 
   TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kTargetId, kChannel));
   TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kMoverId, kChannel));
-  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kTargetId));
 }
 
 void test_apply_boundary_split_same_tick() {
@@ -908,6 +908,11 @@ void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
   focus.baselineMap[kInnerId] = {23, 100, 144, 192};
   focus.baselineMap[kMoverId] = {23, 100, 192, 384};
 
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kInnerId, focus.baselineMap[kInnerId], focus.baselineMap[kInnerId],
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, focus.last, NoteEditPresenceType::Visible);
+
   EditedGeometry overInner{};
   overInner.selection.primaryNote = kMoverId;
   overInner.selection.selectedNotes.push_back(kMoverId);
@@ -929,12 +934,12 @@ void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
   TEST_ASSERT_TRUE(
       actionsContainTypeForNote(overActions, EditSessionActionType::HideNote, kInnerId));
   applyEditSessionActions(overActions, store, focus, kChannel, loopLength);
+  currentState.applyEditSessionAction(overActions[0]);
   TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kInnerId, kChannel));
   TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
-  // Hide records Delete authority; the missing live span alone must never authorise removal.
-  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kInnerId));
+  // Hide records Delete authority via current-state participation.
   TEST_ASSERT_TRUE(
-      noteEditFocusHasPendingBaselineMapDiff(focus, store, kChannel, loopLength));
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, kChannel, loopLength, &currentState));
 
   // Relocate mover off the inner's baseline start so pitch+start resolve cannot confuse
   // the hidden noteId with the mover pair.
@@ -970,6 +975,7 @@ void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
   TEST_ASSERT_TRUE(
       actionsContainTypeForNote(leaveActions, EditSessionActionType::RestoreNote, kInnerId));
   applyEditSessionActions(leaveActions, store, focus, kChannel, loopLength);
+  currentState.applyEditSessionAction(leaveActions[0]);
 
   NoteBaseline innerSpan{};
   TEST_ASSERT_TRUE(
@@ -977,8 +983,8 @@ void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
   TEST_ASSERT_EQUAL_UINT32(144u, innerSpan.startTick);
   TEST_ASSERT_EQUAL_UINT32(192u, innerSpan.endTick);
   // Restore withdraws Delete authority — nothing left pending for the inner note.
-  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kInnerId));
-  for (const EditPass& row : buildPreCommitEditPasses(focus, kChannel, &store, loopLength)) {
+  for (const EditPass& row :
+       buildPreCommitEditPasses(focus, kChannel, &store, loopLength, &currentState)) {
     if (row.actionType == EditActionType::Delete) {
       TEST_ASSERT_NOT_EQUAL(kInnerId, row.targetNoteId);
     }
@@ -992,7 +998,10 @@ void test_forget_changed_overlap_only_on_full_baseline_restore() {
 
   NoteEditFocus focus = makeMovingFocus(kMoverId, 94, 1000, 1200);
   focus.baselineMap[kOverlapId] = {94, 100, 800, 1000};
-  recordChangedOverlapNote(focus, kOverlapId);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, {94, 100, 800, 1000}, {94, 100, 800, 900},
+                         NoteEditPresenceType::Visible);
 
   MidiEventVec store;
   store.push_back(noteOnWithNoteId(800, kChannel, 94, 100, kOverlapId));
@@ -1011,14 +1020,16 @@ void test_forget_changed_overlap_only_on_full_baseline_restore() {
   EditSessionActions actions;
   actions.push_back(partialRestore);
   applyEditSessionActions(actions, store, focus, kChannel, loopLength);
-  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kOverlapId));
+  currentState.applyEditSessionAction(partialRestore);
+  TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
 
   EditSessionAction fullRestore = partialRestore;
   fullRestore.endTick = 1000;
   actions.clear();
   actions.push_back(fullRestore);
   applyEditSessionActions(actions, store, focus, kChannel, loopLength);
-  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
+  currentState.applyEditSessionAction(fullRestore);
+  TEST_ASSERT_FALSE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
 }
 
 void test_log_scenario_same_pitch_hide_when_moving_right() {
@@ -1379,7 +1390,11 @@ void test_canonical_commit_rows_do_not_depend_on_apply_owned_diagnostic_rows() {
   focus.last = {12, 100, 1248, 1439};
   focus.baselineMap[kMoverId] = focus.commitBaseline;
   focus.baselineMap[kOverlapId] = {12, 100, 1296, 1391};
-  recordChangedOverlapNote(focus, kOverlapId);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOverlapId, focus.baselineMap[kOverlapId], focus.baselineMap[kOverlapId],
+                         NoteEditPresenceType::Hidden);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, focus.last, NoteEditPresenceType::Visible);
 
   EditPassVec applyOwnedRows;
   EditSessionAction move{};
@@ -1401,7 +1416,7 @@ void test_canonical_commit_rows_do_not_depend_on_apply_owned_diagnostic_rows() {
   TEST_ASSERT_EQUAL(kMoverId, diagnosticRows[0].targetNoteId);
 
   const EditPassVec canonicalRows =
-      buildPreCommitEditPasses(focus, kChannel, &finalStore, loopLength);
+      buildPreCommitEditPasses(focus, kChannel, &finalStore, loopLength, &currentState);
   TEST_ASSERT_EQUAL(2, static_cast<int>(canonicalRows.size()));
   TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
                     static_cast<int>(canonicalRows[0].actionType));

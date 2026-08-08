@@ -96,26 +96,16 @@ bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row);
 NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
     const NoteEditCurrentState& currentState, NoteId movingNoteId);
 
-/// Geometry/pre-commit participation (§11 step 5.4): prefer current-state membership when
-/// non-empty; otherwise transitional Focus latch (legacy / empty current-state paths).
+/// Geometry/pre-commit participation (§11 step 5.5): current-state membership only.
 bool noteIsOverlapParticipant(NoteId noteId, const NoteEditFocus& focus,
                               const NoteEditCurrentState* currentState);
 
-/// True when any non-mover overlap participant exists (current state when non-empty, else latch).
+/// True when any non-mover overlap participant exists in current state.
 bool hasOverlapParticipants(const NoteEditFocus& focus, const NoteEditCurrentState* currentState);
-
-/// Transitional latch membership (`NoteEditFocus::changedOverlapNoteIds`) — dual-write only;
-/// readers must prefer `currentStateRowIsOverlapParticipant` / `noteIsOverlapParticipant`.
-bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId);
 
 /// True when row is Ended with geometry still differing (sticky clear without span rewrite).
 bool overlapParticipationEndedWhileGeometryDiffers(const NoteEditCurrentState& currentState,
                                                    NoteId noteId);
-
-/// Legacy dual-assert: latch forgotten while geometry still differs (pre–Ended readers).
-bool overlapParticipationLatchClearedWhileGeometryDiffers(const NoteEditFocus& focus,
-                                                          const NoteEditCurrentState& currentState,
-                                                          NoteId noteId);
 
 /// Same-start shortened tail or head-trimmed span that may leave-restore to committed baseline.
 bool participatingSpanQualifiesForOverlapLeaveRestore(const NoteBaseline& committed,

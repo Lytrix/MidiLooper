@@ -77,8 +77,8 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     }
 
     const NoteIdList evaluationScope =
-        collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.changedOverlapNoteIds,
-                                      focus.movingNoteId, overlapPitchLane, currentStateReader);
+        collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.movingNoteId,
+                                      overlapPitchLane, currentStateReader);
 
     ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel,
                                                currentStateReader);
@@ -118,8 +118,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         constrained = resolveAllConstrainedGeometry(
             grouped, analysisBaseline, transactionBaselineAfterEnsure, liveStore,
             channel, loopLength, noteMinLengthTicks, noteMinLengthRemoveEnabled, selection,
-            editedGeometry, focus.changedOverlapNoteIds, focus, leaveRestoreTargetNoteIds,
-            currentStateReader);
+            editedGeometry, focus, leaveRestoreTargetNoteIds, currentStateReader);
 
     const EditSessionActions actions =
         buildEditSessionActions(constrained, editedGeometry, analysisBaseline,
@@ -137,7 +136,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
                   collectOverlapParticipantNoteIdsFromCurrentState(*currentStateReader,
                                                                    focus.movingNoteId)
                       .size())
-            : static_cast<unsigned>(focus.changedOverlapNoteIds.size());
+            : 0u;
     logger.log(CAT_MIDI, LOG_DEBUG,
                "GeometryPipeline: storeNoteOns=%u baselineMap=%u lane=%d changed=%u candidates=%u "
                "pairs=%u interactions=%u constrained=%u actions=%u",

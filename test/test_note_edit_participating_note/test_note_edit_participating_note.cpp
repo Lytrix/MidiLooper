@@ -186,10 +186,8 @@ void test_overlap_participation_ended_after_sticky_clear() {
   focus.active = true;
   focus.movingNoteId = kMoverId;
   focus.last = kMoverPast;
-  recordChangedOverlapNote(focus, kOverlapId);
 
   TEST_ASSERT_TRUE(currentStateRowIsOverlapParticipant(*currentState.find(kOverlapId)));
-  TEST_ASSERT_TRUE(overlapParticipationLatchActive(focus, kOverlapId));
   TEST_ASSERT_FALSE(overlapParticipationEndedWhileGeometryDiffers(currentState, kOverlapId));
 
   clearChangedOverlapParticipationWhenInteractionCleared(focus, currentState, kMoverPast,
@@ -200,10 +198,7 @@ void test_overlap_participation_ended_after_sticky_clear() {
                     static_cast<int>(row->overlapParticipation));
   TEST_ASSERT_FALSE(currentStateRowIsOverlapParticipant(*row));
   TEST_ASSERT_TRUE(currentStateRowGeometryDiffersFromCommitted(*row));
-  TEST_ASSERT_FALSE(overlapParticipationLatchActive(focus, kOverlapId));
   TEST_ASSERT_TRUE(overlapParticipationEndedWhileGeometryDiffers(currentState, kOverlapId));
-  TEST_ASSERT_TRUE(
-      overlapParticipationLatchClearedWhileGeometryDiffers(focus, currentState, kOverlapId));
   TEST_ASSERT_EQUAL_UINT32(kStub.endTick, row->currentSpan.endTick);
 }
 
@@ -220,8 +215,6 @@ void test_note_is_overlap_participant_prefers_current_state_over_latch() {
 
   NoteEditFocus focus;
   focus.movingNoteId = 11;
-  recordChangedOverlapNote(focus, kEndedId);
-  recordChangedOverlapNote(focus, kActiveId);
 
   TEST_ASSERT_FALSE(noteIsOverlapParticipant(kEndedId, focus, &currentState));
   TEST_ASSERT_TRUE(noteIsOverlapParticipant(kActiveId, focus, &currentState));
@@ -229,10 +222,9 @@ void test_note_is_overlap_participant_prefers_current_state_over_latch() {
 
   currentState.markOverlapParticipationEnded(kActiveId);
   TEST_ASSERT_FALSE(hasOverlapParticipants(focus, &currentState));
-  // Empty current-state path still reads latch.
   NoteEditCurrentState emptyState;
-  TEST_ASSERT_TRUE(noteIsOverlapParticipant(kEndedId, focus, &emptyState));
-  TEST_ASSERT_TRUE(hasOverlapParticipants(focus, &emptyState));
+  TEST_ASSERT_FALSE(noteIsOverlapParticipant(kEndedId, focus, &emptyState));
+  TEST_ASSERT_FALSE(hasOverlapParticipants(focus, &emptyState));
 }
 
 void test_shorten_reactivates_overlap_participation_after_ended() {

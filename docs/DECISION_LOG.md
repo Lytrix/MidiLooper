@@ -63,6 +63,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Validation:** Native fixtures for sticky clear → Ended, Shorten reactivates Active; display/inventory readers use current-state participation.
 
+**Completion (2026-08-08):** §11 step 5.5 removed `changedOverlapNoteIds` and live-store membership reconcile; participation is current-state only (smoke HITL `025807`, `030432` on prior slices).
+
 ---
 
 ## DEC-029 — NoteEditCurrentState owns NOTE_EDIT editable note state

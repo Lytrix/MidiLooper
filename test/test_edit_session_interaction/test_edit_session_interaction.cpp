@@ -354,7 +354,7 @@ void test_evaluation_scope_excludes_cross_lane_notes() {
 
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, 13);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 13);
   TEST_ASSERT_EQUAL(1, static_cast<int>(scope.size()));
   TEST_ASSERT_TRUE(scopeContains(scope, kSameLaneId));
   TEST_ASSERT_FALSE(scopeContains(scope, kCrossLaneId));
@@ -374,14 +374,14 @@ void test_evaluation_scope_without_lane_includes_all_notes() {
   MidiEventVec liveStore;
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, std::nullopt);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, std::nullopt);
   TEST_ASSERT_EQUAL(2, static_cast<int>(scope.size()));
   TEST_ASSERT_TRUE(scopeContains(scope, 2));
   TEST_ASSERT_TRUE(scopeContains(scope, 3));
 }
 
 /// Source-lane restore after a pitch change: the note hidden on lane 13 is absent from the live
-/// store and off the new lane 16, so only its changedOverlapNoteIds membership keeps it in
+/// store and off the new lane 16, so current-state Active Hidden participation keeps it in
 /// scope. Without the sticky rule the restore action could never be generated.
 void test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change() {
   constexpr uint8_t kChannel = 5;
@@ -399,11 +399,12 @@ void test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change() {
   liveStore.push_back(taggedNoteOn(144, kChannel, 16, kMoverId));
   liveStore.push_back(taggedNoteOn(600, kChannel, 16, kDestLaneId));
 
-  NoteIdList changed;
-  changed.push_back(kHiddenOnSourceLane);
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenOnSourceLane, baseline[kHiddenOnSourceLane],
+                         baseline[kHiddenOnSourceLane], NoteEditPresenceType::Hidden);
 
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, changed, kMoverId, 16);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 16, &currentState);
   TEST_ASSERT_TRUE(scopeContains(scope, kDestLaneId));
   TEST_ASSERT_TRUE(scopeContains(scope, kHiddenOnSourceLane));
 
@@ -439,7 +440,7 @@ void test_evaluation_scope_ignores_store_channel() {
 
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, 26);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 26);
   TEST_ASSERT_EQUAL(1, static_cast<int>(scope.size()));
   TEST_ASSERT_TRUE(scopeContains(scope, kSameLaneId));
 }
@@ -494,7 +495,7 @@ void test_ensure_baseline_fills_scope_gap_enables_pitch_lane_interactions() {
 
   const NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(focus.baselineMap, liveStore, noneChanged, kMoverId, kLane);
+      collectEvaluationScopeNoteIds(focus.baselineMap, liveStore, kMoverId, kLane);
   TEST_ASSERT_TRUE(scopeContains(scope, kLaneTarget));
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kLaneTarget)));
 
@@ -565,7 +566,10 @@ void test_delete_causing_restore_candidate_without_incoming() {
   focus.last = {60, 100, 100, 200};
   focus.baselineMap[kDeletedCausingId] = {60, 100, 100, 200};
   focus.baselineMap[kHiddenNeighborId] = {60, 100, 120, 180};
-  focus.changedOverlapNoteIds.push_back(kHiddenNeighborId);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenNeighborId, focus.baselineMap[kHiddenNeighborId],
+                         focus.baselineMap[kHiddenNeighborId], NoteEditPresenceType::Hidden);
 
   EditorSelection selection{};
   selection.primaryNote = kDeletedCausingId;
@@ -573,6 +577,10 @@ void test_delete_causing_restore_candidate_without_incoming() {
 
   EditedGeometry editedGeometry{};
   editedGeometry.selection = selection;
+  EditedNoteSpan deletedCausing{};
+  deletedCausing.noteId = kDeletedCausingId;
+  deletedCausing.span = {60, 100, 0, 119};
+  editedGeometry.causingSpans.push_back(deletedCausing);
 
   EditSessionInteractionsByTarget grouped{};
   MidiEventVec liveStore;
@@ -580,8 +588,8 @@ void test_delete_causing_restore_candidate_without_incoming() {
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, focus.baselineMap, liveStore, kChannel,
-                                                loopLength, selection, editedGeometry,
-                                                focus.changedOverlapNoteIds, focus);
+                                                loopLength, selection, editedGeometry, focus,
+                                                &currentState);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targetIds.size()));
   TEST_ASSERT_EQUAL_UINT32(kHiddenNeighborId, targetIds[0]);
 
@@ -869,7 +877,7 @@ void test_overlap_analyze_uses_current_span_not_stale_baseline_021939() {
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, changedOverlap, kMoverId, kPitch,
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kPitch,
                                     &currentState);
   const auto pairs = determineEligiblePairs(selection, changed, scope);
   TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
@@ -927,7 +935,7 @@ void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, changedOverlap, kMoverId, kPitch,
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kPitch,
                                     &currentState);
   const auto pairs = determineEligiblePairs(selection, changed, scope);
   TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
@@ -972,7 +980,7 @@ void test_evaluation_scope_excludes_ended_participation_even_with_stale_latch() 
   currentState.projectToSessionStore(liveStore, 5);
 
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, staleLatch, kMoverId, kLane, &currentState);
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kLane, &currentState);
   TEST_ASSERT_TRUE(scopeContains(scope, kOnLaneId));
   TEST_ASSERT_FALSE(scopeContains(scope, kEndedId));
   TEST_ASSERT_FALSE(scopeContains(scope, kMoverId));
@@ -998,7 +1006,7 @@ void test_evaluation_scope_excludes_sealed_deleted_022849() {
   currentState.projectToSessionStore(liveStore, kChannel);
   NoteIdList noneChanged;
   const NoteIdList scope =
-      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, kPitch,
+      collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, kPitch,
                                     &currentState);
   TEST_ASSERT_TRUE(std::find(scope.begin(), scope.end(), kDeletedId) == scope.end());
 }

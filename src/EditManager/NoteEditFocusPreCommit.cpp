@@ -27,15 +27,22 @@ NOTE_EDIT_FOCUS_INTERNAL_MEM EditPass makeNoteEditRow(EditActionType actionType,
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
     const NoteEditFocus& focus, const MidiEventVec& sessionEvents, uint8_t channel,
-    uint32_t loopLength) {
+    uint32_t loopLength, const NoteEditCurrentState* currentState) {
   EditPassVec rows;
   if (!focus.active) {
     return rows;
   }
   (void)loopLength;
+  if (currentState == nullptr || currentState->empty()) {
+    return rows;
+  }
 
   for (const auto& [noteId, baseline] : focus.baselineMap) {
     if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    const NoteEditCurrentNoteState* stateRow = currentState->find(noteId);
+    if (stateRow == nullptr || !currentStateRowIsOverlapParticipant(*stateRow)) {
       continue;
     }
     NoteBaseline live{};
@@ -43,29 +50,15 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
         readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength,
                                        focus.movingNoteId, live);
     if (!hasLive) {
-      // Delete authority: only a note the geometry pipeline hid may be removed. An unresolved
+      // Delete authority: only an Active overlap participant may be removed. An unresolved
       // baseline entry (pass-materialize noteId vs session-store noteId) is preserved and
       // reported — a lookup miss must never destroy a note.
-      if (!hasChangedOverlapNote(focus, noteId)) {
-#if defined(SESSION_CAPTURE)
-        logger.log(CAT_TRACK, LOG_WARNING,
-                   "NOTE_EDIT pre-commit: baseline noteId=%lu pitch=%u start=%lu unresolved in "
-                   "live store; preserved (no Delete row)",
-                   static_cast<unsigned long>(noteId),
-                   static_cast<unsigned>(baseline.pitch),
-                   static_cast<unsigned long>(baseline.startTick));
-#endif
-        continue;
-      }
       EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
       row.targetNoteId = noteId;
       rows.push_back(row);
       continue;
     }
     if (live.pitch != baseline.pitch) {
-      continue;
-    }
-    if (!hasChangedOverlapNote(focus, noteId)) {
       continue;
     }
     if (loopLength > 0 &&
@@ -280,11 +273,12 @@ NOTE_EDIT_MEM EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& f
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                                    const MidiEventVec* sessionStoreEvents,
-                                                   uint32_t loopLength) {
+                                                   uint32_t loopLength,
+                                                   const NoteEditCurrentState* currentState) {
   EditPassVec rows;
   if (sessionStoreEvents != nullptr && loopLength > 0) {
     rows = buildPreCommitBaselineLiveDiffOverlapPasses(focus, *sessionStoreEvents, channel,
-                                                       loopLength);
+                                                       loopLength, currentState);
   }
   if (!focus.active) {
     return rows;

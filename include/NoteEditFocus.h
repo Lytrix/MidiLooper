@@ -83,16 +83,8 @@ struct NoteEditFocus {
   NoteBaseline last{};
   BaselineMap baselineMap;
   /// Scratch for evict/clear/session undo sizing — not commit or filter authority (baselineMap +
-  /// live store + changedOverlapNoteIds). Retained until explicit retire task.
+  /// live store). Retained until explicit retire task.
   OverlapNoteMap overlapNotes;
-  /// Overlap notes the geometry pipeline hid or shortened under the current edit driver.
-  /// Transient session state: only geometry actions write it, it is cleared at the edit driver
-  /// boundary and session end, and it is never persisted to storage. It travels with the focus in
-  /// session undo snapshots (like `baselineMap` / `overlapNotes`) so a note changed several steps
-  /// back keeps its pre-commit authority across undo. Membership authorises overlap Update rows;
-  /// membership plus absence from the live store authorises a Delete row — see
-  /// `buildPreCommitBaselineLiveDiffOverlapPasses`.
-  NoteIdList changedOverlapNoteIds;
 
   void clear() {
     active = false;
@@ -102,7 +94,6 @@ struct NoteEditFocus {
     last = {};
     baselineMap.clear();
     overlapNotes.clear();
-    changedOverlapNoteIds.clear();
   }
 };
 
@@ -121,17 +112,7 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
 OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId);
 const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId);
 
-/// Transitional latch membership (`changedOverlapNoteIds`) — dual-write until §11 step 5.5.
-/// Participation authority is `NoteEditCurrentNoteState::overlapParticipation` /
-/// `currentStateRowIsOverlapParticipant`.
-bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
-void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
-void reconcileChangedOverlapNoteIdsFromLiveStore(NoteEditFocus& focus,
-                                                 const MidiEventVec& sessionEvents,
-                                                 uint8_t channel, uint32_t loopLength,
-                                                 const NoteEditCurrentState* currentState = nullptr);
-void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
-/// Sticky end-of-participation: mark Visible shortened rows Ended and forget latch dual-write.
+/// Sticky end-of-participation: mark Visible shortened rows Ended.
 /// Does not rewrite currentSpan (session_20260807_232118).
 void clearChangedOverlapParticipationWhenInteractionCleared(
     NoteEditFocus& focus, NoteEditCurrentState& currentState, const NoteBaseline& causingSpan,
@@ -177,22 +158,17 @@ bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 /// True when pre-commit would emit moving-note and/or overlap edit pass rows.
 bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus);
 
-/// Phase 4 geometry: overlap hide/shorten via baselineMap + live store (overlapNotes scratch empty).
+/// Overlap hide/shorten pending via baselineMap + live store, gated by current-state participation.
 template <typename Alloc>
 bool noteEditFocusHasPendingBaselineMapDiff(const NoteEditFocus& focus,
                                             const std::vector<MidiEvent, Alloc>& sessionEvents,
-                                            uint8_t channel, uint32_t loopLength);
+                                            uint8_t channel, uint32_t loopLength,
+                                            const NoteEditCurrentState* currentState = nullptr);
 
 /// True when pitch edit can update the mover pair only (no overlap lane work).
 bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const NoteEditFocus& focus,
                                uint8_t channel, uint8_t currentPitch, uint8_t targetPitch,
                                uint32_t moverStart, uint32_t moverEnd, uint32_t loopLength);
-
-/// Sticky overlap candidates on a pitch lane so the geometry pipeline can RestoreNote when leaving
-/// that lane (replaces legacy overlapNotes scratch restore before pitch change).
-void recordBaselinePitchLaneRestoreOverlapCandidates(NoteEditFocus& focus,
-                                                     const MidiEventVec& liveStore,
-                                                     uint8_t channel, uint8_t pitch);
 
 /// Reject LIFO mispairs (e.g. on@387 with off@loopLength+displayEnd).
 bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength);
@@ -278,7 +254,8 @@ bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
 /// When unset, overlap rows are omitted (moving-note rows still emitted when focus is active).
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                      const MidiEventVec* sessionStoreEvents = nullptr,
-                                     uint32_t loopLength = 0);
+                                     uint32_t loopLength = 0,
+                                     const NoteEditCurrentState* currentState = nullptr);
 
 /// Macro commit rows from current state compared to committed baseline (`baselineMap`).
 EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,

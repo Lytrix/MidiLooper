@@ -183,19 +183,10 @@ NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(
     participants.push_back(focus.movingNoteId);
   }
   if (currentState != nullptr && !currentState->empty()) {
-    // §11 step 5.4: paint participants from current-state membership (Ended excluded).
+    // §11 step 5.5: paint participants from current-state membership only (Ended excluded).
     const NoteIdList fromState =
         collectOverlapParticipantNoteIdsFromCurrentState(*currentState, focus.movingNoteId);
     for (NoteId noteId : fromState) {
-      if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
-        participants.push_back(noteId);
-      }
-    }
-  } else {
-    for (NoteId noteId : focus.changedOverlapNoteIds) {
-      if (noteId == kInvalidNoteId) {
-        continue;
-      }
       if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
         participants.push_back(noteId);
       }
