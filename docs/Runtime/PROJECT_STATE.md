@@ -2,17 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-08 (Phase 1.1 `b759fc6`; 1.2 SoT in progress)
+Last updated: 2026-08-08 (Phase 1.2 `a93e205`, 1.3 `e026126`)
 
 ---
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) on `refactor/note-edit-projected-store-retire` (1.1 committed; 1.2 uncommitted); HITL CLI Phase 3.
+**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) on `refactor/note-edit-projected-store-retire` (Phase 1.1–1.3); HITL CLI Phase 3.
 
-**Recent on `dev`:** StorageManager TU trim PR [#17](https://github.com/Lytrix/MidiLooper/pull/17); DEC-029 closeout (`3e9253e`); playing move/length audition (`15c5750`).
-
-**Branch tip (local):** `b759fc6` — NOTE_EDIT projected-store compat retirement (Phase 1.1).
+**Branch tip (local):** `e026126` — Phase 1.3 admit* migration; Phase 1.2 selection tick SoT (`a93e205`); Phase 1.1 projected-store compat (`b759fc6`).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
@@ -32,7 +30,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Codebase consistency:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) **NOW** — Phase 1.1 shipped (`b759fc6`); **1.2** selection tick SoT in progress on `refactor/note-edit-projected-store-retire` — [`codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)
+- **Codebase consistency:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) **NOW** — Phase 1.1–1.3 on `refactor/note-edit-projected-store-retire` — [`codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)
 - **StorageManager TU remaining:** **Merged** PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08); closeout [#16](https://github.com/Lytrix/MidiLooper/issues/16)
 - **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor
 - **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; layered **`base`** device PASS deferred to dedicated HITL refactor
