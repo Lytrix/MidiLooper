@@ -11,6 +11,8 @@ Fixing one root cause often **unmasks** the next. That is expected — not a rea
 
 **Does not replace:** [architecture-checkpoint-bugfix](architecture-checkpoint-bugfix.mdc), [Plan-Pre-Implementation-Review.mdc](Plan-Pre-Implementation-Review.mdc), [OpenSpec-Phase-Gate.mdc](OpenSpec-Phase-Gate.mdc).
 
+**Work identity / closeout:** [WORKFLOW_LIFECYCLE.md](../../docs/Authority/WORKFLOW_LIFECYCLE.md); GitHub Bug/RC rules: [GITHUB_WORK_TRACKING.md](../../docs/Authority/GITHUB_WORK_TRACKING.md).
+
 ## One capture ≠ one commit
 
 A single capture may show several bugs. **Split by root cause**, not by session.
