@@ -106,10 +106,10 @@ SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint3
                                    uint8_t ch, uint8_t note);
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
                                  size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
-                                 size_t bufferEvents, int published);
+                                 size_t bufferEvents, int hasCommittedPasses);
 SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uint32_t loopLen,
                                        size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
-                                       size_t bufferEvents, int published, uint32_t windowStartTick,
+                                       size_t bufferEvents, int hasCommittedPasses, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount);
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
@@ -173,12 +173,12 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::captureCoordinate(absTick, storageTick, projPhase, displayPhase, \
                                          startLoopTick, projectionCycleStartTick, loopStartTick, \
                                          ch, note)
-#define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
-  DebugSessionCapture::displaySnapshot(slot, state, loopLen, take, visual, frame, buffer, published)
-#define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, published, wStart, wBars, \
-                       wNotes) \
+#define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses) \
+  DebugSessionCapture::displaySnapshot(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses)
+#define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses, wStart, wBars, \
+                      wNotes) \
   DebugSessionCapture::displaySnapshotWindow(slot, state, loopLen, take, visual, frame, buffer, \
-                                             published, wStart, wBars, wNotes)
+                                             hasCommittedPasses, wStart, wBars, wNotes)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) \
@@ -236,9 +236,9 @@ inline void restartCaptureBootGrace() {}
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   ((void)0)
-#define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)
-#define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, published, wStart, wBars, \
-                       wNotes) \
+#define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses) ((void)0)
+#define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses, wStart, wBars, \
+                      wNotes) \
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) ((void)0)

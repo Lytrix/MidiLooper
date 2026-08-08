@@ -145,7 +145,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
                        "LENGTH EDIT: pitchbend %d -> tick %lu (was %lu)",
                        pitchValue, targetEndTick, relativeEndTick);
             if (clockManager.isTransportRunning()) {
-                queuePendingPlayingLength(currentNote, targetEndTick);
+                queuePendingPlayingEditLength(currentNote, targetEndTick);
                 return;
             }
             geometryApplied =
@@ -197,7 +197,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             // Store the target step as reference for fine adjustments
             editManager.setReferenceStep(targetSixteenthStep);
             if (clockManager.isTransportRunning()) {
-                queuePendingPlayingMove(currentNote, targetTick);
+                queuePendingPlayingEditMove(currentNote, targetTick);
                 return;
             }
             geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetTick);
@@ -278,7 +278,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                    "LENGTH EDIT (fine): anchor %lu offset %ld -> tick %lu",
                    anchorTick, fineOffset, targetEndTick);
         if (clockManager.isTransportRunning()) {
-            queuePendingPlayingLength(currentNote, targetEndTick);
+            queuePendingPlayingEditLength(currentNote, targetEndTick);
             return;
         }
         geometryApplied =
@@ -315,7 +315,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                    relativeStartTick, relativeTargetStartTick, currentNoteStartTick,
                    targetStartTick);
         if (clockManager.isTransportRunning()) {
-            queuePendingPlayingMove(currentNote, targetStartTick);
+            queuePendingPlayingEditMove(currentNote, targetStartTick);
             return;
         }
         geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetStartTick);
@@ -395,11 +395,11 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleNoteValueFaderInput(uint8_t ccVa
     releaseEditedNoteAudition();
 
     if (clockManager.isTransportRunning()) {
-        queuePendingPlayingPitch(liveNote, currentNoteValue, newNoteValue);
+        queuePendingPlayingEditPitch(liveNote, currentNoteValue, newNoteValue);
         return;
     }
     const bool refreshPlaybackPreview = !clockManager.isTransportRunning();
-    if (!applyPlayingPitchGeometry(track, liveNote, currentNoteValue, newNoteValue,
+    if (!applyPlayingEditPitchGeometry(track, liveNote, currentNoteValue, newNoteValue,
                                    refreshPlaybackPreview)) {
         return;
     }

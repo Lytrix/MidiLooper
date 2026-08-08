@@ -1496,7 +1496,7 @@ void test_apply_restore_storm_keeps_pitch71_bounded_144520() {
 }
 
 void test_pitch_change_to_lane30_emits_restore_and_change_pitch_151910() {
-  // session_20260805_151910 @ ~38.2s: pitch 23 -> 30 runs geometry pipeline (not simple path)
+  // session_20260805_151910 @ ~38.2s: pitch 23 -> 30 runs NoteGeometryResolver (not simple path)
   // with RestoreNote rows for baseline lane-30 notes plus ChangePitch on the mover.
   constexpr uint32_t kLoopLength = 3072;
   constexpr NoteId kMoverId = 42;

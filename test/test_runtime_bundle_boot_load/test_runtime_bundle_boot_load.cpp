@@ -34,12 +34,12 @@ RecordPass makeRecordPassWithNotes(unsigned noteCount) {
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(i * 48u, 1, 60, 100)));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOff(i * 48u + 24u, 1, 60, 0)));
   }
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 

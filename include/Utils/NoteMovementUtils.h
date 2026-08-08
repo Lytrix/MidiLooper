@@ -50,7 +50,7 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                                          bool refreshPlaybackPreview = true);
 
     /**
-     * Apply a pitch change using the edit-session geometry pipeline for overlap hide/restore.
+     * Apply a pitch change using NoteGeometryResolver for overlap hide/restore.
      *
      * @param currentNoteValue Existing pitch of the moving note
      * @param newNoteValue Target pitch for the moving note

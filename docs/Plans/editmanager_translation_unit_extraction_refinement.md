@@ -192,7 +192,7 @@ Milestone after **Phases 0–9**: root TU within target band.
 | `logChangeLengthCommitTrace` / `logPreCommitEditPassRows` / `logApplyOwnedCommitParity` | `#CAP` / commit trace |
 | `editPassRowsEqualForParity` / `addedEventsEqual` | Test parity helpers |
 | `materializePassesExcludingEditPasses` | Pass materialize helper for focus rebuild |
-| `logGeomApplyUndo` / `logGeomApplyFocus` / `logGeomApplyPipeline` | `#CAP,GEOM_APPLY,*` (SESSION_CAPTURE) |
+| `logGeomApplyUndo` / `logGeomApplyFocus` / `logGeomApplyResolve` | `#CAP,GEOM_APPLY,*` (SESSION_CAPTURE) |
 
 ### Keep in root
 

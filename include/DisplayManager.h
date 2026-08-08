@@ -190,7 +190,7 @@ private:
     bool syncDetailedPaintWindow(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                  uint32_t loopLength, uint32_t& outWindowStart,
                                  uint32_t& outWindowLength, uint8_t& outWindowBars);
-    /// Windowed published reconstruction with gather-margin reuse across frames.
+    /// Windowed committed-pass reconstruction with gather-margin reuse across frames.
     const DisplayNoteVec& resolveWindowedDisplayNotes(const Track& track, Loop& mutLoop,
                                                      const Loop& loop, uint8_t displaySlot,
                                                      uint32_t loopLength, uint32_t windowStart,

@@ -185,7 +185,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
 void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
   if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
-  isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
+  ignorePlaybackMidiInput = true;  // Suppress playback-echo MIDI during overdub capture
   MidiEvent evtCopy = evt;
   // Per-event channel 1-16 is remapped to the track's output channel. Channel 0 is treated as
   // unset (edit paths that default-construct MidiEvent and never set channel).
@@ -200,7 +200,7 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   if (evt.isNoteOff()) {
     const uint8_t note = evtCopy.data.noteData.note;
     if (!runtime.ledger.isActive(evtCopy.channel, note)) {
-      isPlayingBack = false;
+      ignorePlaybackMidiInput = false;
       return;
     }
     runtime.ledger.noteOff(evtCopy.channel, note);
@@ -221,7 +221,7 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
                evtCopy.data.noteData.note, evtCopy.data.noteData.velocity, evt.tick);
   }
   midiHandler.sendMidiEvent(evtCopy);
-  isPlayingBack = false;  // Reset playback state
+  ignorePlaybackMidiInput = false;  // Reset playback state
 }
 
 void Track::sendAllNotesOff() {

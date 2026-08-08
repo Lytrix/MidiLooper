@@ -18,8 +18,8 @@ Last updated: 2026-08-08 (#18 Phase 2 branch; Phase 1 merged PR #19)
 | Phase | Status |
 |-------|--------|
 | 1 — Authority | **Shipped** — PR #19 merged to `dev` |
-| **2 — API / vocabulary** | **Next** — 2.1 selectable-display, 2.2 geometry strings, 2.3 published→committed, 2.4 Playing vs Playback |
-| 3–4 | Queued |
+| **2 — API / vocabulary** | **Shipped** — 2.1–2.4 done (selectable-display, geometry, committed, Playing vs Playback) |
+| 3–4 | **Next** — dead helpers, selection writes, investigation |
 
 ### StorageManager TU extraction — shipped (PR #17)
 

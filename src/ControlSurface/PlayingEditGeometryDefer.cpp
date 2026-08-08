@@ -13,6 +13,9 @@
 #include "Track.h"
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteMovementUtils.h"
+#if defined(SESSION_CAPTURE)
+#include "EditManagerInternal.h"
+#endif
 #include "Utils/NoteUtils.h"
 
 namespace {
@@ -42,40 +45,40 @@ void logGeomApplySkip(uint8_t reasonCode) {
 
 }  // namespace
 
-NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingMove(const NoteUtils::DisplayNote& note,
-                                                                  uint32_t targetTick) {
-    pendingPlayingGeometryType_ = PendingPlayingGeometryType::Move;
-    pendingPlayingGeometryNote_ = note;
-    pendingPlayingGeometryTargetTick_ = targetTick;
-    pendingPlayingGeometryQueuedAtMs_ = millis();
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditMove(const NoteUtils::DisplayNote& note,
+                                                                    uint32_t targetTick) {
+    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Move;
+    pendingPlayingEditGeometryNote_ = note;
+    pendingPlayingEditGeometryTargetTick_ = targetTick;
+    pendingPlayingEditGeometryQueuedAtMs_ = millis();
 #if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingGeometryType::Move), targetTick,
+    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Move), targetTick,
                       clockManager.isTransportRunning());
 #endif
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingLength(const NoteUtils::DisplayNote& note,
-                                                                    uint32_t targetEndTick) {
-    pendingPlayingGeometryType_ = PendingPlayingGeometryType::Length;
-    pendingPlayingGeometryNote_ = note;
-    pendingPlayingGeometryTargetTick_ = targetEndTick;
-    pendingPlayingGeometryQueuedAtMs_ = millis();
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditLength(const NoteUtils::DisplayNote& note,
+                                                                      uint32_t targetEndTick) {
+    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Length;
+    pendingPlayingEditGeometryNote_ = note;
+    pendingPlayingEditGeometryTargetTick_ = targetEndTick;
+    pendingPlayingEditGeometryQueuedAtMs_ = millis();
 #if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingGeometryType::Length), targetEndTick,
+    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Length), targetEndTick,
                       clockManager.isTransportRunning());
 #endif
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingPitch(const NoteUtils::DisplayNote& note,
-                                                                   uint8_t currentPitch,
-                                                                   uint8_t newPitch) {
-    pendingPlayingGeometryType_ = PendingPlayingGeometryType::Pitch;
-    pendingPlayingGeometryNote_ = note;
-    pendingPlayingGeometryPitchCurrent_ = currentPitch;
-    pendingPlayingGeometryPitchNew_ = newPitch;
-    pendingPlayingGeometryQueuedAtMs_ = millis();
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditPitch(const NoteUtils::DisplayNote& note,
+                                                                     uint8_t currentPitch,
+                                                                     uint8_t newPitch) {
+    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Pitch;
+    pendingPlayingEditGeometryNote_ = note;
+    pendingPlayingEditGeometryPitchCurrent_ = currentPitch;
+    pendingPlayingEditGeometryPitchNew_ = newPitch;
+    pendingPlayingEditGeometryQueuedAtMs_ = millis();
 #if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingGeometryType::Pitch), newPitch,
+    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Pitch), newPitch,
                       clockManager.isTransportRunning());
 #endif
 }
@@ -114,11 +117,11 @@ NOTE_EDIT_MEM void ControlSurfaceManager::finishGeometryDriverSideEffects(
     }
 }
 
-NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingPitchGeometry(Track& track,
-                                                                    const NoteUtils::DisplayNote& liveNote,
-                                                                    uint8_t currentPitch,
-                                                                    uint8_t newPitch,
-                                                                    bool refreshPlaybackPreview) {
+NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingEditPitchGeometry(Track& track,
+                                                                        const NoteUtils::DisplayNote& liveNote,
+                                                                        uint8_t currentPitch,
+                                                                        uint8_t newPitch,
+                                                                        bool refreshPlaybackPreview) {
 #if defined(SESSION_CAPTURE)
     const uint32_t focusStartUs = micros();
 #endif
@@ -143,7 +146,7 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingPitchGeometry(Track& track
     logger.info("#CAP,%lu,GEOM_APPLY,undo,ok,%lu,%u,0", static_cast<unsigned long>(micros()),
                 static_cast<unsigned long>(micros() - undoStartUs),
                 static_cast<unsigned>(NoteEditKind::Pitch));
-    const uint32_t pipelineStartUs = micros();
+    const uint32_t resolveStartUs = micros();
 #endif
 
     NoteUtils::DisplayNote pitchTarget = liveNote;
@@ -153,9 +156,7 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingPitchGeometry(Track& track
         track, editManager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
         currentPitch, newPitch, pitchTarget.startTick, pitchTarget.endTick, refreshPlaybackPreview);
 #if defined(SESSION_CAPTURE)
-    logger.info("#CAP,%lu,GEOM_APPLY,pipeline,%lu,%u,%u,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(micros() - pipelineStartUs), pitchUpdated ? 1u : 0u,
-                static_cast<unsigned>(NoteEditKind::Pitch));
+    logGeomApplyResolve(micros() - resolveStartUs, pitchUpdated, NoteEditKind::Pitch);
 #endif
     if (!pitchUpdated) {
         return false;
@@ -168,50 +169,50 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingPitchGeometry(Track& track
     return true;
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::processPendingPlayingGeometry(Track& track) {
-    if (pendingPlayingGeometryType_ == PendingPlayingGeometryType::None) {
+NOTE_EDIT_MEM void ControlSurfaceManager::processPendingPlayingEditGeometry(Track& track) {
+    if (pendingPlayingEditGeometryType_ == PendingPlayingEditGeometryType::None) {
         return;
     }
     if (!clockManager.isTransportRunning()) {
 #if defined(SESSION_CAPTURE)
         logGeomApplySkip(1);
 #endif
-        pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
+        pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::None;
         return;
     }
     const uint32_t queueAgeMs =
-        pendingPlayingGeometryQueuedAtMs_ > 0 ? millis() - pendingPlayingGeometryQueuedAtMs_ : 0;
+        pendingPlayingEditGeometryQueuedAtMs_ > 0 ? millis() - pendingPlayingEditGeometryQueuedAtMs_ : 0;
 #if defined(SESSION_CAPTURE)
     logGeomApplyDequeue(queueAgeMs,
-                        static_cast<uint8_t>(pendingPlayingGeometryType_));
+                        static_cast<uint8_t>(pendingPlayingEditGeometryType_));
 #endif
     editManager.processKindBoundaryUndoWarm(track);
     const uint32_t now = millis();
 
-    const PendingPlayingGeometryType kind = pendingPlayingGeometryType_;
-    pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
-    pendingPlayingGeometryQueuedAtMs_ = 0;
+    const PendingPlayingEditGeometryType kind = pendingPlayingEditGeometryType_;
+    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::None;
+    pendingPlayingEditGeometryQueuedAtMs_ = 0;
 
     bool applied = false;
     MidiMapping::FaderType driverFader = MidiMapping::FaderType::FADER_COARSE;
     switch (kind) {
-        case PendingPlayingGeometryType::Move:
-            applied = editManager.moveNoteToPosition(track, pendingPlayingGeometryNote_,
-                                                     pendingPlayingGeometryTargetTick_);
+        case PendingPlayingEditGeometryType::Move:
+            applied = editManager.moveNoteToPosition(track, pendingPlayingEditGeometryNote_,
+                                                     pendingPlayingEditGeometryTargetTick_);
             driverFader = MidiMapping::FaderType::FADER_COARSE;
             break;
-        case PendingPlayingGeometryType::Length:
+        case PendingPlayingEditGeometryType::Length:
             applied = editManager.changeNoteEndWithOverlapHandling(
-                track, pendingPlayingGeometryNote_, pendingPlayingGeometryTargetTick_);
+                track, pendingPlayingEditGeometryNote_, pendingPlayingEditGeometryTargetTick_);
             driverFader = MidiMapping::FaderType::FADER_COARSE;
             break;
-        case PendingPlayingGeometryType::Pitch:
-            applied = applyPlayingPitchGeometry(track, pendingPlayingGeometryNote_,
-                                                pendingPlayingGeometryPitchCurrent_,
-                                                pendingPlayingGeometryPitchNew_, true);
+        case PendingPlayingEditGeometryType::Pitch:
+            applied = applyPlayingEditPitchGeometry(track, pendingPlayingEditGeometryNote_,
+                                                    pendingPlayingEditGeometryPitchCurrent_,
+                                                    pendingPlayingEditGeometryPitchNew_, true);
             driverFader = MidiMapping::FaderType::FADER_NOTE_VALUE;
             break;
-        case PendingPlayingGeometryType::None:
+        case PendingPlayingEditGeometryType::None:
             break;
     }
     if (applied) {

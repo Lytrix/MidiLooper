@@ -16,8 +16,8 @@ MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   const uint32_t revision = loop.playbackRevision;
   if (committedMidiScratchRevision_ != revision) {
     loop.materializeEditViewFromPasses();
-    const SessionMidiEventVec& published = loop.midiEvents();
-    committedMidiScratch_.assign(published.begin(), published.end());
+    const SessionMidiEventVec& committedLoopMidi = loop.midiEvents();
+    committedMidiScratch_.assign(committedLoopMidi.begin(), committedLoopMidi.end());
     committedMidiScratchRevision_ = revision;
   }
   return committedMidiScratch_;

@@ -69,13 +69,13 @@ RecordPass makeRecordPassWithEvents(PassId id, uint32_t mergeSequence, CapturePa
                               uint8_t typeRaw, uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   (void)mergeSequence;
   (void)typeRaw;
   return pass;
@@ -85,14 +85,14 @@ OverdubPass makeOverdubPassWithEvents(PassId id, uint32_t mergeSequence, Capture
                                 uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
 
   OverdubPass pass{};
   pass.id = id;
   pass.mergeSequence = mergeSequence;
   pass.state = state;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -103,13 +103,13 @@ RecordPass makeRecordPassWithEventCount(PassId id, CapturePassState state, size_
     const uint8_t note = static_cast<uint8_t>(48u + (i % 12u));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, note, 100)));
   }
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -128,13 +128,13 @@ RecordPass makeRecordPassForBars(PassId id, CapturePassState state, uint32_t bar
     }
   }
 
-  CommittedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, committedChunkIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.committedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(committedChunkIds);
   return pass;
 }
 
@@ -688,7 +688,7 @@ void test_legacy_deferred_header_without_note_id_reads() {
   TEST_ASSERT_FALSE(reloadedLoop.visualCache.notes.empty());
 }
 
-void test_zero_loop_length_with_published_events_loads_and_reconciles() {
+void test_zero_loop_length_with_committed_events_loads_and_reconciles() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
 
@@ -824,7 +824,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_read_edits_tail_roundtrip);
   RUN_TEST(test_legacy_edit_tail_v4_rejected);
   RUN_TEST(test_legacy_deferred_header_without_note_id_reads);
-  RUN_TEST(test_zero_loop_length_with_published_events_loads_and_reconciles);
+  RUN_TEST(test_zero_loop_length_with_committed_events_loads_and_reconciles);
   RUN_TEST(test_apply_snapshot_preserves_start_loop_tick);
   RUN_TEST(test_truncated_edit_tail_fails_read);
   RUN_TEST(test_corrupt_scoped_edit_tail_fails_read);
