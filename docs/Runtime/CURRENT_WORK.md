@@ -2,24 +2,28 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (Phase 1.1 committed `b759fc6`; 1.2 SoT in progress)
+Last updated: 2026-08-08 (#18 Phase 2 branch; Phase 1 merged PR #19)
 
 ---
 
 ## Now implementing
 
-### Codebase consistency & maintainability refinement
+### Codebase consistency & maintainability — Phase 2 (API / vocabulary)
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
 **Plan:** [`docs/Plans/codebase_consistency_maintainability_refinement.md`](../Plans/codebase_consistency_maintainability_refinement.md)  
-**Branch:** `refactor/note-edit-projected-store-retire` → PR into `dev`
+**Branch:** `refactor/codebase-consistency-phase-2` → PR into `dev`  
+**Phase 1:** merged [PR #19](https://github.com/Lytrix/MidiLooper/pull/19) — projected-store compat, selection tick SoT, admit* migration
 
 | Phase | Status |
 |-------|--------|
-| 1 — Authority | **In progress** — **1.1–1.2 done**; **1.3** admit* migration (domain call sites migrated) |
-| 2–4 | Queued |
+| 1 — Authority | **Shipped** — PR #19 merged to `dev` |
+| **2 — API / vocabulary** | **Next** — 2.1 selectable-display, 2.2 geometry strings, 2.3 published→committed, 2.4 Playing vs Playback |
+| 3–4 | Queued |
 
-**Phase 1.1 pin:** Retire projected-store mutation bypasses (option 1). Persistence stays queued.
+### StorageManager TU extraction — shipped (PR #17)
+
+**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — closed · [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) merged to `dev`
 
 ### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 
@@ -47,7 +51,7 @@ Last updated: 2026-08-08 (Phase 1.1 committed `b759fc6`; 1.2 SoT in progress)
 
 **Parked hang hunt:** [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md).
 
-**Queued behind #18 Phase 1.1** (COMPAT retirement in progress).
+**Queued behind #18 Phase 2** (API/vocabulary on `refactor/codebase-consistency-phase-2`).
 
 ---
 
@@ -57,7 +61,7 @@ Last updated: 2026-08-08 (Phase 1.1 committed `b759fc6`; 1.2 SoT in progress)
 |-------|-------------------|----------|
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |
-| NOTE_EDIT projected-store compat retirement | `b759fc6` Phase 1.1 | Native 969/969; HITL [`161219`](../../captures/session_20260808_161219.log), [`162038`](../../captures/session_20260808_162038.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
+| Codebase consistency Phase 1 — authority | PR [#19](https://github.com/Lytrix/MidiLooper/pull/19) merged to `dev` (2026-08-08) | Native 969/969; HITL [`163904`](../../captures/session_20260808_163904.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Playing move/length audition | `15c5750` | [`113626`](../../captures/session_20260808_113626.log), [`115120`](../../captures/session_20260808_115120.log); [bugfix doc](../Plans/note_edit_playing_move_audition_bugfix.md) |
 | Resolver §12 orthogonal state | DEC-030; `7af8671` | Native 969/969; HITL [`112202`](../../captures/session_20260808_112202.log) @88.669 |
 | Edit-session-action-geometry archive | 2026-08-05 | [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/) |
