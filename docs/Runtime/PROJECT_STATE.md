@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-08 (doc hygiene review)
+Last updated: 2026-08-08 (StorageManager TU #16)
 
 ---
 
 ## Current branch
 
-**Active work:** HITL CLI rebuild Phase 3; persistence/overlay hardening (candidate next — see [CURRENT_WORK.md](CURRENT_WORK.md)).
+**Active work:** StorageManager TU remaining trim ([#16](https://github.com/Lytrix/MidiLooper/issues/16)) on `refactor/storagemanager-remaining`; HITL CLI rebuild Phase 3; persistence/overlay hardening (candidate — see [CURRENT_WORK.md](CURRENT_WORK.md)).
 
 **Recent on `dev`:** DEC-029 archive closeout (`3e9253e`); playing move/length audition (`15c5750`); DEC-030 §12 orthogonal state (PR #15).
 
@@ -30,6 +30,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
+- **StorageManager TU remaining:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — HITL → `StorageManagerHitlSerial` done (uncommitted); next preamble/epilogue or status-query trim — [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md)
 - **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor
 - **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; layered **`base`** device PASS deferred to dedicated HITL refactor
 - **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)
