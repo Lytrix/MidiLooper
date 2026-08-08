@@ -2,16 +2,16 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (#18 Phase 3 merged PR #21)
+Last updated: 2026-08-08 (#18 TrackManager merged PR #22)
 
 ---
 
 ## Now implementing
 
-### Codebase consistency & maintainability — Phase 4 (TrackManager extraction)
+### Codebase consistency & maintainability — Phase 4 (remaining extractions)
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)  
-Phases 1–3 shipped (PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [#20](https://github.com/Lytrix/MidiLooper/pull/20), [#21](https://github.com/Lytrix/MidiLooper/pull/21)). **Branch `refactor/trackmanager`** — **complete** locally (all process TUs + ~199 LOC coordinator); native 969/969; HITL base recommended before merge.
+TrackManager extraction **shipped** — PR [#22](https://github.com/Lytrix/MidiLooper/pull/22) → `dev` (manual smoke [`225737`](../../captures/session_20260808_225737.log); native 969/969). **Next branches:** `refactor/note-movement-utils`, `refactor/display-note-resolve`, `refactor/note-edit-focus-header`.
 
 ### StorageManager TU extraction — shipped (PR #17)
 
@@ -53,6 +53,7 @@ Phases 1–3 shipped (PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [
 |-------|-------------------|----------|
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |
+| Codebase consistency Phase 4 — TrackManager TU | PR [#22](https://github.com/Lytrix/MidiLooper/pull/22) → `dev` (2026-08-08) | Native 969/969; manual [`225737`](../../captures/session_20260808_225737.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Codebase consistency Phase 1 — authority | PR [#19](https://github.com/Lytrix/MidiLooper/pull/19) merged to `dev` (2026-08-08) | Native 969/969; HITL [`163904`](../../captures/session_20260808_163904.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Playing move/length audition | `15c5750` | [`113626`](../../captures/session_20260808_113626.log), [`115120`](../../captures/session_20260808_115120.log); [bugfix doc](../Plans/note_edit_playing_move_audition_bugfix.md) |
 | Resolver §12 orthogonal state | DEC-030; `7af8671` | Native 969/969; HITL [`112202`](../../captures/session_20260808_112202.log) @88.669 |
