@@ -164,6 +164,10 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
   }
   if (currentState != nullptr) {
     for (const auto& [noteId, row] : currentState->rows()) {
+      // Sealed Deleted after deselect must not re-enter evaluation/baselineMap (022849 E2).
+      if (row.presence == NoteEditPresenceType::Deleted) {
+        continue;
+      }
       addToScope(noteId, row.currentSpan.pitch);
     }
   } else {

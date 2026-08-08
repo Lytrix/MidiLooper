@@ -157,6 +157,17 @@ void test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_fla
       participatingNoteQualifiesForSealedVisibleShortenedLeaveRestore(sealedShortened, storage, 11));
 }
 
+void test_participating_deleted_does_not_qualify_for_leave_restore_022849() {
+  // Stage 7.5.E2: sealed Deleted after deselect must not leave-restore.
+  ParticipatingNoteState deleted{};
+  deleted.noteId = 11;
+  deleted.phase = ParticipatingNotePhase::Deleted;
+  deleted.committedSpan = {88, 100, 1584, 1631};
+  deleted.currentSpan = {88, 100, 1584, 1631};
+  TEST_ASSERT_FALSE(participatingNoteQualifiesForLeaveRestoreTarget(deleted, 7));
+  TEST_ASSERT_FALSE(participatingNoteNeedsFullCommittedLeaveRestore(deleted));
+}
+
 void test_overlap_closure_active_and_cleared() {
   ParticipatingNoteState hidden{};
   hidden.noteId = 17;
@@ -182,6 +193,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_primary_driver_must_project);
   RUN_TEST(test_collect_overlap_participant_ids_from_current_state);
   RUN_TEST(test_participating_leave_restore_hidden_qualifies);
+  RUN_TEST(test_participating_deleted_does_not_qualify_for_leave_restore_022849);
   RUN_TEST(test_participating_visible_shortened_does_not_qualify_for_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_when_macro_sealed_flag_set);

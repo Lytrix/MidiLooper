@@ -944,6 +944,31 @@ void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
                     static_cast<int>(interactions[0].type));
 }
 
+void test_evaluation_scope_excludes_sealed_deleted_022849() {
+  // Stage 7.5.E2: Deleted rows must not re-enter evaluation scope after deselect seal.
+  constexpr NoteId kMoverId = 7;
+  constexpr NoteId kDeletedId = 11;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {kPitch, 100, 1621, 1984};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kDeletedId, {kPitch, 100, 1584, 1631}, {kPitch, 100, 1584, 1631},
+                         NoteEditPresenceType::Deleted);
+  currentState.upsertRow(kMoverId, baseline[kMoverId], baseline[kMoverId],
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+  NoteIdList noneChanged;
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, kPitch,
+                                    &currentState);
+  TEST_ASSERT_TRUE(std::find(scope.begin(), scope.end(), kDeletedId) == scope.end());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_orchestrator_skips_intra_selection_pair_when_co_moving);
@@ -979,5 +1004,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600);
   RUN_TEST(test_overlap_analyze_uses_current_span_not_stale_baseline_021939);
   RUN_TEST(test_overlay_committed_span_shortened_stub_ltr_overlap_181859);
+  RUN_TEST(test_evaluation_scope_excludes_sealed_deleted_022849);
   return UNITY_END();
 }

@@ -143,6 +143,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     for (const auto& [noteId, baseline] : committedOverlapUpdateBaselines) {
         applyCommittedOverlapUpdateToFocus(editSession.focus, noteId, baseline);
     }
+    // Stage 7.5.E2 (022849): seal committed overlap Deletes in currentState so reselect cannot
+    // reinsert/RestoreNote sealed-hidden participants when the mover passes again.
+    for (NoteId noteId : committedOverlapDeleteIds) {
+        editSession.noteEditCurrentState.markRowDeleted(noteId);
+    }
     clearCommittedOverlapDeleteIdsFromFocus(editSession.focus, committedOverlapDeleteIds);
     clearCommittedOverlapScratchExceptHidden(editSession.focus);
 

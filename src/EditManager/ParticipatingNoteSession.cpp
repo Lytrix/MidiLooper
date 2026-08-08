@@ -77,8 +77,8 @@ bool participatingNoteQualifiesForLeaveRestoreTarget(const ParticipatingNoteStat
   if (participant.noteId == kInvalidNoteId || participant.noteId == movingNoteId) {
     return false;
   }
-  return participant.phase == ParticipatingNotePhase::Hidden ||
-         participant.phase == ParticipatingNotePhase::Deleted;
+  // Session-unsealed Hidden only. Sealed Deleted after deselect must not leave-restore (022849 E2).
+  return participant.phase == ParticipatingNotePhase::Hidden;
 }
 
 bool participatingNoteCommittedSpanSealedBelowStorageBaseline(
@@ -116,8 +116,7 @@ bool participatingNoteUsesCommittedBaselineDuringOverlapClosure(
 }
 
 bool participatingNoteNeedsFullCommittedLeaveRestore(const ParticipatingNoteState& participant) {
-  return participant.phase == ParticipatingNotePhase::Hidden ||
-         participant.phase == ParticipatingNotePhase::Deleted;
+  return participant.phase == ParticipatingNotePhase::Hidden;
 }
 
 NoteBaseline participatingLeaveRestoreCommittedSpan(const ParticipatingNoteState& participant) {
