@@ -2,6 +2,8 @@
 
 How work is proposed, implemented, verified, and recorded. Subordinate to [PROJECT_INTENT.md](PROJECT_INTENT.md) and [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md).
 
+Lifecycle coordination (discovery → decision → work item → closeout): [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md). GitHub work inventory: [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md). Documentation closeout: [DOCUMENTATION_CLOSEOUT.md](DOCUMENTATION_CLOSEOUT.md).
+
 Cursor rule (detail): `.cursor/rules/OpenSpec-Workflow.mdc`. Runtime: [PROJECT_STATE.md](../Runtime/PROJECT_STATE.md), [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md), [ROADMAP.md](../Runtime/ROADMAP.md).
 
 ---
@@ -182,3 +184,5 @@ Before closing a design-heavy chat without merging: run session closeout so excl
 | Design exports and handoffs | `docs/Plans/` |
 | Normative requirements (accepted) | `openspec/specs/` |
 | Session runtime | `docs/Runtime/` — PROJECT_STATE, CURRENT_WORK, ROADMAP |
+
+After any logic/behavior change: [DOCUMENTATION_CLOSEOUT.md](DOCUMENTATION_CLOSEOUT.md) — choose the owning artifact; plans are not authority.

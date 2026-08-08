@@ -1,0 +1,24 @@
+---
+description: Discovery → decision → GitHub work identity → CURRENT_WORK → docs closeout
+alwaysApply: true
+---
+
+# Work lifecycle
+
+When starting, changing, or closing work:
+
+1. Read [`docs/Authority/WORKFLOW_LIFECYCLE.md`](../../docs/Authority/WORKFLOW_LIFECYCLE.md).
+2. Do not turn an uninvestigated observation into a GitHub Bug automatically. See [`GITHUB_WORK_TRACKING.md`](../../docs/Authority/GITHUB_WORK_TRACKING.md).
+3. Establish the discovery → investigation → understanding → decision progression before treating work as committed.
+4. Use GitHub Issues as work identity; do not use them as architecture authority.
+5. Use Feature / Bug / Task consistently.
+6. Use sub-issues for meaningful decomposition or stages, not every implementation step. RCs stay plan/commit-level unless independently actionable ([Multi-Stage-Bugfix-Workflow.mdc](Multi-Stage-Bugfix-Workflow.mdc)).
+7. Follow [`docs/Authority/ARCHITECTURE_RULES.md`](../../docs/Authority/ARCHITECTURE_RULES.md) for architecture and ownership decisions.
+8. Follow [`docs/Authority/DELIVERY_RULES.md`](../../docs/Authority/DELIVERY_RULES.md) and [OpenSpec-Workflow.mdc](OpenSpec-Workflow.mdc) for applicable normative changes.
+9. Use [`docs/Runtime/CURRENT_WORK.md`](../../docs/Runtime/CURRENT_WORK.md) for immediate execution scope; do not create a competing queue.
+10. A separate plan is not mandatory for every task.
+11. Every implemented logic, behavior, functionality, architecture, or data-model change requires documentation closeout.
+12. Before closing work, read [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../docs/Authority/DOCUMENTATION_CLOSEOUT.md) and update the appropriate durable documentation.
+13. Do not close a behavioral change while the relevant durable documentation still describes the old behavior.
+14. When a design decision was made, append `DEC-###` when required by `ARCHITECTURE_RULES.md`.
+15. Do not duplicate normative OpenSpec requirements in plans or GitHub issues.

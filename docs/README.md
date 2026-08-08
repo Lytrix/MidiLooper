@@ -29,6 +29,9 @@ Does **not** change firmware — process and documentation for coding agents.
 |----------|------|
 | [**Authority/**](Authority/README.md) | Authority hierarchy: intent → architecture → naming → delivery |
 | [Authority/NAMING.md](Authority/NAMING.md) | Architectural vocabulary, concept boundaries, migration policy |
+| [Authority/WORKFLOW_LIFECYCLE.md](Authority/WORKFLOW_LIFECYCLE.md) | Discovery → decision → GitHub / plan / OpenSpec → verify → docs closeout |
+| [Authority/GITHUB_WORK_TRACKING.md](Authority/GITHUB_WORK_TRACKING.md) | GitHub Issues / Project — work inventory (not execution authority) |
+| [Authority/DOCUMENTATION_CLOSEOUT.md](Authority/DOCUMENTATION_CLOSEOUT.md) | Docs must match shipped behavior before closing work |
 | [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md) | Execution context — **load first** |
 | [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) | Implementation scope (now / not now) — **required before coding** |
 | [BRANCHING.md](BRANCHING.md) | v1 / v2 / v3 branches, feature workflow, local archive refs |

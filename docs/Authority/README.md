@@ -149,6 +149,9 @@ Do not resolve conflicts by:
 | [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md) | Runtime data flow: storage → derived representations → interval projection → consumers |
 | [Architecture/](Architecture/) | Child docs: Storage, DerivedViews, IntervalProjection, Playback, Display |
 | [DELIVERY_RULES.md](DELIVERY_RULES.md) | How work is tracked, verified, and shipped |
+| [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md) | Discovery → decision → work item → verify → docs closeout |
+| [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) | GitHub Issues / Project NOW·NEXT·PARKED — work identity only |
+| [DOCUMENTATION_CLOSEOUT.md](DOCUMENTATION_CLOSEOUT.md) | Durable docs must match shipped behavior before close |
 
 ---
 
@@ -156,13 +159,14 @@ Do not resolve conflicts by:
 
 1. [docs/Runtime/PROJECT_STATE.md](../Runtime/PROJECT_STATE.md) — execution context (load first)
 2. [docs/Runtime/CURRENT_WORK.md](../Runtime/CURRENT_WORK.md) — implementation scope (**required** before coding)
-3. [docs/Runtime/ROADMAP.md](../Runtime/ROADMAP.md) — future sequencing (optional; not implementation authority)
-4. [docs/DECISION_LOG.md](../DECISION_LOG.md) — historical decisions (search + append at closeout)
-5. [docs/Templates/DECISION_REVIEW.md](../Templates/DECISION_REVIEW.md) — mandatory before firmware implementation
-6. [docs/AGENT_CONTEXT_MAP.md](../AGENT_CONTEXT_MAP.md) — domain → required docs
-7. [docs/Templates/PREFLIGHT.md](../Templates/PREFLIGHT.md) — planning template (§ Similar Historical Decisions mandatory)
-8. [docs/Templates/OWNERSHIP_TRANSFER.md](../Templates/OWNERSHIP_TRANSFER.md) — when mutable scope moves between modules
-9. [docs/ARCHITECTURE_REASSESSMENT.md](../ARCHITECTURE_REASSESSMENT.md) — when to pause for design review **or authority conflict**
-10. [docs/Templates/SESSION_CLOSEOUT.md](../Templates/SESSION_CLOSEOUT.md) — before closing design chats
+3. [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md) — how discovery becomes tracked work (coordination only)
+4. [docs/Runtime/ROADMAP.md](../Runtime/ROADMAP.md) — future sequencing (optional; not implementation authority)
+5. [docs/DECISION_LOG.md](../DECISION_LOG.md) — historical decisions (search + append at closeout)
+6. [docs/Templates/DECISION_REVIEW.md](../Templates/DECISION_REVIEW.md) — mandatory before firmware implementation
+7. [docs/AGENT_CONTEXT_MAP.md](../AGENT_CONTEXT_MAP.md) — domain → required docs
+8. [docs/Templates/PREFLIGHT.md](../Templates/PREFLIGHT.md) — planning template (§ Similar Historical Decisions mandatory)
+9. [docs/Templates/OWNERSHIP_TRANSFER.md](../Templates/OWNERSHIP_TRANSFER.md) — when mutable scope moves between modules
+10. [docs/ARCHITECTURE_REASSESSMENT.md](../ARCHITECTURE_REASSESSMENT.md) — when to pause for design review **or authority conflict**
+11. [docs/Templates/SESSION_CLOSEOUT.md](../Templates/SESSION_CLOSEOUT.md) — before closing design chats
 
 Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
