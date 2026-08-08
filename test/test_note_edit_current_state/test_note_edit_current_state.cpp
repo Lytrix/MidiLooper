@@ -1785,7 +1785,7 @@ void test_macro_sealed_shortened_paints_committed_after_inactive_focus_deselect_
 
 void test_second_overlap_shorten_commits_before_deselect_clears_participation_004532() {
   // session_20260808_004532: every F1 navigation must seal overlap geometry while
-  // changedOverlapNoteIds is still set — empty-step deselect must not clear participation first.
+  // Active participation still set — empty-step deselect must not clear participation before seal.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 11;
