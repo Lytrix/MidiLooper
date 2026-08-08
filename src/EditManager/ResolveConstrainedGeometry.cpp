@@ -233,7 +233,13 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
     if (hasIncomingInteraction(noteId, grouped)) {
       continue;
     }
-    if (!isChangedOverlapParticipant(noteId, changedOverlapNoteIds)) {
+    // §11 step 5.4: leave-restore / sticky targets from current-state participation when present.
+    if (currentState != nullptr && !currentState->empty()) {
+      const NoteEditCurrentNoteState* participantRow = currentState->find(noteId);
+      if (participantRow == nullptr || !currentStateRowIsOverlapParticipant(*participantRow)) {
+        continue;
+      }
+    } else if (!isChangedOverlapParticipant(noteId, changedOverlapNoteIds)) {
       continue;
     }
     const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);

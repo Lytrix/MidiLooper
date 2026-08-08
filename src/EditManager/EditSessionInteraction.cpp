@@ -143,7 +143,12 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
   const auto inLane = [&](uint8_t pitch) {
     return !overlapPitchLane.has_value() || pitch == overlapPitchLane.value();
   };
+  // §11 step 5.4: sticky off-lane membership from current-state participation when present.
   const auto isSticky = [&](NoteId noteId) {
+    if (currentState != nullptr && !currentState->empty()) {
+      const NoteEditCurrentNoteState* row = currentState->find(noteId);
+      return row != nullptr && currentStateRowIsOverlapParticipant(*row);
+    }
     return std::find(changedOverlapNoteIds.begin(), changedOverlapNoteIds.end(), noteId) !=
            changedOverlapNoteIds.end();
   };

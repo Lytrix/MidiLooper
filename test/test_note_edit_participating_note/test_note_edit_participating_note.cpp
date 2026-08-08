@@ -207,6 +207,34 @@ void test_overlap_participation_ended_after_sticky_clear() {
   TEST_ASSERT_EQUAL_UINT32(kStub.endTick, row->currentSpan.endTick);
 }
 
+void test_note_is_overlap_participant_prefers_current_state_over_latch() {
+  constexpr NoteId kEndedId = 9;
+  constexpr NoteId kActiveId = 10;
+  const NoteBaseline kCommitted{88, 100, 1488, 1966};
+  const NoteBaseline kStub{88, 100, 1488, 1774};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kEndedId, kCommitted, kStub, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kActiveId, kCommitted, kStub, NoteEditPresenceType::Visible);
+  currentState.markOverlapParticipationEnded(kEndedId);
+
+  NoteEditFocus focus;
+  focus.movingNoteId = 11;
+  recordChangedOverlapNote(focus, kEndedId);
+  recordChangedOverlapNote(focus, kActiveId);
+
+  TEST_ASSERT_FALSE(noteIsOverlapParticipant(kEndedId, focus, &currentState));
+  TEST_ASSERT_TRUE(noteIsOverlapParticipant(kActiveId, focus, &currentState));
+  TEST_ASSERT_TRUE(hasOverlapParticipants(focus, &currentState));
+
+  currentState.markOverlapParticipationEnded(kActiveId);
+  TEST_ASSERT_FALSE(hasOverlapParticipants(focus, &currentState));
+  // Empty current-state path still reads latch.
+  NoteEditCurrentState emptyState;
+  TEST_ASSERT_TRUE(noteIsOverlapParticipant(kEndedId, focus, &emptyState));
+  TEST_ASSERT_TRUE(hasOverlapParticipants(focus, &emptyState));
+}
+
 void test_shorten_reactivates_overlap_participation_after_ended() {
   constexpr NoteId kOverlapId = 9;
   const NoteBaseline kCommitted{88, 100, 1488, 1966};
@@ -261,6 +289,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_participating_leave_restore_hidden_qualifies);
   RUN_TEST(test_participating_deleted_does_not_qualify_for_leave_restore_022849);
   RUN_TEST(test_overlap_participation_ended_after_sticky_clear);
+  RUN_TEST(test_note_is_overlap_participant_prefers_current_state_over_latch);
   RUN_TEST(test_shorten_reactivates_overlap_participation_after_ended);
   RUN_TEST(test_participating_visible_shortened_does_not_qualify_for_leave_restore);
   RUN_TEST(test_participating_sealed_visible_shortened_qualifies_for_committed_leave_restore);

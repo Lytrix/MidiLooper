@@ -96,8 +96,16 @@ bool currentStateRowIsOverlapParticipant(const NoteEditCurrentNoteState& row);
 NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
     const NoteEditCurrentState& currentState, NoteId movingNoteId);
 
+/// Geometry/pre-commit participation (§11 step 5.4): prefer current-state membership when
+/// non-empty; otherwise transitional Focus latch (legacy / empty current-state paths).
+bool noteIsOverlapParticipant(NoteId noteId, const NoteEditFocus& focus,
+                              const NoteEditCurrentState* currentState);
+
+/// True when any non-mover overlap participant exists (current state when non-empty, else latch).
+bool hasOverlapParticipants(const NoteEditFocus& focus, const NoteEditCurrentState* currentState);
+
 /// Transitional latch membership (`NoteEditFocus::changedOverlapNoteIds`) — dual-write only;
-/// readers must prefer `currentStateRowIsOverlapParticipant`.
+/// readers must prefer `currentStateRowIsOverlapParticipant` / `noteIsOverlapParticipant`.
 bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId);
 
 /// True when row is Ended with geometry still differing (sticky clear without span rewrite).

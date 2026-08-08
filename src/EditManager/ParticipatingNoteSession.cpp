@@ -68,6 +68,26 @@ NoteIdList collectOverlapParticipantNoteIdsFromCurrentState(
   return out;
 }
 
+bool noteIsOverlapParticipant(NoteId noteId, const NoteEditFocus& focus,
+                              const NoteEditCurrentState* currentState) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  if (currentState != nullptr && !currentState->empty()) {
+    const NoteEditCurrentNoteState* row = currentState->find(noteId);
+    return row != nullptr && currentStateRowIsOverlapParticipant(*row);
+  }
+  return overlapParticipationLatchActive(focus, noteId);
+}
+
+bool hasOverlapParticipants(const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
+  if (currentState != nullptr && !currentState->empty()) {
+    return !collectOverlapParticipantNoteIdsFromCurrentState(*currentState, focus.movingNoteId)
+                .empty();
+  }
+  return !focus.changedOverlapNoteIds.empty();
+}
+
 bool overlapParticipationLatchActive(const NoteEditFocus& focus, NoteId noteId) {
   // Inline latch membership so ParticipatingNoteSession does not hard-link NoteEditFocusOverlap
   // (native suites that include this TU without overlap.cpp).

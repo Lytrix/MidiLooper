@@ -944,6 +944,40 @@ void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
                     static_cast<int>(interactions[0].type));
 }
 
+void test_evaluation_scope_excludes_ended_participation_even_with_stale_latch() {
+  // §11 step 5.4: when current state is present, sticky off-lane membership follows Ended, not latch.
+  constexpr NoteId kMoverId = 11;
+  constexpr NoteId kEndedId = 9;
+  constexpr NoteId kOnLaneId = 13;
+  constexpr uint8_t kLane = 88;
+  constexpr uint8_t kOtherLane = 60;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {kLane, 100, 1200, 1247};
+  baseline[kEndedId] = {kOtherLane, 100, 1488, 1966};
+  baseline[kOnLaneId] = {kLane, 100, 2000, 2100};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, baseline[kMoverId], baseline[kMoverId],
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kEndedId, baseline[kEndedId], {kOtherLane, 100, 1488, 1774},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOnLaneId, baseline[kOnLaneId], baseline[kOnLaneId],
+                         NoteEditPresenceType::Visible);
+  currentState.markOverlapParticipationEnded(kEndedId);
+
+  NoteIdList staleLatch;
+  staleLatch.push_back(kEndedId);
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, 5);
+
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, staleLatch, kMoverId, kLane, &currentState);
+  TEST_ASSERT_TRUE(scopeContains(scope, kOnLaneId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kEndedId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kMoverId));
+}
+
 void test_evaluation_scope_excludes_sealed_deleted_022849() {
   // Stage 7.5.E2: Deleted rows must not re-enter evaluation scope after deselect seal.
   constexpr NoteId kMoverId = 7;
@@ -1004,6 +1038,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600);
   RUN_TEST(test_overlap_analyze_uses_current_span_not_stale_baseline_021939);
   RUN_TEST(test_overlay_committed_span_shortened_stub_ltr_overlap_181859);
+  RUN_TEST(test_evaluation_scope_excludes_ended_participation_even_with_stale_latch);
   RUN_TEST(test_evaluation_scope_excludes_sealed_deleted_022849);
   return UNITY_END();
 }

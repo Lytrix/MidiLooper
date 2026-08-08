@@ -165,12 +165,13 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
     if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
       continue;
     }
-    if (!hasChangedOverlapNote(focus, noteId)) {
-      continue;
-    }
 
     const NoteEditCurrentNoteState* row = currentState.find(noteId);
-    if (row == nullptr || row->presence == NoteEditPresenceType::Deleted ||
+    // §11 step 5.4: commit overlap authority from current-state participation, not Focus latch.
+    if (row == nullptr || !currentStateRowIsOverlapParticipant(*row)) {
+      continue;
+    }
+    if (row->presence == NoteEditPresenceType::Deleted ||
         row->presence == NoteEditPresenceType::Hidden) {
       EditPass deleteRow = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
       deleteRow.targetNoteId = noteId;

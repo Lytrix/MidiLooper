@@ -13,6 +13,7 @@
 #include "EditSessionLiveStoreSpan.h"
 #include "Globals.h"
 #include "NoteEditCurrentState.h"
+#include "ParticipatingNoteSession.h"
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/NoteEditMem.h"
 
@@ -70,7 +71,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changedCausingNotes =
         determineChangedCausingNotes(selection, editedGeometry, priorLatchByNoteId);
     const bool overlapRestoreOnly =
-        changedCausingNotes.empty() && !focus.changedOverlapNoteIds.empty();
+        changedCausingNotes.empty() && hasOverlapParticipants(focus, currentStateReader);
     if (changedCausingNotes.empty() && !overlapRestoreOnly) {
         return false;
     }
@@ -130,13 +131,20 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     }
 
 #if defined(SESSION_CAPTURE)
+    const unsigned participantCount =
+        currentStateReader != nullptr && !currentStateReader->empty()
+            ? static_cast<unsigned>(
+                  collectOverlapParticipantNoteIdsFromCurrentState(*currentStateReader,
+                                                                   focus.movingNoteId)
+                      .size())
+            : static_cast<unsigned>(focus.changedOverlapNoteIds.size());
     logger.log(CAT_MIDI, LOG_DEBUG,
                "GeometryPipeline: storeNoteOns=%u baselineMap=%u lane=%d changed=%u candidates=%u "
                "pairs=%u interactions=%u constrained=%u actions=%u",
                static_cast<unsigned>(liveNoteOnCount),
                static_cast<unsigned>(transactionBaselineAfterEnsure.size()),
                overlapPitchLane.has_value() ? static_cast<int>(overlapPitchLane.value()) : -1,
-               static_cast<unsigned>(focus.changedOverlapNoteIds.size()),
+               participantCount,
                static_cast<unsigned>(evaluationScope.size()),
                static_cast<unsigned>(eligiblePairs.size()),
                static_cast<unsigned>(interactions.size()),
