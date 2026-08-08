@@ -2,7 +2,7 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **1.1 complete** (1.1d); next **1.2** selection tick SoT  
+**Status:** Active — Phase **1.2** selection tick SoT (in progress); **1.1 complete**  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
 **Branch:** `refactor/note-edit-projected-store-retire` (off `dev`)  
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
@@ -164,11 +164,26 @@ Project board: [Work](https://github.com/users/Lytrix/projects/1) — **NOW** (#
 ### Proceed?
 - YES — 1.1a
 
+### Phase 1.2 — selection tick SoT (started)
+
+**SoT:** `sessionState.selection.selectedTick` (`EditorSelection`). `getSelectedTick` / `setSelectedTick` route through session state; duplicate `EditManager::selectedTick` member removed.
+
+| Area | Change |
+|------|--------|
+| `EditManager.h` | get/set → `sessionState.selection.selectedTick`; drop member |
+| `NoteEditSelection.cpp` | Remove mirror writes in `applySelectionFromGeometryEdit`, `syncGeometrySelectionToUi`, `syncNoteEditSessionStateToUi` |
+| `EditNoteStateCoordinator.cpp` | Reads via `getSelectedTick()`; writes via `applySelectNav` only |
+| Commit / focus rebuild / undo | Drop redundant member mirrors |
+
+**Architecture gate (1.2):** Owner — `EditorSelection` in `NoteEditSessionState`; accessors on `EditManager`. Ownership change: NO. Transition change: NO. Behavior-preserving: YES. Native: **969/969**. HITL: **PASS** [`162859`](../../captures/session_20260808_162859.log) + [`163043`](../../captures/session_20260808_163043.log).
+
 ### HITL smoke (Phase 1.1)
 | Capture | Scope | Result |
 |---------|-------|--------|
 | [`session_20260808_161219.log`](../../captures/session_20260808_161219.log) | 1.1a–b — move + overlap + pitch + commit (~53s); boot recovery | **PASS** |
 | [`session_20260808_162038.log`](../../captures/session_20260808_162038.log) | 1.1c — loaded workspace + move/overlap/pitch + projection-owner normalize (~61s) | **PASS** — all `commit parity ok`; `NoteEditPassClosed edits=4` |
+| [`session_20260808_162859.log`](../../captures/session_20260808_162859.log) | 1.2 — selection tick SoT + boot-loaded workspace (~37s) | **PASS** — select/motor bracket aligned; move+overlap+pitch; `NoteEditPassClosed edits=6` |
+| [`session_20260808_163043.log`](../../captures/session_20260808_163043.log) | 1.2 extended — length bracket, overlap chain, chord select (~48s active; tail continuation) | **PASS** — length end-tick motor sync; 20+ overlap moves; `ChangeLength` commit; `NoteEditPassClosed edits=4` |
 
 ---
 

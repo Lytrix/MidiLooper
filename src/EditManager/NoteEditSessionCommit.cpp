@@ -152,7 +152,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         const uint32_t displayBracket = NoteEditDisplaySnapshot::displayStartTickFromStorage(
             storageBracketTick, noteEditLoopStartTick(track), loopLength);
         sessionState.selection.selectedTick = displayBracket;
-        selectedTick = displayBracket;
         syncSelectedNoteIdxToFilteredInventory(track);
     }
 }

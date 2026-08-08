@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (PR #17 merged; #18 Phase 1.1b)
+Last updated: 2026-08-08 (Phase 1.1 committed `b759fc6`; 1.2 SoT in progress)
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-08 (PR #17 merged; #18 Phase 1.1b)
 
 | Phase | Status |
 |-------|--------|
-| 1 — Authority | **In progress** — **1.1 done**; next **1.2** selection tick SoT |
+| 1 — Authority | **In progress** — **1.1 done** (`b759fc6`); **1.2** selection tick SoT (native 969/969) |
 | 2–4 | Queued |
 
 **Phase 1.1 pin:** Retire projected-store mutation bypasses (option 1). Persistence stays queued.
@@ -57,6 +57,7 @@ Last updated: 2026-08-08 (PR #17 merged; #18 Phase 1.1b)
 |-------|-------------------|----------|
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |
+| NOTE_EDIT projected-store compat retirement | `b759fc6` Phase 1.1 | Native 969/969; HITL [`161219`](../../captures/session_20260808_161219.log), [`162038`](../../captures/session_20260808_162038.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Playing move/length audition | `15c5750` | [`113626`](../../captures/session_20260808_113626.log), [`115120`](../../captures/session_20260808_115120.log); [bugfix doc](../Plans/note_edit_playing_move_audition_bugfix.md) |
 | Resolver §12 orthogonal state | DEC-030; `7af8671` | Native 969/969; HITL [`112202`](../../captures/session_20260808_112202.log) @88.669 |
 | Edit-session-action-geometry archive | 2026-08-05 | [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/) |
