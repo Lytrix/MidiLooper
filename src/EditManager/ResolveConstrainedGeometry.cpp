@@ -132,10 +132,8 @@ NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
         geometry.pitch = committed.pitch;
         return geometry;
       }
-      if (participant.phase == ParticipatingNotePhase::Visible && participant.shortenedVsCommitted &&
-          (participant.visibleOverlapShortenSealed ||
-           participatingNoteCommittedSpanSealedBelowStorageBaseline(participant,
-                                                                     transactionBaseline))) {
+      // Visible shortened leave-restore paints committedSpan (021407 pitch vacate after ShortenNote).
+      if (participant.phase == ParticipatingNotePhase::Visible && participant.shortenedVsCommitted) {
         const NoteBaseline committed = participant.committedSpan;
         geometry.startTick = committed.startTick;
         geometry.endTick = committed.endTick;
@@ -238,10 +236,35 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
     if (!isChangedOverlapParticipant(noteId, changedOverlapNoteIds)) {
       continue;
     }
-    if (baseline.pitch != overlapLanePitch) {
+    const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
+    const bool onCurrentLane = baseline.pitch == overlapLanePitch;
+
+    // Stage 7.5.D1/D2 (020050 / 021407): after ChangePitch away from a lane, leave-restore
+    // Hidden/Deleted or Visible shortened overlap participants on the vacated pitch.
+    // Without currentState, keep RC9i / 011115 (no vacated restore from live-store alone).
+    if (!onCurrentLane) {
+      if (currentState == nullptr) {
+        continue;
+      }
+      const NoteEditCurrentNoteState* vacatedRow = currentState->find(noteId);
+      if (vacatedRow == nullptr) {
+        continue;
+      }
+      const ParticipatingNoteState vacatedParticipant = buildParticipatingNoteState(*vacatedRow);
+      const bool hiddenLeave = participatingNoteQualifiesForLeaveRestoreTarget(
+          vacatedParticipant, focus.movingNoteId);
+      const bool shortenedLeave = vacatedParticipant.phase == ParticipatingNotePhase::Visible &&
+                                  vacatedParticipant.shortenedVsCommitted;
+      if (!hiddenLeave && !shortenedLeave) {
+        continue;
+      }
+      if (causingSpan != nullptr &&
+          !participatingNoteOverlapInteractionCleared(vacatedParticipant, *causingSpan)) {
+        continue;
+      }
+      targets.push_back(noteId);
       continue;
     }
-    const NoteBaseline* causingSpan = findCausingSpanForMover(focus.movingNoteId, editedGeometry);
 
     if (currentState != nullptr) {
       const NoteEditCurrentNoteState* row = currentState->find(noteId);
@@ -275,12 +298,14 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
       }
       if (currentSpanDiffersFromBaseline(noteId, baseline, *currentState) &&
           participatingSpanQualifiesForOverlapLeaveRestore(baseline, row->currentSpan)) {
+        // Slice A: defer while mover still inside committed overlap closure (224633 tail).
+        // Once cleared, Visible shortened leave-restores to committedSpan (022151 LTR).
         if (causingSpan != nullptr &&
             participatingNoteVisibleOverlapTailInProgress(participant, *causingSpan)) {
           continue;
         }
-        if (row->presence == NoteEditPresenceType::Visible &&
-            participatingNoteShortenedVsCommitted(row->currentSpan, row->committedSpan)) {
+        if (causingSpan != nullptr &&
+            !participatingNoteOverlapInteractionCleared(participant, *causingSpan)) {
           continue;
         }
         targets.push_back(noteId);
