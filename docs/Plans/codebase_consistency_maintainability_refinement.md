@@ -2,9 +2,9 @@
 
 **Kind:** refinement  
 **Date:** 2026-08-08  
-**Status:** Active — Phase **2 shipped** (PR [#20](https://github.com/Lytrix/MidiLooper/pull/20)); **Phase 3** structural cleanup on `refactor/codebase-consistency-phase-3`  
+**Status:** Active — Phase **3 shipped** (PR [#21](https://github.com/Lytrix/MidiLooper/pull/21)); **Phase 4** investigation queued  
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) (Task) · Project [Work](https://github.com/users/Lytrix/projects/1) **NOW**  
-**Branch:** `refactor/codebase-consistency-phase-3` (off `dev`); Phase 2 landed via PR #20
+**Branch:** `dev` — Phase 3 landed via PR #21; Phase 2 via PR #20
 **Decision:** Refinement — align representation with established authority/ownership; behavior-preserving unless explicitly approved otherwise  
 **Naming authority:** [NAMING.md](../Authority/NAMING.md)  
 **Lifecycle:** [WORKFLOW_LIFECYCLE.md](../Authority/WORKFLOW_LIFECYCLE.md) · [GITHUB_WORK_TRACKING.md](../Authority/GITHUB_WORK_TRACKING.md)
@@ -91,6 +91,14 @@ Low risk after Phases 1–2 stabilize call sites.
 **Architecture gate (3.x):** Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
 
 **Verification:** `pio test -e native`; `pio run -e teensy41-capture-serial`.
+
+**HITL smoke (Phase 3)**
+
+| Capture | Scope | Result |
+|---------|-------|--------|
+| [`session_20260808_174827.log`](../../captures/session_20260808_174827.log) | Post–PR #21 full edit smoke (~53s) | **PASS** — boot load; 126× `GEOM_APPLY,resolve` (0× `pipeline`); 65 Move + 49 Pitch + 12 Length while `transport=1`; 126/126 `done,1`; `NoteEditPassClosed edits=6`; 6× `UNDO_PUSH,admit_ok` |
+
+**Phase 3 HITL gate:** **PASS** — combined move/pitch/length playing-transport defer + clean session exit on post–Phase 3 firmware.
 
 ### Phase 4 — Investigation only
 
