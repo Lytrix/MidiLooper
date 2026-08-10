@@ -104,7 +104,7 @@ Roadmap for incremental convergence. **Do not batch-rename** — adopt when touc
 | `EditorSelection` / `SelectNavigation` / `NoteEditKind::Select` | Keep all three; boundaries in NAMING.md | Medium | EditManager, ControlSurface | Doc-only now |
 | `LooperStateManager` vs `looperState` global | Document; no rename | Low | `LooperState.h` | Doc-only |
 | Plan-local Commit/Publish glossaries | Promote stable terms to NAMING.md | Medium | unified_publish_pipeline_* plans | As terms stabilize |
-| `Playing` in docs for runtime machinery | Playback | Low | Plans, comments | Incremental doc edits |
+| `Playing` in docs for runtime machinery | Playback | Low | Plans, comments | **Done** 2026-08-10 — active Plans vocabulary pass |
 | `Controller` in plans | Manager or Handler | Low | `controller_midi_priority_check_*.plan.md` | When plans touched |
 | Serial capture tokens (`#CAP`, etc.) | **Frozen** | — | HITL fixtures | Never rename |
 

@@ -76,9 +76,9 @@ sequenceDiagram
   participant Disp as Display
 
   Fader->>CS: POSITION EDIT (playing)
-  CS->>CS: queuePendingPlayingMove
+  CS->>CS: queuePendingPlayingEditMove
   Note over CS,Loop: Suspected gap 300–650 ms
-  Loop->>CS: processPendingPlayingGeometry
+  Loop->>CS: processPendingPlayingEditGeometry
   CS->>EM: beginGeometryMutation (~8 ms undo)
   EM->>EM: moveNote / GeometryPipeline
   EM->>Disp: bumpSessionPreviewRevision
@@ -98,16 +98,16 @@ Add `SESSION_CAPTURE` lines (same pattern as `UNDO_WARM`):
 
 | Marker | When | Fields |
 |--------|------|--------|
-| `GEOM_APPLY,queue` | `queuePendingPlayingMove/Length/Pitch` | kind, target tick, `millis`, transport running |
-| `GEOM_APPLY,dequeue` | start of `processPendingPlayingGeometry` | queued age ms, kind |
+| `GEOM_APPLY,queue` | `queuePendingPlayingEditMove/Length/Pitch` | kind, target tick, `millis`, transport running |
+| `GEOM_APPLY,dequeue` | start of `processPendingPlayingEditGeometry` | queued age ms, kind |
 | `GEOM_APPLY,undo` | after `beginGeometryMutation` in apply path | ok/fail, elapsed µs |
 | `GEOM_APPLY,focus` | after `ensureNoteEditFocusForLiveEdit` in apply path | elapsed µs, kind |
 | `GEOM_APPLY,resolve` | after `applyNoteEditChange` / length overlap | elapsed µs, applied, kind |
 | `GEOM_APPLY,done` | after `finishGeometryDriverSideEffects` | applied, display revision |
 
-Also log when `processPendingPlayingGeometry` returns early (`pending None`, transport stopped).
+Also log when `processPendingPlayingEditGeometry` returns early (`pending None`, transport stopped).
 
-**Files:** `src/ControlSurfaceManager.cpp`, optionally `src/Utils/NoteMovementUtils.cpp` (pipeline boundary).
+**Files:** `src/ControlSurface/PlayingEditGeometryDefer.cpp`, optionally `NoteEditGeometryApply` mutation paths (pipeline boundary).
 
 **Gate:** One HITL capture; table queue age vs pipeline time for first vs second move.
 
@@ -117,9 +117,9 @@ Also log when `processPendingPlayingGeometry` returns early (`pending None`, tra
 
 **Hypotheses to confirm with `GEOM_APPLY` (ordered by log evidence):**
 
-1. **Pending geometry not applied for many frames** — queue at fader ingress, `processPendingPlayingGeometry` runs but pending cleared/stale, or apply blocked until a later condition (transport edge, `startEditingEnabled`, grace).
+1. **Pending geometry not applied for many frames** — queue at fader input, `processPendingPlayingEditGeometry` runs but pending cleared/stale, or apply blocked until a later condition (transport edge, `startEditingEnabled`, grace).
 2. **First `moveNoteToPosition` path only** — heavy one-shot work between `beginGeometryMutation` and `applyNoteEditChange` (e.g. `ensureNoteEditFocusForLiveEdit`, focus rebuild, session flat materialize) that subsequent moves skip.
-3. **Main-loop ordering** — `processPendingPlayingGeometry` runs before/after work that blocks for hundreds of ms on first kind change only (deferred load, persistence, display path).
+3. **Main-loop ordering** — `processPendingPlayingEditGeometry` runs before/after work that blocks for hundreds of ms on first kind change only (deferred load, persistence, display path).
 4. **Coalescing overwrites without apply** — rapid coarse input replaces pending target; first target not applied until fader settles (would show long queue age in A).
 
 **Likely fix directions (implement only after A):**
@@ -129,9 +129,9 @@ Also log when `processPendingPlayingGeometry` returns early (`pending None`, tra
 | Long queue age, short pipeline | Apply pending geometry earlier in loop; ensure same-frame dequeue after MIDI; avoid dropping first pending |
 | Short queue age, long gap inside `moveNoteToPosition` | Split/profile `ensureNoteEditFocusForLiveEdit` + pre-pipeline; cache focus bridge on select |
 | First move only, instant second | One-shot init deferred to select/warm; don't repeat on every apply |
-| Pending never dequeued until transport edge | Fix transport gating on `processPendingPlayingGeometry` |
+| Pending never dequeued until transport edge | Fix transport gating on `processPendingPlayingEditGeometry` |
 
-**Files (expected):** `ControlSurfaceManager.cpp` (`processPendingPlayingGeometry`, coarse/fine/pitch handlers), `EditManager.cpp` (`moveNoteToPosition`, `ensureNoteEditFocusForLiveEdit`), possibly `main.cpp` loop order.
+**Files (expected):** `ControlSurfaceManager.cpp` (`processPendingPlayingEditGeometry`, coarse/fine/pitch handlers), `EditManager.cpp` (`moveNoteToPosition`, `ensureNoteEditFocusForLiveEdit`), possibly `main.cpp` loop order.
 
 **Gate:** HITL — NOTE_EDIT + PLAYING, first coarse move: `GEOM_APPLY,done` within 35 ms of `GEOM_APPLY,queue`; display note position updates on first tick.
 
@@ -156,15 +156,15 @@ Only after stream B — undo is ~6 ms and not user-visible compared to 300+ ms a
 | Function | Role |
 |----------|------|
 | `handleCoarseFaderInput` / fine / pitch | Log `POSITION EDIT`; queue when playing |
-| `queuePendingPlaying*` | Hold latest target |
-| `ControlSurfaceManager::update` | `processPendingPlayingGeometry` each frame |
-| `processPendingPlayingGeometry` | warm → `moveNoteToPosition` / pitch / length |
+| `queuePendingPlayingEdit*` | Hold latest target |
+| `ControlSurfaceManager::update` | `processPendingPlayingEditGeometry` each frame |
+| `processPendingPlayingEditGeometry` | warm → `moveNoteToPosition` / pitch / length |
 | `EditManager::beginGeometryMutation` | kind-boundary undo push (~8 ms first time) |
-| `NoteMovementUtils::applyNoteEditChange` | `GeometryPipeline` |
+| `NoteEditGeometryApply::applyNoteEditChange` | `NoteGeometryResolver::resolve` |
 | `finishGeometryDriverSideEffects` | selection sync; F1 motor defer |
 | `maybeUpdateDisplayForNoteEditSelection` | force display when revision bumped |
 
-**Main loop order** (`main.cpp`): `handleMidiInput` → … → `controlSurfaceManager.update()` (includes `processPendingPlayingGeometry`) → `maybeUpdateDisplayForNoteEditSelection` → deferred load/display frame.
+**Main loop order** (`main.cpp`): `handleMidiInput` → … → `controlSurfaceManager.update()` (includes `processPendingPlayingEditGeometry`) → `maybeUpdateDisplayForNoteEditSelection` → deferred load/display frame.
 
 ---
 

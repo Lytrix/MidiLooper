@@ -294,7 +294,7 @@ Deprecated `markCurrentSet*Dirty` wrappers forward to the split APIs. **18** pro
 | `kPlaybackWindowBars` | `kMergedMidiEventsGatherBars` |
 | `makeFullLoopPlaybackWindow` | `makeFullLoopPlaybackProjectionInterval` (full-loop `TickInterval` for projection — not domain `PlaybackWindow`) |
 
-**Architecture gate (2.4):** Owner — `ControlSurfaceManager` defer queue; `Track` capture ingress; `TrackPlaybackWindowBuild` merge cache. Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
+**Architecture gate (2.4):** Owner — `ControlSurfaceManager` defer queue; `Track` capture MIDI input filter; `TrackPlaybackWindowBuild` merge cache. Ownership change: NO. Transition change: NO. Behavior-preserving: YES.
 
 **Verification:** `pio test -e native`; HITL gate above.
 

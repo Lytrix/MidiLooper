@@ -39,7 +39,7 @@ Sessions budget long work. Persistence is queued + budgeted — never SD from th
 |-------------|------------|-----------------|
 | Record / overdub / stop | [Capture](#capture--record--overdub) | `Loop` timeline; `Track` stop/commit |
 | MIDI out / playhead | [Playback](#playback) | `Track` |
-| Note move / pitch / overlap | [Note edit](#note-edit) | `EditManager` (geometry); `ControlSurfaceManager` (NOTE_EDIT fader ingress) |
+| Note move / pitch / overlap | [Note edit](#note-edit) | `EditManager` (geometry); `ControlSurfaceManager` (NOTE_EDIT fader input) |
 | Undo / redo | [Undo](#undo--redo) | session stack then `GlobalUndoStack` |
 | Piano roll / OLED | [Display](#display--derived-views) | `Loop` builds; `DisplayManager` draws |
 | Multi-loop / select | [Slots](#slots--focus) | `TrackManager` activate; `LoopPool` lifetime |

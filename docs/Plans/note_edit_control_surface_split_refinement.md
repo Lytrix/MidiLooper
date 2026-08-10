@@ -71,7 +71,7 @@ Future hardware feedback
 EditManager
     ├── EditSession
     ├── EditNoteState (FSM)
-    └── EditNoteGeometry   ← note move/resize/overlap (via NoteMovementUtils / EditApply; not storage)
+    └── EditNoteGeometry   ← note move/resize/overlap (via `NoteEditGeometryApply` / `EditApply`; not storage)
 ```
 
 `EditNoteGeometry` is an architectural responsibility label, not a new class name in Phase 1–7 unless implementation needs one.
@@ -83,10 +83,10 @@ EditManager
 | Component | May know | Must not know |
 |-----------|----------|---------------|
 | **ControlSurfaceManager** | Hardware protocols, MIDI CCs, GPIO events, motor timing, ignore windows, outbound scheduling, **transient hardware state only** (see Definitions) | Note storage, undo, selection internals, loop geometry algorithms, `EditPass` commit, editing/selection/undo state |
-| **EditManager** | Edit session, selection, undo, edit state, **EditNoteGeometry** (via `NoteMovementUtils` / `EditApply`) | MIDI CC numbers, motor scheduling, fader feedback ignore periods |
+| **EditManager** | Edit session, selection, undo, edit state, **EditNoteGeometry** (via `NoteEditGeometryApply` / `EditApply`) | MIDI CC numbers, motor scheduling, fader feedback ignore periods |
 | **Loop / Storage** | Event storage, passes, persistence | Hardware concepts |
 
-Utility modules (`NoteMovementUtils`, `NoteEditFader*`, `SelectNavigation` helpers) stay **stateless** unless ownership genuinely moves — move **ownership**, not utility code.
+Utility modules (`NoteEditGeometryApply`, `NoteEditFader*`, `SelectNavigation` helpers) stay **stateless** unless ownership genuinely moves — move **ownership**, not utility code.
 
 ---
 
@@ -292,7 +292,7 @@ MidiHandler / GPIO ──▶ ControlSurfaceManager
 | Move to `EditManager` | Notes |
 |-----------------------|-------|
 | `deleteSelectedNote` | edit operation — **done** |
-| `moveNoteToPosition`, `changeNoteEndWithOverlapHandling` | still use `NoteMovementUtils` — **done** |
+| `moveNoteToPosition`, `changeNoteEndWithOverlapHandling` | still use `NoteEditGeometryApply` — **done** |
 | `cycleEditSession` routing | thin wrapper + audition on `NoteEditManager` — **done** |
 
 > **Transitional wrappers:** wrapper functions in `NoteEditManager` exist only as migration aids and **must be removed in Phase 4** once all callers route through `EditManager` and the `EditEvent` interface.
