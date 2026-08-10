@@ -43,9 +43,9 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 | [`scripts/host_midi_automation_baseline.py`](../../scripts/host_midi_automation_baseline.py) | **~32** | Thin shim |
 | [`scripts/host_midi_automation_edit_baseline.py`](../../scripts/host_midi_automation_edit_baseline.py) | **~32** | Thin shim |
 | [`src/DisplayManager.cpp`](../../src/DisplayManager.cpp) | ~3345 | Unchanged size |
-| [`src/ControlSurfaceManager.cpp`](../../src/ControlSurfaceManager.cpp) | ~2370 | NOTE_EDIT control surface (fader ingress/egress, motor sync); edit state on `EditManager` |
+| [`src/ControlSurfaceManager.cpp`](../../src/ControlSurfaceManager.cpp) | ~2370 | NOTE_EDIT control surface (fader input/outbound, motor sync); edit state on `EditManager` |
 | [`src/Track.cpp`](../../src/Track.cpp) | ~2457 | Stop-path DRY via `commitCaptureForStop` / prep / fold |
-| [`src/Utils/NoteMovementUtils.cpp`](../../src/Utils/NoteMovementUtils.cpp) | ~2094 | Unchanged |
+| `src/EditManager/NoteEditGeometryApply*.cpp` | split under `EditManager/` | Phase 4 #23 |
 
 ---
 
@@ -58,7 +58,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 | 3 | Edit split: `EditManager` vs `ControlSurfaceManager` vs `LoopEditManager` | **Done** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) Phases 0–7 (`d3505db` on `chore/note-edit-control-surface-split`) |
 | 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Done** — `copySortedCaptureEvents`; removed unused `findCaptureOpenNoteOns` |
 | 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Done** — `playCommittedLoopMidi` + `advancePlaybackCursor`; [`playback_cursor_advance_dry_refinement.md`](playback_cursor_advance_dry_refinement.md) |
-| 6 | Note-edit geometry in `NoteMovementUtils` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
+| 6 | Note-edit geometry in `NoteEditGeometryApply` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
 
 ---
 
