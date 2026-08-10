@@ -10,7 +10,7 @@ Last updated: 2026-08-10 (Phase 4 NoteEditFocus header shipped)
 
 **Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 extraction stack complete; optional Phase LR shim cleanup.
 
-**Branch tip (local):** `dev` — Phase 4 extractions: TrackManager #22, NoteMovementUtils #23, DisplayNoteResolve #24, NoteEditFocus header (pending merge).
+**Branch tip (local):** `dev` — Phase 4 extractions: TrackManager #22, NoteMovementUtils #23, DisplayNoteResolve #24, NoteEditFocus header #25 merged.
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
