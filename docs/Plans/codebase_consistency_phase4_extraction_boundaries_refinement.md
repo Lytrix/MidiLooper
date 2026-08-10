@@ -390,7 +390,7 @@ Reference HITL gates: Phase 2 [`173010`/`173332`](codebase_consistency_maintaina
 - [x] **Implementation** — `refactor/note-movement-utils` **merged** PR #23
 - [x] **Implementation** — `refactor/display-note-resolve` **merged** PR #24
 - [x] **Implementation** — `refactor/note-edit-focus-header` **merged** PR #25
-- [x] **Implementation** — Phase LR: remove `NoteMovementUtils` / `NoteMovementWrap` shims → `NoteEditGeometryApply`
+- [x] **Implementation** — Phase LR **merged** PR #26
 
 ---
 
