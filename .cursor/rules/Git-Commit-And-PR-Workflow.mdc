@@ -1,0 +1,52 @@
+---
+description: Small hygiene → direct commit on dev; no auto-PR; large work needs explicit PR ask
+alwaysApply: true
+---
+
+# Git commit and PR workflow (agents)
+
+**Default: implement locally only.** Do not treat “do this task” or “yes, continue” as permission to commit, push, or open a PR.
+
+## Never without explicit user request
+
+- `git commit` (see also user commit rule)
+- `git push`
+- `gh pr create` / `gh pr merge`
+
+**Explicit triggers:** user says commit, push, open/create PR, merge, land on `dev`, or uses the creating-pull-requests workflow.
+
+## Small / hygiene / doc-only work
+
+Examples: P3 naming (`Ingress`→`Input`, `Playing`/`Playback` doc vocabulary), plan closeout, backlog index, comment-only fixes, Cursor rules.
+
+When the user asks to **do** or **ship** such work (or confirms at end of session):
+
+1. **Batch** related slices into **one** commit on **`dev`**.
+2. **No PR** — direct commit on `dev` is the default for this class of change.
+3. Do **not** create a feature branch or `gh pr create` unless the user explicitly wants a PR.
+4. **Do not** `git push` unless they ask.
+
+| Do | Don't |
+|----|--------|
+| One batched commit on `dev` | One PR per tiny slice |
+| Summarize commit message + files | Auto-push without asking |
+| Run `pio test -e native` only if firmware changed | PR for doc-only hygiene |
+
+## Firmware / refactor slices
+
+Reviewable extraction, behavior changes, multi-file refactors:
+
+- **Default:** implement locally; report build/test; wait for commit/PR instruction.
+- **PR path** only when user explicitly asks (e.g. “open a PR”, “merge like TrackManager”).
+- Direct `dev` commit without PR is **not** the default for firmware — user must opt in.
+
+## After user asks to commit
+
+1. Follow user **committing-changes-with-git** rules.
+2. Run `pio test -e native` before push if logic changed ([Testing-Workflow.mdc](Testing-Workflow.mdc)).
+3. Teensy upload: ask separately ([Teensy-Upload-After-Build.mdc](Teensy-Upload-After-Build.mdc)).
+4. PR: only via **creating-pull-requests** when user requested a PR.
+
+## Authority
+
+Humans may still use branch → PR → `dev` for review ([GITHUB_WORK_TRACKING.md](../../docs/Authority/GITHUB_WORK_TRACKING.md)). Agents use **direct `dev` commits, no PR** for small hygiene/doc work when the user wants it shipped.

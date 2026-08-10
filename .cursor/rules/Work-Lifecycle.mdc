@@ -13,7 +13,7 @@ When starting, changing, or closing work:
 4. Use GitHub Issues as work identity; do not use them as architecture authority.
 5. Use Feature / Bug / Task consistently.
 6. Use sub-issues for meaningful decomposition or stages, not every implementation step. RCs stay plan/commit-level unless independently actionable ([Multi-Stage-Bugfix-Workflow.mdc](Multi-Stage-Bugfix-Workflow.mdc)).
-7. Default delivery: short-lived `feature/` or `refactor/` branch off `dev`, PR into `dev`. A PR always needs a branch; direct commits on `dev` only by explicit exception. See [`GITHUB_WORK_TRACKING.md`](../../docs/Authority/GITHUB_WORK_TRACKING.md) § Branches and pull requests and [`BRANCHING.md`](../../docs/BRANCHING.md).
+7. Default delivery: short-lived `feature/` or `refactor/` branch off `dev`, PR into `dev` for reviewable firmware. **Small hygiene/doc:** direct commit on `dev`, no PR ([Git-Commit-And-PR-Workflow.mdc](Git-Commit-And-PR-Workflow.mdc)). Direct commits on `dev` only by explicit exception for large work. See [`GITHUB_WORK_TRACKING.md`](../../docs/Authority/GITHUB_WORK_TRACKING.md) § Branches and pull requests and [`BRANCHING.md`](../../docs/BRANCHING.md).
 8. Follow [`docs/Authority/ARCHITECTURE_RULES.md`](../../docs/Authority/ARCHITECTURE_RULES.md) for architecture and ownership decisions.
 9. Follow [`docs/Authority/DELIVERY_RULES.md`](../../docs/Authority/DELIVERY_RULES.md) and [OpenSpec-Workflow.mdc](OpenSpec-Workflow.mdc) for applicable normative changes.
 10. Use [`docs/Runtime/CURRENT_WORK.md`](../../docs/Runtime/CURRENT_WORK.md) for immediate execution scope; do not create a competing queue.
