@@ -14,7 +14,7 @@
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "Utils/SelectNavigation.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
 #include "NoteEditSessionState.h"
 #include "MidiConfig.h"
 #include "Globals.h"
@@ -935,7 +935,7 @@ void test_geometry_bracket_tracking_alignment_predicate() {
 }
 
 void test_geometry_bracket_change_detected_after_session_preupdate() {
-    // NoteMovementUtils pre-updates EditorSelection; F1 sync compares lastSynced bracket.
+    // NoteEditGeometryApply pre-updates EditorSelection; F1 sync compares lastSynced bracket.
     const uint32_t sessionTick = 1008;
     const uint32_t lastSynced = 960;
     TEST_ASSERT_TRUE(
@@ -1172,8 +1172,8 @@ void test_move_length_forward_refresh_playback_preview_parameter() {
     using LengthFn =
         void (*)(Track&, EditManager&, const NoteUtils::DisplayNote&, uint32_t, bool);
     TEST_ASSERT_TRUE(
-        (std::is_same_v<decltype(&NoteMovementUtils::moveNoteWithOverlapHandling), MoveFn>));
-    TEST_ASSERT_TRUE((std::is_same_v<decltype(&NoteMovementUtils::changeLengthWithOverlapHandling),
+        (std::is_same_v<decltype(&NoteEditGeometryApply::moveNoteWithOverlapHandling), MoveFn>));
+    TEST_ASSERT_TRUE((std::is_same_v<decltype(&NoteEditGeometryApply::changeLengthWithOverlapHandling),
                                      LengthFn>));
 }
 

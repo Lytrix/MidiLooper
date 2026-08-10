@@ -2,15 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-10 (Phase 4 NoteEditFocus header shipped)
+Last updated: 2026-08-10 (Phase LR NoteMovementUtils shims)
 
 ---
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 extraction stack complete; optional Phase LR shim cleanup.
+**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 + LR complete; ready to close.
 
-**Branch tip (local):** `dev` — Phase 4 extractions: TrackManager #22, NoteMovementUtils #23, DisplayNoteResolve #24, NoteEditFocus header #25 merged.
+**Branch tip (local):** `dev` — Phase 4 + LR: TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, shim removal (pending merge).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

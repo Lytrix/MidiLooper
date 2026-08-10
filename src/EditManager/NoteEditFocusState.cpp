@@ -12,7 +12,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteEditMem.h"
-#include "Utils/NoteMovementWrap.h"
+#include "NoteEditGeometryApplyWrap.h"
 #include "Utils/NoteUtils.h"
 
 namespace {
@@ -158,7 +158,7 @@ NOTE_EDIT_MEM bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focu
   if (pitch == focus.commitBaseline.pitch) {
     return false;
   }
-  return NoteMovementUtils::isNoteWithinMovingNoteRange(
+  return NoteEditGeometryApply::isNoteWithinMovingNoteRange(
       noteStart, noteEnd, focus.movingNoteRange.start,
       movingNoteRangeDisplayEnd(focus, loopLength), loopLength);
 }

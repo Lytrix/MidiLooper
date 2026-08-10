@@ -6,7 +6,7 @@
 #include "Track.h"
 #include "Logger.h"
 #include "Utils/MidiEventVecFnvHash.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
 #include "NoteEditFocus.h"
 
 void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
@@ -93,7 +93,7 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     if (focus.active) {
         selected = {focus.last.pitch, focus.last.velocity, focus.last.startTick, focus.last.endTick};
     }
-    NoteMovementUtils::changeLengthWithOverlapHandling(track, manager, selected, newEnd);
+    NoteEditGeometryApply::changeLengthWithOverlapHandling(track, manager, selected, newEnd);
 
     const NoteUtils::DisplayNoteVec& updatedNotes =
         manager.selectableDisplayNotesAtEditSelect(track);

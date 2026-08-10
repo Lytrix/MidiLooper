@@ -8,7 +8,7 @@
 #include "Globals.h"
 #include "MidiConfig.h"
 #include "Utils/NoteEditMem.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
 
 NOTE_EDIT_MEM void applyLengthEndTargetRules(uint32_t noteStart, uint32_t currentEnd, uint32_t loopLength,
                                              uint32_t minNoteDuration, uint32_t& targetEndTick) {
@@ -29,7 +29,7 @@ NOTE_EDIT_MEM void applyLengthEndTargetRules(uint32_t noteStart, uint32_t curren
     }
 
     const uint32_t newNoteDuration =
-        NoteMovementUtils::calculateNoteLength(noteStart, targetEndTick, loopLength);
+        NoteEditGeometryApply::calculateNoteLength(noteStart, targetEndTick, loopLength);
     if (newNoteDuration < minNoteDuration) {
         targetEndTick = (noteStart + minNoteDuration) % loopLength;
     }

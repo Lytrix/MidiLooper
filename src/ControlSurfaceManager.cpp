@@ -22,7 +22,6 @@
 #include "EditStates/EditLengthNoteState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Utils/NoteUtils.h"
-#include "Utils/NoteMovementUtils.h"
 #include "Utils/ValidationUtils.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/MidiMapping.h"

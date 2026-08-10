@@ -6,8 +6,7 @@
 #include "Track.h"
 #include "Logger.h"
 #include "Utils/MidiEventVecFnvHash.h"
-#include "Utils/NoteMovementUtils.h"
-#include "Utils/NoteMovementWrap.h"
+#include "NoteEditGeometryApply.h"
 #include "NoteEditFocus.h"
 
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
@@ -63,7 +62,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     }
 
     const int32_t rawNewStart = static_cast<int32_t>(fromStart) + delta;
-    const uint32_t newStart = NoteMovementUtils::wrapPosition(rawNewStart, loopLength);
+    const uint32_t newStart = NoteEditGeometryApply::wrapPosition(rawNewStart, loopLength);
 
     NoteUtils::DisplayNote currentNote = liveNote;
     if (focus.active) {
@@ -73,7 +72,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
 
     uint32_t dummyStart = currentNote.startTick;
     uint32_t dummyEnd = currentNote.endTick;
-    NoteMovementUtils::applyNoteEditChange(track, manager, NoteMovementUtils::NoteEditChangeKind::Move,
+    NoteEditGeometryApply::applyNoteEditChange(track, manager, NoteEditGeometryApply::NoteEditChangeKind::Move,
                                            currentNote, newStart, delta, 0, 0, 0, dummyStart,
                                            dummyEnd);
 }
