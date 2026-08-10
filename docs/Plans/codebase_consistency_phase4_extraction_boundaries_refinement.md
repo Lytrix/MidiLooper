@@ -387,7 +387,8 @@ Reference HITL gates: Phase 2 [`173010`/`173332`](codebase_consistency_maintaina
 - [x] Prior splits inventory + cross-domain table
 - [x] Naming / rename step — Phase 0 table, per-branch Phase RN, LR shims ([NAMING.md](../Authority/NAMING.md), no new abbreviations)
 - [x] **Implementation** — `refactor/trackmanager` Phase 0–8 + coordinator trim **merged** PR #22
-- [x] **Implementation** — `refactor/note-movement-utils` Phase 0–RN + PairResolve + WrapHeadAdjust + GeometryApplyMutate + coordinator **done** (local); native 969/969
+- [x] **Implementation** — `refactor/note-movement-utils` **merged** PR #23
+- [x] **Implementation** — `refactor/display-note-resolve` split **done** (local); native 969/969
 
 ---
 
