@@ -31,7 +31,7 @@ Counts are approximate substring matches in `src/`, `include/`, and `docs/` (inf
 | Deferred | 653 | 309 | 962 | SD persistence, idle maintenance, undo hydrate |
 | Scheduled | 15 | 2 | 17 | Persistence work queue, fader timing |
 | Input | 164 | 92 | 256 | MIDI/USB routing |
-| Ingress (filename) | 0 | 1 | 1 | `NoteEdit*Ingress.cpp` only |
+| Ingress (filename) | 0 | 0 | 0 | **Done** — `NoteEdit*Input.cpp` (`c5f1da1`) |
 | Inbound | 0 | 5 | 5 | Docs only |
 | Output | 29 | 12 | 41 | MIDI egress |
 | Outbound | 203 | 57 | 260 | Note-edit fader motor path |
@@ -95,8 +95,8 @@ Roadmap for incremental convergence. **Do not batch-rename** — adopt when touc
 | `RunEditSessionGeometryPipeline.*` files | `NoteGeometryResolver.cpp` / `NoteGeometryResolver.h` | High | 3 files → 2 | Same refactor pass |
 | `runEditSessionGeometryPipelineForCausingNote` | `NoteGeometryResolver::resolveForCausingNote` | High | `NoteMovementUtils`, `EditManager` | Same refactor pass |
 | `RunEditSessionGeometryPipelineDriver.h` | merged into `NoteGeometryResolver.h` | High | driver header | Same refactor pass |
-| `*Ingress.cpp` filenames | `*Input.cpp` | Low | 2 ControlSurface TUs | Next ControlSurface TU work |
-| Ingress/egress in ARCHITECTURE_RULES prose | Input / Output / Outbound | Low | Ownership table | Doc cleanup (this pass) |
+| `*Ingress.cpp` filenames | `*Input.cpp` | Low | 2 ControlSurface TUs | **Done** `c5f1da1` |
+| Ingress/egress in ControlSurfaceManager header | Input / Outbound | Low | 2 comment lines | **Done** 2026-08-10 |
 | Duplicate suffix tables | Single table in NAMING.md | Medium | 2 authority/guide docs | This pass |
 | Cursor rule as de facto authority | NAMING.md canonical | High | Agent rules, openspec | This pass |
 | `completeOutboundPipelineAtDone` | Evaluate: legitimate async pipeline vs rename | Medium | `ControlSurfaceManager` | Next motor/outbound refactor |
