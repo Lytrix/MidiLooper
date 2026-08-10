@@ -5,15 +5,36 @@ alwaysApply: true
 
 # Git commit and PR workflow (agents)
 
-**Default: implement locally only.** Do not treat “do this task” or “yes, continue” as permission to commit, push, or open a PR.
+**Default:** follow the stage-checkpoint instruction below. Never push or open a PR without
+an explicit request.
+
+## Stage checkpoints — standing user instruction
+
+The user has explicitly requested a commit after every completed implementation stage or
+root-cause slice so rollback remains easy.
+
+1. Commit each cohesive, verified plan stage / RC before starting the next one.
+2. A stage is a reviewable invariant or deliverable — **not** each file edit, test run, or
+   mechanical sub-step.
+3. Keep unrelated work out of the commit. Preserve one-root-cause commits for multi-stage
+   bugfixes.
+4. Run the relevant focused tests and `pio test -e native` for logic changes before committing.
+5. Update the stage plan/runtime docs in the same commit.
+6. If HITL unmasks another defect, keep the completed stage commit and open the next RC; do not
+   amend or bundle it backward.
+7. If a stage is not verified, label any explicitly requested checkpoint accurately; never
+   describe failing or unverified code as complete.
+
+This standing instruction authorizes local stage commits. It does **not** authorize push, PR,
+merge, amend, force operations, or committing unrelated user changes.
 
 ## Never without explicit user request
 
-- `git commit` (see also user commit rule)
 - `git push`
 - `gh pr create` / `gh pr merge`
 
-**Explicit triggers:** user says commit, push, open/create PR, merge, land on `dev`, or uses the creating-pull-requests workflow.
+**Explicit triggers for external operations:** user says push, open/create PR, merge, land on
+`dev`, or uses the creating-pull-requests workflow.
 
 ## Small / hygiene / doc-only work
 
@@ -36,7 +57,7 @@ When the user asks to **do** or **ship** such work (or confirms at end of sessio
 
 Reviewable extraction, behavior changes, multi-file refactors:
 
-- **Default:** implement locally; report build/test; wait for commit/PR instruction.
+- **Default:** commit each verified stage locally under the standing instruction above.
 - **PR path** only when user explicitly asks (e.g. “open a PR”, “merge like TrackManager”).
 - Direct `dev` commit without PR is **not** the default for firmware — user must opt in.
 
