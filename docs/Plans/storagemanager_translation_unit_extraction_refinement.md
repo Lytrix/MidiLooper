@@ -1,7 +1,8 @@
 # StorageManager translation-unit extraction
 
 **Kind:** refinement  
-**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — **closed** (PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) merged 2026-08-08)  
+**Status:** **Shipped** — Phases 0–8 + PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) remaining trim (2026-08-08)  
+**GitHub:** [#16](https://github.com/Lytrix/MidiLooper/issues/16) — **closed**  
 **Branch:** `refactor/storagemanager-remaining` (merged); historical Phases 0–8 on `refactor/storagemanager`  
 **Parent context:** [storage_session_state_refactor_handoff.md](storage_session_state_refactor_handoff.md), [deferred_storage_commit_parse_split_enhancement.md](deferred_storage_commit_parse_split_enhancement.md), firmware audit P1-3  
 **Prerequisite merged:** PR #8 — loop-slot SD payload RAM cache (`hasLoopSlotPayloadOnSdInRam`)  
@@ -344,16 +345,33 @@ Two TUs: `WallClockSdSync.cpp` + `SetBrowserRead.cpp`.
 |------|-----|-------|
 | `saveState` drain → `SyncDrainSaveState.cpp` | ~100 | **Done** — root `saveState` is thin delegate to `drainPersistenceWorkBlocking` |
 | HITL catalog / quarantine → `StorageManagerHitlSerial.cpp` | ~400 | **Done** (2026-08-08) — nuke/cleanup/quarantine + `hitlRevisionCommitBackup` colocated with serial dispatch; GitHub [#16](https://github.com/Lytrix/MidiLooper/issues/16) |
-
-### Documentation closeout (structural)
-
-No OpenSpec / DEC / guide rewrite — behavior unchanged. Durable truth for this refinement remains **this plan** + issue #16 checklist. Update [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) when slices ship or park; close #16 after remaining items done or explicitly deferred.
 | Deferred-save status queries → `StorageManagerStatusQueries.inl` | ~60 | **Done** (2026-08-08) — workspace dirty/epoch/save-queue getters + undo-hydrate pending; `clearAutoSaveBeforeLoadFolderPending` in Internal |
 | `readCurrentSetFilePreamble` / `Epilogue` → `CurrentSetBootLoad.cpp` | ~155 | **Done** (2026-08-08) — colocated with track-slot metadata; undo-hydrate RAM promoted to `StorageManagerInternal` (`Internal.cpp`) |
 | `toggleSetRevisionCatalogFavorite` + revision catalog | — | Shipped in Phase 8b |
-| `StorageSession` colocation ([DEC-012](storage_session_state_refactor_handoff.md)) | — | **After** extractions stabilize file boundaries |
+| `StorageSession` colocation ([DEC-012](storage_session_state_refactor_handoff.md)) | — | **Separate track** — not mechanical TU trim; after file boundaries stable |
+
+### Documentation closeout (structural)
+
+No OpenSpec / DEC / guide rewrite — behavior unchanged. Durable truth for this refinement remains **this plan** + issue #16 checklist. [#16](https://github.com/Lytrix/MidiLooper/issues/16) closed after PR #17; optional Phase 9+ below is **not required**.
 
 ---
+
+## Phase 9+ — optional remainder trim (**not required**)
+
+Phases **0–8** and optional follow-up rows above met the plan goal: root [`StorageManager.cpp`](../../src/StorageManager.cpp) is **~422 LOC** (target was ~1200–1500); `saveState` delegates to [`SyncDrainSaveState.cpp`](../../src/StorageManager/SyncDrainSaveState.cpp).
+
+**There is no scheduled Phase 9–14 stack in this plan.** Any further body moves are **optional**, **evidence-driven** (same pattern as Loop Phase 10): extract only when touching persistence boot/load/save paths, or when a cohesive block clearly belongs in an existing TU (`SavedSetIo`, `LoopSlotRestoreQueue`, `CurrentSetBootLoad`, `PersistenceAdmit`).
+
+| Candidate (root glue today) | Natural owner if moved | When |
+|-----------------------------|------------------------|------|
+| Boot undo hydrate (`processDeferredUndoSnapshots`, …) | New `BootUndoHydrate.cpp` or `BootRecovery.cpp` | Boot/undo work |
+| `loadSetIntoCurrent` orchestration | Extend `SavedSetIo.cpp` | Saved-set load changes |
+| Focus slot-restore entry points | Extend `LoopSlotRestoreQueue.cpp` | Slot-switch / boot restore |
+| `resetLoopSlotToEmpty`, SD chunk persist marks | `CurrentSetBootLoad.cpp` | Boot empty-slot paths |
+| Thin public delegates | **Keep in root** | Façade |
+
+**Do not** schedule a multi-PR hygiene stack for navigation alone. Prefer bundling with **persistence / overlay** CURRENT_WORK ([`codebase_hygiene_technical_debt_review.md`](codebase_hygiene_technical_debt_review.md) § Next hygiene slices).
+
 
 ## Per-phase checklist (copy into PR)
 
