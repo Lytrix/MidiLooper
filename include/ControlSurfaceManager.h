@@ -30,7 +30,7 @@ class DisplayManager;
 
 /**
  * @class ControlSurfaceManager
- * @brief Coordinates NOTE_EDIT control-surface ingress and egress (MIDI faders/buttons, motor feedback).
+ * @brief Coordinates NOTE_EDIT control-surface input and outbound (MIDI faders/buttons, motor feedback).
  *
  * Delegates to MidiButtonManager / MidiFaderManager for hardware I/O; edit state lives on EditManager.
  */
@@ -64,7 +64,7 @@ public:
     void cycleEditSession(Track& track);
     void onTrackChanged(Track& newTrack);
 
-    // NOTE_EDIT physical ingress (Phase 8) — buttons, bar-step, GPIO encoder hold
+    // NOTE_EDIT physical input (Phase 8) — buttons, bar-step, GPIO encoder hold
     void handleCycleNoteEditType(Track& track);
     void handleExitEditMode(Track& track);
     void handleDeleteSelectedNote(Track& track);
