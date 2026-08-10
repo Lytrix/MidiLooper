@@ -2,16 +2,16 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-10 (#18 NoteMovementUtils extraction)
+Last updated: 2026-08-10 (#18 DisplayNoteResolve extraction)
 
 ---
 
 ## Now implementing
 
-### Codebase consistency & maintainability — Phase 4 (remaining extractions)
+### Codebase consistency & maintainability — Phase 4 (remaining)
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)  
-NoteMovementUtils extraction **complete** on `refactor/note-movement-utils` (native 969/969). TrackManager **shipped** PR [#22](https://github.com/Lytrix/MidiLooper/pull/22). **Next:** `refactor/display-note-resolve`, `refactor/note-edit-focus-header`.
+DisplayNoteResolve split on `refactor/display-note-resolve` (native 969/969). **Shipped:** TrackManager PR [#22](https://github.com/Lytrix/MidiLooper/pull/22), NoteMovementUtils PR [#23](https://github.com/Lytrix/MidiLooper/pull/23). **Next:** `refactor/note-edit-focus-header`.
 
 ### StorageManager TU extraction — shipped (PR #17)
 
