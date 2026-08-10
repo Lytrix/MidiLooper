@@ -15,7 +15,7 @@
 #include "StorageManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApplyWrap.h"
 #include "Utils/SlotFocusDisplay.h"
 #include <Arduino.h>
 #include <Font5x7Fixed.h>
@@ -546,7 +546,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
         const uint32_t endExclusive =
             (noteToShow->endTick == lengthLoop - 1) ? lengthLoop : noteToShow->endTick;
         uint32_t lenVal =
-            NoteMovementUtils::calculateNoteLength(noteToShow->startTick, endExclusive, lengthLoop);
+            NoteEditGeometryApply::calculateNoteLength(noteToShow->startTick, endExclusive, lengthLoop);
         uint8_t velVal = noteToShow->velocity;
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);

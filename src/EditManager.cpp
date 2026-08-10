@@ -28,7 +28,6 @@
 #include "Utils/LoopEventValidation.h"
 #include "ClockManager.h"
 #include "DisplayManager.h"
-#include "Utils/NoteMovementUtils.h"
 #include "ApplyOwnedEditPassRows.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/DisplayWindowUtils.h"

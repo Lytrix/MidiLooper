@@ -10,7 +10,6 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
-#include "Utils/NoteMovementWrap.h"
 #include "Utils/SlotFocusDisplay.h"
 #include <Arduino.h>
 #include <algorithm>

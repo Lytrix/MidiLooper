@@ -83,9 +83,9 @@ After extraction stabilizes and retirement criteria met ([legacy_api_retirement_
 
 | Legacy shim | Replacement | Branch |
 |-------------|-------------|--------|
-| `include/Utils/NoteMovementUtils.h` forwarding include | `#include "NoteEditGeometryApply.h"` only | `refactor/note-movement-utils` |
-| `namespace NoteMovementUtils` deprecated alias | `NoteEditGeometryApply` | same |
-| Any `[[deprecated]]` `updateLeds*` left for ControlSurface callers | `updateMidiLeds*` | `refactor/trackmanager` |
+| `include/Utils/NoteMovementUtils.h` forwarding include | `#include "NoteEditGeometryApply.h"` only | **LR merged** |
+| `namespace NoteMovementUtils` deprecated alias | `NoteEditGeometryApply` | **LR merged** |
+| `include/Utils/NoteMovementWrap.h` forwarding include | `#include "NoteEditGeometryApplyWrap.h"` | **LR merged** |
 
 ---
 
@@ -390,6 +390,7 @@ Reference HITL gates: Phase 2 [`173010`/`173332`](codebase_consistency_maintaina
 - [x] **Implementation** — `refactor/note-movement-utils` **merged** PR #23
 - [x] **Implementation** — `refactor/display-note-resolve` **merged** PR #24
 - [x] **Implementation** — `refactor/note-edit-focus-header` **merged** PR #25
+- [x] **Implementation** — Phase LR: remove `NoteMovementUtils` / `NoteMovementWrap` shims → `NoteEditGeometryApply`
 
 ---
 

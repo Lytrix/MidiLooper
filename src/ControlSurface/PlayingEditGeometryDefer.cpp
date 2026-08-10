@@ -12,7 +12,7 @@
 #include "NoteEditFocus.h"
 #include "Track.h"
 #include "Utils/NoteEditMem.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
 #if defined(SESSION_CAPTURE)
 #include "EditManagerInternal.h"
 #endif
@@ -152,8 +152,8 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingEditPitchGeometry(Track& t
     NoteUtils::DisplayNote pitchTarget = liveNote;
     pitchTarget.startTick = liveNote.startTick;
     pitchTarget.endTick = liveNote.endTick;
-    const bool pitchUpdated = NoteMovementUtils::applyNoteEditChange(
-        track, editManager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
+    const bool pitchUpdated = NoteEditGeometryApply::applyNoteEditChange(
+        track, editManager, NoteEditGeometryApply::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
         currentPitch, newPitch, pitchTarget.startTick, pitchTarget.endTick, refreshPlaybackPreview);
 #if defined(SESSION_CAPTURE)
     logGeomApplyResolve(micros() - resolveStartUs, pitchUpdated, NoteEditKind::Pitch);
