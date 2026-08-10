@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-10 (#18 Phase LR NoteMovementUtils shims)
+Last updated: 2026-08-10 (persistence doc sync)
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-08-10 (#18 Phase LR NoteMovementUtils shims)
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)  
-**Shipped:** TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, Phase LR #26. **Next:** close #18; pick next queue item (HITL CLI Phase 3 or persistence).
+**Shipped:** TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, Phase LR #26. **Next:** close #18; pick next queue item (HITL CLI Phase 3 or persistence — see table below).
 
 ### StorageManager TU extraction — shipped (PR #17)
 
@@ -32,18 +32,21 @@ Last updated: 2026-08-10 (#18 Phase LR NoteMovementUtils shims)
 
 **Phase 3 exit:** Mode B device PASS for `--layered --preset base` and `--layered --preset edit_full`.
 
-### Persistence / overlay (candidate next — confirm with user)
+### Persistence — pick one track (not all parallel)
 
-**Branch context:** `feature/deferred-lazy-load` — Phase B archived.
+**Guides:** [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](../Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md) · **Handoffs:** [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md), [`continuous_runtime_persistence_phase5_recovery_handoff.md`](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md)  
+**Work-queue baseline (shipped):** [`current_set_persist_work_item_queue_enhancement.md`](../Plans/current_set_persist_work_item_queue_enhancement.md)
 
-| Item | Status |
-|------|--------|
-| DeferredJobScheduler Phase B | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/` |
-| Specs | `openspec/specs/deferred-job-scheduler/`, updated `lazy-slot-hydration` |
+| Track | OpenSpec / plan | Remaining | When to pick |
+|-------|-----------------|-----------|--------------|
+| **A — Overlay loop picker** | `set-revision-persistence` §4.8–4.10 | Loop picker UI polish + HITL `set_revision_overlay` | Product overlay milestone |
+| **B — Crash recovery** | `continuous-runtime-persistence` Phase 5 | `.sealj` / slot **prefix load**, quarantine tail, native fixtures | After architecture gate; orthogonal to overlay |
+| **C — Admit API migration** | [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 1.3 | `admitLoopSlotPersist` → `admitLoopPersist(LoopId)` at domain call sites | Hygiene with #18 closeout |
+| **D — Parked** | overlay hang, 3.9 failsafe | [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md); set-revision §3.9 | Investigation only |
 
-**Parked hang hunt:** [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md).
+**DeferredJobScheduler Phase B:** **Archived** [`2026-07-19-deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/). Specs: `deferred-job-scheduler/`, `lazy-slot-hydration`.
 
-**Queued behind #18 Phase 2** (API/vocabulary on `refactor/codebase-consistency-phase-2`).
+**DEC-020 note:** Phases 0–4 **shipped** on `dev`. Phase 5 was historically **paused** pending wrap-fix validation — that does not block overlay track A; confirm with user before starting B if wrap HITL is still open (see § Parked wrap investigation below).
 
 ---
 
@@ -274,9 +277,9 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 
 ---
 
-### OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) (DEC-020) — **paused** until wrap fix lands
+### OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) (DEC-020)
 
-**Branch:** `dev` @ `644de4f` (recovery stack merged 2026-07-09)
+**Branch:** `dev` — Phases 0–4 shipped; **Phase 5 not started**
 
 | Phase | Status |
 |-------|--------|
@@ -285,16 +288,16 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 | **2** Persistence queue | **Complete** |
 | **3** Cooperative scheduler | **Complete** — overdub-stop HITL passed (`f0ee520`) |
 | **4** Mid-pass persistence | **Shipped** — native + **HITL passed** [`session_20260709_171043.log`](../../captures/session_20260709_171043.log) (64+64); boot restore [`session_20260709_171951.log`](../../captures/session_20260709_171951.log) |
-| **5** Recovery | **Next** — longest valid prefix load + quarantine tail — [**handoff**](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
+| **5** Recovery | **Not started** — longest valid prefix load + quarantine tail — [**handoff**](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) — **CURRENT_WORK pick track B** |
 | **6** Full 64+64 HITL | **Mostly evidenced** (same log) — archive checklist + `oldestDirtyChunkAge` review remain |
 
 | Gate | Owner | Status |
 |------|-------|--------|
-| Native | Agent | `pio test -e native` — **540/540** (post-merge) |
-| `test_storage_loop_io` | Agent | Run before Phase 4 sign-off |
-| Phase 4 HITL (64+64 record/overdub) | **User** | **PASS** — [`session_20260709_171043.log`](../../captures/session_20260709_171043.log): 282× `PERS,mid_pass`, 9× `PERS,result,...,ok`, `freeChunk` 105–136 |
-| Phase 4 HITL (cold-boot restore) | **User** | **PASS** — [`session_20260709_171951.log`](../../captures/session_20260709_171951.log): `BOOT,load,ok`, deferred restore slot `4/0`, `DISP` 41472 ticks, playback |
-| Phase 5 native fixture | Agent | Partial persisted pass load — not started |
+| Native | Agent | `pio test -e native` — **969/969** (2026-08-10) |
+| `test_storage_loop_io` | Agent | Run before Phase 4 archive sign-off |
+| Phase 4 HITL (64+64 record/overdub) | **User** | **PASS** — [`session_20260709_171043.log`](../../captures/session_20260709_171043.log) |
+| Phase 4 HITL (cold-boot restore) | **User** | **PASS** — [`session_20260709_171951.log`](../../captures/session_20260709_171951.log) |
+| Phase 5 native fixture | Agent | Prefix load from truncated `.sealj` / slot — **not started** |
 
 **HITL policy:** stop/crash scenarios — user captures serial manually (`capture_session.py`); agent does not loop HITL. On crash, user bisects and shares log before stop-path patches.
 

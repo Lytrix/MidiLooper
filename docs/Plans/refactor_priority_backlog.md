@@ -50,7 +50,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 | **`completeOutboundPipelineAtDone` — evaluate rename** | Naming | Medium | Low–Medium | Next ControlSurface motor/outbound work | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **Scoped EditPass model** (data model, not rename-only) | Data model | High — future edit domains | High | OpenSpec when prioritized; **do not** mix with naming drift Track 1 | [naming_drift_scoped_edit_pass_handoff.md](naming_drift_scoped_edit_pass_handoff.md) Track 2 |
 | **Promote Commit/Publish glossary to NAMING.md** | Docs | Medium | Low | When unified publish pipeline stabilizes | [unified_publish_pipeline_commit_terminology_refinement.md](unified_publish_pipeline_commit_terminology_refinement.md) |
-| **Phase 5 recovery** (deferred save) | Persistence | Medium | High | After persistence slice; currently parked | [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md) |
+| **Phase 5 recovery** (prefix load / `.sealj`) | Persistence | Medium | High | CURRENT_WORK track B — not started | [continuous_runtime_persistence_phase5_recovery_handoff.md](continuous_runtime_persistence_phase5_recovery_handoff.md) |
 | **`PersistenceQueue` → mid-pass/chunk-oriented name** | Naming | Medium | Low–Medium | With persistence hardening | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) |
 
 ---
