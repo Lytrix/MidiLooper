@@ -336,6 +336,11 @@ void loop() {
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 
+  // Poll USB host again after deferred SD/display work so DROID button note-ons are not
+  // dropped when the main loop was busy (session_20260810_234059: note-off without note-on).
+  midiHandler.handleMidiInput();
+  midiButtonManager.update();
+
 #if defined(SESSION_CAPTURE)
   StorageManager::processHitlSerialCommands();
 #endif

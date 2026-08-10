@@ -13,6 +13,7 @@
 #include "Utils/MemoryMonitor.h"
 #include <Arduino.h>
 #include <cstdio>
+#include <cstring>
 
 namespace StorageManagerInternal {
 namespace {
@@ -61,6 +62,9 @@ STORAGE_PERSIST_MEM void formatPersistKeyLabel(const PersistKey& key, char* out,
 STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& item, const char* phase,
                                     const char* outcome) {
 #if defined(SESSION_CAPTURE)
+  if (strcmp(phase, "bundle_slice") == 0) {
+    return;
+  }
   char detail[64];
   char keyLabel[24];
   formatPersistKeyLabel(item.key, keyLabel, sizeof(keyLabel));
