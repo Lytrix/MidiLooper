@@ -8,9 +8,9 @@ Last updated: 2026-08-08 (Phase 4 TrackManager shipped PR #22)
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — TrackManager extraction **shipped** (PR #22); remaining Phase 4 branches: NoteMovementUtils, DisplayNoteResolve, NoteEditFocus header.
+**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — NoteMovementUtils extraction on `refactor/note-movement-utils`; TrackManager shipped PR #22.
 
-**Branch tip (local):** `dev` — TrackManager TUs merged; next `refactor/note-movement-utils` or confirm with user.
+**Branch tip (local):** `refactor/note-movement-utils` — next `refactor/display-note-resolve` after merge.
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-08 (#18 TrackManager merged PR #22)
+Last updated: 2026-08-10 (#18 NoteMovementUtils extraction)
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-08-08 (#18 TrackManager merged PR #22)
 ### Codebase consistency & maintainability — Phase 4 (remaining extractions)
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)  
-TrackManager extraction **shipped** — PR [#22](https://github.com/Lytrix/MidiLooper/pull/22) → `dev` (manual smoke [`225737`](../../captures/session_20260808_225737.log); native 969/969). **Next branches:** `refactor/note-movement-utils`, `refactor/display-note-resolve`, `refactor/note-edit-focus-header`.
+NoteMovementUtils extraction **complete** on `refactor/note-movement-utils` (native 969/969). TrackManager **shipped** PR [#22](https://github.com/Lytrix/MidiLooper/pull/22). **Next:** `refactor/display-note-resolve`, `refactor/note-edit-focus-header`.
 
 ### StorageManager TU extraction — shipped (PR #17)
 
