@@ -2,16 +2,16 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-10 (#18 DisplayNoteResolve extraction)
+Last updated: 2026-08-10 (#18 Phase 4 NoteEditFocus header)
 
 ---
 
 ## Now implementing
 
-### Codebase consistency & maintainability — Phase 4 (remaining)
+### Codebase consistency & maintainability — Phase 4 complete
 
 **GitHub:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) · **Plan:** [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)  
-DisplayNoteResolve split on `refactor/display-note-resolve` (native 969/969). **Shipped:** TrackManager PR [#22](https://github.com/Lytrix/MidiLooper/pull/22), NoteMovementUtils PR [#23](https://github.com/Lytrix/MidiLooper/pull/23). **Next:** `refactor/note-edit-focus-header`.
+**Shipped:** TrackManager PR [#22](https://github.com/Lytrix/MidiLooper/pull/22), NoteMovementUtils PR [#23](https://github.com/Lytrix/MidiLooper/pull/23), DisplayNoteResolve PR [#24](https://github.com/Lytrix/MidiLooper/pull/24), NoteEditFocus header PR (pending merge). **Next:** confirm #18 close / Phase LR shim cleanup optional.
 
 ### StorageManager TU extraction — shipped (PR #17)
 
@@ -53,7 +53,8 @@ DisplayNoteResolve split on `refactor/display-note-resolve` (native 969/969). **
 |-------|-------------------|----------|
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |
-| Codebase consistency Phase 4 — NoteEditGeometryApply | PR [#23](https://github.com/Lytrix/MidiLooper/pull/23) → `dev` (2026-08-10) | Native 969/969; [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
+| Codebase consistency Phase 4 — DisplayNoteResolve | PR [#24](https://github.com/Lytrix/MidiLooper/pull/24) → `dev` (2026-08-10) | Native 969/969; [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
+| Codebase consistency Phase 4 — NoteEditFocus header | PR (pending) → `dev` | Native 969/969; [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Codebase consistency Phase 4 — TrackManager TU | PR [#22](https://github.com/Lytrix/MidiLooper/pull/22) → `dev` (2026-08-08) | Native 969/969; manual [`225737`](../../captures/session_20260808_225737.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Codebase consistency Phase 1 — authority | PR [#19](https://github.com/Lytrix/MidiLooper/pull/19) merged to `dev` (2026-08-08) | Native 969/969; HITL [`163904`](../../captures/session_20260808_163904.log); [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
 | Playing move/length audition | `15c5750` | [`113626`](../../captures/session_20260808_113626.log), [`115120`](../../captures/session_20260808_115120.log); [bugfix doc](../Plans/note_edit_playing_move_audition_bugfix.md) |
