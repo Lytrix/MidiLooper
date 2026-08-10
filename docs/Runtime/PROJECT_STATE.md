@@ -10,7 +10,7 @@ Last updated: 2026-08-10 (Phase LR NoteMovementUtils shims)
 
 **Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 + LR complete; ready to close.
 
-**Branch tip (local):** `dev` — Phase 4 + LR: TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, shim removal (pending merge).
+**Branch tip (local):** `dev` — Phase 4 + LR: TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, shim removal #26 merged.
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
