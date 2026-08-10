@@ -389,7 +389,7 @@ Reference HITL gates: Phase 2 [`173010`/`173332`](codebase_consistency_maintaina
 - [x] **Implementation** — `refactor/trackmanager` Phase 0–8 + coordinator trim **merged** PR #22
 - [x] **Implementation** — `refactor/note-movement-utils` **merged** PR #23
 - [x] **Implementation** — `refactor/display-note-resolve` **merged** PR #24
-- [x] **Implementation** — `refactor/note-edit-focus-header` header split (Types + Select)
+- [x] **Implementation** — `refactor/note-edit-focus-header` **merged** PR #25
 
 ---
 
