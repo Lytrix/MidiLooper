@@ -292,7 +292,7 @@ Sub-phases must land **in order 2a → 2b → 2c** on one branch; do not merge 2
 
 | Item | Notes |
 |------|--------|
-| `resolveDisplayNotes` mode sub-resolvers | Behavioral refactor after Phase 2 — `resolveLiveCaptureDisplayNotes`, `resolveNoteEditDisplayNotes`, `resolvePlayingDisplayNotes` |
+| `resolveDisplayNotes` mode sub-resolvers | Behavioral refactor after Phase 2 — `resolveDisplayNotesLiveCapture`, `resolveDisplayNotesCommitted`, NOTE_EDIT overlay in committed path |
 | M6 display defer / capture-active merge | [multi_track_playback_pressure_closure_refinement.md](multi_track_playback_pressure_closure_refinement.md) — **not** mixed into extract PRs |
 | [note_edit_display_commit_stream_refactor_refinement.md](note_edit_display_commit_stream_refactor_refinement.md) Phase A | Single projection owner — coordinate with NOTE_EDIT resolve split |
 | `clearDisplayBuffer` debug serial noise | Optional trim when touching root TU |

@@ -341,9 +341,9 @@ Committed **editPass** rows store canonical **EditPass** row fields (SD v5); liv
 1. Global undo/redo for the selected slot via `TrackUndo::undoForLoop` / `redoForLoop` — any `UndoEntryKind` at stack cursor for that slot (**RecordPassAdded**, **OverdubPassAdded**, **NoteEditPassClosed**, **LoopBoundaryChange**, **ClearSlot**, …).
 2. Open overdub capture: if `capture.phase == Overdub` and capture non-empty, undo discards live capture (`discardCapture`) without popping the stack (handled inside the global undo path).
 
-**Separate ingress:** `handleUndoClearTrack` / `handleRedoClearTrack` — only when the top global entry is **ClearSlot** for the slot (Button B double-press).
+**Separate input path:** `handleUndoClearTrack` / `handleRedoClearTrack` — only when the top global entry is **ClearSlot** for the slot (Button B double-press).
 
-GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `TrackUndo::undoOverdub` is a test/legacy helper — not the product undo ingress.
+GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `TrackUndo::undoOverdub` is a test/legacy helper — not the product undo input path.
 
 **Slot clear** prunes global undo entries for that slot (`clearUndoHistoryForSlot` in `Track::clear()`).
 

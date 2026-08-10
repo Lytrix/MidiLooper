@@ -18,17 +18,17 @@ Trust session store and display projection. Fix **playback preview revision sche
 
 `moveNoteWithOverlapHandling` and `changeLengthWithOverlapHandling` passed hardcoded `false` to `NoteGeometryResolver::resolveForCausingNote` and `finalReconstructAndSelect`, so `Track::invalidateCaches(false)` bumped display revision only and never called `scheduleDeferredNoteEditDisplayRefresh()` while PLAYING.
 
-Pitch path (`applyPlayingPitchGeometry` → `applyNoteEditChange` Pitch) already forwarded `refreshPlaybackPreview=true`.
+Pitch path (`applyPlayingEditPitchGeometry` → `applyNoteEditChange` Pitch) already forwarded `refreshPlaybackPreview=true`.
 
 ## Fix
 
 | Change | Location |
 |--------|----------|
-| Add `refreshPlaybackPreview` parameter (default `true`) to move/length helpers | `NoteMovementUtils.h` / `.cpp` |
-| Forward flag from `applyNoteEditChange` Move/Length cases | `NoteMovementUtils.cpp` |
-| Replace hardcoded `false` in resolver + `finalReconstructAndSelect` calls | `NoteMovementUtils.cpp` |
+| Add `refreshPlaybackPreview` parameter (default `true`) to move/length helpers | `NoteEditGeometryApply.h` / `NoteEditGeometryApplyMutate.cpp` |
+| Forward flag from `applyNoteEditChange` Move/Length cases | `NoteEditGeometryApplyMutate.cpp` |
+| Replace hardcoded `false` in resolver + `finalReconstructAndSelect` calls | `NoteEditGeometryApplyMutate.cpp` |
 
-Playing defer path (`PlayingGeometryDefer::processPendingPlayingGeometry` → `moveNoteToPosition` / `changeNoteEndWithOverlapHandling`) uses `applyNoteEditChange` default `true`, matching pitch.
+Playing-transport defer path (`PlayingEditGeometryDefer::processPendingPlayingEditGeometry` → `moveNoteToPosition` / `changeNoteEndWithOverlapHandling`) uses `applyNoteEditChange` default `true`, matching pitch.
 
 ## Invariant
 
