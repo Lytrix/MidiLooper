@@ -1,7 +1,6 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-
 #include "Logger.h"
 #include "Globals.h"
 #ifndef PIO_UNIT_TEST_NATIVE
@@ -11,375 +10,17 @@
 #include "NoteEditSessionState.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/MidiEventUtils.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
+#include "NoteEditGeometryApplyInternal.h"
 #include "NoteGeometryResolver.h"
 #include "Utils/IntervalProjection.h"
-#include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
 #include <algorithm>
 #include <map>
 #include "Utils/NoteEditMem.h"
 
-namespace NoteMovementUtils {
+namespace NoteEditGeometryApply {
 
-namespace {
-
-uint32_t storageTickToDisplayPhase(uint32_t tick, uint32_t loopLength) {
-    return IntervalProjection::tickPhaseInLoop(tick, 0, loopLength);
-}
-
-uint32_t bracketDisplayTickFromStorage(uint32_t storageTick, uint32_t loopStartTick,
-                                       uint32_t loopLength) {
-    return NoteEditDisplaySnapshot::displayStartTickFromStorage(storageTick, loopStartTick,
-                                                                loopLength);
-}
-
-}  // namespace
-
-MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
-                             uint32_t startTick);
-
-namespace {
-
-NOTE_EDIT_MEM void stampPairedNoteId(MidiEvent* noteOn, MidiEvent* noteOff) {
-    if (noteOn != nullptr && noteOff != nullptr && noteOn->noteId != kInvalidNoteId &&
-        noteOff->noteId == kInvalidNoteId) {
-        noteOff->noteId = noteOn->noteId;
-    }
-}
-
-NOTE_EDIT_MEM NoteEditFocus& editFocus(EditManager& manager) {
-    return manager.getEditSession().focus;
-}
-
-MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
-                             uint32_t startTick);
-
-} // namespace
-
-NOTE_EDIT_MEM bool linearStorageSpansOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2) {
-    return start1 < end2 && start2 < end1;
-}
-
-template <typename Alloc>
-NOTE_EDIT_MEM MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent, Alloc>& midiEvents,
-                                                  MidiEvent* noteOnEvent, uint8_t pitch,
-                                                  std::uint32_t startTick, std::uint32_t endTick) {
-    (void)startTick;
-    (void)endTick;
-    if (noteOnEvent == nullptr) {
-        return nullptr;
-    }
-    std::vector<MidiEvent*> activeNoteOnStack;
-
-    for (auto& evt : midiEvents) {
-        bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-                         evt.data.noteData.note == pitch);
-        bool isNoteOff = ((evt.type == midi::NoteOff ||
-                           (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) &&
-                          evt.data.noteData.note == pitch);
-
-        if (isNoteOn) {
-            activeNoteOnStack.push_back(&evt);
-        } else if (isNoteOff) {
-            for (int stackIndex = static_cast<int>(activeNoteOnStack.size()) - 1; stackIndex >= 0;
-                 --stackIndex) {
-                MidiEvent* candidateOn = activeNoteOnStack[static_cast<size_t>(stackIndex)];
-                if (evt.tick <= candidateOn->tick) {
-                    continue;
-                }
-                MidiEvent* correspondingNoteOn = candidateOn;
-                activeNoteOnStack.erase(activeNoteOnStack.begin() + stackIndex);
-                if (correspondingNoteOn == noteOnEvent) {
-                    logger.log(CAT_MIDI, LOG_DEBUG,
-                              "Found corresponding note-off: pitch=%d, noteOn@%lu -> noteOff@%lu",
-                              pitch, correspondingNoteOn->tick, evt.tick);
-                    return &evt;
-                }
-                break;
-            }
-        }
-    }
-
-    logger.log(CAT_MIDI, LOG_DEBUG, "No corresponding note-off found for pitch=%d, start=%lu",
-              pitch, startTick);
-    return nullptr;
-}
-
-template MidiEvent* findCorrespondingNoteOff<InternalHeapFirstAllocator<MidiEvent>>(
-    MidiEventVec&, MidiEvent*, uint8_t, std::uint32_t, std::uint32_t);
-template MidiEvent* findCorrespondingNoteOff<ExternalMemoryFirstAllocator<MidiEvent>>(
-    SessionMidiEventVec&, MidiEvent*, uint8_t, std::uint32_t, std::uint32_t);
-
-NOTE_EDIT_MEM MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
-                               uint32_t endTick) {
-    std::vector<MidiEvent*> activeNoteOnStack;
-    for (auto& evt : midiEvents) {
-        const bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-                             evt.data.noteData.note == pitch);
-        const bool isNoteOff =
-            ((evt.type == midi::NoteOff ||
-              (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) &&
-             evt.data.noteData.note == pitch);
-
-        if (isNoteOn) {
-            activeNoteOnStack.push_back(&evt);
-        } else if (isNoteOff) {
-            if (activeNoteOnStack.empty()) {
-                continue;
-            }
-            MidiEvent* correspondingNoteOn = activeNoteOnStack.back();
-            activeNoteOnStack.pop_back();
-            if (correspondingNoteOn->tick == startTick && evt.tick == endTick) {
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Found paired note-off: pitch=%d, start=%lu, end=%lu",
-                          pitch, startTick, endTick);
-                return &evt;
-            }
-        }
-    }
-
-    logger.log(CAT_MIDI, LOG_DEBUG,
-              "No paired note-off for pitch=%d, start=%lu, end=%lu",
-              pitch, startTick, endTick);
-    return nullptr;
-}
-
-NOTE_EDIT_MEM MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel,
-                                       uint8_t pitch, uint32_t startTick, NoteId noteId,
-                                       uint32_t loopLength) {
-    if (noteId != kInvalidNoteId) {
-        for (auto& evt : midiEvents) {
-            if (evt.noteId != noteId || evt.channel != channel || !evt.isNoteOn() ||
-                evt.data.noteData.velocity == 0 || evt.data.noteData.note != pitch) {
-                continue;
-            }
-            if (evt.tick != startTick) {
-                continue;
-            }
-            if (MidiEvent* linearOff =
-                    findLinearOffForNoteId(midiEvents, evt, noteId, loopLength)) {
-                return linearOff;
-            }
-            return findCorrespondingNoteOff(midiEvents, &evt, pitch, evt.tick, 0);
-        }
-    }
-    for (auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-            evt.data.noteData.note == pitch && evt.channel == channel &&
-            evt.tick == startTick) {
-            return findCorrespondingNoteOff(midiEvents, &evt, pitch, startTick, 0);
-        }
-    }
-    return nullptr;
-}
-
-NOTE_EDIT_MEM MidiEvent* resolveNoteOffForEditSpan(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
-                                   uint8_t channel, uint8_t pitch, uint32_t startTick,
-                                   uint32_t displayEndTick, uint32_t loopLength) {
-    if (!noteOnEvent) {
-        return nullptr;
-    }
-
-    if (MidiEvent* noteOffEvent = findCorrespondingNoteOff(
-            midiEvents, noteOnEvent, pitch, startTick, displayEndTick)) {
-        return noteOffEvent;
-    }
-    if (MidiEvent* noteOffEvent =
-            findNoteOffPairedAt(midiEvents, pitch, startTick, displayEndTick)) {
-        return noteOffEvent;
-    }
-
-    for (auto& evt : midiEvents) {
-        if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != pitch) {
-            continue;
-        }
-        const uint32_t headOffTick = storageTickToDisplayPhase(evt.tick, loopLength);
-        if (NoteUtils::isPreferredWrapTailForHeadOff(startTick, headOffTick, midiEvents, pitch,
-                                                     channel, loopLength)) {
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Found wrap-head note-off: pitch=%d, tailOn@%lu -> headOff@%lu",
-                       pitch, startTick, headOffTick);
-            return &evt;
-        }
-    }
-    return nullptr;
-}
-
-NOTE_EDIT_MEM bool isOpenTailNoteAtLoopEnd(const MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
-                             uint32_t startTick, uint32_t displayEndTick, uint32_t loopLength) {
-    if (loopLength == 0 || displayEndTick != loopLength - 1) {
-        return false;
-    }
-
-    const MidiEvent* noteOnEvent = nullptr;
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-            evt.data.noteData.note == pitch && evt.channel == channel &&
-            evt.tick == startTick) {
-            noteOnEvent = &evt;
-            break;
-        }
-    }
-    if (!noteOnEvent) {
-        return false;
-    }
-
-    MidiEventVec& mutableEvents = const_cast<MidiEventVec&>(midiEvents);
-    return resolveNoteOffForEditSpan(mutableEvents, const_cast<MidiEvent*>(noteOnEvent), channel,
-                                     pitch, startTick, displayEndTick,
-                                     loopLength) == nullptr;
-}
-
-namespace {
-
-NOTE_EDIT_MEM MidiEvent* resolveMovingNoteOffForEdit(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
-                                       NoteId movingNoteId, uint8_t channel, uint8_t pitch,
-                                       uint32_t startTick, uint32_t displayEndTick,
-                                       uint32_t loopLength) {
-    if (noteOnEvent == nullptr) {
-        return nullptr;
-    }
-    MidiEvent* noteOffEvent = nullptr;
-    if (movingNoteId != kInvalidNoteId && noteOnEvent->noteId == movingNoteId) {
-        noteOffEvent =
-            findLinearOffForNoteId(midiEvents, *noteOnEvent, movingNoteId, loopLength);
-    }
-    if (noteOffEvent == nullptr) {
-        noteOffEvent = resolveNoteOffForEditSpan(midiEvents, noteOnEvent, channel, pitch,
-                                                 startTick, displayEndTick, loopLength);
-    }
-    stampPairedNoteId(noteOnEvent, noteOffEvent);
-    return noteOffEvent;
-}
-
-NOTE_EDIT_MEM MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
-                             uint32_t startTick) {
-    for (auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-            evt.data.noteData.note == pitch && evt.channel == channel &&
-            evt.tick == startTick) {
-            return &evt;
-        }
-    }
-    return nullptr;
-}
-
-NOTE_EDIT_MEM MidiEvent& appendNoteOffForOpenTail(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
-                                    uint32_t offTick, NoteId noteId) {
-    MidiEvent offEvent = MidiEvent::NoteOff(offTick, channel, pitch, 0);
-    offEvent.noteId = noteId;
-    midiEvents.push_back(offEvent);
-    NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, channel, pitch);
-    return midiEvents.back();
-}
-
-NOTE_EDIT_MEM uint32_t storageOffTickForSpanEnd(uint32_t startTick, uint32_t noteLen, uint32_t loopLength) {
-    (void)loopLength;
-    return NoteMovementUtils::linearStorageOffTickForSpanEnd(startTick, noteLen);
-}
-
-NOTE_EDIT_MEM uint32_t displayFocusEndTickForMove(uint32_t startTick, uint32_t noteLen, uint32_t loopLength) {
-    if (loopLength == 0) {
-        return startTick + noteLen;
-    }
-    const uint32_t rawEnd = startTick + noteLen;
-    if (rawEnd >= loopLength) {
-        return loopLength - 1;
-    }
-    return rawEnd;
-}
-
-NOTE_EDIT_MEM void scrubStaleWrapHeadOffsForMovedNote(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
-                                        uint32_t tailOnTick, uint32_t linearOffTick,
-                                        uint32_t loopLength, NoteId movingNoteId) {
-    if (loopLength == 0 || movingNoteId == kInvalidNoteId) {
-        return;
-    }
-    MidiEvent* moverOn = findNoteOnAtStart(midiEvents, channel, pitch, tailOnTick);
-    if (moverOn == nullptr || moverOn->noteId != movingNoteId) {
-        return;
-    }
-    const auto isStaleWrapHead = [&](const MidiEvent& evt) {
-        if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != pitch) {
-            return false;
-        }
-        if (evt.tick == linearOffTick) {
-            return false;
-        }
-        uint32_t headOffTick = evt.tick;
-        if (headOffTick >= loopLength) {
-            if (headOffTick == linearOffTick) {
-                return false;
-            }
-            headOffTick %= loopLength;
-        }
-        if (headOffTick >= loopLength - 1) {
-            return false;
-        }
-        if (linearOffTick >= loopLength) {
-            return NoteUtils::isPreferredWrapTailForHeadOff(tailOnTick, headOffTick, midiEvents,
-                                                            pitch, channel, loopLength);
-        }
-        return NoteUtils::isPreferredWrapTailForHeadOff(tailOnTick, headOffTick, midiEvents, pitch,
-                                                        channel, loopLength);
-    };
-    midiEvents.erase(std::remove_if(midiEvents.begin(), midiEvents.end(), isStaleWrapHead),
-                     midiEvents.end());
-}
-
-NOTE_EDIT_MEM bool stillOpenTailAfterMove(uint32_t newStart, uint32_t noteLen, uint32_t loopLength) {
-    if (loopLength == 0) {
-        return false;
-    }
-    return (newStart + noteLen) >= loopLength;
-}
-
-NOTE_EDIT_MEM bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
-                            MidiEvent* noteOffEvent, uint8_t channel, uint8_t pitch,
-                            uint32_t loopLength) {
-    if (!noteOnEvent || !noteOffEvent || loopLength == 0) {
-        return false;
-    }
-    const uint32_t headOffTick = storageTickToDisplayPhase(noteOffEvent->tick, loopLength);
-    return NoteUtils::isPreferredWrapTailForHeadOff(noteOnEvent->tick, headOffTick, midiEvents,
-                                                    pitch, channel, loopLength);
-}
-
-NOTE_EDIT_MEM uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t channel,
-                                      uint8_t pitch, uint32_t startTick,
-                                      uint32_t fallbackEndTick, uint32_t loopLength,
-                                      NoteId movingNoteId) {
-    if (loopLength == 0) {
-        return 0;
-    }
-    if (movingNoteId != kInvalidNoteId) {
-        NoteBaseline linearSpan;
-        if (findLinearNoteSpanForNoteId(midiEvents, movingNoteId, channel, linearSpan, startTick,
-                                        loopLength) &&
-            linearSpan.endTick > linearSpan.startTick) {
-            if (linearSpan.endTick <= linearSpan.startTick + loopLength) {
-                return linearSpan.endTick - linearSpan.startTick;
-            }
-            return calculateNoteLength(linearSpan.startTick, linearSpan.endTick, loopLength);
-        }
-    }
-    if (MidiEvent* noteOffEvent = findNoteOffForNoteOnAtStart(
-            midiEvents, channel, pitch, startTick, movingNoteId, loopLength)) {
-        const uint32_t pairedEnd = noteOffEvent->tick;
-        if (pairedEnd > startTick && pairedEnd <= startTick + loopLength) {
-            return pairedEnd - startTick;
-        }
-        return calculateNoteLength(startTick, pairedEnd, loopLength);
-    }
-    const uint32_t displayFallbackEnd = storageTickToDisplayPhase(fallbackEndTick, loopLength);
-    if (fallbackEndTick > startTick && fallbackEndTick <= startTick + loopLength) {
-        return fallbackEndTick - startTick;
-    }
-    return calculateNoteLength(startTick, displayFallbackEnd, loopLength);
-}
-
-}  // namespace
 
 NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                               MidiEventVec& midiEvents,
@@ -392,7 +33,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                               bool refreshPlaybackPreview) {
     NoteUtils::sortMidiEventsChronologically(midiEvents);
     int newSelectedIdx = -1;
-    const uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
+    const uint32_t displayNewEnd = noteEditGeometryApplyStorageTickToDisplayPhase(newEnd, loopLength);
 
     if (manager.isNoteEditActive()) {
         const NoteEditFocus& focus = manager.getEditSession().focus;
@@ -410,7 +51,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                 focus.movingNoteId == selection.primaryNote) {
                 const uint32_t storageBracketTick =
                     lengthBracket ? focus.last.endTick : focus.last.startTick;
-                const uint32_t displayBracket = bracketDisplayTickFromStorage(
+                const uint32_t displayBracket = noteEditGeometryApplyBracketDisplayTickFromStorage(
                     storageBracketTick, loopStartTick, loopLength);
                 newSelectedIdx = filteredDisplayNoteIndexForNoteIdAndStart(
                     filtered, focus.movingNoteId, displayBracket, loopStartTick, loopLength);
@@ -425,7 +66,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                 const bool lengthBracket = manager.isLengthBracketEditActive();
                 const uint32_t storageBracketTick =
                     lengthBracket ? focus.last.endTick : focus.last.startTick;
-                retrySelection.selectedTick = bracketDisplayTickFromStorage(
+                retrySelection.selectedTick = noteEditGeometryApplyBracketDisplayTickFromStorage(
                     storageBracketTick, loopStartTick, loopLength);
                 newSelectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
                     retrySelection, filtered, loopStartTick, loopLength, lengthBracket);
@@ -494,7 +135,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
         const bool lengthBracket = manager.isLengthBracketEditActive();
         const uint32_t storageBracketTick =
             lengthBracket ? focus.last.endTick : focus.last.startTick;
-        const uint32_t displayBracket = bracketDisplayTickFromStorage(
+        const uint32_t displayBracket = noteEditGeometryApplyBracketDisplayTickFromStorage(
             storageBracketTick, loopStartTick, loopLength);
         manager.applySelectionFromGeometryEdit(track, displayBracket, focus.movingNoteId);
     }
@@ -524,13 +165,13 @@ NOTE_EDIT_MEM bool applySimplePitchChange(MidiEventVec& midiEvents, EditManager&
     }
   }
 
-  const uint32_t displayEndForResolve = storageTickToDisplayPhase(noteEnd, loopLength);
+  const uint32_t displayEndForResolve = noteEditGeometryApplyStorageTickToDisplayPhase(noteEnd, loopLength);
   MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, focus, channel, currentNoteValue,
                                                        noteStart, loopLength);
   if (noteOnEvent == nullptr) {
     return false;
   }
-  MidiEvent* noteOffEvent = resolveMovingNoteOffForEdit(
+  MidiEvent* noteOffEvent = noteEditGeometryApplyResolveMovingNoteOffForEdit(
       midiEvents, noteOnEvent, focus.movingNoteId, channel, currentNoteValue, noteOnEvent->tick,
       displayEndForResolve, loopLength);
   const bool openTailOnly =
@@ -573,7 +214,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         return false;
     }
 
-    NoteEditFocus& focus = editFocus(manager);
+    NoteEditFocus& focus = noteEditGeometryApplyEditFocus(manager);
     if (focus.active) {
         manager.syncNoteEditFocusLastFromSessionStore(track);
         noteStart = focus.last.startTick;
@@ -617,7 +258,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
         const uint32_t bracketDisplay =
-            bracketDisplayTickFromStorage(noteStart, loopStartTick, loopLength);
+            noteEditGeometryApplyBracketDisplayTickFromStorage(noteStart, loopStartTick, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
         finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                                   focus.last.endTick, loopLength, bracketDisplay,
@@ -656,7 +297,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
       noteEnd = focus.last.endTick;
     }
 
-    const uint32_t displayEndForResolve = storageTickToDisplayPhase(noteEnd, loopLength);
+    const uint32_t displayEndForResolve = noteEditGeometryApplyStorageTickToDisplayPhase(noteEnd, loopLength);
 
     // Resolve the note-on, then its STRUCTURALLY PAIRED note-off (not an independent
     // tick scan): two same-pitch notes can share a start or end tick when overlapping,
@@ -671,7 +312,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     }
     MidiEvent* noteOffEvent = nullptr;
     if (noteOnEvent) {
-        noteOffEvent = resolveMovingNoteOffForEdit(
+        noteOffEvent = noteEditGeometryApplyResolveMovingNoteOffForEdit(
             midiEvents, noteOnEvent, focus.movingNoteId, channel, newNoteValue, noteOnEvent->tick,
             displayEndForResolve, loopLength);
         const bool openTailOnly =
@@ -724,7 +365,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         const uint32_t storageBracket =
             lengthBracket ? focus.last.endTick : focus.last.startTick;
         const uint32_t bracketDisplay =
-            bracketDisplayTickFromStorage(storageBracket, loopStartTick, loopLength);
+            noteEditGeometryApplyBracketDisplayTickFromStorage(storageBracket, loopStartTick, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
         if (!overlapStructureChanged) {
             NoteUtils::sortMidiEventsChronologically(midiEvents);
@@ -752,11 +393,11 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     auto& midiEvents = track.editAwareMidiEvents();
     const uint32_t loopLength = manager.noteEditLoopLengthTicks(track);
 
-    logger.log(CAT_MIDI, LOG_DEBUG, "NoteMovementUtils::moveNoteWithOverlapHandling called: targetTick=%lu, delta=%d", targetTick, delta);
+    logger.log(CAT_MIDI, LOG_DEBUG, "NoteEditGeometryApply::moveNoteWithOverlapHandling called: targetTick=%lu, delta=%d", targetTick, delta);
 
     manager.ensureNoteEditFocusForLiveEdit(track, currentNote);
     const uint8_t channel = track.getMidiChannel();
-    const NoteEditFocus& focus = editFocus(manager);
+    const NoteEditFocus& focus = noteEditGeometryApplyEditFocus(manager);
     
     if (loopLength == 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length is 0, cannot move notes");
@@ -784,17 +425,17 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d, start=%lu, end=%lu", 
               movingNotePitch, currentStart, currentEnd);
     
-    uint32_t displayCurrentEnd = storageTickToDisplayPhase(currentEnd, loopLength);
+    uint32_t displayCurrentEnd = noteEditGeometryApplyStorageTickToDisplayPhase(currentEnd, loopLength);
     if (focus.active && focus.last.pitch == movingNotePitch &&
         focus.last.startTick == currentStart &&
         focus.last.endTick > currentEnd) {
         currentEnd = focus.last.endTick;
-        displayCurrentEnd = storageTickToDisplayPhase(currentEnd, loopLength);
+        displayCurrentEnd = noteEditGeometryApplyStorageTickToDisplayPhase(currentEnd, loopLength);
     }
     const NoteId movingNoteId =
         focus.active ? focus.movingNoteId : kInvalidNoteId;
     if (focus.active) {
-        evictOverlapScratchForSelectedNote(editFocus(manager), movingNoteId);
+        evictOverlapScratchForSelectedNote(noteEditGeometryApplyEditFocus(manager), movingNoteId);
     }
     // Prefer focus.last length during an active edit driver. Live-store pairing can briefly
     // mis-resolve same-pitch neighbor offs (noteId lives on note-on only) before Shorten
@@ -807,20 +448,20 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
             noteLen = calculateNoteLength(currentStart, currentEnd, loopLength);
         }
     } else {
-        noteLen = resolveMovingNoteLengthTicks(midiEvents, channel, movingNotePitch, currentStart,
+        noteLen = noteEditGeometryApplyResolveMovingNoteLengthTicks(midiEvents, channel, movingNotePitch, currentStart,
                                                currentEnd, loopLength, movingNoteId);
     }
     uint32_t newStart = targetTick;
     uint32_t newEnd = newStart + noteLen;
-    uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
+    uint32_t displayNewEnd = noteEditGeometryApplyStorageTickToDisplayPhase(newEnd, loopLength);
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Movement: start %lu->%lu, end actual %lu (display %lu), length=%lu", 
               currentStart, newStart, newEnd, displayNewEnd, noteLen);
 
     const uint32_t linearNewEnd =
-        NoteMovementUtils::linearStorageOffTickForSpanEnd(newStart, noteLen);
+        NoteEditGeometryApply::linearStorageOffTickForSpanEnd(newStart, noteLen);
     const uint32_t displayEndForBracket =
-        displayFocusEndTickForMove(newStart, noteLen, loopLength);
+        noteEditGeometryApplyDisplayFocusEndTickForMove(newStart, noteLen, loopLength);
 
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
     // Overlap scope is the mover's own lane — a move never changes pitch (Q14).
@@ -831,10 +472,10 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
 
     bool movedNoteEvents = geometryResolved;
     if (geometryResolved) {
-      MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, editFocus(manager), channel,
+      MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, noteEditGeometryApplyEditFocus(manager), channel,
                                                            movingNotePitch, newStart, loopLength);
       if (noteOnEvent != nullptr) {
-        scrubStaleWrapHeadOffsForMovedNote(midiEvents, channel, movingNotePitch, newStart,
+        noteEditGeometryApplyScrubStaleWrapHeadOffsForMovedNote(midiEvents, channel, movingNotePitch, newStart,
                                            linearNewEnd, loopLength, noteOnEvent->noteId);
       }
     } else {
@@ -846,7 +487,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
 
     const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
     const uint32_t bracketDisplay =
-        bracketDisplayTickFromStorage(newStart, loopStartTick, loopLength);
+        noteEditGeometryApplyBracketDisplayTickFromStorage(newStart, loopStartTick, loopLength);
     if (movedNoteEvents && focus.active && focus.movingNoteId != kInvalidNoteId) {
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
     }
@@ -866,10 +507,10 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     manager.ensureNoteEditFocusForLiveEdit(track, currentNote);
     manager.syncNoteEditFocusLastFromSessionStore(track);
     const uint8_t channel = track.getMidiChannel();
-    const NoteEditFocus& focus = editFocus(manager);
+    const NoteEditFocus& focus = noteEditGeometryApplyEditFocus(manager);
 
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
-        evictOverlapScratchForSelectedNote(editFocus(manager), focus.movingNoteId);
+        evictOverlapScratchForSelectedNote(noteEditGeometryApplyEditFocus(manager), focus.movingNoteId);
     }
 
     if (loopLength == 0) {
@@ -895,7 +536,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     if (targetEndTick == currentEnd) {
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
         manager.setSelectedTick(
-            bracketDisplayTickFromStorage(targetEndTick, loopStartTick, loopLength));
+            noteEditGeometryApplyBracketDisplayTickFromStorage(targetEndTick, loopStartTick, loopLength));
         return;
     }
 
@@ -914,16 +555,16 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     const uint32_t baselineStart =
         focus.active ? focus.commitBaseline.startTick : noteStart;
 
-    const uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
+    const uint32_t displayNewEnd = noteEditGeometryApplyStorageTickToDisplayPhase(newEnd, loopLength);
 
     logger.log(CAT_MIDI, LOG_DEBUG,
               "Length change with overlap: pitch=%d, start=%lu, end %lu->%lu",
               notePitch, noteStart, currentEnd, targetEndTick);
 
     const uint32_t noteLen =
-        NoteMovementUtils::calculateNoteLength(newStart, newEnd, loopLength);
+        NoteEditGeometryApply::calculateNoteLength(newStart, newEnd, loopLength);
     const uint32_t linearNewEnd =
-        NoteMovementUtils::linearStorageOffTickForSpanEnd(newStart, noteLen);
+        NoteEditGeometryApply::linearStorageOffTickForSpanEnd(newStart, noteLen);
 
     const NoteBaseline editedSpan{notePitch, focus.last.velocity, newStart, linearNewEnd};
     const bool geometryResolved =
@@ -940,7 +581,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
 
     const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
     const uint32_t lengthBracketDisplay =
-        bracketDisplayTickFromStorage(newEnd, loopStartTick, loopLength);
+        noteEditGeometryApplyBracketDisplayTickFromStorage(newEnd, loopStartTick, loopLength);
   if (geometryResolved && focus.active && focus.movingNoteId != kInvalidNoteId) {
     manager.applySelectionFromGeometryEdit(track, lengthBracketDisplay, focus.movingNoteId);
   }
@@ -1002,26 +643,4 @@ NOTE_EDIT_MEM void extendShortenedNotes(MidiEventVec& midiEvents,
     }
 }
 
-NOTE_EDIT_MEM bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
-                         const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
-                         int delta, uint32_t targetEndTick, uint8_t currentPitch,
-                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd,
-                         bool refreshPlaybackPreview) {
-    switch (kind) {
-        case NoteEditChangeKind::Move:
-            return moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta,
-                                               refreshPlaybackPreview);
-        case NoteEditChangeKind::Length:
-            changeLengthWithOverlapHandling(track, manager, currentNote, targetEndTick,
-                                            refreshPlaybackPreview);
-            return true;
-        case NoteEditChangeKind::Pitch:
-            inOutStart = currentNote.startTick;
-            inOutEnd = currentNote.endTick;
-            return applyPitchChange(track, manager, currentPitch, newPitch, inOutStart,
-                                    inOutEnd, refreshPlaybackPreview);
-    }
-    return false;
-}
-
-} // namespace NoteMovementUtils 
+}  // namespace NoteEditGeometryApply
