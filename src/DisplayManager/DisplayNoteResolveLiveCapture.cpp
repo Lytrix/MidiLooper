@@ -386,6 +386,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const bool needsFullLiveRebuild = cacheCold || contextChanged || eventsShrunk || eventsAdded ||
                                       loopLengthChanged || captureRevisionChanged;
 
+    if (liveLoopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR &&
+        displaySlot < kDisplaySlotCount) {
+        uint32_t windowStartScratch = 0;
+        uint32_t windowLengthScratch = 0;
+        uint8_t windowBarsScratch = 0;
+        syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength, windowStartScratch,
+                                windowLengthScratch, windowBarsScratch);
+    }
+
     if (needsFullLiveRebuild) {
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayFullRebuild);

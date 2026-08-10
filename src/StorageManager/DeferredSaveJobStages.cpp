@@ -56,6 +56,14 @@ switch (storageSession.currentWorkspaceSave.globalHeaderStage) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing track count");
                         return false;
                     }
+                    if (storageSession.persistenceWorkItem.bundleWriteActive &&
+                        storageSession.persistenceWorkItem.item.type == PersistWorkType::GlobalMeta) {
+                        if (!closeDeferredMetaTempForLoopWrites()) {
+                            return false;
+                        }
+                        storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
+                        return true;
+                    }
                     storageSession.currentWorkspaceSave.trackCursor = 0;
                     storageSession.currentWorkspaceSave.slotCursor = 0;
                     storageSession.currentWorkspaceSave.poolCursor = 0;
