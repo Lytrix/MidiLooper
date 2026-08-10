@@ -382,7 +382,7 @@ Update: `EditManager`, `EditSelectNoteState`.
 - [x] `MidiButtonActions` NOTE_EDIT paths delegate (`handleCycleNoteEditType`, delete/create, `cycleEditSession`)
 - [x] `GpioButtonManager` encoder hold + BUTTON_C `cycleEditSession` delegate
 - [x] `BarStepButtonHandler` note-edit gestures delegate
-- [x] `src/ControlSurface/NoteEditButtonIngress.cpp`, `NoteEditEncoderIngress.cpp`
+- [x] `src/ControlSurface/NoteEditButtonInput.cpp`, `NoteEditEncoderInput.cpp` (renamed from `*Ingress.cpp` in `c5f1da1`)
 - [x] `MidiFaderActions` / `MidiHandler` — already routed (Phase 4)
 - **Out of scope:** record/overdub/transport button semantics; LED manager consolidation
 
