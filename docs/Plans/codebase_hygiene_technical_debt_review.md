@@ -1,14 +1,14 @@
 # Codebase hygiene — technical debt review
 
-**Date:** 2026-07-19 (updated 2026-08-03 — plans hygiene)  
-**Branch:** `chore/codebase-hygiene-sprint1`  
+**Date:** 2026-07-19 (updated 2026-08-10 — StorageManager extraction closed)  
+**Branch:** `chore/codebase-hygiene-sprint1` (historical); structural updates on `dev`  
 **Authority:** Product scope remains [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md). This doc is hygiene backlog only.
 
 ---
 
 ## Verdict
 
-Safe zero-behavior and rename hygiene on this branch is **complete**. Remaining debt is gated product work (StorageManager extract, `PersistenceQueue` name) or optional leftovers (mass `docs/Plans/` purge, runtime `isTrackAudible`, HITL shim import polish).
+Safe zero-behavior and rename hygiene on the sprint branch is **complete**. **StorageManager TU extraction (Phases 0–8 + PR #17 trim) is complete** — root façade ~422 LOC; see [`storagemanager_translation_unit_extraction_refinement.md`](storagemanager_translation_unit_extraction_refinement.md). Remaining debt is **product persistence** (`admit*`, `PersistenceQueue` rename, overlay) or optional leftovers (mass `docs/Plans/` purge, runtime `isTrackAudible`, HITL shim import polish).
 
 Sprint refinement plans are marked **Status: Done** (see [plans README — Hygiene sprint](README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)). Mass archive of ~150 historical Cursor plans is **not** done in this pass.
 
@@ -37,7 +37,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 
 | File | ~Lines | Notes |
 |------|--------|--------|
-| [`src/StorageManager.cpp`](../../src/StorageManager.cpp) | ~4568 | Still monolithic; extracts under [`src/StorageManager/`](../../src/StorageManager/) |
+| [`src/StorageManager.cpp`](../../src/StorageManager.cpp) | **~422** | Façade + glue; **31** TUs under [`src/StorageManager/`](../../src/StorageManager/) — extraction **complete** (PR [#17](https://github.com/Lytrix/MidiLooper/pull/17)) |
 | [`scripts/hitl/legacy_edit_baseline.py`](../../scripts/hitl/legacy_edit_baseline.py) | ~4448 | Was top-level edit baseline |
 | [`scripts/hitl/legacy_record_baseline.py`](../../scripts/hitl/legacy_record_baseline.py) | ~3986 | Was top-level record baseline |
 | [`scripts/host_midi_automation_baseline.py`](../../scripts/host_midi_automation_baseline.py) | **~32** | Thin shim |
@@ -53,7 +53,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 
 | # | Finding | Status |
 |---|---------|--------|
-| 1 | `StorageManager::saveState` still monolithic | **Queued** — continue extract when persistence hardening is CURRENT_WORK |
+| 1 | `StorageManager` TU extraction (`saveState` delegate, root trim) | **Done** (2026-08-08) — PR [#17](https://github.com/Lytrix/MidiLooper/pull/17); optional further root trim **not required** — see storagemanager plan § Phase 9+ |
 | 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Done** — `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`; [`track_stop_dry_refinement.md`](track_stop_dry_refinement.md) |
 | 3 | Edit split: `EditManager` vs `ControlSurfaceManager` vs `LoopEditManager` | **Done** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) Phases 0–7 (`d3505db` on `chore/note-edit-control-surface-split`) |
 | 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Done** — `copySortedCaptureEvents`; removed unused `findCaptureOpenNoteOns` |
@@ -109,10 +109,10 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 
 ## Next hygiene slices (priority)
 
-1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
-2. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
-3. Optional: mass `docs/Plans/` purge / archive of historical Cursor exports (item 18 remainder)
-4. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
+1. **Persistence / overlay product work** — `admit*` migration ([#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 1.3), `PersistenceQueue` rename — when persistence is CURRENT_WORK
+2. Optional: mass `docs/Plans/` purge / archive of historical Cursor exports (item 18 remainder)
+3. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
+4. Optional: `StorageManager` root trim (evidence-driven when touching persistence) — **not** a scheduled phase stack
 
 ---
 

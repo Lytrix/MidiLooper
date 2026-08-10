@@ -73,7 +73,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 | **Codebase consistency Phase LR** NoteMovementUtils shims | 2026-08-10 — PR [#26](https://github.com/Lytrix/MidiLooper/pull/26) | [phase4 plan](codebase_consistency_phase4_extraction_boundaries_refinement.md) |
 | **`*Ingress.cpp` → `*Input.cpp`** (ControlSurface TUs) | 2026-08-10 — code `c5f1da1`; header comments + doc closeout PR #27 | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **`Playing` → `Playback` in active Plans** (runtime machinery + Phase 2.4 symbol sync) | 2026-08-10 — doc pass | same § B |
-| **StorageManager** Phases 0–8 + remaining root trim (HITL, preamble/epilogue, status-query inlines); root ~422 LOC | 2026-08-08 — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (open); Task [#16](https://github.com/Lytrix/MidiLooper/issues/16) | [storagemanager_translation_unit_extraction_refinement.md](storagemanager_translation_unit_extraction_refinement.md) |
+| **StorageManager** Phases 0–8 + remaining root trim (HITL, preamble/epilogue, status-query inlines); root ~422 LOC | 2026-08-08 — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) merged → `dev`; Task [#16](https://github.com/Lytrix/MidiLooper/issues/16) closed | [storagemanager_translation_unit_extraction_refinement.md](storagemanager_translation_unit_extraction_refinement.md) |
 | **`NoteEditFocus.cpp` TU extraction** (Phases 0–10 + LR) | Done — root TU removed | [noteditfocus_translation_unit_extraction_refinement.md](noteditfocus_translation_unit_extraction_refinement.md) |
 | **`Loop.cpp` TU extraction** (Phases 0–11) | Merged to `dev` | [loop_translation_unit_extraction_refinement.md](loop_translation_unit_extraction_refinement.md) |
 | **EditManager** TU extraction (Phases 0–9) | PR #12 → `dev` | [editmanager_translation_unit_extraction_refinement.md](editmanager_translation_unit_extraction_refinement.md) |
@@ -96,7 +96,7 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 | Module | Plan | Status |
 |--------|------|--------|
 | DisplayManager | [displaymanager…](displaymanager_translation_unit_extraction_refinement.md) | **Done** |
-| StorageManager | [storagemanager…](storagemanager_translation_unit_extraction_refinement.md) | **Done** (PR #17 open) |
+| StorageManager | [storagemanager…](storagemanager_translation_unit_extraction_refinement.md) | **Done** (PR #17; root ~422 LOC) |
 | EditManager | [editmanager…](editmanager_translation_unit_extraction_refinement.md) | **Done** (PR #12) |
 | Track | [track…](track_translation_unit_extraction_refinement.md) | **Done** (PR #13) |
 | Loop | [loop…](loop_translation_unit_extraction_refinement.md) | **Done** |
