@@ -18,7 +18,7 @@
 #include "NoteEditSessionState.h"
 #include "NoteGeometryResolver.h"
 #include "ParticipatingNoteSession.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
 #include "Utils/NoteUtils.h"
 
 using DisplayNote = NoteUtils::DisplayNote;
@@ -231,8 +231,8 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track,
 
     uint32_t dummyStart = currentNote.startTick;
     uint32_t dummyEnd = currentNote.endTick;
-    const bool applied = NoteMovementUtils::applyNoteEditChange(
-        track, *this, NoteMovementUtils::NoteEditChangeKind::Move, currentNote, targetTick,
+    const bool applied = NoteEditGeometryApply::applyNoteEditChange(
+        track, *this, NoteEditGeometryApply::NoteEditChangeKind::Move, currentNote, targetTick,
         static_cast<int>(tickDifference), 0, 0, 0, dummyStart, dummyEnd);
 #if defined(SESSION_CAPTURE)
     logGeomApplyResolve(micros() - resolveStartUs, applied, NoteEditKind::Move);
@@ -270,7 +270,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::changeNoteEndWithOverlapHandling(
     logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Length);
     const uint32_t resolveStartUs = micros();
 #endif
-    NoteMovementUtils::changeLengthWithOverlapHandling(track, *this, currentNote, targetEndTick);
+    NoteEditGeometryApply::changeLengthWithOverlapHandling(track, *this, currentNote, targetEndTick);
 #if defined(SESSION_CAPTURE)
     logGeomApplyResolve(micros() - resolveStartUs, true, NoteEditKind::Length);
 #endif

@@ -6,7 +6,7 @@
 #include "Track.h"
 #include "Logger.h"
 #include "Utils/MidiEventVecFnvHash.h"
-#include "Utils/NoteMovementUtils.h"
+#include "NoteEditGeometryApply.h"
 #include "NoteEditFocus.h"
 
 void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
@@ -46,8 +46,8 @@ void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     NoteUtils::DisplayNote pitchTarget = liveNote;
     pitchTarget.startTick = noteStart;
     pitchTarget.endTick = noteEnd;
-    NoteMovementUtils::applyNoteEditChange(
-        track, manager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
+    NoteEditGeometryApply::applyNoteEditChange(
+        track, manager, NoteEditGeometryApply::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
         liveNote.note, static_cast<uint8_t>(newPitch), noteStart, noteEnd);
 }
 
