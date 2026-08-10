@@ -30,7 +30,7 @@ public:
         std::optional<uint8_t> overlapPitchLane = std::nullopt,
         bool refreshPlaybackPreview = true);
 
-    /// Single causing-note entry — latch map built here (keeps std::unordered_map out of NoteMovementUtils ITCM).
+    /// Single causing-note entry — latch map built here (keeps std::unordered_map out of NoteEditGeometryApply ITCM).
     NOTE_EDIT_MEM static bool resolveForCausingNote(
         Track& track, EditManager& manager, NoteId causingNoteId, const NoteBaseline& editedSpan,
         const NoteBaseline& priorLatch, std::optional<uint32_t> selectionTick = std::nullopt,

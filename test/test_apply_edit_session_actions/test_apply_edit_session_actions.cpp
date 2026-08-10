@@ -14,7 +14,7 @@
 #include "NoteEditCurrentState.h"
 #include "ParticipatingNoteSession.h"
 #include "Utils/LoopEventValidation.h"
-#include "Utils/NoteMovementWrap.h"
+#include "NoteEditGeometryApplyWrap.h"
 
 #include "../../src/EditManager/ApplyEditSessionActions.cpp"
 #include "../../src/EditManager/ApplyOwnedEditPassRows.cpp"
@@ -146,7 +146,7 @@ void test_apply_loop_seam_move_152335() {
   move.type = EditSessionActionType::MoveNote;
   move.targetNoteId = kNoteId;
   move.startTick = 1345;
-  move.endTick = NoteMovementUtils::linearStorageOffTickForSpanEnd(1345, noteLen);
+  move.endTick = NoteEditGeometryApply::linearStorageOffTickForSpanEnd(1345, noteLen);
   move.pitch = 60;
   move.velocity = 100;
   actions.push_back(move);

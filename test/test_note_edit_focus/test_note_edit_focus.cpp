@@ -34,7 +34,7 @@
 #include "ParticipatingNoteSession.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
-#include "Utils/NoteMovementWrap.h"
+#include "NoteEditGeometryApplyWrap.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/LoopTickNormalize.h"
 
@@ -905,7 +905,7 @@ void test_shorten_under_49_ticks_classifies_as_hidden_candidate() {
   const uint32_t neighborStart = 400;
   const uint32_t shortenedEnd = moverStart - 1;
   const uint32_t shortenedLength =
-      NoteMovementUtils::calculateNoteLength(neighborStart, shortenedEnd, loopLength);
+      NoteEditGeometryApply::calculateNoteLength(neighborStart, shortenedEnd, loopLength);
   TEST_ASSERT_TRUE(shortenedLength < 49);
 }
 
@@ -2006,7 +2006,7 @@ void test_wrap_move_canonical_invariants_at_macro_commit() {
   NoteEditFocus focus;
   rebuildNoteEditFocusFromStore(focus, session, 1, loopLength, 0);
   focus.last.startTick = 1345;
-  focus.last.endTick = NoteMovementUtils::linearStorageOffTickForSpanEnd(1345, noteLen);
+  focus.last.endTick = NoteEditGeometryApply::linearStorageOffTickForSpanEnd(1345, noteLen);
   focus.movingNoteRange.start = 1345;
   focus.movingNoteRange.end = focus.last.endTick;
 

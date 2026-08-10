@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "Utils/NoteMovementWrap.h"
+#include "NoteEditGeometryApplyWrap.h"
 #include "Utils/NoteUtils.h"
 
 namespace LoopTickNormalize {
@@ -111,7 +111,7 @@ NormalizeResult normalizeStore(MidiEventVec& events, uint32_t loopLength, const 
       }
 
       const uint32_t linearOff =
-          onEvt.tick + NoteMovementUtils::calculateNoteLength(onEvt.tick, offEvt.tick, loopLength);
+          onEvt.tick + NoteEditGeometryApply::calculateNoteLength(onEvt.tick, offEvt.tick, loopLength);
       events[offIdx].tick = linearOff;
       ++result.wrapPairsMerged;
 
@@ -196,7 +196,7 @@ NormalizeResult normalizeStore(MidiEventVec& events, uint32_t loopLength, const 
         }
       }
       const uint32_t linearOff =
-          onEvt.tick + NoteMovementUtils::calculateNoteLength(onEvt.tick, closeTick, loopLength);
+          onEvt.tick + NoteEditGeometryApply::calculateNoteLength(onEvt.tick, closeTick, loopLength);
       appended.push_back(
           MidiEvent::NoteOff(linearOff, onEvt.channel, onEvt.data.noteData.note, 0));
       ++result.openTailsClosed;

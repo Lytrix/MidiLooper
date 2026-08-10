@@ -11,7 +11,7 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/LoopTickNormalize.h"
-#include "Utils/NoteMovementWrap.h"
+#include "NoteEditGeometryApplyWrap.h"
 #include "MidiEvent.h"
 
 static bool hasNoteOffAt(const MidiEventVec& events, uint32_t tick, uint8_t ch, uint8_t note) {
@@ -194,7 +194,7 @@ void test_move_past_loop_end_linear_off_at_macro_commit() {
   // Linear move +1 (152335 repro): on@1345, off@1536 — not off@0.
   events[1].tick = 1345;
   events[0].tick =
-      NoteMovementUtils::linearStorageOffTickForSpanEnd(1345, noteLen);
+      NoteEditGeometryApply::linearStorageOffTickForSpanEnd(1345, noteLen);
 
   LoopTickNormalize::normalizeAll(events, loopLength);
 

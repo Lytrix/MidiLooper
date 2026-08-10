@@ -21,8 +21,6 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/SlotFocusDisplay.h"
-#include "Utils/NoteMovementWrap.h"
-#include "Utils/NoteMovementUtils.h"
 #include "TrackStateMachine.h"
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
