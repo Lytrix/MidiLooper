@@ -1,9 +1,10 @@
-# Handoff — Set / Revision persistence (next chat)
+# Handoff — Set / Revision persistence
 
-**Date:** 2026-06-27  
-**OpenSpec:** `openspec/changes/set-revision-persistence/`  
-**Architecture plan:** `docs/Plans/set_revision_persistence_architecture_enhancement.md`  
-**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.9 (parked) or section 4 overlay**
+**Date:** 2026-06-27 (updated 2026-08-10 — overlay shipped; remaining scoped)  
+**OpenSpec:** [`set-revision-persistence`](../../openspec/changes/set-revision-persistence/)  
+**Architecture plan:** [`set_revision_persistence_architecture_enhancement.md`](set_revision_persistence_architecture_enhancement.md)  
+**Status:** Core + overlay **4.1–4.7 shipped** on `dev`. **Remaining:** OpenSpec §4.8–4.10 (loop picker HITL), §3.9 parked.  
+**Apply:** `/opsx:apply` on [`tasks.md`](../../openspec/changes/set-revision-persistence/tasks.md) for §4.8+ only.
 
 ---
 
@@ -13,7 +14,7 @@
 
 ---
 
-## What is done (tasks 1.x–2.x, 3.1–3.6)
+## What is done (tasks 1.x–2.x, 3.1–3.8, overlay 4.1–4.7)
 
 ### Section 1 — metadata + catalog + REVPK02
 
@@ -73,7 +74,7 @@ OpenSpec **pros/cons** (format vs MIDI timing): `proposal.md` + `design.md` § R
 | `scripts/hitl/deferred_save_idle.py` | Wait for `PERS,result,ok` before commit |
 | `scripts/hitl/registry.py` | Preset `revision_commit_save` |
 
-**SESSION_CAPTURE hooks** (`main.cpp`, `StorageManager.cpp`): `!REV_COMMIT`, `!REV_CLEANUP`; telemetry `rev_*` via `#CAP,PERS,…`.
+**SESSION_CAPTURE hooks** (`main.cpp`, `StorageManagerHitlSerial.cpp`): `!REV_COMMIT`, `!REV_CLEANUP`; telemetry `rev_*` via `#CAP,PERS,…`.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset revision_commit_save \
@@ -139,16 +140,12 @@ Use `--skip-hitl-cleanup` when debugging failed load. Optional dev `!REV_NUKE_SE
 ### Verification (green as of 2026-06-27)
 
 ```bash
-pio test -e native                              # 251 tests
+pio test -e native
 pio test -e native -f test_set_revision_persistence
 openspec validate set-revision-persistence
 pio run -e teensy41-capture-serial             # ask before upload
 # HITL: revision_commit_save preset (see above)
 ```
-
----
-
-## What is NOT done (start here)
 
 ### Section 3.3 — SNAPSHOT epoch freeze (shipped 2026-06-27)
 
@@ -183,26 +180,68 @@ pio run -e teensy41-capture-serial             # ask before upload
 |------|--------|
 | LoopSlot WRITE | `stepDeferredLoopPersist` + `measureLoopSlotFileBytes` from live RAM passes (chunk refs) |
 | Layout | SlotIndex `bodyLength` from `measureLoopSlotFileBytes`, not opaque SD epoch file size |
-| Transport | Still opaque copy of `runtime.bundle.bin` (split transport.bin deferred) |
+| Transport | Still opaque copy of `runtime.bundle.bin` (split `transport.bin` deferred) |
 | CRC | `LoopPersistPayloadCrc::RevisionCommit` on streamed loop body bytes |
 | Native | `test_measure_persisted_loop_snapshot_wire_bytes_matches_buffer`, policy stream flag |
 
-### Section 3 — hardening (priority order)
+### Section 3.7 — DIRTY_PROMPT (shipped 2026-06-27)
 
-- [x] **3.6** Remove SavedSet shims; stream commit via `StorageLoopIo` / pass shapes (replace opaque copy)
-- [x] **3.7** DIRTY_PROMPT Yes/No/Cancel — pipeline + minimal overlay display
-- [x] **3.8** Boot: Current epoch → derived rev → latest → recovery → empty
-- [ ] **3.9** **Parked** — 8h failsafe when epochs diverge > 8h (see `recovery-boot` spec; defer until field testing confirms revision-commit vs legacy SavedSet failsafe — `processSavedSetFailsafe` still runs today)
+| Item | Detail |
+|------|--------|
+| Gate | `requestLoadRevision` → `rev_load_dirty_prompt` when `currentEpoch != lastCommittedEpoch` |
+| **Yes** | `confirmRevisionLoadDirtyPromptSaveThenLoad` → commit then staged load (`rev_load_dirty_yes`) |
+| **No** | `confirmRevisionLoadDirtyPromptDiscard` → discard uncommitted, load (`rev_load_dirty_no`) |
+| **Cancel** | `cancelRevisionLoadDirtyPrompt` → clear staged target (`rev_load_dirty_cancel`) |
+| Overlay | `getSetBrowserOverlayMode()` — `DirtyPrompt` / `MinimalLoading` / `Root` |
+| Display | `drawLoadSaveDirtyPromptView`, `drawLoadSaveMinimalLoadingView` |
+| HITL serial | `!REV_LOAD_DIRTY_YES`, `!REV_LOAD_DIRTY_NO`, `!REV_LOAD_DIRTY_CANCEL` |
+| Native | `RevisionLoadPolicy` + dirty-pipeline tests |
 
-**Open engineering items (not separate tasks):**
+### Section 3.8 — Boot recovery chain (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| Step 1 | `loadCurrentWorkspaceAtBoot` — scan down from `workspace.bin` epoch; ignore partial successor slot epochs |
+| Step 2–3 | `attemptBootRecoveryChain` — derived revision then latest on Set via `runBootRevisionLoadSynchronously` |
+| Step 4 | `tryLoadLatestRecoveryPoint` (unchanged path layout) |
+| Hygiene | `discardIncompleteRevisionTempFilesOnSd` at `loadState` |
+| Policy | `BootRecoveryPolicy` + native tests |
+| Removed | SavedSet newest-folder fallback from boot chain |
+
+### Section 4 — Set browser overlay (4.1–4.7 shipped)
+
+| Task | Deliverable |
+|------|-------------|
+| 4.1 | Modes: ROOT, DIRTY_PROMPT, REVISION_HISTORY, LOOP_PICK, MINIMAL_LOADING (`SetBrowserOverlayPolicy`) |
+| 4.2 | Save → revision commit REQUEST + overlay exit; playback/persistence continue |
+| 4.3 | Overlay input-modal: suspend record/overdub arm, loop slot gestures, note-edit; keep transport + deferred FSM |
+| 4.4 | GPIO encoder rotation → overlay list focus (ROOT + DIRTY_PROMPT) |
+| 4.5 | GPIO encoder button → overlay row actions (short confirm/load, double favorite, long history/exit) |
+| 4.6 | Workspace Set browser lists revision catalog (`sets/S####/`), sorted by `updatedUnix` |
+| 4.7 | Revision history UI — list, scroll, load, back navigation, detail preview |
+
+**Display:** [`LoadSaveOverlay.cpp`](../../src/DisplayManager/LoadSaveOverlay.cpp) — `drawLoadSaveView`, dirty prompt, minimal loading, revision history, `drawLoadSaveLoopPickView`.  
+**Navigation:** [`Overlay.cpp`](../../src/StorageManager/Overlay.cpp) — `openSetBrowserRevisionHistory`, `openSetBrowserLoopPick`, `navigateSetBrowserOverlayBack`.
+
+---
+
+## Remaining work (start here)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| **4.8–4.10** Loop picker UI polish + HITL `set_revision_overlay` | **Open** | OpenSpec [`tasks.md`](../../openspec/changes/set-revision-persistence/tasks.md) §4.8+; loop-pick navigation exists — finish UI + preset |
+| **3.9** 8h failsafe when epochs diverge > 8h | **Parked** | `recovery-boot` spec; legacy `processSavedSetFailsafe` still runs; defer until field testing |
+| Large-slot focus restore hang | **Parked** | [`persistence_overlay_large_slot_focus_restore_bugfix.md`](persistence_overlay_large_slot_focus_restore_bugfix.md) |
+
+**Open engineering (not separate tasks):**
 
 - Incremental payload CRC during WRITE (optional; footer uses file read as source of truth)
+- Split `runtime.bundle.bin` → `transport.bin` + `global.bin` (future; do not block overlay)
 
-### Sections 4–7
+**Related tracks (not this OpenSpec):**
 
-Overlay modes, loop picker, button remap, HITL `set_revision_overlay` — spec'd, not coded.
-
-**Interim gap:** deferred FSM still writes single **runtime bundle** (`temp/runtime.bundle.bin`). OpenSpec target split `transport.bin` + `global.bin` is future work — do not block 3.2 on split.
+- DEC-020 Phase 5 crash recovery — [`continuous_runtime_persistence_phase5_recovery_handoff.md`](continuous_runtime_persistence_phase5_recovery_handoff.md)
+- `admitLoopSlotPersist` → `admitLoopPersist(LoopId)` call-site migration — [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 1.3; baseline scheduler [`current_set_persist_work_item_queue_enhancement.md`](current_set_persist_work_item_queue_enhancement.md)
 
 ---
 
@@ -229,12 +268,16 @@ sets    = immutable revision history  →  MidiLooper/sets/
 |------|------|
 | Path constants | `include/PersistenceLayout.h`, `CurrentSetStorage.h`, `CurrentWorkspaceStorage.h`, `SetRevisionCatalog.h` |
 | REVPK02 wire + parser | `include/RevisionPackedBlob.h`, `src/RevisionPackedBlob.cpp` |
-| Commit FSM + epoch | `src/StorageManager.cpp` (`stepRevisionCommit*`, `processDeferredSaveState` ~3300+) |
-| HITL serial hooks | `src/main.cpp` (`processHitlSerialCommands`) |
+| Deferred scheduler | `src/StorageManager/DeferredSaveScheduler.cpp`, `SyncDrainBudget.cpp` |
+| Revision commit / load FSM | `src/StorageManager/RevisionCommit.cpp`, `RevisionLoad.cpp` |
+| Boot recovery | `src/StorageManager/BootRecovery.cpp`, `include/BootRecoveryPolicy.h` |
+| Overlay navigation | `src/StorageManager/Overlay.cpp`, `include/SetBrowserOverlayPolicy.h` |
+| Overlay display | `src/DisplayManager/LoadSaveOverlay.cpp` |
+| Root façade | `src/StorageManager.cpp` (~422 LOC) — delegates to TUs above |
+| HITL serial hooks | `src/main.cpp`, `src/StorageManager/StorageManagerHitlSerial.cpp` |
 | Workspace / catalog | `src/CurrentWorkspaceStorage.cpp`, `SetRevisionCatalog.cpp` |
 | Native tests | `test/test_set_revision_persistence/` |
 | HITL | `scripts/hitl/scenarios/revision_commit_save.py`, `revision_load.py`, `revision_load_post_record.py` |
-| Overlay stub | `src/DisplayManager.cpp` (`drawLoadSaveView`) |
 | OpenSpec | `openspec/changes/set-revision-persistence/` |
 
 ---
@@ -264,37 +307,14 @@ SavedSet fallback removed from boot chain (brownfield v5 monolith migration unch
 
 ---
 
-### Section 3.7 — DIRTY_PROMPT (shipped 2026-06-27)
-
-| Item | Detail |
-|------|--------|
-| Gate | `requestLoadRevision` → `rev_load_dirty_prompt` when `currentEpoch != lastCommittedEpoch` |
-| **Yes** | `confirmRevisionLoadDirtyPromptSaveThenLoad` → commit then staged load (`rev_load_dirty_yes`) |
-| **No** | `confirmRevisionLoadDirtyPromptDiscard` → discard uncommitted, load (`rev_load_dirty_no`) |
-| **Cancel** | `cancelRevisionLoadDirtyPrompt` → clear staged target (`rev_load_dirty_cancel`) |
-| Overlay | `getSetBrowserOverlayMode()` — `DirtyPrompt` / `MinimalLoading` / `Root` |
-| Display | `drawLoadSaveDirtyPromptView`, `drawLoadSaveMinimalLoadingView` |
-| HITL serial | `!REV_LOAD_DIRTY_YES`, `!REV_LOAD_DIRTY_NO`, `!REV_LOAD_DIRTY_CANCEL` |
-| Native | `RevisionLoadPolicy` + 4 dirty-pipeline tests |
-
-### Section 3.8 — Boot recovery chain (shipped 2026-06-27)
-
-| Item | Detail |
-|------|--------|
-| Step 1 | `loadCurrentWorkspaceAtBoot` — scan down from `workspace.bin` epoch; ignore partial successor slot epochs |
-| Step 2–3 | `attemptBootRecoveryChain` — derived revision then latest on Set via `runBootRevisionLoadSynchronously` |
-| Step 4 | `tryLoadLatestRecoveryPoint` (unchanged path layout) |
-| Hygiene | `discardIncompleteRevisionTempFilesOnSd` at `loadState` |
-| Policy | `BootRecoveryPolicy` + 5 native tests |
-| Removed | SavedSet newest-folder fallback from boot chain |
-
 ## Suggested next-chat prompt
 
 ```text
-Read docs/Plans/storage_session_state_refactor_handoff.md (DEC-012).
-Implement Tier 0: StorageActivitySnapshot, contract tests, remove RevisionLoadPolicy::isMinimalLoadingOverlayActive wrapper.
-pio test -e native.
+/opsx:apply set-revision-persistence — OpenSpec tasks.md §4.8–4.10 (loop picker UI + HITL set_revision_overlay).
+Read docs/Plans/set_revision_persistence_handoff.md § Remaining work first.
 
-Or /opsx:apply set-revision-persistence — remaining tasks.md overlay items.
-Read docs/Plans/set_revision_persistence_handoff.md first.
+Or DEC-020 Phase 5: docs/Plans/continuous_runtime_persistence_phase5_recovery_handoff.md
+(native prefix-load fixtures before firmware; architecture gate required).
+
+Or #18 Phase 1.3: migrate admitLoopSlotPersist → admitLoopPersist(LoopId) at domain call sites.
 ```

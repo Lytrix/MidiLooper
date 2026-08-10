@@ -1,9 +1,10 @@
 # Handoff — DEC-020 Phase 5 recovery (longest valid prefix load)
 
 **Kind:** handoff  
-**Date:** 2026-07-09  
-**Branch:** `dev` @ `644de4f`  
-**Authority:** [DEC-020](../DECISION_LOG.md#dec-020-continuous-runtime-persistence-architecture), OpenSpec [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/)
+**Date:** 2026-07-09 (updated 2026-08-10)  
+**Branch:** `dev`  
+**Authority:** [DEC-020](../DECISION_LOG.md#dec-020-continuous-runtime-persistence-architecture), OpenSpec [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/)  
+**Status:** **Not started** — pick as CURRENT_WORK track B (orthogonal to set-revision overlay track A)
 
 Load first: [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md), [`ARCHITECTURE-REVIEW.md` § Phase 5](../../openspec/changes/continuous-runtime-persistence/ARCHITECTURE-REVIEW.md), [`tasks.md` § Phase 5](../../openspec/changes/continuous-runtime-persistence/tasks.md), [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](../Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md).
 
