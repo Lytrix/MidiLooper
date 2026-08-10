@@ -59,7 +59,6 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 
 | Item | Category | Impact | Risk | Trigger / timing | Source |
 |------|----------|--------|------|------------------|--------|
-| **`*Ingress.cpp` → `*Input.cpp`** (2 ControlSurface TUs) | Naming | Low | Low | Next ControlSurface TU work | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **`Playing` → `Playback` in docs** where meaning is runtime machinery | Docs | Low | Low | Incremental doc edits | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **`Controller` → Manager/Handler in plans** | Docs | Low | Low | When plans touched | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **Mass `docs/Plans/` archive / purge** | Docs hygiene | Low | Low | Optional | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) item 18 |
@@ -72,7 +71,8 @@ Consolidated **refactor and naming-debt priority** across scattered plans. This 
 
 | Item | Shipped | Source |
 |------|---------|--------|
-| **Codebase consistency #18** Phases 1–3 + Phase 4 design | 2026-08-08 — PRs [#19](https://github.com/Lytrix/MidiLooper/pull/19), [#20](https://github.com/Lytrix/MidiLooper/pull/20), [#21](https://github.com/Lytrix/MidiLooper/pull/21); [phase4 design](codebase_consistency_phase4_extraction_boundaries_refinement.md) | [codebase_consistency_maintainability_refinement.md](codebase_consistency_maintainability_refinement.md) |
+| **Codebase consistency Phase LR** NoteMovementUtils shims | 2026-08-10 — PR [#26](https://github.com/Lytrix/MidiLooper/pull/26) | [phase4 plan](codebase_consistency_phase4_extraction_boundaries_refinement.md) |
+| **`*Ingress.cpp` → `*Input.cpp`** (ControlSurface TUs) | 2026-08-10 — code `c5f1da1`; header comments + doc closeout | [architecture_naming_authority_refinement.md](architecture_naming_authority_refinement.md) § B |
 | **StorageManager** Phases 0–8 + remaining root trim (HITL, preamble/epilogue, status-query inlines); root ~422 LOC | 2026-08-08 — [PR #17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (open); Task [#16](https://github.com/Lytrix/MidiLooper/issues/16) | [storagemanager_translation_unit_extraction_refinement.md](storagemanager_translation_unit_extraction_refinement.md) |
 | **`NoteEditFocus.cpp` TU extraction** (Phases 0–10 + LR) | Done — root TU removed | [noteditfocus_translation_unit_extraction_refinement.md](noteditfocus_translation_unit_extraction_refinement.md) |
 | **`Loop.cpp` TU extraction** (Phases 0–11) | Merged to `dev` | [loop_translation_unit_extraction_refinement.md](loop_translation_unit_extraction_refinement.md) |
