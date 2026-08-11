@@ -2,22 +2,21 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (long capture follow-up RC2)
+Last updated: 2026-08-11 (long capture follow-up RC4)
 
 ---
 
 ## Now implementing
 
-### Long record / overdub display — RC2 post-stop handoff active
+### Long record / overdub display — RC4 visualCache window paint active
 
 **Branch:** `bugfix/long-overdub-display-freeze`
-**Plans:** [`long_overdub_post_stop_display_handoff_bugfix.md`](../Plans/long_overdub_post_stop_display_handoff_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
+**Plans:** [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
-RC3 button delivery shipped (`1e85871`); RC1 open-sidecar shipped (`ad5dbde`). RC2: windowed
-committed resolve before deferred-save live fallback; clamp preserve to committed prefix; bind
-live playback slot; overdub stop shares `refreshViewportAfterRecordStop`. HITL gate next; Stage 5
-append/canonicalization remains separate.
+`030614` (195-bar): RC2 window-bounded frames still tore — dual gather + full-loop idle
+`visualCache` fill. RC4: filter covered `visualCache` for window paint; PLAYING idle slices
+stay near playhead. RC1–RC3 shipped on branch; Stage 5 append pressure remains separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

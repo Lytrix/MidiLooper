@@ -11,6 +11,7 @@
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/SlotFocusDisplay.h"
+#include "VisualCache.h"
 #include <Arduino.h>
 #include <algorithm>
 
@@ -56,11 +57,49 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     const Track& track, Loop& mutLoop, const Loop& loop, uint8_t displaySlot, uint32_t loopLength,
     uint32_t windowStart, uint32_t windowLength) {
     const uint8_t trackIndex = resolveTrackIndex(track);
+
+    // Prefer filtering a covered visualCache over gather+reconstruct when capture is idle.
+    // session_20260811_030614: long-loop PLAYING filled visualCache while every frame still
+    // reconstructed the window — dual work tore the OLED after record stop.
+    if (!loop.captureActive() &&
+        visualCacheCoversWindow(loop.visualCacheDirty, loop.visualCache.dirtyBars, windowStart,
+                                windowLength, loopLength, Config::TICKS_PER_BAR)) {
+        const bool visualCacheHit =
+            liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
+            trackIndex == livePlaybackDisplayTrack_ &&
+            liveMergePlaybackRevision_ == loop.playbackRevision &&
+            liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
+            liveWindowVisualCacheRevision_ == loop.visualCache.revision &&
+            liveWindowGatherLoopLength_ == loopLength &&
+            liveWindowGatherStart_ == windowStart && liveWindowGatherLength_ == windowLength;
+        if (visualCacheHit) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            return liveDisplayNotes;
+        }
+        const uint32_t displayBuildStartUs = micros();
+        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        const DisplayNoteVec filtered = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+            loop.visualCache.notes, windowStart, windowLength, loopLength);
+        liveDisplayNotes.assign(filtered.begin(), filtered.end());
+        liveMergePlaybackRevision_ = loop.playbackRevision;
+        liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+        livePlaybackDisplaySlot_ = displaySlot;
+        livePlaybackDisplayTrack_ = trackIndex;
+        liveWindowGatherStart_ = windowStart;
+        liveWindowGatherLength_ = windowLength;
+        liveWindowGatherLoopLength_ = loopLength;
+        liveWindowGatherValid_ = true;
+        liveWindowVisualCacheRevision_ = loop.visualCache.revision;
+        DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
+        return liveDisplayNotes;
+    }
+
     const bool cacheHit =
         liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
         trackIndex == livePlaybackDisplayTrack_ &&
         liveMergePlaybackRevision_ == loop.playbackRevision &&
         liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
+        liveWindowVisualCacheRevision_ == UINT32_MAX &&
         liveWindowGatherLoopLength_ == loopLength && windowLength > 0 &&
         liveWindowGatherLength_ > 0 && windowStart >= liveWindowGatherStart_ &&
         (windowStart - liveWindowGatherStart_) + windowLength <= liveWindowGatherLength_;
@@ -92,6 +131,7 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     liveWindowGatherLength_ = gatherLength;
     liveWindowGatherLoopLength_ = loopLength;
     liveWindowGatherValid_ = true;
+    liveWindowVisualCacheRevision_ = UINT32_MAX;
     DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
     return liveDisplayNotes;
 }

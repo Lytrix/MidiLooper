@@ -149,7 +149,11 @@ struct Loop {
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
-  void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar);
+  /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
+  /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
+  /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.
+  void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
+                                   uint32_t maxBarDistanceFromPriority = UINT32_MAX);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
   /// Note + visual caches only — does not disturb playback order or materialized pass view.

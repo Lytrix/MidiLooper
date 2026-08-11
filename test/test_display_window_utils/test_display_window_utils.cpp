@@ -5,6 +5,7 @@
 
 #include "MidiEvent.h"
 #include "Utils/IntervalProjection.h"
+#include "VisualCache.h"
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
@@ -122,6 +123,21 @@ void test_clamp_preserved_display_note_count_drops_capture_suffix() {
   TEST_ASSERT_EQUAL_UINT32(64u, DisplayWindowUtils::clampPreservedDisplayNoteCount(64u, 128u));
 }
 
+void test_visual_cache_covers_window_partial_and_full() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 195u * bar;
+  VisualBarVec dirty(195u, 1);
+  for (uint32_t b = 170; b < 195; ++b) {
+    dirty[b] = 0;
+  }
+  TEST_ASSERT_FALSE(visualCacheCoversWindow(true, dirty, 0, 16u * bar, loopLength, bar));
+  TEST_ASSERT_TRUE(
+      visualCacheCoversWindow(true, dirty, 179u * bar, 16u * bar, loopLength, bar));
+  TEST_ASSERT_TRUE(visualCacheCoversWindow(false, VisualBarVec{}, 0, 16u * bar, loopLength, bar));
+  TEST_ASSERT_FALSE(
+      visualCacheCoversWindow(true, VisualBarVec{}, 0, 16u * bar, loopLength, bar));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -133,5 +149,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_filter_display_notes_to_window);
   RUN_TEST(test_resolve_centered_window_start);
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
+  RUN_TEST(test_visual_cache_covers_window_partial_and_full);
   return UNITY_END();
 }

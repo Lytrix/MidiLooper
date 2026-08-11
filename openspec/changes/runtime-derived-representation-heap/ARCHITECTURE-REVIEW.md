@@ -99,6 +99,29 @@ The prior M6 Phase 2 revision gate still copied the complete `capturePreview.not
 | Native clamp fixture + full suite | [x] — 981/981 |
 | Combined HITL post-stop notes without overdub entry | [ ] |
 
+### RC4 architecture gate — visualCache window paint
+
+| Question | Answer |
+|----------|--------|
+| Owner module | `DisplayManager::resolveWindowedDisplayNotes` + `Loop::rebuildVisualCacheIdleSlice` |
+| Primary invariant | Covered paint-window bars filter `visualCache`; PLAYING idle backfill stays near playhead |
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Behavior-preserving? | **NO** for cost path only — same committed notes, no gather when covered |
+| Reuse | **YES** — `filterDisplayNotesByWindowInclusion` + idle slice neighborhood |
+| Phase scope | RC4 only — display window resolve + PLAYING idle budget; no commit/persistence FSM |
+
+#### RC4 implementation review
+
+| Check | Pass |
+|-------|------|
+| Covered window filters `visualCache` before gather | [x] |
+| Capture-active still uses gather path | [x] |
+| PLAYING idle slices neighborhood-limited | [x] |
+| Stopped idle retains full-loop backfill | [x] |
+| Native coverage fixture + full suite | [x] — 982/982 |
+| HITL: post-stop long-record OLED without tear | [ ] |
+
 ### RC3 architecture gate — USB Host button delivery
 
 | Question | Answer |

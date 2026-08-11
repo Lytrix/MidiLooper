@@ -37,6 +37,40 @@ inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
   return tick / ticksPerBar;
 }
 
+/// True when every bar intersecting [windowStart, windowStart + windowLength) is clean in cache.
+/// When `visualCacheDirty` is false, the cache is fully built (dirtyBars cleared).
+inline bool visualCacheCoversWindow(bool visualCacheDirty, const VisualBarVec& dirtyBars,
+                                    uint32_t windowStart, uint32_t windowLength,
+                                    uint32_t loopLength, uint32_t ticksPerBar) {
+  if (loopLength == 0 || windowLength == 0 || ticksPerBar == 0) {
+    return false;
+  }
+  if (!visualCacheDirty) {
+    return true;
+  }
+  if (dirtyBars.empty()) {
+    return false;
+  }
+  uint32_t clampedEnd = windowStart + windowLength;
+  if (windowStart >= loopLength) {
+    return false;
+  }
+  if (clampedEnd > loopLength) {
+    clampedEnd = loopLength;
+  }
+  if (clampedEnd <= windowStart) {
+    return false;
+  }
+  const uint32_t startBar = visualBarForTick(windowStart, ticksPerBar);
+  const uint32_t lastBar = visualBarForTick(clampedEnd - 1, ticksPerBar);
+  for (uint32_t bar = startBar; bar <= lastBar; ++bar) {
+    if (bar >= dirtyBars.size() || dirtyBars[bar] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 struct VisualCache {
   uint32_t revision = 0;
   DisplayNoteVec notes;
