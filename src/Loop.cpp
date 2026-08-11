@@ -44,6 +44,7 @@ void Loop::resetPassTimeline() {
   passesMaterializedStore_.discardEventsCache();
   passesMaterializedStoreStale_ = true;
   clearOverdubSourceView();
+  clearPendingNoteChanges();
 }
 
 void Loop::invalidateCaches() {

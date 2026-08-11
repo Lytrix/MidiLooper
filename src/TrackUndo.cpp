@@ -3,6 +3,7 @@
 
 #include "TrackUndo.h"
 #include "Track.h"
+#include "PendingNoteChange.h"
 #include "EditManager.h"
 #include "LoopEditManager.h"
 #include "StorageManager.h"
@@ -212,6 +213,14 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
+            if (!entry.editPassIds.empty() &&
+                !setEditPassState(loop, entry.editPassIds, EditPassState::Disabled,
+                                  EditPassType::Note)) {
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "Undo failed: missing overdub companion editPass id(s) in slot %u",
+                           static_cast<unsigned>(entry.slotIndex));
+                return false;
+            }
             loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -327,6 +336,14 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             if (!enableCapturePass(loop, entry.passId)) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
                            static_cast<unsigned long>(entry.passId),
+                           static_cast<unsigned>(entry.slotIndex));
+                return false;
+            }
+            if (!entry.editPassIds.empty() &&
+                !setEditPassState(loop, entry.editPassIds, EditPassState::Active,
+                                  EditPassType::Note)) {
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "Redo failed: missing overdub companion editPass id(s) in slot %u",
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
@@ -462,7 +479,8 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     pushUndoEntry(track, std::move(entry));
 }
 
-TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
+TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId,
+                                                    EditPassIdList companionEditPassIds) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
     }
@@ -472,6 +490,9 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
     entry.passId = passId;
+    entry.editPassType = EditPassType::Note;
+    entry.editPassIndex = kOverdubCompanionEditPassIndex;
+    entry.editPassIds = std::move(companionEditPassIds);
     pushUndoEntry(track, std::move(entry));
 }
 

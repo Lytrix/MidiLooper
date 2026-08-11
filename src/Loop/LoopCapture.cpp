@@ -273,7 +273,6 @@ void Loop::clearOverdubSourceView() {
   overdubSourceViewEvents_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
   overdubSourceViewEstablished_ = false;
-  clearPendingNoteChanges();
 }
 
 void Loop::clearPendingNoteChanges() {
@@ -329,6 +328,7 @@ void Loop::discardCapture() {
   capturePreview.clear();
   captureDedupEventsDropped_ = 0;
   clearOverdubSourceView();
+  clearPendingNoteChanges();
 }
 
 CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {

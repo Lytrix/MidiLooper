@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (DEC-032 G2 approved; Phase 2 resume)
+Last updated: 2026-08-12 (Phase 2 G2 slice 2 wired; STK2 GUS)
 
 ---
 
 ## Current branch
 
-**Active work:** OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) — Phase 1 shipped; **G2** (DEC-032) Phase 2 resume — pending session delta + shared geometry; dual storage transitional. Evidence [`183525`](../../captures/session_20260811_183525.log).
+**Active work:** OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) — Phase 1 + G2 slice 1–2 (pending → seal → STK2 undo companions); dual storage transitional. Next: demote `isDuplicateCaptureEvent` (3.7) + device wrap verify. Evidence [`183525`](../../captures/session_20260811_183525.log).
 
 **Merged to `dev`:** PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) — long-overdub display RC4–RC5, Stage 5a-1/5a-2, live-record tick-0.
 

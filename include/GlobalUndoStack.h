@@ -62,6 +62,8 @@ constexpr uint32_t kGlobalUndoStackToken = 0x33535547UL;
 /// Optional undo-stack header extension before entries (wire bytes: "STK1") — scoped-edit fields
 /// on **NoteEditPassClosed** / **ControlChangeEditPassClosed** rows. Legacy stacks omit this token.
 constexpr uint32_t kGlobalUndoStackScopedEditExtensionToken = 0x314B5453UL;
+/// STK2 = STK1 plus OverdubPassAdded companion editPassIds (wire bytes: "STK2").
+constexpr uint32_t kGlobalUndoStackOverdubCompanionExtensionToken = 0x324B5453UL;
 /// Optional footer extension before `selectedSlotIndex[]` (wire bytes: "SLOT").
 constexpr uint32_t kFooterSelectedSlotExtensionToken = 0x534C4F54UL;
 

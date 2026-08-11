@@ -131,3 +131,34 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
   pendingNoteChanges_.push_back(addChange);
   return true;
 }
+
+EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
+  EditPassIdList sealedIds;
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind != PendingNoteChangeKind::Shorten &&
+        change.kind != PendingNoteChangeKind::Hide) {
+      continue;
+    }
+    EditPass row{};
+    row.passType = EditPassType::Note;
+    row.targetNoteId = change.noteId;
+    row.pitch = change.pitch;
+    row.velocity = change.velocity;
+    row.startTick = change.startTick;
+    row.endTick = change.endTick;
+    if (change.kind == PendingNoteChangeKind::Hide) {
+      row.actionType = EditActionType::Delete;
+      row.propertyType = EditPropertyType::None;
+    } else {
+      row.actionType = EditActionType::Update;
+      row.propertyType = EditPropertyType::Length;
+    }
+    const EditPassId id =
+        saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row), EditPassType::Note);
+    if (id != kInvalidEditPassId) {
+      sealedIds.push_back(id);
+    }
+  }
+  clearPendingNoteChanges();
+  return sealedIds;
+}
