@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (PR #29 merged; overdub-pass-overlap-resolution branch)
+Last updated: 2026-08-11 (overdubSourceView OpenSpec refinement)
 
 ---
 
