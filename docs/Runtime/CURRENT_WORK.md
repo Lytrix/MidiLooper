@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (Phase 2 G2: demote capture duplicate under source view)
+Last updated: 2026-08-12 (Phase 3 OLED wrap PASS on 010000)
 
 ---
 
@@ -13,9 +13,10 @@ Last updated: 2026-08-12 (Phase 2 G2: demote capture duplicate under source view
 **Branch:** `feature/overdub-pass-overlap-resolution`  
 **OpenSpec:** [`openspec/changes/overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/)  
 **Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
-**Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
+**Baseline:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap (pre-fix).  
+**Device PASS:** [`010000`](../../captures/session_20260812_010000.log) — 3 wraps; user OLED hide/shorten; 0× `duplicate` **expected** under G2 (not the gate).
 
-**Now:** **G2 Phase 2 nearly complete** — pending → seal → STK2 undo; restore gate; **`isDuplicateCaptureEvent` skipped when `hasOverdubSourceView()`** (Record dedup unchanged); shared `noteMinLengthTicks`. Remaining: 3.11 implementation review, then Phase 3 device wrap+bar41 verify (`183525` class). U1/U2 out of scope.
+**Now:** Phase 2 firmware shipped; Phase 3 OLED/wrap **user PASS**. Remaining: 4.4/4.5 closeout (optional RING throttle 4.2), then archive. U1/U2 out of scope.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 
