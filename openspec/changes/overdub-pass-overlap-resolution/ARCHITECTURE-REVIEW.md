@@ -100,12 +100,11 @@
 
 ---
 
-### Phase 2 — PAUSED pending unified-pass pin
+### Phase 2 — G2 approved (unified resolution, transitional dual storage)
 
-**Scope (under review):** Shared geometry → Add/Shorten/Hide from any input; session pending changes; commit; undo.  
-**Paused:** C→A pending buffer → OverdubPass+EditPass dual seal (DEC-031 seal path).  
-**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md) — storage families are real today; geometry unify validated; U1 needs separate supersession of `timeline-passes`.  
-**User pin required:** G2 / G1 / U1 (DEC-032).
+**Scope:** Shared geometry → pending logical Add/Shorten/Hide; at stop encode via existing capture chunks + edit rows; one logical undo.  
+**Pin:** DEC-032 **G2**. Dual seal is **encoding only** (DEC-031 mechanics). U1/U2 out of scope.  
+**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md). Design §19.
 
 #### Architecture gate
 

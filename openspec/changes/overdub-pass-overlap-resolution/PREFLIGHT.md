@@ -1,15 +1,15 @@
-# PREFLIGHT — Overdub overlap encode (C → A)
+# PREFLIGHT — Overdub overlap encode (G2 transitional dual seal)
 
 **Change:** `overdub-pass-overlap-resolution`  
 **Date:** 2026-08-12  
-**Mode:** Full (formal trigger: undo semantics for one logical overdub unit spanning OverdubPass + EditPass rows)  
-**User decision:** Option 1 — C → A (pending buffer → seal into existing representations)
+**Mode:** Full (formal trigger: undo semantics for one logical overdub unit spanning dual storage encoding)  
+**User decision:** **G2** — unified resolution + pending session delta; dual storage seal is transitional encoding only (DEC-032). C→A seal mechanics remain the encoding path, not the semantic model.
 
 ---
 
 ## Problem
 
-Overdub must resolve each inserted overlapping note against a stable `overdubSourceView` and commit a **complete delta** (Add + Shorten/Hide). Today `OverdubPass` holds only capture chunks; Shorten/Hide already exist as `EditPass` rows. Encode must reuse those representations, keep one logical undo per stopped overdub session, and not contradict stop-time overlap restore.
+Overdub must resolve each inserted overlapping note against a stable `overdubSourceView` and accumulate a **pending logical delta** (Add + Shorten/Hide) under shared geometry with NOTE_EDIT. At commit, the existing storage architecture may encode Adds as capture chunks and Shorten/Hide as edit rows. One logical undo per stopped overdub session. Stop-time overlap restore must not contradict authoritative Add.
 
 ## Domain
 
@@ -84,23 +84,28 @@ Pending overdub-operation buffer is **session state on `Loop`**, not a timeline-
 
 ---
 
-## Encode decision (user-pinned): C → A
+## Encode decision (user-pinned): G2 — semantic unify, storage dual
+
+**Semantic model:** one session → pending logical Add/Shorten/Hide → one commit → one undo.  
+**Storage encoding (transitional):** capture chunks for Add; edit rows for Shorten/Hide.  
+**Not the semantic abstraction:** `OverdubPassAdded` + `editPassIds` (encoding only).
 
 ```text
 OVERDUBBING
   ├── raw capture (Add material)
   ├── immutable overdubSourceView
-  └── pending overlap operations   ← session state only
+  └── pending session delta   ← logical Add/Shorten/Hide; not a pass
         │
      STOP / COMMIT
-        ├── OverdubPass chunks     ← additions
-        └── EditPass rows          ← Shorten / Hide
-        └── one OverdubPassAdded undo grouping both
+        ├── capture/chunk path     ← Add encoding
+        └── edit-row path          ← Shorten / Hide encoding
+        └── one undo grouping both encodings
 ```
 
 - Do **not** extend `OverdubPass` with Shorten/Hide fields.
 - Do **not** write `EditPass` rows mid-session.
-- Do **not** treat the pending buffer as a pass.
+- Do **not** treat the pending delta as a timeline pass.
+- Do **not** pursue U1/U2 in this change.
 
 ---
 

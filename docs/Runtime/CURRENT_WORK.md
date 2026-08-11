@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (DEC-032 unified-pass review; Phase 2 paused)
+Last updated: 2026-08-12 (DEC-032 G2 approved; Phase 2 resume)
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: 2026-08-12 (DEC-032 unified-pass review; Phase 2 paused)
 **Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
 **Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
 
-**Now:** **Phase 2 paused (DEC-032).** Unified-pass refinement + architecture review written. **User pin required:** G2 (resume C→A dual seal) / G1 (geometry only) / U1 (unified committed pass OpenSpec). Do **not** implement pending overdub buffer → OverdubPass+EditPass until pin. Review: [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](../../openspec/changes/overdub-pass-overlap-resolution/UNIFIED-PASS-ARCHITECTURE-REVIEW.md). Phase 1 `overdubSourceView` remains shipped.
+**Now:** **G2 approved (DEC-032).** Phase 2 resume: pending session delta + shared geometry → Add/Shorten/Hide; dual storage seal is transitional encoding only (design §19). Next: slice 1 pending delta + native matrix. U1/U2 out of scope. Phase 1 `overdubSourceView` remains shipped.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 

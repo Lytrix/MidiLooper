@@ -17,23 +17,17 @@
 - [x] 2.7 `pio test -e native`
 - [x] 2.8 Implementation review Phase 1 checklist
 
-## 3. Phase 2 — PAUSED (unified-pass architecture pin)
+## 3. Phase 2 — G2 (unified resolution, transitional dual storage)
 
-**Do not implement C→A pending buffer → OverdubPass+EditPass until §20 / UNIFIED-PASS review is user-pinned.**
-
-- [x] 3.1 Architecture gate Phase 2; Open Q4 = C→A PREFLIGHT + DEC-031 (**seal path parked** — see DEC-032)
-- [x] 3.1b Unified-pass refinement added to design; architecture review written ([UNIFIED-PASS-ARCHITECTURE-REVIEW.md](UNIFIED-PASS-ARCHITECTURE-REVIEW.md))
-- [ ] 3.1c **User pin:** G2 (resume dual seal) / G1 (geometry only) / U1 (unified committed pass OpenSpec)
-- [ ] 3.2+ Firmware tasks below remain blocked until 3.1c
-
-### Blocked — resume only after 3.1c
-
-- [ ] 3.2 Session pending-action representation (shape depends on pin)
-- [ ] 3.3 Bridge `resolveConstrainedGeometry` → pending Add/Shorten/Hide; source view immutable; survives wraps
+- [x] 3.1 Architecture gate; PREFLIGHT encode path; DEC-031 transitional seal encoding
+- [x] 3.1b Unified-pass review ([UNIFIED-PASS-ARCHITECTURE-REVIEW.md](UNIFIED-PASS-ARCHITECTURE-REVIEW.md))
+- [x] 3.1c **User pin G2** (DEC-032) — design §19 updated; U1/U2 out of scope
+- [ ] 3.2 Slice 1: pending session delta (logical Add/Shorten/Hide) on `Loop`; clear with source view
+- [ ] 3.3 Bridge `resolveConstrainedGeometry` → pending delta; source view immutable; survives wraps
 - [ ] 3.4 Native matrix: Add, Shorten, Hide, multi-source, multi-wrap, immutability
-- [ ] 3.5 Commit/seal + undo per pinned representation
+- [ ] 3.5 Slice 2: stop seal — capture chunks then edit rows; one undo grouping both (**encoding**, not semantic model)
 - [ ] 3.6 Gate `shouldRestoreCommittedOverlapOnOverdubStop` when `overdubSourceView` established
-- [ ] 3.7 Wrap-safe candidate lookup on insert; retire reverse-tick early-out as authority
+- [ ] 3.7 Wrap-safe candidate lookup on insert; demote reverse-tick/`isDuplicateCaptureEvent` as semantic authority
 - [ ] 3.8 Shared `noteMinLengthTicks` globals
 - [ ] 3.9 One logical undo per stopped overdub session
 - [ ] 3.10 `pio test -e native`

@@ -12,7 +12,7 @@ That path is not a complete overlap model. Overdub must resolve newly inserted n
 - Reuse constrained-geometry / `EditSessionAction` semantics (not a capture-only overlap policy).
 - Wrap-safe **candidate lookup** into the source view (183525 performance framing); physical backing not prescribed.
 - Phase 1 = source view + native tests only (shipped).
-- Phase 2 **paused (DEC-032):** architecture refinement — input mechanism ≠ pass type; shared Add/Shorten/Hide geometry; do not implement C→A dual seal until user pins G2/G1/U1 ([UNIFIED-PASS-ARCHITECTURE-REVIEW.md](UNIFIED-PASS-ARCHITECTURE-REVIEW.md)).
+- Phase 2 **G2 (DEC-032):** unify resolution (pending logical Add/Shorten/Hide); dual capture/edit storage at commit is transitional encoding only — not a second overlap engine; U1/U2 deferred ([design.md](design.md) §19).
 
 ## Non-goals
 
