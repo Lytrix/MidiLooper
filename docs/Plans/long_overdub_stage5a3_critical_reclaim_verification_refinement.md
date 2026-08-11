@@ -1,8 +1,8 @@
 # Stage 5a-3 — Critical reclaim verification
 
-**Status:** Partial — [`183525`](../../captures/session_20260811_183525.log) classifies append WARNs as `duplicate` (reclaim hypothesis **falsified** for that class); `pool_alloc` / Critical reclaim chain still needs a pressure capture  
+**Status:** Partial — `duplicate` class **closed** via OpenSpec overdub overlap (not reclaim); `pool_alloc` / Critical reclaim chain still needs a pressure capture  
 **Parent:** [`long_overdub_stage5_memory_persistence_bugfix.md`](long_overdub_stage5_memory_persistence_bugfix.md)  
-**Branch tip:** includes 5a-1 (`b5e479f`) + 5a-2/RC4e (`e0ea018`)
+**Branch tip:** 5a-1/5a-2 on `dev` (PR #29); duplicate follow-up on `feature/overdub-pass-overlap-resolution`
 
 ## Principle
 
@@ -66,7 +66,11 @@ Reclaim CAP works; transport-time reclaim with resource release observed at **No
 | CAP gap | `RING,overflow` ~632 s — mid-overdub `append,deny` CAP lost |
 | Chunk pressure | Not implicated for these WARNs |
 
-**Hypothesis status:** **Falsified** for `183525` failure class (`duplicate`, not pool). Open follow-up: overdub overlap OpenSpec / wrap candidate lookup (dedicated branch). Still need a separate capture if proving Critical `pool_alloc` → reclaim recovery.
+**Hypothesis status:** **Falsified** for `183525` failure class (`duplicate`, not pool).
+
+**Duplicate-class closeout (2026-08-12):** Shipped OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) (G2) — `overdubSourceView` + geometry hide/shorten; demote capture `isDuplicateCaptureEvent` under source view. Device PASS [`010000`](../../captures/session_20260812_010000.log); plan frozen [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](long_overdub_wrap_duplicate_display_freeze_bugfix.md).
+
+**Still open for 5a-3:** separate capture proving Critical `pool_alloc` → reclaim recovery (`021117`-comparable workload).
 
 ## Verification recipe (`021117` shape)
 
@@ -126,5 +130,5 @@ Closeout must state: chunk-pressure hypothesis **confirmed or falsified**.
 | `pool_alloc` | Critical reclaim causal chain |
 | `phase_none` | Capture phase lifecycle |
 | `pending_pass` | Pending-pass admission |
-| `duplicate` | Separate (not pressure) |
+| `duplicate` | Closed for overdub wrap class (OpenSpec G2); Record-path dedup unchanged |
 | `store_other` | Identify store failure |

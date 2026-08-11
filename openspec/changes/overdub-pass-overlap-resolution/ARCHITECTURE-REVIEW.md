@@ -145,8 +145,8 @@
 
 - [x] Device wrap + OLED hide/shorten (user) — [`010000`](../../../captures/session_20260812_010000.log); CAP `DFRAME` gap not sole gate
 - [x] Zero mid-overdub `duplicate` deny storm expected under G2 (demoted); not used as pass metric
-- [x] Stage5a3 note: 183525 denies were `duplicate`, not `pool_alloc`
-- [ ] CURRENT_WORK / PROJECT_STATE closeout + archive readiness
+- [x] Stage5a3 note: 183525 denies were `duplicate`, not `pool_alloc`; duplicate class closed via this change
+- [x] CURRENT_WORK / PROJECT_STATE / Stage 5 / wrap plan closeout (4.4); archive = task 4.5
 
 ---
 

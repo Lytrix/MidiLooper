@@ -2,26 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (Phase 3 OLED wrap PASS on 010000)
+Last updated: 2026-08-12 (4.4 closeout — overdub overlap ready to archive)
 
 ---
 
 ## Now implementing
 
-### Overdub pass overlap resolution (OpenSpec)
+### Overdub pass overlap resolution — closeout / archive
 
-**Branch:** `feature/overdub-pass-overlap-resolution`  
-**OpenSpec:** [`openspec/changes/overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/)  
-**Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
-**Baseline:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap (pre-fix).  
-**Device PASS:** [`010000`](../../captures/session_20260812_010000.log) — 3 wraps; user OLED hide/shorten; 0× `duplicate` **expected** under G2 (not the gate).
+**Branch:** `feature/overdub-pass-overlap-resolution` (ahead of origin; not yet merged to `dev`)  
+**OpenSpec:** [`overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/) — tasks **4.4 done**; **4.5** = implementation review + `/opsx:archive`  
+**Plan (FROZEN):** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
+**PASS:** [`010000`](../../captures/session_20260812_010000.log) OLED hide/shorten across wraps; baseline [`183525`](../../captures/session_20260811_183525.log).
 
-**Now:** Phase 2 firmware shipped; Phase 3 OLED/wrap **user PASS**. **4.2 cancelled** (deny throttle not indicated — see wrap bugfix). Remaining: 4.4/4.5 closeout → archive. U1/U2 out of scope.
+**Now:** Run **4.5** archive when ready. U1/U2 out of scope (separate change).
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 
 **5a-1/5a-2 (shipped on `dev`):** Critical reclaim during transport + authoritative append-deny CAP.  
-**5a-3:** [`183525`](../../captures/session_20260811_183525.log) falsifies reclaim for `duplicate` class; `pool_alloc` proof still open.  
+**5a-3:** `duplicate` class **closed** via overdub OpenSpec (not reclaim); **`pool_alloc` proof still open**.  
 **Display RC4–RC5 + live-record tick-0:** shipped on `dev` (PR #29).
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
@@ -70,6 +69,7 @@ Last updated: 2026-08-12 (Phase 3 OLED wrap PASS on 010000)
 
 | Slice | Decision / commit | Evidence |
 |-------|-------------------|----------|
+| Overdub pass overlap (G2) | DEC-031/032; branch tip `20c177b`+ | Native 1016/1016; OLED PASS [`010000`](../../captures/session_20260812_010000.log); plan FROZEN; archive pending 4.5 |
 | Live-record tick-0 NoteOn blip | `8de682c` | Native 999/999; device PASS [`182949`](../../captures/session_20260811_182949.log); pre-fix [`182528`](../../captures/session_20260811_182528.log) |
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |

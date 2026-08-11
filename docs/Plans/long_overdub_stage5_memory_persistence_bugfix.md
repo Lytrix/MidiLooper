@@ -1,8 +1,8 @@
 # Long overdub Stage 5 — memory / persistence pressure
 
-**Status:** In progress — 5a-2 telemetry shipped; 5a-3 verification pending  
+**Status:** In progress — 5a-1/5a-2 on `dev` (PR #29); 5a-3 `duplicate` class closed via overdub OpenSpec; `pool_alloc` proof still open  
 **Parent:** [`long_overdub_display_freeze_bugfix.md`](long_overdub_display_freeze_bugfix.md) §19  
-**Branch:** `bugfix/long-overdub-display-freeze`
+**Branch:** merged via PR #29; overlap follow-up `feature/overdub-pass-overlap-resolution`
 
 ---
 
@@ -44,9 +44,12 @@ After `tryReclaimDerivedViewCachesUnderPressure`, when `pressure >= Critical`, c
 - `#CAP,append,deny` on rejection; `#CAP,DIAG,reclaim` on Critical visibility / resource release; pressure latch on first append fail
 - Plan: [`long_overdub_stage5a3_critical_reclaim_verification_refinement.md`](long_overdub_stage5a3_critical_reclaim_verification_refinement.md)
 
-### 5a-3 — Verification (pending)
+### 5a-3 — Verification (partial)
 
-Reproduce `021117`-comparable workload; classify every `append,deny` by reason before evaluating reclaim hypothesis.
+| Class | Status |
+|-------|--------|
+| `duplicate` (`183525`) | **Closed** — not reclaim; OpenSpec G2 + device [`010000`](../../captures/session_20260812_010000.log); [`wrap_duplicate` plan](long_overdub_wrap_duplicate_display_freeze_bugfix.md) **FROZEN** |
+| `pool_alloc` / Critical reclaim | **Open** — still need `021117`-comparable pressure capture; see [`stage5a3` plan](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) |
 
 ### RC4e — Rolling window overdub (shipped, verify pending)
 

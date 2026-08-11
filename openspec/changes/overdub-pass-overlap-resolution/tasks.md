@@ -40,5 +40,5 @@
 - [x] 4.1 Demote `isDuplicateCaptureEvent` as semantic authority when `hasOverdubSourceView()` (Phase 2; Record path keeps helper)
 - [x] 4.2 Investigate deny WARN/CAP throttle — **cancelled / not indicated** (0 deny WARNs post-G2; [`010000`] RING/DFRAME gap is stop SEVT burst + mid-OD CAP silence, not `append,deny`; see wrap bugfix §4.2)
 - [x] 4.3 Device wrap verify — [`010000`](../../../captures/session_20260812_010000.log): 3 wraps on loopLen 9984; user OLED hide/shorten PASS; 0× `duplicate` (expected)
-- [ ] 4.4 Update Stage 5 / wrap bugfix / CURRENT_WORK closeout
+- [x] 4.4 Update Stage 5 / wrap bugfix / CURRENT_WORK closeout (plan FROZEN; 5a-3 duplicate closed; guide + runtime updated)
 - [ ] 4.5 Implementation review Phase 3; ready for `/opsx:archive` when gates pass
