@@ -70,11 +70,33 @@ The prior M6 Phase 2 revision gate still copied the complete `capturePreview.not
 
 | Check | Pass |
 |-------|------|
-| Closed zero-duration row cannot be selected as open | [ ] |
-| Sidecar/vector alignment guarded | [ ] |
-| Cold rebuild restores open/wrap metadata | [ ] |
-| Focused parity fixtures | [ ] |
-| `pio test -e native` | [ ] |
+| Closed zero-duration row cannot be selected as open | [x] |
+| Sidecar/vector alignment guarded | [x] |
+| Cold rebuild restores open/wrap metadata | [x] |
+| Focused parity fixtures | [x] |
+| `pio test -e native` | [x] — 979/979 |
+
+### RC3 architecture gate — USB Host button delivery
+
+| Question | Answer |
+|----------|--------|
+| Owner module | `MidiHandler` (host drain) + `MidiButtonProcessor` (gesture) |
+| Primary invariant | Bounded host `read()` drain each service; incomplete gestures dispatch no action |
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Behavior-preserving? | **NO** for orphan NoteOff only — stop synthesizing short press (user-approved) |
+| Reuse | **YES** — `kMidiInputBatchMax`, existing dual `handleMidiInput()` sites, lost-NoteOff NoteOn recovery |
+| Phase scope | RC3 only — MidiHandler input + MidiButtonProcessor orphan path + capture DEBUG gate |
+
+#### RC3 implementation review
+
+| Check | Pass |
+|-------|------|
+| USB Host drained in bounded loop | [x] — batch 128 |
+| Orphan NoteOff dispatches no action | [x] |
+| Inbound MIDI DEBUG gated on `SESSION_CAPTURE` | [x] |
+| `pio test -e native` | [x] — 980/980 |
+| `teensy41-capture-serial` build | [x] |
 
 ---
 

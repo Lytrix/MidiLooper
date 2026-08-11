@@ -4,6 +4,7 @@
 #include "MidiButtonProcessor.h"
 #include "Logger.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/MidiButtonGesturePolicy.h"
 
 MidiButtonProcessor::MidiButtonProcessor() {
     // Initialize button states for all possible MIDI notes on all channels
@@ -111,18 +112,14 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
             
             handleButtonRelease(channel, note, duration);
         } else {
+            // NoteOff without a live press: NoteOn was never delivered (or already
+            // released). Duration is unknowable — discard; do not invent short/long.
             const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
-            if (config != nullptr) {
-                const uint32_t effectiveDoubleTap =
-                    config->doubleTapWindow > 0 ? config->doubleTapWindow : doubleTapWindow;
-                const uint32_t sinceRelease =
-                    state.lastReleaseTime > 0 ? now - state.lastReleaseTime : UINT32_MAX;
-                if (sinceRelease > effectiveDoubleTap) {
-                    logger.log(CAT_BUTTON, LOG_DEBUG,
-                               "Orphan note-off only: Ch%d Note%d (missed note-on), short press",
-                               channel, note);
-                    handleButtonRelease(channel, note, effectiveDoubleTap / 2U);
-                }
+            if (config != nullptr &&
+                !MidiButtonGesturePolicy::mayDispatchActionFromOrphanNoteOff()) {
+                logger.log(CAT_BUTTON, LOG_DEBUG,
+                           "Orphan note-off discarded: Ch%d Note%d (missed note-on), no action",
+                           channel, note);
             }
         }
     }

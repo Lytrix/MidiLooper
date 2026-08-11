@@ -2,15 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (long capture follow-up RC1)
+Last updated: 2026-08-11 (long capture follow-up RC3)
 
 ---
 
 ## Current branch
 
-**Active work:** Long record / overdub display — physical freeze resolved; capture-preview
-open-note identity RC1 active. Post-stop handoff RC2 and USB Host NoteOff delivery RC3 follow as
-separate commits.
+**Active work:** Long record / overdub display — RC3 USB Host button delivery (bounded drain,
+orphan NoteOff discard, capture MIDI DEBUG gate). RC1 preview identity uncommitted; RC2 handoff
+next.
 
 **Branch tip (local):** `bugfix/long-overdub-display-freeze` — [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md); M6 Phase 2 follow-up under `runtime-derived-representation-heap`.
 

@@ -121,9 +121,9 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] Stage 1c: re-audit capture-active committed display + LED paths
 - [ ] Stage 2: native preview delta, wrap-tail parity, and post-record display fixtures
 - [ ] Stage 3: 118-bar manual gate — continuous `DFRAME`, buttons responsive, post-record notes visible, no sustained ring overflow
-- [ ] RC1: `CapturePreviewNoteState::open` owns normal NoteOff closure; cold sidecar parity + native fixtures
+- [x] RC1: `CapturePreviewNoteState::open` owns normal NoteOff closure; cold sidecar parity + native fixtures
 - [ ] RC2: bounded canonical post-stop display handoff; no preserved temporary live tails
-- [ ] RC3: bounded USB Host MIDI drain + input telemetry; incomplete button gestures remain discarded
+- [x] RC3: bounded USB Host MIDI drain + input telemetry; incomplete button gestures remain discarded
 
 ### Phase 3 — Idle gating during capture
 
