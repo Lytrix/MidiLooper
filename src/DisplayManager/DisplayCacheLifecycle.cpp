@@ -114,8 +114,9 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveWindowGatherLength_ = 0;
     liveWindowGatherLoopLength_ = 0;
     liveWindowGatherValid_ = false;
+    liveDisplayCommittedFromWindowGather_ = false;
     liveWindowVisualCacheRevision_ = UINT32_MAX;
-    invalidateNoteEditDisplayCache();
+    editManager.invalidateProjectedNoteEditDisplayCache();
 }
 
 void DisplayManager::invalidateNoteEditDisplayCache() {

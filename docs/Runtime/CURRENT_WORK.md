@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (5a-2 telemetry + RC4e overdub window fix shipped)
+Last updated: 2026-08-11 (RC4f overdub wrap record-tail display fix shipped)
 
 ---
 
@@ -16,7 +16,12 @@ Last updated: 2026-08-11 (5a-2 telemetry + RC4e overdub window fix shipped)
 
 **5a-2 (shipped):** Authoritative `CaptureAppendResult` + `#CAP,append,deny` / `#CAP,DIAG,reclaim` / pressure latch.  
 **5a-3 (next):** Verification capture on `021117`-comparable workload — classify deny reasons before evaluating reclaim hypothesis.  
-**RC4e (shipped, verify):** Bounded visual-cache idle slices during overdub for rolling-window follow.
+**RC4e (shipped, verify):** Bounded visual-cache idle slices during overdub for rolling-window follow.  
+**RC4f (shipped, verify):** Promote overdub committed layer to full `visualCache` when idle finishes; overview minimap uses partial `visualCache` — [`long_overdub_record_tail_wrap_display_bugfix.md`](../Plans/long_overdub_record_tail_wrap_display_bugfix.md) (`session_20260811_121918`).  
+**RC4g (shipped, verify):** PLAYING after overdub stop returns `visualCache` for `drawPianoRoll` rolling filter (`session_20260811_124133`).  
+**RC4h (shipped, verify):** Overdub gathers full committed span when cache dirty (`session_20260811_165148`).  
+**RC4i (shipped, verify):** Overview minimap from full `notes` when cache dirty; preserve fix on record stop (`session_20260811_170314`).  
+**RC5 (investigation → implement):** Incremental overdub-stop display handoff — [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md) (RC5c-investigation before full-loop gather fallback; cross-check 5a-3).
 
 **5a-1 (shipped):** Critical `reclaimUnreferencedDisabledPasses` during transport (`main.cpp`).
 

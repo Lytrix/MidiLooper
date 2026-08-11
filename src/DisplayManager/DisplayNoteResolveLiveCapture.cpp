@@ -281,69 +281,30 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                                         loop.visualCache.notes.end());
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                 liveWindowGatherValid_ = false;
+                liveDisplayCommittedFromWindowGather_ = false;
             } else if (loop.hasCommittedPasses()) {
                 if (shouldAvoidFullVisualRebuild(loop, liveLoopLength)) {
-                    uint32_t windowStart = 0;
-                    uint32_t windowLength = 0;
-                    uint8_t windowBars = 0;
-                    if (syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength,
-                                                windowStart, windowLength, windowBars)) {
-                        const uint8_t trackIndex = resolveTrackIndex(track);
-                        const uint32_t marginTicks =
-                            static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
-                        uint32_t gatherStart =
-                            windowStart > marginTicks ? windowStart - marginTicks : 0;
-                        uint32_t gatherEnd = windowStart + windowLength + marginTicks;
-                        if (gatherEnd > liveLoopLength) {
-                            gatherEnd = liveLoopLength;
-                        }
-                        if (gatherStart > gatherEnd) {
-                            gatherStart = 0;
-                        }
-                        const uint32_t gatherLength = gatherEnd - gatherStart;
-                        // committedNoteCount must be > 0: after record-stop invalidate it stays 0,
-                        // and a false hit resized the committed layer empty for the whole overdub
-                        // (session_20260811_033336).
-                        const bool windowCacheHit =
-                            liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
-                            trackIndex == livePlaybackDisplayTrack_ &&
-                            liveMergePlaybackRevision_ == loop.playbackRevision &&
-                            liveWindowGatherLoopLength_ == liveLoopLength &&
-                            DisplayWindowUtils::paintWindowInsideGather(
-                                windowStart, windowLength, liveWindowGatherStart_,
-                                liveWindowGatherLength_) &&
-                            DisplayWindowUtils::overdubCommittedWindowCacheReusable(
-                                liveDisplayCacheCommittedNoteCount_, liveDisplayNotes.size());
-                        if (windowCacheHit) {
-                            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
-                        } else {
-                            rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, gatherStart,
-                                                        gatherLength, liveDisplayEventBuffer,
-                                                        liveDisplayNotes, false);
-                            liveMergePlaybackRevision_ = loop.playbackRevision;
-                            livePlaybackDisplaySlot_ = displaySlot;
-                            livePlaybackDisplayTrack_ = trackIndex;
-                            liveWindowGatherStart_ = gatherStart;
-                            liveWindowGatherLength_ = gatherLength;
-                            liveWindowGatherLoopLength_ = liveLoopLength;
-                            liveWindowGatherValid_ = true;
-                            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                        }
-                    } else {
-                        liveDisplayNotes.clear();
-                        liveDisplayCacheCommittedNoteCount_ = 0;
-                    }
+                    // Full committed span — drawPianoRoll owns rolling-window filter (RC4g).
+                    // Narrow window gather revealed chunks gradually (165148); stale dirty
+                    // visualCache hid the fresh record pass (170314).
+                    rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, 0, liveLoopLength,
+                                                liveDisplayEventBuffer, liveDisplayNotes, false);
+                    liveWindowGatherValid_ = false;
+                    liveDisplayCommittedFromWindowGather_ = false;
+                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                 } else {
                     mutLoop.ensureVisualCacheBuilt();
                     liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                             loop.visualCache.notes.end());
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                     liveWindowGatherValid_ = false;
+                    liveDisplayCommittedFromWindowGather_ = false;
                 }
             } else {
                 liveDisplayNotes.clear();
                 liveDisplayCacheCommittedNoteCount_ = 0;
                 liveWindowGatherValid_ = false;
+                liveDisplayCommittedFromWindowGather_ = false;
             }
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
@@ -352,6 +313,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         liveDisplayNotes.clear();
         liveDisplayCacheCommittedNoteCount_ = 0;
         liveWindowGatherValid_ = false;
+        liveDisplayCommittedFromWindowGather_ = false;
     };
 
     auto replaceCaptureLayer = [&]() {
@@ -422,8 +384,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                                                      liveWindowGatherStart_,
                                                      liveWindowGatherLength_);
 
+    const bool committedLayerPromoteToFullVisualCache =
+        track.isOverdubbing() &&
+        DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(
+            true, loop.visualCacheDirty, !loop.visualCache.notes.empty(),
+            liveDisplayCommittedFromWindowGather_);
+
     const bool committedLayerChanged =
         cacheCold || contextChanged || loopLengthChanged || committedWindowStale ||
+        committedLayerPromoteToFullVisualCache ||
         (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision);
     const bool captureLayerChanged =
         cacheCold || contextChanged || eventsShrunk || captureRevisionChanged ||

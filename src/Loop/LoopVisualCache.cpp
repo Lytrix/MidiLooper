@@ -56,16 +56,23 @@ uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
   return UINT32_MAX;
 }
 
-void removeDisplayNotesOverlappingBars(DisplayNoteVec& notes, uint32_t startBar, uint32_t endBar) {
+void removeDisplayNotesOverlappingBars(DisplayNoteVec& notes, uint32_t startBar, uint32_t endBar,
+                                       uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  const uint32_t rangeStart = startBar * ticksPerBar;
+  const uint32_t rangeEndTick = std::min((endBar + 1) * ticksPerBar, loopLengthTicks);
+  const uint32_t rangeLength = rangeEndTick > rangeStart ? rangeEndTick - rangeStart : 0;
+  if (rangeLength == 0) {
+    return;
+  }
   notes.erase(std::remove_if(notes.begin(), notes.end(),
                              [&](const NoteUtils::DisplayNote& note) {
-                               const uint32_t endTick =
-                                   note.endTick >= note.startTick ? note.endTick : note.startTick;
-                               const uint32_t noteStartBar =
-                                   visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
-                               const uint32_t noteEndBar =
-                                   visualBarForTick(endTick, Config::TICKS_PER_BAR);
-                               return noteStartBar <= endBar && noteEndBar >= startBar;
+                               return DisplayWindowUtils::noteIntersectsWindow(
+                                   note.startTick, note.endTick, rangeStart, rangeLength,
+                                   loopLengthTicks);
                              }),
                   notes.end());
 }
@@ -159,7 +166,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
 
-  removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar);
+  removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar, loopLengthTicks);
   for (const NoteUtils::DisplayNote& note : sliceNotes) {
     const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
     const uint32_t noteStartBar = visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
