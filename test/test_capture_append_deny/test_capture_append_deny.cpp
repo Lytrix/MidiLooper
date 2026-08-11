@@ -51,17 +51,39 @@ void test_append_deny_pending_pass() {
                     static_cast<int>(result.reason));
 }
 
-void test_append_deny_duplicate() {
+void test_append_deny_duplicate_on_record() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  beginOverdubCapture(loop);
+  loop.beginCapture(CapturePhase::Record);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(10, 1, 60, 100)));
   const CaptureAppendResult result =
       loop.appendCaptureEventWithResult(MidiEvent::NoteOn(10, 1, 60, 100));
   TEST_ASSERT_FALSE(result.accepted);
   TEST_ASSERT_EQUAL(static_cast<int>(CaptureAppendDenyReason::Duplicate),
                     static_cast<int>(result.reason));
+}
+
+void test_overdub_source_view_skips_capture_duplicate_deny() {
+  // Multi-wrap overdub reuses phase ticks; capture-store reverse-tick dedup must not deny.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  beginOverdubCapture(loop);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  const uint32_t highTick = loop.loopLengthTicks - 4;
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(highTick, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(highTick + 2, 1, 60, 0)));
+  // Post-wrap low-then-repeat same phase geometry as a later wrap would.
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(10, 1, 62, 100)));
+  const CaptureAppendResult first =
+      loop.appendCaptureEventWithResult(MidiEvent::NoteOn(10, 1, 60, 100));
+  TEST_ASSERT_TRUE(first.accepted);
+  const CaptureAppendResult second =
+      loop.appendCaptureEventWithResult(MidiEvent::NoteOn(10, 1, 60, 100));
+  TEST_ASSERT_TRUE(second.accepted);
+  TEST_ASSERT_EQUAL(static_cast<int>(CaptureAppendDenyReason::Accepted),
+                    static_cast<int>(second.reason));
 }
 
 void test_append_deny_pool_alloc() {
@@ -103,7 +125,8 @@ int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_append_deny_phase_none);
   RUN_TEST(test_append_deny_pending_pass);
-  RUN_TEST(test_append_deny_duplicate);
+  RUN_TEST(test_append_deny_duplicate_on_record);
+  RUN_TEST(test_overdub_source_view_skips_capture_duplicate_deny);
   RUN_TEST(test_append_deny_pool_alloc);
   RUN_TEST(test_append_accepted);
   RUN_TEST(test_deny_reason_labels);

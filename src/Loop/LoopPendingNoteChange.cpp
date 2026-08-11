@@ -101,6 +101,7 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
         continue;
       }
       const NoteBaseline& sourceBaseline = baselineIt->second;
+      // Shared NoteMinLength globals (same as NOTE_EDIT) — no overdub-specific floor.
       const ConstrainedNoteGeometry geometry = resolveConstrainedGeometry(
           group.targetNoteId, sourceBaseline, group.incoming, loopLen, noteMinLengthTicks,
           noteMinLengthRemoveEnabled);

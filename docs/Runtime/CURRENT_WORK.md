@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (Phase 2 G2 slice 2 wired; STK2 GUS)
+Last updated: 2026-08-12 (Phase 2 G2: demote capture duplicate under source view)
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: 2026-08-12 (Phase 2 G2 slice 2 wired; STK2 GUS)
 **Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
 **Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
 
-**Now:** **G2 Phase 2 slice 2 complete (uncommitted)** — overdub NoteOff → `accumulatePendingNoteChangesForIncomingNote`; stop seal Shorten/Hide → EditPass companions; one `OverdubPassAdded` undo (+ GUS **STK2** companions); restore gate skipped when `hasOverdubSourceView()`. Native **1015/1015**. Next: Phase 2 remaining (3.7 demote reverse-tick/`isDuplicateCaptureEvent`, 3.8 shared min length) then Phase 3 device verify. U1/U2 out of scope.
+**Now:** **G2 Phase 2 nearly complete** — pending → seal → STK2 undo; restore gate; **`isDuplicateCaptureEvent` skipped when `hasOverdubSourceView()`** (Record dedup unchanged); shared `noteMinLengthTicks`. Remaining: 3.11 implementation review, then Phase 3 device wrap+bar41 verify (`183525` class). U1/U2 out of scope.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 

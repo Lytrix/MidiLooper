@@ -1,8 +1,6 @@
 # Long overdub wrap — source-view overlap / display freeze
 
-**Status:** G2 approved (DEC-032) — Phase 2 pending session delta  
-
-
+**Status:** G2 Phase 2 firmware complete — device verify (Phase 3) open
 
 **Branch:** `feature/overdub-pass-overlap-resolution`  
 **OpenSpec:** [`openspec/changes/overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/)  
@@ -25,19 +23,24 @@
 - Materialize via `gatherCommittedEvents` (editPass-aware)
 - Wrap-safe `gatherOverdubSourceViewEventsInWindow` / `gatherOverdubSourceViewNotesInWindow`
 - Native: `test/test_overdub_source_view/`
-- Append accept/reject **not** wired to the view yet
+
+## Phase 2 shipped (G2)
+
+- Pending Add/Shorten/Hide via `resolveConstrainedGeometry` + shared `noteMinLengthTicks`
+- Stop seal companions + `OverdubPassAdded` undo (GUS STK2)
+- Restore gate skipped when `hasOverdubSourceView()`
+- **`isDuplicateCaptureEvent` demoted** on overdub append when source view established (Record path unchanged)
 
 ## Debugging boundary
 
 ```
-Phase 1 (done): overdubSourceView + native tests (no deny wiring)
-Phase 2+: resolve → delta encode; reverse-tick early-out retirement; lookup efficiency
-Separate: deny WARN/CAP throttle if RING floods
+Phase 1–2 (done): source view + pending + seal + demote capture dedup under view
+Phase 3: device wrap+bar41; optional deny CAP throttle; retire helper if unused
 Persistence / Critical reclaim: out of scope
 ```
 
 ## Next
 
-1. Phase 2 slice 1 — pending session delta + geometry bridge + native matrix
-2. Slice 2 — dual-storage seal encoding + one undo + restore gate
-3. Device verify wrap + bar 41 (`183525` class)
+1. Device verify wrap + bar 41 (`183525` class) — continuous DFRAME / OLED
+2. Optional deny WARN/CAP throttle if RING still floods
+3. Closeout / archive when Phase 3 gates pass

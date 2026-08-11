@@ -119,12 +119,12 @@
 
 #### Implementation review checklist
 
-- [ ] Source immutability tests
-- [ ] Same-phase wrap-2 re-eval tests
-- [ ] Parity tests vs NOTE_EDIT decisions
-- [ ] Min-length shared globals documented
-- [ ] `pio test -e native`
-- [ ] Persistence Non-Goals still hold (no resolve in save/load)
+- [x] Source immutability tests (`test_pending_note_change`, `test_overdub_source_view`)
+- [x] Same-phase wrap-2 re-eval / append accept (`test_overdub_source_view_skips_capture_duplicate_deny`)
+- [x] Parity via shared `resolveConstrainedGeometry` path (pending matrix)
+- [x] Min-length shared globals documented (`LOOP_MIDI_STORAGE_AND_VALIDATION.md` + pending call site)
+- [x] `pio test -e native` (1016/1016 after 3.7)
+- [x] Persistence Non-Goals still hold (no resolve in save/load)
 
 ---
 

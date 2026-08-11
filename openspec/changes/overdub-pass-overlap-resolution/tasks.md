@@ -27,11 +27,11 @@
 - [x] 3.4 Native matrix: Add, Shorten, Hide, multi-source, multi-wrap, immutability (`test_pending_note_change`)
 - [x] 3.5 Slice 2: stop seal — capture chunks then edit rows; one undo grouping both (**encoding**, not semantic model)
 - [x] 3.6 Gate `shouldRestoreCommittedOverlapOnOverdubStop` when `overdubSourceView` established
-- [ ] 3.7 Wrap-safe candidate lookup on insert; demote reverse-tick/`isDuplicateCaptureEvent` as semantic authority
-- [ ] 3.8 Shared `noteMinLengthTicks` globals
+- [x] 3.7 Wrap-safe candidate lookup on insert; demote reverse-tick/`isDuplicateCaptureEvent` as semantic authority (skipped when `hasOverdubSourceView()`; Record path unchanged)
+- [x] 3.8 Shared `noteMinLengthTicks` globals (pending accumulate → `resolveConstrainedGeometry`; no overdub-specific floor)
 - [x] 3.9 One logical undo per stopped overdub session (`OverdubPassAdded` + companion `editPassIds`; GUS **STK2**)
-- [x] 3.10 `pio test -e native` (slice 2: 1015/1015)
-- [ ] 3.11 Implementation review Phase 2 checklist
+- [x] 3.10 `pio test -e native` (Phase 2 complete: 1016/1016)
+- [x] 3.11 Implementation review Phase 2 checklist
 
 ## 4. Phase 3 — Retire capture dedup authority + device verify
 
