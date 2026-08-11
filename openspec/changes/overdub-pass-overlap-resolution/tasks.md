@@ -8,14 +8,14 @@
 
 ## 2. Phase 1 — overdubSourceView + native tests
 
-- [ ] 2.1 Architecture gate Phase 1 posted in session (ARCHITECTURE-REVIEW)
-- [ ] 2.2 Implement establish/clear `overdubSourceView` at overdub start (`Loop` provides; `Track` lifecycle triggers)
-- [ ] 2.3 Ensure view is materialize-aware (includes `editPasses`; not bare CER when edits active)
-- [ ] 2.4 Native tests: view stable across simulated wraps; expected geometry exposed; source immutability
-- [ ] 2.5 Native tests: candidate lookup into the view (wrap-safe; high-then-low capture order does not break lookup)
-- [ ] 2.6 Do **not** wire view into `appendCaptureEventWithResult` accept/reject in this phase
-- [ ] 2.7 `pio test -e native`
-- [ ] 2.8 Implementation review Phase 1 checklist
+- [x] 2.1 Architecture gate Phase 1 posted in session (ARCHITECTURE-REVIEW)
+- [x] 2.2 Implement establish/clear `overdubSourceView` at overdub start (`Loop` provides; `Track` lifecycle triggers)
+- [x] 2.3 Ensure view is materialize-aware (includes `editPasses`; not bare CER when edits active)
+- [x] 2.4 Native tests: view stable across simulated wraps; expected geometry exposed; source immutability
+- [x] 2.5 Native tests: candidate lookup into the view (wrap-safe; high-then-low capture order does not break lookup)
+- [x] 2.6 Do **not** wire view into `appendCaptureEventWithResult` accept/reject in this phase
+- [x] 2.7 `pio test -e native`
+- [x] 2.8 Implementation review Phase 1 checklist
 
 ## 3. Phase 2 — Canonical overlap → overdubPass delta
 

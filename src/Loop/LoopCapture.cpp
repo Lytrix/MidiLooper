@@ -10,6 +10,7 @@
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/MemoryMonitor.h"
@@ -260,6 +261,44 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   markPassDerivedStale();
 }
 
+void Loop::establishOverdubSourceView() {
+  overdubSourceViewEvents_.clear();
+  gatherCommittedEvents(overdubSourceViewEvents_);
+  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceViewEstablished_ = true;
+}
+
+void Loop::clearOverdubSourceView() {
+  overdubSourceViewEvents_.clear();
+  overdubSourceViewLoopLengthTicks_ = 0;
+  overdubSourceViewEstablished_ = false;
+}
+
+void Loop::gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
+                                                 uint32_t windowLength) const {
+  out.clear();
+  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0 ||
+      windowLength == 0) {
+    return;
+  }
+  DisplayWindowUtils::filterMidiEventsToWindow(overdubSourceViewEvents_, out, windowStart,
+                                               windowLength, overdubSourceViewLoopLengthTicks_);
+}
+
+void Loop::gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out,
+                                                uint32_t windowStart,
+                                                uint32_t windowLength) const {
+  out.clear();
+  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0 ||
+      windowLength == 0) {
+    return;
+  }
+  const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
+      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
+  out = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+      notes, windowStart, windowLength, overdubSourceViewLoopLengthTicks_);
+}
+
 void Loop::beginCapture(CapturePhase phase) {
   discardPendingCapturePass();
   capture.phase = phase;
@@ -269,6 +308,11 @@ void Loop::beginCapture(CapturePhase phase) {
   captureEventsSortDirty = false;
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
+  if (phase == CapturePhase::Overdub) {
+    establishOverdubSourceView();
+  } else {
+    clearOverdubSourceView();
+  }
 }
 
 void Loop::discardCapture() {
@@ -278,6 +322,7 @@ void Loop::discardCapture() {
   captureEventsSortDirty = false;
   capturePreview.clear();
   captureDedupEventsDropped_ = 0;
+  clearOverdubSourceView();
 }
 
 CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
@@ -684,6 +729,7 @@ bool Loop::commitPendingCapturePass() {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   capturePreview.clear();
+  clearOverdubSourceView();
 
   return true;
 }

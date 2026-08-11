@@ -43,6 +43,7 @@ void Loop::resetPassTimeline() {
   passesMaterializedStore_.mutStore().clear();
   passesMaterializedStore_.discardEventsCache();
   passesMaterializedStoreStale_ = true;
+  clearOverdubSourceView();
 }
 
 void Loop::invalidateCaches() {

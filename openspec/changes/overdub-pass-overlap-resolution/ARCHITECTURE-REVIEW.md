@@ -91,12 +91,12 @@
 
 #### Implementation review checklist
 
-- [ ] `overdubSourceView` established at overdub start; cleared at session end
-- [ ] Materialize-aware (editPasses covered)
-- [ ] Native: stable across wraps; immutability; candidate lookup into view
-- [ ] Append accept/reject unchanged this phase
-- [ ] No `freeze*` / Frozen* identifiers; no lastSeenTick authority
-- [ ] `pio test -e native`
+- [x] `overdubSourceView` established at overdub start; cleared at session end
+- [x] Materialize-aware (editPasses covered)
+- [x] Native: stable across wraps; immutability; candidate lookup into view
+- [x] Append accept/reject unchanged this phase
+- [x] No `freeze*` / Frozen* identifiers; no lastSeenTick authority
+- [x] `pio test -e native`
 
 ---
 
