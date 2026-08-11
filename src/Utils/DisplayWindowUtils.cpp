@@ -5,6 +5,8 @@
 #include "Globals.h"
 #include "Utils/IntervalProjection.h"
 
+#include <cstdio>
+
 namespace DisplayWindowUtils {
 
 using DisplayNoteVec = NoteUtils::DisplayNoteVec;
@@ -132,16 +134,20 @@ DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, const Tic
       normalizeTick(static_cast<uint32_t>(viewport.start), loopLength);
   const uint32_t windowLength = static_cast<uint32_t>(viewport.length());
   for (const NoteUtils::DisplayNote& note : notes) {
-    if (!noteIntersectsWindow(displayNoteSpanInLoop(note, loopLength), viewport, loopLength)) {
+    // Clamp frontier overflow before normalizeTick — startTick==loopLength maps to 0.
+    NoteUtils::DisplayNote paintNote = note;
+    clampNonWrapDisplayNoteBarTicks(paintNote.startTick, paintNote.endTick, loopLength);
+    if (!noteIntersectsWindow(displayNoteSpanInLoop(paintNote, loopLength), viewport,
+                              loopLength)) {
       continue;
     }
-    NoteUtils::DisplayNote mapped = note;
-    uint32_t relStart = normalizeTick(note.startTick, loopLength);
+    NoteUtils::DisplayNote mapped = paintNote;
+    uint32_t relStart = normalizeTick(paintNote.startTick, loopLength);
     if (relStart < windowStartNorm) {
       relStart += loopLength;
     }
     mapped.startTick = relStart - windowStartNorm;
-    uint32_t relEnd = normalizeTick(note.endTick, loopLength);
+    uint32_t relEnd = normalizeTick(paintNote.endTick, loopLength);
     if (relEnd < windowStartNorm) {
       relEnd += loopLength;
     }
@@ -249,6 +255,22 @@ void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEven
       out.push_back(evt);
     }
   }
+}
+
+void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,
+                          uint32_t ticksPerBar) {
+  if (out == nullptr || outSize == 0) {
+    return;
+  }
+  if (loopLengthTicks == 0 || ticksPerBar == 0) {
+    snprintf(out, outSize, " --");
+    return;
+  }
+  uint32_t bars = loopLengthTicks / ticksPerBar;
+  if (bars > 999UL) {
+    bars = 999UL;
+  }
+  snprintf(out, outSize, "%3lu", bars);
 }
 
 }  // namespace DisplayWindowUtils

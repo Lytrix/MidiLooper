@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -48,6 +49,98 @@ bool segmentHasNotes(const NoteUtils::DisplayNoteVec& notes, uint32_t loopLength
 uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength,
                                     uint32_t loopLength);
 
+/// Post-stop handoff: keep only the committed compose prefix (drop capture suffix / tails).
+inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t committedBaseCount) {
+    return committedBaseCount < liveNoteCount ? committedBaseCount : liveNoteCount;
+}
+
+/// Overdub-stop handoff (RC5a): drop temporary playhead-tail rows only — never strip the
+/// capture-preview suffix. When compose base bookkeeping is cold (0), keep the full frame.
+inline size_t preservedOverdubStopDisplayNoteCount(size_t liveNoteCount, size_t composeBaseCount) {
+    if (composeBaseCount == 0) {
+        return liveNoteCount;
+    }
+    return composeBaseCount < liveNoteCount ? composeBaseCount : liveNoteCount;
+}
+
+/// Clean visualCache may authorize committed display; dirty/stale cache must not (RC5b).
+inline bool committedDisplayVisualCacheAuthoritative(bool visualCacheDirty,
+                                                     bool visualCacheNonempty) {
+    return !visualCacheDirty && visualCacheNonempty;
+}
+
+/// RC5f: window filter / revision-matched preserve apply while PLAYING defers rebuild
+/// or after transport stop (TRACK_STOPPED). Dirty-cache gather must not run on the stop stack.
+inline bool preferIncrementalCommittedDisplay(bool deferVisualRebuild, bool trackStopped) {
+    return deferVisualRebuild || trackStopped;
+}
+
+/// Growing-capture frontier: MIDI note ticks can lead display loopLength by a frame.
+/// `endTick > lengthLoop` with `endTick >= startTick` is overflow to clamp — not wrap-head
+/// geometry (wrap pairs use endTick < startTick). Prevents 1px flicker at tick 0 on NoteOn.
+inline bool clampNonWrapDisplayNoteBarTicks(uint32_t& startTick, uint32_t& endTick,
+                                            uint32_t lengthLoop) {
+    if (lengthLoop == 0) {
+        return false;
+    }
+    bool clamped = false;
+    // Inclusive bar ticks are in [0, lengthLoop-1]. start/end == lengthLoop is frontier
+    // overflow (same as > lengthLoop) — must clamp before paint/modulo.
+    if (endTick >= lengthLoop && endTick >= startTick) {
+        endTick = lengthLoop - 1;
+        clamped = true;
+    }
+    if (startTick >= lengthLoop) {
+        startTick = lengthLoop - 1;
+        if (endTick < startTick) {
+            endTick = startTick;
+        }
+        clamped = true;
+    }
+    return clamped;
+}
+
+/// Map storage display-note ticks into loop-paint space.
+/// Always clamp frontier overflow before any jam-origin modulo — `startTick == loopLength`
+/// would otherwise become 0 and paint a 1px blip on the left grid (session_20260811_182528).
+inline void mapDisplayNoteBarTicksForLoopPaint(uint32_t startTick, uint32_t endTick,
+                                               uint32_t jamStartTick, uint32_t loopLength,
+                                               uint32_t& outStartTick, uint32_t& outEndTick) {
+    outStartTick = startTick;
+    outEndTick = endTick;
+    if (loopLength == 0) {
+        return;
+    }
+    clampNonWrapDisplayNoteBarTicks(outStartTick, outEndTick, loopLength);
+    if (jamStartTick == 0) {
+        return;
+    }
+    outStartTick = (outStartTick - jamStartTick + loopLength) % loopLength;
+    outEndTick = (outEndTick - jamStartTick + loopLength) % loopLength;
+}
+
+/// Overdub committed-window reuse: never treat committedCount==0 as a hit (would resize empty).
+inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_t liveNoteCount) {
+  return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;
+}
+
+/// Overdub committed layer must switch from window gather to full visualCache when idle
+/// slices finish — otherwise wrap/auto-follow keeps painting a stale ~18-bar gather until stop.
+inline bool shouldPromoteOverdubCommittedToFullVisualCache(bool overdubbing, bool visualCacheDirty,
+                                                           bool visualCacheNonempty,
+                                                           bool committedFromWindowGather) {
+  return overdubbing && !visualCacheDirty && visualCacheNonempty && committedFromWindowGather;
+}
+
+/// True when the paint window lies entirely inside a previously gathered tick range.
+inline bool paintWindowInsideGather(uint32_t windowStart, uint32_t windowLength,
+                                    uint32_t gatherStart, uint32_t gatherLength) {
+    if (windowLength == 0 || gatherLength == 0 || windowStart < gatherStart) {
+        return false;
+    }
+    return (windowStart - gatherStart) + windowLength <= gatherLength;
+}
+
 TickInterval makeViewportInterval(uint32_t windowStart, uint32_t windowLength);
 
 /// Copy MIDI events whose tick lies in the half-open loop window [start, start + length).
@@ -56,5 +149,9 @@ void filterMidiEventsToWindow(const MidiEventVec& events, MidiEventVec& out, uin
 
 void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEventVec& out,
                               uint32_t windowStart, uint32_t windowLength, uint32_t loopLength);
+
+/// Info-strip LEN field: `" --"` when empty; otherwise 3-digit bar count capped at 999.
+void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,
+                          uint32_t ticksPerBar);
 
 }  // namespace DisplayWindowUtils

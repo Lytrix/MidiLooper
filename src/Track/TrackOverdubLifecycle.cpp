@@ -48,6 +48,11 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     logger.logTrackEvent("Overdubbing stopped", currentTick);
     logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
                 static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
+    const uint32_t storagePhaseTickAtStop =
+        (loop.loopLengthTicks > 0)
+            ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
+            : 0;
+    displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
     emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
     logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                         MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -56,6 +61,12 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
     setState(TRACK_STOPPED);
     resetPlaybackState(currentTick);
+    const uint32_t storagePhaseTickAtStop =
+        (loop.loopLengthTicks > 0)
+            ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
+            : 0;
+    // RC5e: same promote/preserve handoff as overdub→PLAYING (session_20260811_174742).
+    displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
     displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
     logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
     HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
@@ -155,6 +166,11 @@ void Track::stopOverdubbing() {
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.displayEventCountHint()),
               TrackUndo::getUndoCount(*this));
 
+  const uint32_t storagePhaseTickAtStop =
+      (loop.loopLengthTicks > 0)
+          ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
+          : 0;
+  displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
   logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -178,6 +194,12 @@ void Track::stopOverdubbingToStopped() {
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);
+  const uint32_t storagePhaseTickAtStop =
+      (loop.loopLengthTicks > 0)
+          ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
+          : 0;
+  // RC5e: adopt composed capture display before STOPPED snapshot (174742 DFRAME gap).
+  displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
   logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
   HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");

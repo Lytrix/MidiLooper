@@ -30,14 +30,25 @@ void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
   cache.dirtyBars.assign(totalBars, 1);
 }
 
-uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar) {
+uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
+                          uint32_t maxBarDistanceFromPriority) {
   if (dirtyBars.empty()) {
     return UINT32_MAX;
   }
   const uint32_t totalBars = static_cast<uint32_t>(dirtyBars.size());
   const uint32_t start = priorityBar < totalBars ? priorityBar : 0;
-  for (uint32_t offset = 0; offset < totalBars; ++offset) {
-    const uint32_t bar = (start + offset) % totalBars;
+  if (maxBarDistanceFromPriority == UINT32_MAX) {
+    for (uint32_t offset = 0; offset < totalBars; ++offset) {
+      const uint32_t bar = (start + offset) % totalBars;
+      if (dirtyBars[bar] != 0) {
+        return bar;
+      }
+    }
+    return UINT32_MAX;
+  }
+  const uint32_t lo = (start > maxBarDistanceFromPriority) ? (start - maxBarDistanceFromPriority) : 0;
+  const uint32_t hi = std::min(totalBars - 1, start + maxBarDistanceFromPriority);
+  for (uint32_t bar = lo; bar <= hi; ++bar) {
     if (dirtyBars[bar] != 0) {
       return bar;
     }
@@ -45,16 +56,23 @@ uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar) {
   return UINT32_MAX;
 }
 
-void removeDisplayNotesOverlappingBars(DisplayNoteVec& notes, uint32_t startBar, uint32_t endBar) {
+void removeDisplayNotesOverlappingBars(DisplayNoteVec& notes, uint32_t startBar, uint32_t endBar,
+                                       uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  const uint32_t rangeStart = startBar * ticksPerBar;
+  const uint32_t rangeEndTick = std::min((endBar + 1) * ticksPerBar, loopLengthTicks);
+  const uint32_t rangeLength = rangeEndTick > rangeStart ? rangeEndTick - rangeStart : 0;
+  if (rangeLength == 0) {
+    return;
+  }
   notes.erase(std::remove_if(notes.begin(), notes.end(),
                              [&](const NoteUtils::DisplayNote& note) {
-                               const uint32_t endTick =
-                                   note.endTick >= note.startTick ? note.endTick : note.startTick;
-                               const uint32_t noteStartBar =
-                                   visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
-                               const uint32_t noteEndBar =
-                                   visualBarForTick(endTick, Config::TICKS_PER_BAR);
-                               return noteStartBar <= endBar && noteEndBar >= startBar;
+                               return DisplayWindowUtils::noteIntersectsWindow(
+                                   note.startTick, note.endTick, rangeStart, rangeLength,
+                                   loopLengthTicks);
                              }),
                   notes.end());
 }
@@ -97,7 +115,8 @@ size_t Loop::displayEventCountHint() const {
   return count;
 }
 
-LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar) {
+LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
+                                                     uint32_t maxBarDistanceFromPriority) {
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
     return;
   }
@@ -112,8 +131,13 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   }
 
-  const uint32_t startBar = findNextDirtyBar(visualCache.dirtyBars, priorityBar);
+  const uint32_t startBar =
+      findNextDirtyBar(visualCache.dirtyBars, priorityBar, maxBarDistanceFromPriority);
   if (startBar == UINT32_MAX) {
+    // Neighborhood-limited search found nothing — keep dirty for later full backfill.
+    if (maxBarDistanceFromPriority != UINT32_MAX) {
+      return;
+    }
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
     return;
@@ -142,7 +166,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
 
-  removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar);
+  removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar, loopLengthTicks);
   for (const NoteUtils::DisplayNote& note : sliceNotes) {
     const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
     const uint32_t noteStartBar = visualBarForTick(note.startTick, Config::TICKS_PER_BAR);

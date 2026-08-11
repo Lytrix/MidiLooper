@@ -12,12 +12,41 @@
 using VisualBarVec = std::vector<uint8_t>;
 using DisplayNoteVec =
     std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>;
+using CapturePreviewChangeIndexVec =
+    std::vector<uint32_t, ExternalMemoryFirstAllocator<uint32_t>>;
+using CapturePreviewNoteIndexVec =
+    std::vector<uint32_t, ExternalMemoryFirstAllocator<uint32_t>>;
+
+struct CapturePreviewNoteState {
+  uint8_t channel = 0;
+  uint8_t pitch = 0;
+  bool open = false;
+  bool wrapHeld = false;
+  bool hasPreferredHeadOff = false;
+  uint32_t preferredHeadOffTick = 0;
+};
+
+using CapturePreviewNoteStateVec =
+    std::vector<CapturePreviewNoteState,
+                ExternalMemoryFirstAllocator<CapturePreviewNoteState>>;
 
 inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
   if (ticksPerBar == 0) {
     return 0;
   }
   return tick / ticksPerBar;
+}
+
+/// True when `visualCache` is fully built and may authorize window paint by filter.
+/// Partial dirtyBars==0 neighborhoods must not count — that painted sparse slices as gaps
+/// (session_20260811_032235 user report after RC4).
+inline bool visualCacheCoversWindow(bool visualCacheDirty, const VisualBarVec& /*dirtyBars*/,
+                                    uint32_t windowStart, uint32_t windowLength,
+                                    uint32_t loopLength, uint32_t /*ticksPerBar*/) {
+  if (loopLength == 0 || windowLength == 0 || windowStart >= loopLength) {
+    return false;
+  }
+  return !visualCacheDirty;
 }
 
 struct VisualCache {
@@ -46,12 +75,20 @@ struct VisualCache {
 
 struct CapturePreview {
   uint32_t revision = 0;
+  uint32_t replacementRevision = 0;
   DisplayNoteVec notes;
+  CapturePreviewNoteStateVec noteStates;
+  CapturePreviewNoteIndexVec openNoteIndices;
+  CapturePreviewChangeIndexVec changedNoteIndices;
   VisualBarVec dirtyBars;
 
   void clear() {
-    revision = 0;
+    ++revision;
+    ++replacementRevision;
     notes.clear();
+    noteStates.clear();
+    openNoteIndices.clear();
+    changedNoteIndices.clear();
     dirtyBars.clear();
   }
 

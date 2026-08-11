@@ -3,9 +3,20 @@
 **Kind:** Architecture + implementation plan  
 **Date:** 2026-07-14  
 **Branch:** `feature/persistence-work-queue` from `dev` @ `ec7b4a5`  
-**Status:** B1–B5 shipped — B6 deferred to loop-owned-undo Phase 2  
+**Status:** **Baseline shipped** on `dev` (B1–B5) — B6 deferred to loop-owned-undo Phase 2  
 **Parent plan:** [SD Write Reduction](.cursor/plans/sd_write_reduction_910f40b3.plan.md)  
 **Evidence:** [`captures/session_20260714_031454.log`](../../captures/session_20260714_031454.log) (pre-queue baseline); B5 HITL [`captures/host_midi_automation_serial_20260714_153240.log`](../../captures/host_midi_automation_serial_20260714_153240.log) — verify-only **PASS**; ~4,675 `bundle_slice` vs ~8,517 baseline.
+
+**Follow-on (separate tracks — not B1–B5 scope):**
+
+| Track | Status | Doc |
+|-------|--------|-----|
+| **B6** loop undo history serializer wire | Deferred | This plan §B6; DEC-024 |
+| **Call-site migration** `admitLoopSlotPersist` → `admitLoopPersist(LoopId)` | Open | [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 1.3 |
+| **Wake pattern** `requestDeferredSaveState` + `admit*` at boundaries | Current practice | Scheduler wake; internal monolith retired in B4 |
+| **`PersistenceQueue` rename** (mid-pass/chunk-oriented) | Optional hygiene | [`codebase_hygiene_technical_debt_review.md`](codebase_hygiene_technical_debt_review.md) |
+
+**Related:** set-revision overlay + DEC-020 Phase 5 — [`set_revision_persistence_handoff.md`](set_revision_persistence_handoff.md), [`continuous_runtime_persistence_phase5_recovery_handoff.md`](continuous_runtime_persistence_phase5_recovery_handoff.md); queue table in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md).
 
 ---
 
@@ -481,7 +492,7 @@ Empty work queue + no in-flight work → **no SD I/O**.
 |-------|-------------|
 | **B0** | This doc ✅ |
 | **B1** | `PersistenceWorkQueue` (internal) + `PersistKey` + `test_persistence_work_queue` | **Done** |
-| **B2** | Public `StorageManager::admit*` only; deprecate `mark*` / `requestDeferredSaveState` | **Done** |
+| **B2** | Public `StorageManager::admit*`; domain uses admit + `requestDeferredSaveState` at boundaries | **Done** — call-site `admitLoopPersist(LoopId)` migration still open (#18) |
 | **B3** | `stepPersistenceWorkItem()` — schedule only; R9; no serialize in queue | **Done** |
 | **B4** | Scheduler wiring; retire monolith | **Done** |
 | **B5** | Native + HITL | **Done** — 604/604 native; Mode A HITL verify PASS (`153240`) |

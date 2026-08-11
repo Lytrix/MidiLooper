@@ -4,6 +4,7 @@
 #include "MidiButtonProcessor.h"
 #include "Logger.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/MidiButtonGesturePolicy.h"
 
 MidiButtonProcessor::MidiButtonProcessor() {
     // Initialize button states for all possible MIDI notes on all channels
@@ -36,18 +37,38 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
     
     if (isNoteOn && velocity > 0) {
         // Note On - Button Press
+        const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
+        uint32_t effectiveDoubleTap =
+            (config && config->doubleTapWindow > 0) ? config->doubleTapWindow : doubleTapWindow;
+
         if (state.isPressed) {
-            // Host re-sent note-on or note-off was lost — re-arm so release duration stays sane.
-            logger.log(CAT_BUTTON, LOG_DEBUG,
-                       "Button already pressed: Ch%d Note%d, re-arming start (was %lu, now %lu)",
-                       channel, note, state.pressStartTime, now);
-            state.pressStartTime = now;
-            return;
+            uint32_t heldMs;
+            if (now >= state.pressStartTime) {
+                heldMs = now - state.pressStartTime;
+            } else {
+                heldMs = (0xFFFFFFFF - state.pressStartTime + 1) + now;
+            }
+            if (heldMs > effectiveDoubleTap + 50U) {
+                // Host may have dropped note-off; clear stale press without synthesizing
+                // long-press (would spuriously clear slots on record button).
+                logger.log(CAT_BUTTON, LOG_DEBUG,
+                           "Lost note-off recovery: Ch%d Note%d held=%lu ms, accepting new press",
+                           channel, note, heldMs);
+                transitionToIdle(state);
+                state.isPressed = false;
+                state.pressStartTime = 0;
+                state.lastReleaseTime = now;
+            } else {
+                logger.log(CAT_BUTTON, LOG_DEBUG,
+                           "Button already pressed: Ch%d Note%d, re-arming start (was %lu, now %lu)",
+                           channel, note, state.pressStartTime, now);
+                state.pressStartTime = now;
+                return;
+            }
         }
 
         // Debounce check: ignore NoteOn that arrives too soon after the last release
         // findButtonConfig expects 0-based channel (channel param here is 1-based MIDI)
-        const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
         if (config && config->debounceMs > 0 && state.lastReleaseTime > 0 &&
             (now - state.lastReleaseTime) < config->debounceMs) {
             logger.log(CAT_BUTTON, LOG_DEBUG, "Debounce: ignoring Ch%d Note%d (%lums since last release)",
@@ -90,6 +111,16 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
                        channel, note, state.pressStartTime, now, duration);
             
             handleButtonRelease(channel, note, duration);
+        } else {
+            // NoteOff without a live press: NoteOn was never delivered (or already
+            // released). Duration is unknowable — discard; do not invent short/long.
+            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
+            if (config != nullptr &&
+                !MidiButtonGesturePolicy::mayDispatchActionFromOrphanNoteOff()) {
+                logger.log(CAT_BUTTON, LOG_DEBUG,
+                           "Orphan note-off discarded: Ch%d Note%d (missed note-on), no action",
+                           channel, note);
+            }
         }
     }
 }

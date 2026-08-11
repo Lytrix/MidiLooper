@@ -333,8 +333,19 @@ void loop() {
   if (pressure >= MemoryPressureLevel::Low) {
     trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
   }
+  if (pressure >= MemoryPressureLevel::Critical) {
+    // Policy: Critical reclaims disabled-pass chunks (memory_pressure_reclaim_refinement §Policy).
+    // Idle-only reclaim at line ~114 misses chunk pressure during RECORDING/PLAYING/OVERDUBBING
+    // (session_20260811_021117: append failures with heap headroom, pool at CHUNK_RESERVE).
+    trackManager.reclaimUnreferencedDisabledPasses(nullptr, true);
+  }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
+
+  // Poll USB host again after deferred SD/display work so DROID button note-ons are not
+  // dropped when the main loop was busy (session_20260810_234059: note-off without note-on).
+  midiHandler.handleMidiInput();
+  midiButtonManager.update();
 
 #if defined(SESSION_CAPTURE)
   StorageManager::processHitlSerialCommands();

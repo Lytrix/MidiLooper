@@ -371,11 +371,17 @@ bool LoopEventStore::hasSealedChunks() const {
   return false;
 }
 
-bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
+bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut) {
+  if (denyOut != nullptr) {
+    *denyOut = LoopEventStoreAppendDeny::None;
+  }
   if (!poolReady_) {
     initPool();
   }
   if (!pool_) {
+    if (denyOut != nullptr) {
+      *denyOut = LoopEventStoreAppendDeny::PoolUnavailable;
+    }
     return false;
   }
 
@@ -393,6 +399,9 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   if (tailId == UINT16_MAX) {
     tailId = allocChunk();
     if (tailId == UINT16_MAX) {
+      if (denyOut != nullptr) {
+        *denyOut = LoopEventStoreAppendDeny::PoolExhausted;
+      }
 #if defined(ARDUINO)
       logger.log(CAT_TRACK, LOG_WARNING,
                  "LoopEventStore chunk pool exhausted (events=%zu chunks=%zu)",
@@ -439,7 +448,11 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   return true;
 }
 
-bool LoopEventStore::append(const MidiEvent& evt) { return appendToTailChunk(evt); }
+bool LoopEventStore::append(const MidiEvent& evt) { return appendToTailChunk(evt, nullptr); }
+
+bool LoopEventStore::append(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut) {
+  return appendToTailChunk(evt, denyOut);
+}
 
 const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   static const MidiEvent kEmpty{};

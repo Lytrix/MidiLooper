@@ -55,12 +55,25 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
 
 void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
                                                    uint32_t storagePhaseTickInLoop) {
-    invalidateLiveDisplayCache();
+    // Capture-layer rows and playhead tails must not become post-stop display authority.
+    // Keep only the committed prefix (may be empty after live record); committed resolve
+    // replaces it through the bounded window path.
+    const size_t committedBaseNoteCount = liveDisplayCacheCommittedNoteCount_;
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    invalidateLiveDisplayCache(true);
     const Loop& loop = track.getLoop(displaySlot);
     if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+    } else {
+        liveDisplayNotes.resize(DisplayWindowUtils::clampPreservedDisplayNoteCount(
+            liveDisplayNotes.size(), committedBaseNoteCount));
+    }
+    if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
-        livePlaybackDisplayTrack_ = resolveTrackIndex(track);
+        livePlaybackDisplayTrack_ = trackIndex;
+    } else {
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
     }
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
@@ -76,25 +89,84 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
         storagePhaseTickInLoop, windowLength, loopLength);
 }
 
-void DisplayManager::invalidateLiveDisplayCache() {
+void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displaySlot,
+                                                     uint32_t storagePhaseTickInLoop) {
+    // RC5a: overdub stop must not use record-stop clamp. Composed frame is
+    // committed display + capturePreview; stripping the suffix causes the record-only flash.
+    // Drop temporary playhead-tail rows only, then promote the capture suffix into the
+    // committed-prefix bookkeeping so PLAYING resolve treats the frame as committed.
+    // RC5c: adopt that composed DisplayNote vector into visualCache — no gather/reconstruct.
+    const size_t preserveCount = DisplayWindowUtils::preservedOverdubStopDisplayNoteCount(
+        liveDisplayNotes.size(), liveDisplayCacheBaseNoteCount_);
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    Loop& loop = track.getLoop(displaySlot);
+    const uint32_t playbackRevision = loop.playbackRevision;
+    const uint16_t captureDisplayRevision = loop.captureDisplayRevision;
+    invalidateLiveDisplayCache(true);
+    if (preserveCount < liveDisplayNotes.size()) {
+        liveDisplayNotes.resize(preserveCount);
+    }
+    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+    liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
+    liveMergePlaybackRevision_ = playbackRevision;
+    liveMergeCaptureRevision_ = captureDisplayRevision;
+    if (!liveDisplayNotes.empty()) {
+        livePlaybackDisplaySlot_ = displaySlot;
+        livePlaybackDisplayTrack_ = trackIndex;
+        // Promote/adopt composed display notes as the revision-matched committed representation.
+        // Replaces prior visualCache notes in place (ExternalMemoryFirst); does not materialize
+        // canonical MIDI or allocate a second long-lived full-loop event buffer (5a-3).
+        loop.visualCache.setNotes(liveDisplayNotes);
+        loop.visualCache.dirtyBars.clear();
+        ++loop.visualCache.revision;
+        loop.visualCacheDirty = false;
+        liveWindowVisualCacheRevision_ = loop.visualCache.revision;
+    } else {
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
+    }
+    const uint32_t loopLength =
+        resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+        return;
+    }
+    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
+    const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+    detailedWindowStartTick_[displaySlot] = DisplayWindowUtils::resolveCenteredWindowStart(
+        storagePhaseTickInLoop, windowLength, loopLength);
+}
+
+void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
     liveDisplayCacheCommittedNoteCount_ = 0;
+    liveDisplayCacheCaptureNoteCount_ = 0;
+    liveDisplayCacheCaptureChangeCount_ = 0;
+    liveDisplayCacheBaseNoteCount_ = 0;
+    liveDisplayCacheCaptureReplacementRevision_ = UINT32_MAX;
+    liveDisplayCacheCapturePreviewRevision_ = UINT32_MAX;
     liveDisplayCacheCaptureRevision = 0;
     liveDisplayCacheLoopLength = 0;
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
     liveDisplayCacheOpenNotes.clear();
-    liveDisplayNotes.clear();
+    if (!preserveDisplayNotes) {
+        liveDisplayNotes.clear();
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
+    }
     liveDisplayEventBuffer.clear();
-    livePlaybackDisplaySlot_ = 255;
-    livePlaybackDisplayTrack_ = 255;
     liveMergePlaybackRevision_ = UINT32_MAX;
     liveMergeCaptureRevision_ = 0;
     liveWindowGatherStart_ = 0;
     liveWindowGatherLength_ = 0;
     liveWindowGatherLoopLength_ = 0;
     liveWindowGatherValid_ = false;
-    invalidateNoteEditDisplayCache();
+    liveDisplayCommittedFromWindowGather_ = false;
+    liveWindowVisualCacheRevision_ = UINT32_MAX;
+    editManager.invalidateProjectedNoteEditDisplayCache();
 }
 
 void DisplayManager::invalidateNoteEditDisplayCache() {

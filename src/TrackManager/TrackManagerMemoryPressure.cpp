@@ -5,8 +5,16 @@
 #include "TrackManagerInternal.h"
 
 #include "EditManager.h"
+#include "LoopEventStore.h"
 #include "PassReclaim.h"
 #include "Utils/MemoryPressureLevel.h"
+#include "Utils/MemoryPressurePolicy.h"
+#include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPressurePolicy.h"
+
+#if defined(SESSION_CAPTURE)
+#include "Utils/DebugSessionCapture.h"
+#endif
 
 #if defined(__IMXRT1062__)
 #define PRESSURE_RECLAIM_MEM FLASHMEM
@@ -61,13 +69,51 @@ PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure
   }
 }
 
-void TrackManager::reclaimUnreferencedDisabledPasses() {
+void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut,
+                                                     bool diagnosticVisibility) {
+  const uint32_t startUs = micros();
+  const uint16_t usedBefore = LoopEventStore::usedChunkCount();
+  const uint16_t freeBefore = LoopEventStore::freeChunkCount();
+  uint16_t passesReclaimed = 0;
+
   for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
     Track& track = tracks[trackIndex];
     PassReferenceSet refs{};
     collectReferencedPasses(track.getGlobalUndoStack(), refs);
     for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
-      track.getLoop(slotIndex).reclaimUnreferencedDisabledPasses(refs.slots[slotIndex]);
+      Loop& loop = track.getLoop(slotIndex);
+      passesReclaimed += loop.reclaimUnreferencedDisabledCapturePasses(refs.slots[slotIndex]);
+      passesReclaimed += loop.reclaimUnreferencedDisabledEditPasses(refs.slots[slotIndex]);
     }
   }
+
+  const uint16_t usedAfter = LoopEventStore::usedChunkCount();
+  const uint16_t freeAfter = LoopEventStore::freeChunkCount();
+  const uint16_t chunksReleased =
+      usedBefore > usedAfter ? static_cast<uint16_t>(usedBefore - usedAfter) : 0;
+  const uint32_t durationUs = micros() - startUs;
+
+  if (statsOut != nullptr) {
+    statsOut->passesReclaimed = passesReclaimed;
+    statsOut->chunksReleased = chunksReleased;
+    statsOut->chunksFreeBefore = freeBefore;
+    statsOut->chunksFreeAfter = freeAfter;
+    statsOut->durationUs = durationUs;
+  }
+
+#if defined(SESSION_CAPTURE)
+  if (passesReclaimed > 0 || chunksReleased > 0 || diagnosticVisibility) {
+    const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
+    bool transportActive = false;
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+      const Track& track = tracks[i];
+      if (track.isRecording() || track.isOverdubbing() || track.isPlaying()) {
+        transportActive = true;
+        break;
+      }
+    }
+    SC_PASS_RECLAIM(freeBefore, freeAfter, passesReclaimed, chunksReleased, durationUs,
+                    memoryPressureLevelName(pressure), transportActive ? 1 : 0);
+  }
+#endif
 }

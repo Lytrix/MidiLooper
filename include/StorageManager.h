@@ -22,10 +22,10 @@
  * @brief Manages persistent saving and loading of the looper state to non-volatile storage.
  *
  * Provides static methods to serialize the current LooperState to external memory (e.g., SD card
- * or flash) and to reload it on startup. Domain code should admit stale persistence work via
- * admitLoopPersist() / admitTrackMeta() / markLoopSlotMaterialDirty() + admitLoopSlotPersist().
- * requestDeferredSaveState() wakes the legacy deferred writer until the work-item scheduler
- * retires the monolith (B4).
+ * or flash) and to reload it on startup. Domain code admits stale work via admit* (e.g.
+ * admitLoopPersist, admitTrackMeta, admitLoopSlotPersist) and wakes the scheduler with
+ * requestDeferredSaveState() at transition boundaries. PersistenceWorkQueue (internal) and
+ * processDeferredSaveState() own scheduling; legacy monolithic save stages were retired (B4).
  */
 class StorageManager {
 public:

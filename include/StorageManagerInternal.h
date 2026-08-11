@@ -161,6 +161,7 @@ SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
 SyncDrainBudget buildSyncDrainBudgetForSession();
 bool drainPersistenceWorkBlocking(const LooperState& state);
 bool beginDeferredRuntimeBundleWrite(const LooperState& state);
+bool completeScopedRuntimeBundleWorkItemIfDone();
 bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut);
 bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);
 bool stepMidPassChunkPersist();

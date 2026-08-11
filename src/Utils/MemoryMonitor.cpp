@@ -240,8 +240,16 @@ PRESSURE_MEM void emitPressureTransition(MemoryPressureLevel from, MemoryPressur
 PRESSURE_MEM MemoryPressureLevel getAdvisoryPressureLevel() { return sAdvisoryLevel; }
 
 PRESSURE_MEM void notifyCaptureAppendFailed(uint32_t nowMs) {
+  const bool wasLatched = sCaptureAppendFailedLatch;
   sCaptureAppendFailedLatch = true;
   sCaptureAppendFailedLatchSinceMs = nowMs;
+#if defined(SESSION_CAPTURE)
+  if (!wasLatched) {
+    MemoryPressurePolicy::Inputs inputs = gatherPressureInputs(nowMs);
+    SC_MEMORY_PRESSURE("latch,Critical", inputs.heapFreeBytes, inputs.chunksFree,
+                       inputs.persistQueueDepth);
+  }
+#endif
 }
 
 PRESSURE_MEM void updateAdvisoryPressureLevel(uint32_t nowMs) {

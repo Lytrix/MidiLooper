@@ -28,13 +28,17 @@ void test_architecture_counter_enum_layout() {
   TEST_ASSERT_EQUAL(3, static_cast<int>(Diagnostics::Counter::LegacyMidiEvents));
   TEST_ASSERT_EQUAL(4, static_cast<int>(Diagnostics::Counter::DisplayFullRebuild));
   TEST_ASSERT_EQUAL(5, static_cast<int>(Diagnostics::Counter::DisplayIncrementalUpdate));
-  TEST_ASSERT_EQUAL(11, static_cast<int>(Diagnostics::Counter::Count));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(Diagnostics::Counter::DisplayCaptureFullGather));
+  TEST_ASSERT_EQUAL(7, static_cast<int>(Diagnostics::Counter::DisplayResolveOverBudgetCount));
+  TEST_ASSERT_EQUAL(8, static_cast<int>(Diagnostics::Counter::DisplayCaptureEventsAdded));
+  TEST_ASSERT_EQUAL(14, static_cast<int>(Diagnostics::Counter::Count));
 }
 
 void test_architecture_timing_enum_layout() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(Diagnostics::Timing::PlaybackBuild));
   TEST_ASSERT_EQUAL(1, static_cast<int>(Diagnostics::Timing::DisplayBuild));
-  TEST_ASSERT_EQUAL(2, static_cast<int>(Diagnostics::Timing::Count));
+  TEST_ASSERT_EQUAL(2, static_cast<int>(Diagnostics::Timing::DisplayResolveLiveCapture));
+  TEST_ASSERT_EQUAL(7, static_cast<int>(Diagnostics::Timing::Count));
 }
 
 int main(int argc, char** argv) {

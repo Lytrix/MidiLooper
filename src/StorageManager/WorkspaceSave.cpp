@@ -271,6 +271,13 @@ STORAGE_PERSIST_MEM bool beginDeferredRuntimeBundleWrite(const LooperState& stat
     storageSession.currentWorkspaceSave.numTracks = Config::NUM_TRACKS;
     storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::Bpm;
     storageSession.currentWorkspaceSave.trackCursor = 0;
+    if (storageSession.persistenceWorkItem.itemActive) {
+        const PersistWorkItem& scopedItem = storageSession.persistenceWorkItem.item;
+        if (scopedItem.type == PersistWorkType::TrackMeta &&
+            scopedItem.key.kind == PersistKeyKind::Track) {
+            storageSession.currentWorkspaceSave.trackCursor = scopedItem.key.trackIndex;
+        }
+    }
     storageSession.currentWorkspaceSave.slotCursor = 0;
     storageSession.currentWorkspaceSave.poolCursor = 0;
     storageSession.currentWorkspaceSave.undoTrackCursor = 0;
@@ -756,6 +763,27 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
     }
 }
 
+STORAGE_PERSIST_MEM bool completeScopedRuntimeBundleWorkItemIfDone() {
+    if (!storageSession.persistenceWorkItem.bundleWriteActive) {
+        return false;
+    }
+    const PersistWorkItem& scopedItem = storageSession.persistenceWorkItem.item;
+    if (scopedItem.type == PersistWorkType::TrackMeta &&
+        scopedItem.key.kind == PersistKeyKind::Track) {
+        const uint8_t scopedTrackIndex = scopedItem.key.trackIndex;
+        if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Footer ||
+            (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::TrackHeaderAndSlots &&
+             storageSession.currentWorkspaceSave.trackCursor > scopedTrackIndex)) {
+            if (!closeDeferredMetaTempForLoopWrites()) {
+                return false;
+            }
+            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
+            return true;
+        }
+    }
+    return false;
+}
+
 STORAGE_PERSIST_MEM bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut) {
     bundleDoneOut = false;
     if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Idle) {
@@ -774,6 +802,10 @@ STORAGE_PERSIST_MEM bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut) {
     const bool stepOk = stepDeferredSaveJob();
     if (!stepOk) {
         return false;
+    }
+    if (completeScopedRuntimeBundleWorkItemIfDone()) {
+        bundleDoneOut = true;
+        return true;
     }
     if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Idle) {
         bundleDoneOut = true;

@@ -76,25 +76,61 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
-        // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
-        // maintenance refreshes it — never return stale notes after invalidate (dirty cache).
-        if (!avoidFullVisualRebuild && (!loop.visualCacheDirty || deferVisualRebuild) &&
-            !loop.visualCache.notes.empty()) {
+        const bool visualCacheAuthoritative =
+            DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(
+                loop.visualCacheDirty, !loop.visualCache.notes.empty());
+        const bool preservedHandoffAuthority =
+            !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
+            trackIndex == livePlaybackDisplayTrack_ &&
+            liveMergePlaybackRevision_ == loop.playbackRevision;
+        // RC5f: STOPPED must use the same incremental paths as deferred PLAYING — otherwise
+        // transport/play stop falls into dirty-cache window gather (174742 ~0.9s DFRAME gap).
+        const bool incrementalCommittedDisplay =
+            DisplayWindowUtils::preferIncrementalCommittedDisplay(deferVisualRebuild,
+                                                                  track.isStopped());
+
+        // RC5b: only a clean visualCache may authorize committed display after a revision bump.
+        // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
+        if (visualCacheAuthoritative && !avoidFullVisualRebuild) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            liveMergePlaybackRevision_ = loop.playbackRevision;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // Prefer last live frame while deferred restore/undo is still draining.
-        if (deferHeavyDisplayRebuild && !liveDisplayNotes.empty() &&
-            displaySlot == livePlaybackDisplaySlot_ && trackIndex == livePlaybackDisplayTrack_) {
+        // Clean cache: prefer window filter (RC5d/RC5f) over full-vector assign every frame.
+        // Dirty cache falls through to preserved handoff.
+        if (incrementalCommittedDisplay && visualCacheAuthoritative) {
+            if (avoidFullVisualRebuild ||
+                loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
+                uint32_t windowStart = 0;
+                uint32_t windowLength = 0;
+                uint8_t windowBars = 0;
+                if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                            windowLength, windowBars)) {
+                    return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
+                                                       windowStart, windowLength);
+                }
+            }
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            liveWindowGatherValid_ = false;
+            livePlaybackDisplaySlot_ = displaySlot;
+            livePlaybackDisplayTrack_ = trackIndex;
+            return liveDisplayNotes;
+        }
+        // RC5a/RC5b/RC5f: revision-matched preserved frame stays authority while visualCache is dirty.
+        if (incrementalCommittedDisplay && preservedHandoffAuthority) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             return liveDisplayNotes;
         }
-        // Windowed reconstruction for long loops / deferred full rebuild.
-        // Use the same paint window as drawPianoRoll (detailedWindowStartTick_), not a
-        // separate centered playhead window — mismatch blanks the roll until a slot switch.
+        // Long loops: bounded committed window before any preserved live-frame fallback.
+        // Deferred save must not keep capture-suffix / playhead-tail rows as authority
+        // (session_20260811_013056: 1872 visualCache + 1011 capturePreview).
+        // When STOPPED/PLAYING already had incremental authority above, dirty-cache gather here
+        // is recovery only (no preserved frame / cold context).
         if (avoidFullVisualRebuild ||
             loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
             uint32_t windowStart = 0;
@@ -105,6 +141,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
                                                    windowStart, windowLength);
             }
+        }
+        // Retain last live frame only when canonical cache/window data cannot be produced.
+        if (deferHeavyDisplayRebuild && !liveDisplayNotes.empty() &&
+            displaySlot == livePlaybackDisplaySlot_ && trackIndex == livePlaybackDisplayTrack_) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            return liveDisplayNotes;
         }
         if (!liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
             trackIndex == livePlaybackDisplayTrack_) {

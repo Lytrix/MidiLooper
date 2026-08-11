@@ -40,9 +40,10 @@ bool shouldDeferHeavyDisplayRebuild() {
 DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopLength,
                                                uint32_t windowStart, uint32_t windowLength,
                                                SessionMidiEventVec& eventBuffer,
-                                               NoteUtils::DisplayNoteVec& outNotes) {
+                                               NoteUtils::DisplayNoteVec& outNotes,
+                                               bool includeActiveCapture) {
     eventBuffer.clear();
-    if (loop.captureActive()) {
+    if (includeActiveCapture && loop.captureActive()) {
         mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart, windowLength);
     } else {
         mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);

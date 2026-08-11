@@ -413,7 +413,9 @@ TRACK_COLD_MEM void applyClearSlotUndoSideEffects(Track& track, const UndoEntry&
     const uint32_t now = clockManager.getCurrentTick();
     if (entry.hasTrackState && entry.beforeTrackState == TRACK_PLAYING) {
         track.resetPlaybackStateForSlot(slotIndex, now);
-        track.startPlaying(now);
+        if (!track.isPlaying() && !track.isOverdubbing()) {
+            track.startPlaying(now);
+        }
     }
     trackManager.forceMidiLedUpdate(now);
 }
