@@ -64,22 +64,34 @@
 
 ### Phase 1 — Source-pass lookup + deny throttle (behavior-preserving toward display)
 
-**Scope:** Freeze/name pre-session source view; wrap-safe chunk/window candidate lookup; throttle duplicate/deny WARN/CAP. Do **not** yet change accept/reject musical policy beyond fixing invalid early-out that skips candidates.
+**Scope:** Freeze/name pre-session source view; wrap-safe candidate lookup **tested but not wired into deny**; throttle duplicate/deny WARN/CAP; optionally fix capture-store reverse-tick early-out only. Do **not** invent Shorten/Hide or change source-pass musical policy.
+
+**Architecture check (2026-08-11) — must not miss:**
+
+| Pin | Finding |
+|-----|---------|
+| No freeze today | `beginOverdubSession` does not snapshot geometry |
+| Canonical source | `materializeToEventVector` (includes `editPasses`); bare `CommittedEventRange` insufficient when edits active |
+| Lookup ≠ note index | `CommittedEventRange` = event windows; spans reconstructed separately |
+| Phase 1 deny wiring | Source lookup **not** in accept/reject until Phase 2 (design D6) |
+| Early-out fix | Narrow: capture-store exact-tick duplicates after wrap only |
 
 #### Architecture gate
 
 | Question | Required |
 |----------|----------|
-| Ownership change? | **NO** |
+| Ownership change? | **NO** — extend `Loop`/`Track` freeze + lookup helpers |
 | State transition change? | **NO** |
 | Formal trigger? | **NO** |
-| Behavior-preserving? | **YES** for overlap policy; observability throttle OK |
-| Reuse | YES — `CommittedEventRange` / materialize |
-| Phase scope | `LoopInternalColdHelpers`, `TrackCaptureInput`, DebugSessionCapture throttle; tests |
+| Behavior-preserving? | **YES** for source-overlap policy; throttle OK; early-out fix is narrow capture-store only |
+| Reuse | YES — `materialize*` / `gatherCommittedEvents*` (editPass-aware); not chunk-only CER |
+| Phase scope | Overdub start freeze, lookup helper + tests, `TrackCaptureInput` / CAP throttle; optional early-out |
 
 #### Implementation review checklist
 
-- [ ] Native: high-then-low append order finds source candidates
+- [ ] Freeze API named and called at overdub start
+- [ ] Native: source lookup finds candidates with high-then-low capture order; editPass-aware path covered
+- [ ] Source lookup **not** changing append accept/reject yet (unless early-out-only)
 - [ ] Throttle: no multi-minute CAP gap on wrap stress
 - [ ] `pio test -e native`
 - [ ] No lastSeenTick semantic authority introduced
@@ -90,16 +102,18 @@
 
 **Scope:** On insert, run constrained-geometry decisions; accumulate Shorten/Hide/Add on pending overdub pass; source immutable; session still one commit/undo.
 
+**Must pin before coding (architecture check):** encode target — `OverdubPass` is chunk-IDs-only today; choose A/B/C in design Open Q4; use free `resolveConstrainedGeometry` (not session-gated `NoteGeometryResolver::resolve`); coexistence with `shouldRestoreCommittedOverlapOnOverdubStop`; DEC-020 mid-pass stays raw capture bytes.
+
 #### Architecture gate
 
 | Question | Required |
 |----------|----------|
-| Ownership change? | **NO** if decisions reuse `NoteGeometryResolver` and encode on existing pending overdub/capture commit path; **YES → STOP** if new Manager or dual writers of committed passes |
+| Ownership change? | **NO** if decisions reuse constrain/build helpers and encode on existing `Loop` capture/commit path; **YES → STOP** if new Manager or dual writers of committed passes |
 | State transition change? | **NO** — still evaluate during session, commit at stop; **YES → STOP** if wrap becomes pass boundary |
-| Formal trigger? | Re-evaluate; PREFLIGHT if encode ownership unclear |
+| Formal trigger? | **YES → PREFLIGHT** if encode adds persistent pass model / undo kind / schema; else re-evaluate |
 | Behavior-preserving? | **NO** vs today’s capture-only duplicate — intentional semantic alignment with NOTE_EDIT |
-| Reuse | YES — `resolveConstrainedGeometry` / action semantics |
-| Phase scope | Loop capture + geometry resolve bridge; native matrix |
+| Reuse | YES — `resolveConstrainedGeometry` / `buildEditSessionActions` (not fake NOTE_EDIT session) |
+| Phase scope | Loop capture + geometry resolve bridge + encode; native matrix |
 
 #### Implementation review checklist
 

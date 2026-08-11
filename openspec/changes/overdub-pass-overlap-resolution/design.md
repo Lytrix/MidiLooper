@@ -33,11 +33,17 @@ Persistence (DEC-020 mid-pass, overlay, Phase 5) stays orthogonal — see Non-Go
 
 **Decision:** The source for every overlap evaluation in an overdub session is the **pre-session canonical committed note geometry** of the active loop slot — the already-resolved musical state from committed `passes[]` **before** this overdub session began — exposed as **one immutable note-geometry view**.
 
-**Access:** Prefer existing committed traversal — `LoopPasses::materialize` / committed event gather and **windowed** lookup via [`CommittedEventRange`](../../../include/CommittedEventRange.h) (`chunkIntersectsWindow`, wrap-aware). Do not scan ad-hoc “whichever historical pass row looks recent.”
+**Access (code-backed pin from architecture check 2026-08-11):**
+
+- Canonical content = result of **`LoopPasses::materialize` / `materializeToEventVector`** (record + overdub chunks **plus** active `editPasses`).
+- Windowed traversal may use `CommittedEventRange` **only when there are no active editPasses**. Today `Loop::gatherCommittedEvents*` already bypasses bare `CommittedEventRange` and full-materializes when `hasActiveEditPasses` — overdub source lookup MUST follow that same rule.
+- `CommittedEventRange` is **MIDI event window iteration**, not a pitch/channel note index. Candidate note spans must be reconstructed from events (same family as note-edit focus rebuild).
+
+**Freeze (Open Q1 — required before Phase 1 firmware):** `TrackUndo::beginOverdubSession` / `Loop::beginCapture(Overdub)` do **not** freeze geometry today. Phase 1 MUST add an explicit freeze (or document live re-materialize each insert) owned on `Loop`/`Track` — preferred: freeze materialized event vector (or equivalent immutable view) at overdub start so mid-session commits elsewhere cannot change the source.
 
 **Naming in prose:** “source pass” means this single immutable pre-session canonical view. Do **not** say “all previous materialized passes” unless that phrase is explicitly defined as this view.
 
-**Alternatives rejected:** last overdubPass row only; pending capture store as source; `lastSeenTick` map; full unsorted capture append walk as authority.
+**Alternatives rejected:** last overdubPass row only; pending capture store as source; `lastSeenTick` map; full unsorted capture append walk as authority; bare `CommittedEventRange` alone when `editPasses` are active.
 
 ### D2 — Two-pass transform; source immutable
 
@@ -69,13 +75,23 @@ Persistence (DEC-020 mid-pass, overlay, Phase 5) stays orthogonal — see Non-Go
 
 **Reconcile** [`capture-pass-boundary-materialization`](../capture-pass-boundary-materialization/) Q16 (`removePairsShorterThanNoteMinLength` on capture tier): keep pair-length sanity on capture events; geometric hide/shorten of **source** notes follows edit constrained-geometry rules. Design task: document that both use the same tick threshold globals.
 
-### D6 — Candidate lookup (183525)
+### D6 — Candidate lookup (183525) + Phase 1 policy pin
 
-**Decision:** Performance work finds candidates in the **source pass** for each inserted note via wrap-safe chunk/window intersection — not “cheap duplicate detection.” Duplicate is one possible overlap outcome.
+**Decision:** Performance work finds candidates in the **source pass** for each inserted note via wrap-safe windowed gather + span reconstruction — not “cheap duplicate detection.” Duplicate is one possible overlap outcome.
 
 **Forbidden:** reverse-tick monotonic early-out on append-ordered capture store as semantic terminator; `lastSeenTick` as authority.
 
-**Interim:** WARN/CAP throttle for deny storms may ship before full geometry apply (behavior-preserving observability only).
+**Phase 1 policy pin (architecture check):**
+
+| Deliverable | Affects accept/reject? |
+|-------------|------------------------|
+| Deny WARN/CAP **throttle** | **NO** — observability only |
+| Source-pass freeze + lookup helper | **NO** until Phase 2 — build and test lookup; do **not** wire into `appendCaptureEventWithResult` deny path yet |
+| Fix/remove `isDuplicateCaptureEvent` reverse-tick early-out | **YES (narrow)** — only exact same-tick capture-store duplicates after wrap; still does **not** search source pass |
+
+Rationale: wiring source-pass lookup into deny before Shorten/Hide encoding exists would invent a half-policy. Phase 1 may still **prove** lookup correctness in native tests against a frozen source view.
+
+**Interim:** WARN/CAP throttle may ship alone if display RING remains unusable.
 
 ### D7 — Persistence boundary
 
@@ -103,6 +119,10 @@ Rollback: per-phase commits; Phase 1 lookup+throttle alone restores display obse
 
 ## Open Questions
 
-1. Exact helper that freezes the pre-session canonical view at overdub start (snapshot vs live materialize-from-passes) — audit `beginOverdubSession` / `commitCapturePass` call sites in Phase 1.
-2. Whether pending overdub-pass ops are visible to live display/preview before commit (product) — default: yes via existing capturePreview / composed display paths without mutating source.
-3. Product min-length 32nd/16th vs code default 12 — needs DEC if product wording wins.
+1. **Freeze helper (Phase 1):** Name the `Loop`/`Track` API that freezes pre-session canonical view at overdub start. Code today: no freeze in `beginOverdubSession` / `beginCapture`. Prefer freeze-at-start over live re-materialize each MIDI event.
+2. **Live preview of pending ops (Phase 2):** `capturePreview` today overlays capture MIDI only — no Shorten/Hide of source. Default until product pin: preview may lag until commit unless Phase 2 extends composed display without mutating source.
+3. **Product min-length 32nd/16th vs code default 12** — needs DEC if product wording wins; v1 uses code globals.
+4. **Phase 2 encode target (must pin before Phase 2 firmware):** `OverdubPass` today is **chunk IDs only** — no Shorten/Hide rows. Choose one: (A) companion `editPass` rows at overdub stop, (B) extend `OverdubPass` / pending-op buffer on `Loop`, (C) other — **STOP for PREFLIGHT** if this creates a new owner or dual writers of committed passes. Cannot represent D2 with chunk IDs alone.
+5. **Apply without NoteEditSession:** `NoteGeometryResolver::resolve` is session-gated; Phase 2 uses free `resolveConstrainedGeometry` / `buildEditSessionActions` with overdub-supplied baseline/focus/store — do **not** open a fake NOTE_EDIT session.
+6. **`shouldRestoreCommittedOverlapOnOverdubStop`:** existing stop-path same-pitch cleanup — Phase 2 must define coexistence or retirement once insert-time geometry exists.
+7. **DEC-020 mid-pass:** sealed bytes remain raw capture MIDI; overlap ops must not be invented in persist — confirm encode stays in RAM pending pass until `commitCapturePass`.
