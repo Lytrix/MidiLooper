@@ -2,31 +2,26 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (live-record tick-0 NoteOn blip PASS)
+Last updated: 2026-08-11 (PR #29 merged; overdub-pass-overlap-resolution branch)
 
 ---
 
 ## Now implementing
 
-### Stage 5 — memory / persistence pressure (long overdub)
+### Overdub pass overlap resolution (OpenSpec)
 
-**Branch:** `bugfix/long-overdub-display-freeze`  
-**Plan:** [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md)  
-**Parent:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19
+**Branch:** `feature/overdub-pass-overlap-resolution`  
+**OpenSpec:** [`openspec/changes/overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/)  
+**Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
+**Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
 
-**5a-2 (shipped):** Authoritative `CaptureAppendResult` + `#CAP,append,deny` / `#CAP,DIAG,reclaim` / pressure latch.  
-**5a-3:** [`183525`](../../captures/session_20260811_183525.log) classifies append WARNs as **`duplicate`** (reclaim hypothesis falsified for that class). Further `pool_alloc` proof needs a separate pressure capture after RING survives. Follow-up: overdub overlap OpenSpec on a dedicated branch (not this PR).  
-**RC4e (shipped, verify):** Bounded visual-cache idle slices during overdub for rolling-window follow.  
-**RC4f (shipped, verify):** Promote overdub committed layer to full `visualCache` when idle finishes; overview minimap uses partial `visualCache` — [`long_overdub_record_tail_wrap_display_bugfix.md`](../Plans/long_overdub_record_tail_wrap_display_bugfix.md) (`session_20260811_121918`).  
-**RC4g (shipped, verify):** PLAYING after overdub stop returns `visualCache` for `drawPianoRoll` rolling filter (`session_20260811_124133`).  
-**RC4h (shipped, verify):** Overdub gathers full committed span when cache dirty (`session_20260811_165148`).  
-**RC4i (shipped, verify):** Overview minimap from full `notes` when cache dirty; preserve fix on record stop (`session_20260811_170314`).  
-**RC5a–f (shipped, device PASS):** Incremental overdub/play-stop display handoff — [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md) (`dc2bffa` / `ce5390b`; verify [`180107`](../../captures/session_20260811_180107.log); pre-fix STOPPED gap [`174742`](../../captures/session_20260811_174742.log)).  
-**Live-record open-note tail + tick-0 NoteOn blip (shipped, device PASS):** Growing RECORD false wrap-head disabled; paint maps frontier ticks without modulo-to-0 — [`live_record_open_note_playhead_tail_bugfix.md`](../Plans/live_record_open_note_playhead_tail_bugfix.md) (`8de682c`; verify [`182949`](../../captures/session_20260811_182949.log)).
+**Now:** Phase 0 docs complete; next `/opsx:apply` Phase 1 (source-pass candidate lookup + deny throttle). Parallel / non-blocking to persistence tracks A/B — do not mix apply sessions.
 
-**5a-1 (shipped):** Critical `reclaimUnreferencedDisabledPasses` during transport (`main.cpp`).
+### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 
-Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
+**5a-1/5a-2 (shipped on `dev`):** Critical reclaim during transport + authoritative append-deny CAP.  
+**5a-3:** [`183525`](../../captures/session_20260811_183525.log) falsifies reclaim for `duplicate` class; `pool_alloc` proof still open.  
+**Display RC4–RC5 + live-record tick-0:** shipped on `dev` (PR #29).
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

@@ -57,7 +57,16 @@ On first `notifyCaptureAppendFailed` per latch window:
 
 Reclaim CAP works; transport-time reclaim with resource release observed at **Normal** pressure (undo/stop/edit call sites). **Critical**-pressure reclaim chain and authoritative deny reasons are still unverified.
 
-**Hypothesis status:** Unconfirmed — need `021117`-comparable capture with `append,deny` reason codes (or sustained zero denies under equivalent load).
+### `183525` (post–5a-2; wrap overdub)
+
+| Signal | Finding |
+|--------|---------|
+| Append WARNs | **191×** `Capture append failed (duplicate)` — **0×** `pool_alloc` |
+| First wrap vs first deny | wrap ≈ 885.5 s; first duplicate ≈ 885.9 s |
+| CAP gap | `RING,overflow` ~632 s — mid-overdub `append,deny` CAP lost |
+| Chunk pressure | Not implicated for these WARNs |
+
+**Hypothesis status:** **Falsified** for `183525` failure class (`duplicate`, not pool). Open follow-up: overdub overlap OpenSpec / wrap candidate lookup (dedicated branch). Still need a separate capture if proving Critical `pool_alloc` → reclaim recovery.
 
 ## Verification recipe (`021117` shape)
 
