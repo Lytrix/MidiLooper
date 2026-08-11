@@ -85,7 +85,7 @@ MidiHandler::MidiHandler()
 
 namespace {
 
-constexpr size_t kMidiInputBatchMax = 64;
+constexpr size_t kMidiInputBatchMax = 128;
 
 struct MidiInputMsg {
   byte type;
@@ -181,9 +181,11 @@ void MidiHandler::handleMidiInput() {
   }
 
   // --- USB Host MIDI Input ---
-  usbHost.Task();  // Update USB host state
-  
-  // Check if USB Host MIDI device is connected and log status changes
+  // USBHost_t36 delivers one MIDI message per read() via callbacks. Drain a bounded
+  // batch each service pass (same cap as USB-device / DIN) so DROID NoteOn/NoteOff
+  // pairs are not left queued across a long main-loop frame.
+  usbHost.Task();
+
   static bool lastConnected = false;
   bool currentlyConnected = usbHostMIDI;
   if (currentlyConnected != lastConnected) {
@@ -194,8 +196,16 @@ void MidiHandler::handleMidiInput() {
     }
     lastConnected = currentlyConnected;
   }
-  
-  usbHostMIDI.read();  // Process USB host MIDI messages (handlers will be called)
+
+  size_t hostReads = 0;
+  while (hostReads < kMidiInputBatchMax && usbHostMIDI.read()) {
+    ++hostReads;
+  }
+  if (hostReads >= kMidiInputBatchMax) {
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "USB Host MIDI drain hit batch cap (%u)",
+               static_cast<unsigned>(kMidiInputBatchMax));
+  }
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
@@ -211,7 +221,9 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   }
 #endif
 
-  // Log incoming MIDI messages (skip Clock to avoid log spam at 24 PPQN)
+  // Per-note Serial DEBUG saturates USB CDC on capture builds (~960 lines/30s in
+  // session_20260811_021117) and starves #CAP flush. Keep #CAP,MI; skip DEBUG text.
+#if !defined(SESSION_CAPTURE)
   if (type != midi::Clock) {
     const char* sourceStr = (source == SOURCE_USB) ? "USB" :
                             (source == SOURCE_SERIAL) ? "Serial" :
@@ -227,6 +239,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
                  noteName, octave, data1, data2);
     }
   }
+#endif
 
   // MIDI Thru: pass channel messages to USB/Serial/USB-host on the selected track channel —
   // except DROID control plane (ch13-16), which must never be remapped onto track output.

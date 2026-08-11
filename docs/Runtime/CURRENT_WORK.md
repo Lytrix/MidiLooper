@@ -2,22 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (long capture follow-up RC1)
+Last updated: 2026-08-11 (long capture follow-up RC3)
 
 ---
 
 ## Now implementing
 
-### Long record / overdub display — freeze resolved; preview parity RC1 active
+### Long record / overdub display — RC3 USB Host button delivery active
 
 **Branch:** `bugfix/long-overdub-display-freeze`
-**Plan:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
+**Plans:** [`midi_button_usb_host_note_off_delivery_bugfix.md`](../Plans/midi_button_usb_host_note_off_delivery_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
-`session_20260811_013056` confirms the physical display no longer freezes. It exposes three
-separate follow-ups: RC1 preview open-note identity (active), RC2 canonical post-stop display
-handoff, and RC3 USB Host NoteOff delivery. Each ships as an independent commit. Stage 5
-memory/persistence remains separate.
+`021117` proves missed host NoteOn (`Orphan note-off … short press`) and Serial MIDI DEBUG flood
+with zero mid-pass `#CAP`. RC3: bounded USB Host `read()` drain, discard orphan NoteOff (no
+synthetic short press), gate inbound MIDI DEBUG on capture builds. RC1 preview identity remains
+uncommitted local work; RC2 post-stop handoff and Stage 5 stay separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 
