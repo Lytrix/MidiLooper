@@ -2,8 +2,8 @@
 
 **Change:** `runtime-derived-representation-heap` — **M6 follow-up + M7**
 **Updated:** 2026-08-11
-**Status:** Active — M6 display follow-up Stage 1 ready; M7 historical gates retained below
-**Plans:** [`long_overdub_display_freeze_bugfix.md`](../../../docs/Plans/long_overdub_display_freeze_bugfix.md), [`published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)
+**Status:** Active — M6 display follow-up RC1; M7 historical gates retained below
+**Plans:** [`long_overdub_display_freeze_bugfix.md`](../../../docs/Plans/long_overdub_display_freeze_bugfix.md), [`long_overdub_capture_preview_tail_parity_bugfix.md`](../../../docs/Plans/long_overdub_capture_preview_tail_parity_bugfix.md), [`published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)
 
 **Related:** [design.md](design.md) § M7, [tasks.md](tasks.md) § M7, [specs/published-capture-pass-split/spec.md](specs/published-capture-pass-split/spec.md)
 
@@ -53,6 +53,28 @@ The prior M6 Phase 2 revision gate still copied the complete `capturePreview.not
 | 118-bar manual record/overdub gate | [ ] |
 
 **Approval:** APPROVE — Stage 1 firmware may proceed within this gate.
+
+### RC1 architecture gate — capture preview open-note identity
+
+| Question | Answer |
+|----------|--------|
+| Owner module | `Loop` through `CapturePreview` and `applyCaptureEventToPreview` |
+| Primary invariant | Only sidecar rows with `open == true` may be closed by normal NoteOff |
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Behavior-preserving? | **YES** — pitch-LIFO normal pairing and channel-aware wrap pairing remain |
+| Reuse | **YES** — existing `CapturePreviewNoteState`, `openNoteIndices`, and cold rebuild |
+| Phase scope | RC1 only; no DisplayManager handoff, USB Host input, stop/commit, or persistence edits |
+
+#### RC1 implementation review
+
+| Check | Pass |
+|-------|------|
+| Closed zero-duration row cannot be selected as open | [ ] |
+| Sidecar/vector alignment guarded | [ ] |
+| Cold rebuild restores open/wrap metadata | [ ] |
+| Focused parity fixtures | [ ] |
+| `pio test -e native` | [ ] |
 
 ---
 
