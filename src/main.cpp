@@ -333,6 +333,12 @@ void loop() {
   if (pressure >= MemoryPressureLevel::Low) {
     trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
   }
+  if (pressure >= MemoryPressureLevel::Critical) {
+    // Policy: Critical reclaims disabled-pass chunks (memory_pressure_reclaim_refinement §Policy).
+    // Idle-only reclaim at line ~114 misses chunk pressure during RECORDING/PLAYING/OVERDUBBING
+    // (session_20260811_021117: append failures with heap headroom, pool at CHUNK_RESERVE).
+    trackManager.reclaimUnreferencedDisabledPasses();
+  }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 
