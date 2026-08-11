@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (RC5e/f STOPPED display handoff)
+Last updated: 2026-08-11 (RC5a–f display handoff device PASS)
 
 ---
 
 ## Current branch
 
-**Active work:** Stage 5 memory/persistence — **5a-3** verification pending; display **RC5e/f** shipped (STOPPED handoff — device verify).
+**Active work:** Stage 5 memory/persistence — **5a-3** verification pending; display **RC5a–f** device PASS ([`180107`](../../captures/session_20260811_180107.log)).
 Plan: [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md); RC5: [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md).
 
 Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
