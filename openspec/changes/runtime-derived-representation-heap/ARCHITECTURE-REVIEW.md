@@ -115,12 +115,13 @@ The prior M6 Phase 2 revision gate still copied the complete `capturePreview.not
 
 | Check | Pass |
 |-------|------|
-| Covered window filters `visualCache` before gather | [x] |
+| Covered window filters `visualCache` before gather | [x] — fully built only (RC4b) |
 | Capture-active still uses gather path | [x] |
+| Overdub committed layer ignores partial visualCache | [x] — RC4b |
 | PLAYING idle slices neighborhood-limited | [x] |
 | Stopped idle retains full-loop backfill | [x] |
-| Native coverage fixture + full suite | [x] — 982/982 |
-| HITL: post-stop long-record OLED without tear | [ ] |
+| Native coverage fixture + full suite | [x] — 982/982 after RC4b |
+| HITL: post-stop long-record OLED without tear/gaps | [ ] |
 
 ### RC3 architecture gate — USB Host button delivery
 
