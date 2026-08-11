@@ -50,12 +50,19 @@ struct WrapHeadSegment {
 };
 
 /// True when live capture should split tail + head because playhead wrapped before tail-on.
+/// Growing live-record lengths must not use this path: closeTick < tailOnTick there means the
+/// playhead is still catching up to a frontier note-on, not a loop wrap (false head from tick 0).
 inline bool isLiveWrapHeadContinuationDisplay(uint32_t tailOnTick, uint32_t closeTick,
                                               uint32_t loopLength, bool extendHeldNotesToPlayhead) {
   if (!extendHeldNotesToPlayhead || loopLength == 0 || closeTick >= tailOnTick) {
     return false;
   }
-  return tailOnTick >= wrapTailStartTick(loopLength);
+  const uint32_t tailStart = wrapTailStartTick(loopLength);
+  // No distinct wrap-tail region (loop shorter than wrap window) — never infer wrap continuation.
+  if (tailStart == 0) {
+    return false;
+  }
+  return tailOnTick >= tailStart;
 }
 
 /// Single authority for wrap-held head segment visibility (display only).

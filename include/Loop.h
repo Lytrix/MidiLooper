@@ -26,6 +26,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
+#include "CaptureAppendResult.h"
 #include "PassReclaim.h"
 #include "Utils/LoopStopFinalize.h"
 
@@ -132,6 +133,7 @@ struct Loop {
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
+  CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);
   /// Remove the open capture note-on for channel/note (overdub overlap restore on stop).
   bool removeOpenCaptureNoteOn(uint8_t channel, uint8_t note);
@@ -149,7 +151,11 @@ struct Loop {
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
-  void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar);
+  /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
+  /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
+  /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.
+  void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
+                                   uint32_t maxBarDistanceFromPriority = UINT32_MAX);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
   /// Note + visual caches only — does not disturb playback order or materialized pass view.
@@ -170,8 +176,8 @@ struct Loop {
   void discardPendingCapturePass();
 
   bool reclaimDisabledCapturePass(PassId id);
-  void reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs);
-  void reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs);
+  uint16_t reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs);
+  uint16_t reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs);
   void reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs);
 
   PlaybackOrderVec& getPlaybackOrder() {

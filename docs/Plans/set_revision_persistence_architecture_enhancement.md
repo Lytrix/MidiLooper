@@ -1,8 +1,9 @@
 # Set / Revision persistence architecture
 
-**Date:** 2026-06-27  
-**Status:** Approved — aligned with runtime architecture  
-**OpenSpec:** `openspec/changes/set-revision-persistence/`
+**Date:** 2026-06-27 (updated 2026-08-10)  
+**Status:** Approved — core shipped on `dev`; overlay 4.1–4.7 shipped; remaining §4.8–4.10 + parked §3.9  
+**OpenSpec:** `openspec/changes/set-revision-persistence/`  
+**Handoff:** [`set_revision_persistence_handoff.md`](set_revision_persistence_handoff.md)
 
 ---
 

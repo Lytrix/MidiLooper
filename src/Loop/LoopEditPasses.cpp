@@ -34,7 +34,8 @@ void Loop::assignMissingNoteIds(MidiEventVec& events) {
   }
 }
 
-void Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs) {
+uint16_t Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs) {
+  const size_t before = passes.editPasses.size();
   passes.editPasses.erase(
       std::remove_if(passes.editPasses.begin(), passes.editPasses.end(),
                      [&](const EditPass& editPass) {
@@ -42,6 +43,8 @@ void Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs)
                               !refs.referencesEditPass(editPass.id);
                      }),
       passes.editPasses.end());
+  const size_t after = passes.editPasses.size();
+  return static_cast<uint16_t>(before - after);
 }
 
 LoopSnapshotRef Loop::sharePassesSnapshot() const {

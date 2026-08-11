@@ -108,6 +108,24 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] `MidiLedManager::prepareLedNoteLookup`: chunk merge when `visualCacheDirty` (P2 — bar-rate)
 - [x] **Manual gate (user):** 175327-style; `DisplayFullRebuild` rate drops; `DisplayIncrementalUpdate` ↑ (`session_20260714_212306`: +3840 incremental vs +392 full, ~10:1)
 
+### Phase 2 follow-up — long capture layered invalidation (2026-08-11)
+
+**Plan:** [`docs/Plans/long_overdub_display_freeze_bugfix.md`](../../../docs/Plans/long_overdub_display_freeze_bugfix.md)
+**Review:** [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § M6 Phase 2 follow-up
+
+- [x] Stage 0: add lightweight gather / resolve / compose / tail / total-display diagnostics
+- [x] Stage 0a: select delta capture composition + append-maintained wrap metadata; ownership and transitions unchanged
+- [x] Stage 1: capture-only revision updates capture suffix; committed prefix remains reusable
+- [x] Stage 1a: populated `visualCache` overdub performs zero committed+capture full gathers in steady state
+- [x] Stage 1b: long live record + post-record PLAYING preserve/replace a bounded display frame
+- [x] Stage 1c: re-audit capture-active committed display + LED paths
+- [ ] Stage 2: native preview delta, wrap-tail parity, and post-record display fixtures
+- [ ] Stage 3: 118-bar manual gate — continuous `DFRAME`, buttons responsive, post-record notes visible, no sustained ring overflow
+- [x] RC1: `CapturePreviewNoteState::open` owns normal NoteOff closure; cold sidecar parity + native fixtures
+- [x] RC2: bounded canonical post-stop display handoff; no preserved temporary live tails
+- [x] RC3: bounded USB Host MIDI drain + input telemetry; incomplete button gestures remain discarded
+- [x] RC4: long-loop window paint from covered `visualCache`; PLAYING idle slices stay near playhead
+
 ### Phase 3 — Idle gating during capture
 
 - [x] `processDeferredIdleMaintenance`: skip full materialize/visual on non-selected tracks while any track RECORDING/OVERDUBBING

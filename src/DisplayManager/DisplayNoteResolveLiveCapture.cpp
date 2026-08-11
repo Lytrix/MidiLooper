@@ -135,79 +135,62 @@ bool shouldSplitLiveWrapOpenNoteDisplay(const NoteUtils::OpenNoteOn& open, uint3
 
 namespace DisplayManagerInternal {
 
-std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOnsFromPreview(const Loop& loop) {
-    if (loop.loopLengthTicks == 0) {
-        return {};
-    }
-    std::vector<NoteUtils::OpenNoteOn> opens;
-    opens.reserve(loop.capturePreview.notes.size());
-    for (const NoteUtils::DisplayNote& note : loop.capturePreview.notes) {
-        if (note.endTick != note.startTick) {
-            continue;
-        }
-        opens.push_back(
-            NoteUtils::OpenNoteOn{note.note, note.velocity, note.startTick});
-    }
-    return opens;
-}
-
-void copySortedCaptureEvents(const Loop& loop, SessionMidiEventVec& out) {
-    if (loop.capture.store.empty()) {
-        out.clear();
-        return;
-    }
-    Loop& mutLoop = const_cast<Loop&>(loop);
-    mutLoop.ensureCaptureEventsSorted();
-    loop.capture.store.copyEventsTo(out);
-}
-
-void applyCapturePlayheadTails(const std::vector<NoteUtils::OpenNoteOn>& captureOpens,
-                               const SessionMidiEventVec& captureEvents, uint32_t loopLength,
+void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
-                               DisplayNoteVec& notes) {
+                               DisplayNoteVec& notes, bool allowWrapContinuation) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
 
-    for (const auto& open : captureOpens) {
-        const bool isWrapHeld =
-            NoteUtils::isWrapHeldOpenNote(captureEvents, open, loopLength);
-        if (shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick, true,
-                                               isWrapHeld)) {
+    for (const uint32_t previewNoteIndex : preview.openNoteIndices) {
+        if (previewNoteIndex >= preview.notes.size() ||
+            previewNoteIndex >= preview.noteStates.size()) {
+            continue;
+        }
+        const NoteUtils::DisplayNote& previewNote = preview.notes[previewNoteIndex];
+        const CapturePreviewNoteState& state = preview.noteStates[previewNoteIndex];
+        if (!state.open) {
+            continue;
+        }
+        const NoteUtils::OpenNoteOn open{
+            previewNote.note, previewNote.velocity, previewNote.startTick};
+        // Growing live record has no loop wrap: closeTick < noteOn is playhead catch-up, not
+        // wrap-head continuation (false head from tick 0 until NoteOff).
+        const bool wrapHeldForSplit = allowWrapContinuation && state.wrapHeld;
+        if (allowWrapContinuation &&
+            shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick, true,
+                                               wrapHeldForSplit)) {
             uint32_t tailEnd = loopLength - 1;
             if (clampedCloseTick >= open.tick) {
                 tailEnd = std::min(clampedCloseTick, loopLength - 1);
             }
 
-            uint32_t headOffTick = 0;
-            const bool hasCommittedHead =
-                isWrapHeld &&
-                findPreferredWrapHeadOffTick(captureEvents, open, loopLength, headOffTick);
             const NoteUtils::WrapHeadSegment head = resolveWrapOpenHeadSegment(
-                loopLength, open, clampedCloseTick, hasCommittedHead, headOffTick);
+                loopLength, open, clampedCloseTick, state.hasPreferredHeadOff,
+                state.preferredHeadOffTick);
             appendWrapHeldOpenNoteDisplay(notes, captureRegionStart, open, tailEnd, head);
             continue;
         }
 
-        const uint32_t playheadEndTick = std::max(open.tick, clampedCloseTick);
-        if (!updateDisplayNoteEndFrom(notes, captureRegionStart, open.note, open.tick,
-                                      playheadEndTick)) {
+        uint32_t noteStartTick = open.tick;
+        uint32_t playheadEndTick = std::max(noteStartTick, clampedCloseTick);
+        DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(noteStartTick, playheadEndTick,
+                                                            loopLength);
+        bool updated = false;
+        for (size_t i = captureRegionStart; i < notes.size(); ++i) {
+            if (notes[i].note == open.note && notes[i].startTick == open.tick) {
+                notes[i].startTick = noteStartTick;
+                notes[i].endTick = playheadEndTick;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated) {
             DisplayNote liveNote;
             liveNote.note = open.note;
             liveNote.velocity = open.velocity;
-            liveNote.startTick = open.tick;
+            liveNote.startTick = noteStartTick;
             liveNote.endTick = playheadEndTick;
             notes.push_back(liveNote);
         }
-    }
-}
-
-void applyRecordingPreviewOpenTails(DisplayNoteVec& notes, uint32_t loopLength,
-                                    uint32_t closeTick) {
-    const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
-    for (DisplayNote& note : notes) {
-        if (note.endTick != note.startTick) {
-            continue;
-        }
-        note.endTick = std::max(note.startTick, clampedCloseTick);
     }
 }
 
@@ -281,6 +264,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         return liveDisplayNotes;
     }
 
+    const uint32_t resolveStartUs = micros();
+
     const TrackState liveTrackState = track.isRecording() ? TRACK_RECORDING : TRACK_OVERDUBBING;
     const size_t eventCount =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size()
@@ -295,149 +280,191 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                                    !expandingLiveRecordLength;
     const bool captureRevisionChanged =
         !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
-    size_t committedDisplayEnd = 0;
+    const bool capturePreviewChanged =
+        !cacheCold && loop.capturePreview.revision != liveDisplayCacheCapturePreviewRevision_;
+    if (eventsAdded) {
+        DIAG_COUNTER_INC(DisplayCaptureEventsAdded);
+    }
     Loop& mutLoop = const_cast<Loop&>(loop);
 
-    auto rebuildLiveDisplayNotes = [&]() {
+    auto rebuildCommittedLayer = [&]() {
         if (track.isOverdubbing()) {
-            if (!loop.visualCache.notes.empty()) {
+            // Only a fully built visualCache may back the committed layer. A partial idle
+            // backfill (PLAYING neighborhood slices) is sparse and shows as gaps in the roll.
+            if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
                 liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                         loop.visualCache.notes.end());
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = false;
+                liveDisplayCommittedFromWindowGather_ = false;
             } else if (loop.hasCommittedPasses()) {
                 if (shouldAvoidFullVisualRebuild(loop, liveLoopLength)) {
-                    uint32_t windowStart = 0;
-                    uint32_t windowLength = 0;
-                    uint8_t windowBars = 0;
-                    if (syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength,
-                                                windowStart, windowLength, windowBars)) {
-                        const uint8_t trackIndex = resolveTrackIndex(track);
-                        const uint32_t marginTicks =
-                            static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
-                        uint32_t gatherStart =
-                            windowStart > marginTicks ? windowStart - marginTicks : 0;
-                        uint32_t gatherEnd = windowStart + windowLength + marginTicks;
-                        if (gatherEnd > liveLoopLength) {
-                            gatherEnd = liveLoopLength;
-                        }
-                        if (gatherStart > gatherEnd) {
-                            gatherStart = 0;
-                        }
-                        const uint32_t gatherLength = gatherEnd - gatherStart;
-                        const bool windowCacheHit =
-                            liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
-                            trackIndex == livePlaybackDisplayTrack_ &&
-                            liveMergePlaybackRevision_ == loop.playbackRevision &&
-                            liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
-                            liveWindowGatherLoopLength_ == liveLoopLength && gatherLength > 0 &&
-                            liveWindowGatherLength_ > 0 && windowStart >= liveWindowGatherStart_ &&
-                            (windowStart - liveWindowGatherStart_) + windowLength <=
-                                liveWindowGatherLength_ &&
-                            liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
-                        if (windowCacheHit) {
-                            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
-                        } else {
-                            rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, gatherStart,
-                                                        gatherLength, liveDisplayEventBuffer,
-                                                        liveDisplayNotes);
-                            liveMergePlaybackRevision_ = loop.playbackRevision;
-                            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
-                            livePlaybackDisplaySlot_ = displaySlot;
-                            livePlaybackDisplayTrack_ = trackIndex;
-                            liveWindowGatherStart_ = gatherStart;
-                            liveWindowGatherLength_ = gatherLength;
-                            liveWindowGatherLoopLength_ = liveLoopLength;
-                            liveWindowGatherValid_ = true;
-                            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                        }
-                    } else {
-                        liveDisplayNotes.clear();
-                        liveDisplayCacheCommittedNoteCount_ = 0;
-                    }
+                    // Full committed span — drawPianoRoll owns rolling-window filter (RC4g).
+                    // Narrow window gather revealed chunks gradually (165148); stale dirty
+                    // visualCache hid the fresh record pass (170314).
+                    rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, 0, liveLoopLength,
+                                                liveDisplayEventBuffer, liveDisplayNotes, false);
+                    liveWindowGatherValid_ = false;
+                    liveDisplayCommittedFromWindowGather_ = false;
+                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                 } else {
                     mutLoop.ensureVisualCacheBuilt();
                     liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                             loop.visualCache.notes.end());
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                    liveWindowGatherValid_ = false;
+                    liveDisplayCommittedFromWindowGather_ = false;
                 }
             } else {
                 liveDisplayNotes.clear();
                 liveDisplayCacheCommittedNoteCount_ = 0;
+                liveWindowGatherValid_ = false;
+                liveDisplayCommittedFromWindowGather_ = false;
             }
-            committedDisplayEnd = liveDisplayNotes.size();
-            liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
-                                    loop.capturePreview.notes.end());
+            liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
 
-        liveDisplayNotes.assign(loop.capturePreview.notes.begin(), loop.capturePreview.notes.end());
-        committedDisplayEnd = 0;
-        if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
-            SessionMidiEventVec captureFlat;
-            copySortedCaptureEvents(loop, captureFlat);
-            if (!captureFlat.empty()) {
-                const NoteUtils::DisplayNoteVec reconstructed =
-                    NoteUtils::reconstructDisplayNotes(captureFlat, liveLoopLength, false);
-                liveDisplayNotes.assign(reconstructed.begin(), reconstructed.end());
-            }
-        }
+        liveDisplayNotes.clear();
+        liveDisplayCacheCommittedNoteCount_ = 0;
+        liveWindowGatherValid_ = false;
+        liveDisplayCommittedFromWindowGather_ = false;
     };
 
-    const bool needsFullLiveRebuild = cacheCold || contextChanged || eventsShrunk || eventsAdded ||
-                                      loopLengthChanged || captureRevisionChanged;
+    auto replaceCaptureLayer = [&]() {
+        liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+        liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
+                                loop.capturePreview.notes.end());
+        liveDisplayCacheCaptureNoteCount_ = loop.capturePreview.notes.size();
+        liveDisplayCacheCaptureChangeCount_ = loop.capturePreview.changedNoteIndices.size();
+        liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
+        liveDisplayCacheCaptureReplacementRevision_ =
+            loop.capturePreview.replacementRevision;
+        liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
+    };
 
-    if (needsFullLiveRebuild) {
+    auto synchronizeCaptureLayer = [&]() {
+        const bool captureMirrorInvalid =
+            liveDisplayCacheCaptureReplacementRevision_ !=
+                loop.capturePreview.replacementRevision ||
+            liveDisplayCacheCaptureNoteCount_ > loop.capturePreview.notes.size() ||
+            liveDisplayCacheCaptureChangeCount_ >
+                loop.capturePreview.changedNoteIndices.size() ||
+            liveDisplayCacheCommittedNoteCount_ + liveDisplayCacheCaptureNoteCount_ >
+                liveDisplayCacheBaseNoteCount_ ||
+            liveDisplayCacheBaseNoteCount_ > liveDisplayNotes.size();
+        if (captureMirrorInvalid) {
+            replaceCaptureLayer();
+            return;
+        }
+
+        liveDisplayNotes.resize(liveDisplayCacheBaseNoteCount_);
+        for (size_t changeIndex = liveDisplayCacheCaptureChangeCount_;
+             changeIndex < loop.capturePreview.changedNoteIndices.size(); ++changeIndex) {
+            const size_t previewNoteIndex =
+                loop.capturePreview.changedNoteIndices[changeIndex];
+            if (previewNoteIndex >= liveDisplayCacheCaptureNoteCount_ ||
+                previewNoteIndex >= loop.capturePreview.notes.size()) {
+                continue;
+            }
+            liveDisplayNotes[liveDisplayCacheCommittedNoteCount_ + previewNoteIndex] =
+                loop.capturePreview.notes[previewNoteIndex];
+        }
+        liveDisplayNotes.insert(
+            liveDisplayNotes.end(),
+            loop.capturePreview.notes.begin() +
+                static_cast<std::ptrdiff_t>(liveDisplayCacheCaptureNoteCount_),
+            loop.capturePreview.notes.end());
+        liveDisplayCacheCaptureNoteCount_ = loop.capturePreview.notes.size();
+        liveDisplayCacheCaptureChangeCount_ = loop.capturePreview.changedNoteIndices.size();
+        liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
+        liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
+    };
+
+    uint32_t paintWindowStart = 0;
+    uint32_t paintWindowLength = 0;
+    uint8_t paintWindowBars = 0;
+    const bool havePaintWindow =
+        liveLoopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR &&
+        displaySlot < kDisplaySlotCount &&
+        syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength, paintWindowStart,
+                                paintWindowLength, paintWindowBars);
+    // Dirty visualCache uses window gather for the committed layer. Auto-follow moves the paint
+    // window without bumping playbackRevision — rebuild when the gather no longer covers it
+    // (session_20260811_034230: notes stuck in first ~18 bars until overdub stop).
+    const bool committedWindowStale =
+        track.isOverdubbing() && havePaintWindow && loop.visualCacheDirty &&
+        liveWindowGatherValid_ &&
+        !DisplayWindowUtils::paintWindowInsideGather(paintWindowStart, paintWindowLength,
+                                                     liveWindowGatherStart_,
+                                                     liveWindowGatherLength_);
+
+    const bool committedLayerPromoteToFullVisualCache =
+        track.isOverdubbing() &&
+        DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(
+            true, loop.visualCacheDirty, !loop.visualCache.notes.empty(),
+            liveDisplayCommittedFromWindowGather_);
+
+    const bool committedLayerChanged =
+        cacheCold || contextChanged || loopLengthChanged || committedWindowStale ||
+        committedLayerPromoteToFullVisualCache ||
+        (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision);
+    const bool captureLayerChanged =
+        cacheCold || contextChanged || eventsShrunk || captureRevisionChanged ||
+        capturePreviewChanged;
+
+    const uint32_t composeStartUs = micros();
+    if (committedLayerChanged) {
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayFullRebuild);
-        if (track.isOverdubbing()) {
-            const bool useWindowedCommitLayer =
-                loop.visualCache.notes.empty() && loop.hasCommittedPasses() &&
-                shouldAvoidFullVisualRebuild(loop, liveLoopLength);
-            if (!useWindowedCommitLayer && liveDisplayEventBuffer.empty()) {
-                if (loop.captureActive()) {
-                    mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
-                } else {
-                    mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
-                }
-            }
-        } else {
-            liveDisplayEventBuffer.clear();
-        }
-        rebuildLiveDisplayNotes();
-        if (track.isOverdubbing()) {
-            liveDisplayCacheOpenNotes =
-                NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
-        } else {
-            liveDisplayCacheOpenNotes.clear();
-        }
-        liveDisplayCacheSlot = displaySlot;
-        liveDisplayCacheTrackState = liveTrackState;
-        liveDisplayCacheLoopLength = liveLoopLength;
-        liveDisplayCacheEventCount = eventCount;
-        liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
+        rebuildCommittedLayer();
+        replaceCaptureLayer();
         DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
-    } else {
-        liveDisplayCacheLoopLength = liveLoopLength;
-        if (track.isRecording() || track.isOverdubbing()) {
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            rebuildLiveDisplayNotes();
-        }
+    } else if (captureLayerChanged) {
+        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        synchronizeCaptureLayer();
+    } else if (liveDisplayCacheBaseNoteCount_ <= liveDisplayNotes.size()) {
+        liveDisplayNotes.resize(liveDisplayCacheBaseNoteCount_);
     }
+    DIAG_TIMING_RECORD(DisplayCaptureCompose, micros() - composeStartUs);
+
+    liveDisplayCacheSlot = displaySlot;
+    liveDisplayCacheTrackState = liveTrackState;
+    liveDisplayCacheLoopLength = liveLoopLength;
+    liveDisplayCacheEventCount = eventCount;
+    liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
+    livePlaybackDisplaySlot_ = displaySlot;
+    livePlaybackDisplayTrack_ = resolveTrackIndex(track);
+    const size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
 
     if (track.isRecording() || track.isOverdubbing()) {
+        const uint32_t tailsStartUs = micros();
         const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        if (track.isOverdubbing()) {
-            const std::vector<NoteUtils::OpenNoteOn> captureOpens =
-                findCaptureOpenNoteOnsFromPreview(loop);
-            if (!captureOpens.empty()) {
-                SessionMidiEventVec captureEvents;
-                copySortedCaptureEvents(loop, captureEvents);
-                applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
-                                          playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
+        for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {
+            if (previewNoteIndex >= loop.capturePreview.notes.size()) {
+                continue;
             }
-        } else {
-            applyRecordingPreviewOpenTails(liveDisplayNotes, liveLoopLength, playheadCloseTick);
+            const size_t displayNoteIndex = committedDisplayEnd + previewNoteIndex;
+            if (displayNoteIndex < liveDisplayCacheBaseNoteCount_) {
+                liveDisplayNotes[displayNoteIndex] =
+                    loop.capturePreview.notes[previewNoteIndex];
+            }
         }
+        if (!loop.capturePreview.openNoteIndices.empty()) {
+            // Growing RECORD has no sealed loop length — never infer wrap-head to tick 0.
+            const bool allowWrapContinuation =
+                !(track.isRecording() && !track.isPlaying());
+            applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
+                                      committedDisplayEnd, liveDisplayNotes,
+                                      allowWrapContinuation);
+        }
+        DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
+    }
+
+    const uint32_t resolveElapsedUs = micros() - resolveStartUs;
+    DIAG_TIMING_RECORD(DisplayResolveLiveCapture, resolveElapsedUs);
+    if (resolveElapsedUs > Diagnostics::kDisplayResolveBudgetMicros) {
+        DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
     }
 
     return liveDisplayNotes;

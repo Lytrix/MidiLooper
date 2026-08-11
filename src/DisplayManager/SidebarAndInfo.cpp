@@ -16,6 +16,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "NoteEditGeometryApplyWrap.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/SlotFocusDisplay.h"
 #include <Arduino.h>
 #include <Font5x7Fixed.h>
@@ -378,12 +379,8 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
     } else {
         ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true);
     }
-    if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
-        uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
-        snprintf(lenStr, sizeof(lenStr), " %02lu", bars > 99 ? 99UL : bars);
-    } else {
-        snprintf(lenStr, sizeof(lenStr), " --");
-    }
+    DisplayWindowUtils::formatLoopLengthBars(lenStr, sizeof(lenStr), lengthLoop,
+                                             Config::TICKS_PER_BAR);
     const uint8_t trackNumber = trackManager.getSelectedTrackIndex() + 1;
     const uint8_t loopNumber = displaySlot + 1;
     snprintf(loopStr, sizeof(loopStr), "%u.%u", trackNumber, loopNumber);

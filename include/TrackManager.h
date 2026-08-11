@@ -10,6 +10,7 @@
 #include "ClockManager.h"
 #include "MidiLedManager.h"
 #include "SlotStateMachine.h"
+#include "PassReclaim.h"
 #include "Utils/MemoryPressureLevel.h"
 
 /// Phase 1 playback policy for slot selection (queued start remains caller-composed).
@@ -137,7 +138,8 @@ public:
   /// When true, the next committed `pendingSlotIndex` switch replaces the enabled slot set with only that slot.
   void setPendingEnabledSetReplacement(uint8_t trackIndex, bool enabled);
 
-  void reclaimUnreferencedDisabledPasses();
+  void reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut = nullptr,
+                                         bool diagnosticVisibility = false);
 
   // --- Slot state machine (selected UI focus + pending quantized switch) ---
   uint8_t getSelectedSlotIndex(uint8_t trackIndex) const;

@@ -8,6 +8,7 @@
 
 #include "ClockManager.h"
 #include "Globals.h"
+#include "Loop.h"
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
 #include "NoteEditFocus.h"
@@ -258,8 +259,9 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
             adjustedStartTick = n.startTick;
             adjustedEndTick = n.endTick;
         } else {
-            adjustedStartTick = (n.startTick - jamStartTick + loopLength) % loopLength;
-            adjustedEndTick = (n.endTick - jamStartTick + loopLength) % loopLength;
+            DisplayWindowUtils::mapDisplayNoteBarTicksForLoopPaint(
+                n.startTick, n.endTick, jamStartTick, loopLength, adjustedStartTick,
+                adjustedEndTick);
         }
 
         if (!windowRelativeTicks && adjustedStartTick >= lengthLoop && adjustedEndTick >= lengthLoop) {
@@ -284,7 +286,11 @@ void DisplayManager::drawBracket(uint32_t selectedTick, uint32_t lengthLoop, int
 }
 
 void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness) {
-    bool isWrapped = (eTick < s) || (eTick > lengthLoop);
+    // Frontier NoteOn can lead growing display length by one frame (181659). Clamping avoids
+    // the wrap branch painting a false head on the tick-0 grid line.
+    DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(s, eTick, lengthLoop);
+    // Wrap pairs only: end before start. Do not treat end past length as wrap.
+    const bool isWrapped = (eTick < s);
 
     if (!isWrapped && eTick >= s) {
         int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, pianoRollWidth());
@@ -353,7 +359,8 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
                 drawNoteBar(note, y, insideStart, insideEnd, fullLoopLength, noteBrightness);
             }
         };
-        const bool isWrapped = (endTick < startTick) || (endTick > fullLoopLength);
+        DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(startTick, endTick, fullLoopLength);
+        const bool isWrapped = (endTick < startTick);
         if (!isWrapped && endTick >= startTick) {
             clipDraw(startTick, endTick);
             return;
@@ -495,10 +502,21 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     const int pianoRollY1 = kDetailedPianoRollY1;
     if (loopLength > 0) {
         const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
+        const Loop& loop = track.getLoop(displaySlot);
+        // Overview minimap spans the full loop. Use fully built visualCache when clean;
+        // while dirty, `notes` carries the authoritative committed/capture span (not window
+        // filtered). Stale partial visualCache must not paint the minimap (170314).
+        const DisplayNoteVec& overviewDensityNotes =
+            (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) ? loop.visualCache.notes
+                                                                         : notes;
 
         int minPitch = 127;
         int maxPitch = 0;
         for (const auto& n : notes) {
+            if (n.note < minPitch) minPitch = n.note;
+            if (n.note > maxPitch) maxPitch = n.note;
+        }
+        for (const auto& n : overviewDensityNotes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
         }
@@ -533,7 +551,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
 
         if (useBoundedWindow) {
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
-                              maxPitch, notes, kOverviewStripY0, kOverviewStripY1);
+                              maxPitch, overviewDensityNotes, kOverviewStripY0, kOverviewStripY1);
             if (drawPlayhead && jamPos >= windowStart && jamPos < windowStart + windowLength) {
                 const float phase = previewPlayheadPending ? 0.0f : displayPlayheadPhase();
                 const float relativePlayhead =

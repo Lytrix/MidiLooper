@@ -32,6 +32,7 @@ DiagLastRecordSlot* sLastRecordSlot = nullptr;
 uint32_t sCounters[static_cast<size_t>(Counter::Count)] = {};
 uint32_t sTimingSumMicros[static_cast<size_t>(Timing::Count)] = {};
 uint32_t sTimingSampleCount[static_cast<size_t>(Timing::Count)] = {};
+uint32_t sTimingMaxMicros[static_cast<size_t>(Timing::Count)] = {};
 
 constexpr const char* kCounterNames[] = {
     "PlaybackMergedMidiEventsRebuild",
@@ -40,6 +41,9 @@ constexpr const char* kCounterNames[] = {
     "LegacyMidiEvents",
     "DisplayFullRebuild",
     "DisplayIncrementalUpdate",
+    "DisplayCaptureFullGather",
+    "DisplayResolveOverBudgetCount",
+    "DisplayCaptureEventsAdded",
     "Materialize",
     "CacheInvalidateBroad",
     "CacheInvalidateScoped",
@@ -50,6 +54,11 @@ constexpr const char* kCounterNames[] = {
 constexpr const char* kTimingNames[] = {
     "PlaybackBuildTime",
     "DisplayBuildTime",
+    "DisplayResolveLiveCaptureTime",
+    "DisplayCaptureGatherTime",
+    "DisplayCaptureComposeTime",
+    "DisplayCaptureTailsTime",
+    "DisplayUpdateTotalTime",
 };
 
 #if defined(__IMXRT1062__)
@@ -112,6 +121,7 @@ DIAG_MEM_ATTR void init() {
   std::memset(sCounters, 0, sizeof(sCounters));
   std::memset(sTimingSumMicros, 0, sizeof(sTimingSumMicros));
   std::memset(sTimingSampleCount, 0, sizeof(sTimingSampleCount));
+  std::memset(sTimingMaxMicros, 0, sizeof(sTimingMaxMicros));
 }
 
 void emitBootCheckpoint() {
@@ -168,6 +178,9 @@ DIAG_MEM_ATTR void recordTimingSample(Timing timing, uint32_t elapsedMicros) {
   }
   sTimingSumMicros[index] += elapsedMicros;
   ++sTimingSampleCount[index];
+  if (elapsedMicros > sTimingMaxMicros[index]) {
+    sTimingMaxMicros[index] = elapsedMicros;
+  }
 }
 
 DIAG_MEM_ATTR uint32_t readTimingSumMicros(Timing timing) {
@@ -184,6 +197,14 @@ DIAG_MEM_ATTR uint32_t readTimingSampleCount(Timing timing) {
     return 0;
   }
   return sTimingSampleCount[index];
+}
+
+DIAG_MEM_ATTR uint32_t readTimingMaxMicros(Timing timing) {
+  const size_t index = static_cast<size_t>(timing);
+  if (index >= static_cast<size_t>(Timing::Count)) {
+    return 0;
+  }
+  return sTimingMaxMicros[index];
 }
 
 DIAG_MEM_ATTR const char* counterName(Counter counter) {
@@ -211,6 +232,7 @@ DIAG_MEM_ATTR void emitArchitectureMetricsSnapshot() {
     const Timing timing = static_cast<Timing>(index);
     DebugSessionCapture::architectureTiming(timingName(timing), sTimingSumMicros[index],
                                             sTimingSampleCount[index]);
+    DebugSessionCapture::architectureTimingMax(timingName(timing), sTimingMaxMicros[index]);
   }
 }
 

@@ -2,15 +2,18 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-10 (Phase LR NoteMovementUtils shims)
+Last updated: 2026-08-11 (RC5a–f display handoff device PASS)
 
 ---
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 + LR complete; ready to close.
+**Active work:** Stage 5 memory/persistence — **5a-3** verification pending; display **RC5a–f** device PASS ([`180107`](../../captures/session_20260811_180107.log)).
+Plan: [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md); RC5: [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md).
 
-**Branch tip (local):** `dev` — Phase 4 + LR: TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, shim removal #26 merged.
+Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
+
+**Branch tip (local):** `bugfix/long-overdub-display-freeze`
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

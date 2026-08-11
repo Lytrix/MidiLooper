@@ -131,6 +131,8 @@ Wrap-held notes split into a **tail** segment (high ticks → `loopLength - 1`) 
 
 Tail-region open notes without a loop-end off yet use `isLiveWrapHeadContinuationDisplay` during live capture: when playhead wraps before `tailOnTick`, display splits tail + head even before seal classifies wrap-held storage.
 
+**Growing live RECORD** (`isRecording && !isPlaying`): wrap-head continuation is disabled. `closeTick < noteOn` means the playhead is catching up to a frontier note-on, not a loop wrap — open notes get a temporary display note-off at the current capture tick only (no head from tick 0).
+
 Piano-roll drawing uses `wrapHeadExclusiveEndForDraw` to map inclusive head ends to exclusive pixel ends (main piano roll and overview strip).
 
 ### 3. Preserve Original MIDI Data
