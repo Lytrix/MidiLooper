@@ -763,83 +763,74 @@ This should replace the earlier "materialized all previous passes" wording and s
 
 ---
 
-# 19. Open Q4 — Encode pin (C → A) + PREFLIGHT
+# 19. Resolution vs storage (G2 pin)
 
-**User decision (2026-08-12):** Option **1 — C → A**.
+> **Resolution unification and storage unification are separate architectural concerns.**
+>
+> MIDI overdub and NOTE_EDIT share canonical note geometry and produce the same logical Add/Shorten/Hide operations. During a session these operations form one **pending logical change set**. The current implementation may encode that result into the existing capture and edit storage families at commit time. The storage-family distinction is **transitional implementation architecture** and is not a second semantic overlap model.
+>
+> A future unified persistent pass model (U1/U2) is explicitly deferred to a separate migration OpenSpec.
 
-Full audit: [`PREFLIGHT.md`](PREFLIGHT.md). Decision log: **DEC-031**.
+**User pin (2026-08-12):** **G2 approved** — DEC-032.  
+Review: [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md).  
+Transitional seal/undo encoding: [`PREFLIGHT.md`](PREFLIGHT.md) / DEC-031 (encoding only, not semantic model).
 
-| Topic | Pin |
-|-------|-----|
-| Mid-session | Pending overdub-operation **buffer** (session state on `Loop`, not a pass); no mid-session `EditPass` writes |
-| Seal Adds | Existing `OverdubPass` chunks |
+### Semantic authority (unified now)
+
+```text
+input (MIDI overdub | NOTE_EDIT)
+        │
+        ▼
+canonical note geometry
+        │
+        ▼
+Add / Shorten / Hide
+        │
+        ▼
+pending session delta   ← session state, not a pass
+        │
+      commit
+        │
+        ├── Add        → capture/chunk path (existing)
+        └── Shorten/Hide → edit-row path (existing)
+        │
+        ▼
+one logical undo
+```
+
+There must **not** be separate MIDI vs NOTE_EDIT overlap policies. Exact duplicate is one geometry outcome. Candidate lookup may be optimized; it must not shrink the semantic candidate domain. No `lastSeenTick` authority. No overlap resolve in persistence.
+
+### Storage (transitional dual — this change)
+
+| Concern | Representation |
+|---------|----------------|
+| Mid-session | Pending logical Add/Shorten/Hide on `Loop` (session state); no mid-session `EditPass` writes |
+| Seal Adds | Existing capture/chunk commit (`OverdubPass` chunks) |
 | Seal Shorten/Hide | Existing `EditPass` rows via `Loop::saveNoteEditPass` |
-| Extend `OverdubPass` struct? | **NO** for v1 |
-| Logical undo | One `OverdubPassAdded` with `passId` + companion `editPassIds` (field already on `UndoEntry`) |
-| Grouping identity | `OverdubPass.id` — no new overdub-op identifier |
-| Commit order | Publish OverdubPass → save EditPass rows → push undo |
-| `shouldRestoreCommittedOverlapOnOverdubStop` | **Not authoritative** when `overdubSourceView` established; do not `removeOpenCaptureNoteOn` on that path |
-| Persistence | No loop SD schema bump; GUS must round-trip `editPassIds` on `OverdubPassAdded` |
+| Extend `OverdubPass` with Shorten/Hide fields? | **NO** |
+| `OverdubPassAdded` + `editPassIds` | **Transitional undo encoding only** — not the semantic abstraction |
+| Commit order | Publish capture pass → save edit rows → push one undo grouping both |
+| Restore path | Not authoritative when `overdubSourceView` established |
+| Persistence schema | No loop SD bump; GUS may round-trip companion ids |
 
-### Phase 2 firmware slices (after this pin)
+### Out of scope (this change)
 
-**PAUSED (2026-08-12).** Do not implement C→A pending-buffer → OverdubPass+EditPass until the unified-pass architecture pin lands.
+- U1 unified committed pass type / EPT3+capture wire redesign  
+- U2 encode all Adds as edit Create rows  
+- Treating `OverdubPass + linked EditPass` as the canonical architecture  
 
-See §20 and [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md).
+### Phase 2 firmware slices (G2)
+
+1. Pending session delta + native constrain→Add/Shorten/Hide (source view immutable; survives wraps).  
+2. Stop seal via existing dual storage + one logical undo + restore gate.  
+3. Insert-path candidate lookup into `overdubSourceView`; demote reverse-tick/`isDuplicateCaptureEvent` as semantic authority (may continue into Phase 3).
 
 ---
 
-# 20. Architecture refinement — unify input mechanisms vs pass storage
+# 20. Architecture refinement — closed by G2
 
-## Decision (process)
+The refinement’s **interaction/resolution** model is adopted (input ≠ pass; shared geometry; pending logical delta; session undo boundary).
 
-**Stop Phase 2 C→A firmware** before introducing a pending overdub buffer that seals into `OverdubPass` + `EditPass` as if that dual seal were the final architecture.
+The refinement’s **storage unification** (remove OverdubPass/EditPass as persistent concepts) is **deferred** (U1 separate change).
 
-## Hypothesis (user)
-
-Live MIDI overdub and note editing are two **input mechanisms** that produce the same canonical operations:
-
-```text
-Add / Shorten / Hide
-```
-
-The pass should represent **what changed**. The interaction mechanism represents **how** the change was produced. These should not require separate pass types long-term.
-
-```text
-input (MIDI | note editor)
-        │
-        ▼
-canonical geometry
-        │
-        ▼
-Add / Shorten / Hide
-        │
-        ▼
-pending session changes
-        │
-        ▼
-committed canonical pass
-        │
-        ▼
-undo
-```
-
-Session ≠ pass. `overdubSourceView` remains a session baseline. Multi-wrap evaluate-on-insert remains. Capture-only duplicate / restore heuristics must not be a second overlap engine.
-
-## Code review finding (storage)
-
-Audit ([`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md)):
-
-- **`OverdubPass` / `EditPass` are true storage families today** (chunks vs Create/Update/Delete; two-phase materialize; separate undo kinds; capture wire vs EPT3).
-- **Shared Add/Shorten/Hide geometry across input mechanisms is validated** and remains the resolution goal.
-- **Removing both types in this change is not validated** without superseding `timeline-passes` and designing SD/undo migration.
-
-## Required user pin before Phase 2 resumes
-
-| Option | Meaning |
-|--------|---------|
-| **G2** | Resume DEC-031 transitional dual seal (geometry unified; storage dual) |
-| **G1** | Geometry + source-view lookup only; delay seal |
-| **U1** | Park seal; open unified committed-pass OpenSpec (schema/undo/materialize) |
-
-Until pinned: no pending-overdub-buffer firmware, no `OverdubPassAdded.editPassIds` companion seal, no mid-session EditPass writes.
+`overdubSourceView` remains the overdub session baseline (not a “freeze”).

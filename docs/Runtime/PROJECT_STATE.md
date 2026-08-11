@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (DEC-032 unified-pass pin required; Phase 2 paused)
+Last updated: 2026-08-12 (DEC-032 G2 approved; Phase 2 resume)
 
 ---
 
 ## Current branch
 
-**Active work:** OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) — Phase 1 shipped; Phase 2 **paused** (DEC-032); pin G2/G1/U1 via [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](../../openspec/changes/overdub-pass-overlap-resolution/UNIFIED-PASS-ARCHITECTURE-REVIEW.md). Evidence [`183525`](../../captures/session_20260811_183525.log).
+**Active work:** OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) — Phase 1 shipped; **G2** (DEC-032) Phase 2 resume — pending session delta + shared geometry; dual storage transitional. Evidence [`183525`](../../captures/session_20260811_183525.log).
 
 **Merged to `dev`:** PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) — long-overdub display RC4–RC5, Stage 5a-1/5a-2, live-record tick-0.
 
