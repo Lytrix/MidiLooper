@@ -448,6 +448,11 @@ SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32
                 (unsigned long)sumMicros, (unsigned long)sampleCount);
 }
 
+SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros) {
+  emitCapPrintf("#CAP,%lu,DIAG,timing_max,%s,%lu\r\n", (unsigned long)micros(), name,
+                (unsigned long)maxMicros);
+}
+
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,

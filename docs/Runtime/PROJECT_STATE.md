@@ -2,15 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-10 (Phase LR NoteMovementUtils shims)
+Last updated: 2026-08-11 (long capture display Stage 0a)
 
 ---
 
 ## Current branch
 
-**Active work:** Codebase consistency [#18](https://github.com/Lytrix/MidiLooper/issues/18) — Phase 4 + LR complete; ready to close.
+**Active work:** Long record / overdub display starvation — Stage 1 implementation and native/build gates complete; 118-bar manual gate next.
 
-**Branch tip (local):** `dev` — Phase 4 + LR: TrackManager #22, NoteEditGeometryApply #23, DisplayNoteResolve #24, NoteEditFocus header #25, shim removal #26 merged.
+**Branch tip (local):** `bugfix/long-overdub-display-freeze` — [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md); M6 Phase 2 follow-up under `runtime-derived-representation-heap`.
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

@@ -12,6 +12,23 @@
 using VisualBarVec = std::vector<uint8_t>;
 using DisplayNoteVec =
     std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>;
+using CapturePreviewChangeIndexVec =
+    std::vector<uint32_t, ExternalMemoryFirstAllocator<uint32_t>>;
+using CapturePreviewNoteIndexVec =
+    std::vector<uint32_t, ExternalMemoryFirstAllocator<uint32_t>>;
+
+struct CapturePreviewNoteState {
+  uint8_t channel = 0;
+  uint8_t pitch = 0;
+  bool open = false;
+  bool wrapHeld = false;
+  bool hasPreferredHeadOff = false;
+  uint32_t preferredHeadOffTick = 0;
+};
+
+using CapturePreviewNoteStateVec =
+    std::vector<CapturePreviewNoteState,
+                ExternalMemoryFirstAllocator<CapturePreviewNoteState>>;
 
 inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
   if (ticksPerBar == 0) {
@@ -46,12 +63,20 @@ struct VisualCache {
 
 struct CapturePreview {
   uint32_t revision = 0;
+  uint32_t replacementRevision = 0;
   DisplayNoteVec notes;
+  CapturePreviewNoteStateVec noteStates;
+  CapturePreviewNoteIndexVec openNoteIndices;
+  CapturePreviewChangeIndexVec changedNoteIndices;
   VisualBarVec dirtyBars;
 
   void clear() {
-    revision = 0;
+    ++revision;
+    ++replacementRevision;
     notes.clear();
+    noteStates.clear();
+    openNoteIndices.clear();
+    changedNoteIndices.clear();
     dirtyBars.clear();
   }
 

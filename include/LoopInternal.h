@@ -29,7 +29,7 @@ LOOP_INTERNAL_MEM void markPreviewSpan(CapturePreview& preview, uint32_t startTi
                                         uint32_t ticksPerBar);
 
 LOOP_INTERNAL_MEM void applyCaptureEventToPreview(CapturePreview& preview, const MidiEvent& evt,
-                                                  uint32_t ticksPerBar);
+                                                  uint32_t ticksPerBar, uint32_t loopLength);
 
 LOOP_INTERNAL_MEM void rebuildCapturePreviewFromStore(Loop& loop);
 

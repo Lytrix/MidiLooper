@@ -29,18 +29,13 @@ bool shouldDeferHeavyDisplayRebuild();
 void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopLength,
                                  uint32_t windowStart, uint32_t windowLength,
                                  SessionMidiEventVec& eventBuffer,
-                                 NoteUtils::DisplayNoteVec& outNotes);
+                                 NoteUtils::DisplayNoteVec& outNotes, bool includeActiveCapture);
 
 uint8_t resolveTrackIndex(const Track& track);
 
-std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOnsFromPreview(const Loop& loop);
-void copySortedCaptureEvents(const Loop& loop, SessionMidiEventVec& out);
-void applyCapturePlayheadTails(const std::vector<NoteUtils::OpenNoteOn>& captureOpens,
-                               const SessionMidiEventVec& captureEvents, uint32_t loopLength,
+void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
                                NoteUtils::DisplayNoteVec& notes);
-void applyRecordingPreviewOpenTails(NoteUtils::DisplayNoteVec& notes, uint32_t loopLength,
-                                    uint32_t closeTick);
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                         uint32_t closeTick, NoteUtils::DisplayNoteVec& notes,

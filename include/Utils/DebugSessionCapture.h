@@ -82,6 +82,7 @@ SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value);
 SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t heapFreeBytes,
                                           uint16_t chunksFree, uint16_t persistQueueDepth);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
+SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks, uint16_t reserve,

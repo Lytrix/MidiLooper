@@ -55,7 +55,7 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
 
 void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
                                                    uint32_t storagePhaseTickInLoop) {
-    invalidateLiveDisplayCache();
+    invalidateLiveDisplayCache(true);
     const Loop& loop = track.getLoop(displaySlot);
     if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
@@ -76,18 +76,25 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
         storagePhaseTickInLoop, windowLength, loopLength);
 }
 
-void DisplayManager::invalidateLiveDisplayCache() {
+void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
     liveDisplayCacheCommittedNoteCount_ = 0;
+    liveDisplayCacheCaptureNoteCount_ = 0;
+    liveDisplayCacheCaptureChangeCount_ = 0;
+    liveDisplayCacheBaseNoteCount_ = 0;
+    liveDisplayCacheCaptureReplacementRevision_ = UINT32_MAX;
+    liveDisplayCacheCapturePreviewRevision_ = UINT32_MAX;
     liveDisplayCacheCaptureRevision = 0;
     liveDisplayCacheLoopLength = 0;
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
     liveDisplayCacheOpenNotes.clear();
-    liveDisplayNotes.clear();
+    if (!preserveDisplayNotes) {
+        liveDisplayNotes.clear();
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
+    }
     liveDisplayEventBuffer.clear();
-    livePlaybackDisplaySlot_ = 255;
-    livePlaybackDisplayTrack_ = 255;
     liveMergePlaybackRevision_ = UINT32_MAX;
     liveMergeCaptureRevision_ = 0;
     liveWindowGatherStart_ = 0;
