@@ -10,7 +10,7 @@
 
 ## Primary invariant (north star)
 
-> A newly inserted overdub note is resolved incrementally against the immutable note geometry of one source pass. Overlap consequences belong to the new overdub pass. One overdub session may perform many such evaluations across multiple loop wraps while remaining one undoable overdub operation.
+> Each overdub session has a stable, materialize-aware `overdubSourceView` established at start. Newly inserted notes are resolved against that view (including across wraps). The source is never destructively modified. The resulting `overdubPass` records the complete delta (additions plus source shorten/remove). The session remains one overdub pass/undo under the current undo model.
 
 ---
 
@@ -18,11 +18,13 @@
 
 | Severity | Finding | Phase | Owner |
 |----------|---------|-------|-------|
-| Critical | Append-order reverse-tick early-out invalid after wrap (`183525`) | 1 | Source-pass candidate lookup |
-| Critical | Capture-only `isDuplicateCaptureEvent` is not full overlap model | 2 | `NoteGeometryResolver` decisions → overdubPass ops |
-| High | CAP/WARN deny storm → RING overflow / display freeze | 1 | Throttle (observability) |
-| High | Vague “all previous passes” search domain | 0–1 | Source-pass identity (D1) |
-| Medium | Q16 capture min-length vs edit constrained geometry | 0 / 2 | Shared globals + docs |
+| Critical | No stable session source view today | 1 | `overdubSourceView` on Loop; Track lifecycle |
+| Critical | Capture-only `isDuplicateCaptureEvent` is not full overlap model | 2 | Constrain/build → overdubPass **complete delta** |
+| Critical | Append-order reverse-tick early-out invalid after wrap (`183525`) | 2–3 | Lookup into `overdubSourceView` (not Phase 1) |
+| High | CAP/WARN deny storm → RING overflow | Separate / 3 | Throttle (observability only) |
+| High | Vague “all previous passes” / “freeze” language | 0 | `overdubSourceView` naming (D1) |
+| Medium | `OverdubPass` chunk-IDs-only vs delta encode | 2 | Open Q4 + PREFLIGHT |
+| Medium | Q16 capture min-length vs edit constrained geometry | 2 | Shared globals + docs |
 | Low | Per-wrap undo desire | Out of scope | Future separate change |
 
 ---
@@ -62,39 +64,39 @@
 
 ---
 
-### Phase 1 — Source-pass lookup + deny throttle (behavior-preserving toward display)
+### Phase 1 — `overdubSourceView` + native tests only
 
-**Scope:** Freeze/name pre-session source view; wrap-safe candidate lookup **tested but not wired into deny**; throttle duplicate/deny WARN/CAP; optionally fix capture-store reverse-tick early-out only. Do **not** invent Shorten/Hide or change source-pass musical policy.
+**Scope:** Establish `overdubSourceView` at overdub start (`Loop` provides; `Track` lifecycle triggers); materialize-aware; stable across wraps; native tests for geometry exposure, candidate lookup into the view, source immutability. **Do not** wire into append accept/reject. **Do not** fix reverse-tick early-out, full resolve/encode, or deny throttle in this phase (throttle may be a separate interim commit).
 
-**Architecture check (2026-08-11) — must not miss:**
+**Refinement pins (2026-08-11):**
 
-| Pin | Finding |
-|-----|---------|
-| No freeze today | `beginOverdubSession` does not snapshot geometry |
-| Canonical source | `materializeToEventVector` (includes `editPasses`); bare `CommittedEventRange` insufficient when edits active |
-| Lookup ≠ note index | `CommittedEventRange` = event windows; spans reconstructed separately |
-| Phase 1 deny wiring | Source lookup **not** in accept/reject until Phase 2 (design D6) |
-| Early-out fix | Narrow: capture-store exact-tick duplicates after wrap only |
+| Pin | Decision |
+|-----|----------|
+| Naming | `overdubSourceView` — not freeze / FrozenPass |
+| When | Overdub start |
+| Ownership | Loop canonical view; Track session lifecycle |
+| Representation | Semantic contract only; events/spans/chunk-window OK |
+| Deny path | Not wired in Phase 1 |
 
 #### Architecture gate
 
 | Question | Required |
 |----------|----------|
-| Ownership change? | **NO** — extend `Loop`/`Track` freeze + lookup helpers |
+| Ownership change? | **NO** — extend `Loop`/`Track` |
 | State transition change? | **NO** |
 | Formal trigger? | **NO** |
-| Behavior-preserving? | **YES** for source-overlap policy; throttle OK; early-out fix is narrow capture-store only |
-| Reuse | YES — `materialize*` / `gatherCommittedEvents*` (editPass-aware); not chunk-only CER |
-| Phase scope | Overdub start freeze, lookup helper + tests, `TrackCaptureInput` / CAP throttle; optional early-out |
+| Behavior-preserving? | **YES** — view + tests; no musical policy change |
+| Reuse | YES — `materialize*` / editPass-aware gather |
+| Phase scope | Establish/clear view + native tests only |
 
 #### Implementation review checklist
 
-- [ ] Freeze API named and called at overdub start
-- [ ] Native: source lookup finds candidates with high-then-low capture order; editPass-aware path covered
-- [ ] Source lookup **not** changing append accept/reject yet (unless early-out-only)
-- [ ] Throttle: no multi-minute CAP gap on wrap stress
+- [ ] `overdubSourceView` established at overdub start; cleared at session end
+- [ ] Materialize-aware (editPasses covered)
+- [ ] Native: stable across wraps; immutability; candidate lookup into view
+- [ ] Append accept/reject unchanged this phase
+- [ ] No `freeze*` / Frozen* identifiers; no lastSeenTick authority
 - [ ] `pio test -e native`
-- [ ] No lastSeenTick semantic authority introduced
 
 ---
 
