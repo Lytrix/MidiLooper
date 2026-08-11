@@ -319,9 +319,9 @@ Full-loop gather/reconstruct remains the existing recovery path when no preserve
 | Loop wrap during overdub | Record tail visible (RC4f guard) |
 | Overview minimap | Full-loop density; not window-only |
 | `#CAP` / `DFRAME` after overdub→PLAYING | No multi-second gap — **PASS** for that path |
-| Transport / play stop → STOPPED | **RC5e/f shipped** — device verify pending (was OPEN on `174742`) |
+| Transport / play stop → STOPPED | **PASS** — [`180107`](../../captures/session_20260811_180107.log): `PLAYING→STOPPED` DISP +1.6 ms, `visualCache=1222` stable (not mid-idle 768→793 as on `174742`) |
 
-Build gates: `pio test -e native` 994/994; `pio run -e teensy41-capture-serial` SUCCESS; commit `dc2bffa`.
+Build gates: `pio test -e native` 995/995; `pio run -e teensy41-capture-serial` SUCCESS; commits `dc2bffa` (RC5a–d), `ce5390b` (RC5e/f).
 
 ---
 
@@ -374,7 +374,16 @@ So yes — the same promote/preserve model applies to any transition into STOPPE
 | **RC5e** | `stopOverdubbingToStopped` + in-edit fold → STOPPED: `refreshViewportAfterOverdubStop` before snapshot emit |
 | **RC5f** | `preferIncrementalCommittedDisplay(deferVisualRebuild, track.isStopped())` — clean-cache window filter + revision-matched preserve under STOPPED |
 
-Device verify: repeat transport stop during/after overdub; expect no ~1 s `DFRAME` gap and `visualCache` adopted (not stuck mid-idle count like 768→793).
+### Device verify PASS — `session_20260811_180107.log`
+
+| Marker | Evidence |
+|--------|----------|
+| Overdub → PLAYING | `#CAP,204945323,ST,Track,OVERDUBBING,PLAYING` then DISP `visualCache=1222` (adopted; not partial) |
+| Play → STOPPED | `#CAP,208434047,ST,Track,PLAYING,STOPPED` → DISP `#CAP,208435685,...STOPPED,...,1222,310...` (+1.6 ms) |
+| Cache stability | STOPPED frames keep `visual=1222` (contrast `174742` 768→793 under dirty idle) |
+| User | Fluidness confirmed after RC5e/f flash |
+
+Firmware: `ce5390b`.
 
 ---
 
