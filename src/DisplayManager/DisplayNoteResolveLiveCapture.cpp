@@ -137,7 +137,7 @@ namespace DisplayManagerInternal {
 
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
-                               DisplayNoteVec& notes) {
+                               DisplayNoteVec& notes, bool allowWrapContinuation) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
 
     for (const uint32_t previewNoteIndex : preview.openNoteIndices) {
@@ -152,8 +152,12 @@ void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLengt
         }
         const NoteUtils::OpenNoteOn open{
             previewNote.note, previewNote.velocity, previewNote.startTick};
-        if (shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick, true,
-                                               state.wrapHeld)) {
+        // Growing live record has no loop wrap: closeTick < noteOn is playhead catch-up, not
+        // wrap-head continuation (false head from tick 0 until NoteOff).
+        const bool wrapHeldForSplit = allowWrapContinuation && state.wrapHeld;
+        if (allowWrapContinuation &&
+            shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick, true,
+                                               wrapHeldForSplit)) {
             uint32_t tailEnd = loopLength - 1;
             if (clampedCloseTick >= open.tick) {
                 tailEnd = std::min(clampedCloseTick, loopLength - 1);
@@ -436,8 +440,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             }
         }
         if (!loop.capturePreview.openNoteIndices.empty()) {
+            // Growing RECORD has no sealed loop length — never infer wrap-head to tick 0.
+            const bool allowWrapContinuation =
+                !(track.isRecording() && !track.isPlaying());
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
-                                      committedDisplayEnd, liveDisplayNotes);
+                                      committedDisplayEnd, liveDisplayNotes,
+                                      allowWrapContinuation);
         }
         DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
     }

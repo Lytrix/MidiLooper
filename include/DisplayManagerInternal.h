@@ -33,9 +33,10 @@ void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopL
 
 uint8_t resolveTrackIndex(const Track& track);
 
+/// `allowWrapContinuation`: false during growing live record (no loop wrap yet).
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
-                               NoteUtils::DisplayNoteVec& notes);
+                               NoteUtils::DisplayNoteVec& notes, bool allowWrapContinuation = true);
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                         uint32_t closeTick, NoteUtils::DisplayNoteVec& notes,
