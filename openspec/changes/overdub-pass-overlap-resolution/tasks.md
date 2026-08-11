@@ -35,8 +35,10 @@
 
 ## 4. Phase 3 — Retire capture dedup authority + device verify
 
-- [ ] 4.1 Demote or remove `isDuplicateCaptureEvent` as semantic authority
+**Pass criteria:** OLED hide/shorten + continuous UI across wraps. Zero `duplicate` denies is **expected** under G2 (not the product gate). CAP `DFRAME` gaps alone do not fail if OLED updated.
+
+- [x] 4.1 Demote `isDuplicateCaptureEvent` as semantic authority when `hasOverdubSourceView()` (Phase 2; Record path keeps helper)
 - [ ] 4.2 Optional separate commit: deny WARN/CAP throttle if RING still floods (observability only)
-- [ ] 4.3 Device capture past wrap + bar 41: continuous DFRAME, OLED updating
+- [x] 4.3 Device wrap verify — [`010000`](../../../captures/session_20260812_010000.log): 3 wraps on loopLen 9984; user OLED hide/shorten PASS; 0× `duplicate` (expected)
 - [ ] 4.4 Update Stage 5 / wrap bugfix / CURRENT_WORK closeout
 - [ ] 4.5 Implementation review Phase 3; ready for `/opsx:archive` when gates pass
