@@ -2,18 +2,17 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (RC5a–f display handoff device PASS)
+Last updated: 2026-08-12 (archived overdub-pass-overlap-resolution)
 
 ---
 
 ## Current branch
 
-**Active work:** Stage 5 memory/persistence — **5a-3** verification pending; display **RC5a–f** device PASS ([`180107`](../../captures/session_20260811_180107.log)).
-Plan: [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md); RC5: [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md).
+**Active work:** Merge [`feature/overdub-pass-overlap-resolution`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/) → `dev` (OpenSpec **archived**; OLED PASS [`010000`](../../captures/session_20260812_010000.log)). Specs: `openspec/specs/overdub-pass-overlap-resolution/`.
 
-Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
+**Merged to `dev`:** PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) — long-overdub display RC4–RC5, Stage 5a-1/5a-2, live-record tick-0.
 
-**Branch tip (local):** `bugfix/long-overdub-display-freeze`
+**Branch tip (local):** `feature/overdub-pass-overlap-resolution`
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

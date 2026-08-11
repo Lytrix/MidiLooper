@@ -13,7 +13,8 @@ class TrackUndo {
 public:
     friend class Track;
     static void pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId);
-    static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId);
+    static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId,
+                                     EditPassIdList companionEditPassIds = {});
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds);
     static void pushEditPassClosed(Track& track, uint8_t editPassIndex,
