@@ -81,11 +81,15 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
     const uint32_t displayTick = resolveDisplayTick(track, displaySlot, currentTick);
     if (isLiveRecordingDisplay(track, displaySlot)) {
         if (track.isRecording() && !track.isPlaying()) {
-            // Growing capture length equals displayTick; modulo would always yield 0.
-            if (loopLength == 0 || displayTick == 0) {
+            // Temporary display note-off at the current capture tick (clamped into the loop).
+            // Growing length equals displayTick — clamp to loopLength-1 so close stays in-range.
+            if (loopLength == 0) {
                 return 0;
             }
-            return std::min(displayTick, loopLength) - 1;
+            if (displayTick == 0) {
+                return 0;
+            }
+            return std::min(displayTick, loopLength - 1);
         }
         return displayTick % loopLength;
     }
