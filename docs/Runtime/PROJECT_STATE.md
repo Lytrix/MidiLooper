@@ -2,16 +2,20 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (long capture follow-up RC4)
+Last updated: 2026-08-11 (display RC slice verified — `111528`)
 
 ---
 
 ## Current branch
 
-**Active work:** Long record / overdub display — RC4 visualCache window paint (filter covered
-cache; PLAYING idle neighborhood). RC1–RC3 shipped on branch; Stage 5 append pressure remains open.
+**Active work:** Long record / overdub display RC slice **closed** on
+[`session_20260811_111528`](../../captures/session_20260811_111528.log). **Next:** Stage 5
+append/storage pressure (separate commit) per
+[`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19.
 
-**Branch tip (local):** `bugfix/long-overdub-display-freeze` — [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md); M6 Phase 2 follow-up under `runtime-derived-representation-heap`.
+**Branch tip (local):** `bugfix/long-overdub-display-freeze` — RC4 + LEN + overview minimap;
+plans [`overview_strip_window_gather_notes_bugfix.md`](../Plans/overview_strip_window_gather_notes_bugfix.md),
+[`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

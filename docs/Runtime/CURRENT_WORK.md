@@ -2,22 +2,20 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (LEN>100 info strip + RC4 follow-up)
+Last updated: 2026-08-11 (display RC slice verified — `111528`)
 
 ---
 
 ## Now implementing
 
-### Long record / overdub display — RC4 visualCache window paint active
+### Long record / overdub display — RC slice closed (user `111528`)
 
 **Branch:** `bugfix/long-overdub-display-freeze`
-**Plans:** [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
+**Plans:** [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md), [`overview_strip_window_gather_notes_bugfix.md`](../Plans/overview_strip_window_gather_notes_bugfix.md)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
-RC4d: overdub committed window gather follows auto-follow paint window (`committedWindowStale`).
-RC4c zero-count cache hit; RC4b fully-built-only filter. Info-strip `LEN:` uses 3-digit bars (no 99 clamp). Overview minimap uses full `visualCache`
-density — not window/gather notes ([`overview_strip_window_gather_notes_bugfix.md`](../Plans/overview_strip_window_gather_notes_bugfix.md)).
-Stage 5 append pressure remains separate.
+RC4d–RC4 overview/LEN shipped and verified on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
+**Next on this track:** Stage 5 append/storage pressure ([`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19) — separate commit; optional RC4 HITL ~195-bar gate if desired before merge.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

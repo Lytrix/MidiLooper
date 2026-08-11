@@ -1,6 +1,6 @@
 # Overview strip stuck on first ~18 bars
 
-**Status:** Implemented — `drawPianoRoll` uses `visualCache` for minimap density  
+**Status:** Shipped — user verified [`session_20260811_111528.log`](../../captures/session_20260811_111528.log)  
 **Evidence:** [`session_20260811_110408.log`](../../captures/session_20260811_110408.log), user report after RC4d / LEN fix
 
 ## Problem
@@ -46,4 +46,6 @@ Improvement (out of scope here): stale-while-revalidate or load placeholder for 
 
 - [x] Overview minimap uses full `visualCache` when available on long loops.
 - [x] `pio test -e native`, `pio run -e teensy41-capture-serial`.
-- [ ] Manual: 133-bar loop — minimap dots span full width; window box follows detailed roll.
+- [x] Manual: 133-bar loop — minimap dots span full width; window box follows detailed roll
+  ([`session_20260811_111528`](../../captures/session_20260811_111528.log): `wStart` 19998–23863
+  ticks ≈ 26–31 bars; `visualCache` 480–1570 vs window ~387–421; DFRAME ~12 ms steady PLAYING).
