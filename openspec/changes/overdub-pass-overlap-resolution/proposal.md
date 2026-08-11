@@ -11,7 +11,8 @@ That path is not a complete overlap model. Overdub must resolve newly inserted n
 - **`overdubPass` complete delta:** Add + Shorten + Remove/Hide of source notes; source material immutable.
 - Reuse constrained-geometry / `EditSessionAction` semantics (not a capture-only overlap policy).
 - Wrap-safe **candidate lookup** into the source view (183525 performance framing); physical backing not prescribed.
-- Phase 1 = source view + native tests only; later phases wire resolve/encode/early-out; deny-log throttle separate if needed.
+- Phase 1 = source view + native tests only (shipped).
+- Phase 2 **paused (DEC-032):** architecture refinement — input mechanism ≠ pass type; shared Add/Shorten/Hide geometry; do not implement C→A dual seal until user pins G2/G1/U1 ([UNIFIED-PASS-ARCHITECTURE-REVIEW.md](UNIFIED-PASS-ARCHITECTURE-REVIEW.md)).
 
 ## Non-goals
 

@@ -783,6 +783,63 @@ Full audit: [`PREFLIGHT.md`](PREFLIGHT.md). Decision log: **DEC-031**.
 
 ### Phase 2 firmware slices (after this pin)
 
-1. Pending buffer + native constrain→pending-ops bridge (source view immutable; no seal/undo yet).
-2. Stop seal + undo bundling + restore gate.
-3. Append-path evaluation wiring / reverse-tick retirement (may overlap Phase 3).
+**PAUSED (2026-08-12).** Do not implement C→A pending-buffer → OverdubPass+EditPass until the unified-pass architecture pin lands.
+
+See §20 and [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md).
+
+---
+
+# 20. Architecture refinement — unify input mechanisms vs pass storage
+
+## Decision (process)
+
+**Stop Phase 2 C→A firmware** before introducing a pending overdub buffer that seals into `OverdubPass` + `EditPass` as if that dual seal were the final architecture.
+
+## Hypothesis (user)
+
+Live MIDI overdub and note editing are two **input mechanisms** that produce the same canonical operations:
+
+```text
+Add / Shorten / Hide
+```
+
+The pass should represent **what changed**. The interaction mechanism represents **how** the change was produced. These should not require separate pass types long-term.
+
+```text
+input (MIDI | note editor)
+        │
+        ▼
+canonical geometry
+        │
+        ▼
+Add / Shorten / Hide
+        │
+        ▼
+pending session changes
+        │
+        ▼
+committed canonical pass
+        │
+        ▼
+undo
+```
+
+Session ≠ pass. `overdubSourceView` remains a session baseline. Multi-wrap evaluate-on-insert remains. Capture-only duplicate / restore heuristics must not be a second overlap engine.
+
+## Code review finding (storage)
+
+Audit ([`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md)):
+
+- **`OverdubPass` / `EditPass` are true storage families today** (chunks vs Create/Update/Delete; two-phase materialize; separate undo kinds; capture wire vs EPT3).
+- **Shared Add/Shorten/Hide geometry across input mechanisms is validated** and remains the resolution goal.
+- **Removing both types in this change is not validated** without superseding `timeline-passes` and designing SD/undo migration.
+
+## Required user pin before Phase 2 resumes
+
+| Option | Meaning |
+|--------|---------|
+| **G2** | Resume DEC-031 transitional dual seal (geometry unified; storage dual) |
+| **G1** | Geometry + source-view lookup only; delay seal |
+| **U1** | Park seal; open unified committed-pass OpenSpec (schema/undo/materialize) |
+
+Until pinned: no pending-overdub-buffer firmware, no `OverdubPassAdded.editPassIds` companion seal, no mid-session EditPass writes.
