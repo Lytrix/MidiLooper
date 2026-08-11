@@ -2,50 +2,50 @@
 
 Long overdub after loop wrap (`session_20260811_183525`) shows a sustained `Capture append failed (duplicate)` storm (191×, 0× `pool_alloc`) that starves the CAP ring and freezes the display. Capture today uses `isDuplicateCaptureEvent` with a reverse-tick early-out that assumes append order is tick-monotonic — false after wrap.
 
-That path is not a complete overlap model. Overdub must resolve newly inserted notes against **one immutable source pass** using the same note-overlap rules as NOTE_EDIT (`NoteGeometryResolver` / `edit-session-action-geometry`), accumulating consequences on a **new overdubPass**, without inventing capture-only duplicate semantics or `lastSeenTick` authority.
+That path is not a complete overlap model. Overdub must resolve newly inserted notes against a stable **`overdubSourceView`** using the same note-overlap rules as NOTE_EDIT, and commit an **`overdubPass` that is a complete delta** (Add plus Shorten/Remove of source notes) — closer to the existing `editPass` model than to a deduplication cache.
 
 ## What Changes
 
-- Normative **two-pass** overdub overlap model: immutable source pass → per-note overlap evaluation → ops on pending/new `overdubPass`.
-- **Evaluate on insert** during one overdub session (including after every loop wrap); session still ends as **one** `commitCapturePass()` / **one** overdub undo.
-- Reuse **NoteGeometryResolver** / constrained-geometry / `EditSessionAction` encoding patterns for Shorten / Hide / Add — source pass not mutated in place.
-- Explicit **source-pass identity**: pre-session canonical note geometry as one immutable chunk/window view (named in design).
-- Replace capture-only append-order dedup as the semantic authority; wrap-safe **source-pass candidate lookup** (183525 performance track).
-- Behavior-preserving deny-log / CAP throttle so verification survives wrap (orthogonal).
+- Establish **`overdubSourceView`** at overdub start (`Loop` provides; `Track` lifecycle triggers): materialize-aware, semantically stable for the session (not a “loop freeze”).
+- **Evaluate on insert** across wraps against that same view; session still one `commitCapturePass` / one undo.
+- **`overdubPass` complete delta:** Add + Shorten + Remove/Hide of source notes; source material immutable.
+- Reuse constrained-geometry / `EditSessionAction` semantics (not a capture-only overlap policy).
+- Wrap-safe **candidate lookup** into the source view (183525 performance framing); physical backing not prescribed.
+- Phase 1 = source view + native tests only; later phases wire resolve/encode/early-out; deny-log throttle separate if needed.
 
 ## Non-goals
 
-- Per-wrap undo / new pass-per-wrap grouping
-- Persistence overlap resolution, Phase 5 recovery, overlay picker, admit API
+- Per-wrap undo / FrozenPass / FrozenGeometry domain nouns
+- Persistence overlap resolution, Phase 5 recovery, overlay, admit API
 - Changing DEC-020 mid-pass sealed-chunk writer
 - New global note index mandated before chunk/window audit
 - `lastSeenTick` as semantic authority
-- Critical reclaim / `pool_alloc` policy (183525 falsified reclaim for these denies)
+- Critical reclaim / `pool_alloc` policy
+- Bundling all 183525 fixes into Phase 1
 
 ## Capabilities
 
 ### New Capabilities
 
-- `overdub-pass-overlap-resolution`: two-pass overdub overlap contract, session vs evaluation boundaries, source-pass immutability, per-note evaluate-on-insert, encoding of consequences on `overdubPass`, candidate-lookup constraints, parity with note-edit overlap policy
+- `overdub-pass-overlap-resolution`: `overdubSourceView` contract; evaluate-on-insert; complete overdubPass delta; candidate-lookup constraints; note-edit geometry parity; persistence boundary
 
 ### Modified Capabilities
 
-- `timeline-passes`: clarify that loop wrap does not create a pass/undo; overdub session remains one `overdubPass` / undo unit while overlap evaluation may run many times within the session (no change to pass kinds or storage families)
-- `edit-session-action-geometry`: extend applicability so overdub overlap decisions SHALL follow the same constrained-geometry / action semantics for equivalent note geometry (overdub remains a separate apply/encode owner for the pending overdubPass — not NOTE_EDIT session store)
+- `timeline-passes`: wrap does not create pass/undo; session remains one `overdubPass` / undo while evaluation may run many times
+- `edit-session-action-geometry`: overdub overlap decisions SHALL follow the same constrained-geometry / action semantics for equivalent note geometry (separate apply target for pending overdub delta)
 
 ## Impact
 
-- Firmware (implementation phases): `Loop` / `LoopCapture`, `TrackCaptureInput`, overlap apply encoding onto pending overdub pass; candidate lookup via existing materialize / chunk-window APIs; `NoteGeometryResolver` reuse
-- Related: [`capture-pass-boundary-materialization`](../capture-pass-boundary-materialization/) Q16 NoteMinLength — design must reconcile capture-tier min-length with edit geometry min-length
-- Evidence: [`captures/session_20260811_183525.log`](../../../captures/session_20260811_183525.log); plan [`.cursor/plans/wrap_duplicate_display_freeze_c7075cd6.plan.md`](../../../.cursor/plans/wrap_duplicate_display_freeze_c7075cd6.plan.md)
+- Firmware: `Loop` (source view + later delta encode), `Track` overdub lifecycle, capture input; geometry helpers; native tests
+- Related: parked `capture-pass-boundary-materialization` Q16 min-length globals
+- Evidence: [`captures/session_20260811_183525.log`](../../../captures/session_20260811_183525.log); [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../../../docs/Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)
 - Guides: [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md), [`NAMING.md`](../../../docs/Authority/NAMING.md)
-- Verification: native matrix (duplicate / overlap / wrap re-eval / source immutability); device wrap+bar41 after lookup; `pio test -e native`
-- Persistence tracks A/B remain parallel and non-blocking for **docs-only** propose; firmware apply must not share a session with Phase 5 / overlay impl
+- Verification: Phase 1 native source-view tests; later device wrap+bar41; `pio test -e native`
 
 ## Primary architectural invariant
 
-> A newly inserted overdub note is resolved incrementally against the immutable note geometry of one source pass. Overlap consequences belong to the new overdub pass. One overdub session may perform many such evaluations across multiple loop wraps while remaining one undoable overdub operation.
+> Each overdub session has a stable, materialize-aware `overdubSourceView` established at start. Newly inserted notes are resolved against that view (including across wraps). The source is never destructively modified. The resulting `overdubPass` records the complete delta (additions plus source shorten/remove). The session remains one overdub pass/undo under the current undo model.
 
 ## Per-phase review
 
-[ARCHITECTURE-REVIEW.md](./ARCHITECTURE-REVIEW.md) — architecture + implementation gates each phase.
+[ARCHITECTURE-REVIEW.md](./ARCHITECTURE-REVIEW.md)

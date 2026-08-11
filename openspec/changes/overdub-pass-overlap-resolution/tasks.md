@@ -4,31 +4,35 @@
 - [x] 1.2 Point CURRENT_WORK / PROJECT_STATE at `overdub-pass-overlap-resolution` as proposed (docs; non-blocking to persistence)
 - [x] 1.3 Add `docs/Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md` linking this OpenSpec and `183525` evidence
 - [x] 1.4 Record Stage 5a-3 note: `183525` append WARNs are `duplicate` (reclaim hypothesis falsified for that class)
+- [x] 1.5 Refine OpenSpec: `overdubSourceView` naming, complete delta, Phase 1 = view + tests only
 
-## 2. Phase 1 — Source-pass lookup + deny throttle
+## 2. Phase 1 — overdubSourceView + native tests
 
 - [ ] 2.1 Architecture gate Phase 1 posted in session (ARCHITECTURE-REVIEW)
-- [ ] 2.2 Pin API that freezes/exposes pre-session canonical source view at overdub start (audit `beginOverdubSession`)
-- [ ] 2.3 Implement wrap-safe source-pass candidate lookup via `CommittedEventRange` / materialize (no append-order reverse-tick authority)
-- [ ] 2.4 Throttle duplicate/deny WARN and `append,deny` CAP during storms
-- [ ] 2.5 Native tests: high-then-low store order still finds source candidates; wrap phase re-lookup
-- [ ] 2.6 `pio test -e native`
-- [ ] 2.7 Implementation review Phase 1 checklist
+- [ ] 2.2 Implement establish/clear `overdubSourceView` at overdub start (`Loop` provides; `Track` lifecycle triggers)
+- [ ] 2.3 Ensure view is materialize-aware (includes `editPasses`; not bare CER when edits active)
+- [ ] 2.4 Native tests: view stable across simulated wraps; expected geometry exposed; source immutability
+- [ ] 2.5 Native tests: candidate lookup into the view (wrap-safe; high-then-low capture order does not break lookup)
+- [ ] 2.6 Do **not** wire view into `appendCaptureEventWithResult` accept/reject in this phase
+- [ ] 2.7 `pio test -e native`
+- [ ] 2.8 Implementation review Phase 1 checklist
 
-## 3. Phase 2 — Canonical overlap → overdubPass ops
+## 3. Phase 2 — Canonical overlap → overdubPass delta
 
-- [ ] 3.1 Architecture gate Phase 2 posted; PREFLIGHT if encode ownership unclear
-- [ ] 3.2 On insert, obtain shorten/hide/add decisions from `NoteGeometryResolver` / `resolveConstrainedGeometry` semantics
-- [ ] 3.3 Accumulate ops on pending overdub pass; keep source pass immutable
-- [ ] 3.4 Reconcile Q16 capture min-length with shared `noteMinLengthTicks` globals (document + tests)
-- [ ] 3.5 Native matrix: duplicate, overlap shorten/cover, min-length boundary, multi-wrap same-phase re-eval, source immutability, edit-path parity
-- [ ] 3.6 Ensure session still commits one `overdubPass` / one undo at stop
-- [ ] 3.7 `pio test -e native`
-- [ ] 3.8 Implementation review Phase 2 checklist
+- [ ] 3.1 Architecture gate Phase 2 posted; pin encode target (design Open Q4); PREFLIGHT if needed
+- [ ] 3.2 On insert, obtain shorten/hide/add decisions from `resolveConstrainedGeometry` / action semantics
+- [ ] 3.3 Accumulate complete delta on pending overdub pass; keep source view immutable
+- [ ] 3.4 Replace invalid reverse-tick early-out; efficient wrap-safe candidate lookup into `overdubSourceView`
+- [ ] 3.5 Reconcile Q16 capture min-length with shared `noteMinLengthTicks` globals (document + tests)
+- [ ] 3.6 Native matrix: duplicate, overlap shorten/cover, min-length, multi-wrap re-eval, source immutability, edit-path parity
+- [ ] 3.7 Session still commits one `overdubPass` / one undo at stop
+- [ ] 3.8 `pio test -e native`
+- [ ] 3.9 Implementation review Phase 2 checklist
 
 ## 4. Phase 3 — Retire capture dedup authority + device verify
 
-- [ ] 4.1 Demote or remove `isDuplicateCaptureEvent` as semantic authority (no contradictory policy left)
-- [ ] 4.2 Device capture past wrap + bar 41: continuous DFRAME, OLED updating
-- [ ] 4.3 Update Stage 5 / wrap bugfix / CURRENT_WORK closeout
-- [ ] 4.4 Implementation review Phase 3; ready for `/opsx:archive` when gates pass
+- [ ] 4.1 Demote or remove `isDuplicateCaptureEvent` as semantic authority
+- [ ] 4.2 Optional separate commit: deny WARN/CAP throttle if RING still floods (observability only)
+- [ ] 4.3 Device capture past wrap + bar 41: continuous DFRAME, OLED updating
+- [ ] 4.4 Update Stage 5 / wrap bugfix / CURRENT_WORK closeout
+- [ ] 4.5 Implementation review Phase 3; ready for `/opsx:archive` when gates pass

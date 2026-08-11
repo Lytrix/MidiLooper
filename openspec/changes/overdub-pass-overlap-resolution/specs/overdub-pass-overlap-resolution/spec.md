@@ -1,31 +1,48 @@
 ## ADDED Requirements
 
-### Requirement: Two-pass overdub overlap model
+### Requirement: Stable overdubSourceView at session start
 
-The system SHALL resolve overdub note overlap as a two-pass transformation: (1) one immutable **source pass** providing pre-session canonical note geometry, and (2) one **overdub pass** that records Add / Shorten / Hide (or equivalent) consequences. The source pass SHALL NOT be destructively rewritten during overdub capture. The term **source pass** SHALL mean the single immutable pre-session canonical committed note-geometry view of the active loop slot, not an ad-hoc scan of arbitrary historical pass rows, last-appended events, or undo grouping.
+At the start of an overdub session the system SHALL establish an **`overdubSourceView`**: a materialize-aware canonical note-geometry view of the active loop slot that includes the effective result of committed record/overdub material and applicable **`editPasses`**. The view SHALL remain **semantically stable** for the lifetime of that overdub session. Establishing the view MUST NOT be described as freezing the loop. The physical backing (event vector, note spans, chunk/window view, or combination) is an implementation choice provided this semantic contract holds. The system MUST NOT use bare `CommittedEventRange` alone as the source when active `editPasses` exist.
 
-#### Scenario: Source remains unchanged when overdub shortens
+#### Scenario: Source view established at overdub start
 
-- **GIVEN** source geometry contains note A spanning a long interval
-- **WHEN** an overlapping shorter note B is inserted during overdub
-- **THEN** source pass geometry for A remains unchanged
-- **AND** the pending overdub pass records the shorten (or hide) consequence for A and the add for B per canonical overlap rules
+- **WHEN** an overdub session begins
+- **THEN** an `overdubSourceView` is established before overlap evaluation for newly inserted notes
+- **AND** that view includes materialize-aware geometry (including `editPasses` when present)
 
-#### Scenario: Covering note encodes removals on overdub pass
+#### Scenario: Source view stable across wraps
 
-- **GIVEN** source geometry contains short notes A, B, C
-- **WHEN** a long overlapping note X is inserted during overdub that covers them under canonical rules
-- **THEN** the overdub pass records remove/hide for A, B, C and add for X as required by those rules
-- **AND** the source pass rows remain unmodified
+- **GIVEN** an overdub session with an established `overdubSourceView`
+- **WHEN** the playhead wraps the loop one or more times during the session
+- **THEN** subsequent overlap evaluations still use the same semantic `overdubSourceView`
+- **AND** evaluation is not retargeted to a different pass identity solely because a wrap occurred
 
-### Requirement: Source-pass candidate lookup domain
+### Requirement: OverdubPass is a complete delta
 
-For each newly inserted overdub note that requires overlap evaluation, candidate lookup SHALL search the immutable source-pass geometry. Lookup MUST be wrap-safe and MUST NOT rely on capture append-order tick monotonicity. The system MUST NOT use `lastSeenTick`, last-appended event, current loop wrap as a materialization boundary, or undo grouping as a substitute for the source-pass search domain. Candidate lookup SHOULD use existing committed chunk/window intersection facilities where applicable.
+The committed `overdubPass` SHALL represent the **complete delta** required to transform the session’s `overdubSourceView` into the overdub result. The delta SHALL be able to include newly added notes and changes to source notes (shorten and remove/hide) according to canonical overlap rules. Source material SHALL NOT be destructively rewritten in place during the session.
+
+#### Scenario: Short note overlapping long source note
+
+- **GIVEN** `overdubSourceView` contains note A spanning a long interval
+- **WHEN** overlapping shorter note B is inserted and resolved during overdub
+- **THEN** source geometry for A remains unchanged in the source view
+- **AND** the overdub delta records Shorten (or Hide) for A and Add for B as required by canonical rules
+
+#### Scenario: Long note covering multiple short source notes
+
+- **GIVEN** `overdubSourceView` contains short notes A, B, C
+- **WHEN** long covering note X is inserted and resolved under canonical rules
+- **THEN** the overdub delta records Remove/Hide for A, B, C and Add for X as required
+- **AND** the source view itself is not rewritten
+
+### Requirement: Source-view candidate lookup domain
+
+For each newly inserted overdub note that requires overlap evaluation, candidate lookup SHALL search the session’s `overdubSourceView`. Lookup MUST be wrap-safe and MUST NOT rely on capture append-order tick monotonicity. The system MUST NOT use `lastSeenTick`, last-appended event, current loop wrap as a materialization boundary, or undo grouping as a substitute for the source-view search domain. Candidate lookup SHOULD prefer existing committed chunk/window facilities where applicable. Optimization MUST NOT reduce the semantic candidate domain.
 
 #### Scenario: High-then-low append order still finds source candidates
 
 - **GIVEN** the pending capture store contains high loop-phase ticks followed by low loop-phase ticks after wrap
-- **WHEN** a new note is inserted at a low loop-phase tick that overlaps source geometry
+- **WHEN** a new note is inserted at a low loop-phase tick that overlaps source-view geometry
 - **THEN** candidate lookup still finds the relevant source notes
 - **AND** evaluation does not terminate solely because a reverse walk of append order encountered a lower tick
 
@@ -36,18 +53,18 @@ For each newly inserted overdub note that requires overlap evaluation, candidate
 
 ### Requirement: Evaluate on insert across wraps
 
-During an overdub session, every newly inserted note that can overlap source material SHALL be evaluated when it is inserted. A loop wrap SHALL NOT suppress or defer that evaluation merely because the same normalized loop phase was evaluated earlier in the session.
+During an overdub session, every newly inserted note that can overlap source-view material SHALL be evaluated when it is inserted. A loop wrap SHALL NOT suppress or defer that evaluation merely because the same normalized loop phase was evaluated earlier in the session.
 
 #### Scenario: Same phase re-evaluated on later wrap
 
-- **GIVEN** an overdub session inserts note A at phase P during wrap 1 and evaluates it
+- **GIVEN** an overdub session inserts note A at phase P during wrap 1 and evaluates it against `overdubSourceView`
 - **WHEN** the session inserts note A again at phase P during wrap 2
-- **THEN** overlap evaluation runs again against the source pass
+- **THEN** overlap evaluation runs again against the same `overdubSourceView`
 - **AND** wrap 2 insertion is not skipped as “already handled”
 
 ### Requirement: Session commit remains one overdubPass
 
-An overdub session (`start overdub` through `stop overdub` / `commitCapturePass`) SHALL produce exactly one committed `overdubPass` and one corresponding overdub undo unit under the current `timeline-passes` model, regardless of how many loop wraps or per-note evaluations occurred. A loop wrap SHALL NOT create a pass or undo unit.
+An overdub session (`start overdub` through `stop overdub` / `commitCapturePass`) SHALL produce exactly one committed `overdubPass` and one corresponding overdub undo unit under the current `timeline-passes` model, regardless of how many loop wraps or per-note evaluations occurred. A loop wrap SHALL NOT create a pass or undo unit. Undoing the overdub pass SHALL remove its delta (additions and source-note transformations), exposing the previous materialized state.
 
 #### Scenario: Multi-wrap session one undo
 
@@ -58,7 +75,7 @@ An overdub session (`start overdub` through `stop overdub` / `commitCapturePass`
 
 ### Requirement: Note-edit overlap policy parity
 
-For the same source note geometry and the same incoming note geometry, overdub overlap resolution SHALL apply the same shorten / hide / min-length decisions as NOTE_EDIT geometry resolution (`NoteGeometryResolver` / `resolveConstrainedGeometry` semantics). Overdub MAY use a different apply/encode target (pending overdub pass) than `NoteEditSession.store`, but MUST NOT invent a contradictory overlap policy. Exact duplicate handling SHALL be treated as one outcome of that flow, not as a separate capture-only semantic model.
+For the same source note geometry and the same incoming note geometry, overdub overlap resolution SHALL apply the same shorten / hide / min-length decisions as NOTE_EDIT geometry resolution (`resolveConstrainedGeometry` semantics). Overdub MAY use a different apply/encode target for the pending overdub delta than `NoteEditSession.store`, but MUST NOT invent a contradictory overlap policy. Exact duplicate handling SHALL be one outcome of that flow, not a separate capture-only semantic model.
 
 #### Scenario: Equivalent geometry same shorten decision
 
@@ -72,16 +89,26 @@ Persistence, deferred save, mid-pass seal, load, and recovery MUST NOT invent, r
 
 #### Scenario: Load does not invent shorten
 
-- **WHEN** a loop is loaded from SD after an overdub that shortened a source note via overdub-pass ops
+- **WHEN** a loop is loaded from SD after an overdub that shortened a source note via overdub-pass delta
 - **THEN** persistence reconstructs committed passes without performing a new geometric overlap resolve
 - **AND** musical outcome matches the committed pass content
 
 ### Requirement: Shared minimum note length globals
 
-Overdub overlap hide/shorten decisions that depend on minimum retained note length SHALL use `Config::noteMinLengthTicks` and `Config::noteMinLengthRemoveEnabled` (the same globals used by NOTE_EDIT constrained geometry). Capture-tier pair sanity that removes pairs shorter than the minimum SHALL use those same tick globals.
+Overdub overlap hide/shorten decisions that depend on minimum retained note length SHALL use `Config::noteMinLengthTicks` and `Config::noteMinLengthRemoveEnabled` (the same globals used by NOTE_EDIT constrained geometry). The system MUST NOT introduce an overdub-specific minimum-length constant. Capture-tier pair sanity that removes pairs shorter than the minimum SHALL use those same tick globals.
 
 #### Scenario: Boundary uses shared threshold
 
 - **GIVEN** `noteMinLengthTicks` is N and remove-enabled is true
 - **WHEN** overlap resolution would leave a source note shorter than N
 - **THEN** the note is hidden/removed according to constrained-geometry rules using threshold N
+
+### Requirement: Ownership of overdubSourceView lifetime
+
+`Track` SHALL own overdub session lifecycle that triggers establish/clear of the source view. `Loop` SHALL own providing the canonical materialized loop state used as `overdubSourceView`. The system MUST NOT introduce a new top-level Manager for this view.
+
+#### Scenario: Lifecycle trigger without new Manager
+
+- **WHEN** overdub starts and later stops
+- **THEN** `overdubSourceView` is established and cleared under Track lifecycle + Loop state ownership
+- **AND** no new top-level Manager type is required for the view
