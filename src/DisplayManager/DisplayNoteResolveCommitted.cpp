@@ -83,6 +83,11 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
             trackIndex == livePlaybackDisplayTrack_ &&
             liveMergePlaybackRevision_ == loop.playbackRevision;
+        // RC5f: STOPPED must use the same incremental paths as deferred PLAYING — otherwise
+        // transport/play stop falls into dirty-cache window gather (174742 ~0.9s DFRAME gap).
+        const bool incrementalCommittedDisplay =
+            DisplayWindowUtils::preferIncrementalCommittedDisplay(deferVisualRebuild,
+                                                                  track.isStopped());
 
         // RC5b: only a clean visualCache may authorize committed display after a revision bump.
         // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
@@ -94,9 +99,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // PLAYING / stopped-recording with clean cache: prefer window filter (RC5d) over
-        // full-vector assign every frame. Dirty cache falls through to preserved handoff.
-        if (deferVisualRebuild && visualCacheAuthoritative) {
+        // Clean cache: prefer window filter (RC5d/RC5f) over full-vector assign every frame.
+        // Dirty cache falls through to preserved handoff.
+        if (incrementalCommittedDisplay && visualCacheAuthoritative) {
             if (avoidFullVisualRebuild ||
                 loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
                 uint32_t windowStart = 0;
@@ -116,14 +121,16 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // RC5a/RC5b: revision-matched preserved frame stays authority while visualCache is dirty.
-        if (deferVisualRebuild && preservedHandoffAuthority) {
+        // RC5a/RC5b/RC5f: revision-matched preserved frame stays authority while visualCache is dirty.
+        if (incrementalCommittedDisplay && preservedHandoffAuthority) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             return liveDisplayNotes;
         }
         // Long loops: bounded committed window before any preserved live-frame fallback.
         // Deferred save must not keep capture-suffix / playhead-tail rows as authority
         // (session_20260811_013056: 1872 visualCache + 1011 capturePreview).
+        // When STOPPED/PLAYING already had incremental authority above, dirty-cache gather here
+        // is recovery only (no preserved frame / cold context).
         if (avoidFullVisualRebuild ||
             loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
             uint32_t windowStart = 0;

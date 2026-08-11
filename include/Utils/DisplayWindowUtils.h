@@ -69,6 +69,12 @@ inline bool committedDisplayVisualCacheAuthoritative(bool visualCacheDirty,
     return !visualCacheDirty && visualCacheNonempty;
 }
 
+/// RC5f: window filter / revision-matched preserve apply while PLAYING defers rebuild
+/// or after transport stop (TRACK_STOPPED). Dirty-cache gather must not run on the stop stack.
+inline bool preferIncrementalCommittedDisplay(bool deferVisualRebuild, bool trackStopped) {
+    return deferVisualRebuild || trackStopped;
+}
+
 /// Overdub committed-window reuse: never treat committedCount==0 as a hit (would resize empty).
 inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_t liveNoteCount) {
   return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;

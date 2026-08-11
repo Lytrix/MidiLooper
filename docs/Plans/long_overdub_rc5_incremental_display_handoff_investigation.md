@@ -1,6 +1,7 @@
 # RC5 — Incremental committed-display handoff
 
-**Status:** RC5a–RC5d shipped; device verify PASS for overdub→PLAYING handoff; STOPPED-path follow-up open  
+**Status:** RC5a–RC5f shipped; device verify PASS for overdub→PLAYING; STOPPED handoff pending device verify  
+
 **Parent:** [`long_overdub_record_tail_wrap_display_bugfix.md`](long_overdub_record_tail_wrap_display_bugfix.md) (RC4f–RC4i)  
 **Related:** [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md) (RC2)  
 **Persistence dependency:** [`long_overdub_stage5a3_critical_reclaim_verification_refinement.md`](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) (5a-3)
@@ -304,6 +305,8 @@ Full-loop gather/reconstruct remains the existing recovery path when no preserve
 | **RC5b** | `resolveDisplayNotesCommitted` — `committedDisplayVisualCacheAuthoritative`; dirty cache never overwrites revision-matched preserved frame |
 | **RC5c** | Overdub-stop adopt: `visualCache.setNotes(liveDisplayNotes)` + clear dirty; no sync full-loop gather on stop |
 | **RC5d** | PLAYING + clean cache → `resolveWindowedDisplayNotes` filter path (cache-hit reuse); not full-vector copy every frame |
+| **RC5e** | Overdub→STOPPED (+ in-edit fold→STOPPED): same `refreshViewportAfterOverdubStop` promote as →PLAYING |
+| **RC5f** | STOPPED uses incremental committed display path (`preferIncrementalCommittedDisplay`) |
 
 ---
 
@@ -316,7 +319,7 @@ Full-loop gather/reconstruct remains the existing recovery path when no preserve
 | Loop wrap during overdub | Record tail visible (RC4f guard) |
 | Overview minimap | Full-loop density; not window-only |
 | `#CAP` / `DFRAME` after overdub→PLAYING | No multi-second gap — **PASS** for that path |
-| Transport / play stop → STOPPED | **OPEN** — see RC5 follow-up below (`174742`) |
+| Transport / play stop → STOPPED | **RC5e/f shipped** — device verify pending (was OPEN on `174742`) |
 
 Build gates: `pio test -e native` 994/994; `pio run -e teensy41-capture-serial` SUCCESS; commit `dc2bffa`.
 
@@ -364,12 +367,14 @@ So yes — the same promote/preserve model applies to any transition into STOPPE
 | State transition change? | **NO** — display sync scheduling only |
 | Stop-path seal/commit? | Unchanged |
 
-### Proposed next slice (not implemented in this commit)
+### Implementation shipped (RC5e / RC5f)
 
 | ID | Work |
 |----|------|
-| **RC5e** | `stopOverdubbingToStopped` (+ in-edit fold → STOPPED if needed): `refreshViewportAfterOverdubStop` before `emitDisplayCaptureSnapshot` |
-| **RC5f** | STOPPED resolve: allow revision-matched clean `visualCache` window filter and preserved handoff without requiring `deferVisualRebuild` (PLAYING-only gate) |
+| **RC5e** | `stopOverdubbingToStopped` + in-edit fold → STOPPED: `refreshViewportAfterOverdubStop` before snapshot emit |
+| **RC5f** | `preferIncrementalCommittedDisplay(deferVisualRebuild, track.isStopped())` — clean-cache window filter + revision-matched preserve under STOPPED |
+
+Device verify: repeat transport stop during/after overdub; expect no ~1 s `DFRAME` gap and `visualCache` adopted (not stuck mid-idle count like 768→793).
 
 ---
 
