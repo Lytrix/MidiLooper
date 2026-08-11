@@ -48,6 +48,11 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     logger.logTrackEvent("Overdubbing stopped", currentTick);
     logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
                 static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
+    const uint32_t storagePhaseTickAtStop =
+        (loop.loopLengthTicks > 0)
+            ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
+            : 0;
+    displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
     emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
     logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                         MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -155,6 +160,11 @@ void Track::stopOverdubbing() {
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.displayEventCountHint()),
               TrackUndo::getUndoCount(*this));
 
+  const uint32_t storagePhaseTickAtStop =
+      (loop.loopLengthTicks > 0)
+          ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
+          : 0;
+  displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
   logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");

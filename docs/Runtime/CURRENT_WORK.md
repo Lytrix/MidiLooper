@@ -2,22 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (long capture follow-up RC3)
+Last updated: 2026-08-11 (long capture follow-up RC2)
 
 ---
 
 ## Now implementing
 
-### Long record / overdub display — RC3 USB Host button delivery active
+### Long record / overdub display — RC2 post-stop handoff active
 
 **Branch:** `bugfix/long-overdub-display-freeze`
-**Plans:** [`midi_button_usb_host_note_off_delivery_bugfix.md`](../Plans/midi_button_usb_host_note_off_delivery_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
+**Plans:** [`long_overdub_post_stop_display_handoff_bugfix.md`](../Plans/long_overdub_post_stop_display_handoff_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
-`021117` proves missed host NoteOn (`Orphan note-off … short press`) and Serial MIDI DEBUG flood
-with zero mid-pass `#CAP`. RC3: bounded USB Host `read()` drain, discard orphan NoteOff (no
-synthetic short press), gate inbound MIDI DEBUG on capture builds. RC1 preview identity remains
-uncommitted local work; RC2 post-stop handoff and Stage 5 stay separate.
+RC3 button delivery shipped (`1e85871`); RC1 open-sidecar shipped (`ad5dbde`). RC2: windowed
+committed resolve before deferred-save live fallback; clamp preserve to committed prefix; bind
+live playback slot; overdub stop shares `refreshViewportAfterRecordStop`. HITL gate next; Stage 5
+append/canonicalization remains separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

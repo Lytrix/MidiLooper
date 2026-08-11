@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -47,6 +48,11 @@ bool segmentHasNotes(const NoteUtils::DisplayNoteVec& notes, uint32_t loopLength
 /// Place detailed window so playheadTick sits near the horizontal center (clamped to loop).
 uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength,
                                     uint32_t loopLength);
+
+/// Post-stop handoff: keep only the committed compose prefix (drop capture suffix / tails).
+inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t committedBaseCount) {
+    return committedBaseCount < liveNoteCount ? committedBaseCount : liveNoteCount;
+}
 
 TickInterval makeViewportInterval(uint32_t windowStart, uint32_t windowLength);
 

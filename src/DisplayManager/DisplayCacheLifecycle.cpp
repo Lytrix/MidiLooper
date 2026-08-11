@@ -55,12 +55,25 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
 
 void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
                                                    uint32_t storagePhaseTickInLoop) {
+    // Capture-layer rows and playhead tails must not become post-stop display authority.
+    // Keep only the committed prefix (may be empty after live record); committed resolve
+    // replaces it through the bounded window path.
+    const size_t committedBaseNoteCount = liveDisplayCacheCommittedNoteCount_;
+    const uint8_t trackIndex = resolveTrackIndex(track);
     invalidateLiveDisplayCache(true);
     const Loop& loop = track.getLoop(displaySlot);
     if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+    } else {
+        liveDisplayNotes.resize(DisplayWindowUtils::clampPreservedDisplayNoteCount(
+            liveDisplayNotes.size(), committedBaseNoteCount));
+    }
+    if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
-        livePlaybackDisplayTrack_ = resolveTrackIndex(track);
+        livePlaybackDisplayTrack_ = trackIndex;
+    } else {
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
     }
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());

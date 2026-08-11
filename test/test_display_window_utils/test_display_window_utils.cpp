@@ -115,6 +115,13 @@ void test_resolve_centered_window_start() {
                            DisplayWindowUtils::resolveCenteredWindowStart(31u * bar, windowLength, loopLength));
 }
 
+void test_clamp_preserved_display_note_count_drops_capture_suffix() {
+  // session_20260811_013056: 1872 committed + 1011 capture must not preserve as 2883.
+  TEST_ASSERT_EQUAL_UINT32(1872u, DisplayWindowUtils::clampPreservedDisplayNoteCount(2883u, 1872u));
+  TEST_ASSERT_EQUAL_UINT32(0u, DisplayWindowUtils::clampPreservedDisplayNoteCount(1011u, 0u));
+  TEST_ASSERT_EQUAL_UINT32(64u, DisplayWindowUtils::clampPreservedDisplayNoteCount(64u, 128u));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -125,5 +132,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_intersects_window_inside_and_outside);
   RUN_TEST(test_filter_display_notes_to_window);
   RUN_TEST(test_resolve_centered_window_start);
+  RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   return UNITY_END();
 }
