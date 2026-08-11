@@ -116,6 +116,35 @@ int findPreferredWrapPreviewNote(const CapturePreview& preview, const MidiEvent&
   return preferredIndex;
 }
 
+bool findPreferredPreviewHeadOffTick(const MidiEventVec& events,
+                                     const NoteUtils::DisplayNote& note,
+                                     const CapturePreviewNoteState& state,
+                                     uint32_t loopLength, uint32_t& headOffTickOut) {
+  if (loopLength == 0) {
+    return false;
+  }
+  for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOff() || evt.channel != state.channel ||
+        evt.data.noteData.note != state.pitch) {
+      continue;
+    }
+    uint32_t headOffTick = evt.tick;
+    if (headOffTick >= loopLength) {
+      headOffTick %= loopLength;
+    }
+    if (headOffTick >= loopLength - 1) {
+      continue;
+    }
+    if (NoteUtils::isPreferredWrapTailForHeadOff(
+            note.startTick, headOffTick, events, state.pitch, state.channel,
+            loopLength)) {
+      headOffTickOut = headOffTick;
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 LOOP_INTERNAL_MEM void applyCaptureEventToPreview(CapturePreview& preview, const MidiEvent& evt,
@@ -182,11 +211,12 @@ LOOP_INTERNAL_MEM void applyCaptureEventToPreview(CapturePreview& preview, const
     if (it->note != evt.data.noteData.note) {
       continue;
     }
-    if (it->endTick != it->startTick) {
-      continue;
-    }
     const size_t noteIndex =
         static_cast<size_t>(std::distance(preview.notes.begin(), it.base()) - 1);
+    if (noteIndex >= preview.noteStates.size() ||
+        !preview.noteStates[noteIndex].open) {
+      continue;
+    }
     if (evt.tick < it->startTick && noteIndex < preview.noteStates.size() &&
         preview.noteStates[noteIndex].channel != evt.channel) {
       continue;
@@ -234,6 +264,17 @@ LOOP_INTERNAL_MEM void rebuildCapturePreviewFromStore(Loop& loop) {
       state.open = true;
       loop.capturePreview.openNoteIndices.push_back(
           static_cast<uint32_t>(noteIndex));
+    }
+    uint32_t preferredHeadOffTick = 0;
+    if (findPreferredPreviewHeadOffTick(flat, note, state, loop.loopLengthTicks,
+                                        preferredHeadOffTick)) {
+      state.wrapHeld = true;
+      state.hasPreferredHeadOff = true;
+      state.preferredHeadOffTick = preferredHeadOffTick;
+    } else if (state.open) {
+      const NoteUtils::OpenNoteOn open{note.note, note.velocity, note.startTick};
+      state.wrapHeld =
+          NoteUtils::isWrapHeldOpenNote(flat, open, loop.loopLengthTicks);
     }
   }
   loop.capturePreview.changedNoteIndices.clear();
