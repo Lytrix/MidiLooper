@@ -760,3 +760,29 @@ The OpenSpec should ultimately establish these requirements:
 11. **The physical representation of `overdubSourceView` is an implementation decision, provided the semantic contract is preserved.**
 
 This should replace the earlier "materialized all previous passes" wording and should be the basis for the OpenSpec design phase.
+
+---
+
+# 19. Open Q4 — Encode pin (C → A) + PREFLIGHT
+
+**User decision (2026-08-12):** Option **1 — C → A**.
+
+Full audit: [`PREFLIGHT.md`](PREFLIGHT.md). Decision log: **DEC-031**.
+
+| Topic | Pin |
+|-------|-----|
+| Mid-session | Pending overdub-operation **buffer** (session state on `Loop`, not a pass); no mid-session `EditPass` writes |
+| Seal Adds | Existing `OverdubPass` chunks |
+| Seal Shorten/Hide | Existing `EditPass` rows via `Loop::saveNoteEditPass` |
+| Extend `OverdubPass` struct? | **NO** for v1 |
+| Logical undo | One `OverdubPassAdded` with `passId` + companion `editPassIds` (field already on `UndoEntry`) |
+| Grouping identity | `OverdubPass.id` — no new overdub-op identifier |
+| Commit order | Publish OverdubPass → save EditPass rows → push undo |
+| `shouldRestoreCommittedOverlapOnOverdubStop` | **Not authoritative** when `overdubSourceView` established; do not `removeOpenCaptureNoteOn` on that path |
+| Persistence | No loop SD schema bump; GUS must round-trip `editPassIds` on `OverdubPassAdded` |
+
+### Phase 2 firmware slices (after this pin)
+
+1. Pending buffer + native constrain→pending-ops bridge (source view immutable; no seal/undo yet).
+2. Stop seal + undo bundling + restore gate.
+3. Append-path evaluation wiring / reverse-tick retirement (may overlap Phase 3).

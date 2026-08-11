@@ -19,15 +19,17 @@
 
 ## 3. Phase 2 — Canonical overlap → overdubPass delta
 
-- [ ] 3.1 Architecture gate Phase 2 posted; pin encode target (design Open Q4); PREFLIGHT if needed
-- [ ] 3.2 On insert, obtain shorten/hide/add decisions from `resolveConstrainedGeometry` / action semantics
-- [ ] 3.3 Accumulate complete delta on pending overdub pass; keep source view immutable
-- [ ] 3.4 Replace invalid reverse-tick early-out; efficient wrap-safe candidate lookup into `overdubSourceView`
-- [ ] 3.5 Reconcile Q16 capture min-length with shared `noteMinLengthTicks` globals (document + tests)
-- [ ] 3.6 Native matrix: duplicate, overlap shorten/cover, min-length, multi-wrap re-eval, source immutability, edit-path parity
-- [ ] 3.7 Session still commits one `overdubPass` / one undo at stop
-- [ ] 3.8 `pio test -e native`
-- [ ] 3.9 Implementation review Phase 2 checklist
+- [x] 3.1 Architecture gate Phase 2; Open Q4 = C→A; PREFLIGHT + DEC-031 (undo/`editPassIds`, restore gate, commit order)
+- [ ] 3.2 Slice 1: session pending-op buffer + bridge from `resolveConstrainedGeometry` → pending Add/Shorten/Hide (no mid-session EditPass writes)
+- [ ] 3.3 Keep `overdubSourceView` immutable; pending buffer survives wraps; clear on discard/commit
+- [ ] 3.4 Native matrix (buffer level): Add, Shorten, Hide, multi-source, multi-wrap, source immutability
+- [ ] 3.5 Slice 2: stop seal — OverdubPass then EditPass rows then one `OverdubPassAdded` (`passId` + `editPassIds`); GUS + PassReclaim
+- [ ] 3.6 Gate off `shouldRestoreCommittedOverlapOnOverdubStop` remove path when `overdubSourceView` established
+- [ ] 3.7 Replace invalid reverse-tick early-out; wire wrap-safe lookup into `overdubSourceView` on insert path
+- [ ] 3.8 Reconcile Q16 capture min-length with shared `noteMinLengthTicks` globals (document + tests)
+- [ ] 3.9 Native/integration: one overdubPass + one undo reverses Adds and Shorten/Hide; edit-path parity
+- [ ] 3.10 `pio test -e native`
+- [ ] 3.11 Implementation review Phase 2 checklist
 
 ## 4. Phase 3 — Retire capture dedup authority + device verify
 

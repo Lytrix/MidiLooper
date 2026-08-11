@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (overdubSourceView Phase 1 shipped)
+Last updated: 2026-08-12 (DEC-031 overdub encode C→A PREFLIGHT)
 
 ---
 
 ## Current branch
 
-**Active work:** OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) — Phase 1 shipped (`overdubSourceView` + native tests); next Phase 2 encode pin. Evidence [`183525`](../../captures/session_20260811_183525.log).
+**Active work:** OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) — Phase 1 shipped; Phase 2 PREFLIGHT + DEC-031 (C→A); next pending-op buffer firmware. Evidence [`183525`](../../captures/session_20260811_183525.log).
 
 **Merged to `dev`:** PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) — long-overdub display RC4–RC5, Stage 5a-1/5a-2, live-record tick-0.
 

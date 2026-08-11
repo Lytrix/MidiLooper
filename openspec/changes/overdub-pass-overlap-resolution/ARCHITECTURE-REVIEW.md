@@ -102,20 +102,20 @@
 
 ### Phase 2 — Wire canonical overlap into overdubPass ops
 
-**Scope:** On insert, run constrained-geometry decisions; accumulate Shorten/Hide/Add on pending overdub pass; source immutable; session still one commit/undo.
+**Scope:** On insert, run constrained-geometry decisions; accumulate Add/Shorten/Hide in **session pending-op buffer**; source immutable; at stop seal into OverdubPass chunks + EditPass rows; one `OverdubPassAdded` undo.
 
-**Must pin before coding (architecture check):** encode target — `OverdubPass` is chunk-IDs-only today; choose A/B/C in design Open Q4; use free `resolveConstrainedGeometry` (not session-gated `NoteGeometryResolver::resolve`); coexistence with `shouldRestoreCommittedOverlapOnOverdubStop`; DEC-020 mid-pass stays raw capture bytes.
+**Pins (2026-08-12):** Open Q4 = **C → A**. PREFLIGHT + DEC-031. Undo = `OverdubPassAdded` + `editPassIds`. Restore path gated off when `overdubSourceView` established. Free `resolveConstrainedGeometry` (not session-gated `NoteGeometryResolver::resolve`). DEC-020 mid-pass stays raw capture bytes.
 
 #### Architecture gate
 
 | Question | Required |
 |----------|----------|
-| Ownership change? | **NO** if decisions reuse constrain/build helpers and encode on existing `Loop` capture/commit path; **YES → STOP** if new Manager or dual writers of committed passes |
-| State transition change? | **NO** — still evaluate during session, commit at stop; **YES → STOP** if wrap becomes pass boundary |
-| Formal trigger? | **YES → PREFLIGHT** if encode adds persistent pass model / undo kind / schema; else re-evaluate |
-| Behavior-preserving? | **NO** vs today’s capture-only duplicate — intentional semantic alignment with NOTE_EDIT |
-| Reuse | YES — `resolveConstrainedGeometry` / `buildEditSessionActions` (not fake NOTE_EDIT session) |
-| Phase scope | Loop capture + geometry resolve bridge + encode; native matrix |
+| Ownership change? | **NO** — Loop session buffer + existing `saveNoteEditPass` / `TrackUndo` |
+| State transition change? | **NO** — evaluate during session, commit at stop; wrap ≠ pass |
+| Formal trigger? | **YES — PREFLIGHT done** ([PREFLIGHT.md](PREFLIGHT.md)): undo apply/reclaim/GUS for companion ids; no new undo kind; no OverdubPass schema |
+| Behavior-preserving? | **NO** vs today’s capture-only duplicate — intentional NOTE_EDIT geometry alignment |
+| Reuse | YES — `resolveConstrainedGeometry` → EditPass-shaped pending ops; seal via `saveNoteEditPass` |
+| Phase scope | Slice 1: pending buffer + native bridge. Slice 2: seal + undo + restore gate |
 
 #### Implementation review checklist
 
