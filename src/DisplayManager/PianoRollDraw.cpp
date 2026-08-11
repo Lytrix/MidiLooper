@@ -497,9 +497,12 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     if (loopLength > 0) {
         const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
         const Loop& loop = track.getLoop(displaySlot);
-        // Overview minimap spans the full loop; detailed paint uses window/gather notes (~18 bars).
+        // Overview minimap spans the full loop. Use fully built visualCache when clean;
+        // while dirty, `notes` carries the authoritative committed/capture span (not window
+        // filtered). Stale partial visualCache must not paint the minimap (170314).
         const DisplayNoteVec& overviewDensityNotes =
-            (useBoundedWindow && !loop.visualCache.notes.empty()) ? loop.visualCache.notes : notes;
+            (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) ? loop.visualCache.notes
+                                                                         : notes;
 
         int minPitch = 127;
         int maxPitch = 0;

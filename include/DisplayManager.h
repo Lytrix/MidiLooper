@@ -224,6 +224,8 @@ private:
     uint32_t liveWindowGatherLength_ = 0;
     uint32_t liveWindowGatherLoopLength_ = 0;
     bool liveWindowGatherValid_ = false;
+    /// Overdub committed layer came from window gather (not full visualCache).
+    bool liveDisplayCommittedFromWindowGather_ = false;
     /// When window paint was filtered from `visualCache`, matches `visualCache.revision`.
     uint32_t liveWindowVisualCacheRevision_ = UINT32_MAX;
 

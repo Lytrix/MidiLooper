@@ -129,6 +129,19 @@ void test_overdub_committed_window_cache_rejects_zero_committed_count() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(301u, 300u));
 }
 
+void test_overdub_committed_promote_to_full_visual_cache() {
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(true, false, true, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(true, true, true, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(true, false, false, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(true, false, true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(false, false, true, true));
+}
+
 void test_paint_window_inside_gather_detects_follow_exit() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   // First gather: bars 0..18 (16 + 2 margin). Follow window at bar 0 fits; at bar 8 does not.
@@ -184,6 +197,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_centered_window_start);
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
+  RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_requires_fully_built);
   RUN_TEST(test_format_loop_length_bars_info_strip);

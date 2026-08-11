@@ -86,6 +86,17 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
+        // PLAYING / stopped-recording: rolling window is owned by drawPianoRoll's window
+        // filter. Window gather here returns a fixed tick band; auto-follow then filters again
+        // and the roll goes blank until a full cache rebuild (session_20260811_124133).
+        if (deferVisualRebuild && !loop.visualCache.notes.empty()) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            liveWindowGatherValid_ = false;
+            livePlaybackDisplaySlot_ = displaySlot;
+            livePlaybackDisplayTrack_ = trackIndex;
+            return liveDisplayNotes;
+        }
         // Long loops: bounded committed window before any preserved live-frame fallback.
         // Deferred save must not keep capture-suffix / playhead-tail rows as authority
         // (session_20260811_013056: 1872 visualCache + 1011 capturePreview).
