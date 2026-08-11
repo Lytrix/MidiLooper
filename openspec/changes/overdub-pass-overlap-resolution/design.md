@@ -1,170 +1,762 @@
-## Context
+# OpenSpec Refinement — Overdub Source View, Pass Delta, and Overlap Resolution
 
-Capture append today rejects events via `isDuplicateCaptureEvent` / `eventsEquivalent` within `DUPLICATE_TICK_TOLERANCE`, walking `capture.store` backward with `if (evt.tick < lo) break`. After loop wrap, append order is high ticks then low ticks, so the early-out is invalid and post-wrap dense MIDI produces a `duplicate` storm (`183525`).
+## Decision
 
-NOTE_EDIT already owns canonical overlap via `NoteGeometryResolver` → `resolveConstrainedGeometry` → `buildEditSessionActions` → `applyEditSessionActions` ([`edit-session-action-geometry`](../../specs/edit-session-action-geometry/spec.md)). Overdub does not call that path.
+The overdub overlap model is now refined around the existing **pass + edit-pass architecture**.
 
-[`timeline-passes`](../../specs/timeline-passes/spec.md) defines pass kinds and commit boundaries. This design does **not** change wrap→pass/undo grouping.
+The important distinction is:
 
-Persistence (DEC-020 mid-pass, overlay, Phase 5) stays orthogonal — see Non-Goals.
+* an overdub session may span multiple loop wraps;
+* every newly inserted note must be evaluated during the session;
+* evaluation is against **one stable canonical source view** for that overdub session;
+* the source material is immutable from the perspective of the overdub operation;
+* the resulting `overdubPass` contains the **complete delta** required to transform that source state into the overdub result;
+* that delta includes both newly added notes and changes to existing material such as **shorten** and **remove**;
+* the overdub session currently produces one `overdubPass` / one undo unit when stopped.
 
-## Goals / Non-Goals
+This is closer to the existing `editPass` model than to a generic "deduplication cache".
 
-**Goals:**
+---
 
-- Stable **`overdubSourceView`** at overdub start: materialize-aware canonical note geometry for the session.
-- Per-note evaluate-on-insert across wraps against that same view; one session → one `commitCapturePass` / one undo.
-- **`overdubPass` is a complete delta**: Add plus Shorten/Remove (Hide) of source notes — closer to `editPass` than to a dedup cache.
-- Same overlap decisions as NOTE_EDIT for equivalent geometry.
-- Wrap-safe candidate lookup preferring existing chunk/window infrastructure; physical backing of the source view is an implementation choice.
-- Clear persistence boundary.
+# 1. Source View Lifetime
 
-**Non-Goals:**
+## Decision: establish the source view at overdub start
 
-- Per-wrap undo or pass-per-wrap.
-- “Freezing the loop” or inventing FrozenPass / FrozenGeometry domain nouns.
-- Persistence performing overlap; Phase 5 recovery; overlay; admit API.
-- Changing DEC-020 mid-pass sealed-chunk writer semantics.
-- Mandating a new global note index before chunk/window audit proves insufficient.
-- `lastSeenTick` / last-append / undo grouping as semantic search domain.
-- Critical reclaim policy changes.
-- Combining all `183525` fixes into Phase 1.
+At:
 
-## Decisions
+```text
+Loop::beginCapture(Overdub)
+TrackUndo::beginOverdubSession
+```
 
-### D1 — `overdubSourceView` (not “freeze”)
+the system establishes the canonical materialized source state against which the overdub session will be resolved.
 
-**Decision:** At overdub start (`Loop::beginCapture(Overdub)` / `TrackUndo::beginOverdubSession`), the system establishes a stable semantic view called **`overdubSourceView`**.
+Preferred semantic name:
 
-Do **not** call this a freeze. The loop is not frozen; committed geometry is not generally frozen by `beginCapture(Overdub)` today. The view is simply the **stable semantic baseline for this overdub session**.
+**`overdubSourceView`**
+
+Do **not** call this a "freeze".
+
+The loop is not frozen and committed geometry is not generally frozen by `beginCapture(Overdub)` today.
+
+The source view is a **stable semantic view for the lifetime of one overdub session**.
 
 ```text
 begin overdub
-      → establish overdubSourceView (stable for session)
-      → (wraps + per-note resolve…)
+      │
+      ▼
+establish overdubSourceView
+      │
+      │ stable for entire session
+      ▼
+┌─────────────────────────────┐
+│ overdub session              │
+│                             │
+│ new note → resolve          │
+│ new note → resolve          │
+│ loop wrap                   │
+│ new note → resolve          │
+│ loop wrap                   │
+│ new note → resolve          │
+└─────────────────────────────┘
+      │
+      ▼
 stop overdub
-      → commit overdubPass (complete delta)
+      │
+      ▼
+commit overdubPass
 ```
 
-**Stability:** Every inserted note in the session evaluates against the **same** semantic baseline. Result must not depend on unrelated materialization changes mid-session.
+### Stability invariant
 
-**Content (semantic contract):** Materialize-aware canonical note geometry including effective `editPasses`. Must **not** use bare `CommittedEventRange` alone when edits exist.
+Every note inserted during the same overdub session must be evaluated against the same semantic source state.
 
-**Physical representation (not prescribed):** Implementation may use materialized `MidiEvent` vector, reconstructed note spans, chunk/window-backed views, or a combination — provided the semantic contract holds. Prefer existing chunk/window infrastructure over a new global index.
+The result must not depend on unrelated materialization changes occurring later in the session.
 
-**Ownership:**
+Therefore:
 
-| Owner | Role |
-|-------|------|
-| **Track** | Overdub session lifecycle (`beginOverdubSession` … stop/commit) |
-| **Loop** | Provides/creates access to canonical materialized state → `overdubSourceView` |
+> **The overdub source view is established once for an overdub session and remains semantically stable until that session ends.**
 
-No new top-level Manager. Exact field/class placement deferred to smallest consistent design at implement time.
+This does **not** require a large standalone copy of all loop events. The implementation may use existing materialized/chunk/window infrastructure.
 
-**Naming:** Prefer `overdubSourceView`. Alternative if explicitly a snapshot object: `overdubSourceSnapshot`. Avoid `freeze*`, `FrozenPass`, `FrozenGeometry`.
+---
 
-**Alternatives rejected:** live rematerialize each insert as the v1 semantic baseline; last overdubPass only; pending capture as source; `lastSeenTick`; bare CER when `editPasses` active.
+# 2. What the Source View Represents
 
-### D2 — OverdubPass is a complete delta
+## Decision: define the semantic view, not the physical data structure
 
-**Decision:** Source material is never destructively rewritten. The committed `overdubPass` records the **complete delta** that transforms the source view into the overdub result:
+The OpenSpec must require a **materialize-aware canonical note view**.
 
-- **Add** — newly recorded notes
-- **Shorten** — changes to source notes
-- **Remove/Hide** — source notes made inactive by overlap
+It must include the effective result of the existing pass history relevant to the current canonical loop state, including `editPasses`.
 
-Reuse `EditSessionAction` / editPass patterns where applicable. `OverdubPass` today is chunk-IDs-only — encode placement is Open Q4 before Phase 2 firmware.
+It must therefore **not** simply use a bare:
 
-Examples: long A + short B → `Shorten(A)` + `Add(B)`; covering X over A,B,C → `Remove(A/B/C)` + `Add(X)` per canonical rules.
+```text
+CommittedEventRange
+```
 
-### D3 — Session vs evaluation boundary
+when edits affect the canonical result.
 
-| Boundary | Behavior |
-|----------|----------|
-| Overdub session | `start → wraps… → stop → commitCapturePass()` → one `overdubPass` + one undo |
-| Overlap evaluation | Every newly inserted overlapping note evaluated **on insert** |
-| Loop wrap | Not a pass/undo boundary; must not skip re-evaluation at repeated phase |
+Conceptually:
 
-### D4 — Overlap authority
+```text
+canonical pass history
+        │
+        ├── recordPass
+        ├── applicable overdubPasses
+        └── editPasses
+              │
+              ▼
+      canonical materialized state
+              │
+              ▼
+       overdubSourceView
+```
 
-Geometric policy: **`resolveConstrainedGeometry` / action-builder semantics** (NOTE_EDIT parity). Do not invent capture-only overlap policy.
+The important point is that `overdubSourceView` represents **the canonical musical state at the overdub-session boundary**.
 
-**Apply:** Pending overdub-pass delta owned on capture/commit side (`Loop` path), not `NoteEditSession.store`. Prefer free constrain/build helpers — do **not** open a fake NOTE_EDIT session (`NoteGeometryResolver::resolve` is session-gated).
+It is a stable view of that state, not a new lifecycle state for the loop.
 
-### D5 — Min-length
+### Physical representation remains open
 
-**v1:** Shared `Config::noteMinLengthTicks` / `noteMinLengthRemoveEnabled` (default `DEFAULT_NOTE_MIN_LENGTH_TICKS` = 12). No overdub-specific constant. Product 32nd/16th wording needs DEC if it should replace code defaults. Q16 capture pair-remove stays on capture tier with same globals.
+The implementation may use:
 
-### D6 — Phase 1 scope vs later `183525` work
+**A. Materialized `MidiEvent` representation**
 
-**Phase 1 (this refinement):**
+* closest to the current materialization path;
+* can reuse existing event materialization;
+* spans can be reconstructed.
 
-- Establish `overdubSourceView` at overdub start
-- Prove materialize-aware + stable across wraps
-- Native tests: source selection, candidate lookup into the view, source immutability
-- **Do not** wire into append accept/reject yet
-- **Do not** bundle reverse-tick early-out fix, full geometry resolve, or encode into Phase 1
+**B. Reconstructed note-span representation**
 
-**Later phases:**
+* directly matches `NoteGeometryResolver`;
+* efficient for overlap decisions;
+* avoids repeated event-to-span reconstruction.
 
-- Per-note overlap resolution + wrap-safe efficient lookup into the view
-- Replace invalid reverse-tick early-out
-- Encode Add/Shorten/Remove into overdubPass delta
-- Device verify `183525`
-- Deny-log throttle **separately** if RING still floods (observability only — not a semantic workaround)
+**C. Chunk/window-backed representation with span access**
 
-**183525 framing:** Efficient wrap-safe candidate lookup into the stable `overdubSourceView` for repeated per-note overlap evaluation — **not** “make duplicate detection faster.” Exact duplicate is one overlap outcome.
+* potentially best fit for bounded memory;
+* can preserve immutable source access;
+* may avoid copying the entire loop.
 
-### D7 — Persistence boundary
+**D. Combination**
 
-Persist sealed capture bytes and/or committed `overdubPass` per existing contracts. Persistence MUST NOT re-run geometry. Mid-pass seals remain capture bytes; overlap delta lives in RAM until `commitCapturePass`.
+Possible if profiling demonstrates a need.
 
-## Risks / Trade-offs
+The OpenSpec should **not prescribe one of these representations**.
 
-| Risk | Mitigation |
-|------|------------|
-| Dense MIDI CPU on evaluate-on-insert | Bounded chunk/window lookup; native perf fixtures |
-| Dual apply paths diverge | Shared constrain/build; parity tests |
-| Encode into chunk-only `OverdubPass` | Pin Q4 + PREFLIGHT before Phase 2 |
-| “Freeze” language invents domain noun | Use `overdubSourceView` only |
-| Half-policy if lookup wired to deny early | Phase 1 tests only; wire in later phase |
+The requirement is:
 
-## Migration Plan
+> The source view must provide materialize-aware immutable note geometry with efficient access to the candidate region required for overlap resolution.
 
-1. Phase 0 — OpenSpec + ARCHITECTURE-REVIEW (done; this refinement).
-2. **Phase 1** — Establish `overdubSourceView` + native source/lookup/immutability tests (no deny wiring).
-3. Phase 2 — Connect per-note resolve → accumulate delta; encode Add/Shorten/Remove; early-out retirement path.
-4. Phase 3 — Retire capture-store dedup as authority; device wrap+bar41; optional throttle if needed earlier as separate commit.
-5. Archive when gates pass.
+Prefer existing chunk/window infrastructure before introducing a new global index or cache.
 
-## Open Questions
+---
 
-1. **Exact Loop API names** for establish/clear/query `overdubSourceView` (placement audit at Phase 1 implement).
-2. **Backing representation v1** — events vs note spans vs hybrid (semantic contract fixed; pick smallest consistent design).
-3. **Live preview of pending delta** — `capturePreview` today is capture MIDI only; product pin for Phase 2.
-4. **Phase 2 encode target:** (A) companion `editPass` rows, (B) extend `OverdubPass` / pending-op buffer on `Loop`, (C) other — **PREFLIGHT** if new owner or dual writers. Cannot represent D2 with chunk IDs alone.
-5. **Product min-length 32nd/16th vs code default 12** — DEC if product wins; v1 = code globals.
-6. **`shouldRestoreCommittedOverlapOnOverdubStop`** coexistence once insert-time geometry exists.
-7. **DEC-020 mid-pass** remains raw capture MIDI while delta is RAM-only until commit.
+# 3. Ownership
 
-## Architecture invariants (refined)
+## Decision: Loop owns canonical source access; Track owns overdub lifecycle
 
-| Question | Decision |
-|----------|----------|
-| Loop frozen at overdub start? | **NO** |
-| Stable `overdubSourceView`? | **YES** |
-| Established at overdub start? | **YES** |
-| Semantically stable for session? | **YES** |
-| Includes `editPasses`? | **YES** |
-| Source mutated directly? | **NO** |
-| `overdubPass` only new notes? | **NO** — complete delta |
-| Can contain Shorten/Remove of source? | **YES** |
-| Evaluate each new overlapping note? | **YES** |
-| Multi-wrap session? | **YES** |
-| Wrap creates undo? | **NO** |
-| Stop creates overdubPass/undo? | **YES** |
-| `lastSeenTick` authority? | **NO** |
-| Source representation prescribed? | **NO** |
-| Prefer chunk/window infra? | **YES** |
-| Persistence resolves overlap? | **NO** |
-| New top-level Manager? | **NO** |
+There is a distinction between **canonical loop data ownership** and **overdub session lifecycle**.
+
+### Track
+
+Owns the overdub session lifecycle:
+
+```text
+beginOverdubSession()
+...
+end / commit overdub
+```
+
+### Loop
+
+Owns access to the canonical materialized loop state and therefore provides the source view required by the overdub session.
+
+Conceptually:
+
+```text
+Track
+  │
+  │ begin overdub
+  ▼
+Loop
+  │
+  ├── establish overdubSourceView
+  │
+  ▼
+stable canonical source
+```
+
+Do not introduce a new top-level manager merely to own this.
+
+The exact field/class placement should be determined during implementation after auditing existing materialization and capture ownership.
+
+### Naming
+
+Preferred:
+
+```text
+overdubSourceView
+```
+
+Possible alternative if implementation clearly creates a snapshot object:
+
+```text
+overdubSourceSnapshot
+```
+
+Avoid:
+
+```text
+freezeOverdubSourceGeometry
+freezePass
+FrozenPass
+FrozenGeometry
+```
+
+These introduce a domain concept that does not currently exist.
+
+---
+
+# 4. Pass Model
+
+The phrase **"previous materialized passes"** should not be used as the semantic definition.
+
+The relevant relationship is:
+
+```text
+canonical source state
+        │
+        │ overlap resolution
+        ▼
+new overdubPass
+```
+
+The source state is treated as immutable by the overdub operation.
+
+The new overdub pass records the delta required to produce the resulting canonical state.
+
+This mirrors the general edit-pass model.
+
+---
+
+# 5. `overdubPass` Is a Complete Delta
+
+An `overdubPass` is **not merely a container for newly recorded notes**.
+
+It must be capable of representing:
+
+1. newly added notes;
+2. shortening of existing source notes;
+3. removal/hiding of existing source notes;
+4. any other overlap consequences required by the canonical note-edit geometry rules.
+
+Conceptually:
+
+```text
+overdubPass
+├── additions
+│   └── newly recorded notes
+│
+├── shortenings
+│   └── changes to source notes
+│
+└── removals
+    └── source notes made inactive/removed
+```
+
+The exact representation should reuse the existing pass/edit mechanisms wherever possible.
+
+### Source immutability
+
+If the source contains:
+
+```text
+A ─────────────────────
+```
+
+and the overdub inserts:
+
+```text
+       B ────
+```
+
+the source remains unchanged:
+
+```text
+A ─────────────────────
+```
+
+The overdub pass contains the transformation:
+
+```text
+Shorten(A, ...)
+Add(B)
+```
+
+The source is therefore never destructively edited.
+
+---
+
+# 6. Overlap Examples
+
+## 6.1 Short note overlapping long note
+
+Source:
+
+```text
+A ─────────────────────
+```
+
+Incoming overdub note:
+
+```text
+       B ────
+```
+
+Resulting overdub delta:
+
+```text
+Shorten(A, ...)
+Add(B)
+```
+
+The exact shortening must be determined by the canonical note-overlap geometry.
+
+---
+
+## 6.2 Long note covering multiple short notes
+
+Source:
+
+```text
+A ──
+    B ──
+         C ──
+```
+
+Incoming overdub note:
+
+```text
+X ───────────────────────
+```
+
+Resulting overdub delta may be:
+
+```text
+Remove(A)
+Remove(B)
+Remove(C)
+Add(X)
+```
+
+according to the canonical overlap rules.
+
+The existing source pass remains unchanged.
+
+---
+
+## 6.3 Exact duplicate
+
+If the incoming note exactly duplicates source material, it is an overlap case whose resulting action is determined by the same canonical overlap semantics.
+
+It must **not** be implemented as a separate capture-only semantic policy.
+
+This is important for `183525`: duplicate detection is only one outcome of the broader overlap-resolution process.
+
+---
+
+# 7. Canonical Overlap Authority
+
+The overdub path should reuse the existing note-edit geometry flow rather than create a second overlap engine.
+
+The intended authority remains:
+
+```text
+NoteGeometryResolver
+       │
+       ▼
+constrained geometry
+       │
+       ▼
+EditSessionAction / equivalent canonical actions
+       │
+       ▼
+pass delta
+```
+
+The required invariant is:
+
+> **Given the same source note geometry and the same incoming note geometry, overdub overlap resolution must make the same geometric decision as the canonical note-edit flow.**
+
+This includes:
+
+* exact duplicate;
+* partial overlap;
+* shortening;
+* covering multiple notes;
+* removal;
+* minimum-length handling;
+* wrap-equivalent geometry.
+
+---
+
+# 8. Minimum Note Length
+
+Minimum note length remains part of the canonical geometry decision.
+
+Current code uses:
+
+```text
+Config::noteMinLengthTicks
+noteMinLengthRemoveEnabled
+```
+
+with the current default documented as:
+
+```text
+DEFAULT_NOTE_MIN_LENGTH_TICKS = 12
+```
+
+The product discussion has also referred to:
+
+* 32nd-note minimum existing-note length;
+* optionally 16th-note minimum when configured globally.
+
+These must be reconciled during OpenSpec design.
+
+The overdub path must **not** introduce an independent overdub-specific minimum-length rule.
+
+The effective global minimum-length policy should be shared with note editing.
+
+---
+
+# 9. Incremental Evaluation During Overdub
+
+A single overdub session may span multiple loop wraps.
+
+The overlap-evaluation boundary is **each newly inserted note**, not overdub stop.
+
+```text
+start overdub
+   │
+   ├── wrap 1
+   │    └── new note → evaluate
+   │
+   ├── wrap 2
+   │    └── new note → evaluate
+   │
+   ├── wrap 3
+   │    └── new note → evaluate
+   │
+   └── stop overdub
+        └── commit one overdubPass / undo
+```
+
+Every newly inserted note that can overlap existing material must therefore enter the canonical overlap flow.
+
+A loop wrap must not suppress subsequent evaluations.
+
+### Important semantic distinction
+
+The following are separate boundaries:
+
+| Boundary          | Meaning                               |
+| ----------------- | ------------------------------------- |
+| Loop wrap         | Changes capture tick/phase context    |
+| New inserted note | Triggers overlap evaluation           |
+| Overdub stop      | Ends the overdub session              |
+| Pass commit       | Stores the resulting overdub delta    |
+| Undo              | Reverts the logical overdub operation |
+
+A loop wrap does **not** currently create a new pass or undo.
+
+---
+
+# 10. Multi-Wrap Requirement
+
+Consider:
+
+```text
+loop:
+|---------------------------|
+
+overdub session:
+
+wrap 1:
+    A
+
+wrap 2:
+    A
+
+wrap 3:
+    A
+```
+
+Each newly inserted `A` must be evaluated.
+
+The implementation must not assume that evaluation in wrap 1 makes the corresponding phase irrelevant in wrap 2 or wrap 3.
+
+It must not reduce the semantic search to:
+
+* current wrap only;
+* most recent event;
+* most recent `(channel, note, type)` event;
+* events appended since the previous wrap.
+
+Candidate lookup may be optimized, but the semantic source domain must remain the stable `overdubSourceView`.
+
+---
+
+# 11. Undo Relationship
+
+The current undo boundary is the overdub recording session:
+
+```text
+initial record
+  └── recordPass + initial undo
+
+overdub session #1
+  ├── wrap 1
+  ├── wrap 2
+  ├── wrap 3
+  └── stop
+       └── overdubPass + one undo
+
+overdub session #2
+  ├── wrap 1
+  └── stop
+       └── overdubPass + another undo
+```
+
+The overdub pass therefore owns the complete delta produced during that session.
+
+That includes:
+
+```text
+Add
+Shorten
+Remove
+```
+
+not just additions.
+
+Undoing the overdub pass should therefore restore the previous canonical materialized state by removing/reversing the overdub pass delta.
+
+Any future change to per-wrap undo granularity is a separate pass/undo design decision and is not part of this OpenSpec.
+
+---
+
+# 12. Why `lastSeenTick` Is Not Valid
+
+The previously proposed:
+
+```text
+(channel, note, type) → lastSeenTick
+```
+
+must not become semantic authority.
+
+It cannot correctly represent:
+
+* long-vs-short overlap;
+* partial overlap;
+* one new note covering multiple source notes;
+* shortening;
+* removal;
+* source geometry;
+* wrap-equivalent geometry;
+* the complete overdub-pass delta.
+
+It also risks conflating events that belong to different semantic passes.
+
+Candidate indexes may be introduced for performance, but they must remain an implementation of the source-view query rather than a replacement for its semantics.
+
+---
+
+# 13. Candidate Lookup
+
+The intended runtime flow is:
+
+```text
+new incoming note
+       │
+       ▼
+overdubSourceView
+       │
+       ▼
+bounded chunk/window candidate lookup
+       │
+       ▼
+candidate note spans
+       │
+       ▼
+canonical NoteGeometryResolver
+       │
+       ▼
+canonical actions
+       │
+       ▼
+overdubPass delta
+```
+
+The optimization target is therefore:
+
+> **Efficient candidate discovery for repeated per-note overlap evaluation.**
+
+It is not merely:
+
+> "Make duplicate detection faster."
+
+The implementation should first audit existing chunk/window/materialization infrastructure.
+
+Do not prescribe a new index structure in the OpenSpec unless implementation analysis shows that existing mechanisms cannot satisfy the required bounded lookup.
+
+---
+
+# 14. `183525` Reframing
+
+The capture still establishes the immediate performance bug.
+
+Current logic effectively assumes:
+
+```text
+reverse capture-store walk
+    └── break when evt.tick < lo
+```
+
+This is only valid when reverse traversal is monotonic in tick.
+
+After loop wrap, append order can be:
+
+```text
+... high loop ticks
+0
+1
+2
+3
+```
+
+so the assumption is invalid.
+
+The result is an unnecessarily broad scan for each incoming note, producing the observed duplicate storm and display starvation.
+
+The fix should therefore be framed as:
+
+> **Provide efficient, wrap-safe candidate lookup into the stable overdub source view for repeated per-note overlap evaluation.**
+
+Do not implement a semantic `lastSeenTick` shortcut.
+
+Do not weaken the candidate domain to make the scan cheaper.
+
+---
+
+# 15. Phase 1
+
+Phase 1 should establish the architecture before attempting the complete `183525` fix.
+
+### Phase 1 scope
+
+* establish `overdubSourceView` at overdub start;
+* verify it is materialize-aware;
+* verify it includes the effective `editPasses` result;
+* verify it remains stable across multiple loop wraps;
+* verify source material is not mutated;
+* add native tests for source selection and candidate lookup;
+* establish parity with canonical note-edit geometry where host-testable.
+
+### Later phase
+
+Then:
+
+* connect per-note overdub overlap resolution;
+* implement efficient candidate lookup;
+* remove the invalid reverse-tick early-out;
+* route overlap decisions through canonical note geometry;
+* encode Add / Shorten / Remove into the new overdub pass;
+* verify `183525` on hardware;
+* throttle duplicate diagnostics separately.
+
+### Interim safety
+
+If CAP/RING flooding prevents useful observation of `DFRAME`, a behavior-preserving deny-log throttle may be implemented separately.
+
+It must not change overlap semantics.
+
+---
+
+# 16. Persistence Boundary
+
+Persistence is not responsible for overlap resolution.
+
+The persistence layer may persist the appropriate sealed capture material and/or the resulting committed pass according to its existing contract.
+
+It must not:
+
+* resolve note overlaps;
+* shorten notes;
+* remove notes;
+* invent overdub state during load;
+* re-run geometry resolution during save/recovery.
+
+The separation remains:
+
+```text
+runtime capture
+      │
+      ▼
+overlap resolution
+      │
+      ▼
+committed overdubPass
+      │
+      ▼
+persistence
+```
+
+---
+
+# 17. Updated Architecture Invariants
+
+| Question                                                   | Decision                 |
+| ---------------------------------------------------------- | ------------------------ |
+| Is the loop itself frozen at overdub start?                | **NO**                   |
+| Is there a stable overdub source view?                     | **YES**                  |
+| Is it established at overdub start?                        | **YES**                  |
+| Does it remain semantically stable throughout the session? | **YES**                  |
+| Is it materialize-aware?                                   | **YES**                  |
+| Does it include effective `editPasses`?                    | **YES**                  |
+| Is source material mutated directly by overdub resolution? | **NO**                   |
+| Does `overdubPass` contain only new notes?                 | **NO**                   |
+| Can `overdubPass` contain shorten/remove changes?          | **YES**                  |
+| Is every newly inserted overlapping note evaluated?        | **YES**                  |
+| Can one overdub span multiple wraps?                       | **YES**                  |
+| Does a loop wrap create an undo?                           | **NO, current behavior** |
+| Does overdub stop create the overdub pass/undo?            | **YES**                  |
+| Is `lastSeenTick` semantic authority?                      | **NO**                   |
+| Is candidate lookup optimized?                             | **YES**                  |
+| Is the source representation prescribed?                   | **NO**                   |
+| Should existing chunk/window infrastructure be preferred?  | **YES**                  |
+| Does persistence perform overlap resolution?               | **NO**                   |
+| Is a new top-level manager required?                       | **NO**                   |
+
+---
+
+# 18. Normative Core
+
+The OpenSpec should ultimately establish these requirements:
+
+1. **Each overdub session establishes one stable, materialize-aware `overdubSourceView` at overdub start.**
+2. **The source view remains semantically stable for the lifetime of that overdub session.**
+3. **Every newly inserted note that can overlap existing material is evaluated during the session.**
+4. **Every evaluation queries the same source view, including across loop wraps.**
+5. **Overlap decisions reuse the canonical note-edit geometry semantics.**
+6. **The source material is never destructively modified by the overdub operation.**
+7. **The resulting `overdubPass` records the complete delta required to transform the source state into the overdub result, including additions, shortenings, and removals.**
+8. **The current overdub session remains one logical `overdubPass` / undo operation regardless of the number of loop wraps.**
+9. **Candidate lookup may use chunk/window/index optimizations, but optimization must not reduce the semantic candidate domain.**
+10. **Persistence does not perform overlap resolution.**
+11. **The physical representation of `overdubSourceView` is an implementation decision, provided the semantic contract is preserved.**
+
+This should replace the earlier "materialized all previous passes" wording and should be the basis for the OpenSpec design phase.

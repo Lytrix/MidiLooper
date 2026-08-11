@@ -133,6 +133,18 @@ struct Loop {
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
+  /// Establish materialize-aware overdubSourceView for the active overdub session.
+  void establishOverdubSourceView();
+  void clearOverdubSourceView();
+  bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
+  uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
+  const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
+  /// Wrap-safe event candidates from the session source view (not capture append order).
+  void gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
+                                             uint32_t windowLength) const;
+  /// Wrap-safe note-span candidates reconstructed from the session source view.
+  void gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out, uint32_t windowStart,
+                                            uint32_t windowLength) const;
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);
   /// Remove the open capture note-on for channel/note (overdub overlap restore on stop).
@@ -225,6 +237,11 @@ struct Loop {
 
   PassesMaterializedEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
+
+  /// Stable materialize-aware source for one overdub session (not a loop freeze).
+  SessionMidiEventVec overdubSourceViewEvents_;
+  uint32_t overdubSourceViewLoopLengthTicks_ = 0;
+  bool overdubSourceViewEstablished_ = false;
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();

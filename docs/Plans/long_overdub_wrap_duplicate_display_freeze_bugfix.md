@@ -1,6 +1,6 @@
 # Long overdub wrap — source-view overlap / display freeze
 
-**Status:** OpenSpec refined — Phase 1 = `overdubSourceView` + native tests  
+**Status:** Phase 1 shipped — next Phase 2 encode pin  
 **Branch:** `feature/overdub-pass-overlap-resolution`  
 **OpenSpec:** [`openspec/changes/overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/)  
 **Evidence:** [`session_20260811_183525.log`](../../captures/session_20260811_183525.log)  
@@ -16,19 +16,18 @@
 | CAP | `RING,overflow` ~632 s gap mid-overdub |
 | 5a-3 reclaim | **Falsified** for this failure class |
 
-## Normative model (OpenSpec)
+## Phase 1 shipped
 
-- **`overdubSourceView`** established at overdub start (not a “loop freeze”)
-- Materialize-aware, stable for the session; includes `editPasses`
-- Per-note evaluate-on-insert across wraps against that view
-- **`overdubPass` = complete delta** (Add + Shorten/Remove); source immutable
-- One session → one pass / one undo
-- `183525` fix framing: efficient wrap-safe **candidate lookup into the source view** — not “faster duplicate detection”
+- `Loop::establishOverdubSourceView` / `clearOverdubSourceView` on overdub capture lifecycle
+- Materialize via `gatherCommittedEvents` (editPass-aware)
+- Wrap-safe `gatherOverdubSourceViewEventsInWindow` / `gatherOverdubSourceViewNotesInWindow`
+- Native: `test/test_overdub_source_view/`
+- Append accept/reject **not** wired to the view yet
 
 ## Debugging boundary
 
 ```
-Phase 1: overdubSourceView + native tests (no deny wiring)
+Phase 1 (done): overdubSourceView + native tests (no deny wiring)
 Phase 2+: resolve → delta encode; reverse-tick early-out retirement; lookup efficiency
 Separate: deny WARN/CAP throttle if RING floods
 Persistence / Critical reclaim: out of scope
@@ -36,6 +35,6 @@ Persistence / Critical reclaim: out of scope
 
 ## Next
 
-1. Architecture gate Phase 1
-2. Implement establish/clear `overdubSourceView`
-3. Native tests; then Phase 2 encode pin (design Open Q4)
+1. Phase 2 architecture gate + Open Q4 encode pin
+2. Wire `resolveConstrainedGeometry` → complete overdubPass delta
+3. Device verify wrap + bar 41 (`183525` class)
