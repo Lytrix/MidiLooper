@@ -54,6 +54,21 @@ inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t commit
     return committedBaseCount < liveNoteCount ? committedBaseCount : liveNoteCount;
 }
 
+/// Overdub-stop handoff (RC5a): drop temporary playhead-tail rows only — never strip the
+/// capture-preview suffix. When compose base bookkeeping is cold (0), keep the full frame.
+inline size_t preservedOverdubStopDisplayNoteCount(size_t liveNoteCount, size_t composeBaseCount) {
+    if (composeBaseCount == 0) {
+        return liveNoteCount;
+    }
+    return composeBaseCount < liveNoteCount ? composeBaseCount : liveNoteCount;
+}
+
+/// Clean visualCache may authorize committed display; dirty/stale cache must not (RC5b).
+inline bool committedDisplayVisualCacheAuthoritative(bool visualCacheDirty,
+                                                     bool visualCacheNonempty) {
+    return !visualCacheDirty && visualCacheNonempty;
+}
+
 /// Overdub committed-window reuse: never treat committedCount==0 as a hit (would resize empty).
 inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_t liveNoteCount) {
   return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;

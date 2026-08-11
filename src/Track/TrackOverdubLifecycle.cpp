@@ -52,7 +52,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
         (loop.loopLengthTicks > 0)
             ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
             : 0;
-    displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
+    displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
     emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
     logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                         MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -164,7 +164,7 @@ void Track::stopOverdubbing() {
       (loop.loopLengthTicks > 0)
           ? tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks)
           : 0;
-  displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
+  displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
   logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");

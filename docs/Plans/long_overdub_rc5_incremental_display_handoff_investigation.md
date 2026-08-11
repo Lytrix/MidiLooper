@@ -1,6 +1,6 @@
 # RC5 — Incremental committed-display handoff
 
-**Status:** Investigation required before RC5c implementation  
+**Status:** RC5a–RC5d implemented (promote/adopt; full-loop gather retained as recovery only)  
 **Parent:** [`long_overdub_record_tail_wrap_display_bugfix.md`](long_overdub_record_tail_wrap_display_bugfix.md) (RC4f–RC4i)  
 **Related:** [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md) (RC2)  
 **Persistence dependency:** [`long_overdub_stage5a3_critical_reclaim_verification_refinement.md`](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) (5a-3)
@@ -226,17 +226,84 @@ RC5 implementation must answer:
 
 ---
 
+## Investigation findings (RC5c-investigation)
+
+### 1. `capturePreview` audit
+
+| Topic | Finding |
+|-------|---------|
+| Created | `Loop::appendCaptureEventWithResult` → `applyCaptureEventToPreview` (`LoopInternalColdHelpers.cpp`) |
+| Geometry | Same `NoteUtils::DisplayNote` fields as committed display (`note`, `velocity`, `startTick`, `endTick`); wrap splits into tail + head segments |
+| Note identity | `noteId` stays `kInvalidNoteId` — preview does not assign NoteIds. Paint-safe; note-edit identity is not the handoff consumer |
+| Ordering | Append order of closed notes; not a sorted full-loop reconstruct |
+| Wrap support | Yes — preferred wrap path + `WrapHeadSegment` head rows |
+| Become committed without reconstruct? | **Yes for display paint** — composed `liveDisplayNotes` already is `committed layer + capturePreview.notes` via `replaceCaptureLayer` / `synchronizeCaptureLayer` |
+| Discarded on commit | `capturePreview.clear()` in `commitPendingCapturePass` / `discardCapture` / `beginCapture` — after seal, promote must use the **already-composed** `liveDisplayNotes`, not re-read preview |
+
+Prior incremental-append design: [`multi_track_playback_pressure_closure_refinement.md`](multi_track_playback_pressure_closure_refinement.md); tail parity: [`long_overdub_capture_preview_tail_parity_bugfix.md`](long_overdub_capture_preview_tail_parity_bugfix.md).
+
+### 2. Overdub commit delta audit
+
+| Topic | Finding |
+|-------|---------|
+| Added/removed events | Commit seals capture chunks into an `OverdubPass`; no separate display-note delta API |
+| Affected NoteIds | Not exposed as a display delta at stop |
+| Affected tick range | Preview has `dirtyBars` / `changedNoteIndices` while capture is live; cleared with preview on commit |
+| `playbackRevision` | Bumped in seal/publish (`++playbackRevision`) + `markDisplayCachesStale()` |
+
+**Decision:** Do not invent a new delta owner. The composed display vector **is** the stop-time delta carrier (committed prefix + capture suffix already merged for paint).
+
+### 3. Simplest handoff test
+
+```text
+trim playhead tails → preserve liveDisplayNotes → promote into visualCache → match playbackRevision
+```
+
+Without `gatherCommittedEventsInWindow(0, loopLength)` + `reconstructDisplayNotes`.
+
+Temporary per-frame tails live beyond `liveDisplayCacheBaseNoteCount_`; `preservedOverdubStopDisplayNoteCount` drops those only.
+
+### 4. Hierarchy choice
+
+**Selected:** (1) Promote/adopt composed capture display notes into `visualCache` at overdub stop.  
+Full-loop gather/reconstruct remains the existing recovery path when no preserved frame exists (window gather / idle rebuild).
+
+### 5a-3 memory cross-check
+
+| Question | Answer |
+|----------|--------|
+| Avoid full-loop temporary allocation? | Yes — no gather buffer + reconstruct on the stop handoff path |
+| Avoid duplicating canonical MIDI? | Yes — adopts `DisplayNote`s only; chunk refs unchanged |
+| New long-lived full-loop representation? | No — writes the existing `visualCache.notes` slot |
+| Allocation on overdub stop? | One `DisplayNoteVec::assign` into `visualCache` (ExternalMemoryFirst); replaces prior cache contents |
+| During critical reclaim / deferred persistence? | Handoff does not allocate capture chunks or call reclaim |
+| Bounded under memory pressure? | Same capacity class as prior `visualCache`; does not grow chunk pool |
+| Steal chunk headroom? | No — display notes are not chunk-pool consumers |
+
+---
+
 ## Investigation acceptance checklist
 
-- [ ] Can `capturePreview` display notes become committed display notes without reconstruction?
-- [ ] If not, what information blocks direct promotion?
-- [ ] Can committed display be patched from overdub commit delta?
-- [ ] If not, can only the affected tick range be rebuilt?
-- [ ] Worst-case allocation for each approach?
-- [ ] Preferred approach avoids full-loop temporary materialization?
-- [ ] Preserves RC4f–RC4i correctness (wrap tail, rolling window, overview full-loop density)?
-- [ ] Compatible with pending 5a-3 critical-reclaim / persistence goal?
-- [ ] Full-loop reconstruction retained only as explicit fallback/recovery?
+- [x] Can `capturePreview` display notes become committed display notes without reconstruction?
+- [x] If not, what information blocks direct promotion? — `noteId` unset (paint OK); promote from composed `liveDisplayNotes` after preview clear
+- [x] Can committed display be patched from overdub commit delta? — No separate delta API; composed vector is the delta
+- [x] If not, can only the affected tick range be rebuilt? — N/A for chosen promote path
+- [x] Worst-case allocation for each approach? — Promote: one DisplayNote assign; full gather: events + reconstruct temps (fallback only)
+- [x] Preferred approach avoids full-loop temporary materialization?
+- [x] Preserves RC4f–RC4i correctness (wrap tail, rolling window, overview full-loop density)?
+- [x] Compatible with pending 5a-3 critical-reclaim / persistence goal?
+- [x] Full-loop reconstruction retained only as explicit fallback/recovery?
+
+---
+
+## Implementation shipped
+
+| Stage | Change |
+|-------|--------|
+| **RC5a** | `refreshViewportAfterOverdubStop` — no `clampPreservedDisplayNoteCount`; trim tails via `preservedOverdubStopDisplayNoteCount`; `stopOverdubbing` / in-edit fold call it |
+| **RC5b** | `resolveDisplayNotesCommitted` — `committedDisplayVisualCacheAuthoritative`; dirty cache never overwrites revision-matched preserved frame |
+| **RC5c** | Overdub-stop adopt: `visualCache.setNotes(liveDisplayNotes)` + clear dirty; no sync full-loop gather on stop |
+| **RC5d** | PLAYING + clean cache → `resolveWindowedDisplayNotes` filter path (cache-hit reuse); not full-vector copy every frame |
 
 ---
 
