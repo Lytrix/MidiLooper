@@ -443,6 +443,23 @@ SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t 
                 (unsigned)persistQueueDepth);
 }
 
+SC_MEM_ATTR void captureAppendDeny(const char* reason, uint16_t freeChunks, uint16_t usedChunks,
+                                   const char* pressure, uint8_t ch, uint8_t note, uint32_t tick,
+                                   uint8_t pendingPass) {
+  emitCapPrintf("#CAP,%lu,append,deny,%s,%u,%u,%s,%u,%u,%lu,%u\r\n", (unsigned long)micros(),
+                reason, (unsigned)freeChunks, (unsigned)usedChunks, pressure, (unsigned)ch,
+                (unsigned)note, (unsigned long)tick, (unsigned)pendingPass);
+}
+
+SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter,
+                             uint16_t passesReclaimed, uint16_t chunksReleased,
+                             uint32_t durationUs, const char* pressure, uint8_t transport) {
+  emitCapPrintf("#CAP,%lu,DIAG,reclaim,%u,%u,%u,%u,%lu,%s,%u\r\n", (unsigned long)micros(),
+                (unsigned)chunksFreeBefore, (unsigned)chunksFreeAfter, (unsigned)passesReclaimed,
+                (unsigned)chunksReleased, (unsigned long)durationUs, pressure,
+                (unsigned)transport);
+}
+
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount) {
   emitCapPrintf("#CAP,%lu,DIAG,timing,%s,%lu,%lu\r\n", (unsigned long)micros(), name,
                 (unsigned long)sumMicros, (unsigned long)sampleCount);

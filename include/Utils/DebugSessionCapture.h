@@ -81,6 +81,12 @@ SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value);
 SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t heapFreeBytes,
                                           uint16_t chunksFree, uint16_t persistQueueDepth);
+SC_MEM_ATTR void captureAppendDeny(const char* reason, uint16_t freeChunks, uint16_t usedChunks,
+                                   const char* pressure, uint8_t ch, uint8_t note, uint32_t tick,
+                                   uint8_t pendingPass);
+SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter,
+                             uint16_t passesReclaimed, uint16_t chunksReleased,
+                             uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
@@ -199,6 +205,13 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_UPDATE(tick, ticksPerBar)         DebugSessionCapture::update(tick, ticksPerBar)
 #define SC_MEMORY_PRESSURE(transition, heapFree, chunksFree, queueDepth) \
   DebugSessionCapture::memoryPressureTransition(transition, heapFree, chunksFree, queueDepth)
+#define SC_CAPTURE_APPEND_DENY(reason, freeChunks, usedChunks, pressure, ch, note, tick, pendingPass) \
+  DebugSessionCapture::captureAppendDeny(reason, freeChunks, usedChunks, pressure, ch, note, tick, \
+                                         pendingPass)
+#define SC_PASS_RECLAIM(chunksFreeBefore, chunksFreeAfter, passesReclaimed, chunksReleased, \
+                        durationUs, pressure, transport) \
+  DebugSessionCapture::passReclaim(chunksFreeBefore, chunksFreeAfter, passesReclaimed, \
+                                 chunksReleased, durationUs, pressure, transport)
 
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
 
@@ -255,5 +268,10 @@ inline void restartCaptureBootGrace() {}
 #define SC_CAPTURE_FLUSH(maxRecords)         ((void)0)
 #define SC_UPDATE(tick, ticksPerBar)         ((void)0)
 #define SC_MEMORY_PRESSURE(transition, heapFree, chunksFree, queueDepth) ((void)0)
+#define SC_CAPTURE_APPEND_DENY(reason, freeChunks, usedChunks, pressure, ch, note, tick, pendingPass) \
+  ((void)0)
+#define SC_PASS_RECLAIM(chunksFreeBefore, chunksFreeAfter, passesReclaimed, chunksReleased, \
+                        durationUs, pressure, transport) \
+  ((void)0)
 
 #endif  // SESSION_CAPTURE
