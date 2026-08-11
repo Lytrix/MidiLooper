@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (overdubSourceView Phase 1 shipped)
+Last updated: 2026-08-12 (Phase 2 PREFLIGHT / DEC-031 C→A encode pin)
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: 2026-08-11 (overdubSourceView Phase 1 shipped)
 **Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
 **Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
 
-**Now:** Phase 1 shipped — `overdubSourceView` establish/clear + wrap-safe lookup helpers + `test_overdub_source_view`. Append deny path unchanged. Next: Phase 2 architecture gate + encode pin (design Open Q4) before wiring resolve→delta. Parallel / non-blocking to persistence tracks A/B — do not mix apply sessions.
+**Now:** Phase 2 PREFLIGHT + **DEC-031** pinned (C→A). Next firmware slice 1: session pending-op buffer + `resolveConstrainedGeometry` → pending Add/Shorten/Hide + native matrix (no mid-session EditPass; seal/undo/restore gate in slice 2). See [`PREFLIGHT.md`](../../openspec/changes/overdub-pass-overlap-resolution/PREFLIGHT.md). Parallel / non-blocking to persistence tracks A/B — do not mix apply sessions.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 

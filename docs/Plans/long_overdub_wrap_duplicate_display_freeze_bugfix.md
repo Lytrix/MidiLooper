@@ -1,6 +1,7 @@
 # Long overdub wrap — source-view overlap / display freeze
 
-**Status:** Phase 1 shipped — next Phase 2 encode pin  
+**Status:** Phase 2 PREFLIGHT + DEC-031 (C→A) — next pending-op buffer  
+
 **Branch:** `feature/overdub-pass-overlap-resolution`  
 **OpenSpec:** [`openspec/changes/overdub-pass-overlap-resolution/`](../../openspec/changes/overdub-pass-overlap-resolution/)  
 **Evidence:** [`session_20260811_183525.log`](../../captures/session_20260811_183525.log)  
@@ -35,6 +36,6 @@ Persistence / Critical reclaim: out of scope
 
 ## Next
 
-1. Phase 2 architecture gate + Open Q4 encode pin
-2. Wire `resolveConstrainedGeometry` → complete overdubPass delta
+1. Phase 2 slice 1 — pending-op buffer + native constrain→ops (`PREFLIGHT.md` / DEC-031)
+2. Slice 2 — stop seal + `OverdubPassAdded`+`editPassIds` + restore gate
 3. Device verify wrap + bar 41 (`183525` class)
