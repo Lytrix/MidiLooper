@@ -15,7 +15,7 @@ Last updated: 2026-08-12 (DEC-032 G2 approved; Phase 2 resume)
 **Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
 **Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
 
-**Now:** **G2 approved (DEC-032).** Phase 2 resume: pending session delta + shared geometry → Add/Shorten/Hide; dual storage seal is transitional encoding only (design §19). Next: slice 1 pending delta + native matrix. U1/U2 out of scope. Phase 1 `overdubSourceView` remains shipped.
+**Now:** **G2 Phase 2 slice 1 shipped** — `PendingNoteChange` session delta + `accumulatePendingNoteChangesForIncomingNote` (`resolveConstrainedGeometry`) + `test_pending_note_change`. Next: slice 2 stop seal (capture chunks + edit rows encoding) + one undo + restore gate. Not wired into append path yet. U1/U2 out of scope.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 

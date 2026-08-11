@@ -28,6 +28,7 @@
 #include "Globals.h"
 #include "CaptureAppendResult.h"
 #include "PassReclaim.h"
+#include "PendingNoteChange.h"
 #include "Utils/LoopStopFinalize.h"
 
 class Track;
@@ -145,6 +146,17 @@ struct Loop {
   /// Wrap-safe note-span candidates reconstructed from the session source view.
   void gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out, uint32_t windowStart,
                                             uint32_t windowLength) const;
+
+  /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
+  void clearPendingNoteChanges();
+  bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
+  const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
+  /// Resolve incoming note against overdubSourceView; append/update pending delta.
+  /// Returns false when no source view is established.
+  bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
+                                                   uint32_t startTick, uint32_t endTick,
+                                                   NoteId incomingNoteId = kInvalidNoteId);
+
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);
   /// Remove the open capture note-on for channel/note (overdub overlap restore on stop).
@@ -242,6 +254,7 @@ struct Loop {
   SessionMidiEventVec overdubSourceViewEvents_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
+  PendingNoteChangeVec pendingNoteChanges_;
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
