@@ -1,12 +1,12 @@
 # RC5 — Incremental committed-display handoff
 
-**Status:** RC5a–RC5f shipped; device verify PASS for overdub→PLAYING; STOPPED handoff pending device verify  
+**Status:** RC5a–RC5f shipped; device verify PASS (`180107`)  
 
 **Parent:** [`long_overdub_record_tail_wrap_display_bugfix.md`](long_overdub_record_tail_wrap_display_bugfix.md) (RC4f–RC4i)  
 **Related:** [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md) (RC2)  
 **Persistence dependency:** [`long_overdub_stage5a3_critical_reclaim_verification_refinement.md`](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) (5a-3)
 
-**Evidence:** User report after RC4i; captures `session_20260811_170314.log`, `session_20260811_165148.log`; verify `session_20260811_174742.log`
+**Evidence:** User report after RC4i; captures `session_20260811_170314.log`, `session_20260811_165148.log`; pre-fix STOPPED gap `session_20260811_174742.log`; RC5e/f verify `session_20260811_180107.log`
 
 ---
 
