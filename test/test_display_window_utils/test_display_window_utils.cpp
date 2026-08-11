@@ -155,6 +155,23 @@ void test_visual_cache_covers_window_requires_fully_built() {
       visualCacheCoversWindow(true, VisualBarVec{}, 0, 16u * bar, loopLength, bar));
 }
 
+void test_format_loop_length_bars_info_strip() {
+  char lenStr[8];
+  const uint32_t bar = Config::TICKS_PER_BAR;
+
+  DisplayWindowUtils::formatLoopLengthBars(lenStr, sizeof(lenStr), 16u * bar, bar);
+  TEST_ASSERT_EQUAL_STRING(" 16", lenStr);
+
+  DisplayWindowUtils::formatLoopLengthBars(lenStr, sizeof(lenStr), 99u * bar, bar);
+  TEST_ASSERT_EQUAL_STRING(" 99", lenStr);
+
+  DisplayWindowUtils::formatLoopLengthBars(lenStr, sizeof(lenStr), 133u * bar, bar);
+  TEST_ASSERT_EQUAL_STRING("133", lenStr);
+
+  DisplayWindowUtils::formatLoopLengthBars(lenStr, sizeof(lenStr), 0, bar);
+  TEST_ASSERT_EQUAL_STRING(" --", lenStr);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -169,5 +186,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_requires_fully_built);
+  RUN_TEST(test_format_loop_length_bars_info_strip);
   return UNITY_END();
 }

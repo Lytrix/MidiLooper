@@ -9,7 +9,10 @@
   to 0 because `liveDisplayCacheCommittedNoteCount_` stayed 0 after record-stop invalidate.
 - RC4d user report / [`session_20260811_034230.log`](../../captures/session_20260811_034230.log)
   (boot-only CAP): PLAYING/overdub stuck on first ~18 bars; overdub window does not follow
-  recorded pass until stop. `committedLayerChanged` ignored paint-window leave of gather range.  
+  recorded pass until stop. `committedLayerChanged` ignored paint-window leave of gather range.
+- [`session_20260811_035101.log`](../../captures/session_20260811_035101.log): 133-bar loop
+  (`length=102144`) — piano-roll follow OK after RC4d; info-strip `LEN:` showed 99 due to
+  `drawInfoArea` 99-bar clamp. Fixed via `DisplayWindowUtils::formatLoopLengthBars` (3-digit, cap 999).  
 
 
 

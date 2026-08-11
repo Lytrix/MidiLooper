@@ -77,4 +77,8 @@ void filterMidiEventsToWindow(const MidiEventVec& events, MidiEventVec& out, uin
 void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEventVec& out,
                               uint32_t windowStart, uint32_t windowLength, uint32_t loopLength);
 
+/// Info-strip LEN field: `" --"` when empty; otherwise 3-digit bar count capped at 999.
+void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,
+                          uint32_t ticksPerBar);
+
 }  // namespace DisplayWindowUtils

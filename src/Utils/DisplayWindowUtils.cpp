@@ -5,6 +5,8 @@
 #include "Globals.h"
 #include "Utils/IntervalProjection.h"
 
+#include <cstdio>
+
 namespace DisplayWindowUtils {
 
 using DisplayNoteVec = NoteUtils::DisplayNoteVec;
@@ -249,6 +251,22 @@ void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEven
       out.push_back(evt);
     }
   }
+}
+
+void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,
+                          uint32_t ticksPerBar) {
+  if (out == nullptr || outSize == 0) {
+    return;
+  }
+  if (loopLengthTicks == 0 || ticksPerBar == 0) {
+    snprintf(out, outSize, " --");
+    return;
+  }
+  uint32_t bars = loopLengthTicks / ticksPerBar;
+  if (bars > 999UL) {
+    bars = 999UL;
+  }
+  snprintf(out, outSize, "%3lu", bars);
 }
 
 }  // namespace DisplayWindowUtils
