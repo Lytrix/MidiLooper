@@ -21,8 +21,17 @@
 - [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
 - [`CURRENT_WORK.md`](../../../docs/Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../../../docs/Runtime/PROJECT_STATE.md)
 
-## Remaining
+## 4.5 Implementation review
 
-- **4.5:** Implementation review + `/opsx:archive` (sync delta specs into `openspec/specs/`)
-- Merge PR to `dev` when archive complete
+| Check | Result |
+|-------|--------|
+| Owner | `Loop` source view + pending; `Track` lifecycle/stop; shared `resolveConstrainedGeometry` |
+| Ownership / transition change | NO beyond approved G2 / DEC-031–032 |
+| Device OLED wrap | PASS [`010000`](../../../captures/session_20260812_010000.log) |
+| Specs synced | `overdub-pass-overlap-resolution` (new); `edit-session-action-geometry` + `timeline-passes` (ADDED) |
+| Archive | `openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/` |
+
+## Remaining after archive
+
+- Merge feature branch PR to `dev`
 - Out of scope: U1 storage unification; Stage 5a-3 `pool_alloc` proof
