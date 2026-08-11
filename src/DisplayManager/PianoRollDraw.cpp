@@ -285,7 +285,11 @@ void DisplayManager::drawBracket(uint32_t selectedTick, uint32_t lengthLoop, int
 }
 
 void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness) {
-    bool isWrapped = (eTick < s) || (eTick > lengthLoop);
+    // Frontier NoteOn can lead growing display length by one frame (181659). Clamping avoids
+    // the wrap branch painting a false head on the tick-0 grid line.
+    DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(s, eTick, lengthLoop);
+    // Wrap pairs only: end before start. Do not treat end past length as wrap.
+    const bool isWrapped = (eTick < s);
 
     if (!isWrapped && eTick >= s) {
         int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, pianoRollWidth());
@@ -354,7 +358,8 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
                 drawNoteBar(note, y, insideStart, insideEnd, fullLoopLength, noteBrightness);
             }
         };
-        const bool isWrapped = (endTick < startTick) || (endTick > fullLoopLength);
+        DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(startTick, endTick, fullLoopLength);
+        const bool isWrapped = (endTick < startTick);
         if (!isWrapped && endTick >= startTick) {
             clipDraw(startTick, endTick);
             return;

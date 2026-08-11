@@ -75,6 +75,29 @@ inline bool preferIncrementalCommittedDisplay(bool deferVisualRebuild, bool trac
     return deferVisualRebuild || trackStopped;
 }
 
+/// Growing-capture frontier: MIDI note ticks can lead display loopLength by a frame.
+/// `endTick > lengthLoop` with `endTick >= startTick` is overflow to clamp — not wrap-head
+/// geometry (wrap pairs use endTick < startTick). Prevents 1px flicker at tick 0 on NoteOn.
+inline bool clampNonWrapDisplayNoteBarTicks(uint32_t& startTick, uint32_t& endTick,
+                                            uint32_t lengthLoop) {
+    if (lengthLoop == 0) {
+        return false;
+    }
+    bool clamped = false;
+    if (endTick > lengthLoop && endTick >= startTick) {
+        endTick = lengthLoop - 1;
+        clamped = true;
+    }
+    if (startTick >= lengthLoop) {
+        startTick = lengthLoop - 1;
+        if (endTick < startTick) {
+            endTick = startTick;
+        }
+        clamped = true;
+    }
+    return clamped;
+}
+
 /// Overdub committed-window reuse: never treat committedCount==0 as a hit (would resize empty).
 inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_t liveNoteCount) {
   return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;

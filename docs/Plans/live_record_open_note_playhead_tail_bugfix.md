@@ -1,8 +1,9 @@
 # Live record open-note playhead tail (false wrap to tick 0)
 
-**Status:** Fixed  
+**Status:** Fixed (playhead tail + tick-0 NoteOn flicker)  
 **Branch:** `bugfix/long-overdub-display-freeze`  
-**Regression report:** After RC5; open NoteOns in early/growing RECORD lengthened a head from tick 0 until NoteOff.
+**Regression report:** After RC5; open NoteOns in early/growing RECORD lengthened a head from tick 0 until NoteOff.  
+**Follow-up evidence:** [`session_20260811_181659.log`](../../captures/session_20260811_181659.log) — temporary off OK; 1px flicker on tick-0 grid at each NoteOn.
 
 ## Problem
 
@@ -25,6 +26,13 @@ During growing live RECORD, held notes showed a wrap-style head from tick 0 to t
 2. `isLiveWrapHeadContinuationDisplay`: return false when `wrapTailStartTick == 0` (loop shorter than wrap window).
 3. `resolvePlayheadInLoop` growing/fixed RECORD: temporary close at `min(displayTick, loopLength - 1)` (current tick, in-range).
 
+## Tick-0 grid flicker on each NoteOn (follow-up)
+
+**Why:** MIDI capture can stamp `note.startTick` one tick ahead of the display frame’s growing `loopLength`. `drawNoteBar` treated `endTick > lengthLoop` as wrap geometry and painted a head at tick 0 for one frame — visible as a flash on the leftmost vertical grid line.
+
+**Fix:** `clampNonWrapDisplayNoteBarTicks` before draw / on playhead-tail apply — overflow with `end >= start` clamps; only `end < start` remains wrap.
+
 ## Tests
 
-`test_noteutils_reconstruct`: `test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window`.
+`test_noteutils_reconstruct`: `test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window`.  
+`test_display_window_utils`: `test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow`.

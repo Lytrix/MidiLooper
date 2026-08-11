@@ -148,6 +148,28 @@ void test_prefer_incremental_committed_display_includes_stopped() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::preferIncrementalCommittedDisplay(false, false));
 }
 
+void test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow() {
+  // NoteOn tick can lead growing display length — clamp, do not classify as wrap (end < start).
+  uint32_t start = 100;
+  uint32_t end = 100;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(start, end, 99u));
+  TEST_ASSERT_EQUAL_UINT32(98u, start);
+  TEST_ASSERT_EQUAL_UINT32(98u, end);
+
+  start = 50;
+  end = 100;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(start, end, 99u));
+  TEST_ASSERT_EQUAL_UINT32(50u, start);
+  TEST_ASSERT_EQUAL_UINT32(98u, end);
+
+  // Genuine wrap pair (end < start) is left alone for the wrap draw path.
+  start = 90;
+  end = 10;
+  TEST_ASSERT_FALSE(DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(start, end, 99u));
+  TEST_ASSERT_EQUAL_UINT32(90u, start);
+  TEST_ASSERT_EQUAL_UINT32(10u, end);
+}
+
 void test_overdub_committed_window_cache_rejects_zero_committed_count() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(0u, 300u));
   TEST_ASSERT_TRUE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(256u, 300u));
@@ -224,6 +246,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
   RUN_TEST(test_prefer_incremental_committed_display_includes_stopped);
+  RUN_TEST(test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
