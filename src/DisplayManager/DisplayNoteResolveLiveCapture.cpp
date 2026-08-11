@@ -170,13 +170,24 @@ void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLengt
             continue;
         }
 
-        const uint32_t playheadEndTick = std::max(open.tick, clampedCloseTick);
-        if (!updateDisplayNoteEndFrom(notes, captureRegionStart, open.note, open.tick,
-                                      playheadEndTick)) {
+        uint32_t noteStartTick = open.tick;
+        uint32_t playheadEndTick = std::max(noteStartTick, clampedCloseTick);
+        DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(noteStartTick, playheadEndTick,
+                                                            loopLength);
+        bool updated = false;
+        for (size_t i = captureRegionStart; i < notes.size(); ++i) {
+            if (notes[i].note == open.note && notes[i].startTick == open.tick) {
+                notes[i].startTick = noteStartTick;
+                notes[i].endTick = playheadEndTick;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated) {
             DisplayNote liveNote;
             liveNote.note = open.note;
             liveNote.velocity = open.velocity;
-            liveNote.startTick = open.tick;
+            liveNote.startTick = noteStartTick;
             liveNote.endTick = playheadEndTick;
             notes.push_back(liveNote);
         }
