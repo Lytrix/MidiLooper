@@ -266,12 +266,18 @@ void Loop::establishOverdubSourceView() {
   gatherCommittedEvents(overdubSourceViewEvents_);
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
   overdubSourceViewEstablished_ = true;
+  clearPendingNoteChanges();
 }
 
 void Loop::clearOverdubSourceView() {
   overdubSourceViewEvents_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
   overdubSourceViewEstablished_ = false;
+  clearPendingNoteChanges();
+}
+
+void Loop::clearPendingNoteChanges() {
+  pendingNoteChanges_.clear();
 }
 
 void Loop::gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,

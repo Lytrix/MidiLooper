@@ -22,15 +22,15 @@
 - [x] 3.1 Architecture gate; PREFLIGHT encode path; DEC-031 transitional seal encoding
 - [x] 3.1b Unified-pass review ([UNIFIED-PASS-ARCHITECTURE-REVIEW.md](UNIFIED-PASS-ARCHITECTURE-REVIEW.md))
 - [x] 3.1c **User pin G2** (DEC-032) — design §19 updated; U1/U2 out of scope
-- [ ] 3.2 Slice 1: pending session delta (logical Add/Shorten/Hide) on `Loop`; clear with source view
-- [ ] 3.3 Bridge `resolveConstrainedGeometry` → pending delta; source view immutable; survives wraps
-- [ ] 3.4 Native matrix: Add, Shorten, Hide, multi-source, multi-wrap, immutability
+- [x] 3.2 Slice 1: pending session delta (logical Add/Shorten/Hide) on `Loop`; clear with source view
+- [x] 3.3 Bridge `resolveConstrainedGeometry` → pending delta; source view immutable; survives wraps
+- [x] 3.4 Native matrix: Add, Shorten, Hide, multi-source, multi-wrap, immutability (`test_pending_note_change`)
 - [ ] 3.5 Slice 2: stop seal — capture chunks then edit rows; one undo grouping both (**encoding**, not semantic model)
 - [ ] 3.6 Gate `shouldRestoreCommittedOverlapOnOverdubStop` when `overdubSourceView` established
 - [ ] 3.7 Wrap-safe candidate lookup on insert; demote reverse-tick/`isDuplicateCaptureEvent` as semantic authority
 - [ ] 3.8 Shared `noteMinLengthTicks` globals
 - [ ] 3.9 One logical undo per stopped overdub session
-- [ ] 3.10 `pio test -e native`
+- [ ] 3.10 `pio test -e native` (slice 1: 1012/1012; re-run after slice 2)
 - [ ] 3.11 Implementation review Phase 2 checklist
 
 ## 4. Phase 3 — Retire capture dedup authority + device verify
