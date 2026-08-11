@@ -54,6 +54,11 @@ inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t commit
     return committedBaseCount < liveNoteCount ? committedBaseCount : liveNoteCount;
 }
 
+/// Overdub committed-window reuse: never treat committedCount==0 as a hit (would resize empty).
+inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_t liveNoteCount) {
+    return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;
+}
+
 TickInterval makeViewportInterval(uint32_t windowStart, uint32_t windowLength);
 
 /// Copy MIDI events whose tick lies in the half-open loop window [start, start + length).

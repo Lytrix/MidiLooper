@@ -301,6 +301,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                             gatherStart = 0;
                         }
                         const uint32_t gatherLength = gatherEnd - gatherStart;
+                        // committedNoteCount must be > 0: after record-stop invalidate it stays 0,
+                        // and a false hit resized the committed layer empty for the whole overdub
+                        // (session_20260811_033336).
                         const bool windowCacheHit =
                             liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
                             trackIndex == livePlaybackDisplayTrack_ &&
@@ -309,7 +312,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                             liveWindowGatherLength_ > 0 && windowStart >= liveWindowGatherStart_ &&
                             (windowStart - liveWindowGatherStart_) + windowLength <=
                                 liveWindowGatherLength_ &&
-                            liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
+                            DisplayWindowUtils::overdubCommittedWindowCacheReusable(
+                                liveDisplayCacheCommittedNoteCount_, liveDisplayNotes.size());
                         if (windowCacheHit) {
                             liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
                         } else {
