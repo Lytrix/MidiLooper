@@ -1,6 +1,11 @@
 # Long-loop post-stop visualCache window paint
 
-**Status:** Implemented — native/build PASS; combined HITL pending  
+**Status:** Implemented — RC4b gap regression fix; HITL pending  
+
+**Regression evidence:** user report after `c39eeb6` — sparse notes (first 16 + ~bar 90; overdub
+only to ~bar 82). Capture [`session_20260811_032235.log`](../../captures/session_20260811_032235.log)
+is boot-only (session not captured); root cause is code-path proven below.  
+
 
 ## Architecture gate (session)
 
@@ -16,9 +21,13 @@
 
 ## Implementation result
 
-- `visualCacheCoversWindow` in `VisualCache.h`
-- `resolveWindowedDisplayNotes` filters covered `visualCache` before gather+reconstruct
-- PLAYING idle slices limited to `kMaxDetailedWindowBars + 4` around playhead; full backfill when stopped
+- `visualCacheCoversWindow` in `VisualCache.h` — **fully built only** (`!visualCacheDirty`);
+  partial dirtyBars neighborhoods must not authorize filter paint (RC4b).
+- `resolveWindowedDisplayNotes` filters `visualCache` only when fully built; else gather.
+- Overdub committed layer assigns full `visualCache` only when `!visualCacheDirty`; else
+  window gather on long loops.
+- PLAYING idle slices still limited to `kMaxDetailedWindowBars + 4` around playhead (tear
+  mitigation without sparse-cache authority).
 **Branch:** `bugfix/long-overdub-display-freeze`  
 **Evidence:** [`session_20260811_030614.log`](../../captures/session_20260811_030614.log)  
 **Parent:** [`long_overdub_display_freeze_bugfix.md`](long_overdub_display_freeze_bugfix.md)  

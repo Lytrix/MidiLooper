@@ -274,7 +274,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 
     auto rebuildCommittedLayer = [&]() {
         if (track.isOverdubbing()) {
-            if (!loop.visualCache.notes.empty()) {
+            // Only a fully built visualCache may back the committed layer. A partial idle
+            // backfill (PLAYING neighborhood slices) is sparse and shows as gaps in the roll.
+            if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
                 liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                         loop.visualCache.notes.end());
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
