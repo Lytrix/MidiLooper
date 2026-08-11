@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (long capture follow-up RC4)
+Last updated: 2026-08-11 (LEN>100 info strip + RC4 follow-up)
 
 ---
 
@@ -15,7 +15,9 @@ Last updated: 2026-08-11 (long capture follow-up RC4)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
 RC4d: overdub committed window gather follows auto-follow paint window (`committedWindowStale`).
-RC4c zero-count cache hit; RC4b fully-built-only filter. Stage 5 append pressure remains separate.
+RC4c zero-count cache hit; RC4b fully-built-only filter. Info-strip `LEN:` uses 3-digit bars
+(no 99 clamp) — [`session_20260811_035101`](../../captures/session_20260811_035101.log) 133 bars.
+Stage 5 append pressure remains separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 
