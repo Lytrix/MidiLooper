@@ -33,6 +33,12 @@ using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 /// Runtime chunk lifecycle (ChunkManager). Independent of persistence state.
 enum class ChunkLifecycleState : uint8_t { Free, Recording, Sealed };
 
+enum class LoopEventStoreAppendDeny : uint8_t {
+  None,
+  PoolUnavailable,
+  PoolExhausted,
+};
+
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
  public:
@@ -80,6 +86,7 @@ class LoopEventStore {
   LoopEventStore& operator=(const LoopEventStore&) = delete;
 
   bool append(const MidiEvent& evt);
+  bool append(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut);
   size_t size() const { return eventCount_; }
   bool empty() const { return size() == 0; }
   const MidiEvent& at(size_t globalIndex) const;
@@ -194,7 +201,7 @@ class LoopEventStore {
   bool hasSealedChunks() const;
   EventChunk& chunk(uint16_t id);
   const EventChunk& chunk(uint16_t id) const;
-  bool appendToTailChunk(const MidiEvent& evt);
+  bool appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut = nullptr);
   void rebuildBarIndex() const;
   void markBarIndexDirty();
 };

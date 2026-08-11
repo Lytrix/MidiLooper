@@ -138,17 +138,23 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
   return false;
 }
 
-void Loop::reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs) {
+uint16_t Loop::reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs) {
+  uint16_t reclaimed = 0;
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Disabled &&
       !refs.referencesCapturePass(passes.recordPass.id)) {
-    reclaimDisabledCapturePass(passes.recordPass.id);
+    if (reclaimDisabledCapturePass(passes.recordPass.id)) {
+      ++reclaimed;
+    }
   }
   for (size_t i = passes.overdubPasses.size(); i > 0; --i) {
     const OverdubPass& pass = passes.overdubPasses[i - 1];
     if (pass.state == CapturePassState::Disabled && !refs.referencesCapturePass(pass.id)) {
-      reclaimDisabledCapturePass(pass.id);
+      if (reclaimDisabledCapturePass(pass.id)) {
+        ++reclaimed;
+      }
     }
   }
+  return reclaimed;
 }
 
 bool Loop::setCapturePassState(PassId id, CapturePassState state) {
@@ -274,24 +280,39 @@ void Loop::discardCapture() {
   captureDedupEventsDropped_ = 0;
 }
 
-bool Loop::appendCaptureEvent(const MidiEvent& evt) {
+CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
+  CaptureAppendResult result;
   if (capture.phase == CapturePhase::None) {
-    return false;
+    result.reason = CaptureAppendDenyReason::PhaseNone;
+    return result;
   }
   if (hasPendingCapturePass_) {
-    return false;
+    result.reason = CaptureAppendDenyReason::PendingPass;
+    return result;
   }
   if (isDuplicateCaptureEvent(*this, evt)) {
     ++captureDedupEventsDropped_;
-    return false;
+    result.reason = CaptureAppendDenyReason::Duplicate;
+    return result;
   }
-  if (!capture.store.append(evt)) {
-    return false;
+  LoopEventStoreAppendDeny storeDeny = LoopEventStoreAppendDeny::None;
+  if (!capture.store.append(evt, &storeDeny)) {
+    result.reason =
+        storeDeny == LoopEventStoreAppendDeny::PoolExhausted
+            ? CaptureAppendDenyReason::PoolAlloc
+            : CaptureAppendDenyReason::StoreOther;
+    return result;
   }
   captureEventsSortDirty = true;
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR, loopLengthTicks);
   ++captureDisplayRevision;
-  return true;
+  result.accepted = true;
+  result.reason = CaptureAppendDenyReason::Accepted;
+  return result;
+}
+
+bool Loop::appendCaptureEvent(const MidiEvent& evt) {
+  return appendCaptureEventWithResult(evt).accepted;
 }
 
 bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {

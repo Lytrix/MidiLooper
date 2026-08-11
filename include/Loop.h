@@ -26,6 +26,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
+#include "CaptureAppendResult.h"
 #include "PassReclaim.h"
 #include "Utils/LoopStopFinalize.h"
 
@@ -132,6 +133,7 @@ struct Loop {
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
+  CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);
   /// Remove the open capture note-on for channel/note (overdub overlap restore on stop).
   bool removeOpenCaptureNoteOn(uint8_t channel, uint8_t note);
@@ -174,8 +176,8 @@ struct Loop {
   void discardPendingCapturePass();
 
   bool reclaimDisabledCapturePass(PassId id);
-  void reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs);
-  void reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs);
+  uint16_t reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs);
+  uint16_t reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs);
   void reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs);
 
   PlaybackOrderVec& getPlaybackOrder() {

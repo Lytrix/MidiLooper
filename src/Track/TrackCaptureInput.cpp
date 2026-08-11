@@ -9,11 +9,24 @@
 
 #include "Globals.h"
 #include "Logger.h"
+#include "CaptureAppendResult.h"
+#include "LoopEventStore.h"
 #include "TickPhase.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPressurePolicy.h"
 #include "Utils/RecordStopLength.h"
+
+#if defined(SESSION_CAPTURE)
+static void logCaptureAppendDeny(const Loop& loop, const CaptureAppendResult& result,
+                                 uint8_t channel, uint8_t note, uint32_t tick) {
+  SC_CAPTURE_APPEND_DENY(captureAppendDenyReasonLabel(result.reason),
+                           LoopEventStore::freeChunkCount(), LoopEventStore::usedChunkCount(),
+                           memoryPressureLevelName(MemoryMonitor::getAdvisoryPressureLevel()),
+                           channel, note, tick, loop.hasPendingCapturePass() ? 1 : 0);
+}
+#endif
 
 const uint32_t Track::TICKS_PER_BAR = Config::TICKS_PER_BAR;
 
@@ -112,7 +125,8 @@ bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t 
     tickRelative = loop.loopLengthTicks - 1;
   }
   const MidiEvent newEvt = MidiEvent::NoteOff(tickRelative, channel, note, 0);
-  if (!loop.appendCaptureEvent(newEvt)) {
+  const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
+  if (!appendResult.accepted) {
     return false;
   }
   return true;
@@ -257,11 +271,16 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       newEvt.tick = tickRelative;
     }
 
-    if (!loop.appendCaptureEvent(newEvt)) {
+    const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
+    if (!appendResult.accepted) {
       logger.log(CAT_TRACK, LOG_WARNING,
-                 "Capture append failed (chunk pool or memory pressure) ch=%u note=%u",
+                 "Capture append failed (%s) ch=%u note=%u",
+                 captureAppendDenyReasonLabel(appendResult.reason),
                  static_cast<unsigned>(channel), static_cast<unsigned>(data1));
       MemoryMonitor::notifyCaptureAppendFailed(millis());
+#if defined(SESSION_CAPTURE)
+      logCaptureAppendDeny(loop, appendResult, channel, data1, newEvt.tick);
+#endif
       return;
     }
 

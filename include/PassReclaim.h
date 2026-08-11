@@ -72,3 +72,11 @@ bool overUndoMemoryPressure(const GlobalUndoStack& stack);
 /// Trim global undo entries under depth/pressure rails. Prefers dropping entries before
 /// cursor (undo history) so the redo branch at cursor..end stays intact when cursor > 0.
 size_t trimGlobalUndoStackForMemory(GlobalUndoStack& stack);
+
+struct PassReclaimStats {
+  uint16_t passesReclaimed = 0;
+  uint16_t chunksReleased = 0;
+  uint16_t chunksFreeBefore = 0;
+  uint16_t chunksFreeAfter = 0;
+  uint32_t durationUs = 0;
+};

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (display RC slice verified — `111528`)
+Last updated: 2026-08-11 (5a-2 telemetry + RC4e overdub window fix shipped)
 
 ---
 
@@ -14,10 +14,11 @@ Last updated: 2026-08-11 (display RC slice verified — `111528`)
 **Plan:** [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md)  
 **Parent:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19
 
-**5a-1 (in progress):** Run `reclaimUnreferencedDisabledPasses` on **Critical** pressure during
-transport — idle-only reclaim left chunk pool at reserve during multi-track overdub
-([`session_20260811_021117`](../../captures/session_20260811_021117.log) @511 s, 41 append failures,
-heap 196 KB free).
+**5a-2 (shipped):** Authoritative `CaptureAppendResult` + `#CAP,append,deny` / `#CAP,DIAG,reclaim` / pressure latch.  
+**5a-3 (next):** Verification capture on `021117`-comparable workload — classify deny reasons before evaluating reclaim hypothesis.  
+**RC4e (shipped, verify):** Bounded visual-cache idle slices during overdub for rolling-window follow.
+
+**5a-1 (shipped):** Critical `reclaimUnreferencedDisabledPasses` during transport (`main.cpp`).
 
 Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
 
