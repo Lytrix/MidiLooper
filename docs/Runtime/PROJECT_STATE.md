@@ -2,20 +2,18 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (display RC slice verified — `111528`)
+Last updated: 2026-08-11 (Stage 5a-1 pass reclaim)
 
 ---
 
 ## Current branch
 
-**Active work:** Long record / overdub display RC slice **closed** on
-[`session_20260811_111528`](../../captures/session_20260811_111528.log). **Next:** Stage 5
-append/storage pressure (separate commit) per
-[`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19.
+**Active work:** Stage 5 memory/persistence — **5a-1** Critical pass reclaim during transport.
+Plan: [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md).
 
-**Branch tip (local):** `bugfix/long-overdub-display-freeze` — RC4 + LEN + overview minimap;
-plans [`overview_strip_window_gather_notes_bugfix.md`](../Plans/overview_strip_window_gather_notes_bugfix.md),
-[`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md).
+Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
+
+**Branch tip (local):** `bugfix/long-overdub-display-freeze`
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

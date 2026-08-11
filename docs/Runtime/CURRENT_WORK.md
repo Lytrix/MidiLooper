@@ -8,14 +8,18 @@ Last updated: 2026-08-11 (display RC slice verified — `111528`)
 
 ## Now implementing
 
-### Long record / overdub display — RC slice closed (user `111528`)
+### Stage 5 — memory / persistence pressure (long overdub)
 
-**Branch:** `bugfix/long-overdub-display-freeze`
-**Plans:** [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md), [`overview_strip_window_gather_notes_bugfix.md`](../Plans/overview_strip_window_gather_notes_bugfix.md)
-**OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
+**Branch:** `bugfix/long-overdub-display-freeze`  
+**Plan:** [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md)  
+**Parent:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19
 
-RC4d–RC4 overview/LEN shipped and verified on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
-**Next on this track:** Stage 5 append/storage pressure ([`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19) — separate commit; optional RC4 HITL ~195-bar gate if desired before merge.
+**5a-1 (in progress):** Run `reclaimUnreferencedDisabledPasses` on **Critical** pressure during
+transport — idle-only reclaim left chunk pool at reserve during multi-track overdub
+([`session_20260811_021117`](../../captures/session_20260811_021117.log) @511 s, 41 append failures,
+heap 196 KB free).
+
+Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 
