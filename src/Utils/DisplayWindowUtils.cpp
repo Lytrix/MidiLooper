@@ -134,16 +134,20 @@ DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, const Tic
       normalizeTick(static_cast<uint32_t>(viewport.start), loopLength);
   const uint32_t windowLength = static_cast<uint32_t>(viewport.length());
   for (const NoteUtils::DisplayNote& note : notes) {
-    if (!noteIntersectsWindow(displayNoteSpanInLoop(note, loopLength), viewport, loopLength)) {
+    // Clamp frontier overflow before normalizeTick — startTick==loopLength maps to 0.
+    NoteUtils::DisplayNote paintNote = note;
+    clampNonWrapDisplayNoteBarTicks(paintNote.startTick, paintNote.endTick, loopLength);
+    if (!noteIntersectsWindow(displayNoteSpanInLoop(paintNote, loopLength), viewport,
+                              loopLength)) {
       continue;
     }
-    NoteUtils::DisplayNote mapped = note;
-    uint32_t relStart = normalizeTick(note.startTick, loopLength);
+    NoteUtils::DisplayNote mapped = paintNote;
+    uint32_t relStart = normalizeTick(paintNote.startTick, loopLength);
     if (relStart < windowStartNorm) {
       relStart += loopLength;
     }
     mapped.startTick = relStart - windowStartNorm;
-    uint32_t relEnd = normalizeTick(note.endTick, loopLength);
+    uint32_t relEnd = normalizeTick(paintNote.endTick, loopLength);
     if (relEnd < windowStartNorm) {
       relEnd += loopLength;
     }

@@ -84,7 +84,9 @@ inline bool clampNonWrapDisplayNoteBarTicks(uint32_t& startTick, uint32_t& endTi
         return false;
     }
     bool clamped = false;
-    if (endTick > lengthLoop && endTick >= startTick) {
+    // Inclusive bar ticks are in [0, lengthLoop-1]. start/end == lengthLoop is frontier
+    // overflow (same as > lengthLoop) — must clamp before paint/modulo.
+    if (endTick >= lengthLoop && endTick >= startTick) {
         endTick = lengthLoop - 1;
         clamped = true;
     }
@@ -96,6 +98,25 @@ inline bool clampNonWrapDisplayNoteBarTicks(uint32_t& startTick, uint32_t& endTi
         clamped = true;
     }
     return clamped;
+}
+
+/// Map storage display-note ticks into loop-paint space.
+/// Always clamp frontier overflow before any jam-origin modulo — `startTick == loopLength`
+/// would otherwise become 0 and paint a 1px blip on the left grid (session_20260811_182528).
+inline void mapDisplayNoteBarTicksForLoopPaint(uint32_t startTick, uint32_t endTick,
+                                               uint32_t jamStartTick, uint32_t loopLength,
+                                               uint32_t& outStartTick, uint32_t& outEndTick) {
+    outStartTick = startTick;
+    outEndTick = endTick;
+    if (loopLength == 0) {
+        return;
+    }
+    clampNonWrapDisplayNoteBarTicks(outStartTick, outEndTick, loopLength);
+    if (jamStartTick == 0) {
+        return;
+    }
+    outStartTick = (outStartTick - jamStartTick + loopLength) % loopLength;
+    outEndTick = (outEndTick - jamStartTick + loopLength) % loopLength;
 }
 
 /// Overdub committed-window reuse: never treat committedCount==0 as a hit (would resize empty).
