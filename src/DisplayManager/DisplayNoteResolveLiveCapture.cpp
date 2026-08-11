@@ -308,10 +308,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                             liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
                             trackIndex == livePlaybackDisplayTrack_ &&
                             liveMergePlaybackRevision_ == loop.playbackRevision &&
-                            liveWindowGatherLoopLength_ == liveLoopLength && gatherLength > 0 &&
-                            liveWindowGatherLength_ > 0 && windowStart >= liveWindowGatherStart_ &&
-                            (windowStart - liveWindowGatherStart_) + windowLength <=
-                                liveWindowGatherLength_ &&
+                            liveWindowGatherLoopLength_ == liveLoopLength &&
+                            DisplayWindowUtils::paintWindowInsideGather(
+                                windowStart, windowLength, liveWindowGatherStart_,
+                                liveWindowGatherLength_) &&
                             DisplayWindowUtils::overdubCommittedWindowCacheReusable(
                                 liveDisplayCacheCommittedNoteCount_, liveDisplayNotes.size());
                         if (windowCacheHit) {
@@ -404,21 +404,30 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
     };
 
+    uint32_t paintWindowStart = 0;
+    uint32_t paintWindowLength = 0;
+    uint8_t paintWindowBars = 0;
+    const bool havePaintWindow =
+        liveLoopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR &&
+        displaySlot < kDisplaySlotCount &&
+        syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength, paintWindowStart,
+                                paintWindowLength, paintWindowBars);
+    // Dirty visualCache uses window gather for the committed layer. Auto-follow moves the paint
+    // window without bumping playbackRevision — rebuild when the gather no longer covers it
+    // (session_20260811_034230: notes stuck in first ~18 bars until overdub stop).
+    const bool committedWindowStale =
+        track.isOverdubbing() && havePaintWindow && loop.visualCacheDirty &&
+        liveWindowGatherValid_ &&
+        !DisplayWindowUtils::paintWindowInsideGather(paintWindowStart, paintWindowLength,
+                                                     liveWindowGatherStart_,
+                                                     liveWindowGatherLength_);
+
     const bool committedLayerChanged =
-        cacheCold || contextChanged || loopLengthChanged ||
+        cacheCold || contextChanged || loopLengthChanged || committedWindowStale ||
         (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision);
     const bool captureLayerChanged =
         cacheCold || contextChanged || eventsShrunk || captureRevisionChanged ||
         capturePreviewChanged;
-
-    if (liveLoopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR &&
-        displaySlot < kDisplaySlotCount) {
-        uint32_t windowStartScratch = 0;
-        uint32_t windowLengthScratch = 0;
-        uint8_t windowBarsScratch = 0;
-        syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength, windowStartScratch,
-                                windowLengthScratch, windowBarsScratch);
-    }
 
     const uint32_t composeStartUs = micros();
     if (committedLayerChanged) {

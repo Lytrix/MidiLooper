@@ -101,9 +101,10 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
         liveMergePlaybackRevision_ == loop.playbackRevision &&
         liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
         liveWindowVisualCacheRevision_ == UINT32_MAX &&
-        liveWindowGatherLoopLength_ == loopLength && windowLength > 0 &&
-        liveWindowGatherLength_ > 0 && windowStart >= liveWindowGatherStart_ &&
-        (windowStart - liveWindowGatherStart_) + windowLength <= liveWindowGatherLength_;
+        liveWindowGatherLoopLength_ == loopLength &&
+        DisplayWindowUtils::paintWindowInsideGather(windowStart, windowLength,
+                                                    liveWindowGatherStart_,
+                                                    liveWindowGatherLength_);
     if (cacheHit) {
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
         return liveDisplayNotes;

@@ -14,9 +14,8 @@ Last updated: 2026-08-11 (long capture follow-up RC4)
 **Plans:** [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md), [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
-RC4c (`06ccf8f`): overdub no longer wipes committed notes via `committedNoteCount==0` window
-cache hit (`033336`). RC4b fully-built-only filter; PLAYING idle neighborhood kept. Stage 5
-append pressure remains separate.
+RC4d: overdub committed window gather follows auto-follow paint window (`committedWindowStale`).
+RC4c zero-count cache hit; RC4b fully-built-only filter. Stage 5 append pressure remains separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

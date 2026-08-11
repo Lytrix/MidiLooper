@@ -1,12 +1,16 @@
 # Long-loop post-stop visualCache window paint
 
-**Status:** Implemented — RC4c overdub empty-layer fix; HITL pending  
+**Status:** Implemented — RC4d committed-window follow; HITL pending  
 
 **Regression evidence:**
 - RC4 sparse gaps after `c39eeb6` — RC4b (`3ea7b03`) fully-built-only filter.
 - RC4c [`session_20260811_033336.log`](../../captures/session_20260811_033336.log): notes vanish for
   PLAYING→overdub, return after overdub stop. Overdub `windowCacheHit` resized committed layer
-  to 0 because `liveDisplayCacheCommittedNoteCount_` stayed 0 after record-stop invalidate.  
+  to 0 because `liveDisplayCacheCommittedNoteCount_` stayed 0 after record-stop invalidate.
+- RC4d user report / [`session_20260811_034230.log`](../../captures/session_20260811_034230.log)
+  (boot-only CAP): PLAYING/overdub stuck on first ~18 bars; overdub window does not follow
+  recorded pass until stop. `committedLayerChanged` ignored paint-window leave of gather range.  
+
 
 
 
