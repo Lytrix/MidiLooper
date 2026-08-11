@@ -1,9 +1,9 @@
 # Long overdub wrap — source-view overlap / display freeze
 
-**Status:** FROZEN — Phase 3 product gate PASS; OpenSpec closeout → `/opsx:archive` (task 4.5)
+**Status:** FROZEN — Phase 3 PASS; OpenSpec **archived** `2026-08-12-overdub-pass-overlap-resolution`
 
 **Branch:** `feature/overdub-pass-overlap-resolution`  
-**OpenSpec:** [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/)  
+**OpenSpec:** [`archive/2026-08-12-overdub-pass-overlap-resolution`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/) · specs [`overdub-pass-overlap-resolution`](../../openspec/specs/overdub-pass-overlap-resolution/)  
 **Baseline failure:** [`session_20260811_183525.log`](../../captures/session_20260811_183525.log)  
 **Device PASS:** [`session_20260812_010000.log`](../../captures/session_20260812_010000.log)  
 **Parent stack:** PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) → `dev`
@@ -65,4 +65,4 @@ Do **not** reopen this plan for:
 | OpenSpec tasks 4.1–4.4 | Done |
 | Guide | [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) |
 | Runtime | CURRENT_WORK / PROJECT_STATE |
-| Archive | Task **4.5** — `/opsx:archive` when ready |
+| Archive | **Done** — `openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/` |

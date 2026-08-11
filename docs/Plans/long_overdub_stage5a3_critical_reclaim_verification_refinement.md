@@ -68,7 +68,7 @@ Reclaim CAP works; transport-time reclaim with resource release observed at **No
 
 **Hypothesis status:** **Falsified** for `183525` failure class (`duplicate`, not pool).
 
-**Duplicate-class closeout (2026-08-12):** Shipped OpenSpec [`overdub-pass-overlap-resolution`](../../openspec/changes/overdub-pass-overlap-resolution/) (G2) — `overdubSourceView` + geometry hide/shorten; demote capture `isDuplicateCaptureEvent` under source view. Device PASS [`010000`](../../captures/session_20260812_010000.log); plan frozen [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](long_overdub_wrap_duplicate_display_freeze_bugfix.md).
+**Duplicate-class closeout (2026-08-12):** Archived OpenSpec [`2026-08-12-overdub-pass-overlap-resolution`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/) (G2) — `overdubSourceView` + geometry hide/shorten; demote capture `isDuplicateCaptureEvent` under source view. Device PASS [`010000`](../../captures/session_20260812_010000.log); plan frozen [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](long_overdub_wrap_duplicate_display_freeze_bugfix.md). Specs: [`openspec/specs/overdub-pass-overlap-resolution/`](../../openspec/specs/overdub-pass-overlap-resolution/).
 
 **Still open for 5a-3:** separate capture proving Critical `pool_alloc` → reclaim recovery (`021117`-comparable workload).
 

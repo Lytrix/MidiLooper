@@ -53,8 +53,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-08-12  
 **Status:** Accepted — **G2**  
-**OpenSpec:** [`overdub-pass-overlap-resolution`](../openspec/changes/overdub-pass-overlap-resolution/)  
-**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](../openspec/changes/overdub-pass-overlap-resolution/UNIFIED-PASS-ARCHITECTURE-REVIEW.md)
+**OpenSpec:** [`archive/2026-08-12-overdub-pass-overlap-resolution`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/)  
+**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/UNIFIED-PASS-ARCHITECTURE-REVIEW.md)
 
 ### Decision
 
@@ -77,8 +77,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-08-12  
 **Status:** Accepted (encoding under DEC-032 G2)  
-**OpenSpec:** [`overdub-pass-overlap-resolution`](../openspec/changes/overdub-pass-overlap-resolution/)  
-**PREFLIGHT:** [`PREFLIGHT.md`](../openspec/changes/overdub-pass-overlap-resolution/PREFLIGHT.md)
+**OpenSpec:** [`archive/2026-08-12-overdub-pass-overlap-resolution`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/)  
+**PREFLIGHT:** [`PREFLIGHT.md`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/PREFLIGHT.md)
 
 ### Decision
 
