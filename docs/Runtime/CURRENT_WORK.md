@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (live-record open-note playhead tail fix)
+Last updated: 2026-08-11 (live-record tick-0 NoteOn blip PASS)
 
 ---
 
@@ -22,8 +22,7 @@ Last updated: 2026-08-11 (live-record open-note playhead tail fix)
 **RC4h (shipped, verify):** Overdub gathers full committed span when cache dirty (`session_20260811_165148`).  
 **RC4i (shipped, verify):** Overview minimap from full `notes` when cache dirty; preserve fix on record stop (`session_20260811_170314`).  
 **RC5a–f (shipped, device PASS):** Incremental overdub/play-stop display handoff — [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md) (`dc2bffa` / `ce5390b`; verify [`180107`](../../captures/session_20260811_180107.log); pre-fix STOPPED gap [`174742`](../../captures/session_20260811_174742.log)).  
-**Live-record open-note tail (shipped, verify):** Growing RECORD disables false wrap-head to tick 0 — temporary display note-off at current tick — [`live_record_open_note_playhead_tail_bugfix.md`](../Plans/live_record_open_note_playhead_tail_bugfix.md).  
-**Live-record tick-0 NoteOn blip (shipped, device verify):** `drawAllNotes` modulo mapped `startTick==loopLength` → 0 before clamp (`182528`); fixed via `mapDisplayNoteBarTicksForLoopPaint` + clamp `end/start >= length`.
+**Live-record open-note tail + tick-0 NoteOn blip (shipped, device PASS):** Growing RECORD false wrap-head disabled; paint maps frontier ticks without modulo-to-0 — [`live_record_open_note_playhead_tail_bugfix.md`](../Plans/live_record_open_note_playhead_tail_bugfix.md) (`8de682c`; verify [`182949`](../../captures/session_20260811_182949.log)).
 
 **5a-1 (shipped):** Critical `reclaimUnreferencedDisabledPasses` during transport (`main.cpp`).
 
