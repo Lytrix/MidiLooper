@@ -2,14 +2,14 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (Stage 5a-1 pass reclaim)
+Last updated: 2026-08-11 (RC5 incremental overdub-stop display handoff)
 
 ---
 
 ## Current branch
 
-**Active work:** Stage 5 memory/persistence — **5a-1** Critical pass reclaim during transport.
-Plan: [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md).
+**Active work:** Stage 5 memory/persistence — **5a-3** verification pending; display **RC5** shipped (verify on device).
+Plan: [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md); RC5: [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md).
 
 Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
 

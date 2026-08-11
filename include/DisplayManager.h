@@ -112,6 +112,10 @@ public:
     void refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
                                         uint32_t storagePhaseTickInLoop);
 
+    /// After overdub stop: preserve composed committed+capture frame (no capture clamp); recenter.
+    void refreshViewportAfterOverdubStop(Track& track, uint8_t displaySlot,
+                                         uint32_t storagePhaseTickInLoop);
+
     // Margin for piano roll, info area and note info
     static constexpr int TRACK_MARGIN = 22; 
     // Display buffer size

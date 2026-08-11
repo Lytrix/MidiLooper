@@ -67,10 +67,10 @@ uses partial `visualCache` density again (committed-layer promote handles overdu
 resolve. `invalidateLiveDisplayCache` invalidates note-edit projection without clearing preserved frame
 notes.
 
-## RC5 — Incremental display handoff (in progress)
+## RC5 — Incremental display handoff (shipped, device verify)
 
 **Plan:** [`long_overdub_rc5_incremental_display_handoff_investigation.md`](long_overdub_rc5_incremental_display_handoff_investigation.md)
 
-Overdub-stop flash + transition lag. RC5a/b handoff + revision authority first; **RC5c-investigation**
-required before implementation (promote/adopt `capturePreview` vs full-loop gather fallback). Cross-check
-with 5a-3 reclaim/memory constraints.
+RC5a preserve composed frame / RC5b dirty-cache gate / RC5c promote-adopt into `visualCache` /
+RC5d window filter on PLAYING. Full-loop gather retained as recovery only — not default on
+`playbackRevision` bump.

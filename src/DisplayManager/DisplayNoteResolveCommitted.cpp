@@ -76,25 +76,49 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
-        // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
-        // maintenance refreshes it — never return stale notes after invalidate (dirty cache).
-        if (!avoidFullVisualRebuild && (!loop.visualCacheDirty || deferVisualRebuild) &&
-            !loop.visualCache.notes.empty()) {
+        const bool visualCacheAuthoritative =
+            DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(
+                loop.visualCacheDirty, !loop.visualCache.notes.empty());
+        const bool preservedHandoffAuthority =
+            !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
+            trackIndex == livePlaybackDisplayTrack_ &&
+            liveMergePlaybackRevision_ == loop.playbackRevision;
+
+        // RC5b: only a clean visualCache may authorize committed display after a revision bump.
+        // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
+        if (visualCacheAuthoritative && !avoidFullVisualRebuild) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            liveMergePlaybackRevision_ = loop.playbackRevision;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // PLAYING / stopped-recording: rolling window is owned by drawPianoRoll's window
-        // filter. Window gather here returns a fixed tick band; auto-follow then filters again
-        // and the roll goes blank until a full cache rebuild (session_20260811_124133).
-        if (deferVisualRebuild && !loop.visualCache.notes.empty()) {
+        // PLAYING / stopped-recording with clean cache: prefer window filter (RC5d) over
+        // full-vector assign every frame. Dirty cache falls through to preserved handoff.
+        if (deferVisualRebuild && visualCacheAuthoritative) {
+            if (avoidFullVisualRebuild ||
+                loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
+                uint32_t windowStart = 0;
+                uint32_t windowLength = 0;
+                uint8_t windowBars = 0;
+                if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                            windowLength, windowBars)) {
+                    return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
+                                                       windowStart, windowLength);
+                }
+            }
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            liveMergePlaybackRevision_ = loop.playbackRevision;
             liveWindowGatherValid_ = false;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
+            return liveDisplayNotes;
+        }
+        // RC5a/RC5b: revision-matched preserved frame stays authority while visualCache is dirty.
+        if (deferVisualRebuild && preservedHandoffAuthority) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             return liveDisplayNotes;
         }
         // Long loops: bounded committed window before any preserved live-frame fallback.
