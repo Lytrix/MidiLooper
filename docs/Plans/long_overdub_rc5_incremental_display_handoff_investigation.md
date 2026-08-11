@@ -1,11 +1,11 @@
 # RC5 — Incremental committed-display handoff
 
-**Status:** RC5a–RC5d implemented (promote/adopt; full-loop gather retained as recovery only)  
+**Status:** RC5a–RC5d shipped; device verify PASS for overdub→PLAYING handoff; STOPPED-path follow-up open  
 **Parent:** [`long_overdub_record_tail_wrap_display_bugfix.md`](long_overdub_record_tail_wrap_display_bugfix.md) (RC4f–RC4i)  
 **Related:** [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md) (RC2)  
 **Persistence dependency:** [`long_overdub_stage5a3_critical_reclaim_verification_refinement.md`](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) (5a-3)
 
-**Evidence:** User report after RC4i; captures `session_20260811_170314.log`, `session_20260811_165148.log`
+**Evidence:** User report after RC4i; captures `session_20260811_170314.log`, `session_20260811_165148.log`; verify `session_20260811_174742.log`
 
 ---
 
@@ -311,13 +311,65 @@ Full-loop gather/reconstruct remains the existing recovery path when no preserve
 
 | Check | Pass |
 |-------|------|
-| Overdub stop | No record-only flash; no vertical pitch jump |
-| Overdub stop → PLAYING | Rolling window within ~one frame (~33 ms), not 1–2 s stall |
+| Overdub stop | No record-only flash; no vertical pitch jump — **PASS** (user: fluidity improved immensely; `174742`) |
+| Overdub stop → PLAYING | Rolling window within ~one frame (~33 ms), not 1–2 s stall — **PASS** (same) |
 | Loop wrap during overdub | Record tail visible (RC4f guard) |
 | Overview minimap | Full-loop density; not window-only |
-| `#CAP` / `DFRAME` | No multi-second `DFRAME` gap after stop |
+| `#CAP` / `DFRAME` after overdub→PLAYING | No multi-second gap — **PASS** for that path |
+| Transport / play stop → STOPPED | **OPEN** — see RC5 follow-up below (`174742`) |
 
-Build gates: `pio test -e native`; `pio run -e teensy41-capture-serial`.
+Build gates: `pio test -e native` 994/994; `pio run -e teensy41-capture-serial` SUCCESS; commit `dc2bffa`.
+
+---
+
+## RC5 follow-up — STOPPED display handoff (investigation)
+
+**Capture:** [`session_20260811_174742.log`](../../captures/session_20260811_174742.log)
+
+### What the capture shows
+
+There is **no** `ST,Track,PLAYING,STOPPED` in this session. The visible stop rebuild is transport stop while overdubbing:
+
+| Marker | Evidence |
+|--------|----------|
+| User action | Global Transport short press @ 203.377s |
+| Path | `Track::stopOverdubbingToStopped` — log `Overdubbing stopped (to STOPPED)` @ 203.459s |
+| State | `#CAP,203438231,ST,Track,OVERDUBBING,STOPPED` |
+| First DISP | `#CAP,203459927,DISP,4,STOPPED,36864,313,768,313,313,1,24576,16,282` — `visualCache.notes=768`, window frame=313 |
+| Later DISP | `#CAP,205009808,...282,793,...` — cache still growing under STOPPED (768→793) |
+| Frame gap | Next `DFRAME` after stop DISP: `#CAP,204368466,DFRAME,313,...` (~0.9 s after `203459927`) |
+
+RC5a/c handoff runs only on `stopOverdubbing` → PLAYING (and in-edit fold → PLAYING). **`stopOverdubbingToStopped` does not call `refreshViewportAfterOverdubStop`**, so commit still leaves `visualCacheDirty` and the composed capture frame is not adopted.
+
+### Same gap on `stopPlaying` (PLAYING→STOPPED)
+
+`Track::stopPlaying` only `setState(TRACK_STOPPED)` + `emitDisplayCaptureSnapshot`. Resolve path:
+
+```text
+deferVisualRebuild = (isPlaying || isStoppedRecording) && !overdubbing && …
+```
+
+Under `TRACK_STOPPED`, `deferVisualRebuild` is **false**, so RC5b preserved-handoff and RC5d’s defer-gated clean-cache preference do **not** apply. Long-loop STOPPED falls through to `resolveWindowedDisplayNotes`, which **gather+reconstructs** when `visualCache` is dirty.
+
+So yes — the same promote/preserve model applies to any transition into STOPPED that would otherwise paint from a dirty cache:
+
+1. **Overdub → STOPPED:** call `refreshViewportAfterOverdubStop` (same RC5a/c) before snapshot emit.
+2. **PLAYING → STOPPED:** if `visualCache` already clean/revision-matched, prefer filter/reuse (extend RC5d so STOPPED is not excluded); if dirty, preserve last PLAYING frame until idle finishes — do not sync full gather on the stop button stack.
+
+### Architecture checkpoint (before coding follow-up)
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** — extend existing `refreshViewportAfterOverdubStop` / `resolveDisplayNotesCommitted` |
+| State transition change? | **NO** — display sync scheduling only |
+| Stop-path seal/commit? | Unchanged |
+
+### Proposed next slice (not implemented in this commit)
+
+| ID | Work |
+|----|------|
+| **RC5e** | `stopOverdubbingToStopped` (+ in-edit fold → STOPPED if needed): `refreshViewportAfterOverdubStop` before `emitDisplayCaptureSnapshot` |
+| **RC5f** | STOPPED resolve: allow revision-matched clean `visualCache` window filter and preserved handoff without requiring `deferVisualRebuild` (PLAYING-only gate) |
 
 ---
 

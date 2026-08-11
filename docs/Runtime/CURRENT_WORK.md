@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (RC5 incremental overdub-stop display handoff)
+Last updated: 2026-08-11 (RC5 verify PASS; STOPPED handoff follow-up open)
 
 ---
 
@@ -21,7 +21,8 @@ Last updated: 2026-08-11 (RC5 incremental overdub-stop display handoff)
 **RC4g (shipped, verify):** PLAYING after overdub stop returns `visualCache` for `drawPianoRoll` rolling filter (`session_20260811_124133`).  
 **RC4h (shipped, verify):** Overdub gathers full committed span when cache dirty (`session_20260811_165148`).  
 **RC4i (shipped, verify):** Overview minimap from full `notes` when cache dirty; preserve fix on record stop (`session_20260811_170314`).  
-**RC5 (shipped, verify):** Incremental overdub-stop display handoff — [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md) (RC5a preserve / RC5b revision gate / RC5c promote-adopt / RC5d window filter; no default full-loop gather on revision bump).
+**RC5 (shipped, device PASS overdub→PLAYING):** Incremental overdub-stop display handoff — [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md) (`dc2bffa`; verify [`174742`](../../captures/session_20260811_174742.log)).  
+**RC5e/f (next):** STOPPED handoff — `stopOverdubbingToStopped` missing promote; STOPPED resolve skips RC5b/d because `deferVisualRebuild` is PLAYING-only (same capture).
 
 **5a-1 (shipped):** Critical `reclaimUnreferencedDisabledPasses` during transport (`main.cpp`).
 
