@@ -1,9 +1,10 @@
 # Live record open-note playhead tail (false wrap to tick 0)
 
-**Status:** Fixed (playhead tail + tick-0 NoteOn flicker)  
+**Status:** Device PASS (playhead tail + tick-0 NoteOn flicker)  
 **Branch:** `bugfix/long-overdub-display-freeze`  
 **Regression report:** After RC5; open NoteOns in early/growing RECORD lengthened a head from tick 0 until NoteOff.  
-**Follow-up evidence:** [`session_20260811_181659.log`](../../captures/session_20260811_181659.log) — temporary off OK; 1px flicker on tick-0 grid at each NoteOn.
+**Follow-up evidence:** [`session_20260811_181659.log`](../../captures/session_20260811_181659.log) — temporary off OK; 1px flicker on tick-0 grid at each NoteOn.  
+**Final verify:** [`session_20260811_182949.log`](../../captures/session_20260811_182949.log) — both symptoms cleared (`8de682c`).
 
 ## Problem
 
@@ -28,8 +29,9 @@ During growing live RECORD, held notes showed a wrap-style head from tick 0 to t
 
 ## Tick-0 grid flicker on each NoteOn (follow-up)
 
-**Status:** Fixed in code (device verify pending)  
-**Evidence after clamp-only attempt:** [`session_20260811_182528.log`](../../captures/session_20260811_182528.log) — 1px blips still on each NoteOn pitch at the left grid.
+**Status:** Device PASS  
+**Evidence after clamp-only attempt:** [`session_20260811_182528.log`](../../captures/session_20260811_182528.log) — 1px blips still on each NoteOn pitch at the left grid.  
+**Verify:** [`session_20260811_182949.log`](../../captures/session_20260811_182949.log) — left-grid NoteOn blips gone after `mapDisplayNoteBarTicksForLoopPaint` (`8de682c`).
 
 ### First attempt (insufficient)
 
