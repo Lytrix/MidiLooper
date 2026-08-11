@@ -15,8 +15,8 @@ Last updated: 2026-08-11 (LEN>100 info strip + RC4 follow-up)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
 RC4d: overdub committed window gather follows auto-follow paint window (`committedWindowStale`).
-RC4c zero-count cache hit; RC4b fully-built-only filter. Info-strip `LEN:` uses 3-digit bars
-(no 99 clamp) — [`session_20260811_035101`](../../captures/session_20260811_035101.log) 133 bars.
+RC4c zero-count cache hit; RC4b fully-built-only filter. Info-strip `LEN:` uses 3-digit bars (no 99 clamp). Overview minimap uses full `visualCache`
+density — not window/gather notes ([`overview_strip_window_gather_notes_bugfix.md`](../Plans/overview_strip_window_gather_notes_bugfix.md)).
 Stage 5 append pressure remains separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
