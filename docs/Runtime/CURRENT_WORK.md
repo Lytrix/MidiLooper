@@ -15,7 +15,7 @@ Last updated: 2026-08-11 (live-record tick-0 NoteOn blip PASS)
 **Parent:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19
 
 **5a-2 (shipped):** Authoritative `CaptureAppendResult` + `#CAP,append,deny` / `#CAP,DIAG,reclaim` / pressure latch.  
-**5a-3 (next):** Verification capture on `021117`-comparable workload — classify deny reasons before evaluating reclaim hypothesis.  
+**5a-3:** [`183525`](../../captures/session_20260811_183525.log) classifies append WARNs as **`duplicate`** (reclaim hypothesis falsified for that class). Further `pool_alloc` proof needs a separate pressure capture after RING survives. Follow-up: overdub overlap OpenSpec on a dedicated branch (not this PR).  
 **RC4e (shipped, verify):** Bounded visual-cache idle slices during overdub for rolling-window follow.  
 **RC4f (shipped, verify):** Promote overdub committed layer to full `visualCache` when idle finishes; overview minimap uses partial `visualCache` — [`long_overdub_record_tail_wrap_display_bugfix.md`](../Plans/long_overdub_record_tail_wrap_display_bugfix.md) (`session_20260811_121918`).  
 **RC4g (shipped, verify):** PLAYING after overdub stop returns `visualCache` for `drawPianoRoll` rolling filter (`session_20260811_124133`).  
@@ -74,6 +74,7 @@ Display RC slice closed on [`session_20260811_111528`](../../captures/session_20
 
 | Slice | Decision / commit | Evidence |
 |-------|-------------------|----------|
+| Live-record tick-0 NoteOn blip | `8de682c` | Native 999/999; device PASS [`182949`](../../captures/session_20260811_182949.log); pre-fix [`182528`](../../captures/session_20260811_182528.log) |
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |
 | Codebase consistency Phase 4 — DisplayNoteResolve | PR [#24](https://github.com/Lytrix/MidiLooper/pull/24) → `dev` (2026-08-10) | Native 969/969; [#18](https://github.com/Lytrix/MidiLooper/issues/18) |
