@@ -259,8 +259,9 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
             adjustedStartTick = n.startTick;
             adjustedEndTick = n.endTick;
         } else {
-            adjustedStartTick = (n.startTick - jamStartTick + loopLength) % loopLength;
-            adjustedEndTick = (n.endTick - jamStartTick + loopLength) % loopLength;
+            DisplayWindowUtils::mapDisplayNoteBarTicksForLoopPaint(
+                n.startTick, n.endTick, jamStartTick, loopLength, adjustedStartTick,
+                adjustedEndTick);
         }
 
         if (!windowRelativeTicks && adjustedStartTick >= lengthLoop && adjustedEndTick >= lengthLoop) {

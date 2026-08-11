@@ -28,11 +28,31 @@ During growing live RECORD, held notes showed a wrap-style head from tick 0 to t
 
 ## Tick-0 grid flicker on each NoteOn (follow-up)
 
-**Why:** MIDI capture can stamp `note.startTick` one tick ahead of the display frame’s growing `loopLength`. `drawNoteBar` treated `endTick > lengthLoop` as wrap geometry and painted a head at tick 0 for one frame — visible as a flash on the leftmost vertical grid line.
+**Status:** Fixed in code (device verify pending)  
+**Evidence after clamp-only attempt:** [`session_20260811_182528.log`](../../captures/session_20260811_182528.log) — 1px blips still on each NoteOn pitch at the left grid.
 
-**Fix:** `clampNonWrapDisplayNoteBarTicks` before draw / on playhead-tail apply — overflow with `end >= start` clamps; only `end < start` remains wrap.
+### First attempt (insufficient)
+
+MIDI capture can stamp `note.startTick` one tick ahead of the display frame’s growing `loopLength`. `drawNoteBar` treated `endTick > lengthLoop` as wrap geometry.  
+**Partial fix:** `clampNonWrapDisplayNoteBarTicks` in `drawNoteBar` / playhead-tail apply.
+
+### Actual paint-path root cause (`182528`)
+
+During growing RECORD (`windowRelativeTicks == false`), `drawAllNotes` did:
+
+`(n.startTick - jamStartTick + loopLength) % loopLength`
+
+A frontier NoteOn has `startTick == loopLength` (same tick as growing length). That modulo maps to **0**, then `drawNoteBar` paints a 1px bar on the left vertical grid at that pitch — **before** `drawNoteBar`’s clamp can help (inputs are already 0).
+
+Same hazard in `filterDisplayNotesToWindow` via `normalizeTick(loopLength) == 0` once the bounded window is active.
+
+### Fix
+
+1. `mapDisplayNoteBarTicksForLoopPaint` — clamp frontier overflow, then apply jam-origin modulo only when `jamStartTick != 0` (live record uses jam origin 0).
+2. `drawAllNotes` uses that mapper on the non-window path.
+3. `filterDisplayNotesToWindow` clamps before `normalizeTick`.
 
 ## Tests
 
 `test_noteutils_reconstruct`: `test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window`.  
-`test_display_window_utils`: `test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow`.
+`test_display_window_utils`: `test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow`, `test_map_display_note_bar_ticks_frontier_equals_length_stays_at_end`, `test_filter_display_notes_to_window_clamps_frontier_equals_length`.
