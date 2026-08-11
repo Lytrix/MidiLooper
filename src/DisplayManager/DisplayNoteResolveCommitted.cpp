@@ -86,15 +86,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // Prefer last live frame while deferred restore/undo is still draining.
-        if (deferHeavyDisplayRebuild && !liveDisplayNotes.empty() &&
-            displaySlot == livePlaybackDisplaySlot_ && trackIndex == livePlaybackDisplayTrack_) {
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            return liveDisplayNotes;
-        }
-        // Windowed reconstruction for long loops / deferred full rebuild.
-        // Use the same paint window as drawPianoRoll (detailedWindowStartTick_), not a
-        // separate centered playhead window — mismatch blanks the roll until a slot switch.
+        // Long loops: bounded committed window before any preserved live-frame fallback.
+        // Deferred save must not keep capture-suffix / playhead-tail rows as authority
+        // (session_20260811_013056: 1872 visualCache + 1011 capturePreview).
         if (avoidFullVisualRebuild ||
             loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
             uint32_t windowStart = 0;
@@ -105,6 +99,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
                                                    windowStart, windowLength);
             }
+        }
+        // Retain last live frame only when canonical cache/window data cannot be produced.
+        if (deferHeavyDisplayRebuild && !liveDisplayNotes.empty() &&
+            displaySlot == livePlaybackDisplaySlot_ && trackIndex == livePlaybackDisplayTrack_) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            return liveDisplayNotes;
         }
         if (!liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
             trackIndex == livePlaybackDisplayTrack_) {

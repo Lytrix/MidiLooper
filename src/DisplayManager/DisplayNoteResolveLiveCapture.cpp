@@ -434,6 +434,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     liveDisplayCacheLoopLength = liveLoopLength;
     liveDisplayCacheEventCount = eventCount;
     liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
+    livePlaybackDisplaySlot_ = displaySlot;
+    livePlaybackDisplayTrack_ = resolveTrackIndex(track);
     const size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
 
     if (track.isRecording() || track.isOverdubbing()) {

@@ -76,6 +76,29 @@ The prior M6 Phase 2 revision gate still copied the complete `capturePreview.not
 | Focused parity fixtures | [x] |
 | `pio test -e native` | [x] — 979/979 |
 
+### RC2 architecture gate — post-stop display handoff
+
+| Question | Answer |
+|----------|--------|
+| Owner module | `DisplayManager` (`refreshViewportAfterRecordStop`, `resolveDisplayNotesCommitted`) |
+| Primary invariant | First post-stop long-loop frame is bounded canonical/window data; capture suffix and playhead tails are not authority |
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Behavior-preserving? | **NO** for display authority only — window before deferred-save live fallback |
+| Reuse | **YES** — existing windowed resolver + record-stop handoff; overdub stop calls same handoff |
+| Phase scope | RC2 only — DisplayManager handoff/resolve + overdub stop call site; no commit/persistence FSM |
+
+#### RC2 implementation review
+
+| Check | Pass |
+|-------|------|
+| Window rebuild before deferred-save live fallback | [x] |
+| Preserve clamps to committed compose prefix | [x] |
+| Live capture binds playback display slot/track | [x] |
+| Overdub stop uses `refreshViewportAfterRecordStop` | [x] |
+| Native clamp fixture + full suite | [x] — 981/981 |
+| Combined HITL post-stop notes without overdub entry | [ ] |
+
 ### RC3 architecture gate — USB Host button delivery
 
 | Question | Answer |
