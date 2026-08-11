@@ -161,7 +161,9 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
         pendingNotes.erase(key);
         continue;
       }
-      if (shouldRestoreCommittedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
+      // G2: when overdubSourceView owns overlap resolution, do not drop the Add.
+      if (!loop.hasOverdubSourceView() &&
+          shouldRestoreCommittedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
         if (loop.removeOpenCaptureNoteOn(channel, note)) {
           ++overlapCaptureRestored;
         }
@@ -292,6 +294,24 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     if (type == midi::NoteOn) {
       ++recordAddedNoteOnCount;
+    }
+
+    // G2: evaluate completed overdub notes against overdubSourceView → pending delta.
+    if (type == midi::NoteOff && isOverdubbing() && loop.hasOverdubSourceView()) {
+      const LoopEventStore& capture = loop.capture.store;
+      for (size_t i = capture.size(); i > 0; --i) {
+        const MidiEvent& prior = capture.at(i - 1);
+        if (!prior.isNoteOn() || prior.channel != channel ||
+            prior.data.noteData.note != data1) {
+          continue;
+        }
+        if (newEvt.tick < prior.tick) {
+          break;
+        }
+        (void)loop.accumulatePendingNoteChangesForIncomingNote(
+            channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId);
+        break;
+      }
     }
   }
 }

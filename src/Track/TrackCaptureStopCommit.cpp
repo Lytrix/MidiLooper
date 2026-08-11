@@ -83,7 +83,10 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         StorageManager::admitLoopUndoHistory(resolveTrackIndexForPersistence(*this),
                                              getActiveLoopIndex());
       } else if (!editManager.isNoteEditActive()) {
-        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
+        EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId,
+                                        std::move(companionIds));
         StorageManager::admitLoopUndoHistory(resolveTrackIndexForPersistence(*this),
                                              getActiveLoopIndex());
       }

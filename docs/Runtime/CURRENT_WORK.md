@@ -2,31 +2,28 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (live-record tick-0 NoteOn blip PASS)
+Last updated: 2026-08-12 (archived overdub-pass-overlap-resolution)
 
 ---
 
 ## Now implementing
 
-### Stage 5 — memory / persistence pressure (long overdub)
+### Next — pick after merge
 
-**Branch:** `bugfix/long-overdub-display-freeze`  
-**Plan:** [`long_overdub_stage5_memory_persistence_bugfix.md`](../Plans/long_overdub_stage5_memory_persistence_bugfix.md)  
-**Parent:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md) §19
+Overdub overlap OpenSpec **archived**. Merge `feature/overdub-pass-overlap-resolution` → `dev` when ready. Then: Stage 5a-3 `pool_alloc` proof, HITL CLI Phase 3, or persistence overlay — confirm with user.
 
-**5a-2 (shipped):** Authoritative `CaptureAppendResult` + `#CAP,append,deny` / `#CAP,DIAG,reclaim` / pressure latch.  
-**5a-3:** [`183525`](../../captures/session_20260811_183525.log) classifies append WARNs as **`duplicate`** (reclaim hypothesis falsified for that class). Further `pool_alloc` proof needs a separate pressure capture after RING survives. Follow-up: overdub overlap OpenSpec on a dedicated branch (not this PR).  
-**RC4e (shipped, verify):** Bounded visual-cache idle slices during overdub for rolling-window follow.  
-**RC4f (shipped, verify):** Promote overdub committed layer to full `visualCache` when idle finishes; overview minimap uses partial `visualCache` — [`long_overdub_record_tail_wrap_display_bugfix.md`](../Plans/long_overdub_record_tail_wrap_display_bugfix.md) (`session_20260811_121918`).  
-**RC4g (shipped, verify):** PLAYING after overdub stop returns `visualCache` for `drawPianoRoll` rolling filter (`session_20260811_124133`).  
-**RC4h (shipped, verify):** Overdub gathers full committed span when cache dirty (`session_20260811_165148`).  
-**RC4i (shipped, verify):** Overview minimap from full `notes` when cache dirty; preserve fix on record stop (`session_20260811_170314`).  
-**RC5a–f (shipped, device PASS):** Incremental overdub/play-stop display handoff — [`long_overdub_rc5_incremental_display_handoff_investigation.md`](../Plans/long_overdub_rc5_incremental_display_handoff_investigation.md) (`dc2bffa` / `ce5390b`; verify [`180107`](../../captures/session_20260811_180107.log); pre-fix STOPPED gap [`174742`](../../captures/session_20260811_174742.log)).  
-**Live-record open-note tail + tick-0 NoteOn blip (shipped, device PASS):** Growing RECORD false wrap-head disabled; paint maps frontier ticks without modulo-to-0 — [`live_record_open_note_playhead_tail_bugfix.md`](../Plans/live_record_open_note_playhead_tail_bugfix.md) (`8de682c`; verify [`182949`](../../captures/session_20260811_182949.log)).
+### Overdub pass overlap resolution — archived
 
-**5a-1 (shipped):** Critical `reclaimUnreferencedDisabledPasses` during transport (`main.cpp`).
+**Archived:** [`openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/)  
+**Specs:** [`openspec/specs/overdub-pass-overlap-resolution/`](../../openspec/specs/overdub-pass-overlap-resolution/), deltas into `edit-session-action-geometry`, `timeline-passes`  
+**Plan (FROZEN):** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
+**PASS:** [`010000`](../../captures/session_20260812_010000.log); baseline [`183525`](../../captures/session_20260811_183525.log)
 
-Display RC slice closed on [`session_20260811_111528`](../../captures/session_20260811_111528.log).
+### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
+
+**5a-1/5a-2 (shipped on `dev`):** Critical reclaim during transport + authoritative append-deny CAP.  
+**5a-3:** `duplicate` class **closed** via overdub OpenSpec (not reclaim); **`pool_alloc` proof still open**.  
+**Display RC4–RC5 + live-record tick-0:** shipped on `dev` (PR #29).
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 
@@ -74,6 +71,7 @@ Display RC slice closed on [`session_20260811_111528`](../../captures/session_20
 
 | Slice | Decision / commit | Evidence |
 |-------|-------------------|----------|
+| Overdub pass overlap (G2) | DEC-031/032; archived `2026-08-12-overdub-pass-overlap-resolution` | Native 1016/1016; OLED PASS [`010000`](../../captures/session_20260812_010000.log); specs synced; merge PR pending |
 | Live-record tick-0 NoteOn blip | `8de682c` | Native 999/999; device PASS [`182949`](../../captures/session_20260811_182949.log); pre-fix [`182528`](../../captures/session_20260811_182528.log) |
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |
 | StorageManager TU remaining trim | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08) | [#16](https://github.com/Lytrix/MidiLooper/issues/16); [`storagemanager_translation_unit_extraction_refinement.md`](../Plans/storagemanager_translation_unit_extraction_refinement.md) |

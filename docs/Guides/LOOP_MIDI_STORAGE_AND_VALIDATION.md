@@ -232,7 +232,8 @@ Playback/materialize from committed passes uses the same **paired on/off** model
 |-----------|------|
 | **`finalizePendingNotes`** + **`LoopStopFinalize`** | Hot stop: close held keys; synthetic offs for tail open-ons; wrap-window pairing |
 | **`CaptureIncrementalSanity`** | During capture: pair-close, wrap slice, budget orphan repair |
-| **`isDuplicateCaptureEvent`** | Drop duplicate **events** within **12 ticks** (`DUPLICATE_TICK_TOLERANCE`) while recording |
+| **`isDuplicateCaptureEvent`** | Drop duplicate **events** within **12 ticks** (`DUPLICATE_TICK_TOLERANCE`) on **record** capture. Skipped when `overdubSourceView` is established — overdub overlap authority is source-view geometry (`accumulatePendingNoteChangesForIncomingNote`), not reverse-tick capture-store dedup |
+| **`overdubSourceView` + pending delta** | At overdub start: materialize-aware baseline. Completed notes → Add/Shorten/Hide via `resolveConstrainedGeometry` (shared `noteMinLengthTicks`). Stop seals Shorten/Hide as EditPass companions; one `OverdubPassAdded` undo (GUS STK2). OpenSpec: `overdub-pass-overlap-resolution` (DEC-031/032) |
 | **`validateAndCleanupMidiEvents`** | Idle fallback: remove orphan on/off; no synth insert |
 | **Q16** | **`removePairsShorterThanNoteMinLength`** + **`verifyCaptureHotStop`** on hot stop when enabled |
 
@@ -255,7 +256,8 @@ Stop behavior for each pending `(channel,note)` on **overdub stop**:
 2. **Overlap restore**  
    If a published same-pitch note is sounding at the pending note-on tick **or** at the stop close
    tick, discard the open capture `NoteOn` (`Loop::removeOpenCaptureNoteOn`) and **do not** append
-   a synthetic `NoteOff`. This preserves the earlier published span.
+   a synthetic `NoteOff`. This preserves the earlier published span.  
+   **Not authoritative when `hasOverdubSourceView()`** — session geometry owns overlap; do not drop Adds via this restore path.
 
 3. **Normal finalize**  
    Otherwise, append a capture `NoteOff` at the stop close tick (same phase mapping as live

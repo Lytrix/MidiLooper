@@ -50,36 +50,51 @@ void appendUndoEntryTail(std::vector<uint8_t>& buffer, const UndoEntry& entry) {
   appendRaw(buffer, entry.hasRedoPayload);
 }
 
+bool stackNeedsOverdubCompanionExtension(const GlobalUndoStack& stack) {
+  for (const UndoEntry& entry : stack.entries) {
+    if (entry.kind == UndoEntryKind::OverdubPassAdded && !entry.editPassIds.empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void appendScopedEditExtension(std::vector<uint8_t>& buffer, const UndoEntry& entry,
-                               bool scopedEditExtension) {
+                               bool scopedEditExtension, bool overdubCompanionExtension) {
   if (!scopedEditExtension) {
     return;
   }
   switch (entry.kind) {
     case UndoEntryKind::NoteEditPassClosed:
-    case UndoEntryKind::ControlChangeEditPassClosed: {
-      appendRaw(buffer, entry.editPassIndex);
-      const uint8_t editPassTypeRaw = static_cast<uint8_t>(entry.editPassType);
-      appendRaw(buffer, editPassTypeRaw);
-      const uint16_t count = static_cast<uint16_t>(entry.editPassIds.size());
-      appendRaw(buffer, count);
-      for (const EditPassId id : entry.editPassIds) {
-        appendRaw(buffer, id);
+    case UndoEntryKind::ControlChangeEditPassClosed:
+      break;
+    case UndoEntryKind::OverdubPassAdded:
+      if (!overdubCompanionExtension) {
+        return;
       }
       break;
-    }
     default:
-      break;
+      return;
+  }
+  appendRaw(buffer, entry.editPassIndex);
+  const uint8_t editPassTypeRaw = static_cast<uint8_t>(entry.editPassType);
+  appendRaw(buffer, editPassTypeRaw);
+  const uint16_t count = static_cast<uint16_t>(entry.editPassIds.size());
+  appendRaw(buffer, count);
+  for (const EditPassId id : entry.editPassIds) {
+    appendRaw(buffer, id);
   }
 }
 
 void writeGlobalUndoStackToBuffer(std::vector<uint8_t>& buffer, const GlobalUndoStack& stack) {
   const uint32_t entryCount = static_cast<uint32_t>(stack.entries.size());
   const uint32_t cursor = static_cast<uint32_t>(stack.cursor);
+  const bool overdubCompanionExtension = stackNeedsOverdubCompanionExtension(stack);
   appendRaw(buffer, entryCount);
   appendRaw(buffer, cursor);
   appendRaw(buffer, stack.nextEntryId);
-  appendRaw(buffer, kGlobalUndoStackScopedEditExtensionToken);
+  appendRaw(buffer, overdubCompanionExtension ? kGlobalUndoStackOverdubCompanionExtensionToken
+                                              : kGlobalUndoStackScopedEditExtensionToken);
 
   for (const UndoEntry& entry : stack.entries) {
     appendRaw(buffer, entry.id);
@@ -91,47 +106,52 @@ void writeGlobalUndoStackToBuffer(std::vector<uint8_t>& buffer, const GlobalUndo
     appendNullSnapshotFlag(buffer);
     appendNullSnapshotFlag(buffer);
     appendUndoEntryTail(buffer, entry);
-    appendScopedEditExtension(buffer, entry, true);
+    appendScopedEditExtension(buffer, entry, true, overdubCompanionExtension);
   }
 }
 
 bool readScopedEditExtensionFromBuffer(const std::vector<uint8_t>& buffer, size_t& cursor,
-                                       UndoEntry& entry, bool scopedEditExtension) {
+                                       UndoEntry& entry, bool scopedEditExtension,
+                                       bool overdubCompanionExtension) {
   if (!scopedEditExtension) {
     return true;
   }
   switch (entry.kind) {
     case UndoEntryKind::NoteEditPassClosed:
-    case UndoEntryKind::ControlChangeEditPassClosed: {
-      if (cursor + sizeof(entry.editPassIndex) + sizeof(uint8_t) + sizeof(uint16_t) >
-          buffer.size()) {
-        return false;
+    case UndoEntryKind::ControlChangeEditPassClosed:
+      break;
+    case UndoEntryKind::OverdubPassAdded:
+      if (!overdubCompanionExtension) {
+        return true;
       }
-      std::memcpy(&entry.editPassIndex, buffer.data() + cursor, sizeof(entry.editPassIndex));
-      cursor += sizeof(entry.editPassIndex);
-      uint8_t editPassTypeRaw = 0;
-      std::memcpy(&editPassTypeRaw, buffer.data() + cursor, sizeof(editPassTypeRaw));
-      cursor += sizeof(editPassTypeRaw);
-      entry.editPassType = static_cast<EditPassType>(editPassTypeRaw);
-      uint16_t count = 0;
-      std::memcpy(&count, buffer.data() + cursor, sizeof(count));
-      cursor += sizeof(count);
-      entry.editPassIds.clear();
-      entry.editPassIds.reserve(count);
-      for (uint16_t i = 0; i < count; ++i) {
-        if (cursor + sizeof(EditPassId) > buffer.size()) {
-          return false;
-        }
-        EditPassId id = kInvalidEditPassId;
-        std::memcpy(&id, buffer.data() + cursor, sizeof(id));
-        cursor += sizeof(id);
-        entry.editPassIds.push_back(id);
-      }
-      return true;
-    }
+      break;
     default:
       return true;
   }
+  if (cursor + sizeof(entry.editPassIndex) + sizeof(uint8_t) + sizeof(uint16_t) > buffer.size()) {
+    return false;
+  }
+  std::memcpy(&entry.editPassIndex, buffer.data() + cursor, sizeof(entry.editPassIndex));
+  cursor += sizeof(entry.editPassIndex);
+  uint8_t editPassTypeRaw = 0;
+  std::memcpy(&editPassTypeRaw, buffer.data() + cursor, sizeof(editPassTypeRaw));
+  cursor += sizeof(editPassTypeRaw);
+  entry.editPassType = static_cast<EditPassType>(editPassTypeRaw);
+  uint16_t count = 0;
+  std::memcpy(&count, buffer.data() + cursor, sizeof(count));
+  cursor += sizeof(count);
+  entry.editPassIds.clear();
+  entry.editPassIds.reserve(count);
+  for (uint16_t i = 0; i < count; ++i) {
+    if (cursor + sizeof(EditPassId) > buffer.size()) {
+      return false;
+    }
+    EditPassId id = kInvalidEditPassId;
+    std::memcpy(&id, buffer.data() + cursor, sizeof(id));
+    cursor += sizeof(id);
+    entry.editPassIds.push_back(id);
+  }
+  return true;
 }
 
 bool readGlobalUndoStackFromBuffer(const std::vector<uint8_t>& buffer, GlobalUndoStack& stack) {
@@ -150,10 +170,15 @@ bool readGlobalUndoStackFromBuffer(const std::vector<uint8_t>& buffer, GlobalUnd
   cursor += sizeof(nextEntryId);
 
   bool scopedEditExtension = false;
+  bool overdubCompanionExtension = false;
   if (cursor + sizeof(uint32_t) <= buffer.size()) {
     uint32_t maybeToken = 0;
     std::memcpy(&maybeToken, buffer.data() + cursor, sizeof(maybeToken));
-    if (maybeToken == kGlobalUndoStackScopedEditExtensionToken) {
+    if (maybeToken == kGlobalUndoStackOverdubCompanionExtensionToken) {
+      scopedEditExtension = true;
+      overdubCompanionExtension = true;
+      cursor += sizeof(maybeToken);
+    } else if (maybeToken == kGlobalUndoStackScopedEditExtensionToken) {
       scopedEditExtension = true;
       cursor += sizeof(maybeToken);
     }
@@ -211,7 +236,8 @@ bool readGlobalUndoStackFromBuffer(const std::vector<uint8_t>& buffer, GlobalUnd
     cursor += sizeof(uint32_t) * 2;
     cursor += sizeof(bool) * 2;
 
-    if (!readScopedEditExtensionFromBuffer(buffer, cursor, entry, scopedEditExtension)) {
+    if (!readScopedEditExtensionFromBuffer(buffer, cursor, entry, scopedEditExtension,
+                                           overdubCompanionExtension)) {
       return false;
     }
 
@@ -330,6 +356,73 @@ void test_scoped_edit_undo_round_trip_preserves_ids() {
   TEST_ASSERT_EQUAL(12u, loaded.entries[0].editPassIds[1]);
 }
 
+void test_overdub_pass_added_companion_ids_round_trip() {
+  GlobalUndoStack stack;
+  UndoEntry entry{};
+  entry.id = 9;
+  entry.kind = UndoEntryKind::OverdubPassAdded;
+  entry.slotIndex = 1;
+  entry.passId = 42;
+  entry.editPassIndex = 255;
+  entry.editPassType = EditPassType::Note;
+  entry.editPassIds.push_back(100);
+  entry.editPassIds.push_back(101);
+  stack.entries.push_back(entry);
+  stack.cursor = 1;
+  stack.nextEntryId = 10;
+
+  std::vector<uint8_t> buffer;
+  writeGlobalUndoStackToBuffer(buffer, stack);
+
+  // STK2 token must be present when companions are non-empty.
+  uint32_t stackToken = 0;
+  std::memcpy(&stackToken, buffer.data() + sizeof(uint32_t) * 3, sizeof(stackToken));
+  TEST_ASSERT_EQUAL_UINT32(kGlobalUndoStackOverdubCompanionExtensionToken, stackToken);
+
+  GlobalUndoStack loaded;
+  TEST_ASSERT_TRUE(readGlobalUndoStackFromBuffer(buffer, loaded));
+  TEST_ASSERT_EQUAL(1u, loaded.entries.size());
+  TEST_ASSERT_EQUAL(UndoEntryKind::OverdubPassAdded, loaded.entries[0].kind);
+  TEST_ASSERT_EQUAL(42u, loaded.entries[0].passId);
+  TEST_ASSERT_EQUAL_UINT8(255, loaded.entries[0].editPassIndex);
+  TEST_ASSERT_EQUAL(2u, loaded.entries[0].editPassIds.size());
+  TEST_ASSERT_EQUAL(100u, loaded.entries[0].editPassIds[0]);
+  TEST_ASSERT_EQUAL(101u, loaded.entries[0].editPassIds[1]);
+}
+
+void test_stk1_overdub_pass_added_leaves_companions_empty() {
+  // Historical STK1 stacks never wrote OverdubPassAdded companion payload.
+  std::vector<uint8_t> buffer;
+  const uint32_t entryCount = 1;
+  const uint32_t cursor = 1;
+  const uint32_t nextEntryId = 2;
+  appendRaw(buffer, entryCount);
+  appendRaw(buffer, cursor);
+  appendRaw(buffer, nextEntryId);
+  appendRaw(buffer, kGlobalUndoStackScopedEditExtensionToken);
+
+  UndoEntry entry{};
+  entry.id = 6;
+  entry.kind = UndoEntryKind::OverdubPassAdded;
+  entry.slotIndex = 0;
+  entry.passId = 7;
+  appendRaw(buffer, entry.id);
+  const uint8_t kind = static_cast<uint8_t>(entry.kind);
+  appendRaw(buffer, kind);
+  appendRaw(buffer, entry.slotIndex);
+  appendRaw(buffer, entry.loopId);
+  appendRaw(buffer, entry.passId);
+  appendNullSnapshotFlag(buffer);
+  appendNullSnapshotFlag(buffer);
+  appendUndoEntryTail(buffer, entry);
+
+  GlobalUndoStack loaded;
+  TEST_ASSERT_TRUE(readGlobalUndoStackFromBuffer(buffer, loaded));
+  TEST_ASSERT_EQUAL(UndoEntryKind::OverdubPassAdded, loaded.entries[0].kind);
+  TEST_ASSERT_EQUAL(7u, loaded.entries[0].passId);
+  TEST_ASSERT_TRUE(loaded.entries[0].editPassIds.empty());
+}
+
 void test_legacy_stack_read_leaves_scoped_ids_empty() {
   std::vector<uint8_t> buffer;
   const uint32_t entryCount = 1;
@@ -436,6 +529,8 @@ void test_repeated_durable_checkpoint_stack_order_abc() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_scoped_edit_undo_round_trip_preserves_ids);
+  RUN_TEST(test_overdub_pass_added_companion_ids_round_trip);
+  RUN_TEST(test_stk1_overdub_pass_added_leaves_companions_empty);
   RUN_TEST(test_legacy_stack_read_leaves_scoped_ids_empty);
   RUN_TEST(test_round_trip_undo_disables_edit_pass_rows);
   RUN_TEST(test_repeated_durable_checkpoint_stack_order_abc);

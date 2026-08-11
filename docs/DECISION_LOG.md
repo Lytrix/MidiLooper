@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-032](#dec-032-overdub-editpass-unification-reassessment) | 2026-08-12 | G2: unify resolution; dual storage transitional | Accepted |
+| [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) | 2026-08-12 | Transitional dual-seal encode + undo/restore pins | Accepted (encoding) |
 | [DEC-030](#dec-030-sticky-overlap-end-of-participation-on-current-state) | 2026-08-08 | Sticky overlap end-of-participation on NoteEditCurrentState | Accepted |
 | [DEC-029](#dec-029-noteeditcurrentstate-owns-note-edit-editable-note-state) | 2026-08-07 | NoteEditCurrentState owns NOTE_EDIT editable note state | Accepted |
 | [DEC-028](#dec-028-editsessionaction-geometry-pipeline-phase-1-native) | 2026-08-04 | EditSessionAction geometry pipeline Phase 1 native | Accepted |
@@ -45,7 +47,65 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-031 -->
+<!-- Append new entries below (newest first). Next ID: DEC-033 -->
+
+## DEC-032 — Overdub / EditPass unification reassessment
+
+**Date:** 2026-08-12  
+**Status:** Accepted — **G2**  
+**OpenSpec:** [`archive/2026-08-12-overdub-pass-overlap-resolution`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/)  
+**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/UNIFIED-PASS-ARCHITECTURE-REVIEW.md)
+
+### Decision
+
+**G2:** Unify the **resolution** model now; keep **dual storage** as transitional encoding.
+
+- MIDI overdub and NOTE_EDIT share canonical Add/Shorten/Hide geometry.
+- Session accumulates one pending logical delta; commit encodes via capture chunks (Add) + edit rows (Shorten/Hide).
+- Dual seal / `OverdubPassAdded`+`editPassIds` is encoding, not the semantic abstraction.
+- U1/U2 persistent unification explicitly out of scope for this change.
+
+### Consequences
+
+- Phase 2 firmware unblocked under G2.
+- DEC-031 describes transitional seal/undo encoding under this pin.
+- Design §19: resolution unification ≠ storage unification.
+
+---
+
+## DEC-031 — Overdub overlap encode pending buffer to EditPass
+
+**Date:** 2026-08-12  
+**Status:** Accepted (encoding under DEC-032 G2)  
+**OpenSpec:** [`archive/2026-08-12-overdub-pass-overlap-resolution`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/)  
+**PREFLIGHT:** [`PREFLIGHT.md`](../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/PREFLIGHT.md)
+
+### Decision
+
+Overdub overlap encode is **C → A**:
+
+- Session-local **pending overdub-operation buffer** on `Loop` (not a timeline pass).
+- At stop: Adds → existing `OverdubPass` chunks; Shorten/Hide → existing `EditPass` rows.
+- Do not extend `OverdubPass` with Shorten/Hide fields; do not write `EditPass` mid-session.
+- One logical undo: extend `OverdubPassAdded` to carry companion `editPassIds` (field already on `UndoEntry`); apply/redo/reclaim/GUS honor those ids.
+- Grouping identity: `OverdubPass.id` — no new overdub-operation identifier.
+- Commit order: publish OverdubPass → save EditPass rows → push undo.
+- When `overdubSourceView` is established, `shouldRestoreCommittedOverlapOnOverdubStop` / `removeOpenCaptureNoteOn` is **not** authoritative.
+
+### Alternatives rejected
+
+- **B** — ops on `OverdubPass` + materialize/schema rewrite.
+- **Pure A mid-session EditPass writes** — live materialize / cancel / undo boundary races.
+- **Two undo entries** — breaks one logical overdub undo.
+- **New UndoEntryKind** — unnecessary when `editPassIds` exists on `OverdubPassAdded`.
+
+### Consequences
+
+- Phase 2 slice 1: pending buffer + native geometry bridge.
+- Phase 2 slice 2: seal, undo bundling, restore gate, GUS round-trip for companion ids.
+- No loop SD schema bump expected; GUS wire extends for `OverdubPassAdded` companions.
+
+---
 
 ## DEC-030 — Sticky overlap end-of-participation on current state
 
