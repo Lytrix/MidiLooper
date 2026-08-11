@@ -30,8 +30,13 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
     SlotPassReferences& slotRefs = out.slots[entry.slotIndex];
     switch (entry.kind) {
       case UndoEntryKind::RecordPassAdded:
+        slotRefs.pinCapturePass(entry.passId);
+        break;
       case UndoEntryKind::OverdubPassAdded:
         slotRefs.pinCapturePass(entry.passId);
+        for (EditPassId id : entry.editPassIds) {
+          slotRefs.pinEditPass(id);
+        }
         break;
       case UndoEntryKind::NoteEditPassClosed:
       case UndoEntryKind::ControlChangeEditPassClosed:

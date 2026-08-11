@@ -169,6 +169,42 @@ void test_discard_clears_pending_with_source_view() {
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
 }
 
+void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(120, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(160, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_EQUAL(1u, loop.passes.overdubPasses.size());
+
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, companionIds.size());
+  TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(loop.passes.editPasses[0].actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(loop.passes.editPasses[0].propertyType));
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.passes.editPasses[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(119u, loop.passes.editPasses[0].endTick);
+  TEST_ASSERT_EQUAL_UINT8(kOverdubCompanionEditPassIndex, loop.passes.editPasses[0].editPassIndex);
+
+  SessionMidiEventVec flat;
+  loop.gatherCommittedEvents(flat);
+  bool foundShortenedOff = false;
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOff() && evt.data.noteData.note == 60 && evt.tick == 119) {
+      foundShortenedOff = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundShortenedOff);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -177,5 +213,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_when_covered);
   RUN_TEST(test_pending_survives_wraps_and_accumulates);
   RUN_TEST(test_discard_clears_pending_with_source_view);
+  RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
   return UNITY_END();
 }

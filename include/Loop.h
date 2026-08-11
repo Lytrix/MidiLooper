@@ -156,6 +156,8 @@ struct Loop {
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
                                                    NoteId incomingNoteId = kInvalidNoteId);
+  /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
+  EditPassIdList sealPendingNoteChangesToEditPasses();
 
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);

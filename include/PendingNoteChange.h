@@ -18,6 +18,9 @@ enum class PendingNoteChangeKind : uint8_t {
   Hide = 2,
 };
 
+/// Reserved editPassIndex for overdub-sealed Shorten/Hide rows (not a NOTE_EDIT session index).
+constexpr uint8_t kOverdubCompanionEditPassIndex = 255;
+
 /// One canonical geometry outcome held until session commit.
 struct PendingNoteChange {
   PendingNoteChangeKind kind = PendingNoteChangeKind::Add;

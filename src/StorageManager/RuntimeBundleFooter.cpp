@@ -10,106 +10,140 @@
 
 namespace StorageManagerInternal {
 
-static bool writeScopedEditUndoExtension(File& file, const UndoEntry& entry) {
+static bool writeScopedEditUndoExtension(File& file, const UndoEntry& entry,
+                                         bool overdubCompanionExtension) {
     switch (entry.kind) {
         case UndoEntryKind::NoteEditPassClosed:
-        case UndoEntryKind::ControlChangeEditPassClosed: {
-            if (!writeRaw(file, &entry.editPassIndex, sizeof(entry.editPassIndex))) {
-                return false;
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            break;
+        case UndoEntryKind::OverdubPassAdded:
+            if (!overdubCompanionExtension) {
+                return true;
             }
-            const uint8_t editPassTypeRaw = static_cast<uint8_t>(entry.editPassType);
-            if (!writeRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
-                return false;
-            }
-            const uint16_t count = static_cast<uint16_t>(entry.editPassIds.size());
-            if (!writeRaw(file, &count, sizeof(count))) {
-                return false;
-            }
-            for (const EditPassId id : entry.editPassIds) {
-                if (!writeRaw(file, &id, sizeof(id))) {
-                    return false;
-                }
-            }
-            return true;
-        }
+            break;
         default:
             return true;
     }
+    if (!writeRaw(file, &entry.editPassIndex, sizeof(entry.editPassIndex))) {
+        return false;
+    }
+    const uint8_t editPassTypeRaw = static_cast<uint8_t>(entry.editPassType);
+    if (!writeRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
+        return false;
+    }
+    const uint16_t count = static_cast<uint16_t>(entry.editPassIds.size());
+    if (!writeRaw(file, &count, sizeof(count))) {
+        return false;
+    }
+    for (const EditPassId id : entry.editPassIds) {
+        if (!writeRaw(file, &id, sizeof(id))) {
+            return false;
+        }
+    }
+    return true;
 }
 
-static bool readScopedEditUndoExtension(File& file, UndoEntry& entry, bool scopedEditExtension) {
+static bool readScopedEditUndoExtension(File& file, UndoEntry& entry, bool scopedEditExtension,
+                                        bool overdubCompanionExtension) {
     if (!scopedEditExtension) {
         return true;
     }
     switch (entry.kind) {
         case UndoEntryKind::NoteEditPassClosed:
-        case UndoEntryKind::ControlChangeEditPassClosed: {
-            uint8_t editPassTypeRaw = 0;
-            uint16_t count = 0;
-            if (!readRaw(file, &entry.editPassIndex, sizeof(entry.editPassIndex))) {
-                return false;
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            break;
+        case UndoEntryKind::OverdubPassAdded:
+            if (!overdubCompanionExtension) {
+                return true;
             }
-            if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
-                return false;
-            }
-            entry.editPassType = static_cast<EditPassType>(editPassTypeRaw);
-            if (!readRaw(file, &count, sizeof(count))) {
-                return false;
-            }
-            entry.editPassIds.clear();
-            entry.editPassIds.reserve(count);
-            for (uint16_t i = 0; i < count; ++i) {
-                EditPassId id = kInvalidEditPassId;
-                if (!readRaw(file, &id, sizeof(id))) {
-                    return false;
-                }
-                entry.editPassIds.push_back(id);
-            }
-            return true;
-        }
+            break;
         default:
             return true;
     }
+    uint8_t editPassTypeRaw = 0;
+    uint16_t count = 0;
+    if (!readRaw(file, &entry.editPassIndex, sizeof(entry.editPassIndex))) {
+        return false;
+    }
+    if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
+        return false;
+    }
+    entry.editPassType = static_cast<EditPassType>(editPassTypeRaw);
+    if (!readRaw(file, &count, sizeof(count))) {
+        return false;
+    }
+    entry.editPassIds.clear();
+    entry.editPassIds.reserve(count);
+    for (uint16_t i = 0; i < count; ++i) {
+        EditPassId id = kInvalidEditPassId;
+        if (!readRaw(file, &id, sizeof(id))) {
+            return false;
+        }
+        entry.editPassIds.push_back(id);
+    }
+    return true;
 }
 
-static bool skipScopedEditUndoExtension(File& file, UndoEntryKind kind, bool scopedEditExtension) {
+static bool skipScopedEditUndoExtension(File& file, UndoEntryKind kind, bool scopedEditExtension,
+                                        bool overdubCompanionExtension) {
     if (!scopedEditExtension) {
         return true;
     }
     switch (kind) {
         case UndoEntryKind::NoteEditPassClosed:
-        case UndoEntryKind::ControlChangeEditPassClosed: {
-            uint8_t editPassIndex = 0;
-            uint8_t editPassTypeRaw = 0;
-            uint16_t count = 0;
-            if (!readRaw(file, &editPassIndex, sizeof(editPassIndex))) {
-                return false;
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            break;
+        case UndoEntryKind::OverdubPassAdded:
+            if (!overdubCompanionExtension) {
+                return true;
             }
-            if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
-                return false;
-            }
-            if (!readRaw(file, &count, sizeof(count))) {
-                return false;
-            }
-            for (uint16_t i = 0; i < count; ++i) {
-                EditPassId id = kInvalidEditPassId;
-                if (!readRaw(file, &id, sizeof(id))) {
-                    return false;
-                }
-            }
-            return true;
-        }
+            break;
         default:
             return true;
     }
+    uint8_t editPassIndex = 0;
+    uint8_t editPassTypeRaw = 0;
+    uint16_t count = 0;
+    if (!readRaw(file, &editPassIndex, sizeof(editPassIndex))) {
+        return false;
+    }
+    if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
+        return false;
+    }
+    if (!readRaw(file, &count, sizeof(count))) {
+        return false;
+    }
+    for (uint16_t i = 0; i < count; ++i) {
+        EditPassId id = kInvalidEditPassId;
+        if (!readRaw(file, &id, sizeof(id))) {
+            return false;
+        }
+    }
+    return true;
 }
 
-static bool readScopedEditExtensionHeader(File& file, bool& scopedEditExtension) {
+static bool stackNeedsOverdubCompanionExtension(const GlobalUndoStack& stack) {
+    for (const UndoEntry& entry : stack.entries) {
+        if (entry.kind == UndoEntryKind::OverdubPassAdded && !entry.editPassIds.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool readScopedEditExtensionHeader(File& file, bool& scopedEditExtension,
+                                          bool& overdubCompanionExtension) {
     scopedEditExtension = false;
+    overdubCompanionExtension = false;
     const size_t pos = file.position();
     uint32_t maybeToken = 0;
     if (!readRaw(file, &maybeToken, sizeof(maybeToken))) {
         return false;
+    }
+    if (maybeToken == kGlobalUndoStackOverdubCompanionExtensionToken) {
+        scopedEditExtension = true;
+        overdubCompanionExtension = true;
+        return true;
     }
     if (maybeToken == kGlobalUndoStackScopedEditExtensionToken) {
         scopedEditExtension = true;
@@ -189,8 +223,11 @@ STORAGE_PERSIST_MEM bool writeGlobalUndoStackToFile(File& file, const GlobalUndo
     if (!writeRaw(file, &nextEntryId, sizeof(nextEntryId))) {
         return false;
     }
-    if (!writeRaw(file, &kGlobalUndoStackScopedEditExtensionToken,
-                  sizeof(kGlobalUndoStackScopedEditExtensionToken))) {
+    const bool overdubCompanionExtension = stackNeedsOverdubCompanionExtension(stack);
+    const uint32_t stackExtensionToken = overdubCompanionExtension
+                                             ? kGlobalUndoStackOverdubCompanionExtensionToken
+                                             : kGlobalUndoStackScopedEditExtensionToken;
+    if (!writeRaw(file, &stackExtensionToken, sizeof(stackExtensionToken))) {
         return false;
     }
 
@@ -252,7 +289,7 @@ STORAGE_PERSIST_MEM bool writeGlobalUndoStackToFile(File& file, const GlobalUndo
         if (!writeRaw(file, &entry.hasRedoPayload, sizeof(entry.hasRedoPayload))) {
             return false;
         }
-        if (!writeScopedEditUndoExtension(file, entry)) {
+        if (!writeScopedEditUndoExtension(file, entry, overdubCompanionExtension)) {
             return false;
         }
     }
@@ -294,7 +331,8 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackMetadataFromFile(File& file, GlobalU
     }
 
     bool scopedEditExtension = false;
-    if (!readScopedEditExtensionHeader(file, scopedEditExtension)) {
+    bool overdubCompanionExtension = false;
+    if (!readScopedEditExtensionHeader(file, scopedEditExtension, overdubCompanionExtension)) {
         return false;
     }
 
@@ -362,7 +400,8 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackMetadataFromFile(File& file, GlobalU
             return false;
         }
 
-        if (!readScopedEditUndoExtension(file, entry, scopedEditExtension)) {
+        if (!readScopedEditUndoExtension(file, entry, scopedEditExtension,
+                                         overdubCompanionExtension)) {
             return false;
         }
 
@@ -400,7 +439,8 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackFromFile(File& file, GlobalUndoStack
     }
 
     bool scopedEditExtension = false;
-    if (!readScopedEditExtensionHeader(file, scopedEditExtension)) {
+    bool overdubCompanionExtension = false;
+    if (!readScopedEditExtensionHeader(file, scopedEditExtension, overdubCompanionExtension)) {
         return false;
     }
 
@@ -468,7 +508,8 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackFromFile(File& file, GlobalUndoStack
             return false;
         }
 
-        if (!readScopedEditUndoExtension(file, entry, scopedEditExtension)) {
+        if (!readScopedEditUndoExtension(file, entry, scopedEditExtension,
+                                         overdubCompanionExtension)) {
             return false;
         }
 
