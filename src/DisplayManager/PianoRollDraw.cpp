@@ -8,6 +8,7 @@
 
 #include "ClockManager.h"
 #include "Globals.h"
+#include "Loop.h"
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
 #include "NoteEditFocus.h"
@@ -495,10 +496,18 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     const int pianoRollY1 = kDetailedPianoRollY1;
     if (loopLength > 0) {
         const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
+        const Loop& loop = track.getLoop(displaySlot);
+        // Overview minimap spans the full loop; detailed paint uses window/gather notes (~18 bars).
+        const DisplayNoteVec& overviewDensityNotes =
+            (useBoundedWindow && !loop.visualCache.notes.empty()) ? loop.visualCache.notes : notes;
 
         int minPitch = 127;
         int maxPitch = 0;
         for (const auto& n : notes) {
+            if (n.note < minPitch) minPitch = n.note;
+            if (n.note > maxPitch) maxPitch = n.note;
+        }
+        for (const auto& n : overviewDensityNotes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
         }
@@ -533,7 +542,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
 
         if (useBoundedWindow) {
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
-                              maxPitch, notes, kOverviewStripY0, kOverviewStripY1);
+                              maxPitch, overviewDensityNotes, kOverviewStripY0, kOverviewStripY1);
             if (drawPlayhead && jamPos >= windowStart && jamPos < windowStart + windowLength) {
                 const float phase = previewPlayheadPending ? 0.0f : displayPlayheadPhase();
                 const float relativePlayhead =
