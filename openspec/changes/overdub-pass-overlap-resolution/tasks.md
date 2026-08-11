@@ -38,7 +38,7 @@
 **Pass criteria:** OLED hide/shorten + continuous UI across wraps. Zero `duplicate` denies is **expected** under G2 (not the product gate). CAP `DFRAME` gaps alone do not fail if OLED updated.
 
 - [x] 4.1 Demote `isDuplicateCaptureEvent` as semantic authority when `hasOverdubSourceView()` (Phase 2; Record path keeps helper)
-- [ ] 4.2 Optional separate commit: deny WARN/CAP throttle if RING still floods (observability only)
+- [x] 4.2 Investigate deny WARN/CAP throttle — **cancelled / not indicated** (0 deny WARNs post-G2; [`010000`] RING/DFRAME gap is stop SEVT burst + mid-OD CAP silence, not `append,deny`; see wrap bugfix §4.2)
 - [x] 4.3 Device wrap verify — [`010000`](../../../captures/session_20260812_010000.log): 3 wraps on loopLen 9984; user OLED hide/shorten PASS; 0× `duplicate` (expected)
 - [ ] 4.4 Update Stage 5 / wrap bugfix / CURRENT_WORK closeout
 - [ ] 4.5 Implementation review Phase 3; ready for `/opsx:archive` when gates pass
