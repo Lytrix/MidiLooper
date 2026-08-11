@@ -129,6 +129,16 @@ void test_overdub_committed_window_cache_rejects_zero_committed_count() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(301u, 300u));
 }
 
+void test_paint_window_inside_gather_detects_follow_exit() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  // First gather: bars 0..18 (16 + 2 margin). Follow window at bar 0 fits; at bar 8 does not.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::paintWindowInsideGather(0, 16u * bar, 0, 18u * bar));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::paintWindowInsideGather(8u * bar, 16u * bar, 0, 18u * bar));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::paintWindowInsideGather(2u * bar, 16u * bar, 0, 18u * bar));
+}
+
 void test_visual_cache_covers_window_requires_fully_built() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const uint32_t loopLength = 195u * bar;
@@ -157,6 +167,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_centered_window_start);
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
+  RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_requires_fully_built);
   return UNITY_END();
 }

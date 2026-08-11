@@ -59,6 +59,15 @@ inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_
     return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;
 }
 
+/// True when the paint window lies entirely inside a previously gathered tick range.
+inline bool paintWindowInsideGather(uint32_t windowStart, uint32_t windowLength,
+                                    uint32_t gatherStart, uint32_t gatherLength) {
+    if (windowLength == 0 || gatherLength == 0 || windowStart < gatherStart) {
+        return false;
+    }
+    return (windowStart - gatherStart) + windowLength <= gatherLength;
+}
+
 TickInterval makeViewportInterval(uint32_t windowStart, uint32_t windowLength);
 
 /// Copy MIDI events whose tick lies in the half-open loop window [start, start + length).
