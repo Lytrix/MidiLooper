@@ -15,7 +15,7 @@ Last updated: 2026-08-11 (overdubSourceView OpenSpec refinement)
 **Evidence plan:** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
 **Capture:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap; not `pool_alloc`
 
-**Now:** Phase 0 docs complete; next `/opsx:apply` Phase 1 (source-pass candidate lookup + deny throttle). Parallel / non-blocking to persistence tracks A/B — do not mix apply sessions.
+**Now:** OpenSpec refined (`overdubSourceView`, complete `overdubPass` delta). Next `/opsx:apply` **Phase 1** = establish/clear source view + native tests only (no deny wiring, no reverse-tick fix, no encode). Parallel / non-blocking to persistence tracks A/B — do not mix apply sessions.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 
