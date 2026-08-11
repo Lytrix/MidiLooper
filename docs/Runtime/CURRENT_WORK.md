@@ -2,19 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-11 (long capture display Stage 0a)
+Last updated: 2026-08-11 (long capture follow-up RC1)
 
 ---
 
 ## Now implementing
 
-### Long record / overdub display starvation — Stage 3 manual gate next
+### Long record / overdub display — freeze resolved; preview parity RC1 active
 
 **Branch:** `bugfix/long-overdub-display-freeze`
 **Plan:** [`long_overdub_display_freeze_bugfix.md`](../Plans/long_overdub_display_freeze_bugfix.md)
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/) M6 Phase 2 follow-up
 
-Stages 1 / 1a / 1b are implemented: delta capture composition, append-maintained wrap metadata, bounded active-note tails, and a preserved post-record frame. Native tests and the `teensy41-capture-serial` build pass. Next: upload and run the 118-bar manual display/latency gate. Stage 5 memory/persistence remains a separate commit.
+`session_20260811_013056` confirms the physical display no longer freezes. It exposes three
+separate follow-ups: RC1 preview open-note identity (active), RC2 canonical post-stop display
+handoff, and RC3 USB Host NoteOff delivery. Each ships as an independent commit. Stage 5
+memory/persistence remains separate.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

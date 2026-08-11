@@ -1,13 +1,13 @@
 # Long overdub / record display freeze — layered display invalidation
 
-**Status:** In progress — Stages 1 / 1a / 1b implemented; Stage 3 manual gate pending  
+**Status:** Display freeze resolved; RC1 preview parity active, RC2/RC3 planned  
 **Priority:** P0  
 **Behavior:** Behavior-preserving  
 **Ownership change:** No  
 **State-transition change:** No  
-**Evidence:** [`captures/session_20260810_234809.log`](../../captures/session_20260810_234809.log)  
+**Evidence:** [`session_20260810_234809.log`](../../captures/session_20260810_234809.log), [`session_20260811_013056.log`](../../captures/session_20260811_013056.log)  
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/)  
-**Related:** [`multi_track_playback_pressure_closure_refinement.md`](multi_track_playback_pressure_closure_refinement.md)
+**Follow-ups:** [`long_overdub_capture_preview_tail_parity_bugfix.md`](long_overdub_capture_preview_tail_parity_bugfix.md), [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md), [`midi_button_usb_host_note_off_delivery_bugfix.md`](midi_button_usb_host_note_off_delivery_bugfix.md)
 
 ---
 
