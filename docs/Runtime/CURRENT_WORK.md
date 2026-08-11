@@ -16,7 +16,7 @@ Last updated: 2026-08-12 (Phase 3 OLED wrap PASS on 010000)
 **Baseline:** [`183525`](../../captures/session_20260811_183525.log) — 191× `duplicate` after wrap (pre-fix).  
 **Device PASS:** [`010000`](../../captures/session_20260812_010000.log) — 3 wraps; user OLED hide/shorten; 0× `duplicate` **expected** under G2 (not the gate).
 
-**Now:** Phase 2 firmware shipped; Phase 3 OLED/wrap **user PASS**. Remaining: 4.4/4.5 closeout (optional RING throttle 4.2), then archive. U1/U2 out of scope.
+**Now:** Phase 2 firmware shipped; Phase 3 OLED/wrap **user PASS**. **4.2 cancelled** (deny throttle not indicated — see wrap bugfix). Remaining: 4.4/4.5 closeout → archive. U1/U2 out of scope.
 
 ### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
 
