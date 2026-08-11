@@ -33,6 +33,9 @@ enum class Counter : uint8_t {
   LegacyMidiEvents,
   DisplayFullRebuild,
   DisplayIncrementalUpdate,
+  DisplayCaptureFullGather,
+  DisplayResolveOverBudgetCount,
+  DisplayCaptureEventsAdded,
   Materialize,
   CacheInvalidateBroad,
   CacheInvalidateScoped,
@@ -44,8 +47,16 @@ enum class Counter : uint8_t {
 enum class Timing : uint8_t {
   PlaybackBuild = 0,
   DisplayBuild,
+  DisplayResolveLiveCapture,
+  DisplayCaptureGather,
+  DisplayCaptureCompose,
+  DisplayCaptureTails,
+  DisplayUpdateTotal,
   Count,
 };
+
+// Soft budget for live-capture display resolve (30 ms frame cadence).
+constexpr uint32_t kDisplayResolveBudgetMicros = 5000;
 
 #if defined(SESSION_CAPTURE)
 
@@ -60,6 +71,7 @@ uint32_t readCounter(Counter counter);
 void recordTimingSample(Timing timing, uint32_t elapsedMicros);
 uint32_t readTimingSumMicros(Timing timing);
 uint32_t readTimingSampleCount(Timing timing);
+uint32_t readTimingMaxMicros(Timing timing);
 const char* counterName(Counter counter);
 const char* timingName(Timing timing);
 void emitArchitectureMetricsSnapshot();
@@ -76,6 +88,7 @@ inline uint32_t readCounter(Counter) { return 0; }
 inline void recordTimingSample(Timing, uint32_t) {}
 inline uint32_t readTimingSumMicros(Timing) { return 0; }
 inline uint32_t readTimingSampleCount(Timing) { return 0; }
+inline uint32_t readTimingMaxMicros(Timing) { return 0; }
 inline const char* counterName(Counter) { return ""; }
 inline const char* timingName(Timing) { return ""; }
 inline void emitArchitectureMetricsSnapshot() {}

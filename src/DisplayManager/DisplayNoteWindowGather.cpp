@@ -83,7 +83,7 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     }
     const uint32_t gatherLength = gatherEnd - gatherStart;
     rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
-                                liveDisplayEventBuffer, liveDisplayNotes);
+                                liveDisplayEventBuffer, liveDisplayNotes, true);
     liveMergePlaybackRevision_ = loop.playbackRevision;
     liveMergeCaptureRevision_ = loop.captureDisplayRevision;
     livePlaybackDisplaySlot_ = displaySlot;

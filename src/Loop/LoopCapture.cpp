@@ -289,7 +289,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
     return false;
   }
   captureEventsSortDirty = true;
-  applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR);
+  applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR, loopLengthTicks);
   ++captureDisplayRevision;
   return true;
 }

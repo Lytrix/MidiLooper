@@ -103,7 +103,7 @@ public:
     void invalidateForSlotChange(uint8_t trackIndex, uint8_t previousSlot, uint8_t newSlot);
 
     /// Drop live frame caches so the next update re-resolves notes (no slot geometry side effects).
-    void invalidateLiveDisplayCache();
+    void invalidateLiveDisplayCache(bool preserveDisplayNotes = false);
 
     /// Center the bounded detailed piano-roll window on the current playhead (long-loop loops only).
     void centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot, uint32_t currentTick);
@@ -203,6 +203,12 @@ private:
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
     /// Committed-layer note count in `liveDisplayNotes` before capturePreview overlay (overdub).
     size_t liveDisplayCacheCommittedNoteCount_ = 0;
+    /// Stable capture-preview mirror before temporary per-frame tail/head segments.
+    size_t liveDisplayCacheCaptureNoteCount_ = 0;
+    size_t liveDisplayCacheCaptureChangeCount_ = 0;
+    size_t liveDisplayCacheBaseNoteCount_ = 0;
+    uint32_t liveDisplayCacheCaptureReplacementRevision_ = UINT32_MAX;
+    uint32_t liveDisplayCacheCapturePreviewRevision_ = UINT32_MAX;
     uint16_t liveDisplayCacheCaptureRevision = 0;
     uint32_t liveDisplayCacheLoopLength = 0;
     uint8_t liveDisplayCacheSlot = 255;

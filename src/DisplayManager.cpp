@@ -134,6 +134,7 @@ void DisplayManager::update() {
         drawLoadSaveView(now);
         _display.api.display();
         HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
+        DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
         return;
     }
 
@@ -158,6 +159,7 @@ void DisplayManager::update() {
     }
 #endif
     HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
+    DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
     if (editManager.isNoteEditActive()) {
         editManager.markNoteEditDisplayPainted();
     }

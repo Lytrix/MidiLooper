@@ -1,15 +1,58 @@
-# Architecture review — published capture / builder split (M7)
+# Architecture review — runtime derived representations
 
-**Change:** `runtime-derived-representation-heap` — **M7**  
-**Date:** 2026-07-15  
-**Status:** Active — Phase 0 doc gate **complete**; Phase 1 implementation **next**  
-**Plan:** [`docs/Plans/published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)
+**Change:** `runtime-derived-representation-heap` — **M6 follow-up + M7**
+**Updated:** 2026-08-11
+**Status:** Active — M6 display follow-up Stage 1 ready; M7 historical gates retained below
+**Plans:** [`long_overdub_display_freeze_bugfix.md`](../../../docs/Plans/long_overdub_display_freeze_bugfix.md), [`published_pass_capture_builder_split_refinement.md`](../../../docs/Plans/published_pass_capture_builder_split_refinement.md)
 
 **Related:** [design.md](design.md) § M7, [tasks.md](tasks.md) § M7, [specs/published-capture-pass-split/spec.md](specs/published-capture-pass-split/spec.md)
 
 **Orthogonal:** Capture **commit** owner ([DEC-023](../unified-capture-commit-owner/ARCHITECTURE-REVIEW.md)); persistence scheduling ([DEC-020](../continuous-runtime-persistence/ARCHITECTURE-REVIEW.md)). M7 does **not** change seal/publish FSM transitions — only **representation** at existing boundaries.
 
 **Supersedes:** Phase 2A blanket/split-tier typedef swaps (reverted — see [`memory_pressure_reclaim_conclusions_refinement.md`](../../../docs/Plans/memory_pressure_reclaim_conclusions_refinement.md)).
+
+---
+
+## M6 Phase 2 follow-up — long capture display starvation (2026-08-11)
+
+**Plan:** [`docs/Plans/long_overdub_display_freeze_bugfix.md`](../../../docs/Plans/long_overdub_display_freeze_bugfix.md)
+**Evidence:** [`session_20260811_004608.log`](../../../captures/session_20260811_004608.log) — 259-second `DFRAME` gap across RECORDING and post-stop PLAYING.
+
+The prior M6 Phase 2 revision gate still copied the complete `capturePreview.notes` vector when continuous MIDI changed the revision each display frame, and the tail path copied/scanned the complete capture store whenever a preview note remained open. This is an incomplete DEC-016 migration, not a new display or capture architecture.
+
+### Architecture gate
+
+| Question | Answer |
+|----------|--------|
+| Owner module | `Loop` (`CapturePreview`) + `DisplayManager` (composition / draw) |
+| Primary invariant | Capture arrival changes only the capture suffix; committed display data remains reusable; per-frame display work is independent of capture-session length |
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Behavior-preserving? | **YES** — same note, wrap-tail, and wrap-head display result |
+| Reuse | **YES** — extend `CapturePreview`, committed/capture region partition, and PLAYING stale-while-revalidate |
+| Phase scope | Plan Stages 1 / 1a / 1b only; no capture-stop, playback-wrap, or persistence FSM changes |
+
+### Stage 0a decisions
+
+1. Delta-sync exact changed capture rows into the existing partitioned `liveDisplayNotes`; do not introduce a dual-vector paint API.
+2. Maintain channel-aware open/wrap metadata on `CapturePreview` during append; remove full capture-store copy/scan from the per-frame overdub tail path.
+3. Preserve the last valid live-capture frame across record stop and replace it through the bounded committed-window resolver; no synchronous representation rebuild on the stop path.
+
+### Implementation review
+
+| Check | Pass |
+|-------|------|
+| Duplicate `captureDisplayRevision` bumps removed from `TrackCaptureInput` | [x] |
+| Valid committed prefix survives capture-only revisions | [x] |
+| Nominal capture revision copies only new/changed preview rows | [x] |
+| Tail/head parity fixtures cover channel and wrap pairing | [x] |
+| No per-frame `copySortedCaptureEvents` for overdub tails | [x] |
+| Post-record PLAYING paints within 1 second | [ ] |
+| `pio test -e native` | [x] |
+| `teensy41-capture-serial` build | [x] |
+| 118-bar manual record/overdub gate | [ ] |
+
+**Approval:** APPROVE — Stage 1 firmware may proceed within this gate.
 
 ---
 

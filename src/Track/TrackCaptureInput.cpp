@@ -115,7 +115,6 @@ bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t 
   if (!loop.appendCaptureEvent(newEvt)) {
     return false;
   }
-  ++loop.captureDisplayRevision;
   return true;
 }
 
@@ -271,10 +270,6 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       logOverdubCaptureCoordinate(*this, currentTick, newEvt.tick, channel, data1);
     }
 #endif
-
-    if ((isRecording() && !isPlaying()) || isOverdubbing()) {
-      ++loop.captureDisplayRevision;
-    }
 
     if (type == midi::NoteOn) {
       ++recordAddedNoteOnCount;
