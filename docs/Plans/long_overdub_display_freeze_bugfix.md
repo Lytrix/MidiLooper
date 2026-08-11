@@ -7,7 +7,7 @@
 **State-transition change:** No  
 **Evidence:** [`session_20260810_234809.log`](../../captures/session_20260810_234809.log), [`session_20260811_013056.log`](../../captures/session_20260811_013056.log)  
 **OpenSpec:** [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/)  
-**Follow-ups:** [`long_overdub_capture_preview_tail_parity_bugfix.md`](long_overdub_capture_preview_tail_parity_bugfix.md), [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md), [`midi_button_usb_host_note_off_delivery_bugfix.md`](midi_button_usb_host_note_off_delivery_bugfix.md)
+**Follow-ups:** [`long_overdub_capture_preview_tail_parity_bugfix.md`](long_overdub_capture_preview_tail_parity_bugfix.md), [`long_overdub_post_stop_display_handoff_bugfix.md`](long_overdub_post_stop_display_handoff_bugfix.md), [`midi_button_usb_host_note_off_delivery_bugfix.md`](midi_button_usb_host_note_off_delivery_bugfix.md), [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](long_loop_post_stop_visual_cache_window_paint_bugfix.md)
 
 ---
 

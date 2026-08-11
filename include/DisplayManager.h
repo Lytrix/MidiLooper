@@ -224,6 +224,8 @@ private:
     uint32_t liveWindowGatherLength_ = 0;
     uint32_t liveWindowGatherLoopLength_ = 0;
     bool liveWindowGatherValid_ = false;
+    /// When window paint was filtered from `visualCache`, matches `visualCache.revision`.
+    uint32_t liveWindowVisualCacheRevision_ = UINT32_MAX;
 
     static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
     uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};

@@ -2,17 +2,16 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-11 (long capture follow-up RC2)
+Last updated: 2026-08-11 (long capture follow-up RC4)
 
 ---
 
 ## Current branch
 
-**Active work:** Long record / overdub display — RC2 post-stop display handoff (window before
-deferred-save live fallback; clamp preserve to committed prefix). RC1/RC3 shipped on branch;
-Stage 5 append pressure remains open.
+**Active work:** Long record / overdub display — RC4 visualCache window paint (filter covered
+cache; PLAYING idle neighborhood). RC1–RC3 shipped on branch; Stage 5 append pressure remains open.
 
-**Branch tip (local):** `bugfix/long-overdub-display-freeze` — [`long_overdub_post_stop_display_handoff_bugfix.md`](../Plans/long_overdub_post_stop_display_handoff_bugfix.md); M6 Phase 2 follow-up under `runtime-derived-representation-heap`.
+**Branch tip (local):** `bugfix/long-overdub-display-freeze` — [`long_loop_post_stop_visual_cache_window_paint_bugfix.md`](../Plans/long_loop_post_stop_visual_cache_window_paint_bugfix.md); M6 Phase 2 follow-up under `runtime-derived-representation-heap`.
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 

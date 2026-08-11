@@ -9,6 +9,7 @@
 #include "SlotLoadSession.h"
 #include "StorageManager.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/MemoryMonitor.h"
@@ -138,7 +139,12 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       if (loop.lastTickInLoop != UINT32_MAX) {
         priorityBar = visualBarForTick(loop.lastTickInLoop, Config::TICKS_PER_BAR);
       }
-      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar);
+      // PLAYING: only backfill near the playhead/paint window so idle reconstruct does not
+      // race the OLED path across a full long loop (session_20260811_030614).
+      constexpr uint32_t kPlayingVisualCacheNeighborhoodBars =
+          DisplayWindowUtils::kMaxDetailedWindowBars + 4u;
+      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar,
+                                       kPlayingVisualCacheNeighborhoodBars);
     }
   }
 

@@ -124,6 +124,7 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] RC1: `CapturePreviewNoteState::open` owns normal NoteOff closure; cold sidecar parity + native fixtures
 - [x] RC2: bounded canonical post-stop display handoff; no preserved temporary live tails
 - [x] RC3: bounded USB Host MIDI drain + input telemetry; incomplete button gestures remain discarded
+- [x] RC4: long-loop window paint from covered `visualCache`; PLAYING idle slices stay near playhead
 
 ### Phase 3 — Idle gating during capture
 

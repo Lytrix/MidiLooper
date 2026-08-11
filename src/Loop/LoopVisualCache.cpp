@@ -30,14 +30,25 @@ void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
   cache.dirtyBars.assign(totalBars, 1);
 }
 
-uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar) {
+uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
+                          uint32_t maxBarDistanceFromPriority) {
   if (dirtyBars.empty()) {
     return UINT32_MAX;
   }
   const uint32_t totalBars = static_cast<uint32_t>(dirtyBars.size());
   const uint32_t start = priorityBar < totalBars ? priorityBar : 0;
-  for (uint32_t offset = 0; offset < totalBars; ++offset) {
-    const uint32_t bar = (start + offset) % totalBars;
+  if (maxBarDistanceFromPriority == UINT32_MAX) {
+    for (uint32_t offset = 0; offset < totalBars; ++offset) {
+      const uint32_t bar = (start + offset) % totalBars;
+      if (dirtyBars[bar] != 0) {
+        return bar;
+      }
+    }
+    return UINT32_MAX;
+  }
+  const uint32_t lo = (start > maxBarDistanceFromPriority) ? (start - maxBarDistanceFromPriority) : 0;
+  const uint32_t hi = std::min(totalBars - 1, start + maxBarDistanceFromPriority);
+  for (uint32_t bar = lo; bar <= hi; ++bar) {
     if (dirtyBars[bar] != 0) {
       return bar;
     }
@@ -97,7 +108,8 @@ size_t Loop::displayEventCountHint() const {
   return count;
 }
 
-LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar) {
+LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
+                                                     uint32_t maxBarDistanceFromPriority) {
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
     return;
   }
@@ -112,8 +124,13 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   }
 
-  const uint32_t startBar = findNextDirtyBar(visualCache.dirtyBars, priorityBar);
+  const uint32_t startBar =
+      findNextDirtyBar(visualCache.dirtyBars, priorityBar, maxBarDistanceFromPriority);
   if (startBar == UINT32_MAX) {
+    // Neighborhood-limited search found nothing — keep dirty for later full backfill.
+    if (maxBarDistanceFromPriority != UINT32_MAX) {
+      return;
+    }
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
     return;
