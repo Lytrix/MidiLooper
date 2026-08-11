@@ -1,6 +1,6 @@
 # Long overdub capture preview tail parity
 
-**Status:** Active — RC1  
+**Status:** Implemented — native/build PASS; combined HITL pending  
 **Branch:** `bugfix/long-overdub-display-freeze`  
 **Evidence:** [`session_20260811_013056.log`](../../captures/session_20260811_013056.log)  
 **Parent:** [`long_overdub_display_freeze_bugfix.md`](long_overdub_display_freeze_bugfix.md)  
@@ -56,10 +56,20 @@ display data, not lifecycle state.
 
 ## Acceptance
 
-- Closed zero-duration rows are never treated as open.
-- Every `openNoteIndices` entry references an aligned sidecar row with `open == true`.
-- Incremental and cold preview paths agree for covered wrap cases.
-- Focused native suite and `pio test -e native` pass.
+- [x] Closed zero-duration rows are never treated as open.
+- [x] Every normal NoteOff target requires an aligned sidecar row with `open == true`.
+- [x] Incremental and cold preview paths agree for covered open/wrap cases.
+- [x] Focused native suite: 12/12.
+- [x] `pio test -e native`: 979/979.
+- [x] `pio run -e teensy41-capture-serial`: SUCCESS.
+- [ ] Combined long-record/overdub HITL confirms tick-zero rows close correctly.
+
+## Implementation result
+
+`applyCaptureEventToPreview()` no longer uses equal start/end geometry as the open-note sentinel.
+Normal NoteOff pairing requires `CapturePreviewNoteState::open`. The cold rebuild restores open
+indices and preferred wrap-head metadata so later incremental NoteOff events use the same sidecar
+contract.
 
 ## Out of scope
 
