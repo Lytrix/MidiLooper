@@ -1,10 +1,13 @@
 # Long-loop post-stop visualCache window paint
 
-**Status:** Implemented — RC4b gap regression fix; HITL pending  
+**Status:** Implemented — RC4c overdub empty-layer fix; HITL pending  
 
-**Regression evidence:** user report after `c39eeb6` — sparse notes (first 16 + ~bar 90; overdub
-only to ~bar 82). Capture [`session_20260811_032235.log`](../../captures/session_20260811_032235.log)
-is boot-only (session not captured); root cause is code-path proven below.  
+**Regression evidence:**
+- RC4 sparse gaps after `c39eeb6` — RC4b (`3ea7b03`) fully-built-only filter.
+- RC4c [`session_20260811_033336.log`](../../captures/session_20260811_033336.log): notes vanish for
+  PLAYING→overdub, return after overdub stop. Overdub `windowCacheHit` resized committed layer
+  to 0 because `liveDisplayCacheCommittedNoteCount_` stayed 0 after record-stop invalidate.  
+
 
 
 ## Architecture gate (session)

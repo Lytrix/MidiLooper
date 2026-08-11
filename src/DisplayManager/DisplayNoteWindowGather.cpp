@@ -81,6 +81,7 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
         const DisplayNoteVec filtered = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
             loop.visualCache.notes, windowStart, windowLength, loopLength);
         liveDisplayNotes.assign(filtered.begin(), filtered.end());
+        liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         livePlaybackDisplaySlot_ = displaySlot;
@@ -123,6 +124,7 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     const uint32_t gatherLength = gatherEnd - gatherStart;
     rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
                                 liveDisplayEventBuffer, liveDisplayNotes, true);
+    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
     liveMergePlaybackRevision_ = loop.playbackRevision;
     liveMergeCaptureRevision_ = loop.captureDisplayRevision;
     livePlaybackDisplaySlot_ = displaySlot;
