@@ -140,6 +140,14 @@ void test_committed_display_visual_cache_authoritative() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(false, false));
 }
 
+void test_prefer_incremental_committed_display_includes_stopped() {
+  // RC5f: STOPPED must share PLAYING deferred incremental path (174742).
+  TEST_ASSERT_TRUE(DisplayWindowUtils::preferIncrementalCommittedDisplay(true, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::preferIncrementalCommittedDisplay(false, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::preferIncrementalCommittedDisplay(true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::preferIncrementalCommittedDisplay(false, false));
+}
+
 void test_overdub_committed_window_cache_rejects_zero_committed_count() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(0u, 300u));
   TEST_ASSERT_TRUE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(256u, 300u));
@@ -215,6 +223,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
+  RUN_TEST(test_prefer_incremental_committed_display_includes_stopped);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
