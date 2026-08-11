@@ -100,11 +100,12 @@
 
 ---
 
-### Phase 2 — Wire canonical overlap into overdubPass ops
+### Phase 2 — PAUSED pending unified-pass pin
 
-**Scope:** On insert, run constrained-geometry decisions; accumulate Add/Shorten/Hide in **session pending-op buffer**; source immutable; at stop seal into OverdubPass chunks + EditPass rows; one `OverdubPassAdded` undo.
-
-**Pins (2026-08-12):** Open Q4 = **C → A**. PREFLIGHT + DEC-031. Undo = `OverdubPassAdded` + `editPassIds`. Restore path gated off when `overdubSourceView` established. Free `resolveConstrainedGeometry` (not session-gated `NoteGeometryResolver::resolve`). DEC-020 mid-pass stays raw capture bytes.
+**Scope (under review):** Shared geometry → Add/Shorten/Hide from any input; session pending changes; commit; undo.  
+**Paused:** C→A pending buffer → OverdubPass+EditPass dual seal (DEC-031 seal path).  
+**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](UNIFIED-PASS-ARCHITECTURE-REVIEW.md) — storage families are real today; geometry unify validated; U1 needs separate supersession of `timeline-passes`.  
+**User pin required:** G2 / G1 / U1 (DEC-032).
 
 #### Architecture gate
 

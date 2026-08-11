@@ -14,7 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) | 2026-08-12 | Overdub overlap encode C→A; undo + restore pins | Accepted |
+| [DEC-032](#dec-032-overdub-editpass-unification-reassessment) | 2026-08-12 | Pause C→A; unified-pass architecture pin required | Open |
+| [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) | 2026-08-12 | Overdub overlap encode C→A; undo + restore pins | Parked (seal path) |
 | [DEC-030](#dec-030-sticky-overlap-end-of-participation-on-current-state) | 2026-08-08 | Sticky overlap end-of-participation on NoteEditCurrentState | Accepted |
 | [DEC-029](#dec-029-noteeditcurrentstate-owns-note-edit-editable-note-state) | 2026-08-07 | NoteEditCurrentState owns NOTE_EDIT editable note state | Accepted |
 | [DEC-028](#dec-028-editsessionaction-geometry-pipeline-phase-1-native) | 2026-08-04 | EditSessionAction geometry pipeline Phase 1 native | Accepted |
@@ -46,12 +47,43 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-032 -->
+<!-- Append new entries below (newest first). Next ID: DEC-033 -->
+
+## DEC-032 — Overdub / EditPass unification reassessment
+
+**Date:** 2026-08-12  
+**Status:** Open — awaiting user pin  
+**OpenSpec:** [`overdub-pass-overlap-resolution`](../openspec/changes/overdub-pass-overlap-resolution/)  
+**Review:** [`UNIFIED-PASS-ARCHITECTURE-REVIEW.md`](../openspec/changes/overdub-pass-overlap-resolution/UNIFIED-PASS-ARCHITECTURE-REVIEW.md)
+
+### Decision (process)
+
+Pause Phase 2 C→A firmware (pending buffer → OverdubPass + companion EditPass). Add architecture refinement: input mechanism ≠ pass type; shared Add/Shorten/Hide geometry is the resolution authority.
+
+### Code finding
+
+`OverdubPass` and `EditPass` are **storage families** (chunks vs Create/Update/Delete; two-phase materialize; separate undo/persistence). Shared geometry across MIDI and note-edit is validated. Full storage unification (U1) requires superseding `timeline-passes` and a migration design — not a silent Phase 2 continuation.
+
+### Pin options
+
+| Pin | Meaning |
+|-----|---------|
+| **G2** | Resume DEC-031 transitional dual seal |
+| **G1** | Geometry + lookup only; delay seal |
+| **U1** | Park seal; open unified committed-pass change |
+
+### Consequences
+
+- No Phase 2 firmware until pin.
+- Phase 1 `overdubSourceView` remains shipped.
+- DEC-031 seal-path implementation parked (not deleted); may resume only if G2 chosen.
+
+---
 
 ## DEC-031 — Overdub overlap encode pending buffer to EditPass
 
 **Date:** 2026-08-12  
-**Status:** Accepted  
+**Status:** Parked (seal path) — see DEC-032  
 **OpenSpec:** [`overdub-pass-overlap-resolution`](../openspec/changes/overdub-pass-overlap-resolution/)  
 **PREFLIGHT:** [`PREFLIGHT.md`](../openspec/changes/overdub-pass-overlap-resolution/PREFLIGHT.md)
 
