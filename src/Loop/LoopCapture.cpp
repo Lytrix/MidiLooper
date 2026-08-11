@@ -341,7 +341,9 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
     result.reason = CaptureAppendDenyReason::PendingPass;
     return result;
   }
-  if (isDuplicateCaptureEvent(*this, evt)) {
+  // G2: with overdubSourceView, reverse-tick capture dedup is not overlap authority
+  // (multi-wrap same-phase ticks must append; geometry resolves vs the source view).
+  if (!hasOverdubSourceView() && isDuplicateCaptureEvent(*this, evt)) {
     ++captureDedupEventsDropped_;
     result.reason = CaptureAppendDenyReason::Duplicate;
     return result;
