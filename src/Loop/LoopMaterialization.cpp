@@ -169,6 +169,22 @@ LOOP_COLD_MEM bool createRowContributesToPitch(const EditPass& row, uint8_t pitc
   return false;
 }
 
+struct PitchFilterWalkCtx {
+  uint8_t pitch = 0;
+  SessionMidiEventVec* out = nullptr;
+};
+
+LOOP_COLD_MEM void keepNoteEventAtPitch(const MidiEvent& evt, void* raw) {
+  ++g_committedPitchQueryWork.sourceEventsScanned;
+  auto* ctx = static_cast<PitchFilterWalkCtx*>(raw);
+  if (ctx == nullptr || ctx->out == nullptr) {
+    return;
+  }
+  if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == ctx->pitch) {
+    ctx->out->push_back(evt);
+  }
+}
+
 struct CommittedNoteEventWalkCtx {
   SessionMidiEventVec* out = nullptr;
 };
@@ -367,37 +383,54 @@ LOOP_COLD_MEM void Loop::gatherCommittedNoteEventsForPitch(uint8_t pitch, Sessio
   std::vector<NoteId> retargetedNoteIds;
   collectNoteIdsRetargetedToPitch(passes.editPasses, pitch, retargetedNoteIds);
 
-  SessionMidiEventVec committedNotes;
-  CommittedNoteEventWalkCtx walk{};
-  walk.out = &committedNotes;
-  for (const CommittedChunkIdList* list : lists) {
-    if (list == nullptr) {
-      continue;
+  // No committed Pitch row moves another note into this pitch, so the candidate set is exactly
+  // the events already at this pitch. Filter during the walk instead of copying the whole loop.
+  const bool candidatesArePitchOnly = retargetedNoteIds.empty();
+  if (candidatesArePitchOnly) {
+    PitchFilterWalkCtx pitchWalk{};
+    pitchWalk.pitch = pitch;
+    pitchWalk.out = &out;
+    for (const CommittedChunkIdList* list : lists) {
+      if (list == nullptr) {
+        continue;
+      }
+      for (uint16_t chunkId : *list) {
+        LoopEventStore::forEachChunkEvent(chunkId, keepNoteEventAtPitch, &pitchWalk);
+      }
     }
-    for (uint16_t chunkId : *list) {
-      LoopEventStore::forEachChunkEvent(chunkId, appendCommittedNoteEvent, &walk);
+  } else {
+    SessionMidiEventVec committedNotes;
+    CommittedNoteEventWalkCtx walk{};
+    walk.out = &committedNotes;
+    for (const CommittedChunkIdList* list : lists) {
+      if (list == nullptr) {
+        continue;
+      }
+      for (uint16_t chunkId : *list) {
+        LoopEventStore::forEachChunkEvent(chunkId, appendCommittedNoteEvent, &walk);
+      }
     }
-  }
 
-  std::vector<uint8_t> keep(committedNotes.size(), 0);
-  for (size_t i = 0; i < committedNotes.size(); ++i) {
-    const MidiEvent& evt = committedNotes[i];
-    if (evt.data.noteData.note == pitch) {
+    std::vector<uint8_t> keep(committedNotes.size(), 0);
+    for (size_t i = 0; i < committedNotes.size(); ++i) {
+      const MidiEvent& evt = committedNotes[i];
+      if (evt.data.noteData.note == pitch) {
+        keep[i] = 1;
+        continue;
+      }
+      if (!evt.isNoteOn() || !containsNoteId(retargetedNoteIds, evt.noteId)) {
+        continue;
+      }
       keep[i] = 1;
-      continue;
+      const int offIndex = indexOfPairedNoteOff(committedNotes, static_cast<int>(i));
+      if (offIndex >= 0) {
+        keep[static_cast<size_t>(offIndex)] = 1;
+      }
     }
-    if (!evt.isNoteOn() || !containsNoteId(retargetedNoteIds, evt.noteId)) {
-      continue;
-    }
-    keep[i] = 1;
-    const int offIndex = indexOfPairedNoteOff(committedNotes, static_cast<int>(i));
-    if (offIndex >= 0) {
-      keep[static_cast<size_t>(offIndex)] = 1;
-    }
-  }
-  for (size_t i = 0; i < committedNotes.size(); ++i) {
-    if (keep[i] != 0) {
-      out.push_back(committedNotes[i]);
+    for (size_t i = 0; i < committedNotes.size(); ++i) {
+      if (keep[i] != 0) {
+        out.push_back(committedNotes[i]);
+      }
     }
   }
 
@@ -430,14 +463,16 @@ LOOP_COLD_MEM void Loop::gatherCommittedNoteEventsForPitch(uint8_t pitch, Sessio
     applyNoteEditPassSequence(out, relevantRows, loopLengthTicks);
   }
 
-  SessionMidiEventVec filtered;
-  filtered.reserve(out.size());
-  for (const MidiEvent& evt : out) {
-    if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == pitch) {
-      filtered.push_back(evt);
+  if (!candidatesArePitchOnly || !relevantRows.empty()) {
+    SessionMidiEventVec filtered;
+    filtered.reserve(out.size());
+    for (const MidiEvent& evt : out) {
+      if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == pitch) {
+        filtered.push_back(evt);
+      }
     }
+    out = std::move(filtered);
   }
-  out = std::move(filtered);
   sortMidiEventsByTick(out);
   g_committedPitchQueryWork.candidateEvents = static_cast<uint32_t>(out.size());
 }
