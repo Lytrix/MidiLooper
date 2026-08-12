@@ -342,6 +342,20 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 
     auto rebuildCommittedLayer = [&]() {
         if (track.isOverdubbing()) {
+            // Cache recovery belongs to idle work. Gathering the committed window here costs
+            // ~27.9 ms per frame for the whole post-commit dirty window and starves the capture
+            // layer, so played notes stop landing (172405: 30 gathers, 70 of 241 frames over
+            // budget). Hold the layer we already have; processDeferredIdleMaintenance makes the
+            // cache clean in ~0.6-2.3 s and the clean branch then rebuilds it.
+            const bool canHoldCommittedLayer =
+                liveDisplayCacheCommittedNoteCount_ > 0 &&
+                liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
+            if (loop.visualCacheDirty && canHoldCommittedLayer) {
+                liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+                liveCommittedLayerHeldForDirtyCache_ = true;
+                liveMergePlaybackRevision_ = loop.playbackRevision;
+                return;
+            }
             if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
                 if (havePaintWindow) {
                     // RC-F: filter a window wider than the paint window and record it, so
@@ -366,6 +380,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                     liveWindowGatherLength_ = gatherLength;
                     liveWindowGatherLoopLength_ = liveLoopLength;
                     liveDisplayCommittedFromWindowGather_ = false;
+                    liveCommittedLayerHeldForDirtyCache_ = false;
                 } else {
                     DIAG_COUNTER_INC(DisplayCommittedFullAssign);
                     liveDisplayNotes.assign(loop.visualCache.notes.begin(),
@@ -373,6 +388,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                     liveWindowGatherValid_ = false;
                     liveDisplayCommittedFromWindowGather_ = false;
+                    liveCommittedLayerHeldForDirtyCache_ = false;
                 }
             } else if (loop.hasCommittedPasses()) {
                 uint32_t gatherStart = 0;
@@ -420,6 +436,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                 liveWindowGatherValid_ = false;
                 liveDisplayCommittedFromWindowGather_ = false;
             }
+            liveCommittedLayerHeldForDirtyCache_ = false;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
@@ -504,13 +521,21 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     // Dirty visualCache uses window gather for the committed layer. Auto-follow moves the paint
     // window without bumping playbackRevision — rebuild when the gather no longer covers it
     // (session_20260811_034230: notes stuck in first ~18 bars until overdub stop).
-    // RC-F: not gated on visualCacheDirty. Once the RC-E fix lets the cache go clean during
-    // overdub, a dirty-only predicate can never fire and the committed layer freezes.
+    // RC-F: not gated on visualCacheDirty being true. Once the RC-E fix lets the cache go clean
+    // during overdub, a dirty-only predicate can never fire and the committed layer freezes.
+    // It is gated on the cache being clean, because a dirty-cache rebuild would gather.
     const bool committedWindowStale =
-        track.isOverdubbing() && havePaintWindow && liveWindowGatherValid_ &&
+        track.isOverdubbing() && havePaintWindow && !loop.visualCacheDirty &&
+        liveWindowGatherValid_ &&
         !DisplayWindowUtils::paintWindowInsideGather(paintWindowStart, paintWindowLength,
                                                      liveWindowGatherStart_,
                                                      liveWindowGatherLength_);
+
+    // Idle finished recovering the cache while the committed layer was held — rebuild once now
+    // that the clean branch is affordable.
+    const bool committedLayerCleanCacheReady =
+        track.isOverdubbing() && liveCommittedLayerHeldForDirtyCache_ && !loop.visualCacheDirty &&
+        !loop.visualCache.notes.empty();
 
     const bool committedLayerPromoteToFullVisualCache =
         track.isOverdubbing() &&
@@ -520,7 +545,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 
     const bool committedLayerChanged =
         cacheCold || contextChanged || loopLengthChanged || committedWindowStale ||
-        committedLayerPromoteToFullVisualCache ||
+        committedLayerPromoteToFullVisualCache || committedLayerCleanCacheReady ||
         (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision);
     const bool captureLayerChanged =
         cacheCold || contextChanged || eventsShrunk || captureRevisionChanged ||
