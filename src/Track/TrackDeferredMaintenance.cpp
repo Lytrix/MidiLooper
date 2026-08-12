@@ -135,11 +135,21 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
       }
-      uint32_t priorityBar = 0;
+      uint32_t playheadBar = 0;
       if (loop.lastTickInLoop != UINT32_MAX) {
-        priorityBar = visualBarForTick(loop.lastTickInLoop, Config::TICKS_PER_BAR);
+        playheadBar = visualBarForTick(loop.lastTickInLoop, Config::TICKS_PER_BAR);
       }
-      // PLAYING: only backfill near the playhead/paint window so idle reconstruct does not
+      const uint32_t totalBars =
+          (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+      // One slice per maintenance: alternate playhead vs loop-tail priority so tail fills
+      // over time without doubling gather cost in one main-loop iteration (122003 MIDI lag).
+      static bool sPrioritizeLoopTailVisualCache = false;
+      uint32_t priorityBar = playheadBar;
+      if (totalBars > 0 && sPrioritizeLoopTailVisualCache) {
+        priorityBar = totalBars - 1;
+      }
+      sPrioritizeLoopTailVisualCache = !sPrioritizeLoopTailVisualCache;
+      // PLAYING/OVERDUB: backfill near the playhead/paint window so idle reconstruct does not
       // race the OLED path across a full long loop (session_20260811_030614).
       constexpr uint32_t kPlayingVisualCacheNeighborhoodBars =
           DisplayWindowUtils::kMaxDetailedWindowBars + 4u;

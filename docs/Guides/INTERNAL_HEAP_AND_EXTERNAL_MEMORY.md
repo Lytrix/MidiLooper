@@ -80,7 +80,11 @@ Gates consult **internal heap free** plus tier-specific estimates. They do **not
 2. Estimate **external** bytes: `focus.baselineMap`, `focus.overlapNotes` (and redo focus maps).
 3. Require `getInternalHeapFreeBytes() >= HEAP_RESERVE_BYTES + internalBytes`.
 4. If PSRAM **unavailable**: add external estimate to internal requirement (native tests / no chip).
-5. If PSRAM **available**: **do not** call `getExternalMemoryPoolFreeBytes()` on the geometry / kind-boundary push hot path — `sm_malloc_stats_pool` walks the full pool (~300 ms on 8 MiB). Same rule as `LoopEventStore::hasHeadroomForCommittedChunkIdList`: optimistic extmem admit; `push_back` is the real alloc gate. Idle / stopped diagnostics (`logStatus`, 60 s main-loop interval) may walk the pool.
+5. If PSRAM **available**: **do not** call `getExternalMemoryPoolFreeBytes()` or `getExternalMemoryPoolUsedBytes()` anywhere in `loop()` — `sm_malloc_stats_pool` walks the full pool (measured **593 ms** on 8 MiB in [`141815`](../../captures/session_20260812_141815.log)). Same rule as `LoopEventStore::hasHeadroomForCommittedChunkIdList`: optimistic extmem admit; `push_back` is the real alloc gate.
+
+**The walk belongs to `setup()` only** — pass `logStatus(true)` there. Runtime callers report `getExternalMemoryPoolTotalBytes()` (`pool_size`, O(1)) instead.
+
+An earlier version of this rule allowed the walk in "idle / stopped diagnostics (`logStatus`, 60 s main-loop interval)". That exemption was wrong. The `main.cpp` gate is `!timingCriticalTrackActive`, derived from track state (`isRecording() || isOverdubbing() || isPlaying()`), which says nothing about whether an **external clock is still streaming**. In `141815` the gate opened 152 ms after `PLAYING → STOPPED`, the walk blocked the loop 593 ms, and `ClockManager` reported `MIDI clock lost, switching to internal at 118.4 BPM`. There is no track-state predicate that makes this call safe; do not reintroduce one.
 
 **Do not** post-push trim session undo based only on internal heap when entries live in the external pool — that falsely evicted depth at ~32 steps before the split.
 

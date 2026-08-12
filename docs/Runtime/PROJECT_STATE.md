@@ -2,17 +2,17 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (archived overdub-pass-overlap-resolution)
+Last updated: 2026-08-12 (S0 device runs 141815/144323; capture Tier-A + pool-walk fixes shipped; re-run pending)
 
 ---
 
 ## Current branch
 
-**Active work:** Merge [`feature/overdub-pass-overlap-resolution`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/) → `dev` (OpenSpec **archived**; OLED PASS [`010000`](../../captures/session_20260812_010000.log)). Specs: `openspec/specs/overdub-pass-overlap-resolution/`.
+**Active work:** S0 timing-envelope telemetry — [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md) §26; parent [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md); evidence [`115913`](../../captures/session_20260812_115913.log), [`122003`](../../captures/session_20260812_122003.log).
 
-**Merged to `dev`:** PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) — long-overdub display RC4–RC5, Stage 5a-1/5a-2, live-record tick-0.
+**Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
-**Branch tip (local):** `feature/overdub-pass-overlap-resolution`
+**Stage 5a-3:** **`pool_alloc` proof abandoned** (2026-08-12) — see [`long_overdub_stage5a3_critical_reclaim_verification_refinement.md`](../Plans/long_overdub_stage5a3_critical_reclaim_verification_refinement.md).
 
 **`chore/firmware-ownership-lifetime-review`** — P0/P1 review **closed** (manual MT gates PASS); Phase 5 + layered **`base`** **parked**.
 
@@ -38,7 +38,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 - **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; layered **`base`** device PASS deferred to dedicated HITL refactor
 - **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../Plans/note_edit_control_surface_split_refinement.md)
-- **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Long record display freeze:** **NOW** — [`long_record_onset_display_freeze_bugfix.md`](../Plans/long_record_onset_display_freeze_bugfix.md); evidence [`012342`](../../captures/session_20260812_012342.log)
+- **Next product slice:** HITL CLI Phase 3 or persistence overlay — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 - **Hygiene (`chore/codebase-hygiene-sprint1`):** safe debt **complete** — see [`codebase_hygiene_technical_debt_review.md`](../Plans/codebase_hygiene_technical_debt_review.md); sprint plans Status Done + [README index](../Plans/README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)

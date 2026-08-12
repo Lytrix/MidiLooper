@@ -15,6 +15,8 @@
 #include "ControlSurfaceManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "LooperState.h"
+#include "Utils/MidiDispatchOrder.h"
+#include "Utils/RuntimeTimingEnvelope.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
@@ -95,26 +97,24 @@ struct MidiInputMsg {
   InputSource source;
 };
 
-bool isMidiTransport(byte type) {
-  return type == midi::Clock || type == midi::Start || type == midi::Stop ||
-         type == midi::Continue;
-}
-
 // External sequencers (e.g. BeatStep Pro) may send NoteOn before MIDI Start on the
-// same downbeat. Process transport first within each poll batch so armed recording
-// starts before channel messages in that batch are recorded.
+// same downbeat. Process Start/Stop/Continue first within each poll batch so armed
+// recording starts before channel messages in that batch are recorded.
+// Clock stays FIFO with channel messages (RC-C A): Clock, NoteOn, Clock must not
+// become Clock, Clock, NoteOn — note ticks come from getCurrentTick() at process time.
 void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
-  for (size_t i = 0; i < count; ++i) {
-    if (isMidiTransport(batch[i].type)) {
-      midiHandler.handleMidiMessage(batch[i].type, batch[i].channel, batch[i].data1,
-                                    batch[i].data2, batch[i].source);
-    }
+  if (count == 0) {
+    return;
   }
+  size_t order[kMidiInputBatchMax];
+  uint8_t types[kMidiInputBatchMax];
   for (size_t i = 0; i < count; ++i) {
-    if (!isMidiTransport(batch[i].type)) {
-      midiHandler.handleMidiMessage(batch[i].type, batch[i].channel, batch[i].data1,
-                                    batch[i].data2, batch[i].source);
-    }
+    types[i] = batch[i].type;
+  }
+  MidiDispatchOrder::planDispatchOrder(types, count, order);
+  for (size_t i = 0; i < count; ++i) {
+    const MidiInputMsg& msg = batch[order[i]];
+    midiHandler.handleMidiMessage(msg.type, msg.channel, msg.data1, msg.data2, msg.source);
   }
 }
 
@@ -158,6 +158,9 @@ void MidiHandler::beginUsbHost() {
 }
 
 void MidiHandler::handleMidiInput() {
+  const uint32_t serviceEnterUs = micros();
+  RuntimeTimingEnvelope::noteMidiServiceEnter(serviceEnterUs);
+
   MidiInputMsg batch[kMidiInputBatchMax];
   size_t count = 0;
 
@@ -177,6 +180,7 @@ void MidiHandler::handleMidiInput() {
   dispatchMidiBatch(batch, count);
   
   if (!usbHostReady_) {
+    RuntimeTimingEnvelope::noteMidiServiceExit(micros());
     return;
   }
 
@@ -206,6 +210,8 @@ void MidiHandler::handleMidiInput() {
                "USB Host MIDI drain hit batch cap (%u)",
                static_cast<unsigned>(kMidiInputBatchMax));
   }
+
+  RuntimeTimingEnvelope::noteMidiServiceExit(micros());
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {

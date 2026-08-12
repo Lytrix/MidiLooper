@@ -7,6 +7,16 @@
 
 namespace PersistenceDiagnostics {
 
+/// Work-queue + sync-drain estimate snapshot for periodic #CAP,PERS,backlog lines.
+struct BacklogSnapshot {
+  uint16_t workQueueDepth = 0;
+  uint16_t writingWorkItems = 0;
+  uint16_t chunkQueueDepth = 0;
+  uint32_t estSliceSteps = 0;
+  uint32_t estSdBytes = 0;
+  uint8_t urgentRequested = 0;
+};
+
 /// Mark first deferred-save request while work remains outstanding (dirty-save age proxy).
 void onDeferredSaveRequested();
 
@@ -30,7 +40,7 @@ void maybeEmitPoolPressureWarning();
  * Phase 0: queue depth proxies deferred-save backlog (chunk queue arrives in Phase 2).
  */
 void maybeEmitPeriodic(bool captureOrTransportActive, bool savePending, bool saveInProgress,
-                       bool sdIoActive);
+                       bool sdIoActive, const BacklogSnapshot* backlog = nullptr);
 
 #if !defined(SESSION_CAPTURE)
 inline void onDeferredSaveRequested() {}
@@ -39,7 +49,7 @@ inline void onHeapFloorBlock() {}
 inline void onBudgetBlock() {}
 inline void onSliceCompleted(uint32_t) {}
 inline void maybeEmitPoolPressureWarning() {}
-inline void maybeEmitPeriodic(bool, bool, bool, bool) {}
+inline void maybeEmitPeriodic(bool, bool, bool, bool, const BacklogSnapshot*) {}
 #endif
 
 }  // namespace PersistenceDiagnostics
