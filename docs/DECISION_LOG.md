@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-033](#dec-033-overdub-overlap-ignores-per-note-channel) | 2026-08-12 | Overdub overlap uses loop-scoped notes; no per-note channel filter | Accepted |
 | [DEC-032](#dec-032-overdub-editpass-unification-reassessment) | 2026-08-12 | G2: unify resolution; dual storage transitional | Accepted |
 | [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) | 2026-08-12 | Transitional dual-seal encode + undo/restore pins | Accepted (encoding) |
 | [DEC-030](#dec-030-sticky-overlap-end-of-participation-on-current-state) | 2026-08-08 | Sticky overlap end-of-participation on NoteEditCurrentState | Accepted |
@@ -48,6 +49,24 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ---
 
 <!-- Append new entries below (newest first). Next ID: DEC-033 -->
+
+## DEC-033 — Overdub overlap ignores per-note channel
+
+**Date:** 2026-08-12  
+**Status:** Accepted  
+**Plan:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](Plans/realtime_incremental_work_overdub_note_change_bugfix.md)
+
+**Context:** `Loop::accumulatePendingNoteChangesForIncomingNote` filtered overlap candidates with `noteIdHasChannel`, which scanned every `overdubSourceViewEvents_` row per same-pitch reconstructed note. S0e measured that scan as `notepair` 98 ms on a 4257-event / 2109-note loop ([`204221`](../captures/session_20260812_204221.log)). `NoteUtils::DisplayNote` has no channel field; the lookup existed only to recover channel from events.
+
+**Decision:** A loop's committed notes are already scoped to that loop. Overdub G2 overlap resolution matches NOTE_EDIT: geometry uses pitch + tick window, not a per-note channel check. `noteIdHasChannel` is removed. A stored same-pitch note whose recorded channel differs from the incoming channel participates in overlap resolution.
+
+**Previous owner:** File-local `noteIdHasChannel` in `LoopPendingNoteChange.cpp`.
+
+**New owner:** None — filter deleted. Incoming `channel` still stamps the pending Add / Shorten / Hide row.
+
+**Validation:** Native `test_pending_shorten_ignores_recorded_channel` — source note on channel 1, incoming on channel 2, same pitch and overlapping ticks, produces Shorten.
+
+---
 
 ## DEC-032 — Overdub / EditPass unification reassessment
 
