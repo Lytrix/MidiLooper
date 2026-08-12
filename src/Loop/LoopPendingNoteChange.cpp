@@ -64,10 +64,6 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
 
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
   const uint32_t windowLength = (endTick > startTick) ? (endTick - startTick) : 1u;
-  const uint32_t reconStartUs = micros();
-  const NoteUtils::DisplayNoteVec allNotes =
-      NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLen, false);
-  RuntimeTimingEnvelope::addNoteRecon(micros() - reconStartUs);
 
   BaselineMap baseline;
   EditedGeometry edited{};
@@ -78,7 +74,7 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
 
   std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs;
   const uint32_t pairStartUs = micros();
-  for (const NoteUtils::DisplayNote& note : allNotes) {
+  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
       continue;
     }

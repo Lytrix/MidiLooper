@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (S1 RC-K1/K2 shipped; RC-K3 next)
+Last updated: 2026-08-12 (S1 RC-K1–K3 shipped; device re-measure next)
 
 ---
 
@@ -19,6 +19,8 @@ Last updated: 2026-08-12 (S1 RC-K1/K2 shipped; RC-K3 next)
 **S1 RC-K1 (shipped):** `reconstructNotesImpl` tracks seen `(note, startTick, endTick)` in an ordered set instead of `std::any_of` over the accepted list. Same key, same insertion order. Native `test_noteutils_reconstruct` PASS including many-identical-geometry collapse.
 
 **S1 RC-K2 (shipped):** `accumulatePendingNoteChangesForIncomingNote` no longer scans source events for channel. Loop notes are loop-scoped (DEC-033). Native `test_pending_shorten_ignores_recorded_channel` PASS.
+
+**S1 RC-K3 (shipped):** `overdubSourceViewNotes_` is reconstructed once in `establishOverdubSourceView` and cleared in `clearOverdubSourceView`. Note-off path and `gatherOverdubSourceViewNotesInWindow` read the member. Native `test_overdub_source_view` PASS.
 
 **Architecture:** [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md)  
 **Scheduling admission:** [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md)  
@@ -41,12 +43,12 @@ Last updated: 2026-08-12 (S1 RC-K1/K2 shipped; RC-K3 next)
 **RC-H reverted (RC-I):** the overdub-stop handoff preserve (`liveOverdubStopHandoffActive_`) pinned the partial adopted frame permanently — [`183429`](../../captures/session_20260812_183429.log): `adopt_partial notes=394`, then `slice_clean notes=1105`, but `DFRAME 394` held from 209.6 s through 214.2 s. The 174843 window content was density-correct; static viewport at STOPPED is expected. Reverted to pre-RC-H behaviour; `preservedHandoffAuthority` covers the ~0.6 s dirty window. **Verified [`191356`](../../captures/session_20260812_191356.log):** no freeze across two overdub clusters; idle `slice_clean` covers the loop; STOPPED paints the 16-bar window of the completed cache.
 **RC-J (open, behind S0b):** post-stop persistence stall — `timingCriticalTrackActive` goes false at STOPPED while the external clock still streams. Reproduced in [`191356`](../../captures/session_20260812_191356.log): first stop `clockrate` 48→24→0 `msi` 467 ms; final stop 48→36→0 `msi` 365 ms. Do not patch ad hoc.
 **RC-G fix shipped:** `updateOverviewCaptureDensity` builds a per-bar × 8-pitch-band mask incrementally from the capture preview (O(new notes) per frame), and `drawOverviewStrip` renders O(loop bars) from it when no clean `visualCache` exists. Record overview now shows the whole loop. Device verify pending for both.
-**Remaining findings:** S0e attributed in [`204221`](../../captures/session_20260812_204221.log): `noterecon` 177 ms (quadratic dedup, RC-K1 shipped), `notepair` 98 ms (`noteIdHasChannel`, RC-K2 shipped / DEC-033), reconstruct-per-note-off (RC-K3 next). RC-S0c still owed (13 `RING,overflow` in 204221). RC-J not in that log's tail. Display frame-skip / rolling-window during overdub is RC-F follow-up + §31d.
+**Remaining findings:** S0e attributed in [`204221`](../../captures/session_20260812_204221.log): `noterecon` 177 ms (RC-K1), `notepair` 98 ms (RC-K2 / DEC-033), reconstruct-per-note-off (RC-K3). All three firmware stages shipped; device re-measure is the remaining gate. RC-S0c still owed (13 `RING,overflow` in 204221). RC-J not in that log's tail. Display frame-skip / rolling-window during overdub is RC-F follow-up + §31d.
 **Overdub display lag:** `DisplayResolveLiveCapture` 33.6 / 33.8 ms during the second overdub against a 5 000 µs budget — the §31d bailout skips `replaceCaptureLayer` and the tails, so live overdub notes are not composed.
 **Also open:** display resolve is under budget only by margin — the window filter measures 4 595 µs against a 5 000 µs line, and the gather still peaks at 26.3 ms. A 140 ms post-stop `msi` stall with `midisvc` at ~0.1 ms is uninvestigated.  
 **RC-C device:** [`115913`](../../captures/session_20260812_115913.log) — timing PASS; display D1–D2 FAIL.  
 **Regression:** [`122003`](../../captures/session_20260812_122003.log) — dual idle slice caused MIDI lag / clock lost (reverted).  
-**Now:** S1 RC-K3 — cache reconstructed source-view notes for the overdub pass. Device re-measure after K3. No admission.
+**Now:** S1 device re-measure — same S0e probes vs [`204221`](../../captures/session_20260812_204221.log) (`notechg` 274 / `noterecon` 177 / `notepair` 98 ms). Expect `noterecon` off the note-off path. No admission.
 
 ### Long record onset display freeze — [`012342`](../../captures/session_20260812_012342.log)
 
