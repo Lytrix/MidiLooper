@@ -583,13 +583,15 @@ NoteVector reconstructNotesImpl(const std::vector<MidiEvent, EventAlloc>& midiEv
         IntervalProjection::projectDisplayNotes(spans, context);
 
     const size_t originalCount = projected.size();
+    using ReconstructDedupKey = std::tuple<uint8_t, uint32_t, uint32_t>;
+    using ReconstructDedupSet =
+        std::set<ReconstructDedupKey, std::less<ReconstructDedupKey>,
+                 ExternalMemoryFirstAllocator<ReconstructDedupKey>>;
+    ReconstructDedupSet seenGeometry;
+    finalNotes.reserve(projected.size());
     for (const DisplayNote& note : projected) {
-        const bool alreadySeen = std::any_of(
-            finalNotes.begin(), finalNotes.end(), [&](const DisplayNote& existing) {
-                return existing.note == note.note && existing.startTick == note.startTick &&
-                       existing.endTick == note.endTick;
-            });
-        if (!alreadySeen) {
+        const ReconstructDedupKey key{note.note, note.startTick, note.endTick};
+        if (seenGeometry.insert(key).second) {
             finalNotes.push_back(note);
         } else if (logDetails) {
             logger.log(CAT_TRACK, LOG_DEBUG, "Deduplicated note: pitch=%d, start=%lu, end=%lu",

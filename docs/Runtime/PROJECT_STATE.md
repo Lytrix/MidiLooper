@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (S0e firmware; device attribution pending vs session_20260812_200452)
+Last updated: 2026-08-12 (S1 RC-K1 shipped; RC-K2/K3 next)
 
 ---
 
 ## Current branch
 
-**Active work:** **S0e** — split overdub note-off into `noteappend` / `notechg` / `noterecon` / `notepair` (observation only); device attribution pending. Architecture [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md) §31n. Baseline [`200452`](../../captures/session_20260812_200452.log). Do not start S1 / admission / RC-J / source-view cache.
+**Active work:** **S1** — overdub note-off cost. RC-K1 shipped (quadratic reconstruct dedup). Next: RC-K2 channel filter, RC-K3 source-view note cache. Evidence [`204221`](../../captures/session_20260812_204221.log). Do not start admission / RC-J.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

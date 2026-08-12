@@ -150,6 +150,17 @@ void test_reconstruct_dedupes_identical_segments() {
     TEST_ASSERT_EQUAL(1u, notes.size());
 }
 
+void test_reconstruct_dedupes_many_identical_geometry_notes() {
+    MidiEventVec ev;
+    for (int i = 0; i < 64; ++i) {
+        ev.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
+        ev.push_back(MidiEvent::NoteOff(10, 1, 60, 0));
+    }
+    auto notes = NoteUtils::reconstructNotes(ev, 100);
+    TEST_ASSERT_EQUAL(1u, notes.size());
+    assert_has_note(notes, 60, 0, 10, 100);
+}
+
 void test_reconstruct_wrapped_tail_on_head_off() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -403,6 +414,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_lifo_same_pitch);
     RUN_TEST(test_reconstruct_open_note_to_loop_end);
     RUN_TEST(test_reconstruct_dedupes_identical_segments);
+    RUN_TEST(test_reconstruct_dedupes_many_identical_geometry_notes);
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off);
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off_chronological);
     RUN_TEST(test_reconstruct_note_off_at_wrap_zero_is_boundary_end);
