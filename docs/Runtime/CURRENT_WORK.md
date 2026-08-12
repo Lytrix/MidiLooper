@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (RC-K1–K3 shipped; device re-measure next)
+Last updated: 2026-08-12 (RC-K1b vector dedup; device re-measure next)
 
 ---
 
@@ -17,6 +17,8 @@ Last updated: 2026-08-12 (RC-K1–K3 shipped; device re-measure next)
 **S0e exit:** attributed in [`204221`](../../captures/session_20260812_204221.log) — `usbnote` is `notechg`; `noterecon` 177 ms is quadratic reconstruct dedup; `notepair` 98 ms is the per-candidate `noteIdHasChannel` scan. `noteappend` is 59 µs.
 
 **S1 RC-K1 (shipped):** `reconstructNotesImpl` tracks seen `(note, startTick, endTick)` in an ordered set instead of `std::any_of` over the accepted list. Same key, same insertion order. Native `test_noteutils_reconstruct` PASS including many-identical-geometry collapse.
+
+**S1 RC-K1b (shipped):** the ordered set allocated one PSRAM tree node per note. Boot visual-cache rebuild of 1430 notes measured 1.38 s ([`215128`](../../captures/session_20260812_215128.log) / [`215357`](../../captures/session_20260812_215357.log)). Dedup now ranks into one vector, sort+unique, restore first-seen order. Native `test_noteutils_reconstruct` PASS.
 
 **S1 RC-K2 (shipped):** `accumulatePendingNoteChangesForIncomingNote` no longer scans source events for channel. Loop notes are loop-scoped (DEC-033). Native `test_pending_shorten_ignores_recorded_channel` PASS.
 
@@ -48,7 +50,7 @@ Last updated: 2026-08-12 (RC-K1–K3 shipped; device re-measure next)
 **Also open:** display resolve is under budget only by margin — the window filter measures 4 595 µs against a 5 000 µs line, and the gather still peaks at 26.3 ms. A 140 ms post-stop `msi` stall with `midisvc` at ~0.1 ms is uninvestigated.  
 **RC-C device:** [`115913`](../../captures/session_20260812_115913.log) — timing PASS; display D1–D2 FAIL.  
 **Regression:** [`122003`](../../captures/session_20260812_122003.log) — dual idle slice caused MIDI lag / clock lost (reverted).  
-**Now:** Device re-measure — same S0e probes vs [`204221`](../../captures/session_20260812_204221.log) (`notechg` 274 / `noterecon` 177 / `notepair` 98 ms). Expect `noterecon` off the note-off path. Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](../Plans/realtime_incremental_work_overdub_note_change_bugfix.md). No admission.
+**Now:** Device re-measure after RC-K1b — boot of a 64/66-bar slot must not stall `msi` at 775 ms / 1.38 s `slice_clean`. Then grown-loop overdub vs [`204221`](../../captures/session_20260812_204221.log). Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](../Plans/realtime_incremental_work_overdub_note_change_bugfix.md). No admission.
 
 ### Long record onset display freeze — [`012342`](../../captures/session_20260812_012342.log)
 

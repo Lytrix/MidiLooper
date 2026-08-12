@@ -584,19 +584,32 @@ NoteVector reconstructNotesImpl(const std::vector<MidiEvent, EventAlloc>& midiEv
 
     const size_t originalCount = projected.size();
     using ReconstructDedupKey = std::tuple<uint8_t, uint32_t, uint32_t>;
-    using ReconstructDedupSet =
-        std::set<ReconstructDedupKey, std::less<ReconstructDedupKey>,
-                 ExternalMemoryFirstAllocator<ReconstructDedupKey>>;
-    ReconstructDedupSet seenGeometry;
-    finalNotes.reserve(projected.size());
-    for (const DisplayNote& note : projected) {
-        const ReconstructDedupKey key{note.note, note.startTick, note.endTick};
-        if (seenGeometry.insert(key).second) {
-            finalNotes.push_back(note);
-        } else if (logDetails) {
-            logger.log(CAT_TRACK, LOG_DEBUG, "Deduplicated note: pitch=%d, start=%lu, end=%lu",
-                       note.note, note.startTick, note.endTick);
+    struct RankedNote {
+        ReconstructDedupKey key;
+        uint32_t index;
+    };
+    using RankedNoteVec = std::vector<RankedNote, ExternalMemoryFirstAllocator<RankedNote>>;
+    RankedNoteVec ranked;
+    ranked.reserve(projected.size());
+    for (uint32_t i = 0; i < static_cast<uint32_t>(projected.size()); ++i) {
+        const DisplayNote& note = projected[i];
+        ranked.push_back(
+            RankedNote{ReconstructDedupKey{note.note, note.startTick, note.endTick}, i});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const RankedNote& a, const RankedNote& b) {
+        if (a.key != b.key) {
+            return a.key < b.key;
         }
+        return a.index < b.index;
+    });
+    ranked.erase(std::unique(ranked.begin(), ranked.end(),
+                             [](const RankedNote& a, const RankedNote& b) { return a.key == b.key; }),
+                 ranked.end());
+    std::sort(ranked.begin(), ranked.end(),
+              [](const RankedNote& a, const RankedNote& b) { return a.index < b.index; });
+    finalNotes.reserve(ranked.size());
+    for (const RankedNote& row : ranked) {
+        finalNotes.push_back(projected[row.index]);
     }
 
     if (logDetails) {
