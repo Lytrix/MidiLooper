@@ -39,12 +39,21 @@ struct State {
   Accumulator usbnote;
   Accumulator usbcc;
   Accumulator usbtrans;
+  Accumulator noteappend;
+  Accumulator notechg;
+  Accumulator noterecon;
+  Accumulator notepair;
   uint32_t usbNestedCaptureUs = 0;
   uint32_t usbNestedThruUs = 0;
   uint32_t usbNestedClockUs = 0;
   uint32_t usbNestedNoteUs = 0;
   uint32_t usbNestedCcUs = 0;
   uint32_t usbNestedTransportUs = 0;
+  uint32_t usbNestedNoteAppendUs = 0;
+  uint32_t usbNestedNoteChangeUs = 0;
+  uint32_t usbNestedNoteReconUs = 0;
+  uint32_t usbNestedNotePairUs = 0;
+  bool usbNestedActive = false;
   uint32_t clockPulses = 0;
   uint32_t lastServiceExitUs = 0;
   uint32_t serviceEnterUs = 0;
@@ -75,6 +84,10 @@ void clearWindow(State& s) {
   s.usbnote = Accumulator{};
   s.usbcc = Accumulator{};
   s.usbtrans = Accumulator{};
+  s.noteappend = Accumulator{};
+  s.notechg = Accumulator{};
+  s.noterecon = Accumulator{};
+  s.notepair = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -96,6 +109,10 @@ void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
   DebugSessionCapture::runtimeTimingEnvelope("usbnote", s.usbnote.maxUs, s.usbnote.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("usbcc", s.usbcc.maxUs, s.usbcc.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("usbtrans", s.usbtrans.maxUs, s.usbtrans.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("noteappend", s.noteappend.maxUs, s.noteappend.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("notechg", s.notechg.maxUs, s.notechg.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("noterecon", s.noterecon.maxUs, s.noterecon.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("notepair", s.notepair.maxUs, s.notepair.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -178,6 +195,11 @@ void beginUsbDeviceNested() {
   s.usbNestedNoteUs = 0;
   s.usbNestedCcUs = 0;
   s.usbNestedTransportUs = 0;
+  s.usbNestedNoteAppendUs = 0;
+  s.usbNestedNoteChangeUs = 0;
+  s.usbNestedNoteReconUs = 0;
+  s.usbNestedNotePairUs = 0;
+  s.usbNestedActive = true;
 }
 
 void addUsbDeviceCapture(uint32_t durationUs) {
@@ -204,6 +226,34 @@ void addUsbDeviceTransport(uint32_t durationUs) {
   state().usbNestedTransportUs += durationUs;
 }
 
+void addNoteAppend(uint32_t durationUs) {
+  State& s = state();
+  if (s.usbNestedActive) {
+    s.usbNestedNoteAppendUs += durationUs;
+  }
+}
+
+void addNoteChange(uint32_t durationUs) {
+  State& s = state();
+  if (s.usbNestedActive) {
+    s.usbNestedNoteChangeUs += durationUs;
+  }
+}
+
+void addNoteRecon(uint32_t durationUs) {
+  State& s = state();
+  if (s.usbNestedActive) {
+    s.usbNestedNoteReconUs += durationUs;
+  }
+}
+
+void addNotePair(uint32_t durationUs) {
+  State& s = state();
+  if (s.usbNestedActive) {
+    s.usbNestedNotePairUs += durationUs;
+  }
+}
+
 void commitUsbDeviceNested() {
   State& s = state();
   recordSample(s.usbcap, s.usbNestedCaptureUs);
@@ -212,12 +262,21 @@ void commitUsbDeviceNested() {
   recordSample(s.usbnote, s.usbNestedNoteUs);
   recordSample(s.usbcc, s.usbNestedCcUs);
   recordSample(s.usbtrans, s.usbNestedTransportUs);
+  recordSample(s.noteappend, s.usbNestedNoteAppendUs);
+  recordSample(s.notechg, s.usbNestedNoteChangeUs);
+  recordSample(s.noterecon, s.usbNestedNoteReconUs);
+  recordSample(s.notepair, s.usbNestedNotePairUs);
   s.usbNestedCaptureUs = 0;
   s.usbNestedThruUs = 0;
   s.usbNestedClockUs = 0;
   s.usbNestedNoteUs = 0;
   s.usbNestedCcUs = 0;
   s.usbNestedTransportUs = 0;
+  s.usbNestedNoteAppendUs = 0;
+  s.usbNestedNoteChangeUs = 0;
+  s.usbNestedNoteReconUs = 0;
+  s.usbNestedNotePairUs = 0;
+  s.usbNestedActive = false;
 }
 
 void noteClockPulse() {
@@ -278,6 +337,14 @@ Snapshot peek(uint32_t nowUs) {
   out.usbccOverCount = s.usbcc.overCount;
   out.usbtransMaxUs = s.usbtrans.maxUs;
   out.usbtransOverCount = s.usbtrans.overCount;
+  out.noteappendMaxUs = s.noteappend.maxUs;
+  out.noteappendOverCount = s.noteappend.overCount;
+  out.notechgMaxUs = s.notechg.maxUs;
+  out.notechgOverCount = s.notechg.overCount;
+  out.notereconMaxUs = s.noterecon.maxUs;
+  out.notereconOverCount = s.noterecon.overCount;
+  out.notepairMaxUs = s.notepair.maxUs;
+  out.notepairOverCount = s.notepair.overCount;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

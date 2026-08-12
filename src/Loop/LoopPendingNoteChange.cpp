@@ -9,8 +9,16 @@
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/RuntimeTimingEnvelope.h"
 
 #include <algorithm>
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+#include <cstdint>
+inline uint32_t micros() { return 0; }
+#else
+#include <Arduino.h>
+#endif
 
 namespace {
 
@@ -65,8 +73,10 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
 
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
   const uint32_t windowLength = (endTick > startTick) ? (endTick - startTick) : 1u;
+  const uint32_t reconStartUs = micros();
   const NoteUtils::DisplayNoteVec allNotes =
       NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLen, false);
+  RuntimeTimingEnvelope::addNoteRecon(micros() - reconStartUs);
 
   BaselineMap baseline;
   EditedGeometry edited{};
@@ -76,6 +86,7 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
   edited.causingSpans.push_back(causingSpan);
 
   std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs;
+  const uint32_t pairStartUs = micros();
   for (const NoteUtils::DisplayNote& note : allNotes) {
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
       continue;
@@ -90,6 +101,7 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
     pairs.push_back(CausingTargetPair{causingId, note.noteId});
     baseline[note.noteId] = NoteBaseline{note.note, note.velocity, note.startTick, note.endTick};
   }
+  RuntimeTimingEnvelope::addNotePair(micros() - pairStartUs);
 
   if (!pairs.empty()) {
     const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);

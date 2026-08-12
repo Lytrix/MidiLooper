@@ -91,6 +91,43 @@ void test_usb_device_nested_sums_commit_as_one_sample() {
   TEST_ASSERT_EQUAL_UINT32(0, snap.usbtransOverCount);
 }
 
+void test_note_off_nested_sums_commit_and_gate_inactive_window() {
+  RuntimeTimingEnvelope::addNoteAppend(5000);
+  RuntimeTimingEnvelope::addNoteChange(6000);
+  RuntimeTimingEnvelope::addNoteRecon(7000);
+  RuntimeTimingEnvelope::addNotePair(8000);
+
+  const auto outside = RuntimeTimingEnvelope::peek();
+  TEST_ASSERT_EQUAL_UINT32(0, outside.noteappendMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, outside.notechgMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, outside.notereconMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, outside.notepairMaxUs);
+
+  RuntimeTimingEnvelope::beginUsbDeviceNested();
+  RuntimeTimingEnvelope::addNoteAppend(100);
+  RuntimeTimingEnvelope::addNoteAppend(200);
+  RuntimeTimingEnvelope::addNoteChange(300);
+  RuntimeTimingEnvelope::addNoteRecon(4000);
+  RuntimeTimingEnvelope::addNoteRecon(5000);
+  RuntimeTimingEnvelope::addNotePair(50);
+  RuntimeTimingEnvelope::addNotePair(60);
+  RuntimeTimingEnvelope::commitUsbDeviceNested();
+
+  RuntimeTimingEnvelope::beginUsbDeviceNested();
+  RuntimeTimingEnvelope::addNoteChange(90000);
+  RuntimeTimingEnvelope::commitUsbDeviceNested();
+
+  const auto snap = RuntimeTimingEnvelope::peek();
+  TEST_ASSERT_EQUAL_UINT32(300, snap.noteappendMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.noteappendOverCount);
+  TEST_ASSERT_EQUAL_UINT32(90000, snap.notechgMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.notechgOverCount);
+  TEST_ASSERT_EQUAL_UINT32(9000, snap.notereconMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.notereconOverCount);
+  TEST_ASSERT_EQUAL_UINT32(110, snap.notepairMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.notepairOverCount);
+}
+
 void test_midi_service_drains_accumulate_independently() {
   RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
   RuntimeTimingEnvelope::noteUsbDeviceDrain(110000);
@@ -141,6 +178,10 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.usbnoteMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.usbccMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.usbtransMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.noteappendMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.notechgMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.notereconMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.notepairMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
 }
 
@@ -159,6 +200,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_midi_service_drains_accumulate_independently);
   RUN_TEST(test_usb_device_subsegments_accumulate_independently);
   RUN_TEST(test_usb_device_nested_sums_commit_as_one_sample);
+  RUN_TEST(test_note_off_nested_sums_commit_and_gate_inactive_window);
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
   RUN_TEST(test_emit_interval_constant);
   return UNITY_END();
