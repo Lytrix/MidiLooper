@@ -40,7 +40,7 @@ Per 5 s window during OVERDUBBING (`DIAG,name,maxUs,overCount`), grown loop `loo
 
 **Fix:** collapse by `(note, startTick, endTick)` in first-seen order. `noteId` stays out of the key.
 
-RC-K1 first used an ordered `std::set` (one `extmem_malloc` tree node per note). Boot visual-cache rebuild of 1430 notes then measured **1.38 s** ([`215128`](../../captures/session_20260812_215128.log), [`215357`](../../captures/session_20260812_215357.log)). **RC-K1b:** rank into one `ExternalMemoryFirstAllocator` vector, `sort`+`unique` by key, restore original index order.
+RC-K1 first used an ordered `std::set` (one `extmem_malloc` tree node per note). Boot visual-cache rebuild of 1430 notes then measured **1.38 s** ([`215128`](../../captures/session_20260812_215128.log), [`215357`](../../captures/session_20260812_215357.log)). **RC-K1b:** rank into one `ExternalMemoryFirstAllocator` vector, `qsort`+unique, restore original index order (`std::sort` templates overflowed RAM1/ITCM).
 
 Deleting the dedup was rejected: `test_reconstruct_dedupes_identical_segments` requires collapse; capture-level event dedup is off while a source view exists; `upsertSourceTransform` is a different stage (pending Shorten/Hide per noteId).
 
