@@ -236,8 +236,6 @@ private:
     /// RC-F follow-up: committed layer is being held because the visual cache is dirty. Cache
     /// recovery belongs to idle work, so the layer is rebuilt once the cache goes clean again.
     bool liveCommittedLayerHeldForDirtyCache_ = false;
-    /// RC-H: composed overdub-stop frame is authority until the track leaves STOPPED.
-    bool liveOverdubStopHandoffActive_ = false;
 
     /// RC-G: bounded overview density for capture states with no usable `visualCache`.
     /// One byte per loop bar; bit N set when a preview note in that bar falls in pitch band N
