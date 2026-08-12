@@ -64,10 +64,16 @@ void test_usb_device_nested_sums_commit_as_one_sample() {
   RuntimeTimingEnvelope::addUsbDeviceCapture(200);
   RuntimeTimingEnvelope::addUsbDeviceThru(50);
   RuntimeTimingEnvelope::addUsbDeviceThru(60);
+  RuntimeTimingEnvelope::addUsbDeviceClock(4000);
+  RuntimeTimingEnvelope::addUsbDeviceClock(5000);
+  RuntimeTimingEnvelope::addUsbDeviceNote(100);
+  RuntimeTimingEnvelope::addUsbDeviceCc(40);
+  RuntimeTimingEnvelope::addUsbDeviceTransport(20);
   RuntimeTimingEnvelope::commitUsbDeviceNested();
 
   RuntimeTimingEnvelope::beginUsbDeviceNested();
   RuntimeTimingEnvelope::addUsbDeviceCapture(10000);
+  RuntimeTimingEnvelope::addUsbDeviceClock(90000);
   RuntimeTimingEnvelope::commitUsbDeviceNested();
 
   const auto snap = RuntimeTimingEnvelope::peek();
@@ -75,6 +81,14 @@ void test_usb_device_nested_sums_commit_as_one_sample() {
   TEST_ASSERT_EQUAL_UINT32(1, snap.usbcapOverCount);
   TEST_ASSERT_EQUAL_UINT32(110, snap.usbthruMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.usbthruOverCount);
+  TEST_ASSERT_EQUAL_UINT32(90000, snap.usbclkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.usbclkOverCount);
+  TEST_ASSERT_EQUAL_UINT32(100, snap.usbnoteMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.usbnoteOverCount);
+  TEST_ASSERT_EQUAL_UINT32(40, snap.usbccMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.usbccOverCount);
+  TEST_ASSERT_EQUAL_UINT32(20, snap.usbtransMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.usbtransOverCount);
 }
 
 void test_midi_service_drains_accumulate_independently() {
@@ -123,6 +137,10 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.usbdispMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.usbcapMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.usbthruMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbclkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbnoteMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbccMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbtransMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
 }
 

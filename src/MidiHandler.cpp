@@ -284,26 +284,38 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   // before channel messages read it
   switch (type) {
     case midi::Clock:
-      clockManager.onMidiClockPulse();
+      if (source == SOURCE_USB) {
+        const uint32_t clockStartUs = micros();
+        clockManager.onMidiClockPulse();
+        RuntimeTimingEnvelope::addUsbDeviceClock(micros() - clockStartUs);
+      } else {
+        clockManager.onMidiClockPulse();
+      }
       return;
 
     case midi::Start:
-      handleMidiStart();
-      return;
-
     case midi::Stop:
-      handleMidiStop();
+    case midi::Continue: {
+      const uint32_t transportStartUs = (source == SOURCE_USB) ? micros() : 0;
+      if (type == midi::Start) {
+        handleMidiStart();
+      } else if (type == midi::Stop) {
+        handleMidiStop();
+      } else {
+        handleMidiContinue();
+      }
+      if (source == SOURCE_USB) {
+        RuntimeTimingEnvelope::addUsbDeviceTransport(micros() - transportStartUs);
+      }
       return;
-
-    case midi::Continue:
-      handleMidiContinue();
-      return;
+    }
 
     default:
       break;
   }
 
   uint32_t tickNow = clockManager.getCurrentTick();
+  const uint32_t channelStartUs = (source == SOURCE_USB) ? micros() : 0;
 
   switch (type) {
     case midi::NoteOn:
@@ -335,6 +347,16 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
 
     default:
       break;
+  }
+
+  if (source == SOURCE_USB) {
+    const uint32_t channelDurationUs = micros() - channelStartUs;
+    if (type == midi::NoteOn || type == midi::NoteOff) {
+      RuntimeTimingEnvelope::addUsbDeviceNote(channelDurationUs);
+    } else if (type == midi::ControlChange || type == midi::PitchBend ||
+               type == midi::AfterTouchChannel || type == midi::ProgramChange) {
+      RuntimeTimingEnvelope::addUsbDeviceCc(channelDurationUs);
+    }
   }
 }
 

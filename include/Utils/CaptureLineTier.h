@@ -41,7 +41,9 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,din,", 9) == 0 || strncmp(tag, "DIAG,hosttask,", 14) == 0 ||
          strncmp(tag, "DIAG,hostdrain,", 15) == 0 || strncmp(tag, "DIAG,usbread,", 13) == 0 ||
          strncmp(tag, "DIAG,usbdisp,", 13) == 0 || strncmp(tag, "DIAG,usbcap,", 12) == 0 ||
-         strncmp(tag, "DIAG,usbthru,", 13) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0;
+         strncmp(tag, "DIAG,usbthru,", 13) == 0 || strncmp(tag, "DIAG,usbclk,", 12) == 0 ||
+         strncmp(tag, "DIAG,usbnote,", 13) == 0 || strncmp(tag, "DIAG,usbcc,", 11) == 0 ||
+         strncmp(tag, "DIAG,usbtrans,", 14) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0;
 }
 
 }  // namespace CaptureLineTier

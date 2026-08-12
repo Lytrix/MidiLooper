@@ -35,8 +35,16 @@ struct State {
   Accumulator usbdisp;
   Accumulator usbcap;
   Accumulator usbthru;
+  Accumulator usbclk;
+  Accumulator usbnote;
+  Accumulator usbcc;
+  Accumulator usbtrans;
   uint32_t usbNestedCaptureUs = 0;
   uint32_t usbNestedThruUs = 0;
+  uint32_t usbNestedClockUs = 0;
+  uint32_t usbNestedNoteUs = 0;
+  uint32_t usbNestedCcUs = 0;
+  uint32_t usbNestedTransportUs = 0;
   uint32_t clockPulses = 0;
   uint32_t lastServiceExitUs = 0;
   uint32_t serviceEnterUs = 0;
@@ -63,6 +71,10 @@ void clearWindow(State& s) {
   s.usbdisp = Accumulator{};
   s.usbcap = Accumulator{};
   s.usbthru = Accumulator{};
+  s.usbclk = Accumulator{};
+  s.usbnote = Accumulator{};
+  s.usbcc = Accumulator{};
+  s.usbtrans = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -80,6 +92,10 @@ void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
   DebugSessionCapture::runtimeTimingEnvelope("usbdisp", s.usbdisp.maxUs, s.usbdisp.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("usbcap", s.usbcap.maxUs, s.usbcap.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("usbthru", s.usbthru.maxUs, s.usbthru.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbclk", s.usbclk.maxUs, s.usbclk.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbnote", s.usbnote.maxUs, s.usbnote.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbcc", s.usbcc.maxUs, s.usbcc.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbtrans", s.usbtrans.maxUs, s.usbtrans.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -158,6 +174,10 @@ void beginUsbDeviceNested() {
   State& s = state();
   s.usbNestedCaptureUs = 0;
   s.usbNestedThruUs = 0;
+  s.usbNestedClockUs = 0;
+  s.usbNestedNoteUs = 0;
+  s.usbNestedCcUs = 0;
+  s.usbNestedTransportUs = 0;
 }
 
 void addUsbDeviceCapture(uint32_t durationUs) {
@@ -168,12 +188,36 @@ void addUsbDeviceThru(uint32_t durationUs) {
   state().usbNestedThruUs += durationUs;
 }
 
+void addUsbDeviceClock(uint32_t durationUs) {
+  state().usbNestedClockUs += durationUs;
+}
+
+void addUsbDeviceNote(uint32_t durationUs) {
+  state().usbNestedNoteUs += durationUs;
+}
+
+void addUsbDeviceCc(uint32_t durationUs) {
+  state().usbNestedCcUs += durationUs;
+}
+
+void addUsbDeviceTransport(uint32_t durationUs) {
+  state().usbNestedTransportUs += durationUs;
+}
+
 void commitUsbDeviceNested() {
   State& s = state();
   recordSample(s.usbcap, s.usbNestedCaptureUs);
   recordSample(s.usbthru, s.usbNestedThruUs);
+  recordSample(s.usbclk, s.usbNestedClockUs);
+  recordSample(s.usbnote, s.usbNestedNoteUs);
+  recordSample(s.usbcc, s.usbNestedCcUs);
+  recordSample(s.usbtrans, s.usbNestedTransportUs);
   s.usbNestedCaptureUs = 0;
   s.usbNestedThruUs = 0;
+  s.usbNestedClockUs = 0;
+  s.usbNestedNoteUs = 0;
+  s.usbNestedCcUs = 0;
+  s.usbNestedTransportUs = 0;
 }
 
 void noteClockPulse() {
@@ -226,6 +270,14 @@ Snapshot peek(uint32_t nowUs) {
   out.usbcapOverCount = s.usbcap.overCount;
   out.usbthruMaxUs = s.usbthru.maxUs;
   out.usbthruOverCount = s.usbthru.overCount;
+  out.usbclkMaxUs = s.usbclk.maxUs;
+  out.usbclkOverCount = s.usbclk.overCount;
+  out.usbnoteMaxUs = s.usbnote.maxUs;
+  out.usbnoteOverCount = s.usbnote.overCount;
+  out.usbccMaxUs = s.usbcc.maxUs;
+  out.usbccOverCount = s.usbcc.overCount;
+  out.usbtransMaxUs = s.usbtrans.maxUs;
+  out.usbtransOverCount = s.usbtrans.overCount;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;
