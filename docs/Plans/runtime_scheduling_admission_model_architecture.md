@@ -918,6 +918,46 @@ RC-D outranks the resolve budget. The gather spike and the 5.48 ms window filter
 
 ---
 
+## 31f. Run [`155132`](../../captures/session_20260812_155132.log) — RC-D verified, MIDI service isolated
+
+Transitions: `RECORDING → STOPPED_RECORDING` 272.79 s · `→ PLAYING` 273.08 s · `→ OVERDUBBING` 274.03 s · `→ PLAYING` 310.49 s · `→ OVERDUBBING` 316.50 s · `→ STOPPED` 330.78 s.
+
+### RC-D fix confirmed
+
+`DFRAME` reports **32.7 fps** across the session, against 70–78 fps before the fix. `DisplayUpdateTotalTime` gives 9 485 frames over 310 s at a 14.8 ms mean, so display now consumes **45 %** of loop time instead of ~93 %.
+
+The envelope moved with it:
+
+| Window | Before ([`152948`](../../captures/session_20260812_152948.log)) | After |
+|---|---|---|
+| Idle `msi` max | ~34 ms | **15.3 ms** |
+| RECORD `msi` max | — | 19.0–24.5 ms |
+| Idle `midisvc` max | ~34 µs | 2 µs |
+
+### RECORD remains clean, and grows slowly
+
+Across the 60 s of recording, `midisvc` max rises monotonically 604 → 628 → 646 → 652 → 661 → 694 → 709 → 771 → 850 → 888 → 905 µs, with `clk` 174–192 µs and `tracks` 153–172 µs flat. A real O(content) trend, but 300 µs over a full minute of capture — not a scheduling concern at this scale.
+
+### The 126–146 ms MIDI service is unchanged, and is not clock dispatch
+
+Every window from 276.9 s to 332.2 s carries a `midisvc` maximum between **126.0 ms and 145.8 ms**, exactly as in [`145555`](../../captures/session_20260812_145555.log). Halving display load did not touch it.
+
+Clock dispatch cannot account for it, and the arithmetic is now unambiguous. In the 282.0 s window `midisvc` is 125 967 µs while `clk` is 4 584 µs, so explaining the call as buffered clock would need ~27 pulses drained in one `handleMidiInput`. At the measured `clockrate` of 46–49 pulses/s that is ~570 ms of accumulation, but the largest `msi` gap in the same window is 73.6 ms — about 3.5 pulses, or ~16 ms. At least 110 ms of that call is outside clock dispatch.
+
+The same input traffic during RECORD costs 604–905 µs, so it is not message volume either. The cost is in the segments S0 does not measure: the USB device drain, the DIN drain, `usbHost.Task()`, the USB host drain, or per-message work reached from `handleMidiMessage`. **S0b is now the only open question on the dominant path.**
+
+### Display resolve is under budget by margin, not by design
+
+`DisplayResolveOverBudgetCount` fell from 2 223 to **86**. That is not a fix. `DisplayCommittedWindowFilter` ran 457 times and non-gather rebuilds average **4 595 µs** against the 5 000 µs budget — the same operation as before, now landing just under the threshold instead of just over. `DisplayCaptureGatherTime` still shows a single 26.3 ms sample, and `DisplayResolveLiveCapture` still peaks at 33.8 ms during the second overdub.
+
+The branch cost has not changed; only its position relative to an arbitrary line has. Treat the low over-budget count as fragile.
+
+### Separate: a 140 ms post-stop stall
+
+At 337.2 s and 342.2 s, after `PLAYING → STOPPED`, `msi` max is 140.6 ms and 140.2 ms while `midisvc` is 81–126 µs, `clk` is 0, and `clockrate` is 0. Whatever blocks the loop there is not MIDI service and not clock dispatch. `tracks` is 4.1–9.0 ms with `clk` at 0, which is the internal-clock ISR path rather than `onMidiClockPulse`. Not investigated.
+
+---
+
 ## 32. Revised implementation dependency
 
 ```mermaid
