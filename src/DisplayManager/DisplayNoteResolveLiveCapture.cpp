@@ -344,12 +344,27 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         if (track.isOverdubbing()) {
             if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
                 if (havePaintWindow) {
+                    // RC-F: filter a window wider than the paint window and record it, so
+                    // auto-follow slides inside the gather instead of leaving the committed
+                    // prefix pinned to a stale position (165636: wNotes 295 -> 213).
+                    const uint32_t marginTicks =
+                        static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
+                    const uint32_t gatherStart =
+                        paintWindowStart > marginTicks ? paintWindowStart - marginTicks : 0;
+                    uint32_t gatherEnd = paintWindowStart + paintWindowLength + marginTicks;
+                    if (gatherEnd > liveLoopLength) {
+                        gatherEnd = liveLoopLength;
+                    }
+                    const uint32_t gatherLength =
+                        gatherEnd > gatherStart ? gatherEnd - gatherStart : paintWindowLength;
                     DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
                     liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                        loop.visualCache.notes, paintWindowStart, paintWindowLength,
-                        liveLoopLength);
+                        loop.visualCache.notes, gatherStart, gatherLength, liveLoopLength);
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = false;
+                    liveWindowGatherValid_ = true;
+                    liveWindowGatherStart_ = gatherStart;
+                    liveWindowGatherLength_ = gatherLength;
+                    liveWindowGatherLoopLength_ = liveLoopLength;
                     liveDisplayCommittedFromWindowGather_ = false;
                 } else {
                     DIAG_COUNTER_INC(DisplayCommittedFullAssign);
@@ -489,9 +504,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     // Dirty visualCache uses window gather for the committed layer. Auto-follow moves the paint
     // window without bumping playbackRevision — rebuild when the gather no longer covers it
     // (session_20260811_034230: notes stuck in first ~18 bars until overdub stop).
+    // RC-F: not gated on visualCacheDirty. Once the RC-E fix lets the cache go clean during
+    // overdub, a dirty-only predicate can never fire and the committed layer freezes.
     const bool committedWindowStale =
-        track.isOverdubbing() && havePaintWindow && loop.visualCacheDirty &&
-        liveWindowGatherValid_ &&
+        track.isOverdubbing() && havePaintWindow && liveWindowGatherValid_ &&
         !DisplayWindowUtils::paintWindowInsideGather(paintWindowStart, paintWindowLength,
                                                      liveWindowGatherStart_,
                                                      liveWindowGatherLength_);

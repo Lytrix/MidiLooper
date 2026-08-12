@@ -1102,6 +1102,8 @@ After the RC-E fix the cache goes **clean** during overdub, and the clean-cache 
 
 **Not patched.** The obvious change — drop the `visualCacheDirty` term and record the filtered window — makes the predicate fire on nearly every frame, because the recorded gather would equal the paint window and auto-follow moves it continuously. `filterDisplayNotesByWindowInclusion` over ~1 400 cached notes measured 4 595 µs in §31f, so that would put a ~4.6 ms filter on every overdub frame. Sizing a gather window wider than the paint window is the real fix and is a budget decision, not a mechanical patch.
 
+**Fix shipped.** The clean-cache overdub branch of `rebuildCommittedLayer` now filters a window widened by the existing `kWindowedGatherMarginBars = 2` on each side, records it as the gather window, and sets `liveWindowGatherValid_ = true`; `committedWindowStale` drops the `visualCacheDirty` term. The paint window may now slide two bars inside the gather before a rebuild, so the committed layer follows auto-follow at roughly one filter every two bars instead of every frame. This reuses the margin mechanism `DisplayNoteWindowGather` already applies for the same reason. Native tests: `test_paint_window_inside_gather_tolerates_margin_slide`.
+
 ### RC-G — the overview strip is fed only the detailed window during RECORD
 
 `PianoRollDraw` chooses the overview density source as:
@@ -1120,6 +1122,8 @@ During overdub the first branch applies (`visual` 1 296–1 417, clean), so the 
 The frame itself is complete during record — at 227.643 s `frame=1238` against `loopLen=59408` — so this is purely the overview source choice, not missing data.
 
 **Not patched.** Feeding `notes` to the overview restores the display but reintroduces the O(record-length) per-frame scan that RC-C B removed, and that grows without bound on long records. A density histogram over the strip's ~256 columns is the bounded answer.
+
+**Fix shipped.** `DisplayManager::updateOverviewCaptureDensity` maintains a per-bar band mask — one byte per loop bar, one bit per pitch band, with `kOverviewBandCount = 8` bands of 16 semitones mapping onto the 8 overview strip rows. It folds in only capture-preview notes it has not seen yet, so the per-frame cost is O(new notes); open notes are re-folded each frame, bounded by `openNoteIndices`. The mask is indexed by bar rather than by screen column, so a growing record pass only appends bars and previously accumulated bars stay valid as the loop rescales. `drawOverviewStrip` takes an optional mask and, when present, draws O(loop bars) instead of O(notes). The mask is built only while recording or overdubbing with no usable `visualCache`; every other state keeps the existing full-cache path. Native tests: `test_overview_band_mask_*`, `test_overview_band_for_note_covers_full_midi_range`.
 
 ### Remaining findings — status against this run
 
