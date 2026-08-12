@@ -6,10 +6,11 @@
  * @brief S0 observation-only timing envelope telemetry.
  *
  * Measures MSI gaps, MIDI/Clock/track durations, S0b MIDI-service drain
- * segments, and S0c USB-device sub-segments. Does not admit work, change
- * service density, or drive any scheduling decision.
+ * segments, S0c USB-device sub-segments, and S0d handleMidiMessage
+ * remainder sums. Does not admit work, change service density, or drive
+ * any scheduling decision.
  *
- * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31c, §31i, §31j.
+ * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31l.
  */
 #pragma once
 
@@ -51,6 +52,14 @@ struct Snapshot {
   uint32_t usbcapOverCount = 0;
   uint32_t usbthruMaxUs = 0;
   uint32_t usbthruOverCount = 0;
+  uint32_t usbclkMaxUs = 0;
+  uint32_t usbclkOverCount = 0;
+  uint32_t usbnoteMaxUs = 0;
+  uint32_t usbnoteOverCount = 0;
+  uint32_t usbccMaxUs = 0;
+  uint32_t usbccOverCount = 0;
+  uint32_t usbtransMaxUs = 0;
+  uint32_t usbtransOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
 };
@@ -87,7 +96,7 @@ void noteUsbDeviceRead(uint32_t durationUs);
 /** S0c: dispatchMidiBatch for the USB-device batch. */
 void noteUsbDeviceDispatch(uint32_t durationUs);
 
-/** S0c: start summing SC_MIDI_IN / sendMidiThru for this USB-device dispatch. */
+/** S0c: start summing nested USB-device dispatch work. */
 void beginUsbDeviceNested();
 
 /** S0c: add one SOURCE_USB SC_MIDI_IN duration into the current dispatch sum. */
@@ -96,7 +105,19 @@ void addUsbDeviceCapture(uint32_t durationUs);
 /** S0c: add one SOURCE_USB sendMidiThru duration into the current dispatch sum. */
 void addUsbDeviceThru(uint32_t durationUs);
 
-/** S0c: record the nested sums as one sample each and reset them. */
+/** S0d: add one SOURCE_USB Clock / onMidiClockPulse duration into the current dispatch sum. */
+void addUsbDeviceClock(uint32_t durationUs);
+
+/** S0d: add one SOURCE_USB NoteOn/NoteOff handler duration into the current dispatch sum. */
+void addUsbDeviceNote(uint32_t durationUs);
+
+/** S0d: add one SOURCE_USB CC/pitch/AT/PC handler duration into the current dispatch sum. */
+void addUsbDeviceCc(uint32_t durationUs);
+
+/** S0d: add one SOURCE_USB Start/Stop/Continue handler duration into the current dispatch sum. */
+void addUsbDeviceTransport(uint32_t durationUs);
+
+/** S0c/S0d: record the nested sums as one sample each and reset them. */
 void commitUsbDeviceNested();
 
 /** Count one external MIDI Clock pulse for clockrate. */

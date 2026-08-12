@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev` ([`193645`](../../captures/session_20260812_193645.log)); S0c **attributed** to `usbdisp` ([`195240`](../../captures/session_20260812_195240.log)); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp` ([`195240`](../../captures/session_20260812_195240.log)); S0d `handleMidiMessage` split **implemented** (device attribution pending); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -542,6 +542,10 @@ S0 is: observation only; behavior preserving; no admission; no service-density c
 | USB device dispatch | `RuntimeTimingEnvelope::noteUsbDeviceDispatch` | `DIAG,usbdisp,<maxUs>,<overCount>` |
 | USB device SC_MIDI_IN (sum in one dispatch) | `RuntimeTimingEnvelope::addUsbDeviceCapture` + `commitUsbDeviceNested` | `DIAG,usbcap,<maxUs>,<overCount>` |
 | USB device sendMidiThru (sum in one dispatch) | `RuntimeTimingEnvelope::addUsbDeviceThru` + `commitUsbDeviceNested` | `DIAG,usbthru,<maxUs>,<overCount>` |
+| USB device Clock sum | `RuntimeTimingEnvelope::addUsbDeviceClock` + `commitUsbDeviceNested` | `DIAG,usbclk,<maxUs>,<overCount>` |
+| USB device note handlers | `RuntimeTimingEnvelope::addUsbDeviceNote` + `commitUsbDeviceNested` | `DIAG,usbnote,<maxUs>,<overCount>` |
+| USB device CC/pitch/AT/PC | `RuntimeTimingEnvelope::addUsbDeviceCc` + `commitUsbDeviceNested` | `DIAG,usbcc,<maxUs>,<overCount>` |
+| USB device Start/Stop/Continue | `RuntimeTimingEnvelope::addUsbDeviceTransport` + `commitUsbDeviceNested` | `DIAG,usbtrans,<maxUs>,<overCount>` |
 | Clock rate | pulse count in `onMidiClockPulse` | `DIAG,clockrate,<pulsesPerSecond>` |
 
 Emit path: `RuntimeTimingEnvelope::maybeEmit` from `main.cpp::loop()` every 5 s. Tier-A (survives `SC_CAPTURE_FLUSH`). `overCount` uses observational soft ceiling 5000 µs for counting only — **not** an MSI contract.
@@ -600,6 +604,10 @@ Tier-A telemetry (survives `SC_CAPTURE_FLUSH(8)`), rate-limited to 5 s:
 | `DIAG,usbdisp,<maxUs>,<overCount>` | Max USB-device `dispatchMidiBatch` |
 | `DIAG,usbcap,<maxUs>,<overCount>` | Max sum of `SC_MIDI_IN` in one USB-device dispatch |
 | `DIAG,usbthru,<maxUs>,<overCount>` | Max sum of `sendMidiThru` in one USB-device dispatch |
+| `DIAG,usbclk,<maxUs>,<overCount>` | Max sum of Clock / `onMidiClockPulse` in one USB-device dispatch |
+| `DIAG,usbnote,<maxUs>,<overCount>` | Max sum of NoteOn/NoteOff handlers in one USB-device dispatch |
+| `DIAG,usbcc,<maxUs>,<overCount>` | Max sum of CC/pitch/AT/PC handlers in one USB-device dispatch |
+| `DIAG,usbtrans,<maxUs>,<overCount>` | Max sum of Start/Stop/Continue in one USB-device dispatch |
 | `DIAG,clockrate,<pulsesPerSecond>` | Clock messages per second |
 
 Additional useful measurements: MIDI input backlog, MIDI batch peak, USB-host callback count, USB-host task duration, nested callback depth, allocation failures/growth. Do not add broad telemetry without a reason.
@@ -1408,11 +1416,30 @@ In every complete PLAYING/OVERDUB window, `usbdisp` max equals `usbdev` / `midis
 
 ### Residuals
 
-- Next observation split, **not this stage:** the remainder of `handleMidiMessage` after `SC_MIDI_IN`, `sendMidiThru`, and Clock — channel/button/transport handlers (`handleNoteOn`, `handleControlChange`, `MidiButtonManager`, …). `clk` is still a per-pulse max, not a batch sum; even several 5–18 ms pulses cannot make 93 ms.
+- `clk` is the max of one `onMidiClockPulse`, not the sum of clocks in that USB batch. S0d (`usbclk`) is the batch sum. Channel/button/transport remainder is `usbnote` / `usbcc` / `usbtrans` (§31l).
 - RC-S0c: 10 `RING,overflow`. RECORD envelope is present from 38 s (better than [`193645`](../../captures/session_20260812_193645.log)). `ARMED → RECORDING` absent; `RECORDING → STOPPED_RECORDING` present at 119.582 s.
 - Capture ends at 241.5 s, 0.9 s after `PLAYING → STOPPED`; no post-stop `clockrate` 0 window in this log. RC-J not re-measured here. Do not patch.
 
-**S0c exit:** met.
+**S0c exit:** met. S0d firmware: §31l.
+
+---
+
+## 31l. S0d — split `handleMidiMessage` remainder (observation only)
+
+**Status:** firmware **implemented**; device attribution pending against [`195240`](../../captures/session_20260812_195240.log).
+
+[`195240`](../../captures/session_20260812_195240.log) showed `usbdisp` = `usbdev` within 0–3 µs, with `usbcap` / `usbthru` / `usbread` in the tens of microseconds. `clk` is the max of one `onMidiClockPulse`, so it cannot prove or disprove a batch of clock dispatches. S0d sums the remaining `handleMidiMessage` work inside one USB-device dispatch.
+
+| Probe | What it measures | How sampled |
+|---|---|---|
+| `DIAG,usbclk` | `onMidiClockPulse` for `SOURCE_USB` Clock | **sum** in that dispatch, then max across calls |
+| `DIAG,usbnote` | `handleNoteOn` / `handleNoteOff` | **sum** in that dispatch, then max across calls |
+| `DIAG,usbcc` | `handleControlChange` / pitch / aftertouch / program change | **sum** in that dispatch, then max across calls |
+| `DIAG,usbtrans` | `handleMidiStart` / `handleMidiStop` / `handleMidiContinue` | **sum** in that dispatch, then max across calls |
+
+`clk` remains the per-pulse max. `usbclk` is the batch sum of those pulses in one USB dispatch. If `usbclk` matches `usbdisp`, the 48–93 ms call is many `updateAllTracks` in one batch. If `usbnote` or `usbcc` matches, the cost is channel/button work.
+
+**Exit criterion:** the [`195240`](../../captures/session_20260812_195240.log) 48–93 ms PLAYING/OVERDUB `usbdisp` samples (and RECORD 0.3–0.6 ms) are each attributed to `usbclk`, `usbnote`, `usbcc`, and/or `usbtrans`, reported separately for RECORD versus PLAYING/OVERDUB. Do not start S1 or patch RC-J.
 
 ---
 
@@ -1440,7 +1467,8 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 |-------|--------|---------|
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
 | **S0b** | **Attributed** ([`193645`](../../captures/session_20260812_193645.log) §31i) | PLAYING/OVERDUB `midisvc` is `usbdev` (equals within 0–3 µs). `din` / `hosttask` / `hostdrain` ruled out. |
-| **S0c** | **Attributed** ([`195240`](../../captures/session_20260812_195240.log) §31k) | PLAYING/OVERDUB `usbdev` is `usbdisp`. `usbread` / `usbcap` / `usbthru` ruled out (µs). Remainder is `handleMidiMessage` after capture, thru, and Clock. S1 not authorized. |
+| **S0c** | **Attributed** ([`195240`](../../captures/session_20260812_195240.log) §31k) | PLAYING/OVERDUB `usbdev` is `usbdisp`. `usbread` / `usbcap` / `usbthru` ruled out (µs). |
+| **S0d** | **Implemented** (device attribution pending) | Split `handleMidiMessage` remainder into `usbclk` / `usbnote` / `usbcc` / `usbtrans` batch sums. Baseline [`195240`](../../captures/session_20260812_195240.log). S1 not authorized. |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |
