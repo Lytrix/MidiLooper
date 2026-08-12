@@ -23,7 +23,10 @@ inline const char* tagOf(const char* line) {
   return separator == nullptr ? nullptr : separator + 1;
 }
 
-/** Transport state, persistence, record stage, session header, and timing envelope lines. */
+/**
+ * Transport state, persistence, record stage, session header, visual cache coverage, and
+ * timing envelope lines.
+ */
 inline bool isTierALine(const char* line) {
   const char* tag = tagOf(line);
   if (tag == nullptr) {
@@ -31,6 +34,7 @@ inline bool isTierALine(const char* line) {
   }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||
          strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "HDR,", 4) == 0 ||
+         strncmp(tag, "VCACHE,", 7) == 0 ||
          strncmp(tag, "DIAG,timing_max,", 16) == 0 || strncmp(tag, "DIAG,msi,", 9) == 0 ||
          strncmp(tag, "DIAG,midisvc,", 13) == 0 || strncmp(tag, "DIAG,clk,", 9) == 0 ||
          strncmp(tag, "DIAG,tracks,", 12) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0;

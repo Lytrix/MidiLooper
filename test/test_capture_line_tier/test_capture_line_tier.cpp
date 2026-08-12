@@ -30,6 +30,8 @@ void test_transport_and_persistence_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,22800000,PERS,queue,1,2,3,ok"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,22800000,RECS,stop,1,0,0,0,1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,7800000,HDR,v1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,330913469,VCACHE,full,ev,1232,notes,299,first,21,last,37,total,77,dsz,77,dcnt,0,dirty,0"));
 }
 
 void test_note_and_display_traffic_is_not_tier_a() {

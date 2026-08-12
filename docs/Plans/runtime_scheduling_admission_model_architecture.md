@@ -952,6 +952,73 @@ The same input traffic during RECORD costs 604–905 µs, so it is not message v
 
 The branch cost has not changed; only its position relative to an arbitrary line has. Treat the low over-budget count as fragile.
 
+### RC-E — the visual cache is marked complete while covering a fraction of the loop
+
+This is the "piano roll not redrawn after stopping" report, and the piano roll is in fact being redrawn — there is almost nothing in the cache to draw.
+
+`TICKS_PER_BAR` is 768 and `TICKS_PER_16TH_STEP` is 48, so the 59 136-tick loop is **77 bars** and the detailed paint window is 16 bars = 12 288 ticks.
+
+Reading `DISP,4,…` across the stop:
+
+```
+330.913 STOPPED  visual=299  frame=298  wStart=16176  wNotes=298
+331.807 PLAYING  visual=299  frame=1    wStart=0      wNotes=1
+335.011 STOPPED  visual=299  frame=1    wStart=0      wNotes=1
+337.736 PLAYING  visual=299  frame=1    wStart=0      wNotes=1
+338.613 STOPPED  visual=299  frame=1    wStart=0      wNotes=1
+```
+
+At the overdub stop the window sits at tick 16 176 (bar 21) and holds **298 of the 299** cached notes. When transport restarts the playhead returns to tick 0, the window follows, and bars 0–15 contain **one** note. It never recovers across two further play/stop cycles.
+
+Bars 0–15 are not empty in storage. The deferred `REVT` dump immediately after the stop walks a 16th-note grid from the beginning of the loop — `REVT,0,4,96`, `REVT,48,4,95`, `REVT,96,4,94`, … — so the record pass has roughly 256 notes in the first 16 bars alone.
+
+`visual` holds at exactly 299 for eight seconds spanning two STOPPED periods, during which `processDeferredIdleMaintenance` runs its stopped-branch slice with priority bar 0. A dirty cache would grow. It does not, so **`visualCacheDirty` is false with a cache covering roughly 22 % of the loop** (bars 21–37 of 77). Nothing will ever backfill it.
+
+The note density confirms the split rather than contradicting it: 298 notes in a 12 288-tick window is exactly a 16th-note grid, so the region that *is* cached is complete and the region that is not is absent entirely.
+
+**Not yet attributed.** `rebuildVisualCacheFromPasses` does a full `gatherCommittedEvents` and only then sets `visualCacheDirty = false`, so on its own it cannot produce a partial-clean cache. The `visual` count also collapses at **both** commits — 977 → 368 at the first overdub, 1 218 → 299 at the second — and the second commit ends with *fewer* notes than the first. Two candidates, distinguishable by measurement and not yet separated:
+
+1. the progressive idle slice over-counts during overdub and the post-commit full rebuild is the truth, in which case committed content is being lost at the second commit;
+2. the post-commit full rebuild under-covers, and the progressive figure was closer to correct.
+
+Either way the invariant *a cache may only be marked clean when it covers the whole loop* is violated. This is a storage/commit question, not a scheduling one.
+
+### RC-E instrumentation (shipped, observation-only)
+
+A Tier-A `VCACHE` line reports cached-note coverage at every boundary where the cache is rebuilt or declared stale:
+
+```
+#CAP,<us>,VCACHE,<phase>,ev,<gathered>,notes,<n>,first,<bar>,last,<bar>,total,<bars>,dsz,<dirtyBarsSize>,dcnt,<dirtyBars>,dirty,<flag>
+```
+
+`ev` is the gathered committed event count where the phase performed a gather and `-1` otherwise. Phases: `full` (`rebuildVisualCacheFromPasses`), `slice_clean` and `slice_nodirty` (the two points where `rebuildVisualCacheIdleSlice` clears the dirty flag), `stale` (`markPassDerivedStale`), `stale_all` (`markDisplayCachesStale`).
+
+The readings separate the two candidates:
+
+| Observation | Conclusion |
+|---|---|
+| `full` shows `ev` collapsing across the second commit | committed content is lost at commit |
+| `full` shows `ev` intact but `notes` low and `first`/`last` spanning a fraction of `total` | reconstruction or coverage, not storage |
+| `slice_clean` / `slice_nodirty` fires with `first`/`last` spanning a fraction of `total` | cache marked clean while partial — the invariant break |
+| `stale` shows `dsz < total` or `dcnt` far below `total` | stale `dirtyBars` limits which bars later slices may revisit |
+
+That last row is the specific asymmetry worth watching: `markPassDerivedStale` raises `visualCacheDirty` but leaves `dirtyBars` exactly as the previous rebuild left it, whereas `markDisplayCachesStale` marks every bar. `rebuildVisualCacheIdleSlice` only re-marks all bars when `dirtyBars.size() < totalBars`, so a same-length-but-mostly-clean `dirtyBars` would confine every subsequent slice to the bars that happened to hold notes at the last full rebuild. The capture-commit path takes the `markPassDerivedStale` route.
+
+Coverage is measured as bounds only (`first`/`last` over note start and end bars) so the commit path allocates nothing.
+
+### Display during overdub — the §31d bailout, unchanged
+
+`DIAG,timing_max,DisplayResolveLiveCapture` reads **33 595 µs** at 316.7 s and **33 844 µs** at 321.8 s, both inside the second overdub, against the 5 000 µs budget. At 6.8× over, `reuseLastValidFrame` holds the previous frame and both `replaceCaptureLayer` and the playhead tails are skipped, so notes being played into the overdub are not composed into the frame. This is the behaviour described in §31d and it is worse in the second pass because the committed layer is larger.
+
+### MIDI drift grows with content, and is worse in the second overdub
+
+| Pass | `msi` max | `midisvc` max |
+|---|---|---|
+| Overdub 1 (276.9–310.5 s) | 289.6 → 51.9 ms | 145.3 → 134.5 ms |
+| Overdub 2 (316.5–330.8 s) | 98.5 → 48.9 ms | 141.4 → 145.8 → **223.4 ms** |
+
+`midisvc` rises monotonically within each pass and starts higher in the second. The 223.4 ms sample sits in the window containing the stop. `clk` never exceeds 9.8 ms in any of these windows, so this remains the unattributed `handleMidiInput` term from §31f — **S0b**.
+
 ### Separate: a 140 ms post-stop stall
 
 At 337.2 s and 342.2 s, after `PLAYING → STOPPED`, `msi` max is 140.6 ms and 140.2 ms while `midisvc` is 81–126 µs, `clk` is 0, and `clockrate` is 0. Whatever blocks the loop there is not MIDI service and not clock dispatch. `tracks` is 4.1–9.0 ms with `clk` at 0, which is the internal-clock ISR path rather than `onMidiClockPulse`. Not investigated.
