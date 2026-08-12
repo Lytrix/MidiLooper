@@ -88,6 +88,18 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         const bool incrementalCommittedDisplay =
             DisplayWindowUtils::preferIncrementalCommittedDisplay(deferVisualRebuild,
                                                                   track.isStopped());
+        if (!track.isStopped()) {
+            liveOverdubStopHandoffActive_ = false;
+        }
+
+        // RC-H: OVERDUBBING→STOPPED composed frame stays authority even after idle completes
+        // the visual cache. The clean-cache windowed path below would replace it with a
+        // narrower 16-bar slice and freeze the roll at the stop viewport (174843).
+        if (DisplayWindowUtils::shouldPreserveOverdubStopHandoff(
+                liveOverdubStopHandoffActive_, track.isStopped(), preservedHandoffAuthority)) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            return liveDisplayNotes;
+        }
 
         // RC5b: only a clean visualCache may authorize committed display after a revision bump.
         // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.

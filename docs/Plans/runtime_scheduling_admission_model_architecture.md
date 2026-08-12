@@ -1135,6 +1135,24 @@ if (loop.visualCacheDirty && canHoldCommittedLayer) {
 
 Reported at roughly bar 40 of the second overdub (~240 s). Nothing in the capture explains it: single boot header at 8.8 s, MIDI still flowing at 261 s, `AllocatorFailure` 0, `DisplayResolveLiveCapture` max 6 995 µs, `msi` 21 ms. The sparse `DFRAME` lines are **not** missed paints — the frame index advances 750 across the 31.8 s gap, so the panel was being written at 23.6 fps and the missing lines are RC-S0c capture-ring drops. The RC-G density mask is not implicated at that moment because the cache is clean from 215.386 s onward, so the mask path is inactive. Needs a reproduction with the corruption described before it can be chased.
 
+### RC-H — OVERDUBBING→STOPPED replaces the composed frame with a frozen 16-bar window
+
+[`174843`](../../captures/session_20260812_174843.log) verified RC-F/RC-G during overdub (`wNotes` holds ~297–306; capture layer grows). The freeze is the second stop, not stop-playing:
+
+```text
+191.719740 OVERDUBBING -> STOPPED
+191.720643 VCACHE adopt_partial notes=373 first=7 last=27 dirty=1
+191.723302 DISP STOPPED frame=373 wStart=7278 wNotes=297
+192.374076 VCACHE slice_clean notes=1217 first=0 last=70 dirty=0
+192.384208 DISP STOPPED frame=297 visual=1217 wStart=7278 wNotes=297
+```
+
+After that, `DFRAME` keeps painting the same 297-note frame. Persistence overlaps (`PERS,request already_pending`, `SAVE,in_progress`) but does not own two concurrent saves — later requests coalesce. `midisvc` reaches 229.5 ms during the post-stop `REVT` flush; that is a timing issue, not the frozen image.
+
+Root cause: `refreshViewportAfterOverdubStop` adopts the composed overdub frame, then idle `rebuildVisualCacheIdleSlice` (the STOPPED branch of `processDeferredIdleMaintenance`) marks the cache clean. `resolveDisplayNotesCommitted` then prefers the clean-cache windowed path over `preservedHandoffAuthority`, filters `visualCache` to the stopped 16-bar window, and auto-follow is off, so the roll stays at that viewport (bar 14 in this run).
+
+**Fix shipped.** `liveOverdubStopHandoffActive_` is set when the adopt happens on a STOPPED track. `shouldPreserveOverdubStopHandoff` returns that composed frame until the track leaves STOPPED. Overview still uses the completed `visualCache` once idle finishes. Native test: `test_should_preserve_overdub_stop_handoff`.
+
 ### RC-G — the overview strip is fed only the detailed window during RECORD
 
 `PianoRollDraw` chooses the overview density source as:
