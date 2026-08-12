@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev` ([`193645`](../../captures/session_20260812_193645.log)); S0c USB-device split **implemented** (device attribution pending); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev` ([`193645`](../../captures/session_20260812_193645.log)); S0c **attributed** to `usbdisp` ([`195240`](../../captures/session_20260812_195240.log)); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -1352,13 +1352,13 @@ The historical 762.5 ms ([`145555`](../../captures/session_20260812_145555.log))
 - RC-S0c: 13 `RING,overflow`; RECORD envelope missing from 10.4 s (`STOPPED → ARMED`) until 126.1 s; `ARMED → RECORDING` / `RECORDING → STOPPED_RECORDING` absent. Three windows emit only `clockrate` (176.3, 186.3, 231.3 s).
 - Next observation split, **not this stage:** inside `usbdev` — `usbMIDI.read()` versus `dispatchMidiBatch` / `handleMidiMessage` (`sendMidiThru`, `SC_MIDI_IN`, channel/button dispatch). Do not start S1 or patch RC-J.
 
-**S0b exit:** met. S0c firmware: §31j.
+**S0b exit:** met. S0c attributed in §31k (`usbdisp`).
 
 ---
 
 ## 31j. S0c — split `usbdev` (observation only)
 
-**Status:** firmware **implemented**; device attribution pending against [`193645`](../../captures/session_20260812_193645.log).
+**Status:** firmware **implemented**; device-attributed in [`195240`](../../captures/session_20260812_195240.log) (§31k) — PLAYING/OVERDUB `usbdev` is `usbdisp`.
 
 [`193645`](../../captures/session_20260812_193645.log) showed `usbdev` = `midisvc` within 0–3 µs. S0c splits that drain without changing service density or taking a scheduling decision.
 
@@ -1374,6 +1374,45 @@ The historical 762.5 ms ([`145555`](../../captures/session_20260812_145555.log))
 Remainder of `usbdisp` after `usbcap` + `usbthru` + nested `clk` is channel/button/transport work in `handleMidiMessage`. That remainder is not a fifth sequential drain; name it only if the four probes leave a millisecond-scale gap.
 
 **Exit criterion:** the [`193645`](../../captures/session_20260812_193645.log) 78–154 ms PLAYING/OVERDUB `usbdev` samples (and RECORD 0.7 ms) are each attributed to `usbread`, `usbdisp`, `usbcap`, and/or `usbthru`, reported separately for RECORD versus PLAYING/OVERDUB. Do not start S1 or patch RC-J.
+
+---
+
+## 31k. Run [`195240`](../../captures/session_20260812_195240.log) — S0c attributed to `usbdisp`
+
+Firmware: `c33a30a` (S0c probes). RECORD (~64 bars, `RECS,stop` length 36864) then multiple overdubs. Envelope tags `usbread` / `usbdisp` / `usbcap` / `usbthru` present. Capture starts at boot (`HDR` ~7.6 s). `clockrate` 47–48 through RECORD and PLAYING/OVERDUB.
+
+### Named sub-segment
+
+In every complete PLAYING/OVERDUB window, `usbdisp` max equals `usbdev` / `midisvc` max within **0–3 µs**. `usbread` is 3–13 µs. `usbcap` is 22–38 µs (batch **sum** of `SC_MIDI_IN`). `usbthru` is 4–6 µs (batch **sum** of `sendMidiThru`). Clock dispatch is nested in `usbdisp` (`clk` ≈ `tracks`, 3.9–18.2 ms) and does not explain the remainder.
+
+| Phase | Window | `midisvc` | `usbdisp` | `usbread` | `usbcap` | `usbthru` | `clk` | `clockrate` |
+|---|---|---|---|---|---|---|---|---|
+| RECORD | 53.3 s | 327 µs | 324 µs | 2 µs | 26 µs | 5 µs | 173 µs | 47 |
+| RECORD | 118.4 s | 614 µs | 612 µs | 3 µs | 28 µs | 6 µs | 175 µs | 47 |
+| Overdub entry | 123.4 s | 51.0 ms | 51.0 ms | 9 µs | 34 µs | 5 µs | 18.2 ms | 47 |
+| PLAYING/OVERDUB | 153.4 s | 51.1 ms | 51.1 ms | 3 µs | 29 µs | 5 µs | 4.4 ms | 47 |
+| PLAYING/OVERDUB | 198.4 s | 57.7 ms | 57.7 ms | 3 µs | 36 µs | 6 µs | 4.9 ms | 47 |
+| Later overdub | 233.5 s | **92.8 ms** | **92.8 ms** | 9 µs | 22 µs | 4 µs | 9.2 ms | 47 |
+| Stop window | 238.5 s | 88.7 ms | 88.7 ms | 9 µs | 31 µs | 4 µs | 4.8 ms | 47 |
+
+`overCount` for `usbdisp` equals `overCount` for `midisvc` in complete windows (same samples).
+
+**RECORD** stays 0.3–0.6 ms `usbdisp` (two spikes 2.2 ms / 5.5 ms at 58.3 s and 88.3 s). **PLAYING/OVERDUB** is 48–93 ms, almost all `usbdisp`. After subtracting `clk` (max of one pulse), **40–85 ms** of that dispatch is still unattributed inside `handleMidiMessage`.
+
+### Ruled out
+
+- **`usbMIDI.read()`** — 3–13 µs.
+- **`SC_MIDI_IN`** — 22–38 µs summed across the USB batch. Not the ring-eviction cost hypothesized from RC-S0c.
+- **`sendMidiThru`** — 4–6 µs summed across the USB batch.
+- **DIN / `usbHost.Task()` / USB host drain** — 1–89 µs, unchanged from S0b.
+
+### Residuals
+
+- Next observation split, **not this stage:** the remainder of `handleMidiMessage` after `SC_MIDI_IN`, `sendMidiThru`, and Clock — channel/button/transport handlers (`handleNoteOn`, `handleControlChange`, `MidiButtonManager`, …). `clk` is still a per-pulse max, not a batch sum; even several 5–18 ms pulses cannot make 93 ms.
+- RC-S0c: 10 `RING,overflow`. RECORD envelope is present from 38 s (better than [`193645`](../../captures/session_20260812_193645.log)). `ARMED → RECORDING` absent; `RECORDING → STOPPED_RECORDING` present at 119.582 s.
+- Capture ends at 241.5 s, 0.9 s after `PLAYING → STOPPED`; no post-stop `clockrate` 0 window in this log. RC-J not re-measured here. Do not patch.
+
+**S0c exit:** met.
 
 ---
 
@@ -1401,7 +1440,7 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 |-------|--------|---------|
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
 | **S0b** | **Attributed** ([`193645`](../../captures/session_20260812_193645.log) §31i) | PLAYING/OVERDUB `midisvc` is `usbdev` (equals within 0–3 µs). `din` / `hosttask` / `hostdrain` ruled out. |
-| **S0c** | **Implemented** (device attribution pending) | Split `usbdev` into `usbread` / `usbdisp` / `usbcap` / `usbthru`. Baseline [`193645`](../../captures/session_20260812_193645.log). S1 not authorized. |
+| **S0c** | **Attributed** ([`195240`](../../captures/session_20260812_195240.log) §31k) | PLAYING/OVERDUB `usbdev` is `usbdisp`. `usbread` / `usbcap` / `usbthru` ruled out (µs). Remainder is `handleMidiMessage` after capture, thru, and Clock. S1 not authorized. |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |
