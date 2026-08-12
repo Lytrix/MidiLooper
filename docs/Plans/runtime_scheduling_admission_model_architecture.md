@@ -1104,6 +1104,37 @@ After the RC-E fix the cache goes **clean** during overdub, and the clean-cache 
 
 **Fix shipped.** The clean-cache overdub branch of `rebuildCommittedLayer` now filters a window widened by the existing `kWindowedGatherMarginBars = 2` on each side, records it as the gather window, and sets `liveWindowGatherValid_ = true`; `committedWindowStale` drops the `visualCacheDirty` term. The paint window may now slide two bars inside the gather before a rebuild, so the committed layer follows auto-follow at roughly one filter every two bars instead of every frame. This reuses the margin mechanism `DisplayNoteWindowGather` already applies for the same reason. Native tests: `test_paint_window_inside_gather_tolerates_margin_slide`.
 
+### RC-F follow-up — the first fix moved the cost to overdub entry
+
+[`172405`](../../captures/session_20260812_172405.log) confirms the fix works — `wNotes` holds at 300–313 across the whole second overdub instead of decaying — but the first overdub got much more expensive:
+
+| Counter, first overdub | [`165636`](../../captures/session_20260812_165636.log) (35 s) | [`172405`](../../captures/session_20260812_172405.log) (11 s) |
+|---|---|---|
+| Committed rebuilds | 3 | 35 |
+| `DisplayCaptureFullGather` | 1 | 30 |
+| Mean gather | — | **27.9 ms** (835 978 µs / 30) |
+| `DisplayResolveOverBudgetCount` | 4 | 70 of 241 resolves |
+| `DisplayCaptureTails` calls | — | 6 of 241 resolves |
+
+`committedWindowStale` could not fire before because the clean branch set `liveWindowGatherValid_ = false`; making it fire correctly also let it fire during the post-commit dirty window, where every bar is marked dirty and `rebuildCommittedLayer` therefore takes the **full-gather** branch. The dirty window runs `stale_all` 199.564 s → `slice_clean` 201.877 s, so for 2.3 s essentially every frame paid 27.9 ms. An over-budget frame skips `synchronizeCaptureLayer` entirely, which is why played notes stopped landing per frame, and the playhead tails ran on only 6 of 241 frames.
+
+**Fix shipped.** Cache recovery is idle work, so the resolve path no longer gathers:
+
+```cpp
+if (loop.visualCacheDirty && canHoldCommittedLayer) {
+    // idle owns recovery — do not gather committed content here
+    liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+    liveCommittedLayerHeldForDirtyCache_ = true;
+    return;
+}
+```
+
+`committedWindowStale` now additionally requires `!loop.visualCacheDirty`, and a new `committedLayerCleanCacheReady` term rebuilds once when idle finishes recovering the cache while the layer was held. The held layer is the pre-commit committed content, stale for the 0.6–2.3 s the idle slice needs — which is the trade the RC-E fix made affordable.
+
+### Unattributed — garbled display during the second overdub
+
+Reported at roughly bar 40 of the second overdub (~240 s). Nothing in the capture explains it: single boot header at 8.8 s, MIDI still flowing at 261 s, `AllocatorFailure` 0, `DisplayResolveLiveCapture` max 6 995 µs, `msi` 21 ms. The sparse `DFRAME` lines are **not** missed paints — the frame index advances 750 across the 31.8 s gap, so the panel was being written at 23.6 fps and the missing lines are RC-S0c capture-ring drops. The RC-G density mask is not implicated at that moment because the cache is clean from 215.386 s onward, so the mask path is inactive. Needs a reproduction with the corruption described before it can be chased.
+
 ### RC-G — the overview strip is fed only the detailed window during RECORD
 
 `PianoRollDraw` chooses the overview density source as:
