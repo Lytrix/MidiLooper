@@ -1006,6 +1006,56 @@ That last row is the specific asymmetry worth watching: `markPassDerivedStale` r
 
 Coverage is measured as bounds only (`first`/`last` over note start and end bars) so the commit path allocates nothing.
 
+---
+
+## 31g-2. Run [`162230`](../../captures/session_20260812_162230.log) — RC-E root cause proven
+
+Transitions: `RECORDING → STOPPED_RECORDING` 180.96 s · `→ PLAYING` 181.31 s · `→ OVERDUBBING` 183.73 s · `→ PLAYING` 225.68 s · `→ OVERDUBBING` 228.89 s · `→ PLAYING` 244.62 s · `→ STOPPED` 246.85 s. Loop is 84 bars.
+
+### The collapse reproduces at both overdub stops
+
+| Moment | Cached notes | Bars covered |
+|---|---|---|
+| First overdub commit, 225.614 s (`VCACHE,stale`) | 1 042 | 0–83 of 84 |
+| 72 ms later, 225.686 s (`DISP`) | **385** | 1–30 (confirmed at 228.889 s) |
+| Second overdub commit, 244.543 s (`VCACHE,stale`) | 1 298 | 1–83 of 84 |
+| 248 ms later, 244.791 s (`DISP`) | **304** | — |
+
+The cache then stops changing: 385 holds from 225.686 s to 228.889 s across 3.2 s of PLAYING, and 304 holds from 244.791 s to the end of the log at 253.4 s.
+
+### Root cause — `DisplayManager::refreshViewportAfterOverdubStop`
+
+The composed display frame — the bounded 16-bar detailed window plus tails, i.e. only what was on screen — is adopted wholesale as the loop's entire visual cache:
+
+```cpp
+loop.visualCache.setNotes(liveDisplayNotes);
+loop.visualCache.dirtyBars.clear();
+++loop.visualCache.revision;
+loop.visualCacheDirty = false;
+```
+
+Every observation follows from those four lines. The post-stop note count is one window's worth (304 against `wNotes` 301; 385 against frame 305; 299 against `wNotes` 298 in [`155132`](../../captures/session_20260812_155132.log)). Coverage collapses to a band around the playhead. And because `visualCacheDirty` is set **false** with `dirtyBars` empty, `rebuildVisualCacheIdleSlice` returns on its first line forever after — nothing can ever backfill the rest of the loop.
+
+This is the shipped **RC5c** behaviour from [`long_overdub_rc5_incremental_display_handoff_investigation.md`](long_overdub_rc5_incremental_display_handoff_investigation.md), whose intent was to avoid a synchronous full-loop gather on the overdub stop path. That intent is sound. The defect is that the adopt marks the cache **complete** rather than *this window is fresh, the rest is unknown*. It runs on all three overdub stop paths — `stopOverdubbing`, `stopOverdubbingToStopped`, and the in-edit fold.
+
+The record-stop path does not do this. `refreshViewportAfterRecordStop` touches only `liveDisplayNotes`, which is why the cache rebuilt to full coverage after the record (689 notes over bars 0–83 at 183.728 s, growing to 1 042).
+
+### Two earlier hypotheses are now dead
+
+`VCACHE,full` never fires after boot, so `rebuildVisualCacheFromPasses` is not on the commit path at all and `ev` was never sampled. **Committed content is not being lost at commit** — §31g's first candidate is wrong, and the low post-commit counts were never a full-rebuild truth.
+
+The `markPassDerivedStale` asymmetry is real but not the cause: it reported 19 of 84 dirty bars at the first commit and 11 of 84 at the second, and each was immediately followed by `markDisplayCachesStale` restoring all 84. Worth tidying, not load-bearing.
+
+### Instrumentation gap this exposed
+
+None of the four `VCACHE` probes fired on the adopt. It writes `loop.visualCache` directly, bypassing `markPassDerivedStale`, `markDisplayCachesStale`, and both rebuild functions. A probe belongs on the adopt itself and on `invalidateDisplayCaches`.
+
+### Secondary: refill is unreachable beyond ±20 bars while the transport runs
+
+Independent of the adopt, `processDeferredIdleMaintenance` limits the PLAYING/OVERDUBBING slice to `kPlayingVisualCacheNeighborhoodBars = kMaxDetailedWindowBars + 4 = 20` bars from the priority bar, alternating between playhead and loop tail. On this 84-bar loop with the playhead at bar 15 that reaches bars 0–35 and 63–83, leaving **bars 36–62 unreachable** while playing. The dead zone widens with loop length. This does not cause the collapse, but it would slow recovery from one even after the dirty flag is fixed.
+
+---
+
 ### Display during overdub — the §31d bailout, unchanged
 
 `DIAG,timing_max,DisplayResolveLiveCapture` reads **33 595 µs** at 316.7 s and **33 844 µs** at 321.8 s, both inside the second overdub, against the 5 000 µs budget. At 6.8× over, `reuseLastValidFrame` holds the previous frame and both `replaceCaptureLayer` and the playhead tails are skipped, so notes being played into the overdub are not composed into the frame. This is the behaviour described in §31d and it is worse in the second pass because the committed layer is larger.
