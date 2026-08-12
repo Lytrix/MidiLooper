@@ -20,6 +20,7 @@
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
 #include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
+#include "../../src/Utils/RuntimeTimingEnvelope.cpp"
 
 #include "Loop.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"

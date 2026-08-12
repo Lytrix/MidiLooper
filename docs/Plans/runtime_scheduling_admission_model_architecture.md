@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp`; S0d **attributed** to `usbnote` ([`200452`](../../captures/session_20260812_200452.log)); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp`; S0d **attributed** to `usbnote` ([`200452`](../../captures/session_20260812_200452.log)); S0e overdub note-off split **implemented** (device attribution pending); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -546,6 +546,10 @@ S0 is: observation only; behavior preserving; no admission; no service-density c
 | USB device note handlers | `RuntimeTimingEnvelope::addUsbDeviceNote` + `commitUsbDeviceNested` | `DIAG,usbnote,<maxUs>,<overCount>` |
 | USB device CC/pitch/AT/PC | `RuntimeTimingEnvelope::addUsbDeviceCc` + `commitUsbDeviceNested` | `DIAG,usbcc,<maxUs>,<overCount>` |
 | USB device Start/Stop/Continue | `RuntimeTimingEnvelope::addUsbDeviceTransport` + `commitUsbDeviceNested` | `DIAG,usbtrans,<maxUs>,<overCount>` |
+| Capture append | `RuntimeTimingEnvelope::addNoteAppend` + `commitUsbDeviceNested` | `DIAG,noteappend,<maxUs>,<overCount>` |
+| Pending note change | `RuntimeTimingEnvelope::addNoteChange` + `commitUsbDeviceNested` | `DIAG,notechg,<maxUs>,<overCount>` |
+| Source-view reconstruct | `RuntimeTimingEnvelope::addNoteRecon` + `commitUsbDeviceNested` | `DIAG,noterecon,<maxUs>,<overCount>` |
+| Candidate pair scan | `RuntimeTimingEnvelope::addNotePair` + `commitUsbDeviceNested` | `DIAG,notepair,<maxUs>,<overCount>` |
 | Clock rate | pulse count in `onMidiClockPulse` | `DIAG,clockrate,<pulsesPerSecond>` |
 
 Emit path: `RuntimeTimingEnvelope::maybeEmit` from `main.cpp::loop()` every 5 s. Tier-A (survives `SC_CAPTURE_FLUSH`). `overCount` uses observational soft ceiling 5000 µs for counting only — **not** an MSI contract.
@@ -608,6 +612,10 @@ Tier-A telemetry (survives `SC_CAPTURE_FLUSH(8)`), rate-limited to 5 s:
 | `DIAG,usbnote,<maxUs>,<overCount>` | Max sum of NoteOn/NoteOff handlers in one USB-device dispatch |
 | `DIAG,usbcc,<maxUs>,<overCount>` | Max sum of CC/pitch/AT/PC handlers in one USB-device dispatch |
 | `DIAG,usbtrans,<maxUs>,<overCount>` | Max sum of Start/Stop/Continue in one USB-device dispatch |
+| `DIAG,noteappend,<maxUs>,<overCount>` | Max sum of `appendCaptureEventWithResult` in one USB-device dispatch |
+| `DIAG,notechg,<maxUs>,<overCount>` | Max sum of `accumulatePendingNoteChangesForIncomingNote` in one USB-device dispatch |
+| `DIAG,noterecon,<maxUs>,<overCount>` | Max sum of `reconstructDisplayNotes` inside that note-change call |
+| `DIAG,notepair,<maxUs>,<overCount>` | Max sum of candidate-pair scan inside that note-change call |
 | `DIAG,clockrate,<pulsesPerSecond>` | Clock messages per second |
 
 Additional useful measurements: MIDI input backlog, MIDI batch peak, USB-host callback count, USB-host task duration, nested callback depth, allocation failures/growth. Do not add broad telemetry without a reason.
@@ -1476,11 +1484,30 @@ The 424.2 s window is the exception that names `usbclk`: after `OVERDUBBING → 
 
 ### Residuals
 
-- Next observation split, **not this stage:** the remainder of `handleNoteOn` / `handleNoteOff` — `barStepButtonHandler.handleMidiNote`, `midiButtonManager.handleMidiNote`, `Track::noteOn` / `Track::noteOff`.
+- Next observation split, **not this stage:** inside `accumulatePendingNoteChangesForIncomingNote` — `noteappend`, `notechg`, `noterecon`, `notepair` (§31n). Geometry remainder is `notechg − noterecon − notepair` by subtraction.
 - RC-S0c: 11 `RING,overflow`. RECORD envelope missing from 6.9 s until 197.2 s; `ARMED → RECORDING` absent; `RECORDING → STOPPED_RECORDING` present at 214.607 s. Several PLAYING/OVERDUB windows drop `msi` / `midisvc` / `usbdev` while nested USB tags survive.
 - Capture ends at 453.4 s, 4.4 s after `OVERDUBBING → STOPPED` at 449.051 s. Stop window `clockrate` 40; no post-stop `clockrate` 0 window. RC-J not re-measured here. Do not patch.
 
 **S0d exit:** met.
+
+---
+
+## 31n. S0e — split overdub note-off path (observation only)
+
+**Status:** firmware **implemented**; device attribution pending against [`200452`](../../captures/session_20260812_200452.log).
+
+[`200452`](../../captures/session_20260812_200452.log) attributed PLAYING/OVERDUB `usbnote` to `handleNoteOn` / `handleNoteOff`. Analysis showed the cost is per note-off while overdubbing (control window 419.2–424.2 s with no notes: `usbnote` 101 µs). The suspected owner is `Loop::accumulatePendingNoteChangesForIncomingNote`, which calls `NoteUtils::reconstructDisplayNotes` over the full `overdubSourceViewEvents_` on every note-off. S0e splits that path without changing behavior.
+
+| Probe | What it measures | How sampled |
+|---|---|---|
+| `DIAG,noteappend` | `appendCaptureEventWithResult` in `recordMidiEvents` | **sum** in that USB dispatch, then max across calls |
+| `DIAG,notechg` | `accumulatePendingNoteChangesForIncomingNote` | **sum** in that USB dispatch, then max across calls |
+| `DIAG,noterecon` | `reconstructDisplayNotes` inside note-change | **sum** in that USB dispatch, then max across calls |
+| `DIAG,notepair` | candidate-pair scan over `allNotes` (includes `noteIdHasChannel`) | **sum** in that USB dispatch, then max across calls |
+
+S0e probes are gated to the active USB-device nested window (`beginUsbDeviceNested` / `commitUsbDeviceNested`) so DIN and USB-host note-offs do not leak into the batch sum. Geometry (`analyzeEditSessionInteractions` + `resolveConstrainedGeometry`) is `notechg − noterecon − notepair` by subtraction. Expected closure: `usbnote` ≈ `noteappend + notechg`.
+
+**Exit criterion:** the [`200452`](../../captures/session_20260812_200452.log)-class 90–300 ms PLAYING/OVERDUB `usbnote` samples are attributed across `noteappend`, `noterecon`, `notepair`, and the geometry remainder, reported per overdub pass so growth across passes is visible. Do not start S1, patch RC-J, or cache/memoize the source view in this stage.
 
 ---
 
@@ -1509,7 +1536,8 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
 | **S0b** | **Attributed** ([`193645`](../../captures/session_20260812_193645.log) §31i) | PLAYING/OVERDUB `midisvc` is `usbdev` (equals within 0–3 µs). `din` / `hosttask` / `hostdrain` ruled out. |
 | **S0c** | **Attributed** ([`195240`](../../captures/session_20260812_195240.log) §31k) | PLAYING/OVERDUB `usbdev` is `usbdisp`. `usbread` / `usbcap` / `usbthru` ruled out (µs). |
-| **S0d** | **Attributed** ([`200452`](../../captures/session_20260812_200452.log) §31m) | PLAYING/OVERDUB `usbdisp` is `usbnote` (98.7–99.9 %). `usbclk` / `usbcc` / `usbtrans` ruled out. S1 not authorized. |
+| **S0d** | **Attributed** ([`200452`](../../captures/session_20260812_200452.log) §31m) | PLAYING/OVERDUB `usbdisp` is `usbnote` (98.7–99.9 %). `usbclk` / `usbcc` / `usbtrans` ruled out. |
+| **S0e** | **Implemented** (device attribution pending) | Split overdub note-off into `noteappend` / `notechg` / `noterecon` / `notepair`. Baseline [`200452`](../../captures/session_20260812_200452.log). S1 not authorized. |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |

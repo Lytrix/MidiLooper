@@ -7,10 +7,10 @@
  *
  * Measures MSI gaps, MIDI/Clock/track durations, S0b MIDI-service drain
  * segments, S0c USB-device sub-segments, and S0d handleMidiMessage
- * remainder sums. Does not admit work, change service density, or drive
- * any scheduling decision.
+ * remainder sums, and S0e overdub note-off path sums. Does not admit work,
+ * change service density, or drive any scheduling decision.
  *
- * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31l.
+ * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31m.
  */
 #pragma once
 
@@ -60,6 +60,14 @@ struct Snapshot {
   uint32_t usbccOverCount = 0;
   uint32_t usbtransMaxUs = 0;
   uint32_t usbtransOverCount = 0;
+  uint32_t noteappendMaxUs = 0;
+  uint32_t noteappendOverCount = 0;
+  uint32_t notechgMaxUs = 0;
+  uint32_t notechgOverCount = 0;
+  uint32_t notereconMaxUs = 0;
+  uint32_t notereconOverCount = 0;
+  uint32_t notepairMaxUs = 0;
+  uint32_t notepairOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
 };
@@ -117,7 +125,19 @@ void addUsbDeviceCc(uint32_t durationUs);
 /** S0d: add one SOURCE_USB Start/Stop/Continue handler duration into the current dispatch sum. */
 void addUsbDeviceTransport(uint32_t durationUs);
 
-/** S0c/S0d: record the nested sums as one sample each and reset them. */
+/** S0e: add one appendCaptureEventWithResult duration into the current USB dispatch sum. */
+void addNoteAppend(uint32_t durationUs);
+
+/** S0e: add one accumulatePendingNoteChangesForIncomingNote duration into the current USB dispatch sum. */
+void addNoteChange(uint32_t durationUs);
+
+/** S0e: add one reconstructDisplayNotes duration inside accumulatePendingNoteChangesForIncomingNote. */
+void addNoteRecon(uint32_t durationUs);
+
+/** S0e: add one candidate-pair scan duration inside accumulatePendingNoteChangesForIncomingNote. */
+void addNotePair(uint32_t durationUs);
+
+/** S0c/S0d/S0e: record the nested sums as one sample each and reset them. */
 void commitUsbDeviceNested();
 
 /** Count one external MIDI Clock pulse for clockrate. */
