@@ -140,6 +140,7 @@ struct Loop {
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
   const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
+  const NoteUtils::DisplayNoteVec& overdubSourceViewNotes() const { return overdubSourceViewNotes_; }
   /// Wrap-safe event candidates from the session source view (not capture append order).
   void gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                              uint32_t windowLength) const;
@@ -256,6 +257,7 @@ struct Loop {
 
   /// Stable materialize-aware source for one overdub session (not a loop freeze).
   SessionMidiEventVec overdubSourceViewEvents_;
+  NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   PendingNoteChangeVec pendingNoteChanges_;

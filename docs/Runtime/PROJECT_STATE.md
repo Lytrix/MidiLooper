@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (S1 RC-K1/K2 shipped; RC-K3 next)
+Last updated: 2026-08-12 (S1 RC-K1–K3 shipped; device re-measure next)
 
 ---
 
 ## Current branch
 
-**Active work:** **S1** — overdub note-off cost. RC-K1/K2 shipped. Next: RC-K3 source-view note cache. Evidence [`204221`](../../captures/session_20260812_204221.log). Do not start admission / RC-J.
+**Active work:** **S1** — overdub note-off cost. RC-K1–K3 shipped. Device re-measure vs [`204221`](../../captures/session_20260812_204221.log). Do not start admission / RC-J.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

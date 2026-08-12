@@ -265,12 +265,15 @@ void Loop::establishOverdubSourceView() {
   overdubSourceViewEvents_.clear();
   gatherCommittedEvents(overdubSourceViewEvents_);
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
+      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   overdubSourceViewEstablished_ = true;
   clearPendingNoteChanges();
 }
 
 void Loop::clearOverdubSourceView() {
   overdubSourceViewEvents_.clear();
+  overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
   overdubSourceViewEstablished_ = false;
 }
@@ -298,10 +301,8 @@ void Loop::gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out,
       windowLength == 0) {
     return;
   }
-  const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
-      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   out = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-      notes, windowStart, windowLength, overdubSourceViewLoopLengthTicks_);
+      overdubSourceViewNotes_, windowStart, windowLength, overdubSourceViewLoopLengthTicks_);
 }
 
 void Loop::beginCapture(CapturePhase phase) {

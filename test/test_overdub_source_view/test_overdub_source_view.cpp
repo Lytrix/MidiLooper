@@ -90,6 +90,8 @@ void test_overdub_start_establishes_source_view() {
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(kLoopLen, loop.overdubSourceViewLoopLengthTicks());
   TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
+  TEST_ASSERT_EQUAL(1u, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
 void test_record_start_does_not_keep_source_view() {
@@ -102,6 +104,7 @@ void test_record_start_does_not_keep_source_view() {
 
   loop.beginCapture(CapturePhase::Record);
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
 void test_source_view_includes_edit_pass_geometry() {
@@ -130,7 +133,9 @@ void test_source_view_stable_across_capture_appends_and_wraps() {
   loop.beginCapture(CapturePhase::Overdub);
 
   const size_t establishedCount = loop.overdubSourceViewEvents().size();
+  const size_t establishedNotes = loop.overdubSourceViewNotes().size();
   TEST_ASSERT_TRUE(establishedCount >= 2u);
+  TEST_ASSERT_EQUAL(1u, establishedNotes);
 
   // Simulate wrap: high-phase then low-phase capture appends.
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kLoopLen - 20, 1, 72, 90)));
@@ -140,7 +145,9 @@ void test_source_view_stable_across_capture_appends_and_wraps() {
 
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(establishedCount, loop.overdubSourceViewEvents().size());
+  TEST_ASSERT_EQUAL(establishedNotes, loop.overdubSourceViewNotes().size());
   TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_EQUAL(0, countNoteOns(loop.overdubSourceViewEvents(), 72));
   TEST_ASSERT_EQUAL(0, countNoteOns(loop.overdubSourceViewEvents(), 74));
 }
@@ -210,8 +217,10 @@ void test_discard_and_commit_clear_source_view() {
 
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_EQUAL(1u, loop.overdubSourceViewNotes().size());
   loop.discardCapture();
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
@@ -219,6 +228,7 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
 int main(int /*argc*/, char** /*argv*/) {
