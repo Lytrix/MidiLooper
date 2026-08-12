@@ -151,7 +151,7 @@ LOOP_COLD_MEM void collectNoteIdsRetargetedToPitch(const EditPassVec& editPasses
 }
 
 LOOP_COLD_MEM bool createRowContributesToPitch(const EditPass& row, uint8_t pitch,
-                                 const std::vector<NoteId>& extraIds) {
+                                 const std::vector<NoteId>& retargetedNoteIds) {
   if (row.actionType != EditActionType::Create) {
     return false;
   }
@@ -162,82 +162,49 @@ LOOP_COLD_MEM bool createRowContributesToPitch(const EditPass& row, uint8_t pitc
     if (evt.data.noteData.note == pitch) {
       return true;
     }
-    if (containsNoteId(extraIds, evt.noteId)) {
+    if (containsNoteId(retargetedNoteIds, evt.noteId)) {
       return true;
     }
   }
   return false;
 }
 
-constexpr uint8_t kMaxExtraOpenSlots = 32;
-
-struct PitchCandidateWalkCtx {
-  uint8_t pitch = 0;
-  const std::vector<NoteId>* extraIds = nullptr;
+struct CommittedNoteEventWalkCtx {
   SessionMidiEventVec* out = nullptr;
-  uint8_t extraOpenChannel[kMaxExtraOpenSlots]{};
-  uint8_t extraOpenPitch[kMaxExtraOpenSlots]{};
-  uint16_t extraOpenCount[kMaxExtraOpenSlots]{};
-  uint8_t extraOpenUsed = 0;
-  bool extraOpenOverflow = false;
 };
 
-LOOP_COLD_MEM void addExtraOpen(PitchCandidateWalkCtx& ctx, uint8_t channel, uint8_t sourcePitch) {
-  for (uint8_t i = 0; i < ctx.extraOpenUsed; ++i) {
-    if (ctx.extraOpenChannel[i] == channel && ctx.extraOpenPitch[i] == sourcePitch) {
-      ++ctx.extraOpenCount[i];
-      return;
-    }
-  }
-  if (ctx.extraOpenUsed >= kMaxExtraOpenSlots) {
-    ctx.extraOpenOverflow = true;
-    return;
-  }
-  const uint8_t slot = ctx.extraOpenUsed++;
-  ctx.extraOpenChannel[slot] = channel;
-  ctx.extraOpenPitch[slot] = sourcePitch;
-  ctx.extraOpenCount[slot] = 1;
-}
-
-LOOP_COLD_MEM bool takeExtraOpen(PitchCandidateWalkCtx& ctx, uint8_t channel, uint8_t sourcePitch) {
-  for (uint8_t i = 0; i < ctx.extraOpenUsed; ++i) {
-    if (ctx.extraOpenChannel[i] == channel && ctx.extraOpenPitch[i] == sourcePitch &&
-        ctx.extraOpenCount[i] > 0) {
-      --ctx.extraOpenCount[i];
-      return true;
-    }
-  }
-  return ctx.extraOpenOverflow;
-}
-
-LOOP_COLD_MEM void keepPitchCandidateEvent(const MidiEvent& evt, void* raw) {
-  auto* ctx = static_cast<PitchCandidateWalkCtx*>(raw);
+LOOP_COLD_MEM void appendCommittedNoteEvent(const MidiEvent& evt, void* raw) {
   ++g_committedPitchQueryWork.sourceEventsScanned;
+  auto* ctx = static_cast<CommittedNoteEventWalkCtx*>(raw);
   if (ctx == nullptr || ctx->out == nullptr) {
     return;
   }
-  if (evt.isNoteOn()) {
-    if (evt.data.noteData.note == ctx->pitch) {
-      ctx->out->push_back(evt);
-      return;
-    }
-    if (evt.noteId != kInvalidNoteId && ctx->extraIds != nullptr &&
-        containsNoteId(*ctx->extraIds, evt.noteId)) {
-      ctx->out->push_back(evt);
-      addExtraOpen(*ctx, evt.channel, evt.data.noteData.note);
-    }
-    return;
-  }
-  if (!evt.isNoteOff()) {
-    return;
-  }
-  if (evt.data.noteData.note == ctx->pitch) {
-    ctx->out->push_back(evt);
-    return;
-  }
-  if (takeExtraOpen(*ctx, evt.channel, evt.data.noteData.note)) {
+  if (evt.isNoteOn() || evt.isNoteOff()) {
     ctx->out->push_back(evt);
   }
+}
+
+// Same pairing as EditApply findNoteOffForOnIndex: LIFO off after this on, same channel+pitch.
+LOOP_COLD_MEM int indexOfPairedNoteOff(const SessionMidiEventVec& events, int onIndex) {
+  if (onIndex < 0 || static_cast<size_t>(onIndex) >= events.size()) {
+    return -1;
+  }
+  const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
+  const uint8_t channel = onEvt.channel;
+  const uint8_t note = onEvt.data.noteData.note;
+  const uint32_t startTick = onEvt.tick;
+  for (size_t i = static_cast<size_t>(onIndex) + 1; i < events.size(); ++i) {
+    const MidiEvent& evt = events[i];
+    if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note &&
+        evt.tick > startTick) {
+      break;
+    }
+    if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
+        evt.tick >= startTick) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
 }
 
 void collectActiveCommittedChunkLists(const LoopPasses& passes,
@@ -397,23 +364,44 @@ LOOP_COLD_MEM void Loop::gatherCommittedNoteEventsForPitch(uint8_t pitch, Sessio
     return;
   }
 
-  std::vector<NoteId> extraIds;
-  collectNoteIdsRetargetedToPitch(passes.editPasses, pitch, extraIds);
+  std::vector<NoteId> retargetedNoteIds;
+  collectNoteIdsRetargetedToPitch(passes.editPasses, pitch, retargetedNoteIds);
 
-  PitchCandidateWalkCtx walk{};
-  walk.pitch = pitch;
-  walk.extraIds = &extraIds;
-  walk.out = &out;
+  SessionMidiEventVec committedNotes;
+  CommittedNoteEventWalkCtx walk{};
+  walk.out = &committedNotes;
   for (const CommittedChunkIdList* list : lists) {
     if (list == nullptr) {
       continue;
     }
     for (uint16_t chunkId : *list) {
-      LoopEventStore::forEachChunkEvent(chunkId, keepPitchCandidateEvent, &walk);
+      LoopEventStore::forEachChunkEvent(chunkId, appendCommittedNoteEvent, &walk);
     }
   }
 
-  std::vector<NoteId> candidateIds = extraIds;
+  std::vector<uint8_t> keep(committedNotes.size(), 0);
+  for (size_t i = 0; i < committedNotes.size(); ++i) {
+    const MidiEvent& evt = committedNotes[i];
+    if (evt.data.noteData.note == pitch) {
+      keep[i] = 1;
+      continue;
+    }
+    if (!evt.isNoteOn() || !containsNoteId(retargetedNoteIds, evt.noteId)) {
+      continue;
+    }
+    keep[i] = 1;
+    const int offIndex = indexOfPairedNoteOff(committedNotes, static_cast<int>(i));
+    if (offIndex >= 0) {
+      keep[static_cast<size_t>(offIndex)] = 1;
+    }
+  }
+  for (size_t i = 0; i < committedNotes.size(); ++i) {
+    if (keep[i] != 0) {
+      out.push_back(committedNotes[i]);
+    }
+  }
+
+  std::vector<NoteId> candidateIds = retargetedNoteIds;
   for (const MidiEvent& evt : out) {
     if (evt.noteId != kInvalidNoteId && !containsNoteId(candidateIds, evt.noteId)) {
       candidateIds.push_back(evt.noteId);
@@ -425,7 +413,7 @@ LOOP_COLD_MEM void Loop::gatherCommittedNoteEventsForPitch(uint8_t pitch, Sessio
     if (row.state != EditPassState::Active || row.passType != EditPassType::Note) {
       continue;
     }
-    if (createRowContributesToPitch(row, pitch, extraIds)) {
+    if (createRowContributesToPitch(row, pitch, retargetedNoteIds)) {
       relevantRows.push_back(row);
       continue;
     }

@@ -110,24 +110,26 @@ void filterNoteEventsByPitch(const SessionMidiEventVec& full, uint8_t pitch,
   }
 }
 
-void assertPitchQueryMatchesOracle(Loop& loop, uint8_t pitch) {
+void assertPitchQueryMatchesGatherCommittedEvents(Loop& loop, uint8_t pitch) {
   Loop::resetCommittedPitchQueryWork();
-  SessionMidiEventVec optimized;
-  loop.gatherCommittedNoteEventsForPitch(pitch, optimized);
+  SessionMidiEventVec fromPitchQuery;
+  loop.gatherCommittedNoteEventsForPitch(pitch, fromPitchQuery);
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 
-  SessionMidiEventVec full;
-  loop.gatherCommittedEvents(full);
-  SessionMidiEventVec oracle;
-  filterNoteEventsByPitch(full, pitch, oracle);
+  SessionMidiEventVec fromGatherCommittedEvents;
+  loop.gatherCommittedEvents(fromGatherCommittedEvents);
+  SessionMidiEventVec fromGatherCommittedEventsAtPitch;
+  filterNoteEventsByPitch(fromGatherCommittedEvents, pitch, fromGatherCommittedEventsAtPitch);
 
-  TEST_ASSERT_EQUAL(oracle.size(), optimized.size());
-  for (size_t i = 0; i < oracle.size(); ++i) {
-    TEST_ASSERT_EQUAL(static_cast<int>(oracle[i].type), static_cast<int>(optimized[i].type));
-    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, optimized[i].tick);
-    TEST_ASSERT_EQUAL_UINT8(oracle[i].data.noteData.note, optimized[i].data.noteData.note);
-    if (oracle[i].isNoteOn()) {
-      TEST_ASSERT_EQUAL(oracle[i].noteId, optimized[i].noteId);
+  TEST_ASSERT_EQUAL(fromGatherCommittedEventsAtPitch.size(), fromPitchQuery.size());
+  for (size_t i = 0; i < fromGatherCommittedEventsAtPitch.size(); ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(fromGatherCommittedEventsAtPitch[i].type),
+                      static_cast<int>(fromPitchQuery[i].type));
+    TEST_ASSERT_EQUAL_UINT32(fromGatherCommittedEventsAtPitch[i].tick, fromPitchQuery[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(fromGatherCommittedEventsAtPitch[i].data.noteData.note,
+                            fromPitchQuery[i].data.noteData.note);
+    if (fromGatherCommittedEventsAtPitch[i].isNoteOn()) {
+      TEST_ASSERT_EQUAL(fromGatherCommittedEventsAtPitch[i].noteId, fromPitchQuery[i].noteId);
     }
   }
 }
@@ -306,7 +308,7 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
-void test_pitch_query_matches_oracle_shorten_hide_and_unrelated() {
+void test_pitch_query_matches_gather_committed_events_shorten_hide_and_unrelated() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -323,9 +325,9 @@ void test_pitch_query_matches_oracle_shorten_hide_and_unrelated() {
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makeLengthRow(1, 10, 40)));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makeDeleteRow(3)));
 
-  assertPitchQueryMatchesOracle(loop, 60);
-  assertPitchQueryMatchesOracle(loop, 62);
-  assertPitchQueryMatchesOracle(loop, 64);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 64);
 }
 
 void test_committed_pitch_mutation_c4_to_d4_both_queries() {
@@ -335,8 +337,8 @@ void test_committed_pitch_mutation_c4_to_d4_both_queries() {
   seedRecordNote(loop, 10, 58, 60);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 62)));
 
-  assertPitchQueryMatchesOracle(loop, 62);
-  assertPitchQueryMatchesOracle(loop, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 60);
   SessionMidiEventVec d4;
   loop.gatherCommittedNoteEventsForPitch(62, d4);
   TEST_ASSERT_EQUAL(1, countNoteOns(d4, 62));
@@ -353,9 +355,9 @@ void test_committed_pitch_chain_c4_d4_e4() {
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 62)));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 64)));
 
-  assertPitchQueryMatchesOracle(loop, 60);
-  assertPitchQueryMatchesOracle(loop, 62);
-  assertPitchQueryMatchesOracle(loop, 64);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 64);
   SessionMidiEventVec e4;
   loop.gatherCommittedNoteEventsForPitch(64, e4);
   TEST_ASSERT_EQUAL(1, countNoteOns(e4, 64));
@@ -371,8 +373,8 @@ void test_edit_ordering_pitch_then_length_and_length_then_pitch() {
   seedRecordNote(loop, 10, 80, 60);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makePitchRow(1, 10, 80, 62)));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makeLengthRow(1, 10, 40)));
-  assertPitchQueryMatchesOracle(loop, 62);
-  assertPitchQueryMatchesOracle(loop, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 60);
 
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -380,8 +382,8 @@ void test_edit_ordering_pitch_then_length_and_length_then_pitch() {
   seedRecordNote(loop2, 10, 80, 60);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop2.saveNoteEditPass(0, makeLengthRow(1, 10, 40)));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop2.saveNoteEditPass(0, makePitchRow(1, 10, 40, 62)));
-  assertPitchQueryMatchesOracle(loop2, 62);
-  assertPitchQueryMatchesOracle(loop2, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop2, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop2, 60);
 }
 
 void test_edit_ordering_pitch_then_delete_and_delete_then_pitch() {
@@ -391,8 +393,8 @@ void test_edit_ordering_pitch_then_delete_and_delete_then_pitch() {
   seedRecordNote(loop, 10, 58, 60);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 62)));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, makeDeleteRow(1)));
-  assertPitchQueryMatchesOracle(loop, 62);
-  assertPitchQueryMatchesOracle(loop, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, 60);
 
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -400,8 +402,8 @@ void test_edit_ordering_pitch_then_delete_and_delete_then_pitch() {
   seedRecordNote(loop2, 10, 58, 60);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop2.saveNoteEditPass(0, makeDeleteRow(1)));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop2.saveNoteEditPass(0, makePitchRow(1, 10, 58, 62)));
-  assertPitchQueryMatchesOracle(loop2, 62);
-  assertPitchQueryMatchesOracle(loop2, 60);
+  assertPitchQueryMatchesGatherCommittedEvents(loop2, 62);
+  assertPitchQueryMatchesGatherCommittedEvents(loop2, 60);
 }
 
 void test_many_unrelated_companion_rows_do_not_full_materialize() {
@@ -441,7 +443,7 @@ void test_many_unrelated_companion_rows_do_not_full_materialize() {
   TEST_ASSERT_EQUAL(10, countNoteOns(optimized, kQueryPitch));
   TEST_ASSERT_EQUAL_UINT32(20, Loop::committedPitchQueryCandidateEvents());
 
-  assertPitchQueryMatchesOracle(loop, kQueryPitch);
+  assertPitchQueryMatchesGatherCommittedEvents(loop, kQueryPitch);
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -453,7 +455,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_immutable_when_live_materialize_mutates);
   RUN_TEST(test_candidate_lookup_wrap_safe_high_then_low_capture_order);
   RUN_TEST(test_discard_and_commit_clear_source_view);
-  RUN_TEST(test_pitch_query_matches_oracle_shorten_hide_and_unrelated);
+  RUN_TEST(test_pitch_query_matches_gather_committed_events_shorten_hide_and_unrelated);
   RUN_TEST(test_committed_pitch_mutation_c4_to_d4_both_queries);
   RUN_TEST(test_committed_pitch_chain_c4_d4_e4);
   RUN_TEST(test_edit_ordering_pitch_then_length_and_length_then_pitch);
