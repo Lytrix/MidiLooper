@@ -75,14 +75,6 @@ inline bool preferIncrementalCommittedDisplay(bool deferVisualRebuild, bool trac
     return deferVisualRebuild || trackStopped;
 }
 
-/// RC-H: OVERDUBBING→STOPPED must keep the composed overdub-stop frame. A clean visualCache
-/// must not replace it with a narrower stopped-state window (session_20260812_174843:
-/// adopted 373 notes, then window-filter 297 at a frozen bar-14 viewport).
-inline bool shouldPreserveOverdubStopHandoff(bool handoffActive, bool trackStopped,
-                                            bool preservedHandoffAuthority) {
-    return handoffActive && trackStopped && preservedHandoffAuthority;
-}
-
 /// Growing-capture frontier: MIDI note ticks can lead display loopLength by a frame.
 /// `endTick > lengthLoop` with `endTick >= startTick` is overflow to clamp — not wrap-head
 /// geometry (wrap pairs use endTick < startTick). Prevents 1px flicker at tick 0 on NoteOn.

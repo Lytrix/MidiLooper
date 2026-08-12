@@ -1135,9 +1135,9 @@ if (loop.visualCacheDirty && canHoldCommittedLayer) {
 
 Reported at roughly bar 40 of the second overdub (~240 s). Nothing in the capture explains it: single boot header at 8.8 s, MIDI still flowing at 261 s, `AllocatorFailure` 0, `DisplayResolveLiveCapture` max 6 995 µs, `msi` 21 ms. The sparse `DFRAME` lines are **not** missed paints — the frame index advances 750 across the 31.8 s gap, so the panel was being written at 23.6 fps and the missing lines are RC-S0c capture-ring drops. The RC-G density mask is not implicated at that moment because the cache is clean from 215.386 s onward, so the mask path is inactive. Needs a reproduction with the corruption described before it can be chased.
 
-### RC-H — OVERDUBBING→STOPPED replaces the composed frame with a frozen 16-bar window
+### RC-H — OVERDUBBING→STOPPED handoff preserve (reverted)
 
-[`174843`](../../captures/session_20260812_174843.log) verified RC-F/RC-G during overdub (`wNotes` holds ~297–306; capture layer grows). The freeze is the second stop, not stop-playing:
+[`174843`](../../captures/session_20260812_174843.log) showed a freeze at the second overdub stop. The initial diagnosis was that the clean-cache windowed path replaced the composed overdub-stop frame with a narrower 16-bar slice:
 
 ```text
 191.719740 OVERDUBBING -> STOPPED
@@ -1147,11 +1147,38 @@ Reported at roughly bar 40 of the second overdub (~240 s). Nothing in the captur
 192.384208 DISP STOPPED frame=297 visual=1217 wStart=7278 wNotes=297
 ```
 
-After that, `DFRAME` keeps painting the same 297-note frame. Persistence overlaps (`PERS,request already_pending`, `SAVE,in_progress`) but does not own two concurrent saves — later requests coalesce. `midisvc` reaches 229.5 ms during the post-stop `REVT` flush; that is a timing issue, not the frozen image.
+A fix was shipped (`liveOverdubStopHandoffActive_` / `shouldPreserveOverdubStopHandoff`) to keep the composed frame until the track leaves STOPPED.
 
-Root cause: `refreshViewportAfterOverdubStop` adopts the composed overdub frame, then idle `rebuildVisualCacheIdleSlice` (the STOPPED branch of `processDeferredIdleMaintenance`) marks the cache clean. `resolveDisplayNotesCommitted` then prefers the clean-cache windowed path over `preservedHandoffAuthority`, filters `visualCache` to the stopped 16-bar window, and auto-follow is off, so the roll stays at that viewport (bar 14 in this run).
+**Reverted (RC-I).** [`183429`](../../captures/session_20260812_183429.log) proved the fix was wrong. The 174843 window content was density-correct (373 notes over 20 bars ≈ 18.6 notes/bar; 297 notes over 16 bars ≈ 18.6 notes/bar). The roll was static because auto-follow is off at STOPPED — expected behaviour, not a defect. RC-H instead pinned the partial adopted frame permanently:
 
-**Fix shipped.** `liveOverdubStopHandoffActive_` is set when the adopt happens on a STOPPED track. `shouldPreserveOverdubStopHandoff` returns that composed frame until the track leaves STOPPED. Overview still uses the completed `visualCache` once idle finishes. Native test: `test_should_preserve_overdub_stop_handoff`.
+```text
+208.439  VCACHE adopt_partial notes=394 first=17 last=37 dirty=1
+209.016  VCACHE slice_clean   notes=1105 first=0 last=59 dirty=0
+209.601  DFRAME 394  (held through 214.171)
+```
+
+Idle completed the visual cache to 1105 notes covering all 60 bars, but the painted frame stayed at 394 notes forever. The `preservedHandoffAuthority` branch already holds the composed frame for the ~0.6 s dirty window after adopt; no extra latch is needed.
+
+### RC-J — post-stop persistence stall while the MIDI clock still streams
+
+The user-visible "hang" at overdub stop is not a display race — it is unthrottled deferred save work opening as soon as the track enters STOPPED. `timingCriticalTrackActive` in `main.cpp` is derived only from `isRecording() || isOverdubbing() || isPlaying()`, so it goes false at STOPPED while the external clock still streams. That opens both the deferred-restore gate (`processDeferredUndoSnapshots`, `processEditAutosave`, `reclaimUnreferencedDisabledPasses`) and `SC_CAPTURE_FLUSH(64)`.
+
+[`183429`](../../captures/session_20260812_183429.log) at the third overdub stop:
+
+```text
+208.665 -> 211.827  PERS LoopUndoHistory bundle  (3.16 s)
+211.841 -> 214.677  PERS SlotMeta bundle         (2.84 s)
+209.482  msi=298465  clockrate=37  (47-48 during capture)
+```
+
+298 ms of main-loop block and 21% clock-pulse loss over six seconds. [`174843`](../../captures/session_20260812_174843.log) shows the same signature (`midisvc=229535`, `rate=37`) — pre-existing, not introduced by RC-H. The gate's missing transport term is already named in the memory-log comment in `loop()`. **Do not patch ad hoc** — this is an admission-model change and belongs behind S0b.
+
+### RC-I telemetry — no other regressions in [`183429`](../../captures/session_20260812_183429.log)
+
+- `DisplayResolveOverBudgetCount = 0` for the whole session (max 4.88 ms against the 5000 µs budget)
+- `DisplayCommittedWindowFilter = 9`, `DisplayCommittedFullAssign = 0`
+- `midisvc` fell from 103–107 ms in [`172405`](../../captures/session_20260812_172405.log) to 43–72 ms
+- RC-D, RC-F, and the RC-F follow-up all hold
 
 ### RC-G — the overview strip is fed only the detailed window during RECORD
 

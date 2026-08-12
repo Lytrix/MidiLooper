@@ -118,13 +118,9 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
         // cache and blocked idle backfill (session_20260812_162230).
         loop.adoptComposedDisplayNotesFromViewport(liveDisplayNotes);
         liveWindowVisualCacheRevision_ = loop.visualCache.revision;
-        // RC-H: keep this composed frame as STOPPED authority. Idle backfill may complete the
-        // cache, but resolveDisplayNotesCommitted must not replace it with a narrower window.
-        liveOverdubStopHandoffActive_ = track.isStopped();
     } else {
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
-        liveOverdubStopHandoffActive_ = false;
     }
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
@@ -167,7 +163,6 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveWindowGatherValid_ = false;
     liveDisplayCommittedFromWindowGather_ = false;
     liveWindowVisualCacheRevision_ = UINT32_MAX;
-    liveOverdubStopHandoffActive_ = false;
     editManager.invalidateProjectedNoteEditDisplayCache();
 }
 

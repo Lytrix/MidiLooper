@@ -148,14 +148,6 @@ void test_prefer_incremental_committed_display_includes_stopped() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::preferIncrementalCommittedDisplay(false, false));
 }
 
-void test_should_preserve_overdub_stop_handoff() {
-  // RC-H / session_20260812_174843: keep composed overdub-stop frame while STOPPED.
-  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldPreserveOverdubStopHandoff(true, true, true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldPreserveOverdubStopHandoff(true, false, true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldPreserveOverdubStopHandoff(false, true, true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldPreserveOverdubStopHandoff(true, true, false));
-}
-
 void test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow() {
   // NoteOn tick can lead growing display length — clamp, do not classify as wrap (end < start).
   uint32_t start = 100;
@@ -409,7 +401,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
   RUN_TEST(test_prefer_incremental_committed_display_includes_stopped);
-  RUN_TEST(test_should_preserve_overdub_stop_handoff);
   RUN_TEST(test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow);
   RUN_TEST(test_map_display_note_bar_ticks_frontier_equals_length_stays_at_end);
   RUN_TEST(test_filter_display_notes_to_window_clamps_frontier_equals_length);
