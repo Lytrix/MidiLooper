@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (RC-L1 verified in 225803)
+Last updated: 2026-08-12 (RC-L1 verified; source-view reuse plan)
 
 ---
 
@@ -28,7 +28,7 @@ Last updated: 2026-08-12 (RC-L1 verified in 225803)
 
 **S1 RC-L1 (shipped, verified [`225803`](../../captures/session_20260812_225803.log)):** per-span `ProjectedIntervalVec` allocation in `projectDisplayNotes` / `projectNoteIntervals`. Four overdubs on a grown 64-bar loop: `begin_capture` 77 / 80 / 79 / 83 ms (was 1.378 s, and 58 → 410 ms as passes accumulated in [`223033`](../../captures/session_20260812_223033.log)). First USB note 108–242 ms after PLAYING→OVERDUBBING (was 1.76 s). `noterecon` 0; `notechg`/`notepair` 1.09 ms; `usbnote` 1.20 ms; overdub `clockrate` 47–48; overdub `midisvc` 4–14 ms. Remaining ~80 ms is the synchronous gather+reconstruct floor.
 
-**Open after RC-L1 (design session, not a patch):** `establishOverdubSourceView` still runs `gatherCommittedEvents` plus reconstruct synchronously inside `startOverdubbing`. Deferring it moves when `overdubSourceViewNotes_` becomes valid relative to the first note-off, which is a state-transition change.
+**Open after RC-L1 (Option B + note-off pitch query):** Option B native PASS. Device [`002329`](../../captures/session_20260813_002329.log): `PERF,overdub_start` 183 µs; `notechg` 1.40 ms on 10-bar / 1220 events. Grown-loop [`003009`](../../captures/session_20260813_003009.log) showed `notechg` 227–868 ms because companion Shorten/Hide rows forced `gatherCommittedNoteEventsForPitch` through full `midiEvents()`. Native fix shipped (audit **B**, linear source scan + relevant-row apply; 0 full materialize on 3330 events / 100 unrelated rows). Device re-measure vs 003009 still open. Plan: [`realtime_incremental_work_overdub_note_off_pitch_query_refinement.md`](../Plans/realtime_incremental_work_overdub_note_off_pitch_query_refinement.md). Do not start S1 / RC-J / Option A / Option C / Option D.
 
 **Architecture:** [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md)  
 **Scheduling admission:** [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md)  

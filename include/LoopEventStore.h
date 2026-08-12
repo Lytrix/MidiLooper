@@ -129,6 +129,13 @@ class LoopEventStore {
   static void appendChunkRefEvents(
       const CommittedChunkIdList& ids,
       std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+  /// Append note-on/off events of `pitch` from one chunk (read-only; does not mutate id).
+  static void appendChunkRefNoteEventsForPitch(uint16_t id, uint8_t pitch, MidiEventVec& out);
+  static void appendChunkRefNoteEventsForPitch(
+      uint16_t id, uint8_t pitch,
+      std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+  /// Generic read-only walk of one pool chunk. `visitor` may be null (no-op).
+  static void forEachChunkEvent(uint16_t id, void (*visitor)(const MidiEvent&, void*), void* ctx);
   /// Read firstTick/lastTick for a live pool chunk (false if id unused / out of range).
   static bool chunkTickSpan(uint16_t id, uint32_t& firstTick, uint32_t& lastTick);
   /// Count events referenced by chunk ids without copyEventsTo.

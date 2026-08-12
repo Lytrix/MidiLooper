@@ -86,6 +86,15 @@ struct Loop {
   /// Canonical committed-pass event gathering (full loop). Prefer over display-only helpers.
   void gatherCommittedEvents(SessionMidiEventVec& out) const;
   void gatherCommittedEvents(MidiEventVec& out) const;
+  /// Pitch-scoped walk of loaded committed chunks. Unpaired note-ons stay open until a later
+  /// chunk supplies the matching off (including tick gaps between chunk spans). Effective
+  /// committed pitch after Active note edit rows; does not full-materialize the loop.
+  void gatherCommittedNoteEventsForPitch(uint8_t pitch, SessionMidiEventVec& out) const;
+  static void resetCommittedPitchQueryWork();
+  static uint32_t committedPitchQuerySourceEventsScanned();
+  static uint32_t committedPitchQueryCandidateEvents();
+  static uint32_t committedPitchQueryEditRowsApplied();
+  static uint32_t committedEventsFullMaterializeCount();
   /// Windowed committed gathering — wrap-aware chunk skip + event filter.
   void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                      uint32_t windowLength) const;
@@ -157,6 +166,11 @@ struct Loop {
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
                                                    NoteId incomingNoteId = kInvalidNoteId);
+  /// Pair incoming note against an explicit source-note list (full reconstruct or windowed query).
+  void accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
+                                                   uint8_t channel, uint8_t pitch, uint8_t velocity,
+                                                   uint32_t startTick, uint32_t endTick,
+                                                   NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
   EditPassIdList sealPendingNoteChangesToEditPasses();
 
