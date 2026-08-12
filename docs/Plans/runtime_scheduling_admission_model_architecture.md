@@ -681,6 +681,181 @@ The RECORD and OVERDUB windows — the point of S0. Re-run the ≈100-bar scenar
 
 ---
 
+## 31b. S0 run [`145555`](../../captures/session_20260812_145555.log) — first capture-phase envelope
+
+The Tier-A parse fix worked: envelope windows now survive **through RECORD, both OVERDUB passes, and the stops**, from 177.2 s to the end. The runtime pool walk is gone (`[265.666] [Memory] psram chip=8 MB pool=8191 KB`, no free/used) and no 593 ms `msi` sample appears.
+
+**Transitions:** `RECORDING → STOPPED_RECORDING` 220.30 s · `→ PLAYING` 220.79 s · `→ OVERDUBBING` 223.09 s · `→ PLAYING` 247.39 s · `→ OVERDUBBING` 251.67 s · `→ PLAYING` 264.69 s · `→ STOPPED` 265.52 s.
+
+### The envelope splits sharply by phase
+
+| Phase | `msi` max | `midisvc` max | `clk` max | `tracks` max | `clockrate` |
+|---|---|---|---|---|---|
+| RECORD (182–217 s) | 37.8–57.7 ms | **0.9–1.1 ms** | 0.16–0.17 ms | 0.14–0.15 ms | 47–48 |
+| Record stop → PLAYING (222.4 s) | 487.4 ms | 8.7 ms | 2.71 ms | 2.70 ms | 47 |
+| Overdub entry (227.7 s) | 69.8 ms | **762.5 ms** | 8.63 ms | 8.62 ms | 46 |
+| OVERDUB 1 + 2 (232.9–268.1 s) | 58.7–132.3 ms | **140.2–149.0 ms** | 3.46–8.83 ms | 3.44–8.82 ms | 47–48 |
+| After stop (273.1 s) | 52.4 ms | 129.5 ms | 0 | 0 | 0 |
+| Idle (278.1 s+) | 23.1–23.6 ms | 2 µs | 0 | 0 | 0 |
+
+Three things follow directly.
+
+**RECORD is clean.** `midisvc` around 1.1 ms, `clk` 0.17 ms, `tracks` 0.15 ms. Whatever the runtime problem is, it is not in the record capture path.
+
+**PLAYING and OVERDUB cost ~140× more MIDI service than RECORD.** Every window from 232.9 s to 273.1 s carries a `midisvc` maximum between 129.5 ms and 149.0 ms, and it persists into the window *after* transport stopped. This is a per-window maximum, so it is one very expensive `handleMidiInput()` call per window rather than a sustained load.
+
+**`clk` and `tracks` do not explain it.** They track each other within ~20 µs and peak at 8.83 ms, so `ClockManager::onMidiClockPulse` and `TrackManager::updateAllTracks` account for at most 6 % of the 149 ms. The cost is elsewhere inside `MidiHandler::handleMidiInput`.
+
+The 762.5 ms sample sits in the window covering 222.4–227.7 s, which contains the `PLAYING → OVERDUBBING` entry at 223.09 s.
+
+`DIAG,timing_max` corroborates the display side: `DisplayResolveLiveCapture` reads 7.76 ms during RECORD but 23.05 ms and 30.75 ms during the two overdub passes, with `DisplayUpdateTotalTime` at 48.0 ms and `PlaybackBuildTime` at 70.4 ms.
+
+### Why nothing before 177 s survived (RC-S0c)
+
+Not a classification failure this time — a transport failure, and the code is explicit about it:
+
+```648:660:src/Utils/DebugSessionCapture.cpp
+    while (dropped < maxRecords && sCaptureRing.used >= sizeof(CaptureRecordHeader)) {
+      if (headRecordIsTierAText()) {
+        break;
+      }
+      const size_t usedBefore = sCaptureRing.used;
+      discardOldestRecord();
+      if (sCaptureRing.used >= usedBefore) {
+        break;
+      }
+      ++dropped;
+    }
+    return;
+  }
+```
+
+Under the timing-critical budget (`SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 8 : 64)`) this branch **drops records and returns without ever writing to Serial**. Tier-A is therefore never transmitted while a track is recording, overdubbing, or playing — it can only leave the ring by eviction. Every envelope window emitted between roughly 20 s and 265 s had to survive in a 96 KiB ring until the stop flush; only those from 177 s onward fit. Every window after `PLAYING → STOPPED` (278 s onward) survives, because the budget returns to 64 and the lines go straight out.
+
+Making Tier-A un-droppable also introduced a second effect. A Tier-A record at the head is a barrier: the drop loop breaks on it, and `appendCaptureRecord` then refuses incoming Tier-B/C. The ring stalls until the next Tier-A evicts the head. The result is fragmented coverage with **true holes** — records never stored at all, not stored then evicted:
+
+```
+retained seconds, 170–270 s:
+177  182-184  202-205  207-208  212  215  217-223  227-228
+230  232  236  238-239  243-245  247-253  257-258  262-270
+```
+
+Zero records carry a timestamp in 185–202 s, and `RING,overflow` fires only three times (all at stops), confirming loss by refused append rather than eviction.
+
+**Fix direction (not yet implemented):** give the timing-critical path a small, bounded Tier-A **transmit** allowance gated on `serialWriteRoom`, so Tier-A leaves the ring by being sent instead of accumulating as a barrier. This is the option deferred when RC-S0a was chosen. Pair it with counters for refused appends, Tier-A evictions, and Tier-A transmissions so the next run measures the delivery path instead of inferring it.
+
+### S0 status
+
+Partially complete. The capture-phase envelope now exists and is usable; the pre-177 s window and the delivery path are still owed. The dominant term is unambiguous — MIDI service — but the responsible segment inside it is not, so the next stage is S0b, not S1.
+
+---
+
+## 31c. S0b — segment the MIDI service interval (observation only)
+
+`handleMidiInput` has four sequential segments, and S0 measures only their sum. `clk` already covers the Clock branch and accounts for at most 8.83 ms of a 149 ms call, so the cost is in one of the other three:
+
+| Segment | Owner | Already measured? |
+|---|---|---|
+| USB device drain + `dispatchMidiBatch` | `usbMIDI.read()` loop | No |
+| DIN drain + `dispatchMidiBatch` | `MIDIserial.read()` loop | No |
+| USB host stack service | `usbHost.Task()` | No |
+| USB host drain (callbacks into `handleMidiMessage`) | `usbHostMIDI.read()` loop | No |
+| Clock dispatch within a batch | `ClockManager::onMidiClockPulse` | Yes — `DIAG,clk` |
+| Track update within clock dispatch | `TrackManager::updateAllTracks` | Yes — `DIAG,tracks` |
+
+Per-message work reached from `handleMidiMessage` also needs separating: `sendMidiThru` runs for every channel message, and `SC_MIDI_IN` appends to the capture ring, whose `appendCaptureRecord` eviction loop is not free while the ring is in the barrier state described in RC-S0c.
+
+Constraints, unchanged from S0: `micros()` deltas and comparisons only, accumulate maxima into the existing 5 s window, emit as Tier-A `DIAG,` lines, take no scheduling decision. The phase split matters — report each segment separately for RECORD versus PLAYING/OVERDUB, since S0 already shows the two differ by ~140×.
+
+**Exit criterion:** the 762.5 ms overdub-entry sample and the recurring 129–149 ms samples are each attributed to a named segment.
+
+### What S0 already rules out
+
+`midisvc` is measured across three call sites, all in `loop()`, with no nesting, so each sample is one complete call. Two candidates are therefore excluded by the data:
+
+- **Not the RC-C extra MIDI drain.** That call fires only when a track is recording or overdubbing. During RECORD it is active and `midisvc` max is 1.1 ms. In the 268.1–273.1 s window the track had been `STOPPED` since 265.52 s, so the drain was inactive — and `midisvc` max is still 129.5 ms.
+- **Not clock dispatch.** The same window reports `clk` 0, `tracks` 0, and `clockrate` 0, meaning no clock pulse was serviced at all.
+
+The cost lives in the USB device drain, the DIN drain, `usbHost.Task()`, or the USB host drain, and it appears only once the loop holds committed content (absent during RECORD, absent again by 278.1 s).
+
+---
+
+## 31d. Regression vs [`9678c3d`](https://github.com/Lytrix/MidiLooper/commit/9678c3d) — display lag and transition feel
+
+User report: at `9678c3d`, RECORD↔OVERDUB switching was smoother and there was no display lag during OVERDUB. Two changes in `6053b01` account for that, one of them measured directly in [`145555`](../../captures/session_20260812_145555.log).
+
+### Display lag — new budget bailouts show stale frames
+
+`resolveDisplayNotesLiveCapture` gained a soft budget with three bailouts that did not exist at baseline:
+
+```504:517:src/DisplayManager/DisplayNoteResolveLiveCapture.cpp
+    const bool reuseLastValidFrame =
+        !cacheCold && budgetExceeded() && liveDisplayCacheCommittedNoteCount_ +
+                                                  liveDisplayCacheCaptureNoteCount_ >
+                                              0;
+
+    if (reuseLastValidFrame) {
+        // Keep liveDisplayNotes as last valid frame; unfinished committed/capture work stays
+        // pending via visualCacheDirty / capturePreview.revision.
+    } else if (committedLayerChanged) {
+        const uint32_t displayBuildStartUs = micros();
+        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        rebuildCommittedLayer();
+        if (!budgetExceeded()) {
+            replaceCaptureLayer();
+```
+
+The budget is `Diagnostics::kDisplayResolveBudgetMicros = 5000`. Measured `DIAG,timing_max,DisplayResolveLiveCapture` in the same session:
+
+| When | Measured | Ratio to budget |
+|---|---|---|
+| RECORD (215.4 s) | 7 761 µs | 1.6× |
+| Overdub 1 entry (223.2 s) | 23 054 µs | 4.6× |
+| Overdub 2 entry (251.8 s) | 29 991 µs | 6.0× |
+| Overdub 2 (257.0 s) | 30 747 µs | 6.1× |
+
+Resolve is over budget for essentially the whole of both overdub passes. That makes `reuseLastValidFrame` the normal case, so the capture layer is not replaced and the playhead tails are skipped (`!reuseLastValidFrame && (isRecording() || isOverdubbing()) && !budgetExceeded()`). The display holds the previous frame — which is exactly the reported lag.
+
+At `9678c3d` no bailout existed: resolve ran to completion every frame. It cost more, but the frame was current. The bailout converted a cost problem into a correctness-of-freshness problem without reducing the underlying work below budget.
+
+This restates §33's existing rule — *never rebuild everything synchronously and rely on a timeout to make it safe* — with device evidence. A 5 ms budget on an operation that measures 30 ms does not bound anything; it only decides which frames get dropped.
+
+### Transition feel — Clock is no longer dispatched transport-first
+
+At baseline, `isMidiTransport` put `Clock` in the first dispatch pass, so the tick always advanced before channel messages in the same batch. `MidiDispatchOrder::isSequenceTransport` covers only `Start`/`Stop`/`Continue`, leaving Clock in wire order with channel messages. Notes in a batch can now be handled at the previous tick. This adds no measurable CPU — the reorder is three O(count) passes over a ≤128 batch — but it changes grid alignment at the RECORD↔OVERDUB boundary.
+
+### Secondary, conditional
+
+`skipFocusLoadForSlotSession` now paints the OLED during capture where the baseline skipped it, but only while `focusSlotRestoreWork && SlotLoadSession::isActive()`. `PianoRollDraw`'s bounded-window scan reduces cost on long loops and is ruled out as a cause. Overdub-entry invalidation (`startOverdubbing`, `markDisplayCachesStale`, `invalidateLiveDisplayCache`) is unchanged in this diff.
+
+### Consequence for stage order
+
+The display bailouts are the reported user-visible defect and are independent of the `midisvc` term. They are their own root-cause slice, not part of S0b.
+
+### Compose sub-step instrumentation (shipped, observation only)
+
+The existing telemetry could not name the slow step. `DisplayCaptureCompose` measured 30 736 µs of a 30 747 µs resolve, and `DisplayBuild` (33 244 µs) wraps `rebuildCommittedLayer` and `replaceCaptureLayer` together, while `rebuildCommittedLayer` has four distinct outcomes during overdub.
+
+Two slots were declared but never recorded anywhere in the firmware, so their zero values were not evidence: the `DisplayCaptureGather` timing and the `DisplayCaptureFullGather` counter. Both are now wired to the gather branch.
+
+Added, following the existing `DIAG_TIMING_RECORD` / `DIAG_COUNTER_INC` pattern:
+
+| Slot | Covers |
+|---|---|
+| `DisplayCommittedRebuildTime` | `rebuildCommittedLayer` (timed at the call site — the lambda returns early on the overdub path) |
+| `DisplayCaptureReplaceTime` | `replaceCaptureLayer` — full resize + insert of `capturePreview.notes` |
+| `DisplayCaptureSyncTime` | `synchronizeCaptureLayer`, nesting the replace sample when the capture mirror is invalid |
+| `DisplayCaptureGatherTime` | `rebuildDisplayNotesInWindow` (was dead) |
+| `DisplayCommittedWindowFilter` | `filterDisplayNotesByWindowInclusion` branches — full scan of `visualCache.notes` plus a fresh vector |
+| `DisplayCommittedFullAssign` | full `assign` of `visualCache.notes` (no paint window) |
+| `DisplayCaptureFullGather` | gather branch (was dead) |
+
+Both enums are append-only before `Count`, so existing indices are unchanged; `static_assert`s now bind `kCounterNames` / `kTimingNames` to their enums, and `test_diagnostics` pins the new indices. Native suite 1034/1034.
+
+**Exit criterion:** one ≈100-bar RECORD + 2 OVERDUB run that attributes the 23–31 ms resolve to a named sub-step. The bailout semantics decision — stale frame, resumable, or always-complete — is deferred until that lands.
+
+---
+
 ## 32. Revised implementation dependency
 
 ```mermaid
@@ -703,8 +878,9 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 
 | Stage | Status | Summary |
 |-------|--------|---------|
-| **S0** | **Shipped (code)** | Timing-envelope telemetry; observation only; device gate pending |
-| **S1** | Not authorized | Admission design from S0 evidence; interval/reservation/fairness/re-entry/ISR rules |
+| **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
+| **S0b** | **Next — observation only** | Split `MidiHandler::handleMidiInput` into measured segments. S0 proved `midisvc` is the dominant term (762.5 ms peak, 129–149 ms per window during PLAYING/OVERDUB against `clk`/`tracks` ≤ 8.83 ms), but not *which* segment. No admission design can start until this is named. Pair with the RC-S0c Tier-A transmit allowance so the pre-177 s window is recoverable |
+| **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |
 | **S4** | Not authorized | Per-unit bounded work inside owners |

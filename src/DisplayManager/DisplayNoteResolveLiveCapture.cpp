@@ -344,6 +344,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         if (track.isOverdubbing()) {
             if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
                 if (havePaintWindow) {
+                    DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
                     liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
                         loop.visualCache.notes, paintWindowStart, paintWindowLength,
                         liveLoopLength);
@@ -351,6 +352,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                     liveWindowGatherValid_ = false;
                     liveDisplayCommittedFromWindowGather_ = false;
                 } else {
+                    DIAG_COUNTER_INC(DisplayCommittedFullAssign);
                     liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                             loop.visualCache.notes.end());
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
@@ -373,6 +375,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                 if (!loop.visualCache.notes.empty() &&
                     !gatherWindowHasDirtyBar(gatherStart, gatherLength)) {
                     // Idle already sliced this window — reuse progressive cache (no gather).
+                    DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
                     liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
                         loop.visualCache.notes, gatherStart, gatherLength, liveLoopLength);
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
@@ -383,9 +386,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                     liveDisplayCommittedFromWindowGather_ = false;
                 } else {
                     // Short loops: gatherLength == liveLoopLength ≤ 16 bars (work quantum).
+                    DIAG_COUNTER_INC(DisplayCaptureFullGather);
+                    const uint32_t gatherStartUs = micros();
                     rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, gatherStart,
                                                 gatherLength, liveDisplayEventBuffer,
                                                 liveDisplayNotes, false);
+                    DIAG_TIMING_RECORD(DisplayCaptureGather, micros() - gatherStartUs);
                     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                     liveWindowGatherValid_ = true;
                     liveWindowGatherStart_ = gatherStart;
@@ -410,6 +416,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     };
 
     auto replaceCaptureLayer = [&]() {
+        const uint32_t replaceStartUs = micros();
 #if defined(SESSION_CAPTURE)
         // Rate-limited Tier-A DIAG when full capture-layer copy runs on a large preview
         // (second-overdub lag investigation).
@@ -434,9 +441,11 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         liveDisplayCacheCaptureReplacementRevision_ =
             loop.capturePreview.replacementRevision;
         liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
+        DIAG_TIMING_RECORD(DisplayCaptureReplace, micros() - replaceStartUs);
     };
 
     auto synchronizeCaptureLayer = [&]() {
+        const uint32_t syncStartUs = micros();
         const bool captureMirrorInvalid =
             liveDisplayCacheCaptureReplacementRevision_ !=
                 loop.capturePreview.replacementRevision ||
@@ -447,7 +456,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                 liveDisplayCacheBaseNoteCount_ ||
             liveDisplayCacheBaseNoteCount_ > liveDisplayNotes.size();
         if (captureMirrorInvalid) {
+            // Nests DisplayCaptureReplace inside this sample.
             replaceCaptureLayer();
+            DIAG_TIMING_RECORD(DisplayCaptureSync, micros() - syncStartUs);
             return;
         }
 
@@ -472,6 +483,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         liveDisplayCacheCaptureChangeCount_ = loop.capturePreview.changedNoteIndices.size();
         liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
         liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
+        DIAG_TIMING_RECORD(DisplayCaptureSync, micros() - syncStartUs);
     };
 
     // Dirty visualCache uses window gather for the committed layer. Auto-follow moves the paint
@@ -512,7 +524,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     } else if (committedLayerChanged) {
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        // Timed here rather than inside the lambda: it returns early on the overdub path.
         rebuildCommittedLayer();
+        DIAG_TIMING_RECORD(DisplayCommittedRebuild, micros() - displayBuildStartUs);
         if (!budgetExceeded()) {
             replaceCaptureLayer();
         } else {
