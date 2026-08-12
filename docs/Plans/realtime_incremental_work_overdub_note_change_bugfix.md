@@ -80,17 +80,58 @@ Deleting the dedup was rejected: `test_reconstruct_dedupes_identical_segments` r
 
 ---
 
-## After (device re-measure)
+## RC-K1–K3 verified on device — [`223033`](../../captures/session_20260812_223033.log)
 
-S0e probes stay in place as the gate. Expected vs [`204221`](../../captures/session_20260812_204221.log):
+The note-off gate is met. Every DIAG window reads `noterecon` 0; `notechg` peaks at 3.6 ms and otherwise sits at 0.75–2.0 ms, against the 5 ms soft ceiling.
 
-| Probe | Before | Expected after |
-|-------|--------|----------------|
-| `noterecon` | 177 ms on every note-off | 0 on the note-off path (reconstruct moved to overdub entry) |
-| `notepair` | 98 ms | one pass over the cached note list |
-| `notechg` | 274 ms | well under the 5 ms observational soft ceiling |
-| `noteappend` | 59 µs | unchanged |
+| Probe | Before ([`204221`](../../captures/session_20260812_204221.log)) | After ([`223033`](../../captures/session_20260812_223033.log)) |
+|-------|--------|-------|
+| `noterecon` | 176625 | **0** — no longer on the note-off path |
+| `notepair` | 97855 | **3616** peak, then 700–2000 |
+| `notechg` | 274409 | **3626** peak, then 750–2000 |
+| `noteappend` | 59 | 83–558 |
 
-Device re-run: continuous overdub over a grown loop, `teensy41-capture-serial`. Also expect `RING,overflow` pressure to ease once `handleMidiInput` stops blocking.
+RECORD stays cheap (`midisvc` 0.6–0.7 ms, `clockrate` 47–48).
 
-**After capture:** _pending upload / re-run._
+---
+
+## RC-L1 — one external-memory allocation per note in projection
+
+**Invariant:** a reconstruct performs a constant number of external-memory pool operations, not one per note.
+
+RC-K3 exposed this; it did not create it. Total work per overdub pass fell, but the reconstruct that used to be spread one-per-note-off now runs in a single synchronous block inside `Track::startOverdubbing` → `Loop::beginCapture` → `establishOverdubSourceView`, with no MIDI service point. [`223033`](../../captures/session_20260812_223033.log) `ODUB,stage,begin_capture`:
+
+| Loop | Notes | `begin_capture` |
+|------|-------|-----------------|
+| 90 bars, first overdub after boot restore of 8 slots | 2084 | **1377674 µs** |
+| 65 bars | 1035 | 58476 |
+| 65 bars | 1221 | 86961 |
+| 65 bars | 1284 | **295974** |
+| 65 bars | 1392 | **409540** |
+
+`msi` follows at 1.400 s; BPM collapses 110 → 31.9; the first USB note lands 1.76 s after the button. On the unchanged 65-bar loop, +35 % notes costs 7× — steeper than any N², so the per-note term itself is growing.
+
+### Root cause (code, not measurement)
+
+`IntervalProjection::projectDisplayNotes` allocated and freed one external-memory block **per canonical span**: `generateEquivalentIntervals` returned `ProjectedIntervalVec` (an `ExternalMemoryFirstAllocator` vector) by value with a single `reserve`, and the result was destroyed each iteration. A 2084-note reconstruct therefore issued ~4168 pool operations. `projectNoteIntervals` did the same twice per span (`candidates` + `selected`).
+
+`extmem_malloc` routes to smalloc, and `sm_malloc_pool` restarts a linear walk of the pool header chain from `spool->pool` on every call, verifying each block's hashed tag — no free list. Per-allocation cost is the block count before the first adequate gap, which grows as the session's chunks fill the low pool. The repo already measured a full traversal of that chain at **593 ms** (RC-S0b). That is why cost tracks session history and why the worst case followed `Queuing boot playback loop slot restore 8 pending`.
+
+Same mechanism explains the RC-K1 boot hang: its `std::set` added a second per-note allocation whose nodes were all live at once, lengthening the chain mid-call. RC-K1b removed that one; the projection allocation predates RC-K1 and was untouched.
+
+**Fix:** hoist the buffers out of the per-span loops and `clear()` per span — capacity is retained, so a batch allocates once. `generateEquivalentIntervals` and `selectProjectedIntervalsForDisplay` keep their by-value forms for single-span callers and tests, and gain out-param overloads for batch callers. Same candidates, same order, no behaviour change. Also fixes the boot visual-cache backfill, which reaches the same function via `rebuildVisualCacheIdleSlice`.
+
+Durable rule: [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) § Batch loops.
+
+**Tests:** `pio test -e native` 1046/1046. `teensy41-capture-serial` RAM1 free 8160 B (unchanged).
+
+---
+
+## Still open
+
+- **Overdub entry is synchronous.** Even with RC-L1, `establishOverdubSourceView` runs a full `gatherCommittedEvents` plus reconstruct inside `startOverdubbing` — gather alone measured 35–119 ms in [`204221`](../../captures/session_20260812_204221.log). Deferring or slicing it changes when `overdubSourceViewNotes_` becomes valid relative to the first note-off of the pass: a state-transition change, so design session before any patch. Not admission S1.
+- **Overdub stop.** [`223033`](../../captures/session_20260812_223033.log) at 535.392 s: next window `midisvc` 2.16 s (`usbdisp` 2.16 s), `clockrate` 47 → 31 → 0. Separate from entry, uninvestigated.
+- **RC-J** — final stop `clockrate` 12. Unchanged, still behind S0b.
+- **RC-S0c** — 20 `RING,overflow` in `223033`; some `ODUB,stage` lines were dropped.
+
+**Device re-measure after RC-L1:** `begin_capture` on a grown loop must not scale with session history; target is the gather term alone.

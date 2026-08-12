@@ -104,6 +104,11 @@ int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
 ProjectedIntervalVec generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
                                                  const ProjectionContext& context);
 
+// Stage 1 into a caller-owned buffer. Batch loops reuse one `out` across spans so the
+// external-memory pool sees one allocation per batch instead of one per span.
+void generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
+                                 const ProjectionContext& context, ProjectedIntervalVec& out);
+
 // Stage 2 — consumer-specific selection (Playback / Edit / Timeline).
 ProjectedNoteInterval selectProjectedInterval(const ProjectedIntervalVec& candidates,
                                               const ProjectionContext& context);
@@ -111,6 +116,10 @@ ProjectedNoteInterval selectProjectedInterval(const ProjectedIntervalVec& candid
 // Stage 2 — Display: every candidate intersecting window.
 ProjectedIntervalVec selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
                                                         const ProjectionContext& context);
+
+void selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
+                                        const ProjectionContext& context,
+                                        ProjectedIntervalVec& out);
 
 // Batch helper — generate → select per ProjectionType.
 ProjectedIntervalVec projectNoteIntervals(const CanonicalNoteSpanVec& spans,

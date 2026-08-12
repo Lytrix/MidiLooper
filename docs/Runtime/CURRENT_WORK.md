@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (RC-K1b vector dedup; device re-measure next)
+Last updated: 2026-08-12 (RC-L1 projection allocation; device re-measure next)
 
 ---
 
@@ -23,6 +23,12 @@ Last updated: 2026-08-12 (RC-K1b vector dedup; device re-measure next)
 **S1 RC-K2 (shipped):** `accumulatePendingNoteChangesForIncomingNote` no longer scans source events for channel. Loop notes are loop-scoped (DEC-033). Native `test_pending_shorten_ignores_recorded_channel` PASS.
 
 **S1 RC-K3 (shipped):** `overdubSourceViewNotes_` is reconstructed once in `establishOverdubSourceView` and cleared in `clearOverdubSourceView`. Note-off path and `gatherOverdubSourceViewNotesInWindow` read the member. Native `test_overdub_source_view` PASS.
+
+**S1 RC-K1–K3 verified [`223033`](../../captures/session_20260812_223033.log):** the note-off gate is met — `noterecon` 0 in every window, `notechg` and `notepair` peak at 3.6 ms then hold 0.75–2.0 ms (were 274 / 98 ms).
+
+**S1 RC-L1 (shipped):** `IntervalProjection::projectDisplayNotes` allocated and freed one external-memory block per canonical span (`generateEquivalentIntervals` returning a reserved `ProjectedIntervalVec` by value, destroyed each iteration); `projectNoteIntervals` did it twice per span. `sm_malloc_pool` restarts a linear walk of the pool header chain on every call, so per-allocation cost grows with pool occupancy — the same chain whose full traversal measured 593 ms in RC-S0b. A 2084-note reconstruct issued ~4168 pool operations. RC-K3 exposed it by concentrating the reconstruct at overdub entry: `begin_capture` 1.378 s on a 90-bar loop, and 58 → 410 ms on one unchanged 65-bar loop as passes accumulated. Batch loops now reuse one buffer and `clear()` per span; by-value forms kept for single-span callers and tests. Native 1046/1046; RAM1 free 8160 B unchanged. Durable rule in [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) § Batch loops.
+
+**Open after RC-L1 (design session, not a patch):** `establishOverdubSourceView` still runs `gatherCommittedEvents` plus reconstruct synchronously inside `startOverdubbing` — gather alone was 35–119 ms in [`204221`](../../captures/session_20260812_204221.log). Deferring it moves when `overdubSourceViewNotes_` becomes valid relative to the first note-off, which is a state-transition change.
 
 **Architecture:** [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md)  
 **Scheduling admission:** [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md)  
