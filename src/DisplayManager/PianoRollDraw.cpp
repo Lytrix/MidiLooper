@@ -322,7 +322,8 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
 void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOriginTick,
                                        uint32_t windowStart, uint32_t windowLength,
                                        uint32_t playheadTick, int minPitch, int maxPitch,
-                                       const DisplayNoteVec& notes, int y0, int y1) {
+                                       const DisplayNoteVec& notes, int y0, int y1,
+                                       const VisualBarVec* barBandMask) {
     if (fullLoopLength == 0 || y1 < y0) {
         return;
     }
@@ -374,22 +375,59 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
         }
     };
 
-    for (const DisplayNote& n : notes) {
-        uint32_t startTick = (n.startTick >= loopOriginTick)
-                                 ? (n.startTick - loopOriginTick)
-                                 : (n.startTick + fullLoopLength - loopOriginTick);
-        startTick %= fullLoopLength;
-        uint32_t endTick = (n.endTick >= loopOriginTick) ? (n.endTick - loopOriginTick)
-                                                         : (n.endTick + fullLoopLength - loopOriginTick);
-        endTick %= fullLoopLength;
-        if (startTick >= fullLoopLength && endTick >= fullLoopLength) {
-            continue;
+    if (barBandMask != nullptr) {
+        // RC-G: density path. Cost is O(loop bars), not O(notes), so a long record pass does not
+        // grow the per-frame overview cost.
+        const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+        const int bandRows = y1 - y0 + 1;
+        for (uint32_t bar = 0; bar < barBandMask->size(); ++bar) {
+            const uint8_t bands = (*barBandMask)[bar];
+            if (bands == 0) {
+                continue;
+            }
+            const uint32_t barStart = bar * ticksPerBar;
+            if (barStart >= fullLoopLength) {
+                break;
+            }
+            const uint32_t barEnd = std::min(barStart + ticksPerBar, fullLoopLength);
+            const int x0 = TRACK_MARGIN + map(barStart, 0, fullLoopLength, 0, width);
+            int x1 = TRACK_MARGIN + map(barEnd, 0, fullLoopLength, 0, width);
+            if (x1 < x0) {
+                x1 = x0;
+            }
+            const bool insideWindow = barEnd > windowStart && barStart < windowEnd;
+            const int brightness =
+                insideWindow ? kOverviewNoteInsideBrightness : kOverviewNoteOutsideBrightness;
+            for (uint8_t band = 0; band < DisplayWindowUtils::kOverviewBandCount; ++band) {
+                if ((bands & (1u << band)) == 0) {
+                    continue;
+                }
+                // Band 0 is the lowest pitch and belongs at the bottom of the strip.
+                int y = y1 - (band * bandRows) / DisplayWindowUtils::kOverviewBandCount;
+                y = constrain(y, y0, y1);
+                _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y,
+                                              brightness);
+            }
         }
+    } else {
+        for (const DisplayNote& n : notes) {
+            uint32_t startTick = (n.startTick >= loopOriginTick)
+                                     ? (n.startTick - loopOriginTick)
+                                     : (n.startTick + fullLoopLength - loopOriginTick);
+            startTick %= fullLoopLength;
+            uint32_t endTick = (n.endTick >= loopOriginTick)
+                                   ? (n.endTick - loopOriginTick)
+                                   : (n.endTick + fullLoopLength - loopOriginTick);
+            endTick %= fullLoopLength;
+            if (startTick >= fullLoopLength && endTick >= fullLoopLength) {
+                continue;
+            }
 
-        int y = map(n.note, minPitch, maxPitch, y1, y0);
-        y = constrain(y, y0, y1);
-        drawNoteBar(n, y, startTick, endTick, fullLoopLength, kOverviewNoteOutsideBrightness);
-        drawNoteInsideWindow(n, y, startTick, endTick, kOverviewNoteInsideBrightness);
+            int y = map(n.note, minPitch, maxPitch, y1, y0);
+            y = constrain(y, y0, y1);
+            drawNoteBar(n, y, startTick, endTick, fullLoopLength, kOverviewNoteOutsideBrightness);
+            drawNoteInsideWindow(n, y, startTick, endTick, kOverviewNoteInsideBrightness);
+        }
     }
 
     _display.gfx.draw_vline(_display.api.getFrameBuffer(), boxX0, y0, y1,
@@ -406,8 +444,64 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
     _display.gfx.draw_vline(_display.api.getFrameBuffer(), playX, y0, y1, PLAYHEAD_COLOR);
 }
 
-bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const {
-    const uint32_t boundedThreshold =
+const VisualBarVec* DisplayManager::updateOverviewCaptureDensity(const Track& track,
+                                                                 const Loop& loop,
+                                                                 uint8_t displaySlot,
+                                                                 uint32_t loopLength) {
+    // RC-G: only needed while capturing with no usable committed cache. Everything else already
+    // has a clean visualCache covering the whole loop.
+    if (!(track.isRecording() || track.isOverdubbing()) || loopLength == 0) {
+        return nullptr;
+    }
+    if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
+        return nullptr;
+    }
+
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    const bool contextChanged = displaySlot != overviewCaptureSlot_ ||
+                                trackIndex != overviewCaptureTrack_ ||
+                                loop.capturePreview.replacementRevision !=
+                                    overviewCaptureReplacementRevision_ ||
+                                overviewCaptureProcessedNotes_ > loop.capturePreview.notes.size();
+    if (contextChanged) {
+        overviewCaptureBandMask_.clear();
+        overviewCaptureProcessedNotes_ = 0;
+        overviewCaptureSlot_ = displaySlot;
+        overviewCaptureTrack_ = trackIndex;
+        overviewCaptureReplacementRevision_ = loop.capturePreview.replacementRevision;
+    }
+
+    const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+    const size_t totalBars = (loopLength + ticksPerBar - 1) / ticksPerBar;
+    if (totalBars == 0) {
+        return nullptr;
+    }
+    if (overviewCaptureBandMask_.size() < totalBars) {
+        // A growing record pass only appends bars; already-accumulated bars stay valid because
+        // the mask is indexed by bar, not by screen column.
+        overviewCaptureBandMask_.resize(totalBars, 0);
+    }
+
+    for (size_t noteIndex = overviewCaptureProcessedNotes_;
+         noteIndex < loop.capturePreview.notes.size(); ++noteIndex) {
+        DisplayWindowUtils::accumulateOverviewBandMask(overviewCaptureBandMask_,
+                                                       loop.capturePreview.notes[noteIndex],
+                                                       ticksPerBar);
+    }
+    overviewCaptureProcessedNotes_ = loop.capturePreview.notes.size();
+
+    // Open notes keep growing after they were first folded in; re-fold just those.
+    for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {
+        if (previewNoteIndex < loop.capturePreview.notes.size()) {
+            DisplayWindowUtils::accumulateOverviewBandMask(
+                overviewCaptureBandMask_, loop.capturePreview.notes[previewNoteIndex], ticksPerBar);
+        }
+    }
+
+    return &overviewCaptureBandMask_;
+}
+
+bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const {    const uint32_t boundedThreshold =
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
     if (track.isJamming() || loopLength <= boundedThreshold) {
         return false;
@@ -506,6 +600,11 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         const bool captureCritical = track.isRecording() || track.isOverdubbing();
         // Overview: prefer clean visualCache. During capture, never fall back to a full
         // session-sized `notes` scan when a bounded detailed window is available (RC-C B).
+        // RC-G: when neither is available (first record has no committed passes), use the
+        // incremental per-bar density mask rather than showing only the moving window.
+        const VisualBarVec* overviewBandMask =
+            useBoundedWindow ? updateOverviewCaptureDensity(track, loop, displaySlot, loopLength)
+                             : nullptr;
         const DisplayNoteVec& overviewDensityNotes =
             (!loop.visualCacheDirty && !loop.visualCache.notes.empty())
                 ? loop.visualCache.notes
@@ -554,7 +653,8 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
 
         if (useBoundedWindow) {
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
-                              maxPitch, overviewDensityNotes, kOverviewStripY0, kOverviewStripY1);
+                              maxPitch, overviewDensityNotes, kOverviewStripY0, kOverviewStripY1,
+                              overviewBandMask);
             if (drawPlayhead && jamPos >= windowStart && jamPos < windowStart + windowLength) {
                 const float phase = previewPlayheadPending ? 0.0f : displayPlayheadPhase();
                 const float relativePlayhead =

@@ -315,6 +315,78 @@ void test_adopt_partial_visual_cache_clears_dirty_when_loop_fits_window() {
   }
 }
 
+void test_overview_band_mask_marks_every_bar_the_note_spans() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  std::vector<uint8_t> mask(8, 0);
+
+  NoteUtils::DisplayNote note{};
+  note.startTick = 2u * bar;
+  note.endTick = 4u * bar + 10u;
+  note.note = 60;  // band 3
+
+  DisplayWindowUtils::accumulateOverviewBandMask(mask, note, bar);
+
+  const uint8_t expected = static_cast<uint8_t>(1u << 3);
+  TEST_ASSERT_EQUAL_UINT8(0, mask[1]);
+  TEST_ASSERT_EQUAL_UINT8(expected, mask[2]);
+  TEST_ASSERT_EQUAL_UINT8(expected, mask[3]);
+  TEST_ASSERT_EQUAL_UINT8(expected, mask[4]);
+  TEST_ASSERT_EQUAL_UINT8(0, mask[5]);
+}
+
+void test_overview_band_mask_accumulates_bands_and_clamps_range() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  std::vector<uint8_t> mask(4, 0);
+
+  NoteUtils::DisplayNote low{};
+  low.startTick = 0;
+  low.endTick = bar - 1;
+  low.note = 5;  // band 0
+
+  // Runs past the mask end: must clamp, not write out of range.
+  NoteUtils::DisplayNote high{};
+  high.startTick = 0;
+  high.endTick = 40u * bar;
+  high.note = 127;  // band 7
+
+  DisplayWindowUtils::accumulateOverviewBandMask(mask, low, bar);
+  DisplayWindowUtils::accumulateOverviewBandMask(mask, high, bar);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(0x01 | 0x80), mask[0]);
+  TEST_ASSERT_EQUAL_UINT8(0x80, mask[3]);
+  TEST_ASSERT_EQUAL_UINT32(4u, mask.size());
+
+  // A note starting beyond the mask is ignored entirely.
+  NoteUtils::DisplayNote beyond{};
+  beyond.startTick = 10u * bar;
+  beyond.endTick = 11u * bar;
+  beyond.note = 20;
+  DisplayWindowUtils::accumulateOverviewBandMask(mask, beyond, bar);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(0x01 | 0x80), mask[0]);
+}
+
+void test_overview_band_for_note_covers_full_midi_range() {
+  TEST_ASSERT_EQUAL_UINT8(0, DisplayWindowUtils::overviewBandForNote(0));
+  TEST_ASSERT_EQUAL_UINT8(3, DisplayWindowUtils::overviewBandForNote(60));
+  TEST_ASSERT_EQUAL_UINT8(7, DisplayWindowUtils::overviewBandForNote(127));
+}
+
+void test_paint_window_inside_gather_tolerates_margin_slide() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  // RC-F: gather is the paint window widened by kWindowedGatherMarginBars on each side, so
+  // auto-follow may advance within the margin before the committed layer must be rebuilt.
+  const uint32_t gatherStart = 10u * bar;
+  const uint32_t gatherLength = 20u * bar;  // 16-bar window + 2 bars either side
+
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::paintWindowInsideGather(12u * bar, 16u * bar, gatherStart, gatherLength));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::paintWindowInsideGather(14u * bar, 16u * bar, gatherStart, gatherLength));
+  // One bar past the margin leaves the gather and must force a rebuild.
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::paintWindowInsideGather(15u * bar, 16u * bar, gatherStart, gatherLength));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -338,6 +410,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_visual_cache_covers_window_requires_fully_built);
   RUN_TEST(test_adopt_partial_visual_cache_marks_uncovered_bars_dirty);
   RUN_TEST(test_adopt_partial_visual_cache_clears_dirty_when_loop_fits_window);
+  RUN_TEST(test_overview_band_mask_marks_every_bar_the_note_spans);
+  RUN_TEST(test_overview_band_mask_accumulates_bands_and_clamps_range);
+  RUN_TEST(test_overview_band_for_note_covers_full_midi_range);
+  RUN_TEST(test_paint_window_inside_gather_tolerates_margin_slide);
   RUN_TEST(test_format_loop_length_bars_info_strip);
   return UNITY_END();
 }
