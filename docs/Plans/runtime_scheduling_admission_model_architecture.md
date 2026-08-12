@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b MIDI-service drain segmentation **implemented** (device attribution pending); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev` ([`193645`](../../captures/session_20260812_193645.log)); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -760,7 +760,7 @@ Partially complete. The capture-phase envelope now exists and is usable; the pre
 
 ## 31c. S0b — segment the MIDI service interval (observation only)
 
-**Status:** firmware **implemented** (observation only); device attribution pending against [`191356`](../../captures/session_20260812_191356.log).
+**Status:** firmware **implemented**; device-attributed in [`193645`](../../captures/session_20260812_193645.log) (§31i) — the PLAYING/OVERDUB `midisvc` term is `usbdev`.
 
 `handleMidiInput` has four sequential segments, and S0 measures only their sum. `clk` already covers the Clock branch and accounts for at most 8.83 ms of a 149 ms call, so the cost is in one of the other three:
 
@@ -1237,7 +1237,7 @@ First stop 437.7 s: `clockrate` 48 → 24 → 0, `msi` 467 ms. Final stop 1230 s
 
 ### S0b handoff (new chat)
 
-**Authorized next stage: S0b device re-run** — firmware already segments `MidiHandler::handleMidiInput`. See §31c.
+**Authorized next stage: S0b device re-run** — firmware already segments `MidiHandler::handleMidiInput`. See §31c. **Closed in §31i** ([`193645`](../../captures/session_20260812_193645.log)): named drain is `usbdev`.
 
 - **Owner:** `MidiHandler::handleMidiInput` (and the four sequential drains it already runs). `RuntimeTimingEnvelope` emits `DIAG,usbdev` / `din` / `hosttask` / `hostdrain`. Do not add a scheduler or change MIDI service density.
 - **Invariant:** S0b takes no scheduling decision. `micros()` deltas into the existing 5 s window; emit Tier-A `DIAG` lines.
@@ -1302,6 +1302,52 @@ At 337.2 s and 342.2 s, after `PLAYING → STOPPED`, `msi` max is 140.6 ms and 1
 
 ---
 
+## 31i. Run [`193645`](../../captures/session_20260812_193645.log) — S0b attributed to `usbdev`
+
+Firmware: `d99576c` (S0b drain probes). RECORD then multiple overdubs on a 64-bar loop (`RECS,stop` length 49152). Envelope tags `usbdev` / `din` / `hosttask` / `hostdrain` present. Capture starts at boot (`HDR` 5.770 s).
+
+### Named drain
+
+In every complete window, `usbdev` max equals `midisvc` max within **0–3 µs**. `din` is 1 µs, `hosttask` is 0–1 µs, `hostdrain` is 1–100 µs. Clock dispatch is nested inside `usbdev` (`clk` ≈ `tracks`) and does not explain the remainder.
+
+| Phase | Window | `midisvc` | `usbdev` | `clk` | `din` / `hosttask` / `hostdrain` | `clockrate` |
+|---|---|---|---|---|---|---|
+| RECORD | 126.1 s | 687 µs | 686 µs | 183 µs | 1 / 1 / 1 | 47 |
+| RECORD | 131.1 s | 701 µs | 700 µs | 175 µs | 1 / 1 / 1 | 48 |
+| Overdub entry | 141.2 s | 84.1 ms | 84.1 ms | 14.3 ms | 1 / 1 / 81 | 48 |
+| PLAYING/OVERDUB | 181.3 s | 108.0 ms | 108.0 ms | 3.5 ms | 1 / 1 / 2 | 47 |
+| PLAYING/OVERDUB | 266.6 s | 134.6 ms | 134.6 ms | 4.9 ms | 1 / 1 / 2 | 46 |
+| Overdub peak | 276.6 s | **154.0 ms** | **154.0 ms** | 10.4 ms | 1 / 1 / 98 | 48 |
+| Later overdub | 296.6 s | 127.2 ms | 127.2 ms | 4.9 ms | 1 / 1 / 2 | 47 |
+| Post-stop | 306.7 s | 3 µs | 1 µs | 0 | 1 / 1 / 2 | 0 |
+
+`overCount` for `usbdev` equals `overCount` for `midisvc` in every complete window (same samples).
+
+**RECORD** stays 0.7 ms, almost all `usbdev`, of which ~0.18 ms is `clk`. **PLAYING/OVERDUB** is 78–154 ms, almost all `usbdev`, of which 3.5–14.3 ms is `clk`. The 70–144 ms remainder is USB-device read + `dispatchMidiBatch` / `handleMidiMessage` other than Clock.
+
+The historical 762.5 ms ([`145555`](../../captures/session_20260812_145555.log)), 129–149 ms, and 218–221 ms / 110–125 ms ([`191356`](../../captures/session_20260812_191356.log)) samples are the same `midisvc` term. This run did not reproduce those exact peaks (max 154 ms) but identifies that term as `usbdev`.
+
+### Ruled out
+
+- **DIN drain** — 1 µs in every window.
+- **`usbHost.Task()`** — 0–1 µs.
+- **USB host drain** — ≤100 µs; never a millisecond-scale contributor.
+- **Clock dispatch** — still 3.5–14.3 ms inside `usbdev`; `clk` ≈ `tracks`.
+- **RC-C extra MIDI drain** — RECORD has that drain active and `usbdev` is 0.7 ms.
+
+### RC-J reproduced, still not patched
+
+`PLAYING → STOPPED` at 300.671 s. Next window 301.660 s: `clockrate` 38, `msi` 303 ms, `usbdev`/`midisvc` still 132 ms (window includes the stop). Window 306.667 s: `clockrate` 0, `msi` 273 ms, `midisvc` 3 µs, `usbdev` 1 µs. The post-stop stall is outside MIDI service.
+
+### Residuals
+
+- RC-S0c: 13 `RING,overflow`; RECORD envelope missing from 10.4 s (`STOPPED → ARMED`) until 126.1 s; `ARMED → RECORDING` / `RECORDING → STOPPED_RECORDING` absent. Three windows emit only `clockrate` (176.3, 186.3, 231.3 s).
+- Next observation split, **not this stage:** inside `usbdev` — `usbMIDI.read()` versus `dispatchMidiBatch` / `handleMidiMessage` (`sendMidiThru`, `SC_MIDI_IN`, channel/button dispatch). Do not start S1 or patch RC-J.
+
+**S0b exit:** met.
+
+---
+
 ## 32. Revised implementation dependency
 
 ```mermaid
@@ -1325,7 +1371,7 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 | Stage | Status | Summary |
 |-------|--------|---------|
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
-| **S0b** | **Implemented** (device attribution pending) | Split `MidiHandler::handleMidiInput` into `usbdev` / `din` / `hosttask` / `hostdrain`. Baseline [`191356`](../../captures/session_20260812_191356.log) (§31h). No admission until the named segment is known. |
+| **S0b** | **Attributed** ([`193645`](../../captures/session_20260812_193645.log) §31i) | PLAYING/OVERDUB `midisvc` is `usbdev` (equals within 0–3 µs). `din` / `hosttask` / `hostdrain` ruled out. Nested `handleMidiMessage` work inside `usbdev` is the next observation split; S1 not authorized. |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |
