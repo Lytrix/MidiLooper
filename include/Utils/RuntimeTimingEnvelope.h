@@ -5,10 +5,11 @@
  * @file RuntimeTimingEnvelope.h
  * @brief S0 observation-only timing envelope telemetry.
  *
- * Measures MSI gaps and MIDI/Clock/track durations. Does not admit work,
- * change service density, or drive any scheduling decision.
+ * Measures MSI gaps, MIDI/Clock/track durations, and S0b MIDI-service
+ * drain segments. Does not admit work, change service density, or drive
+ * any scheduling decision.
  *
- * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31.
+ * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31c.
  */
 #pragma once
 
@@ -34,6 +35,14 @@ struct Snapshot {
   uint32_t clkOverCount = 0;
   uint32_t tracksMaxUs = 0;
   uint32_t tracksOverCount = 0;
+  uint32_t usbdevMaxUs = 0;
+  uint32_t usbdevOverCount = 0;
+  uint32_t dinMaxUs = 0;
+  uint32_t dinOverCount = 0;
+  uint32_t hosttaskMaxUs = 0;
+  uint32_t hosttaskOverCount = 0;
+  uint32_t hostdrainMaxUs = 0;
+  uint32_t hostdrainOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
 };
@@ -51,6 +60,18 @@ void noteClockDispatch(uint32_t durationUs);
 
 /** Record duration of TrackManager::updateAllTracks (accumulate only; ISR-safe). */
 void noteTracksUpdate(uint32_t durationUs);
+
+/** S0b: USB-device read loop + dispatchMidiBatch. */
+void noteUsbDeviceDrain(uint32_t durationUs);
+
+/** S0b: DIN (Serial8) read loop + dispatchMidiBatch. */
+void noteDinDrain(uint32_t durationUs);
+
+/** S0b: usbHost.Task() stack service. */
+void noteUsbHostTask(uint32_t durationUs);
+
+/** S0b: usbHostMIDI.read() drain (callbacks into handleMidiMessage). */
+void noteUsbHostDrain(uint32_t durationUs);
 
 /** Count one external MIDI Clock pulse for clockrate. */
 void noteClockPulse();

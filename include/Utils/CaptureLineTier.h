@@ -37,7 +37,9 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "VCACHE,", 7) == 0 ||
          strncmp(tag, "DIAG,timing_max,", 16) == 0 || strncmp(tag, "DIAG,msi,", 9) == 0 ||
          strncmp(tag, "DIAG,midisvc,", 13) == 0 || strncmp(tag, "DIAG,clk,", 9) == 0 ||
-         strncmp(tag, "DIAG,tracks,", 12) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0;
+         strncmp(tag, "DIAG,tracks,", 12) == 0 || strncmp(tag, "DIAG,usbdev,", 12) == 0 ||
+         strncmp(tag, "DIAG,din,", 9) == 0 || strncmp(tag, "DIAG,hosttask,", 14) == 0 ||
+         strncmp(tag, "DIAG,hostdrain,", 15) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0;
 }
 
 }  // namespace CaptureLineTier

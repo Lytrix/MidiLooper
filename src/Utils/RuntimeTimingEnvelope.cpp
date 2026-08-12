@@ -27,6 +27,10 @@ struct State {
   Accumulator midisvc;
   Accumulator clk;
   Accumulator tracks;
+  Accumulator usbdev;
+  Accumulator din;
+  Accumulator hosttask;
+  Accumulator hostdrain;
   uint32_t clockPulses = 0;
   uint32_t lastServiceExitUs = 0;
   uint32_t serviceEnterUs = 0;
@@ -45,6 +49,10 @@ void clearWindow(State& s) {
   s.midisvc = Accumulator{};
   s.clk = Accumulator{};
   s.tracks = Accumulator{};
+  s.usbdev = Accumulator{};
+  s.din = Accumulator{};
+  s.hosttask = Accumulator{};
+  s.hostdrain = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -54,6 +62,10 @@ void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
   DebugSessionCapture::runtimeTimingEnvelope("midisvc", s.midisvc.maxUs, s.midisvc.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("clk", s.clk.maxUs, s.clk.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("tracks", s.tracks.maxUs, s.tracks.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbdev", s.usbdev.maxUs, s.usbdev.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("din", s.din.maxUs, s.din.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("hosttask", s.hosttask.maxUs, s.hosttask.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("hostdrain", s.hostdrain.maxUs, s.hostdrain.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -104,6 +116,22 @@ void noteTracksUpdate(uint32_t durationUs) {
   recordSample(state().tracks, durationUs);
 }
 
+void noteUsbDeviceDrain(uint32_t durationUs) {
+  recordSample(state().usbdev, durationUs);
+}
+
+void noteDinDrain(uint32_t durationUs) {
+  recordSample(state().din, durationUs);
+}
+
+void noteUsbHostTask(uint32_t durationUs) {
+  recordSample(state().hosttask, durationUs);
+}
+
+void noteUsbHostDrain(uint32_t durationUs) {
+  recordSample(state().hostdrain, durationUs);
+}
+
 void noteClockPulse() {
   State& s = state();
   ++s.clockPulses;
@@ -138,6 +166,14 @@ Snapshot peek(uint32_t nowUs) {
   out.clkOverCount = s.clk.overCount;
   out.tracksMaxUs = s.tracks.maxUs;
   out.tracksOverCount = s.tracks.overCount;
+  out.usbdevMaxUs = s.usbdev.maxUs;
+  out.usbdevOverCount = s.usbdev.overCount;
+  out.dinMaxUs = s.din.maxUs;
+  out.dinOverCount = s.din.overCount;
+  out.hosttaskMaxUs = s.hosttask.maxUs;
+  out.hosttaskOverCount = s.hosttask.overCount;
+  out.hostdrainMaxUs = s.hostdrain.maxUs;
+  out.hostdrainOverCount = s.hostdrain.overCount;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

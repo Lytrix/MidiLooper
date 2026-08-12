@@ -89,7 +89,7 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
-/** S0 timing envelope: DIAG,{msi|midisvc|clk|tracks},<maxUs>,<overCount> (Tier-A). */
+/** S0/S0b timing envelope: DIAG,{msi|midisvc|clk|tracks|usbdev|din|hosttask|hostdrain},<maxUs>,<overCount> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingEnvelope(const char* tag, uint32_t maxUs, uint32_t overCount);
 /** S0 timing envelope: DIAG,clockrate,<pulsesPerSecond> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);

@@ -45,11 +45,34 @@ void test_clock_and_tracks_accumulate_independently() {
   TEST_ASSERT_EQUAL_UINT32(2, snap.clockPulses);
 }
 
+void test_midi_service_drains_accumulate_independently() {
+  RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
+  RuntimeTimingEnvelope::noteUsbDeviceDrain(110000);
+  RuntimeTimingEnvelope::noteDinDrain(40);
+  RuntimeTimingEnvelope::noteDinDrain(80);
+  RuntimeTimingEnvelope::noteUsbHostTask(1200);
+  RuntimeTimingEnvelope::noteUsbHostTask(900);
+  RuntimeTimingEnvelope::noteUsbHostDrain(800);
+  RuntimeTimingEnvelope::noteUsbHostDrain(6001);
+
+  const auto snap = RuntimeTimingEnvelope::peek();
+  TEST_ASSERT_EQUAL_UINT32(221000, snap.usbdevMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.usbdevOverCount);
+  TEST_ASSERT_EQUAL_UINT32(80, snap.dinMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.dinOverCount);
+  TEST_ASSERT_EQUAL_UINT32(1200, snap.hosttaskMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.hosttaskOverCount);
+  TEST_ASSERT_EQUAL_UINT32(6001, snap.hostdrainMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.hostdrainOverCount);
+}
+
 void test_maybe_emit_rate_limits_and_resets_window() {
   RuntimeTimingEnvelope::noteClockDispatch(9000);
+  RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
   TEST_ASSERT_FALSE(RuntimeTimingEnvelope::maybeEmit(1000));  // first call arms window
 
   RuntimeTimingEnvelope::noteClockDispatch(9000);
+  RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
   TEST_ASSERT_FALSE(
       RuntimeTimingEnvelope::maybeEmit(1000 + RuntimeTimingEnvelope::kEmitIntervalUs - 1));
 
@@ -58,6 +81,10 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   const auto after = RuntimeTimingEnvelope::peek(1000 + RuntimeTimingEnvelope::kEmitIntervalUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clkMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clkOverCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbdevMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.dinMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.hosttaskMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.hostdrainMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
 }
 
@@ -73,6 +100,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_msi_gap_recorded_between_service_calls);
   RUN_TEST(test_observational_over_count_uses_soft_ceiling);
   RUN_TEST(test_clock_and_tracks_accumulate_independently);
+  RUN_TEST(test_midi_service_drains_accumulate_independently);
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
   RUN_TEST(test_emit_interval_constant);
   return UNITY_END();
