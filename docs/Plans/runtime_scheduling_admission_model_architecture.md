@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp` ([`195240`](../../captures/session_20260812_195240.log)); S0d `handleMidiMessage` split **implemented** (device attribution pending); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp`; S0d **attributed** to `usbnote` ([`200452`](../../captures/session_20260812_200452.log)); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -1426,7 +1426,7 @@ In every complete PLAYING/OVERDUB window, `usbdisp` max equals `usbdev` / `midis
 
 ## 31l. S0d — split `handleMidiMessage` remainder (observation only)
 
-**Status:** firmware **implemented**; device attribution pending against [`195240`](../../captures/session_20260812_195240.log).
+**Status:** firmware **implemented**; device-attributed in [`200452`](../../captures/session_20260812_200452.log) (§31m) — PLAYING/OVERDUB `usbdisp` is `usbnote`.
 
 [`195240`](../../captures/session_20260812_195240.log) showed `usbdisp` = `usbdev` within 0–3 µs, with `usbcap` / `usbthru` / `usbread` in the tens of microseconds. `clk` is the max of one `onMidiClockPulse`, so it cannot prove or disprove a batch of clock dispatches. S0d sums the remaining `handleMidiMessage` work inside one USB-device dispatch.
 
@@ -1440,6 +1440,47 @@ In every complete PLAYING/OVERDUB window, `usbdisp` max equals `usbdev` / `midis
 `clk` remains the per-pulse max. `usbclk` is the batch sum of those pulses in one USB dispatch. If `usbclk` matches `usbdisp`, the 48–93 ms call is many `updateAllTracks` in one batch. If `usbnote` or `usbcc` matches, the cost is channel/button work.
 
 **Exit criterion:** the [`195240`](../../captures/session_20260812_195240.log) 48–93 ms PLAYING/OVERDUB `usbdisp` samples (and RECORD 0.3–0.6 ms) are each attributed to `usbclk`, `usbnote`, `usbcc`, and/or `usbtrans`, reported separately for RECORD versus PLAYING/OVERDUB. Do not start S1 or patch RC-J.
+
+**S0d exit:** met. Attribution: §31m.
+
+---
+
+## 31m. Run [`200452`](../../captures/session_20260812_200452.log) — S0d attributed to `usbnote`
+
+Firmware: `89cf3b3` (S0d probes). RECORD (`RECS,stop` length 78336) then multiple overdubs. Envelope tags `usbclk` / `usbnote` / `usbcc` / `usbtrans` present. Capture starts at boot (`HDR` ~6.8 s). `clockrate` 47–48 through RECORD and most PLAYING/OVERDUB.
+
+### Named sub-segment
+
+In complete PLAYING/OVERDUB windows, `usbnote` max is **98.7–99.9 %** of `usbdisp` max (`usbdisp − usbnote` is 0.1–2.3 ms except one 7.5 ms outlier at 419.2 s). `overCount` for `usbnote` equals `overCount` for `usbdisp` in most windows (same samples). `usbclk` is 3.2–10.4 ms — the same scale as `clk` / `tracks`, not the 89–300 ms dispatch. `usbcc` is 0. `usbtrans` is 0.
+
+| Phase | Window | `midisvc` | `usbdisp` | `usbnote` | `usbclk` | `usbcc` | `usbtrans` | `clk` | `clockrate` |
+|---|---|---|---|---|---|---|---|---|---|
+| RECORD | 212.3 s | — | 1.02 ms | 826 µs | 190 µs | 0 | 0 | — | 48 |
+| Overdub entry | 217.3 s | 132.8 ms | 132.8 ms | 131.6 ms | 7.1 ms | 0 | 0 | 4.6 ms | 48 |
+| PLAYING/OVERDUB | 262.4 s | 92.0 ms | 92.0 ms | 90.8 ms | 3.6 ms | 0 | 0 | 3.6 ms | 47 |
+| Later overdub | 357.5 s | 177.3 ms | 177.3 ms | 176.1 ms | 3.5 ms | 0 | 0 | 3.5 ms | 47 |
+| Peak | 419.2 s | **669.8 ms** | **669.8 ms** | **662.3 ms** | 10.4 ms | 0 | 0 | 6.2 ms | 42 |
+| After overdub stop | 424.2 s | 7.2 ms | 7.2 ms | 101 µs | 7.0 ms | 0 | 0 | 7.0 ms | 51 |
+| Stop window | 449.5 s | 291.4 ms | 291.4 ms | 290.3 ms | 6.1 ms | 0 | 0 | 4.2 ms | 40 |
+
+The 424.2 s window is the exception that names `usbclk`: after `OVERDUBBING → PLAYING` at 424.203 s, the peak dispatch is the clock-sum (7.0 of 7.2 ms), not notes. That does not explain the 89–670 ms PLAYING/OVERDUB samples.
+
+**RECORD** stays ~1 ms `usbdisp` (826 µs `usbnote`, 190 µs `usbclk`). **PLAYING/OVERDUB** is 89–300 ms typical, 670 ms peak, almost all `handleNoteOn` / `handleNoteOff`.
+
+### Ruled out
+
+- **Clock batch sum (`usbclk`)** — 3.2–10.4 ms. Not the 89–670 ms dispatch. Closes the S0c gap: `clk` was a per-pulse max; the batch sum is still an order of magnitude below `usbdisp`.
+- **CC / pitch / AT / PC (`usbcc`)** — 0 in every window.
+- **Start / Stop / Continue (`usbtrans`)** — 0 in every window.
+- **`usbread` / `usbcap` / `usbthru`** — still microseconds, unchanged from S0c.
+
+### Residuals
+
+- Next observation split, **not this stage:** the remainder of `handleNoteOn` / `handleNoteOff` — `barStepButtonHandler.handleMidiNote`, `midiButtonManager.handleMidiNote`, `Track::noteOn` / `Track::noteOff`.
+- RC-S0c: 11 `RING,overflow`. RECORD envelope missing from 6.9 s until 197.2 s; `ARMED → RECORDING` absent; `RECORDING → STOPPED_RECORDING` present at 214.607 s. Several PLAYING/OVERDUB windows drop `msi` / `midisvc` / `usbdev` while nested USB tags survive.
+- Capture ends at 453.4 s, 4.4 s after `OVERDUBBING → STOPPED` at 449.051 s. Stop window `clockrate` 40; no post-stop `clockrate` 0 window. RC-J not re-measured here. Do not patch.
+
+**S0d exit:** met.
 
 ---
 
@@ -1468,7 +1509,7 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
 | **S0b** | **Attributed** ([`193645`](../../captures/session_20260812_193645.log) §31i) | PLAYING/OVERDUB `midisvc` is `usbdev` (equals within 0–3 µs). `din` / `hosttask` / `hostdrain` ruled out. |
 | **S0c** | **Attributed** ([`195240`](../../captures/session_20260812_195240.log) §31k) | PLAYING/OVERDUB `usbdev` is `usbdisp`. `usbread` / `usbcap` / `usbthru` ruled out (µs). |
-| **S0d** | **Implemented** (device attribution pending) | Split `handleMidiMessage` remainder into `usbclk` / `usbnote` / `usbcc` / `usbtrans` batch sums. Baseline [`195240`](../../captures/session_20260812_195240.log). S1 not authorized. |
+| **S0d** | **Attributed** ([`200452`](../../captures/session_20260812_200452.log) §31m) | PLAYING/OVERDUB `usbdisp` is `usbnote` (98.7–99.9 %). `usbclk` / `usbcc` / `usbtrans` ruled out. S1 not authorized. |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |
