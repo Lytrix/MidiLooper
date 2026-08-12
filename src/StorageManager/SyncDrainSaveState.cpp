@@ -65,6 +65,7 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
 
     const bool completed = !hasPersistenceWorkPending();
     if (!completed) {
+        const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
         if (failureReason == SyncDrainFailureReason::Stuck) {
             Serial.printf(
                 "[StorageManager] ERROR: Persistence drain stuck after %u iterations "
@@ -73,6 +74,9 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
                 static_cast<unsigned>(drainBudget.maxStuckIterations),
                 static_cast<unsigned>(drainBudget.expectedSliceSteps),
                 static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+            SC_PERSIST_DRAIN_FAIL("stuck", steps, stuckIterations, progress.workQueueDepth,
+                                  progress.chunkQueueDepth, drainBudget.expectedSliceSteps,
+                                  drainBudget.estimatedSdPayloadBytes);
         } else {
             Serial.printf(
                 "[StorageManager] ERROR: Persistence drain exceeded slice budget after %u steps "
@@ -80,15 +84,26 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
                 static_cast<unsigned>(steps), static_cast<unsigned>(drainBudget.maxSliceSteps),
                 static_cast<unsigned>(drainBudget.expectedSliceSteps),
                 static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+            SC_PERSIST_DRAIN_FAIL("budget", steps, stuckIterations, progress.workQueueDepth,
+                                  progress.chunkQueueDepth, drainBudget.expectedSliceSteps,
+                                  drainBudget.estimatedSdPayloadBytes);
         }
         return false;
     }
     if (storageSession.currentWorkspaceSave.pending) {
         Serial.println("[StorageManager] ERROR: Persistence drain left flush pending");
+        const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
+        SC_PERSIST_DRAIN_FAIL("flush_pending", steps, stuckIterations, progress.workQueueDepth,
+                              progress.chunkQueueDepth, drainBudget.expectedSliceSteps,
+                              drainBudget.estimatedSdPayloadBytes);
         return false;
     }
     if (!storageSession.currentWorkspaceSave.lastCompletedOk) {
         Serial.println("[StorageManager] ERROR: Persistence drain failed");
+        const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
+        SC_PERSIST_DRAIN_FAIL("failed", steps, stuckIterations, progress.workQueueDepth,
+                              progress.chunkQueueDepth, drainBudget.expectedSliceSteps,
+                              drainBudget.estimatedSdPayloadBytes);
         return false;
     }
     Serial.println("[StorageManager] State saved successfully (v4).");

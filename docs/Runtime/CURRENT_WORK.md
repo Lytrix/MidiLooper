@@ -2,28 +2,35 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (archived overdub-pass-overlap-resolution)
+Last updated: 2026-08-12 (S0 device runs 141815/144323; capture Tier-A + pool-walk fixes shipped; re-run pending)
 
 ---
 
 ## Now implementing
 
-### Next — pick after merge
+### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing envelope
 
-Overdub overlap OpenSpec **archived**. Merge `feature/overdub-pass-overlap-resolution` → `dev` when ready. Then: Stage 5a-3 `pool_alloc` proof, HITL CLI Phase 3, or persistence overlay — confirm with user.
+**Architecture:** [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md)  
+**Scheduling admission:** [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md)  
+**S0 (shipped code):** `RuntimeTimingEnvelope` — Tier-A `DIAG,msi` / `midisvc` / `clk` / `tracks` / `clockrate` (5 s); observation only. Native `test_runtime_timing_envelope` PASS.  
+**S0 device runs:** [`141815`](../../captures/session_20260812_141815.log), [`144323`](../../captures/session_20260812_144323.log) — envelope lines lost across the whole capture pass; two root causes fixed (see §31a of the scheduling doc):
+- **RC-S0a** `isTierATextLine` skipped two commas, so Tier-A classification was inert and the ring evicted every DIAG window. Parse extracted to `CaptureLineTier::isTierALine` (`test_capture_line_tier` PASS); Tier-A may now only be displaced by Tier-A.
+- **RC-S0b** `MemoryMonitor::logStatus()` external-pool walk blocked the loop **593 ms** and lost external MIDI clock. Walk is now `setup()`-only (`logStatus(true)`); runtime reports `pool_size` (O(1)). Guide exemption removed.
 
-### Overdub pass overlap resolution — archived
+**Measured so far:** `midisvc` 173.2 ms at overdub stop vs `clk`/`tracks` 3.4 ms — MIDI service is itself a dominant path. Idle `msi` 33.8 ms avg / 109.4 ms worst. `clockrate` validated (48 pulses/s at 119.6 BPM).  
+**RC-C device:** [`115913`](../../captures/session_20260812_115913.log) — timing PASS; display D1–D2 FAIL.  
+**Regression:** [`122003`](../../captures/session_20260812_122003.log) — dual idle slice caused MIDI lag / clock lost (reverted).  
+**Now:** re-run ≈100-bar RECORD + 2 OVERDUB on the rebuilt firmware; confirm DIAG windows are continuous from arm through the second overdub stop. No admission until the envelope is complete and reviewed.
 
-**Archived:** [`openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/)  
-**Specs:** [`openspec/specs/overdub-pass-overlap-resolution/`](../../openspec/specs/overdub-pass-overlap-resolution/), deltas into `edit-session-action-geometry`, `timeline-passes`  
-**Plan (FROZEN):** [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](../Plans/long_overdub_wrap_duplicate_display_freeze_bugfix.md)  
-**PASS:** [`010000`](../../captures/session_20260812_010000.log); baseline [`183525`](../../captures/session_20260811_183525.log)
+### Long record onset display freeze — [`012342`](../../captures/session_20260812_012342.log)
 
-### Stage 5 — memory / persistence pressure (merged to `dev` via PR #29)
+**Plan:** [`long_record_onset_display_freeze_bugfix.md`](../Plans/long_record_onset_display_freeze_bugfix.md) — RC-A shipped; RC-C promoted via architecture doc above.  
+**Evidence:** fail [`012342`](../../captures/session_20260812_012342.log); interim PASS [`013747`](../../captures/session_20260812_013747.log).
 
-**5a-1/5a-2 (shipped on `dev`):** Critical reclaim during transport + authoritative append-deny CAP.  
-**5a-3:** `duplicate` class **closed** via overdub OpenSpec (not reclaim); **`pool_alloc` proof still open**.  
-**Display RC4–RC5 + live-record tick-0:** shipped on `dev` (PR #29).
+### Stage 5 — memory / persistence pressure
+
+**5a (closed):** 5a-1/5a-2 shipped; 5a-3 **`pool_alloc` proof abandoned** (2026-08-12).  
+**5b:** boot deferred save + clear gating — **parked**.
 
 ### Codebase consistency & maintainability — Phase 4 + LR complete
 

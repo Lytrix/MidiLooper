@@ -1,6 +1,6 @@
 # Stage 5a-3 — Critical reclaim verification
 
-**Status:** Partial — `duplicate` class **closed** via OpenSpec overdub overlap (not reclaim); `pool_alloc` / Critical reclaim chain still needs a pressure capture  
+**Status:** **Closed / abandoned** — `duplicate` class closed via OpenSpec G2; `pool_alloc` / Critical reclaim chain **not pursued** (2026-08-12 user decision — no `021117`-comparable pressure capture planned)  
 **Parent:** [`long_overdub_stage5_memory_persistence_bugfix.md`](long_overdub_stage5_memory_persistence_bugfix.md)  
 **Branch tip:** 5a-1/5a-2 on `dev` (PR #29); duplicate follow-up on `feature/overdub-pass-overlap-resolution`
 
@@ -70,7 +70,7 @@ Reclaim CAP works; transport-time reclaim with resource release observed at **No
 
 **Duplicate-class closeout (2026-08-12):** Archived OpenSpec [`2026-08-12-overdub-pass-overlap-resolution`](../../openspec/changes/archive/2026-08-12-overdub-pass-overlap-resolution/) (G2) — `overdubSourceView` + geometry hide/shorten; demote capture `isDuplicateCaptureEvent` under source view. Device PASS [`010000`](../../captures/session_20260812_010000.log); plan frozen [`long_overdub_wrap_duplicate_display_freeze_bugfix.md`](long_overdub_wrap_duplicate_display_freeze_bugfix.md). Specs: [`openspec/specs/overdub-pass-overlap-resolution/`](../../openspec/specs/overdub-pass-overlap-resolution/).
 
-**Still open for 5a-3:** separate capture proving Critical `pool_alloc` → reclaim recovery (`021117`-comparable workload).
+**Abandoned (2026-08-12):** `pool_alloc` → Critical reclaim chain — not proven or falsified under `021117`-comparable load. User closed verification; follow-on captures ([`012342`](../../captures/session_20260812_012342.log)) are display-freeze class, not chunk pressure. Shipped 5a-1/5a-2 fixes and authoritative deny CAP remain in tree without device proof of the reclaim recovery chain.
 
 ## Verification recipe (`021117` shape)
 
@@ -121,7 +121,7 @@ rg '\[Memory\].*loop_chunks=' "$SESSION"
 | 021117-comparable workload | 0 sustained append failures |
 | No timing regression | No sustained `DFRAME` stalls from reclaim |
 
-Closeout must state: chunk-pressure hypothesis **confirmed or falsified**.
+Closeout: chunk-pressure **`pool_alloc` hypothesis abandoned** (not confirmed or falsified). **`duplicate` hypothesis falsified** for `183525`. Authoritative deny CAP + Critical reclaim shipped without `021117`-comparable device proof.
 
 ## Failure classification
 

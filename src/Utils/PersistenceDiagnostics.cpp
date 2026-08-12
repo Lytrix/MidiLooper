@@ -40,22 +40,32 @@ uint32_t dirtySaveAgeMs() {
 }
 
 void emitDiagnosticLine(bool captureOrTransportActive, bool savePending, bool saveInProgress,
-                        bool sdIoActive) {
+                        bool sdIoActive, const BacklogSnapshot* backlog) {
   const uint16_t freeChunks = LoopEventStore::freeChunkCount();
   const uint16_t usedChunks = LoopEventStore::usedChunkCount();
   const uint16_t reserve = PassConfig::CHUNK_RESERVE;
   const uint16_t queueDepth = PersistenceQueue::queueDepth();
   const uint16_t writingChunks = PersistenceQueue::writingChunkCount();
-  const uint32_t backlog = queueDepth;
-  if (backlog > state.maxDeferredBacklog) {
-    state.maxDeferredBacklog = backlog;
+  const uint32_t backlogDepth = queueDepth;
+  if (backlogDepth > state.maxDeferredBacklog) {
+    state.maxDeferredBacklog = backlogDepth;
   }
+  const uint32_t dirtyAgeMs = dirtySaveAgeMs();
 
   DebugSessionCapture::persistenceDiagnostic(
       freeChunks, usedChunks, reserve, queueDepth, writingChunks, state.transportBlockCount,
       state.heapFloorBlockCount, state.budgetBlockCount, state.sliceDoneCount,
-      state.peakWriterLatencyUs, dirtySaveAgeMs(), state.maxDeferredBacklog,
+      state.peakWriterLatencyUs, dirtyAgeMs, state.maxDeferredBacklog,
       savePending ? 1U : 0U, saveInProgress ? 1U : 0U, captureOrTransportActive ? 1U : 0U);
+
+  if (backlog != nullptr) {
+    DebugSessionCapture::persistenceBacklog(
+        backlog->workQueueDepth, backlog->writingWorkItems, backlog->chunkQueueDepth, dirtyAgeMs,
+        backlog->estSliceSteps, backlog->estSdBytes, savePending ? 1U : 0U,
+        backlog->urgentRequested, state.transportBlockCount, state.budgetBlockCount,
+        state.heapFloorBlockCount);
+  }
+
   state.lastPeriodicEmitMs = millis();
 }
 
@@ -101,7 +111,7 @@ void maybeEmitPoolPressureWarning() {
 }
 
 void maybeEmitPeriodic(bool captureOrTransportActive, bool savePending, bool saveInProgress,
-                       bool sdIoActive) {
+                       bool sdIoActive, const BacklogSnapshot* backlog) {
   maybeEmitPoolPressureWarning();
 
   const bool hasDeferredWork = savePending || saveInProgress;
@@ -118,7 +128,7 @@ void maybeEmitPeriodic(bool captureOrTransportActive, bool savePending, bool sav
     return;
   }
 
-  emitDiagnosticLine(captureOrTransportActive, savePending, saveInProgress, sdIoActive);
+  emitDiagnosticLine(captureOrTransportActive, savePending, saveInProgress, sdIoActive, backlog);
 
   if (!hasDeferredWork) {
     state.dirtySaveRequestedAtMs = 0;

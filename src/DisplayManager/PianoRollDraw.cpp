@@ -503,16 +503,19 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     if (loopLength > 0) {
         const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
         const Loop& loop = track.getLoop(displaySlot);
-        // Overview minimap spans the full loop. Use fully built visualCache when clean;
-        // while dirty, `notes` carries the authoritative committed/capture span (not window
-        // filtered). Stale partial visualCache must not paint the minimap (170314).
+        const bool captureCritical = track.isRecording() || track.isOverdubbing();
+        // Overview: prefer clean visualCache. During capture, never fall back to a full
+        // session-sized `notes` scan when a bounded detailed window is available (RC-C B).
         const DisplayNoteVec& overviewDensityNotes =
-            (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) ? loop.visualCache.notes
-                                                                         : notes;
+            (!loop.visualCacheDirty && !loop.visualCache.notes.empty())
+                ? loop.visualCache.notes
+                : ((captureCritical && useBoundedWindow) ? *detailedNotes : notes);
 
         int minPitch = 127;
         int maxPitch = 0;
-        for (const auto& n : notes) {
+        const DisplayNoteVec& pitchScanNotes =
+            (captureCritical && useBoundedWindow) ? *detailedNotes : notes;
+        for (const auto& n : pitchScanNotes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
         }

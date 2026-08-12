@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Utils/CaptureLineTier.h"
 #include "Utils/DiagnosticsTypes.h"
 
 #if defined(__IMXRT1062__)
@@ -60,36 +61,7 @@ bool readHeaderAt(size_t index, CaptureRecordHeader& headerOut);
 void readBytesAt(size_t index, void* dest, size_t len);
 
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
-  if (line == nullptr || strncmp(line, "#CAP,", 5) != 0) {
-    return false;
-  }
-  const char* tagStart = strchr(line + 5, ',');
-  if (tagStart == nullptr) {
-    return false;
-  }
-  tagStart = strchr(tagStart + 1, ',');
-  if (tagStart == nullptr) {
-    return false;
-  }
-  tagStart++;
-  return strncmp(tagStart, "ST,", 3) == 0 || strncmp(tagStart, "PERS,", 5) == 0 ||
-         strncmp(tagStart, "RECS,", 5) == 0 || strncmp(tagStart, "HDR,", 4) == 0;
-}
-
-SC_MEM_ATTR bool isTierCTextLine(const char* line) {
-  if (line == nullptr || strncmp(line, "#CAP,", 5) != 0) {
-    return false;
-  }
-  const char* tagStart = strchr(line + 5, ',');
-  if (tagStart == nullptr) {
-    return false;
-  }
-  tagStart = strchr(tagStart + 1, ',');
-  if (tagStart == nullptr) {
-    return false;
-  }
-  tagStart++;
-  return strncmp(tagStart, "MO,", 3) == 0 || strncmp(tagStart, "MI,", 3) == 0;
+  return CaptureLineTier::isTierALine(line);
 }
 
 SC_MEM_ATTR bool captureRingPressureHigh() {
@@ -107,7 +79,9 @@ SC_MEM_ATTR bool headRecordIsTierAText() {
   if (header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0) {
     return false;
   }
-  char line[32] = {};
+  // Must hold "#CAP,<micros>,DIAG,clockrate," — the longest Tier-A prefix — for a
+  // micros field that keeps growing over a long session.
+  char line[48] = {};
   const size_t copyLen = static_cast<size_t>(header.payloadLen) < sizeof(line) - 1
                              ? static_cast<size_t>(header.payloadLen)
                              : sizeof(line) - 1;
@@ -251,10 +225,15 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
       payloadLen,
   };
   const size_t total = recordTotalBytes(header);
-  const bool incomingTierC =
-      type == CaptureRecordType::Text && isTierCTextLine(static_cast<const char*>(payload));
+  // Tier-A may only be displaced by Tier-A. Under a timing-critical flush budget the
+  // drop-only path in flushCaptureBuffer leaves Tier-A at the head untransmitted, so
+  // eviction here was the only way it could leave the ring: 141815 lost every DIAG envelope
+  // window between 21.9s and 318.6s to Tier-B/C appends across a ~296s record/overdub pass.
+  // Allowing Tier-A to evict Tier-A keeps the newest windows and cannot wedge the ring.
+  const bool incomingTierA =
+      type == CaptureRecordType::Text && isTierATextLine(static_cast<const char*>(payload));
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
-    if (incomingTierC && headRecordIsTierAText()) {
+    if (!incomingTierA && headRecordIsTierAText()) {
       return false;
     }
     const size_t usedBefore = sCaptureRing.used;
@@ -470,6 +449,16 @@ SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros) {
                 (unsigned long)maxMicros);
 }
 
+SC_MEM_ATTR void runtimeTimingEnvelope(const char* tag, uint32_t maxUs, uint32_t overCount) {
+  emitCapPrintf("#CAP,%lu,DIAG,%s,%lu,%lu\r\n", (unsigned long)micros(), tag,
+                (unsigned long)maxUs, (unsigned long)overCount);
+}
+
+SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond) {
+  emitCapPrintf("#CAP,%lu,DIAG,clockrate,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)pulsesPerSecond);
+}
+
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
@@ -513,6 +502,30 @@ SC_MEM_ATTR void persistencePoolPressure(uint16_t freeChunks, uint16_t reserve,
                                          uint16_t usedChunks) {
   emitCapPrintf("#CAP,%lu,PERS,pressure,%u,%u,%u\r\n", (unsigned long)micros(), freeChunks,
                 reserve, usedChunks);
+}
+
+SC_MEM_ATTR void persistenceBacklog(uint16_t workQueueDepth, uint16_t writingWorkItems,
+                                  uint16_t chunkQueueDepth, uint32_t dirtyAgeMs,
+                                  uint32_t estSliceSteps, uint32_t estSdBytes,
+                                  uint8_t savePending, uint8_t urgentRequested,
+                                  uint32_t transportBlockCount, uint32_t budgetBlockCount,
+                                  uint32_t heapFloorBlockCount) {
+  emitCapPrintf(
+      "#CAP,%lu,PERS,backlog,%u,%u,%u,%lu,%lu,%lu,%u,%u,%lu,%lu,%lu\r\n",
+      (unsigned long)micros(), workQueueDepth, writingWorkItems, chunkQueueDepth,
+      (unsigned long)dirtyAgeMs, (unsigned long)estSliceSteps, (unsigned long)estSdBytes,
+      savePending, urgentRequested, (unsigned long)transportBlockCount,
+      (unsigned long)budgetBlockCount, (unsigned long)heapFloorBlockCount);
+}
+
+SC_MEM_ATTR void persistenceDrainFailed(const char* reason, uint32_t steps,
+                                          uint32_t stuckIterations, uint16_t workQueueDepth,
+                                          uint16_t chunkQueueDepth, uint32_t estSliceSteps,
+                                          uint32_t estSdBytes) {
+  emitCapPrintf(
+      "#CAP,%lu,PERS,drain,%s,%lu,%lu,%u,%u,%lu,%lu\r\n", (unsigned long)micros(), reason,
+      (unsigned long)steps, (unsigned long)stuckIterations, workQueueDepth, chunkQueueDepth,
+      (unsigned long)estSliceSteps, (unsigned long)estSdBytes);
 }
 
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep) {

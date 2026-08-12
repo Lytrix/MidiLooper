@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "LooperState.h"
 #include "StorageManager.h"
+#include "Utils/RuntimeTimingEnvelope.h"
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
@@ -90,6 +91,7 @@ void TrackManager::advanceJamTicks(uint32_t delta) {
 }
 
 void TrackManager::updateAllTracks(uint32_t currentTick) {
+  const uint32_t tracksStartUs = micros();
   handlePendingRecordStart(currentTick);
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
@@ -245,4 +247,5 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       }
     }
   }
+  RuntimeTimingEnvelope::noteTracksUpdate(micros() - tracksStartUs);
 }

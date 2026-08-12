@@ -89,6 +89,10 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
+/** S0 timing envelope: DIAG,{msi|midisvc|clk|tracks},<maxUs>,<overCount> (Tier-A). */
+SC_MEM_ATTR void runtimeTimingEnvelope(const char* tag, uint32_t maxUs, uint32_t overCount);
+/** S0 timing envelope: DIAG,clockrate,<pulsesPerSecond> (Tier-A). */
+SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks, uint16_t reserve,
@@ -100,6 +104,16 @@ SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks,
                                        uint8_t saveInProgress, uint8_t captureActive);
 SC_MEM_ATTR void persistencePoolPressure(uint16_t freeChunks, uint16_t reserve,
                                          uint16_t usedChunks);
+SC_MEM_ATTR void persistenceBacklog(uint16_t workQueueDepth, uint16_t writingWorkItems,
+                                    uint16_t chunkQueueDepth, uint32_t dirtyAgeMs,
+                                    uint32_t estSliceSteps, uint32_t estSdBytes,
+                                    uint8_t savePending, uint8_t urgentRequested,
+                                    uint32_t transportBlockCount, uint32_t budgetBlockCount,
+                                    uint32_t heapFloorBlockCount);
+SC_MEM_ATTR void persistenceDrainFailed(const char* reason, uint32_t steps,
+                                          uint32_t stuckIterations, uint16_t workQueueDepth,
+                                          uint16_t chunkQueueDepth, uint32_t estSliceSteps,
+                                          uint32_t estSdBytes);
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep);
 SC_MEM_ATTR void loadSaveMode(uint8_t active);
 SC_MEM_ATTR void overlayListSelection(uint8_t mode, uint8_t row);
@@ -169,6 +183,13 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                              inProg, captureActive)
 #define SC_PERSIST_PRESSURE(freeChunks, reserve, usedChunks) \
   DebugSessionCapture::persistencePoolPressure(freeChunks, reserve, usedChunks)
+#define SC_PERSIST_BACKLOG(workQ, writingItems, chunkQ, dirtyAgeMs, estSteps, estBytes, pending, \
+                           urgent, transportBlk, budgetBlk, heapBlk) \
+  DebugSessionCapture::persistenceBacklog(workQ, writingItems, chunkQ, dirtyAgeMs, estSteps, estBytes, \
+                                          pending, urgent, transportBlk, budgetBlk, heapBlk)
+#define SC_PERSIST_DRAIN_FAIL(reason, steps, stuckIter, workQ, chunkQ, estSteps, estBytes) \
+  DebugSessionCapture::persistenceDrainFailed(reason, steps, stuckIter, workQ, chunkQ, estSteps, \
+                                              estBytes)
 #define SC_SAVE(phase, rotateStep)         DebugSessionCapture::saveDisplayPhase(phase, rotateStep)
 #define SC_LOADSAVE(active)                DebugSessionCapture::loadSaveMode(active)
 #define SC_OVERLAY_SEL(mode, row)          DebugSessionCapture::overlayListSelection(mode, row)
@@ -241,6 +262,10 @@ inline void restartCaptureBootGrace() {}
                         inProg, captureActive) \
   ((void)0)
 #define SC_PERSIST_PRESSURE(freeChunks, reserve, usedChunks) ((void)0)
+#define SC_PERSIST_BACKLOG(workQ, writingItems, chunkQ, dirtyAgeMs, estSteps, estBytes, pending, \
+                           urgent, transportBlk, budgetBlk, heapBlk) \
+  ((void)0)
+#define SC_PERSIST_DRAIN_FAIL(reason, steps, stuckIter, workQ, chunkQ, estSteps, estBytes) ((void)0)
 #define SC_SAVE(phase, rotateStep)         ((void)0)
 #define SC_LOADSAVE(active)                ((void)0)
 #define SC_OVERLAY_SEL(mode, row)          ((void)0)
