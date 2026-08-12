@@ -1,6 +1,6 @@
 # Overdub note-off cost (S0e follow-through)
 
-**Status:** Active — RC-K1 / RC-K2 / RC-K3 firmware shipped; device re-measure pending  
+**Status:** RC-K1 / RC-K2 / RC-K3 / RC-L1 verified on device ([`225803`](../../captures/session_20260812_225803.log))  
 **Date:** 2026-08-12  
 **Parent:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §31n / §31o  
 **Evidence (before):** [`session_20260812_204221.log`](../../captures/session_20260812_204221.log)  
@@ -125,13 +125,41 @@ Durable rule: [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_A
 
 **Tests:** `pio test -e native` 1046/1046. `teensy41-capture-serial` RAM1 free 8160 B (unchanged).
 
+### Device re-measure — [`225803`](../../captures/session_20260812_225803.log)
+
+Four overdubs on a restored ~64-bar loop (`loop_events` 2639 → 2949, visual cache 1319 → 1446 notes, 8 slots restored at boot). `begin_capture` no longer grows with pass count:
+
+| Pass | `begin_capture` | `manager_done` | first `MI,U` after PLAYING→OVERDUBBING |
+|------|-----------------|----------------|----------------------------------------|
+| 1 | 76723 | 97951 | **107.8 ms** |
+| 2 | 80213 | 101622 | 111.6 ms |
+| 3 | 78646 | 100224 | 164.7 ms |
+| 4 | 82933 | 104498 | 242.1 ms |
+
+Versus [`223033`](../../captures/session_20260812_223033.log): 1.378 s `begin_capture` / 1.76 s first note on the 90-bar restore, and 58 → 410 ms on one 65-bar loop as passes accumulated.
+
+| Probe | S0e [`204221`](../../captures/session_20260812_204221.log) | After K1–K3 [`223033`](../../captures/session_20260812_223033.log) | After L1 [`225803`](../../captures/session_20260812_225803.log) |
+|-------|--------|--------|--------|
+| `noterecon` | 176625 | **0** | **0** |
+| `notepair` | 97855 | 3616 | **1089** |
+| `notechg` | 274409 | 3626 | **1092** |
+| `usbnote` | ≈ `notechg` | 3886 | **1201** |
+| `noteappend` | 59 | 83–558 | 47–272 |
+| overdub `msi` | — | 1399875 | **157472** (entry windows 99–130 ms) |
+| overdub `midisvc` | — | (entry blocked) | **4–14 ms** |
+| `clockrate` during OVERDUB | — | collapsed on the 1.38 s entry | **47–48** |
+| BPM in 1.5 s after entry | 110 → 31.9 | — | min **102–103**, recovered ~119 |
+| `RING,overflow` | 13 | 20 | **8** |
+
+Boot visual-cache of 1430 notes reached `slice_clean` at 6.597 s (was 1.38 s reconstruct hang under RC-K1 set). Display during overdub 60–89 fps.
+
+The remaining ~80 ms `begin_capture` is the synchronous gather+reconstruct floor, not the per-span pool walk.
+
 ---
 
 ## Still open
 
-- **Overdub entry is synchronous.** Even with RC-L1, `establishOverdubSourceView` runs a full `gatherCommittedEvents` plus reconstruct inside `startOverdubbing` — gather alone measured 35–119 ms in [`204221`](../../captures/session_20260812_204221.log). Deferring or slicing it changes when `overdubSourceViewNotes_` becomes valid relative to the first note-off of the pass: a state-transition change, so design session before any patch. Not admission S1.
-- **Overdub stop.** [`223033`](../../captures/session_20260812_223033.log) at 535.392 s: next window `midisvc` 2.16 s (`usbdisp` 2.16 s), `clockrate` 47 → 31 → 0. Separate from entry, uninvestigated.
-- **RC-J** — final stop `clockrate` 12. Unchanged, still behind S0b.
-- **RC-S0c** — 20 `RING,overflow` in `223033`; some `ODUB,stage` lines were dropped.
-
-**Device re-measure after RC-L1:** `begin_capture` on a grown loop must not scale with session history; target is the gather term alone.
+- **Overdub entry is synchronous.** `establishOverdubSourceView` still runs `gatherCommittedEvents` plus reconstruct inside `startOverdubbing`. [`225803`](../../captures/session_20260812_225803.log) measures that floor at 77–83 ms. Deferring or slicing it changes when `overdubSourceViewNotes_` becomes valid relative to the first note-off of the pass: a state-transition change, so design session before any patch. Not admission S1.
+- **Overdub / final stop.** [`225803`](../../captures/session_20260812_225803.log) at 345.611 s: `midisvc` 132393 (`usbdisp` 132387), `clockrate` 47 → 11 → 0. Same class as [`223033`](../../captures/session_20260812_223033.log) 2.16 s stop `midisvc`. RC-J, behind S0b.
+- **Boot `msi` 748 ms at 10.146 s.** Visual-cache `stale_all` storm after the 1430-note `slice_clean`. Not overdub entry; not RC-L1. Uninvestigated.
+- **RC-S0c** — 8 `RING,overflow` in `225803` (was 20 in `223033`). Envelope windows are present through all four overdubs.
