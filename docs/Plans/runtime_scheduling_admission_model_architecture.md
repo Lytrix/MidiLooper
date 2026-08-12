@@ -1060,6 +1060,81 @@ Independent of the adopt, `processDeferredIdleMaintenance` limits the PLAYING/OV
 
 ---
 
+## 31g-3. Run [`165636`](../../captures/session_20260812_165636.log) — RC-E verified; two display defects isolated
+
+Transitions: `RECORDING → STOPPED_RECORDING` 235.22 s · `→ PLAYING` 235.54 s · `→ OVERDUBBING` 236.90 s · `→ PLAYING` 271.57 s · `→ OVERDUBBING` 274.53 s · `→ PLAYING` 287.27 s · `→ STOPPED` 290.41 s. Loop is 81 bars.
+
+### RC-E fix confirmed
+
+| Moment | `VCACHE` | Notes | Bars | Dirty |
+|---|---|---|---|---|
+| Overdub 1 stop, 271.571 s | `adopt_partial` | 359 | 0–18 | 62 of 81 dirty |
+| 575 ms later, 272.146 s | `slice_clean` | **1 352** | 0–80 | clean |
+| Overdub 2 stop, 287.273 s | `adopt_partial` | 327 | 12–28 | 64 of 81 dirty |
+| 601 ms later, 287.874 s | `slice_clean` | **1 417** | 0–80 | clean |
+
+The adopt now reports the partial coverage it actually has, and idle slices backfill the whole loop in about 0.6 s. The permanent starvation is gone.
+
+### RC-F — committed notes drain out of the piano roll during overdub
+
+`wNotes` in the `DISP` line is `filterDisplayNotesToWindow(frameNotes, …)`, the same filter the detailed pane draws, so it is exactly the painted note count. Across the second overdub:
+
+| Time | Paint window start | Committed painted (`wNotes`) | Capture painted (`frame − wNotes`) |
+|---|---|---|---|
+| 274.628 s | 9 080 | 295 | 0 |
+| 280.098 s | 11 200 | 270 | 36 |
+| 282.767 s | 12 224 | 248 | 66 |
+| 287.275 s | 13 920 | **213** | 114 |
+
+The overdub notes are being added correctly. What decays is the **committed** layer: as the paint window advances, fewer of the frozen committed notes fall inside it, so the previously recorded pass fades out of the roll.
+
+The committed layer is only rebuilt when `committedWindowStale` fires, and that predicate requires `loop.visualCacheDirty`:
+
+```cpp
+const bool committedWindowStale =
+    track.isOverdubbing() && havePaintWindow && loop.visualCacheDirty &&
+    liveWindowGatherValid_ && !paintWindowInsideGather(...);
+```
+
+After the RC-E fix the cache goes **clean** during overdub, and the clean-cache overdub branch of `rebuildCommittedLayer` additionally sets `liveWindowGatherValid_ = false`. Both conditions now fail permanently, so the committed prefix stays pinned to the window position of the last rebuild while the paint window keeps sliding.
+
+**This is a latent defect unmasked by the RC-E fix** — the previously permanent dirty cache was the only thing keeping the predicate alive.
+
+**Not patched.** The obvious change — drop the `visualCacheDirty` term and record the filtered window — makes the predicate fire on nearly every frame, because the recorded gather would equal the paint window and auto-follow moves it continuously. `filterDisplayNotesByWindowInclusion` over ~1 400 cached notes measured 4 595 µs in §31f, so that would put a ~4.6 ms filter on every overdub frame. Sizing a gather window wider than the paint window is the real fix and is a budget decision, not a mechanical patch.
+
+### RC-G — the overview strip is fed only the detailed window during RECORD
+
+`PianoRollDraw` chooses the overview density source as:
+
+```cpp
+const DisplayNoteVec& overviewDensityNotes =
+    (!loop.visualCacheDirty && !loop.visualCache.notes.empty())
+        ? loop.visualCache.notes
+        : ((captureCritical && useBoundedWindow) ? *detailedNotes : notes);
+```
+
+On a first record there are no committed passes, so `visualCache` is empty (`DISP` reports `visual=0` for the whole record) and `captureCritical && useBoundedWindow` is true. The overview therefore renders `*detailedNotes` — **only the current 16-bar window**. Everything outside the moving window is blank, which is the reported gap.
+
+During overdub the first branch applies (`visual` 1 296–1 417, clean), so the overview shows the whole loop. That is exactly the reported difference between record and overdub.
+
+The frame itself is complete during record — at 227.643 s `frame=1238` against `loopLen=59408` — so this is purely the overview source choice, not missing data.
+
+**Not patched.** Feeding `notes` to the overview restores the display but reintroduces the O(record-length) per-frame scan that RC-C B removed, and that grows without bound on long records. A density histogram over the strip's ~256 columns is the bounded answer.
+
+### Remaining findings — status against this run
+
+**S0b is still the dominant path, and clock dispatch is now fully accounted for.** During PLAYING/OVERDUB, `midisvc` runs **82.7–128.9 ms** while `clk` stays at 3.7–9.8 ms. Notably `clk` and `tracks` are near-identical in every window (4 030/3 999, 4 114/4 084, 9 840/9 829), so clock dispatch is almost entirely `updateAllTracks` and is already attributed. That leaves **79–125 ms per call unattributed inside `handleMidiInput`** — unchanged in character from §31f, and still the only open question on the dominant path.
+
+**RECORD remains clean and grows slowly.** `midisvc` 585 → 831 µs across 66 s of recording, `clk` 159–176 µs, `tracks` 143–156 µs, `msi` 17.8–22.7 ms. Consistent with §31f.
+
+**The post-stop stall reproduces.** At 292.127 s `msi` is 131.5 ms with `midisvc` 3.2 ms and `clockrate` falling to 31; at 297.142 s `midisvc` is 131.1 ms with `clk` 0 and `clockrate` 0. Same signature as the 140 ms stall in §31f, still uninvestigated.
+
+**New: a 324 ms record-stop block.** The 237.101 s window reports `msi` **323 851 µs** against `midisvc` 9 883 µs, so roughly 314 ms of that interval is outside MIDI service entirely. This sits on the record-stop commit and deferred-save path and is larger than anything measured during capture.
+
+**RC-S0c is not resolved.** `DIAG` windows run 6.7 → 71.8 s and then jump to 166.9 s — a 95 s hole during RECORD, the same class of gap as the pre-177 s hole in [`145555`](../../captures/session_20260812_145555.log). `RING,overflow` still appears 3 times. The Tier-A transmit allowance is still owed.
+
+---
+
 ### Display during overdub — the §31d bailout, unchanged
 
 `DIAG,timing_max,DisplayResolveLiveCapture` reads **33 595 µs** at 316.7 s and **33 844 µs** at 321.8 s, both inside the second overdub, against the 5 000 µs budget. At 6.8× over, `reuseLastValidFrame` holds the previous frame and both `replaceCaptureLayer` and the playhead tails are skipped, so notes being played into the overdub are not composed into the frame. This is the behaviour described in §31d and it is worse in the second pass because the committed layer is larger.
