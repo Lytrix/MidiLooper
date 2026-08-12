@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (S0 device runs 141815/144323; capture Tier-A + pool-walk fixes shipped; re-run pending)
+Last updated: 2026-08-12 (S0b next; baseline session_20260812_191356; RC-I 752273d)
 
 ---
 
 ## Current branch
 
-**Active work:** S0 timing-envelope telemetry — [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md) §26; parent [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md); evidence [`115913`](../../captures/session_20260812_115913.log), [`122003`](../../captures/session_20260812_122003.log).
+**Active work:** **S0b** — segment `MidiHandler::handleMidiInput` (observation only). Architecture [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md) §31c + §31h. Baseline [`191356`](../../captures/session_20260812_191356.log) on `752273d`. Parent [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md). Do not start S1 / admission / RC-J.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
