@@ -160,9 +160,12 @@ void DisplayManager::update() {
 #endif
     HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
     DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
-    if (editManager.isNoteEditActive()) {
-        editManager.markNoteEditDisplayPainted();
-    }
+    // Acknowledge unconditionally: invalidateLiveDisplayCache raises the paint request with no
+    // note-edit precondition, so gating the ack on isNoteEditActive left it permanently raised
+    // outside a session. maybeUpdateDisplayForNoteEditSelection has no cadence gate, so the OLED
+    // then repainted every loop iteration — 152948 measured a 14 ms frame period against the
+    // 30 ms interval, ~93% of loop time here, from boot onward.
+    editManager.markNoteEditDisplayPainted();
 }
 
 #if defined(SESSION_CAPTURE)
