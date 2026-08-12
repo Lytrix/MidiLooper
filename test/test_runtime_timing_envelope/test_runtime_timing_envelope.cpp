@@ -45,6 +45,38 @@ void test_clock_and_tracks_accumulate_independently() {
   TEST_ASSERT_EQUAL_UINT32(2, snap.clockPulses);
 }
 
+void test_usb_device_subsegments_accumulate_independently() {
+  RuntimeTimingEnvelope::noteUsbDeviceRead(40);
+  RuntimeTimingEnvelope::noteUsbDeviceRead(80);
+  RuntimeTimingEnvelope::noteUsbDeviceDispatch(154000);
+  RuntimeTimingEnvelope::noteUsbDeviceDispatch(108000);
+
+  const auto snap = RuntimeTimingEnvelope::peek();
+  TEST_ASSERT_EQUAL_UINT32(80, snap.usbreadMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.usbreadOverCount);
+  TEST_ASSERT_EQUAL_UINT32(154000, snap.usbdispMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.usbdispOverCount);
+}
+
+void test_usb_device_nested_sums_commit_as_one_sample() {
+  RuntimeTimingEnvelope::beginUsbDeviceNested();
+  RuntimeTimingEnvelope::addUsbDeviceCapture(100);
+  RuntimeTimingEnvelope::addUsbDeviceCapture(200);
+  RuntimeTimingEnvelope::addUsbDeviceThru(50);
+  RuntimeTimingEnvelope::addUsbDeviceThru(60);
+  RuntimeTimingEnvelope::commitUsbDeviceNested();
+
+  RuntimeTimingEnvelope::beginUsbDeviceNested();
+  RuntimeTimingEnvelope::addUsbDeviceCapture(10000);
+  RuntimeTimingEnvelope::commitUsbDeviceNested();
+
+  const auto snap = RuntimeTimingEnvelope::peek();
+  TEST_ASSERT_EQUAL_UINT32(10000, snap.usbcapMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbcapOverCount);
+  TEST_ASSERT_EQUAL_UINT32(110, snap.usbthruMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.usbthruOverCount);
+}
+
 void test_midi_service_drains_accumulate_independently() {
   RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
   RuntimeTimingEnvelope::noteUsbDeviceDrain(110000);
@@ -69,10 +101,12 @@ void test_midi_service_drains_accumulate_independently() {
 void test_maybe_emit_rate_limits_and_resets_window() {
   RuntimeTimingEnvelope::noteClockDispatch(9000);
   RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
+  RuntimeTimingEnvelope::noteUsbDeviceDispatch(154000);
   TEST_ASSERT_FALSE(RuntimeTimingEnvelope::maybeEmit(1000));  // first call arms window
 
   RuntimeTimingEnvelope::noteClockDispatch(9000);
   RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
+  RuntimeTimingEnvelope::noteUsbDeviceDispatch(154000);
   TEST_ASSERT_FALSE(
       RuntimeTimingEnvelope::maybeEmit(1000 + RuntimeTimingEnvelope::kEmitIntervalUs - 1));
 
@@ -85,6 +119,10 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.dinMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.hosttaskMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.hostdrainMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbreadMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbdispMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbcapMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbthruMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
 }
 
@@ -101,6 +139,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_observational_over_count_uses_soft_ceiling);
   RUN_TEST(test_clock_and_tracks_accumulate_independently);
   RUN_TEST(test_midi_service_drains_accumulate_independently);
+  RUN_TEST(test_usb_device_subsegments_accumulate_independently);
+  RUN_TEST(test_usb_device_nested_sums_commit_as_one_sample);
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
   RUN_TEST(test_emit_interval_constant);
   return UNITY_END();
