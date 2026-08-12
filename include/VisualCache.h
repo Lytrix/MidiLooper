@@ -73,6 +73,52 @@ struct VisualCache {
   }
 };
 
+/// Adopt a composed display window into visualCache without claiming the whole loop is built.
+/// Bars touched by adopted notes are marked clean; every other bar stays dirty until idle slices
+/// backfill. visualCacheDirty stays true while any bar remains dirty (RC-E / session_162230).
+template <typename NoteVec>
+inline void adoptPartialVisualCacheNotes(VisualCache& cache, bool& visualCacheDirty,
+                                         const NoteVec& notes, uint32_t loopLengthTicks,
+                                         uint32_t ticksPerBar) {
+  cache.setNotes(notes);
+  ++cache.revision;
+
+  if (loopLengthTicks == 0 || ticksPerBar == 0) {
+    cache.dirtyBars.clear();
+    visualCacheDirty = !notes.empty();
+    return;
+  }
+
+  const uint32_t totalBars = (loopLengthTicks + ticksPerBar - 1) / ticksPerBar;
+  if (totalBars == 0) {
+    cache.dirtyBars.clear();
+    visualCacheDirty = false;
+    return;
+  }
+
+  cache.dirtyBars.assign(totalBars, 1);
+  for (const NoteUtils::DisplayNote& note : notes) {
+    const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
+    const uint32_t startBar = visualBarForTick(note.startTick, ticksPerBar);
+    const uint32_t endBar = visualBarForTick(endTick, ticksPerBar);
+    if (startBar >= totalBars) {
+      continue;
+    }
+    const uint32_t cappedEnd = endBar < totalBars ? endBar : totalBars - 1;
+    for (uint32_t bar = startBar; bar <= cappedEnd; ++bar) {
+      cache.dirtyBars[bar] = 0;
+    }
+  }
+
+  visualCacheDirty = false;
+  for (uint8_t flag : cache.dirtyBars) {
+    if (flag != 0) {
+      visualCacheDirty = true;
+      break;
+    }
+  }
+}
+
 struct CapturePreview {
   uint32_t revision = 0;
   uint32_t replacementRevision = 0;

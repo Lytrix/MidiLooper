@@ -1052,7 +1052,11 @@ None of the four `VCACHE` probes fired on the adopt. It writes `loop.visualCache
 
 ### Secondary: refill is unreachable beyond ±20 bars while the transport runs
 
-Independent of the adopt, `processDeferredIdleMaintenance` limits the PLAYING/OVERDUBBING slice to `kPlayingVisualCacheNeighborhoodBars = kMaxDetailedWindowBars + 4 = 20` bars from the priority bar, alternating between playhead and loop tail. On this 84-bar loop with the playhead at bar 15 that reaches bars 0–35 and 63–83, leaving **bars 36–62 unreachable** while playing. The dead zone widens with loop length. This does not cause the collapse, but it would slow recovery from one even after the dirty flag is fixed.
+Independent of the adopt, `processDeferredIdleMaintenance` limits the PLAYING/OVERDUBBING slice to `kPlayingVisualCacheNeighborhoodBars = kMaxDetailedWindowBars + 4 = 20` bars from the priority bar, alternating between playhead and loop tail. On this 84-bar loop with the playhead at bar 15 that reaches bars 0–35 and 63–83, leaving **bars 36–62 unreachable** while playing. The dead zone widens with loop length. **Shipped with RC-E fix:** neighborhood cap is dropped when the cache is in a mixed clean/dirty state so idle slices can reach any dirty bar.
+
+### Fix shipped (RC-E)
+
+`refreshViewportAfterOverdubStop` now calls `Loop::adoptComposedDisplayNotesFromViewport`, which copies the composed frame, marks bars touched by adopted notes clean and every other bar dirty, leaves `visualCacheDirty = true` while any bar remains dirty, and emits `VCACHE,adopt_partial`. Native tests: `test_adopt_partial_visual_cache_*` in `test_display_window_utils`. Device verify: re-run record → overdub → overdub → stop; expect `VCACHE,adopt_partial` with `dirty,1` and `visual` growing via `slice_clean` while PLAYING/STOPPED.
 
 ---
 

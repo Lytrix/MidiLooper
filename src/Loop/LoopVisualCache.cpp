@@ -153,6 +153,12 @@ LOOP_COLD_MEM void Loop::emitVisualCacheState(const char* phase, int32_t gathere
             visualCacheDirty ? 1 : 0);
 }
 
+void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
+  adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
+                               Config::TICKS_PER_BAR);
+  emitVisualCacheState("adopt_partial", -1);
+}
+
 LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
                                                      uint32_t maxBarDistanceFromPriority) {
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {

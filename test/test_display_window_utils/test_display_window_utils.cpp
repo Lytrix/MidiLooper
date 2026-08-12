@@ -268,6 +268,53 @@ void test_format_loop_length_bars_info_strip() {
   TEST_ASSERT_EQUAL_STRING(" --", lenStr);
 }
 
+void test_adopt_partial_visual_cache_marks_uncovered_bars_dirty() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 84u * bar;
+  VisualCache cache;
+  bool visualCacheDirty = false;
+
+  NoteUtils::DisplayNote note{};
+  note.startTick = 20u * bar;
+  note.endTick = 35u * bar + (bar - 1);
+  std::vector<NoteUtils::DisplayNote> adopted = {note};
+
+  adoptPartialVisualCacheNotes(cache, visualCacheDirty, adopted, loopLength, bar);
+
+  TEST_ASSERT_EQUAL_UINT32(1u, cache.notes.size());
+  TEST_ASSERT_EQUAL_UINT32(84u, cache.dirtyBars.size());
+  TEST_ASSERT_TRUE(visualCacheDirty);
+  for (uint32_t b = 0; b < 20; ++b) {
+    TEST_ASSERT_EQUAL_UINT8(1, cache.dirtyBars[b]);
+  }
+  for (uint32_t b = 20; b <= 35; ++b) {
+    TEST_ASSERT_EQUAL_UINT8(0, cache.dirtyBars[b]);
+  }
+  for (uint32_t b = 36; b < 84; ++b) {
+    TEST_ASSERT_EQUAL_UINT8(1, cache.dirtyBars[b]);
+  }
+}
+
+void test_adopt_partial_visual_cache_clears_dirty_when_loop_fits_window() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 8u * bar;
+  VisualCache cache;
+  bool visualCacheDirty = true;
+
+  NoteUtils::DisplayNote note{};
+  note.startTick = 0;
+  note.endTick = loopLength - 1;
+  std::vector<NoteUtils::DisplayNote> adopted = {note};
+
+  adoptPartialVisualCacheNotes(cache, visualCacheDirty, adopted, loopLength, bar);
+
+  TEST_ASSERT_FALSE(visualCacheDirty);
+  TEST_ASSERT_EQUAL_UINT32(8u, cache.dirtyBars.size());
+  for (uint8_t flag : cache.dirtyBars) {
+    TEST_ASSERT_EQUAL_UINT8(0, flag);
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -289,6 +336,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_requires_fully_built);
+  RUN_TEST(test_adopt_partial_visual_cache_marks_uncovered_bars_dirty);
+  RUN_TEST(test_adopt_partial_visual_cache_clears_dirty_when_loop_fits_window);
   RUN_TEST(test_format_loop_length_bars_info_strip);
   return UNITY_END();
 }

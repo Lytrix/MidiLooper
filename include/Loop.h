@@ -184,6 +184,8 @@ struct Loop {
                                    uint32_t maxBarDistanceFromPriority = UINT32_MAX);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
+  /// RC-E: adopt overdub-stop composed frame as a partial visual cache (window fresh, rest dirty).
+  void adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes);
   /// Note + visual caches only — does not disturb playback order or materialized pass view.
   void invalidateDisplayCaches();
   void shiftActiveCapturePassTicks(int64_t delta);
