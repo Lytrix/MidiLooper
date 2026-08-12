@@ -49,6 +49,8 @@ constexpr const char* kCounterNames[] = {
     "CacheInvalidateScoped",
     "AllocatorFailure",
     "SessionUndoPush",
+    "DisplayCommittedWindowFilter",
+    "DisplayCommittedFullAssign",
 };
 
 constexpr const char* kTimingNames[] = {
@@ -59,7 +61,17 @@ constexpr const char* kTimingNames[] = {
     "DisplayCaptureComposeTime",
     "DisplayCaptureTailsTime",
     "DisplayUpdateTotalTime",
+    "DisplayCommittedRebuildTime",
+    "DisplayCaptureReplaceTime",
+    "DisplayCaptureSyncTime",
 };
+
+static_assert(sizeof(kCounterNames) / sizeof(kCounterNames[0]) ==
+                  static_cast<size_t>(Counter::Count),
+              "kCounterNames must stay index-parallel with Counter");
+static_assert(sizeof(kTimingNames) / sizeof(kTimingNames[0]) ==
+                  static_cast<size_t>(Timing::Count),
+              "kTimingNames must stay index-parallel with Timing");
 
 #if defined(__IMXRT1062__)
 uint32_t readMicros() { return micros(); }

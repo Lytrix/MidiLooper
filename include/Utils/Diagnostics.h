@@ -41,6 +41,10 @@ enum class Counter : uint8_t {
   CacheInvalidateScoped,
   AllocatorFailure,
   SessionUndoPush,
+  // Which branch of rebuildCommittedLayer ran. DisplayCaptureFullGather counts the gather
+  // branch. Append only — kCounterNames is index-parallel.
+  DisplayCommittedWindowFilter,
+  DisplayCommittedFullAssign,
   Count,
 };
 
@@ -52,6 +56,11 @@ enum class Timing : uint8_t {
   DisplayCaptureCompose,
   DisplayCaptureTails,
   DisplayUpdateTotal,
+  // Sub-steps of DisplayCaptureCompose. DisplayCaptureSync nests DisplayCaptureReplace when the
+  // capture mirror is invalid. Append only — kTimingNames is index-parallel.
+  DisplayCommittedRebuild,
+  DisplayCaptureReplace,
+  DisplayCaptureSync,
   Count,
 };
 
