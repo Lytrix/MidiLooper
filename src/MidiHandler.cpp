@@ -165,12 +165,17 @@ void MidiHandler::handleMidiInput() {
   size_t count = 0;
 
   // --- USB MIDI Input (transport before notes within each poll) ---
+  RuntimeTimingEnvelope::beginUsbDeviceNested();
   uint32_t segmentStartUs = micros();
   while (count < kMidiInputBatchMax && usbMIDI.read()) {
     batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
                       usbMIDI.getData2(), SOURCE_USB};
   }
+  RuntimeTimingEnvelope::noteUsbDeviceRead(micros() - segmentStartUs);
+  const uint32_t dispatchStartUs = micros();
   dispatchMidiBatch(batch, count);
+  RuntimeTimingEnvelope::noteUsbDeviceDispatch(micros() - dispatchStartUs);
+  RuntimeTimingEnvelope::commitUsbDeviceNested();
   RuntimeTimingEnvelope::noteUsbDeviceDrain(micros() - segmentStartUs);
 
   // --- Serial MIDI Input (DIN) ---
@@ -225,8 +230,13 @@ void MidiHandler::handleMidiInput() {
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
   // Clock is high-rate (24 PPQN); skip synchronous capture to keep timing paths lean.
   if (type != midi::Clock) {
-    SC_MIDI_IN(source == SOURCE_USB ? 'U' : source == SOURCE_SERIAL ? 'S' : 'H',
-               type, channel, data1, data2);
+    if (source == SOURCE_USB) {
+      const uint32_t captureStartUs = micros();
+      SC_MIDI_IN('U', type, channel, data1, data2);
+      RuntimeTimingEnvelope::addUsbDeviceCapture(micros() - captureStartUs);
+    } else {
+      SC_MIDI_IN(source == SOURCE_SERIAL ? 'S' : 'H', type, channel, data1, data2);
+    }
   }
 
 #if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
@@ -261,7 +271,13 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   bool isChannelMessage = (type == midi::NoteOn || type == midi::NoteOff || type == midi::ControlChange ||
                            type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
   if (isChannelMessage && !isMidiThruExcludedChannel(channel)) {
-    sendMidiThru(type, outCh, data1, data2);
+    if (source == SOURCE_USB) {
+      const uint32_t thruStartUs = micros();
+      sendMidiThru(type, outCh, data1, data2);
+      RuntimeTimingEnvelope::addUsbDeviceThru(micros() - thruStartUs);
+    } else {
+      sendMidiThru(type, outCh, data1, data2);
+    }
   }
 
   // Dispatch transport/clock messages first so tick is up-to-date

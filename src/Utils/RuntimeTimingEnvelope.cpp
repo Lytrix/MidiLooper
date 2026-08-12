@@ -31,6 +31,12 @@ struct State {
   Accumulator din;
   Accumulator hosttask;
   Accumulator hostdrain;
+  Accumulator usbread;
+  Accumulator usbdisp;
+  Accumulator usbcap;
+  Accumulator usbthru;
+  uint32_t usbNestedCaptureUs = 0;
+  uint32_t usbNestedThruUs = 0;
   uint32_t clockPulses = 0;
   uint32_t lastServiceExitUs = 0;
   uint32_t serviceEnterUs = 0;
@@ -53,6 +59,10 @@ void clearWindow(State& s) {
   s.din = Accumulator{};
   s.hosttask = Accumulator{};
   s.hostdrain = Accumulator{};
+  s.usbread = Accumulator{};
+  s.usbdisp = Accumulator{};
+  s.usbcap = Accumulator{};
+  s.usbthru = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -66,6 +76,10 @@ void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
   DebugSessionCapture::runtimeTimingEnvelope("din", s.din.maxUs, s.din.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("hosttask", s.hosttask.maxUs, s.hosttask.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("hostdrain", s.hostdrain.maxUs, s.hostdrain.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbread", s.usbread.maxUs, s.usbread.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbdisp", s.usbdisp.maxUs, s.usbdisp.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbcap", s.usbcap.maxUs, s.usbcap.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("usbthru", s.usbthru.maxUs, s.usbthru.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -132,6 +146,36 @@ void noteUsbHostDrain(uint32_t durationUs) {
   recordSample(state().hostdrain, durationUs);
 }
 
+void noteUsbDeviceRead(uint32_t durationUs) {
+  recordSample(state().usbread, durationUs);
+}
+
+void noteUsbDeviceDispatch(uint32_t durationUs) {
+  recordSample(state().usbdisp, durationUs);
+}
+
+void beginUsbDeviceNested() {
+  State& s = state();
+  s.usbNestedCaptureUs = 0;
+  s.usbNestedThruUs = 0;
+}
+
+void addUsbDeviceCapture(uint32_t durationUs) {
+  state().usbNestedCaptureUs += durationUs;
+}
+
+void addUsbDeviceThru(uint32_t durationUs) {
+  state().usbNestedThruUs += durationUs;
+}
+
+void commitUsbDeviceNested() {
+  State& s = state();
+  recordSample(s.usbcap, s.usbNestedCaptureUs);
+  recordSample(s.usbthru, s.usbNestedThruUs);
+  s.usbNestedCaptureUs = 0;
+  s.usbNestedThruUs = 0;
+}
+
 void noteClockPulse() {
   State& s = state();
   ++s.clockPulses;
@@ -174,6 +218,14 @@ Snapshot peek(uint32_t nowUs) {
   out.hosttaskOverCount = s.hosttask.overCount;
   out.hostdrainMaxUs = s.hostdrain.maxUs;
   out.hostdrainOverCount = s.hostdrain.overCount;
+  out.usbreadMaxUs = s.usbread.maxUs;
+  out.usbreadOverCount = s.usbread.overCount;
+  out.usbdispMaxUs = s.usbdisp.maxUs;
+  out.usbdispOverCount = s.usbdisp.overCount;
+  out.usbcapMaxUs = s.usbcap.maxUs;
+  out.usbcapOverCount = s.usbcap.overCount;
+  out.usbthruMaxUs = s.usbthru.maxUs;
+  out.usbthruOverCount = s.usbthru.overCount;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

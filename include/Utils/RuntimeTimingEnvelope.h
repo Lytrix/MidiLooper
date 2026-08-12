@@ -5,11 +5,11 @@
  * @file RuntimeTimingEnvelope.h
  * @brief S0 observation-only timing envelope telemetry.
  *
- * Measures MSI gaps, MIDI/Clock/track durations, and S0b MIDI-service
- * drain segments. Does not admit work, change service density, or drive
- * any scheduling decision.
+ * Measures MSI gaps, MIDI/Clock/track durations, S0b MIDI-service drain
+ * segments, and S0c USB-device sub-segments. Does not admit work, change
+ * service density, or drive any scheduling decision.
  *
- * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31c.
+ * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31c, §31i, §31j.
  */
 #pragma once
 
@@ -43,6 +43,14 @@ struct Snapshot {
   uint32_t hosttaskOverCount = 0;
   uint32_t hostdrainMaxUs = 0;
   uint32_t hostdrainOverCount = 0;
+  uint32_t usbreadMaxUs = 0;
+  uint32_t usbreadOverCount = 0;
+  uint32_t usbdispMaxUs = 0;
+  uint32_t usbdispOverCount = 0;
+  uint32_t usbcapMaxUs = 0;
+  uint32_t usbcapOverCount = 0;
+  uint32_t usbthruMaxUs = 0;
+  uint32_t usbthruOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
 };
@@ -72,6 +80,24 @@ void noteUsbHostTask(uint32_t durationUs);
 
 /** S0b: usbHostMIDI.read() drain (callbacks into handleMidiMessage). */
 void noteUsbHostDrain(uint32_t durationUs);
+
+/** S0c: usbMIDI.read() loop only (USB-device drain, before dispatch). */
+void noteUsbDeviceRead(uint32_t durationUs);
+
+/** S0c: dispatchMidiBatch for the USB-device batch. */
+void noteUsbDeviceDispatch(uint32_t durationUs);
+
+/** S0c: start summing SC_MIDI_IN / sendMidiThru for this USB-device dispatch. */
+void beginUsbDeviceNested();
+
+/** S0c: add one SOURCE_USB SC_MIDI_IN duration into the current dispatch sum. */
+void addUsbDeviceCapture(uint32_t durationUs);
+
+/** S0c: add one SOURCE_USB sendMidiThru duration into the current dispatch sum. */
+void addUsbDeviceThru(uint32_t durationUs);
+
+/** S0c: record the nested sums as one sample each and reset them. */
+void commitUsbDeviceNested();
 
 /** Count one external MIDI Clock pulse for clockrate. */
 void noteClockPulse();
