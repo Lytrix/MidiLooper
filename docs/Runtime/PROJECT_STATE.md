@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (S0d firmware; device attribution pending vs session_20260812_195240)
+Last updated: 2026-08-12 (S0d attributed to usbnote; session_20260812_200452)
 
 ---
 
 ## Current branch
 
-**Active work:** **S0d** — split `handleMidiMessage` remainder into `usbclk` / `usbnote` / `usbcc` / `usbtrans` (observation only); device attribution pending. Architecture [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md) §31l. Baseline [`195240`](../../captures/session_20260812_195240.log). Do not start S1 / admission / RC-J.
+**Active work:** **S0d closed** — PLAYING/OVERDUB `usbdisp` is `usbnote` ([`200452`](../../captures/session_20260812_200452.log) §31m). Architecture [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md) §31l + §31m. Do not start S1 / admission / RC-J. Next observation split inside `handleNoteOn` / `handleNoteOff` only if confirmed.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
