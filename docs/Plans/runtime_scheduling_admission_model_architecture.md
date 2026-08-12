@@ -856,6 +856,62 @@ Both enums are append-only before `Count`, so existing indices are unchanged; `s
 
 ---
 
+## 31e. Run [`152948`](../../captures/session_20260812_152948.log) — sub-step attributed, and a larger finding
+
+Transitions: `RECORDING → STOPPED_RECORDING` 230.08 s · three OVERDUB passes ending 402.12 s · `PLAYING → STOPPED` 405.46 s.
+
+### The resolve cost is the committed layer, and it splits in two
+
+At the 402.1 s snapshot, `DisplayResolveLiveCaptureTime` max is 29 746 µs, `DisplayCommittedRebuildTime` max is 29 728 µs, and `DisplayCaptureGatherTime` max is 29 716 µs. The committed rebuild is 99.9 % of resolve and the gather is 99.96 % of that. `DisplayCaptureReplaceTime` max is 252 µs and `DisplayCaptureSyncTime` max is 3 740 µs — neither is a factor.
+
+Splitting the sums between the 333.8 s and 402.1 s snapshots separates two distinct costs:
+
+| Branch | Calls | Cost each |
+|---|---|---|
+| `rebuildDisplayNotesInWindow` (gather) | 22 | **25.7 ms** |
+| `filterDisplayNotesByWindowInclusion` | 622 | **5.48 ms** |
+| `replaceCaptureLayer` | 644 | 0.10 ms |
+| `synchronizeCaptureLayer` | ~110 | 0.01 ms |
+
+The branch counters confirm the split exactly: `DisplayCommittedWindowFilter` rose by 622 and `DisplayCaptureFullGather` by 22, together accounting for all 644 committed rebuilds. `DisplayCommittedFullAssign` stayed at 0 for the whole session, so the full-`assign` branch never runs.
+
+So the rare gather produces the 25–30 ms spikes, while the *common* window filter costs 5.48 ms — just over the 5000 µs budget. That is why `DisplayResolveOverBudgetCount` reached 2 223 while the gather ran only 23 times: the sustained over-budget driver is a linear scan of `visualCache.notes` plus a fresh vector allocation, not the gather.
+
+`rebuildCommittedLayer` runs on only 1 730 of 18 592 resolves (9 %), and mean resolve across all frames is 713 µs. The budget problem is confined to that 9 %.
+
+### RC-D — the OLED repaints every loop iteration, ignoring the 30 ms cadence
+
+`DisplayUpdateTotalTime` reports a mean of 13.1 ms over 24 497 samples. `DFRAME` gives the frame period directly, and it is stable across the entire session — before recording, during all three overdubs, and after stop:
+
+```
+ 10.617  notes=342  frame_us=13272  -> 56.1 fps
+ 82.400  notes=342  frame_us=13282  -> 71.7 fps
+380.075  notes=359  frame_us=12105  -> 76.8 fps
+414.804  notes=364  frame_us=12007  -> 78.6 fps
+```
+
+A ~14 ms frame period against `LCD::DISPLAY_UPDATE_INTERVAL = 30 ms`, with ~13 ms spent inside the frame. The main loop is roughly 93 % inside `DisplayManager::update()`, from ten seconds after boot onward. This is the cost that S0 measured as ~34 ms idle MSI.
+
+The cadence gate is not being reached, because one call path has no gate. The chain is closed and provable:
+
+1. `DisplayManager::invalidateLiveDisplayCache` and `invalidateNoteEditDisplayCache` call `EditManager::invalidateProjectedNoteEditDisplayCache()` unconditionally — these are general display-cache paths with no note-edit precondition.
+2. That setter raises `noteEditDisplayImmediatePaintRequested_` and bumps `noteEditDisplayInvalidateEpoch_`.
+3. `shouldForceNoteEditDisplayUpdate()` reports true on either that flag or `paintedEpoch < invalidateEpoch` — again with no note-edit precondition.
+4. `maybeUpdateDisplayForNoteEditSelection` in `main.cpp` calls `displayManager.update()` whenever step 3 is true, and is the **only** display call site with no `DISPLAY_UPDATE_INTERVAL` check.
+5. The only clearer, `markNoteEditDisplayPainted()`, runs at the end of `DisplayManager::update()` **only when `editManager.isNoteEditActive()`**.
+
+Once step 1 fires outside a note-edit session, nothing can clear the flag, so step 4 repaints on every loop iteration for the rest of the session. Session [`152948`](../../captures/session_20260812_152948.log) contains no note-edit markers at all, and the 70 fps behaviour is present from 10 s — before any capture — which is consistent only with the latch being set during boot slot restore.
+
+**Scale:** at the intended 33 fps the same 13 ms frame would consume ~43 % of loop time instead of ~93 %. This dominates every term the admission model was written to bound, including the 129–149 ms `midisvc` samples.
+
+**Owner:** the paint-epoch acknowledgement in `DisplayManager::update` and the note-edit precondition on `shouldForceNoteEditDisplayUpdate`. Both are single-condition defects, but which side to correct is a state-ownership decision — either the flag must not be raised outside a note-edit session, or the acknowledgement must not be conditional on one.
+
+### Consequence for stage order
+
+RC-D outranks the resolve budget. The gather spike and the 5.48 ms window filter are real, but they affect 9 % of frames, whereas RC-D doubles the cost of all of them.
+
+---
+
 ## 32. Revised implementation dependency
 
 ```mermaid
