@@ -50,6 +50,11 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
 }
 
 void Track::emitStoredMidiVerification() const {
+#if !defined(SESSION_CAPTURE)
+  // Every emission below compiles out without SESSION_CAPTURE; the flatten, wrap-pair scan and
+  // reconstruct would run on the overdub stop path and produce nothing.
+  return;
+#else
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
     return;
@@ -92,7 +97,6 @@ void Track::emitStoredMidiVerification() const {
     }
   }
 
-#if defined(SESSION_CAPTURE)
   const auto reconstructed = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
   size_t reconLogged = 0;
   for (const NoteUtils::DisplayNote& note : reconstructed) {
@@ -112,7 +116,7 @@ void Track::emitStoredMidiVerification() const {
       break;
     }
   }
-#endif
+#endif  // SESSION_CAPTURE
 }
 
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
