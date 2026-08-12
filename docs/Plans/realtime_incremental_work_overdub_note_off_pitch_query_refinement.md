@@ -30,10 +30,12 @@ Not S1, RC-J, RC-S0c, Option A, or a new cache.
 
 Current `gatherCommittedNoteEventsForPitch` contract when edit passes exist: **effective** committed pitch after `applyNoteEditPassSequence`, not raw source pitch (`test_source_view_includes_edit_pass_geometry`).
 
-Minimum candidate set that reproduces the oracle:
+Equivalence: `gatherCommittedNoteEventsForPitch(P)` matches `gatherCommittedEvents()` then keep note-on/off at P.
+
+Candidate set:
 
 - committed note-on/off already at P
-- plus source events whose last committed Pitch destination is P
+- plus note-ons whose last committed Pitch destination is P, and each on's paired note-off (`findNoteOffForOnIndex`: LIFO, same channel+pitch). Note-offs stay without `noteId`; pairing is the existing identity contract.
 - plus Create `addedEvents` that are at P or whose `NoteId` is in that retarget set
 - then `applyNoteEditPassSequence` of **relevant** Active note rows (target in the candidate set, or Create as above)
 - then filter to P
