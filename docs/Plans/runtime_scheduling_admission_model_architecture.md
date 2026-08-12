@@ -767,7 +767,7 @@ Per-message work reached from `handleMidiMessage` also needs separating: `sendMi
 
 Constraints, unchanged from S0: `micros()` deltas and comparisons only, accumulate maxima into the existing 5 s window, emit as Tier-A `DIAG,` lines, take no scheduling decision. The phase split matters — report each segment separately for RECORD versus PLAYING/OVERDUB, since S0 already shows the two differ by ~140×.
 
-**Exit criterion:** the 762.5 ms overdub-entry sample and the recurring 129–149 ms samples are each attributed to a named segment.
+**Exit criterion:** the 762.5 ms overdub-entry sample ([`145555`](../../captures/session_20260812_145555.log)), the recurring 129–149 ms samples, and the [`191356`](../../captures/session_20260812_191356.log) 218–221 ms / 110–125 ms overdub samples are each attributed to a named segment. Report RECORD versus PLAYING/OVERDUB separately.
 
 ### What S0 already rules out
 
@@ -1180,6 +1180,62 @@ The user-visible "hang" at overdub stop is not a display race — it is unthrott
 - `midisvc` fell from 103–107 ms in [`172405`](../../captures/session_20260812_172405.log) to 43–72 ms
 - RC-D, RC-F, and the RC-F follow-up all hold
 
+## 31h. Run [`191356`](../../captures/session_20260812_191356.log) — post-RC-I baseline (S0b handoff)
+
+Firmware: `752273d` (RC-H reverted). Two overdub clusters on a long loop, then a new RECORD and more overdubs, including overdub-over-overdub. Display did not freeze. This is the **current stability baseline** for S0b.
+
+### Display — freeze closed
+
+Every overdub stop completes the visual cache (`slice_clean` covers the whole loop: 1766–2018 notes in cluster 1, 1024–1482 after the new record). Final `OVERDUBBING → STOPPED` at 1230.063 s:
+
+```text
+1230.064  VCACHE adopt_partial notes=483 first=19 last=39 dirty=1
+1230.734  VCACHE slice_clean   notes=1482 first=0 last=63 dirty=0
+1230.745  DISP STOPPED visual=1482 wNotes=385 wStart=17552
+1231.499  DFRAME 385  (idx keeps advancing)
+```
+
+385 notes is the stopped 16-bar window of a clean cache, not the RC-H pin. Auto-follow off at STOPPED is expected.
+
+### MIDI — clock rate held; service latency did not
+
+`clockrate` stayed **47–48** (24 PPQN at 120 BPM) through every PLAYING and OVERDUB window. No half-tempo collapse while capturing. RECORD remains clean (`midisvc` 0.3–0.8 ms, `clockrate` 47–48).
+
+Service duration is still far outside the observational 5 ms ceiling. `clk`/`tracks` stay 4–10 ms, so the remainder is unattributed inside `handleMidiInput`:
+
+| Window | `midisvc` max | `clockrate` |
+|---|---|---|
+| Overdub cluster 1 (335–371 s) | 99–133 ms | 47–48 |
+| Longer overdub (374–405 s) | **218–221 ms** | 46–49 |
+| Playing after new record (1045–1155 s) | 47–94 ms | 47–49 |
+| Later overdubs (1165–1226 s) | 110–125 ms | 47–48 |
+| RECORD (935–1035 s) | 0.3–0.8 ms | 47–48 |
+
+PLAYING ↔ OVERDUB edges spike `msi` to **237–433 ms**. ~15 `midisvc` samples per 5 s window exceed 5 ms. A 220 ms call is ~10 clock periods (20.8 ms at 120 BPM): pulses are counted later in the same window, so `clockrate` stays 48 — **catch-up jitter, not dropped clock**.
+
+### RC-J reproduced, still behind S0b
+
+First stop 437.7 s: `clockrate` 48 → 24 → 0, `msi` 467 ms. Final stop 1230 s: 48 → 36 → 0, `msi` 365 ms. Same deferred-save-at-STOPPED signature as [`183429`](../../captures/session_20260812_183429.log). Do not patch.
+
+### Residuals that must not jump the S0b queue
+
+- Overdub piano-roll frame skip / rolling window that restores in PLAYING — RC-F follow-up holds the committed layer while `visualCacheDirty`; §31d bailout class. Independent of S0b.
+- `DisplayResolveOverBudgetCount` rose to 140 in this longer session (max `DisplayResolveLiveCaptureTime` 9.4 ms). Display completeness is S7.
+- RC-S0c: 12 `RING,overflow`; capture still starts mid-session (first transition at 333.8 s). Pair the Tier-A transmit allowance with S0b if RECORD windows would otherwise be lost.
+
+### S0b handoff (new chat)
+
+**Authorized next stage: S0b only** — observation-only segmentation of `MidiHandler::handleMidiInput`. See §31c.
+
+- **Owner:** `MidiHandler::handleMidiInput` (and the four sequential drains it already runs). Extend `RuntimeTimingEnvelope`; do not add a scheduler or change MIDI service density.
+- **Invariant:** S0b takes no scheduling decision. `micros()` deltas into the existing 5 s window; emit Tier-A `DIAG` lines.
+- **Ownership / transition change:** NO.
+- **Baseline to beat:** this capture. Attribute the 218–221 ms sustained overdub `midisvc` and the 110–125 ms later-overdub samples to a named segment. The 762.5 ms overdub-entry sample from [`145555`](../../captures/session_20260812_145555.log) remains in the exit criterion.
+- **Already ruled out:** clock dispatch (`clk` ≈ `tracks`, 4–10 ms); RC-C extra MIDI drain (RECORD is 0.3–0.8 ms with that drain active).
+- **Do not:** implement `RuntimeWorkBudget`, change service density, patch RC-J, chase display frame-skip, or start S1.
+
+**Exit criterion (updated):** the 762.5 ms overdub-entry sample, the recurring 129–149 ms samples, **and** the [`191356`](../../captures/session_20260812_191356.log) 218–221 ms / 110–125 ms overdub samples are each attributed to a named segment, reported separately for RECORD versus PLAYING/OVERDUB.
+
 ### RC-G — the overview strip is fed only the detailed window during RECORD
 
 `PianoRollDraw` chooses the overview density source as:
@@ -1257,7 +1313,7 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 | Stage | Status | Summary |
 |-------|--------|---------|
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
-| **S0b** | **Next — observation only** | Split `MidiHandler::handleMidiInput` into measured segments. S0 proved `midisvc` is the dominant term (762.5 ms peak, 129–149 ms per window during PLAYING/OVERDUB against `clk`/`tracks` ≤ 8.83 ms), but not *which* segment. No admission design can start until this is named. Pair with the RC-S0c Tier-A transmit allowance so the pre-177 s window is recoverable |
+| **S0b** | **Next — observation only** | Split `MidiHandler::handleMidiInput` into measured segments. Baseline [`191356`](../../captures/session_20260812_191356.log) (§31h): display freeze closed; `clockrate` 47–48 during overdub; `midisvc` 110–221 ms with `clk` 4–10 ms. No admission until the named segment is known. Pair RC-S0c Tier-A transmit if RECORD windows would be lost |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |
