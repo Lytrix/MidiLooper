@@ -40,16 +40,10 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
 
 }  // namespace
 
-bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch,
+void Loop::accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
+                                                       uint8_t channel, uint8_t pitch,
                                                        uint8_t velocity, uint32_t startTick,
                                                        uint32_t endTick, NoteId incomingNoteId) {
-  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
-    return false;
-  }
-  if (endTick < startTick) {
-    return false;
-  }
-
   const NoteId causingId =
       (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
 
@@ -62,7 +56,8 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
   addChange.startTick = startTick;
   addChange.endTick = endTick;
 
-  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0 ? overdubSourceViewLoopLengthTicks_
+                                                                 : loopLengthTicks;
   const uint32_t windowLength = (endTick > startTick) ? (endTick - startTick) : 1u;
 
   BaselineMap baseline;
@@ -74,7 +69,7 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
 
   std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs;
   const uint32_t pairStartUs = micros();
-  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+  for (const NoteUtils::DisplayNote& note : sourceNotes) {
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
       continue;
     }
@@ -126,6 +121,25 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
   }
 
   pendingNoteChanges_.push_back(addChange);
+}
+
+bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch,
+                                                       uint8_t velocity, uint32_t startTick,
+                                                       uint32_t endTick, NoteId incomingNoteId) {
+  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
+    return false;
+  }
+  if (endTick < startTick) {
+    return false;
+  }
+  SessionMidiEventVec pitchEvents;
+  const uint32_t reconStartUs = micros();
+  gatherCommittedNoteEventsForPitch(pitch, pitchEvents);
+  const NoteUtils::DisplayNoteVec sourceNotes = NoteUtils::reconstructDisplayNotes(
+      pitchEvents, overdubSourceViewLoopLengthTicks_, false);
+  RuntimeTimingEnvelope::addNoteRecon(micros() - reconStartUs);
+  accumulatePendingNoteChangesFromSourceNotes(sourceNotes, channel, pitch, velocity, startTick,
+                                              endTick, incomingNoteId);
   return true;
 }
 

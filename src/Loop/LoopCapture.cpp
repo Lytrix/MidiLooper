@@ -263,10 +263,8 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
 
 void Loop::establishOverdubSourceView() {
   overdubSourceViewEvents_.clear();
-  gatherCommittedEvents(overdubSourceViewEvents_);
+  overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
-  overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
-      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   overdubSourceViewEstablished_ = true;
   clearPendingNoteChanges();
 }

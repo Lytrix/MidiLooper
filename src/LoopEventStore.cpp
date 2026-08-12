@@ -680,6 +680,47 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvent(
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
+void LoopEventStore::appendChunkRefNoteEventsForPitch(uint16_t id, uint8_t pitch, MidiEventVec& out) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return;
+  }
+  const EventChunk& c = pool_[id];
+  for (uint16_t i = 0; i < c.used; ++i) {
+    const MidiEvent& evt = c.events[i];
+    if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == pitch) {
+      out.push_back(evt);
+    }
+  }
+}
+
+void LoopEventStore::appendChunkRefNoteEventsForPitch(
+    uint16_t id, uint8_t pitch,
+    std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return;
+  }
+  const EventChunk& c = pool_[id];
+  for (uint16_t i = 0; i < c.used; ++i) {
+    const MidiEvent& evt = c.events[i];
+    if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == pitch) {
+      out.push_back(evt);
+    }
+  }
+}
+
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::forEachChunkEvent(uint16_t id,
+                                                                void (*visitor)(const MidiEvent&, void*),
+                                                                void* ctx) {
+  if (visitor == nullptr || id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ ||
+      !poolUsed_[id]) {
+    return;
+  }
+  const EventChunk& c = pool_[id];
+  for (uint16_t i = 0; i < c.used; ++i) {
+    visitor(c.events[i], ctx);
+  }
+}
+
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const CaptureChunkIdList& ids, MidiEventVec& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;
