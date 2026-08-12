@@ -165,20 +165,24 @@ void MidiHandler::handleMidiInput() {
   size_t count = 0;
 
   // --- USB MIDI Input (transport before notes within each poll) ---
+  uint32_t segmentStartUs = micros();
   while (count < kMidiInputBatchMax && usbMIDI.read()) {
     batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
                       usbMIDI.getData2(), SOURCE_USB};
   }
   dispatchMidiBatch(batch, count);
+  RuntimeTimingEnvelope::noteUsbDeviceDrain(micros() - segmentStartUs);
 
   // --- Serial MIDI Input (DIN) ---
   count = 0;
+  segmentStartUs = micros();
   while (count < kMidiInputBatchMax && MIDIserial.read()) {
     batch[count++] = {MIDIserial.getType(), MIDIserial.getChannel(), MIDIserial.getData1(),
                       MIDIserial.getData2(), SOURCE_SERIAL};
   }
   dispatchMidiBatch(batch, count);
-  
+  RuntimeTimingEnvelope::noteDinDrain(micros() - segmentStartUs);
+
   if (!usbHostReady_) {
     RuntimeTimingEnvelope::noteMidiServiceExit(micros());
     return;
@@ -188,7 +192,9 @@ void MidiHandler::handleMidiInput() {
   // USBHost_t36 delivers one MIDI message per read() via callbacks. Drain a bounded
   // batch each service pass (same cap as USB-device / DIN) so DROID NoteOn/NoteOff
   // pairs are not left queued across a long main-loop frame.
+  segmentStartUs = micros();
   usbHost.Task();
+  RuntimeTimingEnvelope::noteUsbHostTask(micros() - segmentStartUs);
 
   static bool lastConnected = false;
   bool currentlyConnected = usbHostMIDI;
@@ -201,10 +207,12 @@ void MidiHandler::handleMidiInput() {
     lastConnected = currentlyConnected;
   }
 
+  segmentStartUs = micros();
   size_t hostReads = 0;
   while (hostReads < kMidiInputBatchMax && usbHostMIDI.read()) {
     ++hostReads;
   }
+  RuntimeTimingEnvelope::noteUsbHostDrain(micros() - segmentStartUs);
   if (hostReads >= kMidiInputBatchMax) {
     logger.log(CAT_MIDI, LOG_DEBUG,
                "USB Host MIDI drain hit batch cap (%u)",

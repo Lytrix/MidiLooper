@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b MIDI-service drain segmentation **implemented** (device attribution pending); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -534,6 +534,10 @@ S0 is: observation only; behavior preserving; no admission; no service-density c
 | MIDI service duration | same | `DIAG,midisvc,<maxUs>,<overCount>` |
 | Clock dispatch | `ClockManager::onMidiClockPulse` | `DIAG,clk,<maxUs>,<overCount>` |
 | Track update | `TrackManager::updateAllTracks` | `DIAG,tracks,<maxUs>,<overCount>` |
+| USB device drain | `RuntimeTimingEnvelope::noteUsbDeviceDrain` via `handleMidiInput` | `DIAG,usbdev,<maxUs>,<overCount>` |
+| DIN drain | `RuntimeTimingEnvelope::noteDinDrain` | `DIAG,din,<maxUs>,<overCount>` |
+| USB host stack | `RuntimeTimingEnvelope::noteUsbHostTask` | `DIAG,hosttask,<maxUs>,<overCount>` |
+| USB host drain | `RuntimeTimingEnvelope::noteUsbHostDrain` | `DIAG,hostdrain,<maxUs>,<overCount>` |
 | Clock rate | pulse count in `onMidiClockPulse` | `DIAG,clockrate,<pulsesPerSecond>` |
 
 Emit path: `RuntimeTimingEnvelope::maybeEmit` from `main.cpp::loop()` every 5 s. Tier-A (survives `SC_CAPTURE_FLUSH`). `overCount` uses observational soft ceiling 5000 µs for counting only — **not** an MSI contract.
@@ -584,6 +588,10 @@ Tier-A telemetry (survives `SC_CAPTURE_FLUSH(8)`), rate-limited to 5 s:
 | `DIAG,midisvc,<maxUs>,<overCount>` | Max `handleMidiInput()` duration |
 | `DIAG,clk,<maxUs>,<overCount>` | Max Clock dispatch duration |
 | `DIAG,tracks,<maxUs>,<overCount>` | Max `updateAllTracks()` duration |
+| `DIAG,usbdev,<maxUs>,<overCount>` | Max USB-device read + `dispatchMidiBatch` |
+| `DIAG,din,<maxUs>,<overCount>` | Max DIN read + `dispatchMidiBatch` |
+| `DIAG,hosttask,<maxUs>,<overCount>` | Max `usbHost.Task()` |
+| `DIAG,hostdrain,<maxUs>,<overCount>` | Max `usbHostMIDI.read()` drain |
 | `DIAG,clockrate,<pulsesPerSecond>` | Clock messages per second |
 
 Additional useful measurements: MIDI input backlog, MIDI batch peak, USB-host callback count, USB-host task duration, nested callback depth, allocation failures/growth. Do not add broad telemetry without a reason.
@@ -752,18 +760,22 @@ Partially complete. The capture-phase envelope now exists and is usable; the pre
 
 ## 31c. S0b — segment the MIDI service interval (observation only)
 
+**Status:** firmware **implemented** (observation only); device attribution pending against [`191356`](../../captures/session_20260812_191356.log).
+
 `handleMidiInput` has four sequential segments, and S0 measures only their sum. `clk` already covers the Clock branch and accounts for at most 8.83 ms of a 149 ms call, so the cost is in one of the other three:
 
-| Segment | Owner | Already measured? |
+| Segment | Owner | Emission |
 |---|---|---|
-| USB device drain + `dispatchMidiBatch` | `usbMIDI.read()` loop | No |
-| DIN drain + `dispatchMidiBatch` | `MIDIserial.read()` loop | No |
-| USB host stack service | `usbHost.Task()` | No |
-| USB host drain (callbacks into `handleMidiMessage`) | `usbHostMIDI.read()` loop | No |
-| Clock dispatch within a batch | `ClockManager::onMidiClockPulse` | Yes — `DIAG,clk` |
-| Track update within clock dispatch | `TrackManager::updateAllTracks` | Yes — `DIAG,tracks` |
+| USB device drain + `dispatchMidiBatch` | `usbMIDI.read()` loop | `DIAG,usbdev` |
+| DIN drain + `dispatchMidiBatch` | `MIDIserial.read()` loop | `DIAG,din` |
+| USB host stack service | `usbHost.Task()` | `DIAG,hosttask` |
+| USB host drain (callbacks into `handleMidiMessage`) | `usbHostMIDI.read()` loop | `DIAG,hostdrain` |
+| Clock dispatch within a batch | `ClockManager::onMidiClockPulse` | `DIAG,clk` (S0) |
+| Track update within clock dispatch | `TrackManager::updateAllTracks` | `DIAG,tracks` (S0) |
 
-Per-message work reached from `handleMidiMessage` also needs separating: `sendMidiThru` runs for every channel message, and `SC_MIDI_IN` appends to the capture ring, whose `appendCaptureRecord` eviction loop is not free while the ring is in the barrier state described in RC-S0c.
+Clock dispatch is nested inside the drain that received the Clock byte (`usbdev`, `din`, or `hostdrain`). Subtract `clk` from that drain when attributing the remainder.
+
+Per-message work reached from `handleMidiMessage` (`sendMidiThru`, `SC_MIDI_IN`) is counted inside the drain that dispatched the message, not as a fifth sequential segment. If a named drain matches `midisvc` and still exceeds `clk`, that nested work is the next split — not this stage.
 
 Constraints, unchanged from S0: `micros()` deltas and comparisons only, accumulate maxima into the existing 5 s window, emit as Tier-A `DIAG,` lines, take no scheduling decision. The phase split matters — report each segment separately for RECORD versus PLAYING/OVERDUB, since S0 already shows the two differ by ~140×.
 
@@ -1225,12 +1237,12 @@ First stop 437.7 s: `clockrate` 48 → 24 → 0, `msi` 467 ms. Final stop 1230 s
 
 ### S0b handoff (new chat)
 
-**Authorized next stage: S0b only** — observation-only segmentation of `MidiHandler::handleMidiInput`. See §31c.
+**Authorized next stage: S0b device re-run** — firmware already segments `MidiHandler::handleMidiInput`. See §31c.
 
-- **Owner:** `MidiHandler::handleMidiInput` (and the four sequential drains it already runs). Extend `RuntimeTimingEnvelope`; do not add a scheduler or change MIDI service density.
+- **Owner:** `MidiHandler::handleMidiInput` (and the four sequential drains it already runs). `RuntimeTimingEnvelope` emits `DIAG,usbdev` / `din` / `hosttask` / `hostdrain`. Do not add a scheduler or change MIDI service density.
 - **Invariant:** S0b takes no scheduling decision. `micros()` deltas into the existing 5 s window; emit Tier-A `DIAG` lines.
 - **Ownership / transition change:** NO.
-- **Baseline to beat:** this capture. Attribute the 218–221 ms sustained overdub `midisvc` and the 110–125 ms later-overdub samples to a named segment. The 762.5 ms overdub-entry sample from [`145555`](../../captures/session_20260812_145555.log) remains in the exit criterion.
+- **Baseline to beat:** this capture. Attribute the 218–221 ms sustained overdub `midisvc` and the 110–125 ms later-overdub samples to a named drain. The 762.5 ms overdub-entry sample from [`145555`](../../captures/session_20260812_145555.log) remains in the exit criterion.
 - **Already ruled out:** clock dispatch (`clk` ≈ `tracks`, 4–10 ms); RC-C extra MIDI drain (RECORD is 0.3–0.8 ms with that drain active).
 - **Do not:** implement `RuntimeWorkBudget`, change service density, patch RC-J, chase display frame-skip, or start S1.
 
@@ -1313,7 +1325,7 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 | Stage | Status | Summary |
 |-------|--------|---------|
 | **S0** | **Shipped**; partially measured | Timing-envelope telemetry; observation only. Capture-phase envelope obtained in [`145555`](../../captures/session_20260812_145555.log); pre-177 s window still owed (RC-S0c delivery path) |
-| **S0b** | **Next — observation only** | Split `MidiHandler::handleMidiInput` into measured segments. Baseline [`191356`](../../captures/session_20260812_191356.log) (§31h): display freeze closed; `clockrate` 47–48 during overdub; `midisvc` 110–221 ms with `clk` 4–10 ms. No admission until the named segment is known. Pair RC-S0c Tier-A transmit if RECORD windows would be lost |
+| **S0b** | **Implemented** (device attribution pending) | Split `MidiHandler::handleMidiInput` into `usbdev` / `din` / `hosttask` / `hostdrain`. Baseline [`191356`](../../captures/session_20260812_191356.log) (§31h). No admission until the named segment is known. |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |

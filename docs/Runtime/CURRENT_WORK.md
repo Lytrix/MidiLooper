@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (S0b handoff; baseline [`191356`](../../captures/session_20260812_191356.log); RC-I `752273d`)
+Last updated: 2026-08-12 (S0b firmware; device attribution pending vs [`191356`](../../captures/session_20260812_191356.log); RC-I `752273d`)
 
 ---
 
@@ -10,11 +10,11 @@ Last updated: 2026-08-12 (S0b handoff; baseline [`191356`](../../captures/sessio
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing envelope
 
-**Now: S0b only.** Observation-only segmentation of `MidiHandler::handleMidiInput`. Do not implement admission, change MIDI service density, patch RC-J, or chase overdub display frame-skip. Full brief: architecture doc [§31h](../Plans/runtime_scheduling_admission_model_architecture.md#31h-run-191356--post-rc-i-baseline-s0b-handoff) + [§31c](../Plans/runtime_scheduling_admission_model_architecture.md#31c-s0b--segment-the-midi-service-interval-observation-only).
+**Now: S0b device re-run.** Firmware segments `MidiHandler::handleMidiInput` into Tier-A `DIAG,usbdev` / `din` / `hosttask` / `hostdrain`. Do not implement admission, change MIDI service density, patch RC-J, or chase overdub display frame-skip. Full brief: architecture doc [§31h](../Plans/runtime_scheduling_admission_model_architecture.md#31h-run-191356--post-rc-i-baseline-s0b-handoff) + [§31c](../Plans/runtime_scheduling_admission_model_architecture.md#31c-s0b--segment-the-midi-service-interval-observation-only).
 
 **Baseline (proof of current stability):** [`191356`](../../captures/session_20260812_191356.log) on `752273d` (RC-H reverted). Multiple overdubs including overdub-over-overdub; display did not freeze (`slice_clean` covers the whole loop after every stop; final STOPPED paints the 16-bar window of a clean 1482-note cache). `clockrate` held **47–48** through PLAYING/OVERDUB (no dropped-clock / half-tempo). `midisvc` did **not** hold: 99–133 ms, then **218–221 ms** on the long overdub, 110–125 ms on later overdubs, against `clk`/`tracks` 4–10 ms. RECORD stays 0.3–0.8 ms. PLAYING↔OVERDUB `msi` spikes 237–433 ms. Post-stop clock drop is RC-J (48→24→0 and 48→36→0) — behind S0b.
 
-**S0b exit:** attribute the 218–221 ms / 110–125 ms overdub samples (and the older 762.5 ms / 129–149 ms samples) to a named `handleMidiInput` segment. Extend `RuntimeTimingEnvelope`. Native `test_runtime_timing_envelope` + device re-run against this baseline.
+**S0b exit:** attribute the 218–221 ms / 110–125 ms overdub samples (and the older 762.5 ms / 129–149 ms samples) to a named `handleMidiInput` drain (`usbdev` / `din` / `hosttask` / `hostdrain`). Firmware shipped; native `test_runtime_timing_envelope` covers the accumulators. Device re-run against this baseline is the remaining gate.
 
 **Architecture:** [`realtime_incremental_work_capture_overdub_architecture.md`](../Plans/realtime_incremental_work_capture_overdub_architecture.md)  
 **Scheduling admission:** [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md)  
@@ -37,12 +37,12 @@ Last updated: 2026-08-12 (S0b handoff; baseline [`191356`](../../captures/sessio
 **RC-H reverted (RC-I):** the overdub-stop handoff preserve (`liveOverdubStopHandoffActive_`) pinned the partial adopted frame permanently — [`183429`](../../captures/session_20260812_183429.log): `adopt_partial notes=394`, then `slice_clean notes=1105`, but `DFRAME 394` held from 209.6 s through 214.2 s. The 174843 window content was density-correct; static viewport at STOPPED is expected. Reverted to pre-RC-H behaviour; `preservedHandoffAuthority` covers the ~0.6 s dirty window. **Verified [`191356`](../../captures/session_20260812_191356.log):** no freeze across two overdub clusters; idle `slice_clean` covers the loop; STOPPED paints the 16-bar window of the completed cache.
 **RC-J (open, behind S0b):** post-stop persistence stall — `timingCriticalTrackActive` goes false at STOPPED while the external clock still streams. Reproduced in [`191356`](../../captures/session_20260812_191356.log): first stop `clockrate` 48→24→0 `msi` 467 ms; final stop 48→36→0 `msi` 365 ms. Do not patch ad hoc.
 **RC-G fix shipped:** `updateOverviewCaptureDensity` builds a per-bar × 8-pitch-band mask incrementally from the capture preview (O(new notes) per frame), and `drawOverviewStrip` renders O(loop bars) from it when no clean `visualCache` exists. Record overview now shows the whole loop. Device verify pending for both.
-**Remaining findings:** S0b is the dominant path — [`191356`](../../captures/session_20260812_191356.log) `midisvc` 110–221 ms vs `clk` 4–10 ms during overdub; `clk` ≈ `tracks`. RC-S0c still owed (12 `RING,overflow` in 191356; capture starts at 333 s). Display frame-skip / rolling-window during overdub is RC-F follow-up + §31d; do not jump the S0b queue.
+**Remaining findings:** S0b firmware is in; device re-run must name the drain — [`191356`](../../captures/session_20260812_191356.log) `midisvc` 110–221 ms vs `clk` 4–10 ms during overdub; `clk` ≈ `tracks`. RC-S0c still owed (12 `RING,overflow` in 191356; capture starts at 333 s). Display frame-skip / rolling-window during overdub is RC-F follow-up + §31d; do not jump the S0b queue.
 **Overdub display lag:** `DisplayResolveLiveCapture` 33.6 / 33.8 ms during the second overdub against a 5 000 µs budget — the §31d bailout skips `replaceCaptureLayer` and the tails, so live overdub notes are not composed.
 **Also open:** display resolve is under budget only by margin — the window filter measures 4 595 µs against a 5 000 µs line, and the gather still peaks at 26.3 ms. A 140 ms post-stop `msi` stall with `midisvc` at ~0.1 ms is uninvestigated.  
 **RC-C device:** [`115913`](../../captures/session_20260812_115913.log) — timing PASS; display D1–D2 FAIL.  
 **Regression:** [`122003`](../../captures/session_20260812_122003.log) — dual idle slice caused MIDI lag / clock lost (reverted).  
-**Now:** S0b — segment `handleMidiInput`. Baseline [`191356`](../../captures/session_20260812_191356.log). No admission until the named segment is known.
+**Now:** S0b device re-run — firmware segments `handleMidiInput`. Baseline [`191356`](../../captures/session_20260812_191356.log). No admission until the named drain is known.
 
 ### Long record onset display freeze — [`012342`](../../captures/session_20260812_012342.log)
 
