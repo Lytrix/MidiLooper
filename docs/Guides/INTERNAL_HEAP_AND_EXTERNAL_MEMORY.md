@@ -52,6 +52,21 @@ Route new buffers here when they scale with loop length, edit closure, or undo d
 | UIP | `buildCanonicalSpansFromMidi` temps, `IntervalProjection` batch vectors | Per reconstruct / per project |
 | `NoteUtils` | span rebuild temps in `buildCanonicalSpansFromMidi` | Same allocator as UIP |
 
+### Batch loops — one buffer per batch, never one per item
+
+`extmem_malloc` is **not** O(1). Teensy routes it to smalloc, and `sm_malloc_pool` restarts a linear walk of the pool header chain from `spool->pool` on **every** call, verifying each block's hashed tag as it goes. There is no free list. Cost per allocation is the number of allocated blocks before the first adequate gap, so it grows with how much of the pool the session already holds — event chunks, playback runtimes, persistence queues. A full traversal of that same chain measured **593 ms** (see the walk rule below).
+
+Therefore a loop that allocates one external-memory temp per item costs `O(items × pool blocks)` and gets slower as a session accumulates passes, independent of item count.
+
+**Rule:** hoist the temp out of the loop and `clear()` it per item — `clear()` keeps capacity, so a reused buffer allocates once per batch. Prefer the out-param overload when one exists.
+
+| Owner | Reused buffer |
+|-------|----------------|
+| `IntervalProjection::projectDisplayNotes` | one `candidates` across all spans |
+| `IntervalProjection::projectNoteIntervals` | one `candidates` + one `selected` across all spans |
+
+`generateEquivalentIntervals` and `selectProjectedIntervalsForDisplay` each have a by-value form (single-span callers, tests) and an out-param form. Batch callers use the out-param form.
+
 ### Baseline map scope (NOTE_EDIT)
 
 `rebuildNoteEditFocusFromStore` SHALL NOT populate `baselineMap` for every note in the loop. Populate **edit closure** only (`populateBaselineMapForEditClosure`): moving note + overlap notes. Undo snapshots trim further via `snapshotFocusForSessionUndo`.

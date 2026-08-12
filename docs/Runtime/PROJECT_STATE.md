@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-12 (RC-K1b vector dedup; device re-measure next)
+Last updated: 2026-08-12 (RC-L1 projection allocation; device re-measure next)
 
 ---
 
 ## Current branch
 
-**Active work:** **S0e follow-through** — RC-K1b (vector reconstruct dedup) after boot hang [`215128`](../../captures/session_20260812_215128.log) / [`215357`](../../captures/session_20260812_215357.log). Device re-measure. Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](../Plans/realtime_incremental_work_overdub_note_change_bugfix.md). Do not start admission S1 / RC-J.
+**Active work:** **S0e follow-through** — RC-K1–K3 verified in [`223033`](../../captures/session_20260812_223033.log) (`noterecon` 0, `notechg`/`notepair` ≤ 3.6 ms). RC-L1 removes the per-span external-memory allocation in `IntervalProjection` that made overdub entry cost 1.378 s. Device re-measure. Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](../Plans/realtime_incremental_work_overdub_note_change_bugfix.md). Do not start admission S1 / RC-J, and do not patch the synchronous `establishOverdubSourceView` without a design session.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
