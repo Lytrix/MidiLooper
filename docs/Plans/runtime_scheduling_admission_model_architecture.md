@@ -904,7 +904,13 @@ Once step 1 fires outside a note-edit session, nothing can clear the flag, so st
 
 **Scale:** at the intended 33 fps the same 13 ms frame would consume ~43 % of loop time instead of ~93 %. This dominates every term the admission model was written to bound, including the 129–149 ms `midisvc` samples.
 
-**Owner:** the paint-epoch acknowledgement in `DisplayManager::update` and the note-edit precondition on `shouldForceNoteEditDisplayUpdate`. Both are single-condition defects, but which side to correct is a state-ownership decision — either the flag must not be raised outside a note-edit session, or the acknowledgement must not be conditional on one.
+**Owner:** the paint-epoch acknowledgement in `DisplayManager::update`.
+
+**Fix (shipped):** `markNoteEditDisplayPainted()` is now called unconditionally at the end of the normal paint path. The flag records *a repaint is owed*, and `update()` performed one, so the acknowledgement was never the note-edit session's to withhold.
+
+Behaviour during note edit is unchanged — `isNoteEditActive()` was true there, so the guard never fired. Only the non-note-edit case changes, which is the latch. The two consumers of `noteEditDisplayPaintedEpoch()` are both note-edit fader motor gates in `ControlSurfaceManager` (`processPendingSelectDependentMotorSync`, `processPendingGeometryDriverMotorSync`); they capture their required epoch at schedule time from note-edit drivers, so neither is reachable with a pending epoch outside a session.
+
+**Residual — load/save overlay:** the overlay branch returns before the acknowledgement, and correctly so, since it draws `drawLoadSaveView` rather than the note-edit view; acknowledging there would claim a repaint that did not happen. While the overlay is open with the flag raised, the ungated path therefore still repaints every iteration at the cost of `_display.api.display()`. Bounded to a transient user mode, and not present in [`152948`](../../captures/session_20260812_152948.log). Correcting it belongs to the raise side or the call-site gate, not the acknowledgement.
 
 ### Consequence for stage order
 
