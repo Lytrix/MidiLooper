@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Envelope Investigation and Admission Prerequisites
 
-**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp`; S0d **attributed** to `usbnote` ([`200452`](../../captures/session_20260812_200452.log)); S0e overdub note-off split **implemented** (device attribution pending); admission still deferred  
+**Status:** S0 timing-envelope telemetry **implemented** (observation only); S0b **attributed** to `usbdev`; S0c **attributed** to `usbdisp`; S0d **attributed** to `usbnote` ([`200452`](../../captures/session_20260812_200452.log)); S0e **attributed** ([`204221`](../../captures/session_20260812_204221.log)); RC-K1–K3 firmware shipped (device re-measure pending); admission still deferred  
 **Date:** 2026-08-12  
 **Decision:** Do not implement runtime admission or change MIDI service density until the timing envelope is measured  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -615,7 +615,7 @@ Tier-A telemetry (survives `SC_CAPTURE_FLUSH(8)`), rate-limited to 5 s:
 | `DIAG,noteappend,<maxUs>,<overCount>` | Max sum of `appendCaptureEventWithResult` in one USB-device dispatch |
 | `DIAG,notechg,<maxUs>,<overCount>` | Max sum of `accumulatePendingNoteChangesForIncomingNote` in one USB-device dispatch |
 | `DIAG,noterecon,<maxUs>,<overCount>` | Max sum of `reconstructDisplayNotes` inside that note-change call |
-| `DIAG,notepair,<maxUs>,<overCount>` | Max sum of candidate-pair scan inside that note-change call |
+| `DIAG,notepair,<maxUs>,<overCount>` | Max sum of candidate-pair scan over `overdubSourceViewNotes_` |
 | `DIAG,clockrate,<pulsesPerSecond>` | Clock messages per second |
 
 Additional useful measurements: MIDI input backlog, MIDI batch peak, USB-host callback count, USB-host task duration, nested callback depth, allocation failures/growth. Do not add broad telemetry without a reason.
@@ -1494,7 +1494,7 @@ The 424.2 s window is the exception that names `usbclk`: after `OVERDUBBING → 
 
 ## 31n. S0e — split overdub note-off path (observation only)
 
-**Status:** firmware **implemented**; device attribution pending against [`200452`](../../captures/session_20260812_200452.log).
+**Status:** **attributed** in [`204221`](../../captures/session_20260812_204221.log). Follow-through: [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md).
 
 [`200452`](../../captures/session_20260812_200452.log) attributed PLAYING/OVERDUB `usbnote` to `handleNoteOn` / `handleNoteOff`. Analysis showed the cost is per note-off while overdubbing (control window 419.2–424.2 s with no notes: `usbnote` 101 µs). The suspected owner is `Loop::accumulatePendingNoteChangesForIncomingNote`, which calls `NoteUtils::reconstructDisplayNotes` over the full `overdubSourceViewEvents_` on every note-off. S0e splits that path without changing behavior.
 
@@ -1503,11 +1503,29 @@ The 424.2 s window is the exception that names `usbclk`: after `OVERDUBBING → 
 | `DIAG,noteappend` | `appendCaptureEventWithResult` in `recordMidiEvents` | **sum** in that USB dispatch, then max across calls |
 | `DIAG,notechg` | `accumulatePendingNoteChangesForIncomingNote` | **sum** in that USB dispatch, then max across calls |
 | `DIAG,noterecon` | `reconstructDisplayNotes` inside note-change | **sum** in that USB dispatch, then max across calls |
-| `DIAG,notepair` | candidate-pair scan over `allNotes` (includes `noteIdHasChannel`) | **sum** in that USB dispatch, then max across calls |
+| `DIAG,notepair` | candidate-pair scan over reconstructed notes | **sum** in that USB dispatch, then max across calls |
 
 S0e probes are gated to the active USB-device nested window (`beginUsbDeviceNested` / `commitUsbDeviceNested`) so DIN and USB-host note-offs do not leak into the batch sum. Geometry (`analyzeEditSessionInteractions` + `resolveConstrainedGeometry`) is `notechg − noterecon − notepair` by subtraction. Expected closure: `usbnote` ≈ `noteappend + notechg`.
 
-**Exit criterion:** the [`200452`](../../captures/session_20260812_200452.log)-class 90–300 ms PLAYING/OVERDUB `usbnote` samples are attributed across `noteappend`, `noterecon`, `notepair`, and the geometry remainder, reported per overdub pass so growth across passes is visible. Do not start S1, patch RC-J, or cache/memoize the source view in this stage.
+**Exit criterion:** met in [`204221`](../../captures/session_20260812_204221.log). PLAYING/OVERDUB `usbnote` is `notechg`. Split on a 4257-event / 2109-note loop: `noterecon` 177 ms, `notepair` 98 ms, `noteappend` 59 µs. Geometry remainder is small. Follow-through is RC-K1–K3 (§31o), not admission S1.
+
+---
+
+## 31o. S0e follow-through — RC-K1 / RC-K2 / RC-K3
+
+**Status:** firmware **shipped**; device re-measure pending. Plan: [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md).
+
+This is the **targeted bounded-work** branch of §32 (existing mechanisms sufficient). It is **not** admission-model S1.
+
+| RC | Invariant | Change |
+|----|-----------|--------|
+| **K1** | Reconstruct dedup is O(N log N), not O(N²) | `reconstructNotesImpl` tracks seen `(note, startTick, endTick)` in an ordered set |
+| **K2** | Candidate scan does not walk source events per note | Delete `noteIdHasChannel` (DEC-033) |
+| **K3** | Source view reconstructed once per overdub pass | `overdubSourceViewNotes_` filled in `establishOverdubSourceView` |
+
+S0e probes stay as the measurement gate. Expected: `noterecon` leaves the note-off path; `notechg` falls under the 5 ms observational soft ceiling.
+
+**Exit criterion:** a grown-loop overdub capture shows `noterecon` ≈ 0 on the note-off path and `notechg` well under 5 ms, versus [`204221`](../../captures/session_20260812_204221.log) 177 / 274 ms. Do not start admission S1 or patch RC-J.
 
 ---
 
@@ -1537,7 +1555,8 @@ The previous sequence S0 → S1 → … → S8 must **not** be treated as author
 | **S0b** | **Attributed** ([`193645`](../../captures/session_20260812_193645.log) §31i) | PLAYING/OVERDUB `midisvc` is `usbdev` (equals within 0–3 µs). `din` / `hosttask` / `hostdrain` ruled out. |
 | **S0c** | **Attributed** ([`195240`](../../captures/session_20260812_195240.log) §31k) | PLAYING/OVERDUB `usbdev` is `usbdisp`. `usbread` / `usbcap` / `usbthru` ruled out (µs). |
 | **S0d** | **Attributed** ([`200452`](../../captures/session_20260812_200452.log) §31m) | PLAYING/OVERDUB `usbdisp` is `usbnote` (98.7–99.9 %). `usbclk` / `usbcc` / `usbtrans` ruled out. |
-| **S0e** | **Implemented** (device attribution pending) | Split overdub note-off into `noteappend` / `notechg` / `noterecon` / `notepair`. Baseline [`200452`](../../captures/session_20260812_200452.log). S1 not authorized. |
+| **S0e** | **Attributed** ([`204221`](../../captures/session_20260812_204221.log) §31n) | PLAYING/OVERDUB `usbnote` is `notechg` = `noterecon` 177 ms + `notepair` 98 ms. |
+| **RC-K1–K3** | **Firmware shipped** (device re-measure pending) | Targeted fix of S0e costs. Not admission S1. Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md). |
 | **S1** | Not authorized | Admission design from S0/S0b evidence; interval/reservation/fairness/re-entry/ISR rules |
 | **S2** | Not authorized | Coarse admission; owner-boundary checks alone cannot claim MSI invariant |
 | **S3** | Not authorized | Service-density changes; mitigation for PLAYING blind spot, not proof of contract |

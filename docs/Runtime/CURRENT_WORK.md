@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-12 (S1 RC-K1–K3 shipped; device re-measure next)
+Last updated: 2026-08-12 (RC-K1–K3 shipped; device re-measure next)
 
 ---
 
@@ -10,7 +10,7 @@ Last updated: 2026-08-12 (S1 RC-K1–K3 shipped; device re-measure next)
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing envelope
 
-**Now: S1 RC-K1–K3** — fix the overdub note-off cost attributed by S0e. Do not implement admission, change MIDI service density, patch RC-J, or chase overdub display frame-skip. Full brief: architecture doc [§31n](../Plans/runtime_scheduling_admission_model_architecture.md#31n-s0e--split-overdub-note-off-path-observation-only) + analysis in [§31m](../Plans/runtime_scheduling_admission_model_architecture.md#31m-run-200452--s0d-attributed-to-usbnote). Evidence: [`204221`](../../captures/session_20260812_204221.log) (`notechg` 274 ms = `noterecon` 177 ms + `notepair` 98 ms).
+**Now: S0e follow-through RC-K1–K3 shipped.** Targeted fix of the overdub note-off cost attributed by S0e. Do not implement admission, change MIDI service density, patch RC-J, or chase overdub display frame-skip. Plan: [`realtime_incremental_work_overdub_note_change_bugfix.md`](../Plans/realtime_incremental_work_overdub_note_change_bugfix.md). Architecture [§31n](../Plans/runtime_scheduling_admission_model_architecture.md#31n-s0e--split-overdub-note-off-path-observation-only) / [§31o](../Plans/runtime_scheduling_admission_model_architecture.md#31o-s0e-follow-through--rc-k1--rc-k2--rc-k3). Evidence: [`204221`](../../captures/session_20260812_204221.log) (`notechg` 274 ms = `noterecon` 177 ms + `notepair` 98 ms).
 
 **Baseline (proof of current stability):** [`191356`](../../captures/session_20260812_191356.log) on `752273d` (RC-H reverted). Multiple overdubs including overdub-over-overdub; display did not freeze (`slice_clean` covers the whole loop after every stop; final STOPPED paints the 16-bar window of a clean 1482-note cache). `clockrate` held **47–48** through PLAYING/OVERDUB (no dropped-clock / half-tempo). `midisvc` did **not** hold: 99–133 ms, then **218–221 ms** on the long overdub, 110–125 ms on later overdubs, against `clk`/`tracks` 4–10 ms. RECORD stays 0.3–0.8 ms. PLAYING↔OVERDUB `msi` spikes 237–433 ms. Post-stop clock drop is RC-J (48→24→0 and 48→36→0) — behind S0b.
 
@@ -48,7 +48,7 @@ Last updated: 2026-08-12 (S1 RC-K1–K3 shipped; device re-measure next)
 **Also open:** display resolve is under budget only by margin — the window filter measures 4 595 µs against a 5 000 µs line, and the gather still peaks at 26.3 ms. A 140 ms post-stop `msi` stall with `midisvc` at ~0.1 ms is uninvestigated.  
 **RC-C device:** [`115913`](../../captures/session_20260812_115913.log) — timing PASS; display D1–D2 FAIL.  
 **Regression:** [`122003`](../../captures/session_20260812_122003.log) — dual idle slice caused MIDI lag / clock lost (reverted).  
-**Now:** S1 device re-measure — same S0e probes vs [`204221`](../../captures/session_20260812_204221.log) (`notechg` 274 / `noterecon` 177 / `notepair` 98 ms). Expect `noterecon` off the note-off path. No admission.
+**Now:** Device re-measure — same S0e probes vs [`204221`](../../captures/session_20260812_204221.log) (`notechg` 274 / `noterecon` 177 / `notepair` 98 ms). Expect `noterecon` off the note-off path. Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](../Plans/realtime_incremental_work_overdub_note_change_bugfix.md). No admission.
 
 ### Long record onset display freeze — [`012342`](../../captures/session_20260812_012342.log)
 
