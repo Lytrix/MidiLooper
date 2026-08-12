@@ -22,15 +22,6 @@ inline uint32_t micros() { return 0; }
 
 namespace {
 
-bool noteIdHasChannel(const SessionMidiEventVec& events, NoteId noteId, uint8_t channel) {
-  for (const MidiEvent& evt : events) {
-    if (evt.isNoteOn() && evt.noteId == noteId) {
-      return evt.channel == channel;
-    }
-  }
-  return false;
-}
-
 void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChange& change) {
   if (change.kind != PendingNoteChangeKind::Shorten && change.kind != PendingNoteChangeKind::Hide) {
     pending.push_back(change);
@@ -89,9 +80,6 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
   const uint32_t pairStartUs = micros();
   for (const NoteUtils::DisplayNote& note : allNotes) {
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
-      continue;
-    }
-    if (!noteIdHasChannel(overdubSourceViewEvents_, note.noteId, channel)) {
       continue;
     }
     if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, startTick,
