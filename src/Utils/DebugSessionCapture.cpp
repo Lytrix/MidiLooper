@@ -568,6 +568,16 @@ SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint3
       (int)projectionCycleStartTick, loopStartTick, ch, note);
 }
 
+SC_MEM_ATTR void visualCacheState(const char* phase, int32_t events, uint32_t notes,
+                                  uint32_t firstBar, uint32_t lastBar, uint32_t totalBars,
+                                  uint32_t dirtyBarsSize, uint32_t dirtyCount, uint8_t dirtyFlag) {
+  emitCapPrintf("#CAP,%lu,VCACHE,%s,ev,%ld,notes,%lu,first,%ld,last,%ld,total,%lu,dsz,%lu,dcnt,%lu,dirty,%u\r\n",
+                (unsigned long)micros(), phase == nullptr ? "?" : phase, (long)events,
+                (unsigned long)notes, firstBar == UINT32_MAX ? -1L : (long)firstBar,
+                firstBar == UINT32_MAX ? -1L : (long)lastBar, (unsigned long)totalBars,
+                (unsigned long)dirtyBarsSize, (unsigned long)dirtyCount, dirtyFlag);
+}
+
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
                                  size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                  size_t bufferEvents, int hasCommittedPasses) {

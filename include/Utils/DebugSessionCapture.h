@@ -132,6 +132,15 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
                                        size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                        size_t bufferEvents, int hasCommittedPasses, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount);
+/**
+ * Visual cache coverage at a pass-lifecycle or rebuild boundary. Distinguishes committed
+ * content loss from cache under-coverage: `events` is the gathered committed event count when
+ * the phase performed a gather and -1 otherwise; `firstBar`/`lastBar` bound the bars actually
+ * holding cached notes, against `totalBars` for the whole loop.
+ */
+SC_MEM_ATTR void visualCacheState(const char* phase, int32_t events, uint32_t notes,
+                                  uint32_t firstBar, uint32_t lastBar, uint32_t totalBars,
+                                  uint32_t dirtyBarsSize, uint32_t dirtyCount, uint8_t dirtyFlag);
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
 SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex);
@@ -207,6 +216,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                       wNotes) \
   DebugSessionCapture::displaySnapshotWindow(slot, state, loopLen, take, visual, frame, buffer, \
                                              hasCommittedPasses, wStart, wBars, wNotes)
+#define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
+                  dirtyFlag) \
+  DebugSessionCapture::visualCacheState(phase, events, notes, firstBar, lastBar, totalBars, \
+                                        dirtyBarsSize, dirtyCount, dirtyFlag)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) \
@@ -278,6 +291,9 @@ inline void restartCaptureBootGrace() {}
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses) ((void)0)
 #define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses, wStart, wBars, \
                       wNotes) \
+  ((void)0)
+#define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
+                  dirtyFlag) \
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) ((void)0)

@@ -260,6 +260,8 @@ struct Loop {
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
+  /// RC-E attribution: cached note coverage vs loop bars at a rebuild or staleness boundary.
+  void emitVisualCacheState(const char* phase, int32_t gatheredEvents) const;
 
   std::unique_ptr<PlaybackOrderVec> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;

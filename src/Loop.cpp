@@ -13,6 +13,9 @@ void Loop::markPassDerivedStale() {
   playbackOrderDirty = true;
   visualCacheDirty = true;
   invalidatePlaybackCaches();
+  // Unlike markDisplayCachesStale this leaves dirtyBars as the previous rebuild left it, so the
+  // emitted dsz/dcnt say which bars the following idle slices are allowed to revisit.
+  emitVisualCacheState("stale", -1);
 }
 
 NoteId Loop::allocateNoteId() {
