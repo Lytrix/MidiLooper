@@ -153,8 +153,25 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       // race the OLED path across a full long loop (session_20260811_030614).
       constexpr uint32_t kPlayingVisualCacheNeighborhoodBars =
           DisplayWindowUtils::kMaxDetailedWindowBars + 4u;
-      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar,
-                                       kPlayingVisualCacheNeighborhoodBars);
+      uint32_t maxBarDistanceFromPriority = kPlayingVisualCacheNeighborhoodBars;
+      // Partial adopt (RC-E): some bars clean and some dirty — the neighborhood cap leaves a
+      // dead zone on long loops (bars 36–62 on an 84-bar loop). Allow any dirty bar while mixed.
+      if (loop.visualCache.dirtyBars.size() == totalBars && totalBars > 0) {
+        bool sawCleanBar = false;
+        bool sawDirtyBar = false;
+        for (uint8_t flag : loop.visualCache.dirtyBars) {
+          if (flag != 0) {
+            sawDirtyBar = true;
+          } else {
+            sawCleanBar = true;
+          }
+          if (sawCleanBar && sawDirtyBar) {
+            maxBarDistanceFromPriority = UINT32_MAX;
+            break;
+          }
+        }
+      }
+      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar, maxBarDistanceFromPriority);
     }
   }
 
