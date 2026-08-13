@@ -123,7 +123,9 @@ public:
                                          uint32_t closeTick);
   /// Seal capture then shared finalize only — never transport, playback, editor, or pending buffers.
   CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick);
-  void emitStoredMidiVerification() const;
+  /// Queue the stored-MIDI verification dump; draining happens in idle maintenance, never on the
+  /// MIDI-dispatched stop path.
+  void queueDeferredStoredMidiVerification();
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(uint32_t nowMs);
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
@@ -351,6 +353,10 @@ private:
   size_t deferredRecordRevtChunkCursor = 0;
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;
+  bool deferredStoredVerificationPending = false;
+  uint8_t deferredStoredVerificationPhase = 0;
+  size_t deferredStoredVerificationCursor = 0;
+  SessionMidiEventVec deferredStoredVerificationEvents;
   bool deferredFullMidiValidate = false;
   uint32_t deferredValidateQueuedAtMs = 0;
   uint32_t playbackGeneration = 0;
@@ -370,6 +376,9 @@ private:
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
+
+  void resetDeferredStoredMidiVerification();
+  void processDeferredStoredMidiVerification(size_t maxEventsPerSlice = 64);
 
   /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
   /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.

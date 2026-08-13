@@ -49,52 +49,116 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     }
 }
 
-void Track::emitStoredMidiVerification() const {
+namespace {
+
+// Wrap-pair verification is quadratic, so it only runs on loops small enough to afford it.
+constexpr size_t kMaxWrapPairVerifyEvents = 512;
+constexpr size_t kMaxDisplayNoteVerifyLines = 32;
+
+enum StoredVerificationPhase : uint8_t {
+  kStoredVerificationNotes = 0,
+  kStoredVerificationWrapPairs = 1,
+  kStoredVerificationDisplayNotes = 2,
+};
+
+}  // namespace
+
+TRACK_COLD_MEM void Track::resetDeferredStoredMidiVerification() {
+  deferredStoredVerificationPending = false;
+  deferredStoredVerificationPhase = kStoredVerificationNotes;
+  deferredStoredVerificationCursor = 0;
+  deferredStoredVerificationEvents.clear();
+}
+
+TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
 #if !defined(SESSION_CAPTURE)
-  // Every emission below compiles out without SESSION_CAPTURE; the flatten, wrap-pair scan and
-  // reconstruct would run on the overdub stop path and produce nothing.
+  // Every emission in the drain compiles out without SESSION_CAPTURE; queueing would only buy a
+  // flatten, a wrap-pair scan and a reconstruct that produce nothing.
   return;
 #else
+  resetDeferredStoredMidiVerification();
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
+    return;
+  }
+  deferredStoredVerificationPending = true;
+#endif
+}
+
+TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEventsPerSlice) {
+#if !defined(SESSION_CAPTURE)
+  (void)maxEventsPerSlice;
+  return;
+#else
+  if (!deferredStoredVerificationPending) {
+    return;
+  }
+
+  const Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
+    resetDeferredStoredMidiVerification();
     return;
   }
 
   const uint32_t heapBeforeMerge = MemoryMonitor::getInternalHeapFreeBytes();
   if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(heapBeforeMerge)) {
+    resetDeferredStoredMidiVerification();
     return;
   }
 
-  SessionMidiEventVec flat;
-  loop.mergeActiveCapturePasses(flat);
-  for (const MidiEvent& evt : flat) {
-    if (evt.isNoteOn()) {
-      SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
-    } else if (evt.isNoteOff()) {
-      SC_STORED_NOTE_EVENT('F', evt.tick, evt.channel, evt.data.noteData.note);
+  // Flatten once, on the first idle slice — never on the stop path.
+  if (deferredStoredVerificationEvents.empty() && deferredStoredVerificationCursor == 0 &&
+      deferredStoredVerificationPhase == kStoredVerificationNotes) {
+    loop.mergeActiveCapturePasses(deferredStoredVerificationEvents);
+    if (deferredStoredVerificationEvents.empty()) {
+      resetDeferredStoredMidiVerification();
+      return;
     }
   }
 
-  constexpr size_t kMaxWrapPairVerifyEvents = 512;
-  if (flat.size() > kMaxWrapPairVerifyEvents) {
-    return;
-  }
+  const SessionMidiEventVec& flat = deferredStoredVerificationEvents;
 
-  for (size_t i = 0; i < flat.size(); ++i) {
-    const MidiEvent& on = flat[i];
-    if (!on.isNoteOn()) {
-      continue;
-    }
-    for (const MidiEvent& off : flat) {
-      if (!off.isNoteOff() || off.channel != on.channel ||
-          off.data.noteData.note != on.data.noteData.note) {
+  if (deferredStoredVerificationPhase == kStoredVerificationNotes) {
+    size_t emitted = 0;
+    while (deferredStoredVerificationCursor < flat.size() && emitted < maxEventsPerSlice) {
+      const MidiEvent& evt = flat[deferredStoredVerificationCursor++];
+      if (evt.isNoteOn()) {
+        SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
+      } else if (evt.isNoteOff()) {
+        SC_STORED_NOTE_EVENT('F', evt.tick, evt.channel, evt.data.noteData.note);
+      } else {
         continue;
       }
-      if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
-        SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
-        break;
+      ++emitted;
+    }
+    if (deferredStoredVerificationCursor < flat.size()) {
+      return;
+    }
+    deferredStoredVerificationPhase = kStoredVerificationWrapPairs;
+    return;
+  }
+
+  if (deferredStoredVerificationPhase == kStoredVerificationWrapPairs) {
+    if (flat.size() <= kMaxWrapPairVerifyEvents) {
+      for (size_t i = 0; i < flat.size(); ++i) {
+        const MidiEvent& on = flat[i];
+        if (!on.isNoteOn()) {
+          continue;
+        }
+        for (const MidiEvent& off : flat) {
+          if (!off.isNoteOff() || off.channel != on.channel ||
+              off.data.noteData.note != on.data.noteData.note) {
+            continue;
+          }
+          if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
+            SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
+            break;
+          }
+        }
       }
     }
+    deferredStoredVerificationPhase = kStoredVerificationDisplayNotes;
+    return;
   }
 
   const auto reconstructed = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
@@ -112,10 +176,11 @@ void Track::emitStoredMidiVerification() const {
     }
     SC_DNTE(note.note, note.startTick, displayStart, length, static_cast<int>(reconLogged));
     ++reconLogged;
-    if (reconLogged >= 32) {
+    if (reconLogged >= kMaxDisplayNoteVerifyLines) {
       break;
     }
   }
+  resetDeferredStoredMidiVerification();
 #endif  // SESSION_CAPTURE
 }
 
@@ -128,6 +193,17 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       revtSlice = 8;
     }
     processDeferredRecordRevts(revtSlice);
+  }
+
+  // Stored-MIDI verification is non-critical evidence, so it drains in slices instead of running
+  // inside the MIDI-dispatched overdub stop. It must still complete before the next overdub
+  // starts (HITL scopes each pass by the following overdub start), so it also runs while PLAYING.
+  if (!isRecording() && !isOverdubbing()) {
+    size_t verificationSlice = 64;
+    if (StorageManager::hasDeferredSaveWork()) {
+      verificationSlice = 16;
+    }
+    processDeferredStoredMidiVerification(verificationSlice);
   }
 
   const bool deferredDerivedViewMaintenance =
