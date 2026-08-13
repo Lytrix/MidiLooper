@@ -76,24 +76,26 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
 #if defined(SESSION_CAPTURE)
     const EditPassVec applyOwnedRows = editSession.applyOwnedEditPassRows;
 #endif
+    const NoteUtils::DisplayNoteVec& committedDisplayNotes =
+        visualCacheNotesForSelectedSlot(track);
     EditPassVec rows;
     if (!editSession.noteEditCurrentState.empty()) {
         rows = buildCommitRowsFromCurrentState(editSession.focus, editSession.noteEditCurrentState,
-                                               channel, loopLength);
+                                               channel, loopLength, &committedDisplayNotes);
 #if defined(SESSION_CAPTURE)
         const EditPassVec parityRows = buildPreCommitEditPasses(
             editSession.focus, channel, &sessionStoreEvents, loopLength,
-            &editSession.noteEditCurrentState);
-        logApplyOwnedCommitParity(rows, parityRows);
+            &editSession.noteEditCurrentState, &committedDisplayNotes);
+        logApplyOwnedCommitParity(rows, parityRows, "pre_commit");
 #endif
     } else {
         rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength,
-                                        nullptr);
+                                        nullptr, &committedDisplayNotes);
     }
     editSession.applyOwnedEditPassRows.clear();
 #if defined(SESSION_CAPTURE)
     if (!applyOwnedRows.empty()) {
-        logApplyOwnedCommitParity(rows, applyOwnedRows);
+        logApplyOwnedCommitParity(rows, applyOwnedRows, "apply_owned");
     }
 #endif
     if (rows.empty()) {

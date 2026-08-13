@@ -69,6 +69,11 @@ void noteEditFocusApplyMoveEnd(NoteEditFocus& focus, uint32_t newStart, uint32_t
 void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t start,
                              uint32_t end, uint32_t loopLength);
 
+/// Select/rebuild: movingNoteId is the painted DisplayNote id (no rematerialize remap).
+/// Visible current-state currentSpan wins for last; otherwise the painted span (181114 76@840).
+void noteEditFocusApplyDisplayNote(NoteEditFocus& focus, const NoteUtils::DisplayNote& liveSelected,
+                                   const NoteEditCurrentState* currentState);
+
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 
 /// True when pre-commit would emit moving-note and/or overlap edit pass rows.
@@ -171,12 +176,14 @@ bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                      const MidiEventVec* sessionStoreEvents = nullptr,
                                      uint32_t loopLength = 0,
-                                     const NoteEditCurrentState* currentState = nullptr);
+                                     const NoteEditCurrentState* currentState = nullptr,
+                                     const NoteUtils::DisplayNoteVec* committedDisplayNotes = nullptr);
 
 /// Macro commit rows from current state compared to committed baseline (`baselineMap`).
 EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,
                                             const NoteEditCurrentState& currentState,
-                                            uint8_t channel, uint32_t loopLength);
+                                            uint8_t channel, uint32_t loopLength,
+                                            const NoteUtils::DisplayNoteVec* committedDisplayNotes = nullptr);
 
 /// NoteIds whose geometry is read from the live session store during NOTE_EDIT display projection.
 /// When \p currentState is non-empty, overlap participants come from current state (C4 display).

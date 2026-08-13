@@ -10,8 +10,8 @@
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
-#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
@@ -261,47 +261,26 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   markPassDerivedStale();
 }
 
-void Loop::establishOverdubSourceView() {
+LOOP_COLD_MEM void Loop::establishOverdubSourceView() {
+  overlapHoldTotals_ = {};
   overdubSourceViewEvents_.clear();
   gatherCommittedEvents(overdubSourceViewEvents_);
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
+      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   overdubSourceViewEstablished_ = true;
   clearPendingNoteChanges();
 }
 
-void Loop::clearOverdubSourceView() {
+LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
   overdubSourceViewEvents_.clear();
+  overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
   overdubSourceViewEstablished_ = false;
 }
 
 void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
-}
-
-void Loop::gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                                 uint32_t windowLength) const {
-  out.clear();
-  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0 ||
-      windowLength == 0) {
-    return;
-  }
-  DisplayWindowUtils::filterMidiEventsToWindow(overdubSourceViewEvents_, out, windowStart,
-                                               windowLength, overdubSourceViewLoopLengthTicks_);
-}
-
-void Loop::gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out,
-                                                uint32_t windowStart,
-                                                uint32_t windowLength) const {
-  out.clear();
-  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0 ||
-      windowLength == 0) {
-    return;
-  }
-  const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
-      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
-  out = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-      notes, windowStart, windowLength, overdubSourceViewLoopLengthTicks_);
 }
 
 void Loop::beginCapture(CapturePhase phase) {

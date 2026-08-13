@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Phase 1 — overdubSourceView establish/clear, materialize-aware geometry, wrap-safe lookup.
+// overdubSourceView establish/clear, materialize-aware geometry, wrap-safe lookup.
 
 #include <unity.h>
 
@@ -21,6 +21,8 @@
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "Globals.h"
+#include "Utils/DisplayWindowUtils.h"
+#include "Utils/NoteUtils.h"
 
 namespace {
 
@@ -89,7 +91,10 @@ void test_overdub_start_establishes_source_view() {
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(kLoopLen, loop.overdubSourceViewLoopLengthTicks());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
 void test_record_start_does_not_keep_source_view() {
@@ -102,6 +107,7 @@ void test_record_start_does_not_keep_source_view() {
 
   loop.beginCapture(CapturePhase::Record);
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
 void test_source_view_includes_edit_pass_geometry() {
@@ -115,11 +121,7 @@ void test_source_view_includes_edit_pass_geometry() {
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(0, countNoteOns(loop.overdubSourceViewEvents(), 60));
   TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 67));
-
-  SessionMidiEventVec committed;
-  loop.gatherCommittedEvents(committed);
-  TEST_ASSERT_EQUAL(countNoteOns(committed, 67),
-                    countNoteOns(loop.overdubSourceViewEvents(), 67));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 67, 10));
 }
 
 void test_source_view_stable_across_capture_appends_and_wraps() {
@@ -128,18 +130,16 @@ void test_source_view_stable_across_capture_appends_and_wraps() {
   Loop loop;
   seedRecordNote(loop, 10, 58, 60);
   loop.beginCapture(CapturePhase::Overdub);
+  const size_t beforeSize = loop.overdubSourceViewEvents().size();
+  TEST_ASSERT_TRUE(beforeSize >= 2u);
 
-  const size_t establishedCount = loop.overdubSourceViewEvents().size();
-  TEST_ASSERT_TRUE(establishedCount >= 2u);
-
-  // Simulate wrap: high-phase then low-phase capture appends.
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kLoopLen - 20, 1, 72, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kLoopLen - 5, 1, 72, 0)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(5, 1, 74, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(40, 1, 74, 0)));
 
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_EQUAL(establishedCount, loop.overdubSourceViewEvents().size());
+  TEST_ASSERT_EQUAL(beforeSize, loop.overdubSourceViewEvents().size());
   TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
   TEST_ASSERT_EQUAL(0, countNoteOns(loop.overdubSourceViewEvents(), 72));
   TEST_ASSERT_EQUAL(0, countNoteOns(loop.overdubSourceViewEvents(), 74));
@@ -151,26 +151,22 @@ void test_source_view_immutable_when_live_materialize_mutates() {
   Loop loop;
   seedRecordNote(loop, 10, 58, 60);
   loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(hasNoteOnAt(loop.overdubSourceViewEvents(), 60, 10));
 
-  SessionMidiEventVec snapshot = loop.overdubSourceViewEvents();
-  TEST_ASSERT_FALSE(snapshot.empty());
-
-  // Derived flat mutation must not rewrite the session source view.
   loop.midiEvents().push_back(MidiEvent::NoteOn(100, 1, 80, 80));
   loop.midiEvents().push_back(MidiEvent::NoteOff(140, 1, 80, 0));
   loop.invalidateCaches();
 
-  TEST_ASSERT_EQUAL(snapshot.size(), loop.overdubSourceViewEvents().size());
+  TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
   TEST_ASSERT_EQUAL(0, countNoteOns(loop.overdubSourceViewEvents(), 80));
   TEST_ASSERT_TRUE(hasNoteOnAt(loop.overdubSourceViewEvents(), 60, 10));
 }
 
-void test_candidate_lookup_wrap_safe_high_then_low_capture_order() {
+void test_source_view_wrap_safe_high_then_low_capture_order() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
 
-  // Source notes near both ends of the loop.
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, kLoopLen - 40, 1, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(kLoopLen - 10, 1, 60, 0)));
@@ -180,26 +176,27 @@ void test_candidate_lookup_wrap_safe_high_then_low_capture_order() {
   loop.loopLengthTicks = kLoopLen;
 
   loop.beginCapture(CapturePhase::Overdub);
-  // Capture store order is high-then-low (wrap). Lookup must ignore that order.
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kLoopLen - 30, 1, 70, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kLoopLen - 15, 1, 70, 0)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(12, 1, 71, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(30, 1, 71, 0)));
 
+  const SessionMidiEventVec& source = loop.overdubSourceViewEvents();
+  TEST_ASSERT_TRUE(hasNoteOnAt(source, 62, 8));
+  TEST_ASSERT_TRUE(hasNoteOnAt(source, 60, kLoopLen - 40));
+  TEST_ASSERT_FALSE(hasNoteOnAt(source, 70, kLoopLen - 30));
+  TEST_ASSERT_FALSE(hasNoteOnAt(source, 71, 12));
+
   SessionMidiEventVec lowWindow;
-  loop.gatherOverdubSourceViewEventsInWindow(lowWindow, 0, 64);
+  DisplayWindowUtils::filterMidiEventsToWindow(source, lowWindow, 0, 64, kLoopLen);
   TEST_ASSERT_TRUE(hasNoteOnAt(lowWindow, 62, 8));
-  TEST_ASSERT_FALSE(hasNoteOnAt(lowWindow, 60, kLoopLen - 40));
 
   SessionMidiEventVec highWindow;
-  loop.gatherOverdubSourceViewEventsInWindow(highWindow, kLoopLen - 64, 64);
+  DisplayWindowUtils::filterMidiEventsToWindow(source, highWindow, kLoopLen - 64, 64, kLoopLen);
   TEST_ASSERT_TRUE(hasNoteOnAt(highWindow, 60, kLoopLen - 40));
-  TEST_ASSERT_FALSE(hasNoteOnAt(highWindow, 62, 8));
 
-  NoteUtils::DisplayNoteVec noteCandidates;
-  loop.gatherOverdubSourceViewNotesInWindow(noteCandidates, 0, 64);
-  TEST_ASSERT_TRUE(hasDisplayNote(noteCandidates, 62, 8));
-  TEST_ASSERT_FALSE(hasDisplayNote(noteCandidates, 60, kLoopLen - 40));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 62, 8));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, kLoopLen - 40));
 }
 
 void test_discard_and_commit_clear_source_view() {
@@ -210,8 +207,10 @@ void test_discard_and_commit_clear_source_view() {
 
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   loop.discardCapture();
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
@@ -219,6 +218,7 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -228,7 +228,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_includes_edit_pass_geometry);
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);
   RUN_TEST(test_source_view_immutable_when_live_materialize_mutates);
-  RUN_TEST(test_candidate_lookup_wrap_safe_high_then_low_capture_order);
+  RUN_TEST(test_source_view_wrap_safe_high_then_low_capture_order);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   return UNITY_END();
 }

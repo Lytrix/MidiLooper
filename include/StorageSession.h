@@ -289,6 +289,11 @@ struct PersistenceWorkItemJob {
   uint8_t slotIndex = 0xFF;
   uint32_t flushStartedAtUs = 0;
   uint32_t flushHeapBefore = 0;
+  uint32_t bundleStartedAtUs = 0;
+  uint32_t bundleSliceCount = 0;
+  uint32_t bundleMaxSliceUs = 0;
+  uint32_t bundleUndoEntryCount = 0;
+  uint32_t bundleSnapshotCount = 0;
 };
 
 struct StorageSession {

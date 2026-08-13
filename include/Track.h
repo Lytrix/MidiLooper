@@ -23,6 +23,7 @@
 #include "Slot.h"
 #include "LoopPool.h"
 #include "Globals.h"
+#include "OverlapNoteIdSet.h"
 
 class TrackUndo; // Forward declaration
 
@@ -32,6 +33,7 @@ struct PendingNote {
   uint8_t channel;         // MIDI channel
   uint32_t startNoteTick;  // tick when note-on occurred
   uint8_t velocity;        // note-on velocity
+  OverlapNoteIdSet overlapNoteIds;  // hold-duration candidates; keep after playback off
 };
 
 // Hash function for pair (used in unordered_map)
@@ -123,9 +125,14 @@ public:
                                          uint32_t closeTick);
   /// Seal capture then shared finalize only — never transport, playback, editor, or pending buffers.
   CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick);
-  void emitStoredMidiVerification() const;
+  /// Queue the stored-MIDI verification dump; draining happens in idle maintenance, never on the
+  /// MIDI-dispatched stop path.
+  void queueDeferredStoredMidiVerification();
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(uint32_t nowMs);
+  /// One-shot `#CAP,DIAG,stored_notes` from a clean visual cache. SESSION_CAPTURE only.
+  /// Gate 0 diagnosis; disable once later-stage overlap validation proofs exist.
+  void maybeLogStoredNoteCount();
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
@@ -141,8 +148,13 @@ public:
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
-  void playMidiEvents(uint32_t currentTick, bool isAudible);
-  void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible);
+  /// Advance committed playback. `emitMidiOutput` sends on this track's MIDI channel
+  /// and output ports; cursor and ledger always run.
+  void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);
+  void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput);
+  /// Silence this track's MIDI channel on the output ports. Does not clear ledger or pendingNotes.
+  void silenceTrackMidiOutput();
+  void silenceSlotMidiOutput(uint8_t slotIndex);
   void printNoteEvents() const;
   /// Send an "All Notes Off" (CC 123) on every channel and clear any pending notes.
   void sendAllNotesOff();
@@ -330,7 +342,10 @@ private:
   friend class TrackUndo;
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
+  bool playbackEmitMidiOutput_ = false;
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
+  void snapshotOverlapHoldCandidates(PendingNote& pending);
+  void collectOverlapHoldPlaybackNoteOn(NoteId noteId, uint8_t pitch);
 
   // Track data
   bool muted;
@@ -351,6 +366,11 @@ private:
   size_t deferredRecordRevtChunkCursor = 0;
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;
+  bool deferredStoredVerificationPending = false;
+  uint8_t storedNoteCountLoggedMask_ = 0;
+  uint8_t deferredStoredVerificationPhase = 0;
+  size_t deferredStoredVerificationCursor = 0;
+  SessionMidiEventVec deferredStoredVerificationEvents;
   bool deferredFullMidiValidate = false;
   uint32_t deferredValidateQueuedAtMs = 0;
   uint32_t playbackGeneration = 0;
@@ -370,6 +390,9 @@ private:
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
+
+  void resetDeferredStoredMidiVerification();
+  void processDeferredStoredMidiVerification(size_t maxEventsPerSlice = 64);
 
   /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
   /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.

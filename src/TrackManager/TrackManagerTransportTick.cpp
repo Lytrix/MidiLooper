@@ -8,6 +8,8 @@
 #include "Logger.h"
 #include "LooperState.h"
 #include "StorageManager.h"
+#include "Utils/PlaybackMidiOutput.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
@@ -90,6 +92,7 @@ void TrackManager::advanceJamTicks(uint32_t delta) {
 }
 
 void TrackManager::updateAllTracks(uint32_t currentTick) {
+  const uint32_t tracksStartUs = micros();
   handlePendingRecordStart(currentTick);
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
@@ -232,17 +235,20 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
 
     const uint8_t activeSlot = tracks[i].getActiveLoopIndex();
 
-    // Primary (active) slot playback.
-    if (slotEnabled[i][activeSlot] && !slotMuted[i][activeSlot]) {
-      tracks[i].playMidiEvents(playTick, audible);
+    // Primary (active) slot playback. Mute/solo/slot-mute suppress MIDI send, not the engine.
+    if (PlaybackMidiOutput::engineShouldRun(slotEnabled[i][activeSlot])) {
+      tracks[i].playMidiEvents(
+          playTick, PlaybackMidiOutput::shouldSend(audible, slotMuted[i][activeSlot]));
     }
 
     // Additional enabled slots.
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       if (s == activeSlot) continue;
-      if (slotEnabled[i][s] && !slotMuted[i][s]) {
-        tracks[i].playMidiEventsForSlot(s, playTick, audible);
+      if (PlaybackMidiOutput::engineShouldRun(slotEnabled[i][s])) {
+        tracks[i].playMidiEventsForSlot(
+            s, playTick, PlaybackMidiOutput::shouldSend(audible, slotMuted[i][s]));
       }
     }
   }
+  RuntimeTimingTelemetry::noteTracksUpdate(micros() - tracksStartUs);
 }

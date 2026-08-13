@@ -319,7 +319,13 @@ void test_legacy_edit_tail_v4_rejected() {
   appendRaw(buffer, changeCount);
 
   const uint8_t typeRaw = 1;
-  const NoteRef target{1, 60, 10, 20};
+  struct LegacyNoteRef {
+    uint8_t channel = 0;
+    uint8_t note = 0;
+    uint32_t startTick = 0;
+    uint32_t endTick = 0;
+  };
+  const LegacyNoteRef target{1, 60, 10, 20};
   const uint8_t newPitch = 0;
   const uint32_t newStartTick = 0;
   const uint32_t newEndTick = 0;

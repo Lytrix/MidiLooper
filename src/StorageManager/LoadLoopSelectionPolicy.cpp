@@ -30,4 +30,8 @@ EmptyIdleAction resolveEmptyIdleAction(bool focusQueued, bool backgroundQueued,
     return EmptyIdleAction::Skip;
 }
 
+bool shouldStepLoadLoopJob(bool jobIsFocus, bool backgroundAllowed) {
+    return jobIsFocus || backgroundAllowed;
+}
+
 }  // namespace LoadLoopSelectionPolicy

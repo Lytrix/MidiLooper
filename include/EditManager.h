@@ -165,6 +165,8 @@ public:
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
     /// Single cached NOTE_EDIT display projection (session store + focus) for grid paint.
     NoteUtils::DisplayNoteVec projectedNoteEditDisplayNotes(const Track& track) const;
+    const NoteUtils::DisplayNoteVec& visualCacheNotesForSelectedSlot(const Track& track) const;
+    void ensureCurrentStateVisibleRowsFromVisualCache(Track& track);
     void invalidateProjectedNoteEditDisplayCache() const;
     uint32_t noteEditDisplayInvalidateEpoch() const { return noteEditDisplayInvalidateEpoch_; }
     uint32_t noteEditDisplayPaintedEpoch() const { return noteEditDisplayPaintedEpoch_; }
@@ -341,6 +343,7 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    mutable uint32_t noteEditSelectableDisplayCacheVisualRevision_ = UINT32_MAX;
     mutable int noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     mutable NoteUtils::DisplayNoteVec noteEditPaintDisplayCacheNotes_;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;

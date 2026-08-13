@@ -236,8 +236,18 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         PersistenceBudget::persistenceSliceBudgetExhausted(sliceBudgetUs, micros() - sliceStartUs)) {
         PersistenceDiagnostics::onBudgetBlock();
     }
+    PersistenceDiagnostics::BacklogSnapshot backlog{};
+    const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
+    const SyncDrainBudget drainBudget = buildSyncDrainBudgetForSession();
+    backlog.workQueueDepth = progress.workQueueDepth;
+    backlog.writingWorkItems = progress.writingWorkItems;
+    backlog.chunkQueueDepth = progress.chunkQueueDepth;
+    backlog.estSliceSteps = drainBudget.expectedSliceSteps;
+    backlog.estSdBytes = drainBudget.estimatedSdPayloadBytes;
+    backlog.urgentRequested = storageSession.currentWorkspaceSave.urgentRequested ? 1U : 0U;
     PersistenceDiagnostics::maybeEmitPeriodic(
         isCaptureActiveForPersistence(), storageSession.currentWorkspaceSave.pending,
-        storageSession.persistenceWorkItem.itemActive, storageSession.persistenceWorkItem.sdIoActive);
+        storageSession.persistenceWorkItem.itemActive, storageSession.persistenceWorkItem.sdIoActive,
+        &backlog);
 #endif
 }

@@ -52,6 +52,21 @@ Route new buffers here when they scale with loop length, edit closure, or undo d
 | UIP | `buildCanonicalSpansFromMidi` temps, `IntervalProjection` batch vectors | Per reconstruct / per project |
 | `NoteUtils` | span rebuild temps in `buildCanonicalSpansFromMidi` | Same allocator as UIP |
 
+### Batch loops — one buffer per batch, never one per item
+
+`extmem_malloc` is **not** O(1). Teensy routes it to smalloc, and `sm_malloc_pool` restarts a linear walk of the pool header chain from `spool->pool` on **every** call, verifying each block's hashed tag as it goes. There is no free list. Cost per allocation is the number of allocated blocks before the first adequate gap, so it grows with how much of the pool the session already holds — event chunks, playback runtimes, persistence queues. A full traversal of that same chain measured **593 ms** (see the walk rule below).
+
+Therefore a loop that allocates one external-memory temp per item costs `O(items × pool blocks)` and gets slower as a session accumulates passes, independent of item count.
+
+**Rule:** hoist the temp out of the loop and `clear()` it per item — `clear()` keeps capacity, so a reused buffer allocates once per batch. Prefer the out-param overload when one exists.
+
+| Owner | Reused buffer |
+|-------|----------------|
+| `IntervalProjection::projectDisplayNotes` | one `candidates` across all spans |
+| `IntervalProjection::projectNoteIntervals` | one `candidates` + one `selected` across all spans |
+
+`generateEquivalentIntervals` and `selectProjectedIntervalsForDisplay` each have a by-value form (single-span callers, tests) and an out-param form. Batch callers use the out-param form.
+
 ### Baseline map scope (NOTE_EDIT)
 
 `rebuildNoteEditFocusFromStore` SHALL NOT populate `baselineMap` for every note in the loop. Populate **edit closure** only (`populateBaselineMapForEditClosure`): moving note + overlap notes. Undo snapshots trim further via `snapshotFocusForSessionUndo`.
@@ -80,7 +95,11 @@ Gates consult **internal heap free** plus tier-specific estimates. They do **not
 2. Estimate **external** bytes: `focus.baselineMap`, `focus.overlapNotes` (and redo focus maps).
 3. Require `getInternalHeapFreeBytes() >= HEAP_RESERVE_BYTES + internalBytes`.
 4. If PSRAM **unavailable**: add external estimate to internal requirement (native tests / no chip).
-5. If PSRAM **available**: **do not** call `getExternalMemoryPoolFreeBytes()` on the geometry / kind-boundary push hot path — `sm_malloc_stats_pool` walks the full pool (~300 ms on 8 MiB). Same rule as `LoopEventStore::hasHeadroomForCommittedChunkIdList`: optimistic extmem admit; `push_back` is the real alloc gate. Idle / stopped diagnostics (`logStatus`, 60 s main-loop interval) may walk the pool.
+5. If PSRAM **available**: **do not** call `getExternalMemoryPoolFreeBytes()` or `getExternalMemoryPoolUsedBytes()` anywhere in `loop()` — `sm_malloc_stats_pool` walks the full pool (measured **593 ms** on 8 MiB in [`141815`](../../captures/session_20260812_141815.log)). Same rule as `LoopEventStore::hasHeadroomForCommittedChunkIdList`: optimistic extmem admit; `push_back` is the real alloc gate.
+
+**The walk belongs to `setup()` only** — pass `logStatus(true)` there. Runtime callers report `getExternalMemoryPoolTotalBytes()` (`pool_size`, O(1)) instead.
+
+An earlier version of this rule allowed the walk in "idle / stopped diagnostics (`logStatus`, 60 s main-loop interval)". That exemption was wrong. The `main.cpp` gate is `!timingCriticalTrackActive`, derived from track state (`isRecording() || isOverdubbing() || isPlaying()`), which says nothing about whether an **external clock is still streaming**. In `141815` the gate opened 152 ms after `PLAYING → STOPPED`, the walk blocked the loop 593 ms, and `ClockManager` reported `MIDI clock lost, switching to internal at 118.4 BPM`. There is no track-state predicate that makes this call safe; do not reintroduce one.
 
 **Do not** post-push trim session undo based only on internal heap when entries live in the external pool — that falsely evicted depth at ~32 steps before the split.
 

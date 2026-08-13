@@ -12,6 +12,7 @@
 #include "MidiHandler.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ClockTransportUtils.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
@@ -141,6 +142,9 @@ void ClockManager::updateInternalClock() {
 void ClockManager::onMidiClockPulse() {
   if (!sequencerRunning) return;
 
+  const uint32_t clockDispatchStartUs = micros();
+  RuntimeTimingTelemetry::noteClockPulse();
+
   requestTransitionTo(CLOCK_EXTERNAL);
   if (transitionPending &&
       ClockSourceStateMachine::isValidTransition(clockSource, CLOCK_EXTERNAL)) {
@@ -180,6 +184,7 @@ void ClockManager::onMidiClockPulse() {
   }
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = micros();
+  RuntimeTimingTelemetry::noteClockDispatch(lastMidiClockTime - clockDispatchStartUs);
 }
 
 uint32_t ClockManager::setLastMidiClockTime(uint32_t lastMidiClockTime){

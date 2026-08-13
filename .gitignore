@@ -6,6 +6,9 @@
 .vscode/launch.json
 .vscode/ipch
 
+# PlatformIO build output and downloaded library dependencies
+.pio/
+
 # HITL capture/session logs and host automation artifacts (disposable)
 captures/
 

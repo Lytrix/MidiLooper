@@ -60,6 +60,18 @@ void test_empty_idle_skip_background_while_playing() {
           LoadLoopSelectionPolicy::resolveEmptyIdleAction(false, true, false)));
 }
 
+void test_non_focus_committing_skips_while_playing() {
+  TEST_ASSERT_FALSE(LoadLoopSelectionPolicy::shouldStepLoadLoopJob(false, false));
+}
+
+void test_focus_committing_steps_while_playing() {
+  TEST_ASSERT_TRUE(LoadLoopSelectionPolicy::shouldStepLoadLoopJob(true, false));
+}
+
+void test_non_focus_steps_when_background_allowed() {
+  TEST_ASSERT_TRUE(LoadLoopSelectionPolicy::shouldStepLoadLoopJob(false, true));
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_parked_focus_resumes);
@@ -69,5 +81,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_empty_idle_focus_high);
   RUN_TEST(test_empty_idle_background_when_allowed);
   RUN_TEST(test_empty_idle_skip_background_while_playing);
+  RUN_TEST(test_non_focus_committing_skips_while_playing);
+  RUN_TEST(test_focus_committing_steps_while_playing);
+  RUN_TEST(test_non_focus_steps_when_background_allowed);
   return UNITY_END();
 }

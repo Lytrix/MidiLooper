@@ -221,6 +221,28 @@ NOTE_EDIT_MEM void noteEditFocusApplyMoveEnd(NoteEditFocus& focus, uint32_t newS
   focus.movingNoteRange.end = newEnd;
 }
 
+NOTE_EDIT_MEM void noteEditFocusApplyDisplayNote(NoteEditFocus& focus,
+                                                 const NoteUtils::DisplayNote& liveSelected,
+                                                 const NoteEditCurrentState* currentState) {
+  const NoteId noteId = liveSelected.noteId;
+  focus.movingNoteId = noteId;
+  focus.commitBaseline = baselineFromDisplayNote(liveSelected);
+  focus.last = focus.commitBaseline;
+  if (currentState != nullptr && noteId != kInvalidNoteId) {
+    const NoteEditCurrentNoteState* row = currentState->find(noteId);
+    if (row != nullptr && currentStateRowIsVisible(*row)) {
+      focus.last = row->currentSpan;
+      focus.commitBaseline = row->committedSpan;
+    }
+  }
+  focus.movingNoteRange.start = focus.last.startTick;
+  focus.movingNoteRange.end = focus.last.endTick;
+  focus.active = true;
+  if (noteId != kInvalidNoteId) {
+    focus.baselineMap[noteId] = focus.commitBaseline;
+  }
+}
+
 NOTE_EDIT_MEM void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t start,
                              uint32_t end, uint32_t loopLength) {
   if (!focus.active || loopLength == 0) {

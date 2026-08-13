@@ -61,8 +61,12 @@ void resetInternalHeapWatermark();
 
 /**
  * @brief Log current memory stats to Serial (uses Logger if available).
+ * @param includeExternalPoolUsage Report external-pool free/used bytes. This walks the whole
+ *        smalloc header chain (`sm_malloc_stats_pool`) and measured 593 ms on an 8 MiB pool
+ *        in session_20260812_141815, long enough to lose external MIDI clock. Only pass true
+ *        from setup, before the transport can run.
  */
-void logStatus();
+void logStatus(bool includeExternalPoolUsage = false);
 
 /**
  * @brief Log heap, PSRAM, pool, and active-loop storage stats at a record/overdub milestone.

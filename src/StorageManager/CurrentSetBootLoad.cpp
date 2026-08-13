@@ -691,9 +691,11 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
     if (file) {
         file.close();
     }
+#if defined(SESSION_CAPTURE)
     if (!ok && setDir != nullptr && std::strcmp(setDir, CurrentSetStorage::kCurrentSetDir) == 0) {
         Serial.println("[StorageManager] Current runtime bundle unreadable; quarantining for recovery.");
         StorageManagerInternal::quarantineCorruptRuntimeBundleOnSd();
     }
+#endif
     return ok;
 }

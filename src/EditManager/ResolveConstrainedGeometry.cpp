@@ -109,27 +109,34 @@ NOTE_EDIT_MEM bool interactionsAreBoundaryTouchOnly(
 
 NOTE_EDIT_MEM ConstrainedNoteGeometry constrainedGeometryFromRestoreCandidate(
     NoteId targetNoteId, const NoteBaseline& transactionBaseline, const MidiEventVec& liveStore,
-    uint8_t channel, const NoteEditFocus& focus, const NoteEditCurrentState* currentState) {
+    uint8_t channel, const NoteEditFocus& focus, const NoteEditCurrentState* currentState,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   ConstrainedNoteGeometry geometry{};
   geometry.noteId = targetNoteId;
   geometry.pitch = transactionBaseline.pitch;
   geometry.visible = true;
+
+  NoteBaseline painted{};
+  const bool hasPainted = committedDisplayNotes != nullptr &&
+                          displaySpanForNoteId(*committedDisplayNotes, targetNoteId, painted);
 
   if (currentState != nullptr) {
     const NoteEditCurrentNoteState* row = currentState->find(targetNoteId);
     if (row != nullptr) {
       const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
       if (participatingNoteNeedsFullCommittedLeaveRestore(participant)) {
-        const NoteBaseline committed = participatingLeaveRestoreCommittedSpan(participant);
+        const NoteBaseline committed =
+            hasPainted ? painted : participatingLeaveRestoreCommittedSpan(participant);
         geometry.startTick = committed.startTick;
         geometry.endTick = committed.endTick;
         geometry.pitch = committed.pitch;
         return geometry;
       }
-      // Visible shortened leave-restore paints committedSpan (021407 pitch vacate after ShortenNote).
+      // Visible shortened leave-restore paints committedSpan (021407 pitch vacate after ShortenNote)
+      // unless Stage 8 painted DisplayNote is shorter rematerialize pairing (200154 note 5).
       if (participatingNoteIsExistingAndVisible(participant) &&
           participatingNoteIsRightTailShortened(participant)) {
-        const NoteBaseline committed = participant.committedSpan;
+        const NoteBaseline committed = hasPainted ? painted : participant.committedSpan;
         geometry.startTick = committed.startTick;
         geometry.endTick = committed.endTick;
         geometry.pitch = committed.pitch;
@@ -397,7 +404,8 @@ resolveAllConstrainedGeometry(
     uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
     const NoteEditFocus& focus, NoteIdList& leaveRestoreTargetNoteIds,
-    const NoteEditCurrentState* currentState) {
+    const NoteEditCurrentState* currentState,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   leaveRestoreTargetNoteIds.clear();
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, storageTransactionBaseline, liveStore,
@@ -417,7 +425,8 @@ resolveAllConstrainedGeometry(
         continue;
       }
       ConstrainedNoteGeometry restoreCandidate = constrainedGeometryFromRestoreCandidate(
-          targetNoteId, storageIt->second, liveStore, channel, focus, currentState);
+          targetNoteId, storageIt->second, liveStore, channel, focus, currentState,
+          committedDisplayNotes);
       if (restoreCandidate.endTick <= restoreCandidate.startTick) {
         continue;
       }

@@ -27,6 +27,7 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "CaptureAppendResult.h"
+#include "OverlapNoteIdSet.h"
 #include "PassReclaim.h"
 #include "PendingNoteChange.h"
 #include "Utils/LoopStopFinalize.h"
@@ -34,6 +35,22 @@
 class Track;
 
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
+
+/// Overdub-session totals for `#CAP,DIAG,overlap_hold`. Incremented on note-off; emitted at stop.
+struct OverlapHoldTotals {
+  uint32_t noteOffs = 0;
+  uint32_t emptySets = 0;
+  uint32_t maxIds = 0;
+  uint32_t overflows = 0;
+  uint32_t lookedUp = 0;
+  uint32_t maxExamined = 0;
+  uint32_t sumExamined = 0;
+  uint32_t maxLookupUs = 0;
+  uint32_t sumLookupUs = 0;
+  uint32_t add = 0;
+  uint32_t shorten = 0;
+  uint32_t hide = 0;
+};
 
 struct Loop {
   Capture capture;
@@ -86,6 +103,8 @@ struct Loop {
   /// Canonical committed-pass event gathering (full loop). Prefer over display-only helpers.
   void gatherCommittedEvents(SessionMidiEventVec& out) const;
   void gatherCommittedEvents(MidiEventVec& out) const;
+  static void resetCommittedPitchQueryWork();
+  static uint32_t committedEventsFullMaterializeCount();
   /// Windowed committed gathering — wrap-aware chunk skip + event filter.
   void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                      uint32_t windowLength) const;
@@ -140,24 +159,29 @@ struct Loop {
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
   const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
-  /// Wrap-safe event candidates from the session source view (not capture append order).
-  void gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                             uint32_t windowLength) const;
-  /// Wrap-safe note-span candidates reconstructed from the session source view.
-  void gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out, uint32_t windowStart,
-                                            uint32_t windowLength) const;
+  const NoteUtils::DisplayNoteVec& overdubSourceViewNotes() const { return overdubSourceViewNotes_; }
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
   void clearPendingNoteChanges();
   bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
   const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
-  /// Resolve incoming note against overdubSourceView; append/update pending delta.
-  /// Returns false when no source view is established.
+  /// Resolve incoming note against hold-candidate ids, then geometry + [S, E).
+  /// Wrap-head off (`endTick < startTick`) consumes the tail `[S, loopLength)` only.
+  /// Empty `overlapNoteIds` skips span lookup (Add only). Returns false when no source view.
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
-                                                   NoteId incomingNoteId = kInvalidNoteId);
+                                                   NoteId incomingNoteId,
+                                                   const OverlapNoteIdSet& overlapNoteIds);
+  /// Pair one linear incoming `[S, E)` against an explicit source-note list (Shorten/Hide only).
+  void accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
+                                                   uint8_t channel, uint8_t pitch, uint8_t velocity,
+                                                   uint32_t startTick, uint32_t endTick,
+                                                   NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
   EditPassIdList sealPendingNoteChangesToEditPasses();
+  const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
+  /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
+  void emitOverlapHoldTotals() const;
 
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);
@@ -184,6 +208,8 @@ struct Loop {
                                    uint32_t maxBarDistanceFromPriority = UINT32_MAX);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
+  /// RC-E: adopt overdub-stop composed frame as a partial visual cache (window fresh, rest dirty).
+  void adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes);
   /// Note + visual caches only — does not disturb playback order or materialized pass view.
   void invalidateDisplayCaches();
   void shiftActiveCapturePassTicks(int64_t delta);
@@ -254,12 +280,16 @@ struct Loop {
 
   /// Stable materialize-aware source for one overdub session (not a loop freeze).
   SessionMidiEventVec overdubSourceViewEvents_;
+  NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   PendingNoteChangeVec pendingNoteChanges_;
+  OverlapHoldTotals overlapHoldTotals_;
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
+  /// RC-E attribution: cached note coverage vs loop bars at a rebuild or staleness boundary.
+  void emitVisualCacheState(const char* phase, int32_t gatheredEvents) const;
 
   std::unique_ptr<PlaybackOrderVec> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;

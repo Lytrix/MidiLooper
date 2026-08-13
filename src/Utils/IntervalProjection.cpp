@@ -239,18 +239,18 @@ int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
     return projectionCycleStartTick + static_cast<int32_t>(loopLengthAtWrap);
 }
 
-ProjectedIntervalVec generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
-                                                 const ProjectionContext& context) {
-    ProjectedIntervalVec candidates;
+void generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
+                                 const ProjectionContext& context, ProjectedIntervalVec& candidates) {
+    candidates.clear();
     if (loopLength == 0) {
-        return candidates;
+        return;
     }
 
     int32_t kMin = 0;
     int32_t kMax = 0;
     if (!computeKBounds(span.interval.start, span.interval.end, loopLength, context.window, kMin,
                       kMax)) {
-        return candidates;
+        return;
     }
 
     const int64_t loop = static_cast<int64_t>(loopLength);
@@ -270,6 +270,12 @@ ProjectedIntervalVec generateEquivalentIntervals(const CanonicalNoteSpan& span, 
             span.pitch,
         });
     }
+}
+
+ProjectedIntervalVec generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
+                                                 const ProjectionContext& context) {
+    ProjectedIntervalVec candidates;
+    generateEquivalentIntervals(span, loopLength, context, candidates);
     return candidates;
 }
 
@@ -296,32 +302,39 @@ ProjectedNoteInterval selectProjectedInterval(const ProjectedIntervalVec& candid
     return best != nullptr ? *best : makeEmptyProjectedInterval();
 }
 
-ProjectedIntervalVec selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
-                                                        const ProjectionContext& context) {
-    ProjectedIntervalVec selected;
+void selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
+                                        const ProjectionContext& context,
+                                        ProjectedIntervalVec& selected) {
+    selected.clear();
     selected.reserve(candidates.size());
     for (const ProjectedNoteInterval& candidate : candidates) {
         if (candidate.interval.intersects(context.window)) {
             selected.push_back(candidate);
         }
     }
+}
+
+ProjectedIntervalVec selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
+                                                        const ProjectionContext& context) {
+    ProjectedIntervalVec selected;
+    selectProjectedIntervalsForDisplay(candidates, context, selected);
     return selected;
 }
 
 ProjectedIntervalVec projectNoteIntervals(const CanonicalNoteSpanVec& spans,
                                                         const ProjectionContext& context) {
     ProjectedIntervalVec projected;
+    ProjectedIntervalVec candidates;
+    ProjectedIntervalVec selected;
     for (const CanonicalNoteSpan& span : spans) {
-        const ProjectedIntervalVec candidates =
-            generateEquivalentIntervals(span, context.loopLength, context);
+        generateEquivalentIntervals(span, context.loopLength, context, candidates);
         if (context.type == ProjectionType::Display) {
-            const ProjectedIntervalVec selected =
-                selectProjectedIntervalsForDisplay(candidates, context);
+            selectProjectedIntervalsForDisplay(candidates, context, selected);
             projected.insert(projected.end(), selected.begin(), selected.end());
         } else {
-            const ProjectedNoteInterval selected = selectProjectedInterval(candidates, context);
-            if (selected.noteId != kInvalidNoteId) {
-                projected.push_back(selected);
+            const ProjectedNoteInterval chosen = selectProjectedInterval(candidates, context);
+            if (chosen.noteId != kInvalidNoteId) {
+                projected.push_back(chosen);
             }
         }
     }
@@ -437,9 +450,9 @@ NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
     ProjectionContext displayContext = context;
     displayContext.type = ProjectionType::Display;
 
+    ProjectedIntervalVec candidates;
     for (const CanonicalNoteSpan& span : spans) {
-        const ProjectedIntervalVec candidates =
-            generateEquivalentIntervals(span, displayContext.loopLength, displayContext);
+        generateEquivalentIntervals(span, displayContext.loopLength, displayContext, candidates);
         const ProjectedNoteInterval selected =
             selectSingleDisplayProjectedInterval(candidates, span, displayContext);
         if (selected.interval.start < selected.interval.end) {

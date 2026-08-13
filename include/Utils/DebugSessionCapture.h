@@ -89,8 +89,18 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
+/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. */
+SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
+/** S0 timing telemetry: DIAG,clockrate,<pulsesPerSecond> (Tier-A). */
+SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
+/** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
+SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
+                               uint8_t phase, uint8_t isFocus);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
+SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
+                                   uint32_t maxSliceUs, uint32_t sliceCount,
+                                   uint32_t undoEntryCount, uint32_t snapshotCount);
 SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks, uint16_t reserve,
                                        uint16_t queueDepth, uint16_t writingChunks,
                                        uint32_t transportBlockCount, uint32_t heapFloorBlockCount,
@@ -100,6 +110,16 @@ SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks,
                                        uint8_t saveInProgress, uint8_t captureActive);
 SC_MEM_ATTR void persistencePoolPressure(uint16_t freeChunks, uint16_t reserve,
                                          uint16_t usedChunks);
+SC_MEM_ATTR void persistenceBacklog(uint16_t workQueueDepth, uint16_t writingWorkItems,
+                                    uint16_t chunkQueueDepth, uint32_t dirtyAgeMs,
+                                    uint32_t estSliceSteps, uint32_t estSdBytes,
+                                    uint8_t savePending, uint8_t urgentRequested,
+                                    uint32_t transportBlockCount, uint32_t budgetBlockCount,
+                                    uint32_t heapFloorBlockCount);
+SC_MEM_ATTR void persistenceDrainFailed(const char* reason, uint32_t steps,
+                                          uint32_t stuckIterations, uint16_t workQueueDepth,
+                                          uint16_t chunkQueueDepth, uint32_t estSliceSteps,
+                                          uint32_t estSdBytes);
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep);
 SC_MEM_ATTR void loadSaveMode(uint8_t active);
 SC_MEM_ATTR void overlayListSelection(uint8_t mode, uint8_t row);
@@ -107,6 +127,14 @@ SC_MEM_ATTR void overlayRowConfirm(uint8_t mode, uint8_t row);
 SC_MEM_ATTR void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t note);
+/** One-shot idle inventory from a clean visual cache. Tier-A. Not a SEVT dump. */
+SC_MEM_ATTR void storedNotes(uint8_t track, uint8_t slot, uint32_t notes, uint32_t uniqueNoteIds,
+                             uint32_t maxSamePitch);
+/** One-shot overdub-stop overlap totals. Tier-A. Not a SEVT dump. */
+SC_MEM_ATTR void overlapHold(uint32_t noteOffs, uint32_t emptySets, uint32_t maxIds,
+                             uint32_t overflows, uint32_t lookedUp, uint32_t maxExamined,
+                             uint32_t sumExamined, uint32_t maxLookupUs, uint32_t sumLookupUs,
+                             uint32_t add, uint32_t shorten, uint32_t hide);
 SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
                                    uint32_t displayPhase, uint32_t startLoopTick,
                                    int32_t projectionCycleStartTick, uint32_t loopStartTick,
@@ -118,6 +146,15 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
                                        size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                        size_t bufferEvents, int hasCommittedPasses, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount);
+/**
+ * Visual cache coverage at a pass-lifecycle or rebuild boundary. Distinguishes committed
+ * content loss from cache under-coverage: `events` is the gathered committed event count when
+ * the phase performed a gather and -1 otherwise; `firstBar`/`lastBar` bound the bars actually
+ * holding cached notes, against `totalBars` for the whole loop.
+ */
+SC_MEM_ATTR void visualCacheState(const char* phase, int32_t events, uint32_t notes,
+                                  uint32_t firstBar, uint32_t lastBar, uint32_t totalBars,
+                                  uint32_t dirtyBarsSize, uint32_t dirtyCount, uint8_t dirtyFlag);
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
 SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex);
@@ -160,6 +197,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
+#define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) \
+  DebugSessionCapture::persistenceBundle(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount)
 #define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
                         heapBlk, budgetBlk, sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \
                         inProg, captureActive) \
@@ -169,12 +208,26 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                              inProg, captureActive)
 #define SC_PERSIST_PRESSURE(freeChunks, reserve, usedChunks) \
   DebugSessionCapture::persistencePoolPressure(freeChunks, reserve, usedChunks)
+#define SC_PERSIST_BACKLOG(workQ, writingItems, chunkQ, dirtyAgeMs, estSteps, estBytes, pending, \
+                           urgent, transportBlk, budgetBlk, heapBlk) \
+  DebugSessionCapture::persistenceBacklog(workQ, writingItems, chunkQ, dirtyAgeMs, estSteps, estBytes, \
+                                          pending, urgent, transportBlk, budgetBlk, heapBlk)
+#define SC_PERSIST_DRAIN_FAIL(reason, steps, stuckIter, workQ, chunkQ, estSteps, estBytes) \
+  DebugSessionCapture::persistenceDrainFailed(reason, steps, stuckIter, workQ, chunkQ, estSteps, \
+                                              estBytes)
 #define SC_SAVE(phase, rotateStep)         DebugSessionCapture::saveDisplayPhase(phase, rotateStep)
 #define SC_LOADSAVE(active)                DebugSessionCapture::loadSaveMode(active)
 #define SC_OVERLAY_SEL(mode, row)          DebugSessionCapture::overlayListSelection(mode, row)
 #define SC_OVERLAY_CONFIRM(mode, row)      DebugSessionCapture::overlayRowConfirm(mode, row)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
+#define SC_STORED_NOTES(track, slot, notes, uniqueNoteIds, maxSamePitch) \
+  DebugSessionCapture::storedNotes(track, slot, notes, uniqueNoteIds, maxSamePitch)
+#define SC_OVERLAP_HOLD(noteOffs, emptySets, maxIds, overflows, lookedUp, maxExamined, \
+                        sumExamined, maxLookupUs, sumLookupUs, add, shorten, hide) \
+  DebugSessionCapture::overlapHold(noteOffs, emptySets, maxIds, overflows, lookedUp, \
+                                   maxExamined, sumExamined, maxLookupUs, sumLookupUs, add, \
+                                   shorten, hide)
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   DebugSessionCapture::captureCoordinate(absTick, storageTick, projPhase, displayPhase, \
@@ -186,6 +239,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                       wNotes) \
   DebugSessionCapture::displaySnapshotWindow(slot, state, loopLen, take, visual, frame, buffer, \
                                              hasCommittedPasses, wStart, wBars, wNotes)
+#define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
+                  dirtyFlag) \
+  DebugSessionCapture::visualCacheState(phase, events, notes, firstBar, lastBar, totalBars, \
+                                        dirtyBarsSize, dirtyCount, dirtyFlag)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) \
@@ -236,23 +293,35 @@ inline void restartCaptureBootGrace() {}
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) ((void)0)
 #define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
                         heapBlk, budgetBlk, sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \
                         inProg, captureActive) \
   ((void)0)
 #define SC_PERSIST_PRESSURE(freeChunks, reserve, usedChunks) ((void)0)
+#define SC_PERSIST_BACKLOG(workQ, writingItems, chunkQ, dirtyAgeMs, estSteps, estBytes, pending, \
+                           urgent, transportBlk, budgetBlk, heapBlk) \
+  ((void)0)
+#define SC_PERSIST_DRAIN_FAIL(reason, steps, stuckIter, workQ, chunkQ, estSteps, estBytes) ((void)0)
 #define SC_SAVE(phase, rotateStep)         ((void)0)
 #define SC_LOADSAVE(active)                ((void)0)
 #define SC_OVERLAY_SEL(mode, row)          ((void)0)
 #define SC_OVERLAY_CONFIRM(mode, row)      ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
+#define SC_STORED_NOTES(track, slot, notes, uniqueNoteIds, maxSamePitch) ((void)0)
+#define SC_OVERLAP_HOLD(noteOffs, emptySets, maxIds, overflows, lookedUp, maxExamined, \
+                        sumExamined, maxLookupUs, sumLookupUs, add, shorten, hide) \
+  ((void)0)
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses) ((void)0)
 #define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses, wStart, wBars, \
                       wNotes) \
+  ((void)0)
+#define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
+                  dirtyFlag) \
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) ((void)0)

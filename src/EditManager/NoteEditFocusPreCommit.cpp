@@ -15,6 +15,33 @@
 #include "Logger.h"
 #endif
 
+namespace {
+
+NOTE_EDIT_MEM bool committedDisplayNotesPaintLoopEnd(
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes, NoteId noteId, uint32_t loopLength) {
+  if (committedDisplayNotes == nullptr) {
+    return true;
+  }
+  for (const NoteUtils::DisplayNote& displayNote : *committedDisplayNotes) {
+    if (displayNote.noteId == noteId && displayNote.endTick != displayNote.startTick &&
+        displayNote.endTick == loopLength) {
+      return true;
+    }
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM bool shouldSkipOverlapDiffToLoopEnd(
+    const NoteBaseline& live, uint32_t loopLength, NoteId noteId,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
+  if (loopLength == 0 || live.endTick != loopLength) {
+    return false;
+  }
+  return !committedDisplayNotesPaintLoopEnd(committedDisplayNotes, noteId, loopLength);
+}
+
+}  // namespace
+
 NOTE_EDIT_FOCUS_INTERNAL_MEM EditPass makeNoteEditRow(EditActionType actionType,
                                                       EditPropertyType propertyType) {
   EditPass row{};
@@ -27,12 +54,12 @@ NOTE_EDIT_FOCUS_INTERNAL_MEM EditPass makeNoteEditRow(EditActionType actionType,
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
     const NoteEditFocus& focus, const MidiEventVec& sessionEvents, uint8_t channel,
-    uint32_t loopLength, const NoteEditCurrentState* currentState) {
+    uint32_t loopLength, const NoteEditCurrentState* currentState,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   EditPassVec rows;
   if (!focus.active) {
     return rows;
   }
-  (void)loopLength;
   if (currentState == nullptr || currentState->empty()) {
     return rows;
   }
@@ -71,6 +98,9 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
                  static_cast<unsigned long>(live.startTick),
                  static_cast<unsigned long>(live.endTick));
 #endif
+      continue;
+    }
+    if (shouldSkipOverlapDiffToLoopEnd(live, loopLength, noteId, committedDisplayNotes)) {
       continue;
     }
     if (live.startTick != baseline.startTick) {
@@ -147,7 +177,7 @@ NOTE_EDIT_MEM void removeInvalidMoverPreCommitRows(EditPassVec& rows, const Note
 
 NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
     const NoteEditFocus& focus, const NoteEditCurrentState& currentState, uint8_t channel,
-    uint32_t loopLength) {
+    uint32_t loopLength, const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   EditPassVec rows;
   if (!focus.active) {
     return rows;
@@ -176,11 +206,9 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
       continue;
     }
 
-    const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-    if (participatingNoteVisibleOverlapTailInProgress(participant, focus.last)) {
-      continue;
-    }
-
+    // A parked mover always still covers the span it shortened, so deferring on active overlap
+    // closure meant the shorten could never seal at the commit the user triggers. Closure defers
+    // leave-restore (ResolveConstrainedGeometry), not persistence.
     if (loopLength > 0 && !isPlausibleStorageSpan(live.startTick, live.endTick, loopLength)) {
 #if defined(SESSION_CAPTURE)
       logger.log(CAT_TRACK, LOG_WARNING,
@@ -190,6 +218,9 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
                  static_cast<unsigned long>(live.startTick),
                  static_cast<unsigned long>(live.endTick));
 #endif
+      continue;
+    }
+    if (shouldSkipOverlapDiffToLoopEnd(live, loopLength, noteId, committedDisplayNotes)) {
       continue;
     }
     if (live.startTick != baseline.startTick) {
@@ -226,12 +257,13 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
   return rows;
 }
 
-NOTE_EDIT_MEM EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,
-                                                          const NoteEditCurrentState& currentState,
-                                                          uint8_t channel, uint32_t loopLength) {
+NOTE_EDIT_MEM EditPassVec buildCommitRowsFromCurrentState(
+    const NoteEditFocus& focus, const NoteEditCurrentState& currentState, uint8_t channel,
+    uint32_t loopLength, const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   EditPassVec rows;
   if (loopLength > 0 && !currentState.empty()) {
-    rows = buildCommitOverlapRowsFromCurrentState(focus, currentState, channel, loopLength);
+    rows = buildCommitOverlapRowsFromCurrentState(focus, currentState, channel, loopLength,
+                                                  committedDisplayNotes);
   }
   if (!focus.active) {
     return rows;
@@ -270,14 +302,15 @@ NOTE_EDIT_MEM EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& f
   return rows;
 }
 
-NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
-                                                   const MidiEventVec* sessionStoreEvents,
-                                                   uint32_t loopLength,
-                                                   const NoteEditCurrentState* currentState) {
+NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(
+    const NoteEditFocus& focus, uint8_t channel, const MidiEventVec* sessionStoreEvents,
+    uint32_t loopLength, const NoteEditCurrentState* currentState,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   EditPassVec rows;
   if (sessionStoreEvents != nullptr && loopLength > 0) {
     rows = buildPreCommitBaselineLiveDiffOverlapPasses(focus, *sessionStoreEvents, channel,
-                                                       loopLength, currentState);
+                                                       loopLength, currentState,
+                                                       committedDisplayNotes);
   }
   if (!focus.active) {
     return rows;

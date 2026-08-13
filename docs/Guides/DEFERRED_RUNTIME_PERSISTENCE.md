@@ -151,7 +151,7 @@ flowchart TB
 Placement in `src/main.cpp`:
 
 ```cpp
-// After transport/MIDI service and display update:
+// After transport / handleMidiInput() and display update:
 StorageManager::processDeferredSaveState(looperState.getLooperState());
 ```
 
