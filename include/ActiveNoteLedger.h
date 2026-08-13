@@ -42,6 +42,18 @@ class ActiveNoteLedger {
     entries_[indexFor(channel, note)] = Entry{};
   }
 
+  template <typename Fn>
+  void forEachActive(Fn&& fn) const {
+    for (size_t i = 0; i < kLedgerSize; ++i) {
+      if (!entries_[i].active) {
+        continue;
+      }
+      const uint8_t channel = static_cast<uint8_t>(i / 128u) + 1u;
+      const uint8_t note = static_cast<uint8_t>(i % 128u);
+      fn(channel, note, entries_[i]);
+    }
+  }
+
   uint8_t longestActiveSpanBars(uint32_t playheadTick, uint32_t loopLengthTicks,
                                 uint32_t ticksPerBar) const {
     if (ticksPerBar == 0 || loopLengthTicks == 0) {

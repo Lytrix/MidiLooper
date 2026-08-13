@@ -143,8 +143,12 @@ public:
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
-  void playMidiEvents(uint32_t currentTick, bool isAudible);
-  void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible);
+  /// Advance committed playback. `emitToPort` gates MidiHandler only; cursor and ledger always run.
+  void playMidiEvents(uint32_t currentTick, bool emitToPort);
+  void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitToPort);
+  /// Port-only silence. Does not clear ledger or pendingNotes.
+  void silencePlaybackPort();
+  void silencePlaybackPortForSlot(uint8_t slotIndex);
   void printNoteEvents() const;
   /// Send an "All Notes Off" (CC 123) on every channel and clear any pending notes.
   void sendAllNotesOff();
@@ -332,6 +336,7 @@ private:
   friend class TrackUndo;
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
+  bool playbackEmitToPort_ = false;
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
 
   // Track data
