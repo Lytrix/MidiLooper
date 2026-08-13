@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (DEC-035 Layer A Stage 0)
+Last updated: 2026-08-14 (DEC-035 Layer A Stage 1)
 
 ---
 
@@ -10,7 +10,7 @@ Last updated: 2026-08-14 (DEC-035 Layer A Stage 0)
 
 ### Loop content-only history (DEC-035 Layer A)
 
-**Now: Stage 0 shipped.** Architecture, DEC-035, OpenSpec `loop-content-history-persistence`, branch `feature/loop-content-history`. **Next: Stage 1 native audit** — every `UndoEntry` operation boundary from content records alone; a persisted content prefix defines the effective Loop. Do not delete `UndoStacks` until Stage 2 reconstructs load-time editing state.
+**Now: Stage 1 shipped.** Native `test_loop_content_history` + `deriveContentUndoUnits`. Prefix invariant holds. Two named content-metadata gaps block Stage 2: loop-lifetime undo-unit id (`editPassIndex` reuse), and geometry content revision (`LoopBoundaryChange`). Do not delete `UndoStacks`. **Next: Stage 2 only after those fields are on content records.**
 
 Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
 
