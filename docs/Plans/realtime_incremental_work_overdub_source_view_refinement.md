@@ -1,9 +1,9 @@
 # Overdub source-view reuse (80 ms entry floor)
 
-**Status:** Option B withdrawn from production. RC-K3 restored. Native source-view / pending-note tests expect a filled view at `beginCapture`. Device re-measure vs [`225803`](../../captures/session_20260812_225803.log) / [`021304`](../../captures/session_20260813_021304.log) open.  
+**Status:** Option B withdrawn. Pitch-query helper and Option A/B native matrices removed. RC-K3 source view remains.  
 **Date:** 2026-08-13  
 **Parent:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md) (RC-K1–K3 / RC-L1 verified)  
-**Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`. Option B pitch-query on note-off is disconnected from that path. Long-term candidate collection: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic; production selection is normalized geometry + `[S, E)`.  
+**Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`, then playback-observation consume of `overlapNoteIds`. `gatherCommittedNoteEventsForPitch` is removed. Long-term candidate collection: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic; production selection is normalized geometry + `[S, E)`.  
 **Scheduling:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §3.1, §6.4, §10 · roadmap R1A / G1 in [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)  
 **Evidence:** RC-K3 known-good [`session_20260812_225803.log`](../../captures/session_20260812_225803.log); Option B stall [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)
 
@@ -265,7 +265,7 @@ Native: `test_pending_note_change` wrap matrix + `test_windowed_overlap_matches_
 
 **Follow-through (003009):** that edit-pass fallback full-materialized the loop on every note-off once Shorten/Hide companions existed. Replaced by a pitch-relevant source scan + relevant-row `applyNoteEditPassSequence`. Plan: [`realtime_incremental_work_overdub_note_off_pitch_query_refinement.md`](realtime_incremental_work_overdub_note_off_pitch_query_refinement.md). Audit **B**. Native 1072 passed / 2 skipped.
 
-Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_003009.log) — **withdrawn.** Option B note-off reconstruct in [`021304`](../../captures/session_20260813_021304.log) was 292 ms per note-off (`noterecon` 291775 µs, `clockrate` 36). Production restored RC-K3: `establishOverdubSourceView` gathers + reconstructs once; `accumulatePendingNoteChangesForIncomingNote` reads `overdubSourceViewNotes_`. `gatherCommittedNoteEventsForPitch` remains for tests only.
+Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_003009.log) — **withdrawn.** Option B note-off reconstruct in [`021304`](../../captures/session_20260813_021304.log) was 292 ms per note-off (`noterecon` 291775 µs, `clockrate` 36). Production restored RC-K3, then playback-observation consume. `gatherCommittedNoteEventsForPitch` and the Option A/B native matrices are removed.
 
 ---
 

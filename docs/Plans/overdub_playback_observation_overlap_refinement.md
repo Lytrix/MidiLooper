@@ -58,7 +58,7 @@ Provisional capacity fits an 8-bar 16th-grid same-pitch full-loop hold (128 uniq
 
 [`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`. Track 6 slot 0 `max_same_pitch=195`. Both exceed capacity 128. Overflow on that hold is a failed gate, not heap growth. Do not raise capacity without a decision.
 
-This idle `stored_notes` diagnosis taxes the MIDI event runtime (visual-cache rebuild plus the count walk). Disable `maybeLogStoredNoteCount` once later-stage overlap validation proofs exist.
+This idle `stored_notes` emit is the total-notes / `max_same_pitch` inventory. Keep `maybeLogStoredNoteCount`.
 
 Native: `test_overlap_note_id_observation` Gate 0 cases; `test_display_note_count` for the inventory helper.
 
@@ -138,7 +138,7 @@ Do **not** flatten the loop and call `findLinearNoteSpanForNoteId` per id (that 
 
 `Track::noteOn` snapshots same-pitch notes already sounding at S from `overdubSourceViewNotes_` into `PendingNote.overlapNoteIds`. `Track::sendMidiEvent` inserts committed playback note-on `NoteId`s of the same pitch while the hold is open. Playback offs do not erase. Native: `test_overlap_hold_candidates`.
 
-Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block. After note-off consume, `teensy41-capture-serial` RAM1 was `code:424956` padding:1028 free:7936. After stop-totals logging (establish/clear in `LOOP_COLD_MEM`), RAM1 is `code:424828` padding:1156 free:7936 — same 32 KB ITCM block.
+Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block. After withdrawn-path cleanup, `teensy41-capture-serial` RAM1 is `code:424444` padding:1540 free:7968 — same 32 KB ITCM block.
 
 ## Note-off consumes overlapNoteIds (wired)
 
@@ -180,32 +180,11 @@ The 4-bar and 68-bar lookup numbers exist. Production note-off is `PendingNote.o
 
 ---
 
-## Skipped native tests — not owed
+## Withdrawn-path cleanup (removed)
 
-`pio test -e native` skips exactly two cases, both in `test_pending_note_change`:
+Option A slice-cache tests, Option B windowed matrix, `gatherOverdubSourceView*InWindow`, `gatherCommittedNoteEventsForPitch`, `appendChunkRefNoteEventsForPitch`, and `forEachChunkEvent` are removed. `test_overdub_source_view` keeps establish/clear/immutability cases against `overdubSourceViewEvents_` / `overdubSourceViewNotes_`. `committedEventsFullMaterializeCount` stays for Gate 3. `maybeLogStoredNoteCount` stays (total-notes inventory).
 
-- `test_slice_cache_overlap_matches_full_wrap_tail_to_head`
-- `test_slice_cache_overlap_matches_full_long_note_spanning_bars`
-
-These are **Option A rejection fixtures**, not unfinished wiring. Option A (copy slice-built `visualCache.notes` as the overdub source) misses wrap notes and notes longer than the idle-slice pad. The `TEST_IGNORE_MESSAGE` text is the rejection. Two sibling slice tests still run (`interior`, `note_split_across_chunks`) and only cover cases that happen to pass on a rejected approach.
-
-Do not implement those skipped tests. Gate 1 still owes a muted/solo same-id check after collection; that is a different fixture and is not these two.
-
----
-
-## Safe to remove (withdrawn paths — not current production)
-
-Current production overlap does not call these. Removing them does not change note-off behavior. Do not remove `overdubSourceViewNotes_`, `establishOverdubSourceView`, `accumulatePendingNoteChangesFromSourceNotes`, `OverlapNoteIdObservation` tests, or `findLinearNoteSpanForNoteId` (NOTE_EDIT).
-
-| Item | Why removable | Keep if |
-|------|----------------|---------|
-| `test_slice_cache_overlap_matches_full_*` (4 tests) + `assertSliceCacheMatchesFull` / `drainIdleVisualCache` | Option A rejected | documenting the rejection in-tree |
-| `test_windowed_overlap_matches_full_*` (18 tests) + `assertWindowedMatchesFull` | Option B wrap-equivalence; compares full reconstruct vs `gatherCommittedNoteEventsForPitch`, not `overlapNoteIds` | reviving pitch-query |
-| `gatherOverdubSourceViewEventsInWindow` / `gatherOverdubSourceViewNotesInWindow` | No callers in `src/` or `test/` | — |
-| `gatherCommittedNoteEventsForPitch` + `CommittedPitchQueryWork` counters + `test_overdub_source_view` pitch-query cases | Option B / RC-L2; no `src/` callers | reviving pitch-query |
-| `maybeLogStoredNoteCount` emit | Gate 0 count is in [`152940`](../../captures/session_20260813_152940.log); overlap_hold proofs exist in [`162856`](../../captures/session_20260813_162856.log) / [`163422`](../../captures/session_20260813_163422.log). The walk taxes MIDI. | another same-pitch inventory |
-
-`gatherCommittedEventsInWindow` stays — visual cache, display, and playback still call it.
+`gatherCommittedEventsInWindow` stays — visual cache, display, and playback still call it. Gate 1 still owes a muted/solo same-id check after collection.
 
 ---
 

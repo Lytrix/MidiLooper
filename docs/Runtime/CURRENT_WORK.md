@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (overlap-hold 4-bar + 68-bar measured)
+Last updated: 2026-08-13 (withdrawn Option A/B overlap path removed)
 
 ---
 
@@ -28,7 +28,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **S1 RC-K2 (shipped):** `accumulatePendingNoteChangesForIncomingNote` no longer scans source events for channel. Loop notes are loop-scoped (DEC-033). Native `test_pending_shorten_ignores_recorded_channel` PASS.
 
-**S1 RC-K3 (shipped):** `overdubSourceViewNotes_` is reconstructed once in `establishOverdubSourceView` and cleared in `clearOverdubSourceView`. Note-off path and `gatherOverdubSourceViewNotesInWindow` read the member. Native `test_overdub_source_view` PASS.
+**S1 RC-K3 (shipped):** `overdubSourceViewNotes_` is reconstructed once in `establishOverdubSourceView` and cleared in `clearOverdubSourceView`. Note-off reads the member. Native `test_overdub_source_view` PASS.
 
 **S1 RC-K1–K3 verified [`223033`](../../captures/session_20260812_223033.log):** the note-off gate is met — `noterecon` 0 in every window, `notechg` and `notepair` peak at 3.6 ms then hold 0.75–2.0 ms (were 274 / 98 ms).
 
@@ -36,7 +36,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Now: playback-observation overlap on `feature/overdub-playback-observation-overlap`.** Plan: [`overdub_playback_observation_overlap_refinement.md`](../Plans/overdub_playback_observation_overlap_refinement.md). Local `dev` is at `73f0489` so this work can land as its own PR. `PendingNote.overlapNoteIds` collection is wired. Note-off consumes the set via `appendNotesForIds` on `overdubSourceViewNotes_`, then geometry + `[S, E)`. Empty set is Add only. PLAYING idle prebuild reverted (`73f0489`). Option B stays withdrawn ([`021304`](../../captures/session_20260813_021304.log) 292 ms/note-off). Collection-wired overdub in [`154823`](../../captures/session_20260813_154823.log): `noterecon=0`, `notechg=2993`; 11.7 s post-stop stall is `LoopUndoHistory`, not this path.
 
-**Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. Idle `stored_notes` measured in [`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`; track 6 `max_same_pitch=195`. Both exceed 128. Do not raise capacity without a decision. This diagnosis taxes the MIDI event runtime. Gate 0 count is recorded in [`152940`](../../captures/session_20260813_152940.log); overlap_hold proofs exist in [`162856`](../../captures/session_20260813_162856.log) / [`163422`](../../captures/session_20260813_163422.log). The idle emit may be disabled.
+**Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. Idle `stored_notes` measured in [`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`; track 6 `max_same_pitch=195`. Both exceed 128. Do not raise capacity without a decision. This diagnosis taxes the MIDI event runtime. Gate 0 count is recorded in [`152940`](../../captures/session_20260813_152940.log). Keep `maybeLogStoredNoteCount` as the total-notes / `max_same_pitch` inventory.
 
 **Gate 1:** Production selection is normalized note geometry + `[S, E)` intersection (`existingNoteOverlapsIncomingHold`). `OverlapNoteIdObservation` is test/diagnostic only. Split-chunk and prior Shorten/Hide companion fixtures landed. 021304 same-pitch count still open on Gate 0.
 
@@ -52,9 +52,9 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Overlap-hold stop totals (4-bar [`162856`](../../captures/session_20260813_162856.log) + 68-bar [`163422`](../../captures/session_20260813_163422.log)):** one `#CAP,DIAG,overlap_hold` at overdub-stop seal. 4-bar slot 1: Add/Shorten/Hide + `empty_sets`. 68-bar slot 4 (`VCACHE` 68 bars, 1828 notes): `empty_sets` is the majority; when lookup runs `max_examined` 1592–1612, `max_lookup_us` 439–1100 vs `notechg` 775–2705; `noterecon=0`; `overflows=0`. First 68-bar stop: `notechg` 986 / `max_lookup_us` 959. Lookup-source change is not started.
 
-**Native skips (not owed):** `test_slice_cache_overlap_matches_full_wrap_tail_to_head` and `test_slice_cache_overlap_matches_full_long_note_spanning_bars` are Option A rejection fixtures, not unfinished wiring. Removable withdrawn-path inventory is in the overlap plan (Option A slice tests, Option B windowed matrix, dead `gatherOverdubSourceView*InWindow`, test-only `gatherCommittedNoteEventsForPitch`).
+**Withdrawn-path cleanup (removed):** Option A slice tests, Option B windowed matrix, `gatherOverdubSourceView*InWindow`, and `gatherCommittedNoteEventsForPitch`. `maybeLogStoredNoteCount` kept.
 
-**RC-L2 (shipped, device verify open) — pitch-query full-loop copy:** the pairing change had `gatherCommittedNoteEventsForPitch` build a PSRAM `SessionMidiEventVec` of every committed note event per note-off before filtering. [`013917`](../../captures/session_20260813_013917.log) shows `noterecon` 98–191 ms / `notechg` 99–192 ms on 3554 events (`begin_capture` 11 µs, so Option B held). When `collectNoteIdsRetargetedToPitch` returns nothing — always true during plain overdub — the candidate set is exactly the events at that pitch, so the walk filters inline and skips the trailing re-filter. Pairing path unchanged when retargets exist; both branches covered by `test_overdub_source_view`.
+**RC-L2 (withdrawn helper removed):** `gatherCommittedNoteEventsForPitch` is gone. Production note-off uses `overlapNoteIds` + `overdubSourceViewNotes_`. `test_overdub_source_view` now covers establish/clear only.
 
 **RC-L3 (shipped, HITL verify open) — stored-MIDI verification off the stop path:** `emitStoredMidiVerification` ran inside MIDI button dispatch at overdub stop and cost 342.7 ms / 325.5 ms in [`013917`](../../captures/session_20260813_013917.log) (flush itself under 1 ms): a full `mergeActiveCapturePasses`, one `SEVT` line per note event over 3554 events, the capped wrap-pair scan, then a second full `reconstructNotes` for at most 32 `DNTE` lines. The ring overflowed at both stops, so most `SEVT` lines were dropped and the `seal` / `finalize` / `set_state` stage lines were evicted with them. Now `queueDeferredStoredMidiVerification` only sets a flag; `processDeferredStoredMidiVerification` drains from `processDeferredIdleMaintenance` in 64-event slices (16 while `hasDeferredSaveWork`), flattening once on the first slice and phasing notes → wrap pairs → display notes. Functions are `TRACK_COLD_MEM` — in ITCM they pushed RAM1 past a 32 KB block boundary.
 

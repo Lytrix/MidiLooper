@@ -9,8 +9,7 @@
 #include <cstdint>
 
 /// Compact inventory of an already-available DisplayNote list. No gather or reconstruct.
-/// Device emit (`maybeLogStoredNoteCount`) is Gate 0 diagnosis and taxes MIDI runtime;
-/// disable that path once later-stage overlap validation proofs exist.
+/// Device emit (`maybeLogStoredNoteCount`) is the idle total-notes / `max_same_pitch` metric.
 namespace DisplayNoteCount {
 
 struct Result {

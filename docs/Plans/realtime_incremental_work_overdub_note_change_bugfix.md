@@ -72,7 +72,7 @@ Deleting the dedup was rejected: `test_reconstruct_dedupes_identical_segments` r
 
 `overdubSourceViewEvents_` is immutable between `establishOverdubSourceView` and `clearOverdubSourceView`.
 
-**Fix:** `Loop::overdubSourceViewNotes_` filled in `establishOverdubSourceView`, cleared in `clearOverdubSourceView`. `accumulatePendingNoteChangesForIncomingNote` and `gatherOverdubSourceViewNotesInWindow` read the member. Not `CachedNoteList` — that hashes its whole input on every call, and the per-loop instance is keyed to live materialized events.
+**Fix:** `Loop::overdubSourceViewNotes_` filled in `establishOverdubSourceView`, cleared in `clearOverdubSourceView`. `accumulatePendingNoteChangesForIncomingNote` reads the member. Not `CachedNoteList` — that hashes its whole input on every call, and the per-loop instance is keyed to live materialized events.
 
 **Tests:** `test_overdub_source_view` — notes populated after `beginCapture(Overdub)`, stable across capture appends, empty after discard/commit.
 

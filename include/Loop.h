@@ -103,14 +103,7 @@ struct Loop {
   /// Canonical committed-pass event gathering (full loop). Prefer over display-only helpers.
   void gatherCommittedEvents(SessionMidiEventVec& out) const;
   void gatherCommittedEvents(MidiEventVec& out) const;
-  /// Pitch-scoped walk of loaded committed chunks. Unpaired note-ons stay open until a later
-  /// chunk supplies the matching off (including tick gaps between chunk spans). Effective
-  /// committed pitch after Active note edit rows; does not full-materialize the loop.
-  void gatherCommittedNoteEventsForPitch(uint8_t pitch, SessionMidiEventVec& out) const;
   static void resetCommittedPitchQueryWork();
-  static uint32_t committedPitchQuerySourceEventsScanned();
-  static uint32_t committedPitchQueryCandidateEvents();
-  static uint32_t committedPitchQueryEditRowsApplied();
   static uint32_t committedEventsFullMaterializeCount();
   /// Windowed committed gathering — wrap-aware chunk skip + event filter.
   void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
@@ -167,12 +160,6 @@ struct Loop {
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
   const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
   const NoteUtils::DisplayNoteVec& overdubSourceViewNotes() const { return overdubSourceViewNotes_; }
-  /// Wrap-safe event candidates from the session source view (not capture append order).
-  void gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                             uint32_t windowLength) const;
-  /// Wrap-safe note-span candidates reconstructed from the session source view.
-  void gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out, uint32_t windowStart,
-                                            uint32_t windowLength) const;
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
   void clearPendingNoteChanges();

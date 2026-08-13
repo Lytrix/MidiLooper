@@ -75,8 +75,7 @@ enum StoredVerificationPhase : uint8_t {
 
 }  // namespace
 
-// Gate 0 diagnosis only. Walking a clean visual cache for stored_notes taxes the MIDI
-// runtime. Disable this path once later-stage overlap validation proofs exist.
+// Idle total-notes / max_same_pitch inventory from a clean visual cache.
 TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeLogStoredNoteCount() {
 #if !defined(SESSION_CAPTURE)
   return;
