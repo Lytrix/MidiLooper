@@ -1,6 +1,6 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gates 0–4 native landed; collection wired; note-off consumes overlapNoteIds  
+**Status:** Active — Gates 0–4 native landed; collection wired; note-off consumes overlapNoteIds; stop totals logging wired  
 **Branch:** `feature/overdub-playback-observation-overlap`  
 **Date:** 2026-08-13  
 **Kind:** refinement  
@@ -9,7 +9,7 @@
 **Trigger:** [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)  
 **Scheduling:** R1A / G1 in [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
 
-Native Gates 0–4 landed. `PendingNote.overlapNoteIds` collects hold-duration candidates (snapshot already-sounding at S + playback note-ons). Note-off looks up those ids in `overdubSourceViewNotes_` via `appendNotesForIds`, then applies geometry + `[S, E)`. Empty set is Add only (Gate 3). Option B stays withdrawn. PLAYING idle prebuild was reverted (`73f0489`).
+Native Gates 0–4 landed. `PendingNote.overlapNoteIds` collects hold-duration candidates (snapshot already-sounding at S + playback note-ons). Note-off looks up those ids in `overdubSourceViewNotes_` via `appendNotesForIds`, then applies geometry + `[S, E)`. Empty set is Add only (Gate 3). Overlap-hold stop totals emit one `#CAP,DIAG,overlap_hold` at seal. Option B stays withdrawn. PLAYING idle prebuild was reverted (`73f0489`).
 
 ---
 
@@ -138,11 +138,21 @@ Do **not** flatten the loop and call `findLinearNoteSpanForNoteId` per id (that 
 
 `Track::noteOn` snapshots same-pitch notes already sounding at S from `overdubSourceViewNotes_` into `PendingNote.overlapNoteIds`. `Track::sendMidiEvent` inserts committed playback note-on `NoteId`s of the same pitch while the hold is open. Playback offs do not erase. Native: `test_overlap_hold_candidates`.
 
-Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block. After note-off consume, `teensy41-capture-serial` RAM1 is `code:424956` padding:1028 free:7936.
+Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block. After note-off consume, `teensy41-capture-serial` RAM1 was `code:424956` padding:1028 free:7936. After stop-totals logging (establish/clear in `LOOP_COLD_MEM`), RAM1 is `code:424828` padding:1156 free:7936 — same 32 KB ITCM block.
 
 ## Note-off consumes overlapNoteIds (wired)
 
 `Loop::accumulatePendingNoteChangesForIncomingNote` takes `PendingNote.overlapNoteIds`. Empty set skips `appendNotesForIds` (Add only). Non-empty set copies matching notes from `overdubSourceViewNotes_` in one pass, then `accumulatePendingNoteChangesFromSourceNotes` applies geometry + `[S, E)` (`existingNoteOverlapsIncomingHold`, not `noteIntersectsWindow`) and writes Add/Shorten/Hide. The production overlap body lives in `LoopPendingNoteChange.cpp` — do not include `OverlapNoteIdObservation.h` there. Native: `test_pending_note_change` including `test_empty_overlap_ids_add_only_when_source_overlaps`.
+
+## Overlap-hold stop totals (wired)
+
+One `#CAP,DIAG,overlap_hold,…` at overdub-stop seal (`logOverdubStopStage` when stage is `seal`). Counters live on `Loop` (`OverlapHoldTotals`). Increment on each evaluated note-off (integers only). `micros()` wraps `appendNotesForIds` only. Add/Shorten/Hide are the current pending-row counts after that note-off.
+
+Reset in `establishOverdubSourceView` only. `clearOverdubSourceView` runs inside commit/discard **before** the seal-stage emit, so resetting there would wipe the line. A Skipped empty capture still prints zeros if establish ran.
+
+`establishOverdubSourceView`, `clearOverdubSourceView`, the note-off increment, and `emitOverlapHoldTotals` are `LOOP_COLD_MEM` / `FLASHMEM`. Do not include `OverlapHoldCandidates.h` or `OverlapNoteIdObservation.h` from firmware TUs. Counters sit on the EXTMEM `Loop` shell, not RAM1.
+
+Native: `test_pending_note_change` (empty set increments `emptySets` not `lookedUp`; non-empty increments `lookedUp` and `examined`; establish resets). Device still owed: 4-bar Add/Shorten/Hide + `empty_sets`, then 68-bar slot 4 `max_examined` / `max_lookup_us` vs `notechg`. Do not change the ID→geometry source until that measurement exists.
 
 ---
 

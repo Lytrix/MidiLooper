@@ -9,6 +9,7 @@
 #include "OverlapCandidateLookup.h"
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
@@ -176,13 +177,56 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (endTick < startTick) {
     return false;
   }
+  ++overlapHoldTotals_.noteOffs;
+  const uint32_t idCount = static_cast<uint32_t>(overlapNoteIds.size());
+  if (idCount > overlapHoldTotals_.maxIds) {
+    overlapHoldTotals_.maxIds = idCount;
+  }
+  if (overlapNoteIds.overflowed()) {
+    ++overlapHoldTotals_.overflows;
+  }
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
-    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected);
+    size_t notesExamined = 0;
+    const uint32_t lookupStartUs = micros();
+    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
+                                              &notesExamined);
+    const uint32_t lookupUs = micros() - lookupStartUs;
+    ++overlapHoldTotals_.lookedUp;
+    const uint32_t examined = static_cast<uint32_t>(notesExamined);
+    overlapHoldTotals_.sumExamined += examined;
+    if (examined > overlapHoldTotals_.maxExamined) {
+      overlapHoldTotals_.maxExamined = examined;
+    }
+    overlapHoldTotals_.sumLookupUs += lookupUs;
+    if (lookupUs > overlapHoldTotals_.maxLookupUs) {
+      overlapHoldTotals_.maxLookupUs = lookupUs;
+    }
+  } else {
+    ++overlapHoldTotals_.emptySets;
   }
   accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, startTick,
                                               endTick, incomingNoteId);
+  overlapHoldTotals_.add = 0;
+  overlapHoldTotals_.shorten = 0;
+  overlapHoldTotals_.hide = 0;
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind == PendingNoteChangeKind::Add) {
+      ++overlapHoldTotals_.add;
+    } else if (change.kind == PendingNoteChangeKind::Shorten) {
+      ++overlapHoldTotals_.shorten;
+    } else if (change.kind == PendingNoteChangeKind::Hide) {
+      ++overlapHoldTotals_.hide;
+    }
+  }
   return true;
+}
+
+LOOP_COLD_MEM __attribute__((noinline)) void Loop::emitOverlapHoldTotals() const {
+  const OverlapHoldTotals& totals = overlapHoldTotals_;
+  SC_OVERLAP_HOLD(totals.noteOffs, totals.emptySets, totals.maxIds, totals.overflows,
+                  totals.lookedUp, totals.maxExamined, totals.sumExamined, totals.maxLookupUs,
+                  totals.sumLookupUs, totals.add, totals.shorten, totals.hide);
 }
 
 EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {

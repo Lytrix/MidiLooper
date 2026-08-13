@@ -36,6 +36,22 @@ class Track;
 
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
 
+/// Overdub-session totals for `#CAP,DIAG,overlap_hold`. Incremented on note-off; emitted at stop.
+struct OverlapHoldTotals {
+  uint32_t noteOffs = 0;
+  uint32_t emptySets = 0;
+  uint32_t maxIds = 0;
+  uint32_t overflows = 0;
+  uint32_t lookedUp = 0;
+  uint32_t maxExamined = 0;
+  uint32_t sumExamined = 0;
+  uint32_t maxLookupUs = 0;
+  uint32_t sumLookupUs = 0;
+  uint32_t add = 0;
+  uint32_t shorten = 0;
+  uint32_t hide = 0;
+};
+
 struct Loop {
   Capture capture;
   uint16_t captureNextEventIndex = 0;
@@ -175,6 +191,9 @@ struct Loop {
                                                    NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
   EditPassIdList sealPendingNoteChangesToEditPasses();
+  const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
+  /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
+  void emitOverlapHoldTotals() const;
 
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);
   bool appendCaptureEvent(const MidiEvent& evt);
@@ -277,6 +296,7 @@ struct Loop {
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   PendingNoteChangeVec pendingNoteChanges_;
+  OverlapHoldTotals overlapHoldTotals_;
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();

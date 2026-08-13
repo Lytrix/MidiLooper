@@ -12,6 +12,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
@@ -261,7 +262,8 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   markPassDerivedStale();
 }
 
-void Loop::establishOverdubSourceView() {
+LOOP_COLD_MEM void Loop::establishOverdubSourceView() {
+  overlapHoldTotals_ = {};
   overdubSourceViewEvents_.clear();
   gatherCommittedEvents(overdubSourceViewEvents_);
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
@@ -271,7 +273,7 @@ void Loop::establishOverdubSourceView() {
   clearPendingNoteChanges();
 }
 
-void Loop::clearOverdubSourceView() {
+LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
   overdubSourceViewEvents_.clear();
   overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
