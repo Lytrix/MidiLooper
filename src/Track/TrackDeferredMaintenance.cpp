@@ -263,6 +263,10 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       }
       loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar, maxBarDistanceFromPriority);
     }
+    // R1A: when PLAYING visual cache is clean, prebuild overdub source view off the button path.
+    if (isPlaying() && !isOverdubbing() && loop.hasCommittedPasses()) {
+      loop.stepOverdubSourceViewPrebuild();
+    }
   }
 
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {

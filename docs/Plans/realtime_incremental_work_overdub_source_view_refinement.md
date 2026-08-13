@@ -1,6 +1,6 @@
 # Overdub source-view reuse (80 ms entry floor)
 
-**Status:** Option B withdrawn from production. RC-K3 restored. Native source-view / pending-note tests expect a filled view at `beginCapture`. Device re-measure vs [`225803`](../../captures/session_20260812_225803.log) / [`021304`](../../captures/session_20260813_021304.log) open.  
+**Status:** R1A shipped — PLAYING idle prebuild + adopt at `establishOverdubSourceView`; Option B withdrawn from production. Device re-measure vs [`225803`](../../captures/session_20260812_225803.log) open.  
 **Date:** 2026-08-13  
 **Parent:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md) (RC-K1–K3 / RC-L1 verified)  
 **Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`. Option B pitch-query on note-off is disconnected from that path. Playback-observation candidate discovery is designed, not implemented (Gates 0–4).  
@@ -274,6 +274,25 @@ Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_00
 Do not optimize Option B further. [`021304`](../../captures/session_20260813_021304.log) on a 68-bar / 3714-event loop: `begin_capture` 11 µs; first overdub `noterecon` **291775 µs**, `notechg` **292976 µs**, `notepair` 968 µs, `clockrate` 36. RC-K3 [`225803`](../../captures/session_20260812_225803.log): `begin_capture` 77–83 ms once; overdub `noterecon` 0, `notechg` ~1.09 ms, `clockrate` 47–48.
 
 Playback-observation candidate discovery is the long-term design (Gates 0–4). It is not production until those gates pass.
+
+---
+
+## R1A design session (2026-08-13) — PLAYING idle prebuild (Option C variant)
+
+**G1 pins (roadmap):**
+
+| Pin | Decision |
+|-----|----------|
+| Incomplete source view during PLAYING | Prebuild runs only when `visualCache` is clean; overdub has not started. No capture without overlap authority. |
+| `overdubSourceViewEstablished_` | Still flips at `beginCapture(Overdub)` — adopt prebuild or synchronous fallback. |
+| Invalidation | `markDisplayCachesStale`, `invalidateDisplayCaches`, `playbackRevision` mismatch, adopt consume. |
+| First-note overlap | Same Shorten/Hide set as RC-K3 full gather+reconstruct; note-off still reads `overdubSourceViewNotes_` (no per-note-off reconstruct). |
+
+**Implementation:** `Loop::stepOverdubSourceViewPrebuild` from `Track::processDeferredIdleMaintenance` while PLAYING (not overdubbing). `establishOverdubSourceView` moves prebuild into session members when revision and loop length match; else synchronous RC-K3 fallback.
+
+**Fallback:** overdub immediately after record stop (dirty visual cache) or before idle prebuild completes — same ~80 ms `begin_capture` as RC-K3.
+
+**Not in scope:** Option B note-off pitch query, visualCache alias (Option A), sliced button-path establish (Option D), interval reservation.
 
 ---
 

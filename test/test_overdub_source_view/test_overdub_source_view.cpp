@@ -288,6 +288,46 @@ void test_candidate_lookup_wrap_safe_high_then_low_capture_order() {
   TEST_ASSERT_FALSE(hasDisplayNote(note62, 60, kLoopLen - 40));
 }
 
+void drainIdleVisualCache(Loop& loop) {
+  loop.invalidateDisplayCaches();
+  uint32_t guard = 0;
+  while (loop.visualCacheDirty && guard < 512u) {
+    loop.rebuildVisualCacheIdleSlice(1, 0, UINT32_MAX);
+    ++guard;
+  }
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+}
+
+void test_establish_adopts_idle_prebuild() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  drainIdleVisualCache(loop);
+  loop.stepOverdubSourceViewPrebuild();
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceViewPrebuildReady());
+  TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_FALSE(loop.hasOverdubSourceViewPrebuildReady());
+}
+
+void test_prebuild_cleared_when_display_cache_stale() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  drainIdleVisualCache(loop);
+  loop.stepOverdubSourceViewPrebuild();
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceViewPrebuildReady());
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_FALSE(loop.hasOverdubSourceViewPrebuildReady());
+  loop.stepOverdubSourceViewPrebuild();
+  TEST_ASSERT_FALSE(loop.hasOverdubSourceViewPrebuildReady());
+}
+
 void test_discard_and_commit_clear_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -456,6 +496,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);
   RUN_TEST(test_source_view_immutable_when_live_materialize_mutates);
   RUN_TEST(test_candidate_lookup_wrap_safe_high_then_low_capture_order);
+  RUN_TEST(test_establish_adopts_idle_prebuild);
+  RUN_TEST(test_prebuild_cleared_when_display_cache_stale);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_pitch_query_matches_gather_committed_events_shorten_hide_and_unrelated);
   RUN_TEST(test_committed_pitch_mutation_c4_to_d4_both_queries);

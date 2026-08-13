@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (RuntimeTimingTelemetry rename; MIDI Input Gap naming; scheduling contract/roadmap split; overdub-stop dump remainder re-gate)
+Last updated: 2026-08-13 (R1A overdub source-view PLAYING idle prebuild; PERS,bundle telemetry)
 
 ---
 

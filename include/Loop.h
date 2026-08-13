@@ -146,6 +146,10 @@ struct Loop {
   /// Establish materialize-aware overdubSourceView for the active overdub session.
   void establishOverdubSourceView();
   void clearOverdubSourceView();
+  /// PLAYING idle: build source view off the overdub button path when visual cache is clean.
+  void stepOverdubSourceViewPrebuild();
+  void invalidateOverdubSourceViewPrebuild();
+  bool hasOverdubSourceViewPrebuildReady() const { return overdubSourceViewPrebuildReady_; }
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
   const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
@@ -274,8 +278,14 @@ struct Loop {
   NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
+  SessionMidiEventVec overdubSourceViewPrebuildEvents_;
+  NoteUtils::DisplayNoteVec overdubSourceViewPrebuildNotes_;
+  uint32_t overdubSourceViewPrebuildRevision_ = 0;
+  uint32_t overdubSourceViewPrebuildLoopLengthTicks_ = 0;
+  bool overdubSourceViewPrebuildReady_ = false;
   PendingNoteChangeVec pendingNoteChanges_;
 
+  bool adoptPrebuiltOverdubSourceView();
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
   /// RC-E attribution: cached note coverage vs loop bars at a rebuild or staleness boundary.

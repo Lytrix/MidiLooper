@@ -261,14 +261,58 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   markPassDerivedStale();
 }
 
+void Loop::invalidateOverdubSourceViewPrebuild() {
+  overdubSourceViewPrebuildEvents_.clear();
+  overdubSourceViewPrebuildNotes_.clear();
+  overdubSourceViewPrebuildRevision_ = 0;
+  overdubSourceViewPrebuildLoopLengthTicks_ = 0;
+  overdubSourceViewPrebuildReady_ = false;
+}
+
+void Loop::stepOverdubSourceViewPrebuild() {
+  if (overdubSourceViewPrebuildReady_ &&
+      overdubSourceViewPrebuildRevision_ == playbackRevision &&
+      overdubSourceViewPrebuildLoopLengthTicks_ == loopLengthTicks) {
+    return;
+  }
+  if (loopLengthTicks == 0 || !hasCommittedPasses() || captureActive() || visualCacheDirty) {
+    invalidateOverdubSourceViewPrebuild();
+    return;
+  }
+  invalidateOverdubSourceViewPrebuild();
+  gatherCommittedEvents(overdubSourceViewPrebuildEvents_);
+  overdubSourceViewPrebuildLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceViewPrebuildNotes_ = NoteUtils::reconstructDisplayNotes(
+      overdubSourceViewPrebuildEvents_, overdubSourceViewPrebuildLoopLengthTicks_, false);
+  overdubSourceViewPrebuildRevision_ = playbackRevision;
+  overdubSourceViewPrebuildReady_ = true;
+}
+
+bool Loop::adoptPrebuiltOverdubSourceView() {
+  if (!overdubSourceViewPrebuildReady_ ||
+      overdubSourceViewPrebuildRevision_ != playbackRevision ||
+      overdubSourceViewPrebuildLoopLengthTicks_ != loopLengthTicks || loopLengthTicks == 0) {
+    return false;
+  }
+  overdubSourceViewEvents_ = std::move(overdubSourceViewPrebuildEvents_);
+  overdubSourceViewNotes_ = std::move(overdubSourceViewPrebuildNotes_);
+  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  invalidateOverdubSourceViewPrebuild();
+  return true;
+}
+
 void Loop::establishOverdubSourceView() {
+  clearPendingNoteChanges();
+  if (adoptPrebuiltOverdubSourceView()) {
+    overdubSourceViewEstablished_ = true;
+    return;
+  }
   overdubSourceViewEvents_.clear();
   gatherCommittedEvents(overdubSourceViewEvents_);
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
   overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
       overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   overdubSourceViewEstablished_ = true;
-  clearPendingNoteChanges();
 }
 
 void Loop::clearOverdubSourceView() {
