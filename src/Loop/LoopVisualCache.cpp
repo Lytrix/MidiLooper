@@ -271,6 +271,7 @@ void Loop::ensureVisualCacheBuilt() {
 
 void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
+  invalidateOverdubSourceViewPrebuild();
   visualCacheDirty = true;
   markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   emitVisualCacheState("stale_all", -1);
@@ -280,6 +281,7 @@ void Loop::invalidateDisplayCaches() {
   if (noteCache_) {
     noteCache_->invalidate();
   }
+  invalidateOverdubSourceViewPrebuild();
   visualCache.notes.clear();
   visualCache.dirtyBars.clear();
   visualCacheDirty = true;
