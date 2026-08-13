@@ -10,7 +10,6 @@
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
-#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
@@ -282,29 +281,6 @@ LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
 
 void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
-}
-
-void Loop::gatherOverdubSourceViewEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                                 uint32_t windowLength) const {
-  out.clear();
-  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0 ||
-      windowLength == 0) {
-    return;
-  }
-  DisplayWindowUtils::filterMidiEventsToWindow(overdubSourceViewEvents_, out, windowStart,
-                                               windowLength, overdubSourceViewLoopLengthTicks_);
-}
-
-void Loop::gatherOverdubSourceViewNotesInWindow(NoteUtils::DisplayNoteVec& out,
-                                                uint32_t windowStart,
-                                                uint32_t windowLength) const {
-  out.clear();
-  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0 ||
-      windowLength == 0) {
-    return;
-  }
-  out = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-      overdubSourceViewNotes_, windowStart, windowLength, overdubSourceViewLoopLengthTicks_);
 }
 
 void Loop::beginCapture(CapturePhase phase) {
