@@ -1,7 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Gate 0 / Gate 1 — OverlapNoteIdSet + observed vs geometry candidate equality.
+// Gate 0 / Gate 1 — OverlapNoteIdSet + diagnostic observed vs production geometry.
+// OverlapNoteIdObservation is test-only. Selection is normalized geometry + [S, E).
 
 #include <unity.h>
 
