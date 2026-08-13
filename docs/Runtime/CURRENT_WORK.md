@@ -2,17 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (NOTE_EDIT multi-overlap device PASS)
+Last updated: 2026-08-14 (DEC-035 Layer A Stage 0)
 
 ---
 
 ## Now implementing
 
+### Loop content-only history (DEC-035 Layer A)
+
+**Now: Stage 0 shipped.** Architecture, DEC-035, OpenSpec `loop-content-history-persistence`, branch `feature/loop-content-history`. **Next: Stage 1 native audit** — every `UndoEntry` operation boundary from content records alone; a persisted content prefix defines the effective Loop. Do not delete `UndoStacks` until Stage 2 reconstructs load-time editing state.
+
+Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
+
+Do not start Stage 3b (replace `GlobalUndoStack`), Layer B clear-as-unlink, Layer D range-first load, interval reservation, or MIDI catch-up suppression. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of this work. DEC-024 Phase 2 (move GUS Track → Loop) is **not** the Layer A path.
+
 ### Overdub-stop MIDI dump during PLAYING
 
-**Now:** Stage 1 LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log) (`load_frame` 16–32 ms after overdub stop). Dump **FAIL** remains: stop 4 BPM 274 then 5.59 s CAP silence, `msi` 5.62 s; the owner is now identified as the deferred `LoopUndoHistory` runtime bundle. Added `PERS,bundle` summary telemetry; re-measure before changing scheduling. Plan: [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md). Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) (R1B design gate before payload firmware).
-
-Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of the dump work. Persistence payload narrowing needs the wire-format / DEC-024 design gate before firmware.
+LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log). Dump **FAIL** remains the `UndoStacks` walk. Relief is Layer A Stage 3 of the content-history plan above, gated on Stage 2. Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Do not patch RC-J.
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing telemetry
 
