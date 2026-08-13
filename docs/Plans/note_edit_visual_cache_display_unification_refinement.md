@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT shared display representation
 
-**Status:** Active — Stage 1 shipped; Stages 2–4 not started  
+**Status:** Active — Stages 1–2 shipped; Stages 3–4 not started  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Parent:** [`Display.md`](../Authority/Architecture/Display.md), [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), DEC-029  
@@ -108,7 +108,7 @@ Commit each verified stage before the next.
 
 **Not this stage:** visual-cache wiring. Device still shows 23 until Stage 2 uses `visualCache.notes` as committed base.
 
-### Stage 2 — Committed base is `visualCache.notes`
+### Stage 2 — Committed base is `visualCache.notes` ✅ shipped
 
 **Owner:** `EditManager::ensureNoteEditDisplayProjectionCachesBuilt` in [`NoteEditDisplayProjection.cpp`](../../src/EditManager/NoteEditDisplayProjection.cpp)
 
@@ -116,14 +116,13 @@ Commit each verified stage before the next.
 
 **Change:**
 
-- Replace `reconstructDisplayNotes(materializedLoopEventsForNoteEditFocus(...))` with the selected loop visual-cache notes.
-- If the cache is empty and `!shouldAvoidFullVisualRebuild`, call `ensureVisualCacheBuilt` (same gate as `Track::getVisualNotesForSlot`).
-- Long loop (`shouldAvoidFullVisualRebuild`): do **not** full-flatten on NOTE_EDIT open. Use the existing cache; window filter stays in `selectableDisplayNotesForEditUi` / Display.md step 2.
-- Keep `projectNoteEditDisplayNotes(committedBase, editAwareMidiEvents(), focus, …, &noteEditCurrentState)` for overlay.
+- Committed base is `track.getVisualNotesForSlot(slot)` (same STOPPED / short-loop `ensureVisualCacheBuilt` gate as LOOP_EDIT).
+- Long loop: no full flatten on NOTE_EDIT open; existing cache + window filter.
+- Overlay unchanged: `projectNoteEditDisplayNotes(committedBase, editAwareMidiEvents(), …, &noteEditCurrentState)`.
+- Cache key includes `visualCache.revision`.
+- `materializedLoopEventsForNoteEditFocus` kept for `rebuildNoteEditFocusForDisplayNote`.
 
-**Test:** native fixture that passes a 68-note committed base (or a smaller stand-in list) plus a current state built only from linear-span rows; after Stage 1, paint count equals the committed-base count. Host cannot own a real `Loop::visualCache`; the production wiring is the call-site change plus a comment in the test that 171219 is the device gate.
-
-`materializedLoopEventsForNoteEditFocus` remains for focus baseline / commit (not paint). Do not delete it in this stage unless a call-site audit shows paint was the last reader — `rg materializedLoopEventsForNoteEditFocus` first.
+**Test:** `test_display_projection_paint_matches_committed_base_when_current_state_is_subset` — 8-note committed stand-in, 3 linear current-state rows, paint count 8. Device gate remains Stage 4 (171219).
 
 ### Stage 3 — `resolveDisplayNotes` NOTE_EDIT path
 

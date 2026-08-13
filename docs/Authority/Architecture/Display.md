@@ -31,7 +31,7 @@ Display **does not** mutate passes or session store.
 
 | Phase | Policy |
 |-------|--------|
-| Stopped / NOTE_EDIT | Rebuild display representation when revision stale; filter by window on read |
+| Stopped / NOTE_EDIT | Rebuild display representation when revision stale; filter by window on read. NOTE_EDIT paint committed base is `visualCache.notes` (`getVisualNotesForSlot`); `NoteEditCurrentState` overlays this-session Hide / Shorten / move / add only. |
 | PLAYING | **Defer** full representation rebuild — use last good representation + playhead overlay; schedule rebuild in `Track::processDeferredIdleMaintenance` |
 | Live record | Incremental `capturePreview` — not full-loop flatten per frame |
 
