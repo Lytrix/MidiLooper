@@ -69,6 +69,11 @@ void noteEditFocusApplyMoveEnd(NoteEditFocus& focus, uint32_t newStart, uint32_t
 void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t start,
                              uint32_t end, uint32_t loopLength);
 
+/// Select/rebuild: movingNoteId is the painted DisplayNote id (no rematerialize remap).
+/// Visible current-state currentSpan wins for last; otherwise the painted span (181114 76@840).
+void noteEditFocusApplyDisplayNote(NoteEditFocus& focus, const NoteUtils::DisplayNote& liveSelected,
+                                   const NoteEditCurrentState* currentState);
+
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 
 /// True when pre-commit would emit moving-note and/or overlap edit pass rows.

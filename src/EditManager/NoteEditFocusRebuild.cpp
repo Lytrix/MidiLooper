@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "EditManager.h"
+#include "EditSessionInteraction.h"
 #include "Globals.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
@@ -61,21 +62,28 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
         editSession.focus.clear();
         return;
     }
-    Loop& loop = trackManager.getSelectedLoop(track);
     const uint8_t channel = track.getMidiChannel();
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    const NoteEditCurrentState* currentStatePtr =
+        editSession.noteEditCurrentState.empty() ? nullptr : &editSession.noteEditCurrentState;
+
+    if (selectedNoteIdx >= 0) {
+        const NoteUtils::DisplayNoteVec notes = selectableDisplayNotesAtEditSelect(track);
+        if (selectedNoteIdx < static_cast<int>(notes.size())) {
+            rebuildNoteEditFocusForDisplayNote(track, notes[static_cast<size_t>(selectedNoteIdx)]);
+        }
+        return;
+    }
 
     BaselineMap preservedOverlapBaselines;
     std::unordered_map<NoteId, OverlapNote, NoteIdHash> preservedOverlapNotes;
     NoteBaseline preservedMoverSpan{};
     NoteId preservedMovingNoteId = kInvalidNoteId;
-    const NoteEditCurrentState* currentStatePtr =
-        editSession.noteEditCurrentState.empty() ? nullptr : &editSession.noteEditCurrentState;
     const bool pendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
     const bool pendingOverlapDiff =
         noteEditFocusHasPendingBaselineMapDiff(editSession.focus, sessionMidiEvents(), channel,
                                                loopLength, currentStatePtr);
-    if (selectedNoteIdx < 0 && !pendingMoverCommit && !pendingOverlapDiff) {
+    if (!pendingMoverCommit && !pendingOverlapDiff) {
         preservedMovingNoteId = editSession.focus.movingNoteId;
         preservedMoverSpan = editSession.focus.last;
         const NoteIdList preservedParticipantIds =
@@ -95,60 +103,27 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusAtSelect(Track& trac
         }
     }
 
-    // commitBaseline / baselineMap come from committed passes materialize, not the live
-    // session preview — otherwise a pending length preview (e.g. end 680) becomes baseline
-    // on fader-1 reselect and the next ChangeLength commit is a no-op on rematerialize.
-    MidiEventVec loopMidiEventsFromPasses;
-    loop.passes.materializeToEventVector(loopMidiEventsFromPasses, loopLength);
-    if (selectedNoteIdx < 0 && (pendingMoverCommit || pendingOverlapDiff)) {
-        // Session store owns live geometry — do not clear focus from passes materialize or
-        // preserve stale overlap closure. Clearing focus.active makes projection return
-        // committed passes only (session_20260807_015614: mover at 1248 reverted to 3600).
-        populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
-                                          sessionMidiEvents(), channel, loopLength);
+    if (pendingMoverCommit || pendingOverlapDiff) {
+        // Session store owns live geometry — do not clear focus (session_20260807_015614).
+        overlayUneditedBaselineMapFromDisplayNotes(
+            editSession.focus, currentStatePtr, visualCacheNotesForSelectedSlot(track));
         editSession.focus.active = true;
         return;
     }
-    rebuildNoteEditFocusFromStore(editSession.focus, loopMidiEventsFromPasses, channel, loopLength,
-                                  selectedNoteIdx);
-    if (selectedNoteIdx < 0) {
-        for (const auto& [noteId, baseline] : preservedOverlapBaselines) {
-            editSession.focus.baselineMap[noteId] = baseline;
-        }
-        for (auto& [noteId, entry] : preservedOverlapNotes) {
-            editSession.focus.overlapNotes[noteId] = std::move(entry);
-        }
-        if (!editSession.noteEditCurrentState.empty() && preservedMovingNoteId != kInvalidNoteId) {
-            clearChangedOverlapParticipationWhenInteractionCleared(
-                editSession.focus, editSession.noteEditCurrentState, preservedMoverSpan,
-                preservedMovingNoteId);
-        }
-        invalidateProjectedNoteEditDisplayCache();
-        return;
-    }
-    populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
-                                      sessionMidiEvents(), channel, loopLength);
 
-    const std::vector<DisplayNote> liveNotes =
-        NoteUtils::reconstructNotes(sessionMidiEvents(), loopLength, false);
-    if (selectedNoteIdx >= 0 && selectedNoteIdx < static_cast<int>(liveNotes.size())) {
-        const DisplayNote& live = liveNotes[static_cast<size_t>(selectedNoteIdx)];
-        editSession.focus.last = {live.note, live.velocity, live.startTick, live.endTick};
-        const NoteId noteId = editSession.focus.movingNoteId;
-        MidiEventVec& sessionEvents = sessionMidiEvents();
-        NoteBaseline linearBaseline;
-        if (noteId != kInvalidNoteId &&
-            findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, linearBaseline, UINT32_MAX,
-                                        loopLength)) {
-            editSession.focus.last.startTick = linearBaseline.startTick;
-            editSession.focus.last.endTick = linearBaseline.endTick;
-            editSession.focus.last.pitch = linearBaseline.pitch;
-            editSession.focus.last.velocity = linearBaseline.velocity;
-        }
-        editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
-        editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
-        evictOverlapScratchForSelectedNote(editSession.focus, noteId);
+    editSession.focus.clear();
+    for (const auto& [noteId, baseline] : preservedOverlapBaselines) {
+        editSession.focus.baselineMap[noteId] = baseline;
     }
+    for (auto& [noteId, entry] : preservedOverlapNotes) {
+        editSession.focus.overlapNotes[noteId] = std::move(entry);
+    }
+    if (!editSession.noteEditCurrentState.empty() && preservedMovingNoteId != kInvalidNoteId) {
+        clearChangedOverlapParticipationWhenInteractionCleared(
+            editSession.focus, editSession.noteEditCurrentState, preservedMoverSpan,
+            preservedMovingNoteId);
+    }
+    invalidateProjectedNoteEditDisplayCache();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
@@ -157,7 +132,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
         editSession.focus.clear();
         return;
     }
-    const uint8_t channel = track.getMidiChannel();
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
         return;
@@ -165,50 +139,14 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
 
     ensureCurrentStateVisibleRowsFromVisualCache(track);
 
-    const MidiEventVec& committedLoopEvents = materializedLoopEventsForNoteEditFocus(track);
-    rebuildNoteEditFocusFromStore(editSession.focus, committedLoopEvents, channel, loopLength, -1);
-
-    const NoteId baselineNoteId = findBaselineNoteIdForDisplay(editSession.focus, liveSelected);
-    editSession.focus.movingNoteId = baselineNoteId;
-    evictOverlapScratchForSelectedNote(editSession.focus, baselineNoteId);
-
-    editSession.focus.commitBaseline = {liveSelected.note, liveSelected.velocity,
-                                        liveSelected.startTick, liveSelected.endTick};
-    editSession.focus.last = editSession.focus.commitBaseline;
-    MidiEventVec& sessionEvents = sessionMidiEvents();
-    MidiEventVec committedMutable(committedLoopEvents.begin(), committedLoopEvents.end());
-    NoteBaseline committedBaseline;
-    if (baselineNoteId != kInvalidNoteId &&
-        findLinearNoteSpanForNoteId(committedMutable, baselineNoteId, channel, committedBaseline,
-                                    UINT32_MAX, loopLength)) {
-        editSession.focus.commitBaseline.pitch = committedBaseline.pitch;
-        editSession.focus.commitBaseline.velocity = committedBaseline.velocity;
-        editSession.focus.commitBaseline.startTick = committedBaseline.startTick;
-        editSession.focus.commitBaseline.endTick = committedBaseline.endTick;
-    }
-    NoteBaseline liveBaseline;
-    const bool liveSpanFromCurrentState =
-        !editSession.noteEditCurrentState.empty() && baselineNoteId != kInvalidNoteId &&
-        editSession.noteEditCurrentState.readCurrentSpan(baselineNoteId, liveBaseline);
-    if (liveSpanFromCurrentState) {
-        editSession.focus.last = liveBaseline;
-        const NoteEditCurrentNoteState* currentRow =
-            editSession.noteEditCurrentState.find(baselineNoteId);
-        if (currentRow != nullptr) {
-            editSession.focus.commitBaseline = currentRow->committedSpan;
-        }
-    } else if (baselineNoteId != kInvalidNoteId &&
-               findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, liveBaseline,
-                                           UINT32_MAX, loopLength)) {
-        editSession.focus.last.pitch = liveBaseline.pitch;
-        editSession.focus.last.velocity = liveBaseline.velocity;
-        editSession.focus.last.startTick = liveBaseline.startTick;
-        editSession.focus.last.endTick = liveBaseline.endTick;
-    }
-    editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
-    editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
-    editSession.focus.active = true;
+    const NoteEditCurrentState* currentStatePtr =
+        editSession.noteEditCurrentState.empty() ? nullptr : &editSession.noteEditCurrentState;
+    noteEditFocusApplyDisplayNote(editSession.focus, liveSelected, currentStatePtr);
+    evictOverlapScratchForSelectedNote(editSession.focus, editSession.focus.movingNoteId);
+    overlayUneditedBaselineMapFromDisplayNotes(
+        editSession.focus, currentStatePtr, visualCacheNotesForSelectedSlot(track));
 #if defined(SESSION_CAPTURE)
+    const NoteId baselineNoteId = editSession.focus.movingNoteId;
     if (baselineNoteId != kInvalidNoteId) {
         const NoteEditCurrentNoteState* currentRow =
             editSession.noteEditCurrentState.find(baselineNoteId);
@@ -221,13 +159,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
                    static_cast<unsigned long>(baselineNoteId), presenceValue,
                    projectsToStore ? 1 : 0);
     }
-#endif
-    if (baselineNoteId != kInvalidNoteId) {
-        editSession.focus.baselineMap[baselineNoteId] = editSession.focus.commitBaseline;
-    }
-    populateBaselineMapForEditClosure(editSession.focus, committedLoopEvents, sessionEvents,
-                                      channel, loopLength);
-#if defined(SESSION_CAPTURE)
     if (!editSession.noteEditCurrentState.empty()) {
         const NoteIdList overlapIds = collectOverlapParticipantNoteIdsFromCurrentState(
             editSession.noteEditCurrentState, editSession.focus.movingNoteId);

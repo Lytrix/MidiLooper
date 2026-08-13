@@ -3531,6 +3531,43 @@ void test_mover_pre_commit_rejects_stale_wrapped_commit_baseline_length() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(rows.size()));
 }
 
+void test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114() {
+  // session_20260813_181114: after MoveNote 76 to 840, reselect must keep last at 840.
+  // Selecting a different painted note at tick 168 must not assign noteId 76.
+  constexpr NoteId kMovedId = 76;
+  constexpr NoteId kOtherId = 4;
+  constexpr uint32_t kCacheStart = 168;
+  constexpr uint32_t kMovedStart = 840;
+  constexpr uint32_t kLength = 671;
+
+  const NoteBaseline committed{24, 100, kCacheStart, kCacheStart + kLength};
+  const NoteBaseline moved{46, 100, kMovedStart, kMovedStart + kLength};
+  const NoteBaseline otherSpan{24, 100, kCacheStart, kCacheStart + 100};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMovedId, committed, moved, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kOtherId, otherSpan, otherSpan, NoteEditPresenceType::Visible);
+
+  NoteEditFocus focus;
+  focus.baselineMap[kMovedId] = committed;
+
+  const NoteUtils::DisplayNote paintedMoved{kMovedId, 46, 100, kMovedStart, kMovedStart + kLength};
+  noteEditFocusApplyDisplayNote(focus, paintedMoved, &currentState);
+  TEST_ASSERT_EQUAL(kMovedId, focus.movingNoteId);
+  TEST_ASSERT_EQUAL_UINT32(kMovedStart, focus.last.startTick);
+  TEST_ASSERT_EQUAL_UINT32(kMovedStart + kLength, focus.last.endTick);
+
+  const NoteUtils::DisplayNote cacheGhost{kMovedId, 24, 100, kCacheStart, kCacheStart + kLength};
+  noteEditFocusApplyDisplayNote(focus, cacheGhost, &currentState);
+  TEST_ASSERT_EQUAL(kMovedId, focus.movingNoteId);
+  TEST_ASSERT_EQUAL_UINT32(kMovedStart, focus.last.startTick);
+
+  const NoteUtils::DisplayNote otherAt168{kOtherId, 24, 100, kCacheStart, kCacheStart + 100};
+  noteEditFocusApplyDisplayNote(focus, otherAt168, &currentState);
+  TEST_ASSERT_EQUAL(kOtherId, focus.movingNoteId);
+  TEST_ASSERT_EQUAL_UINT32(kCacheStart, focus.last.startTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -3643,5 +3680,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_171134_canonical_commit_rows_from_final_session_store);
   RUN_TEST(test_focus_rebuild_pending_after_pitch_move_stale_display_hint_session_193016);
   RUN_TEST(test_pitch_pre_commit_requires_active_focus);
+  RUN_TEST(test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114);
   return UNITY_END();
 }

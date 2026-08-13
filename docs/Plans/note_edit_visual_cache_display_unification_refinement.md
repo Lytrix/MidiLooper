@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT shared display representation
 
-**Status:** Active — Stages 1–2 and 5–7 shipped; Stages 3–4 not started  
+**Status:** Active — Stages 1–2 and 5–9 shipped; Stages 3–4 not started  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Parent:** [`Display.md`](../Authority/Architecture/Display.md), [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), DEC-029  
@@ -199,6 +199,77 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 **Not this stage:** zero-length noteId 94 (`DNTE` length 0). Overlap consume. Making `visualCache` the overdub source.
 
+**Device [`181114`](../../captures/session_20260813_181114.log)** (do not reopen Stage 7 firmware):
+
+- LOOP_EDIT `DISP` **64/64**; first NOTE_EDIT frame **61/64** (Stage 7 first-frame gate not met). Paint 61 vs 64 stays open — not Stage 8/9.
+- noteId **76** first `DNTE,24,168,168,671`. Time-axis moves keep length 671 and `interactions=0`.
+- Pitch onto 46: `HideNote` noteId **45** as `1440–2160` (720). Leave-restore (`RestoreNote`) writes **45** back to `1440–2160`.
+- After 76 is at `840` (`DNTE,46,840,840,671`), select “note 4 at tick 168” rebuilds the same noteId **76**; next `DNTE` is `46,168,168,671`.
+- Later move of noteId **87** on pitch 12 uses length **240** and does Shorten/Hide — overlap runs when the mover span is the cache length.
+
+### Sluggishness (measured, rematerialize call sites)
+
+[`181114`](../../captures/session_20260813_181114.log) on this 64-note loop:
+
+| Marker | Range | When |
+|--------|--------|------|
+| `GEOM_APPLY,resolve` | **24–51 ms** (24942–50993 µs) | every time/pitch fader step |
+| `UNDO_WARM,build,total` | **39–108 ms** (39393–108522 µs) | select and first geometry of a gesture |
+
+Rematerialize on the NOTE_EDIT fader path:
+
+- `rebuildNoteEditFocusAtSelect` calls `loop.passes.materializeToEventVector` on every select (bypasses cached `materializedLoopEventsForNoteEditFocus`), then `NoteUtils::reconstructNotes(sessionMidiEvents())` to set `focus.last`.
+- `rebuildNoteEditFocusForDisplayNote` uses the cached materialize helper, then `findLinearNoteSpanForNoteId` + `populateBaselineMapForEditClosure` on that rematerialize store.
+- `NoteGeometryResolver::resolve` stamps offs and pairs from `editAwareMidiEvents()` (`readLiveLinearSpan`) every step.
+- `openNoteEditSession` still calls `loop.rematerializeEditView` once at open (keep; session-store apply, DEC-029).
+
+`UNDO_WARM` is a separate measured cost. Do not fold it into Stage 8/9.
+
+### Stage 8 — Overlap targets use display spans ✅ shipped
+
+**Owner:** `ensureBaselineMapEntriesForEvaluationScope` / `overlayAnalysisBaselineForSessionMovedOverlaps` in [`EditSessionInteraction.cpp`](../../src/EditManager/EditSessionInteraction.cpp); [`NoteGeometryResolver::resolve`](../../src/EditManager/NoteGeometryResolver.cpp).
+
+**Invariant:** a NOTE_EDIT overlap target’s analysis span (and leave-restore `baselineMap` span) is the painted DisplayNote span (visual cache, or this-session current-state if Hidden / Shortened / moved / Added). Rematerialize `readLiveLinearSpan` / `findLinearNoteSpanForNoteId` must not supply a longer end for an unedited Existing row.
+
+**Change:**
+
+- At resolve start, `ensureCurrentStateVisibleRowsFromVisualCache` (Stage 7 align).
+- Overlay unedited `focus.baselineMap` entries from `visualCache.notes` so `RestoreNote` does not write a rematerialize end.
+- `ensureBaselineMapEntriesForEvaluationScope` / `overlayAnalysisBaselineForSessionMovedOverlaps` take the committed display list: current-state this-session geometry wins; else the display span; else live store.
+- Keep `linearSpansOverlapForAnalysis` inclusive classification. Do not call overdub consume. Do not include `OverlapNoteIdObservation.h`.
+
+**Test:** `test_overlay_unedited_row_uses_display_span_not_rematerialize_181114` — 45 rematerialize `1440–2160`, cache `1344–1536`; analysis and Hide/Restore use end **1536**. Hidden / C9 / 87-at-240 fixtures stay PASS.
+
+**Not this stage:** select rematerialize, undo-warm, paint 61 vs 64, overdub consume, zero-length noteId 94.
+
+### Stage 9 — Select / rebuild without rematerialize ✅ shipped
+
+**Owner:** `rebuildNoteEditFocusAtSelect` / `rebuildNoteEditFocusForDisplayNote` in [`NoteEditFocusRebuild.cpp`](../../src/EditManager/NoteEditFocusRebuild.cpp); `noteEditFocusApplyDisplayNote`.
+
+**Invariant:** select and focus rebuild set `focus.last` / `movingNoteId` from the projected DisplayNote (paint / select inventory), not from `materializeToEventVector` + `reconstructNotes(sessionMidiEvents())`. After a this-session move of 76 to 840, selecting the painted 76 rebuilds at 840, not cache tick 168.
+
+**Change:**
+
+- `rebuildNoteEditFocusAtSelect` does not call `loop.passes.materializeToEventVector`. Index select uses `selectableDisplayNotesAtEditSelect` then `rebuildNoteEditFocusForDisplayNote`. Deselect overlays `visualCache.notes` or preserves overlap without rematerialize.
+- `noteEditFocusApplyDisplayNote` sets `movingNoteId` from the painted DisplayNote id (no rematerialize / baselineMap span remap). Visible current-state `currentSpan` wins for `focus.last`.
+- `rebuildNoteEditFocusForDisplayNote` does not call `findLinearNoteSpanForNoteId` or `populateBaselineMapForEditClosure`.
+- `materializedLoopEventsForNoteEditFocus` has no remaining rebuild caller; the helper is kept, no new flatten.
+
+**Test:** `test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114` — painted 76 at 840 rebuilds `focus.last.startTick == 840`; cache-tick ghost of 76 still uses 840; a different painted note at 168 does not become noteId 76.
+
+**Not this stage:** undo-warm, open-time `rematerializeEditView`, paint 61 vs 64.
+
+### Device gate (after Stage 8+9)
+
+Same loop as 181114:
+
+1. First NOTE_EDIT `DISP` still recorded (61 vs 64 is not this gate).
+2. Pitch 76 onto the lane of 45: Hide/Shorten uses cache length, not 720; leave-restore does not lengthen 45 to 2160.
+3. Move 76 to 840, browse away, reselect 76: `DNTE` start stays 840.
+4. Time/pitch fader: select-path `materializeToEventVector` is absent from rebuild; `GEOM_APPLY,resolve` is re-measured (no target number until the new capture).
+
+Env: `teensy41-capture-serial`. Ask before upload.
+
 ---
 
 ## Pre-implementation review
@@ -252,5 +323,7 @@ YES for Stage 1 after this plan is accepted. Stages 2–3 follow only when Stage
 | [`NoteEditSessionLifecycle.cpp`](../../src/EditManager/NoteEditSessionLifecycle.cpp) / [`NoteEditFocusRebuild.cpp`](../../src/EditManager/NoteEditFocusRebuild.cpp) | 6 |
 | [`NoteEditCurrentState.cpp`](../../src/EditManager/NoteEditCurrentState.cpp) `ensureVisibleRowsForDisplayNotes` align | 7 |
 | [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) `projectNoteEditDisplayNotes` | 7 |
+| [`EditSessionInteraction.cpp`](../../src/EditManager/EditSessionInteraction.cpp) / [`NoteGeometryResolver.cpp`](../../src/EditManager/NoteGeometryResolver.cpp) | 8 |
+| [`NoteEditFocusRebuild.cpp`](../../src/EditManager/NoteEditFocusRebuild.cpp) / [`NoteEditFocusState.cpp`](../../src/EditManager/NoteEditFocusState.cpp) | 9 |
 | [`DisplayNoteResolve.cpp`](../../src/DisplayManager/DisplayNoteResolve.cpp) | 3 (only if the branch still reconstructs) |
 | This plan + CURRENT_WORK | each commit |
