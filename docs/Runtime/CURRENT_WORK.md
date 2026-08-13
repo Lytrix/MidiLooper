@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (empty overlap candidates do not gather or reconstruct)
+Last updated: 2026-08-13 (overlap span lookup is one pass, not candidates × loop)
 
 ---
 
@@ -34,7 +34,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **S1 RC-L1 (shipped, verified [`225803`](../../captures/session_20260812_225803.log)):** per-span `ProjectedIntervalVec` allocation in `projectDisplayNotes` / `projectNoteIntervals`. Four overdubs on a grown 64-bar loop: `begin_capture` 77 / 80 / 79 / 83 ms (was 1.378 s, and 58 → 410 ms as passes accumulated in [`223033`](../../captures/session_20260812_223033.log)). First USB note 108–242 ms after PLAYING→OVERDUBBING (was 1.76 s). `noterecon` 0; `notechg`/`notepair` 1.09 ms; `usbnote` 1.20 ms; overdub `clockrate` 47–48; overdub `midisvc` 4–14 ms. Remaining ~80 ms is the synchronous gather+reconstruct floor.
 
-**Now: playback-observation overlap on `feature/overdub-playback-observation-overlap`.** Plan: [`overdub_playback_observation_overlap_refinement.md`](../Plans/overdub_playback_observation_overlap_refinement.md). Local `dev` is at `73f0489` so this work can land as its own PR. Production overlap stays RC-K3. Do not wire `PendingNote.overlapNoteIds` until Gates 2–4 pass. PLAYING idle prebuild reverted (`73f0489`). Option B stays withdrawn ([`021304`](../../captures/session_20260813_021304.log) 292 ms/note-off).
+**Now: playback-observation overlap on `feature/overdub-playback-observation-overlap`.** Plan: [`overdub_playback_observation_overlap_refinement.md`](../Plans/overdub_playback_observation_overlap_refinement.md). Local `dev` is at `73f0489` so this work can land as its own PR. Production overlap stays RC-K3. Native Gates 0–4 landed. Do not wire `PendingNote.overlapNoteIds` until Gate 2 device check or the user asks. PLAYING idle prebuild reverted (`73f0489`). Option B stays withdrawn ([`021304`](../../captures/session_20260813_021304.log) 292 ms/note-off).
 
 **Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. 021304 same-pitch count unmeasured.
 
@@ -43,6 +43,8 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 **Gate 2 (native landed, device open):** enabled slots keep advancing playback; mute/solo/slot-mute suppress send on that track's MIDI channel and output ports (USB/DIN/USB Host). Track mute sends CC 123 on `midiChannel` only. Native proves cursor/wrap advance while MIDI send is suppressed, unmute does not resend crossed events, and mute does not clear the ledger. Device still owed: mute mid-note silences that channel on the output ports.
 
 **Gate 3 (native landed):** empty candidate set does not look up spans and does not call `gatherCommittedEvents` / `reconstructDisplayNotes` on note-off. `OverlapCandidateLookup` copies from an already-available note list only. RC-K3 note-off still reads `overdubSourceViewNotes_`. `fullMaterializeCount` stays 0 after the work counter is reset, including when companion edit rows exist.
+
+**Gate 4 (native landed):** `appendNotesForIds` is one pass over the available `DisplayNote` list and stops at the last matching id. It does not call `findLinearNoteSpanForNoteId` and does not build an index. 3714-note fixture with 3 ids examines 30 notes, not 3714×3. Production overlap stays RC-K3. `PendingNote.overlapNoteIds` is still unwired.
 
 **RC-L2 (shipped, device verify open) — pitch-query full-loop copy:** the pairing change had `gatherCommittedNoteEventsForPitch` build a PSRAM `SessionMidiEventVec` of every committed note event per note-off before filtering. [`013917`](../../captures/session_20260813_013917.log) shows `noterecon` 98–191 ms / `notechg` 99–192 ms on 3554 events (`begin_capture` 11 µs, so Option B held). When `collectNoteIdsRetargetedToPitch` returns nothing — always true during plain overdub — the candidate set is exactly the events at that pitch, so the walk filters inline and skips the trailing re-filter. Pairing path unchanged when retargets exist; both branches covered by `test_overdub_source_view`.
 

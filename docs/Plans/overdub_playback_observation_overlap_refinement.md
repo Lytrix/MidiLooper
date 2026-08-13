@@ -1,6 +1,6 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gates 0–3 native landed; Gate 2 device open; Gate 4 not started  
+**Status:** Active — Gates 0–4 native landed; Gate 2 device open  
 **Branch:** `feature/overdub-playback-observation-overlap`  
 **Date:** 2026-08-13  
 **Kind:** refinement  
@@ -9,7 +9,7 @@
 **Trigger:** [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)  
 **Scheduling:** R1A / G1 in [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
 
-Do **not** implement overlap-on-`PendingNote` or change `sendMidiEvent` until Gates 0–4 pass. RC-K3 remains the production overlap path. Option B stays withdrawn. PLAYING idle prebuild was reverted (`73f0489`).
+Native Gates 0–4 landed. Do **not** wire overlap-on-`PendingNote` until the Gate 2 device check or the user asks. RC-K3 remains the production overlap path. Option B stays withdrawn. PLAYING idle prebuild was reverted (`73f0489`).
 
 ---
 
@@ -124,9 +124,11 @@ If candidate discovery produces zero `NoteId`s, do **not** call `gatherCommitted
 
 `OverlapCandidateLookup::shouldLookupSpans` is false for an empty set. `appendNotesForIds` copies from an already-available `DisplayNote` list only. Production note-off still uses RC-K3 `overdubSourceViewNotes_`; it does not fall back to gather when there is no overlap. Native: `test_overlap_candidate_lookup` and `test_pending_note_change` (`fullMaterializeCount == 0` after reset, including companion edit rows).
 
-## Gate 4 (not started)
+## Gate 4 — lookup cost is one pass, not candidates × loop (native landed)
 
-- Span lookup cost scales with candidate count, not loop size.
+Do **not** flatten the loop and call `findLinearNoteSpanForNoteId` per id (that helper walks the event vector twice per note). Do **not** build a NoteId index yet.
+
+`appendNotesForIds` walks the already-available `DisplayNote` list once and stops when every candidate is found. On a 3714-note list with ids 10/20/30 it examines 30 notes, not 3714×3. Production overlap still uses RC-K3. Native: `test_lookup_examines_through_last_match_not_candidates_times_loop`.
 
 ---
 
