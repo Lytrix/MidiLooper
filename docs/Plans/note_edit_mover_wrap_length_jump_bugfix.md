@@ -1,6 +1,6 @@
 # NOTE_EDIT mover wrap-length jump after overlap Hide
 
-**Status:** Active — RC0 shipped (writer named); RC1 next  
+**Status:** Active — RC1 native shipped; device gate open  
 **Date:** 2026-08-13  
 **Kind:** bugfix  
 **Parent:** [`note_edit_visual_cache_display_unification_refinement.md`](note_edit_visual_cache_display_unification_refinement.md) (Stages 8–9 shipped; do not reopen evaluate/select rematerialize)  
@@ -96,17 +96,17 @@ Pass 1 matches pitch + channel only (no `noteId`). A wrap-window on (32 `@2208`)
 
 ---
 
-## RC1 — Mover length stays 47 across that Hide
+## RC1 — Mover length stays 47 across that Hide — native shipped
 
-**Owner:** `LoopTickNormalize::normalize` Pass 1 wrap merge in [`LoopTickNormalize.cpp`](../../src/Utils/LoopTickNormalize.cpp). Do not patch `moveNoteWithOverlapHandling`, `projectNoteEditDisplayNotes`, or `noteEditFocusApplyDisplayNote`. Do not make `syncProjectingRowsFromSessionStore` the sole fix — the store already holds 2975 before sync.
+**Owner:** `LoopTickNormalize::normalize` Pass 1 wrap merge in [`LoopTickNormalize.cpp`](../../src/Utils/LoopTickNormalize.cpp).
 
 **Invariant:** after Hide of a same-pitch neighbor, the mover’s `currentSpan` / `focus.last` / selected `DNTE` length stay the pre-Hide length (**47** here). They must not become `loopLength + priorEnd − start` (**2351**).
 
-**Change:** extend that wrap merge so it does not retarget another `noteId`’s off. Do not reject inflation by inventing a second length store. Do not call overdub consume. Do not reopen Stage 8/9 rematerialize.
+**Change:** Pass 1 skips a wrap merge when both on and off are tagged and the `noteId`s disagree. Untagged (legacy) pairs and same-`noteId` wrap pairs still merge. Sync still copies store; it is not the fix.
 
-**Test:** the RC0 fixture must PASS after the fix (111 end **671**, projected length **47**, `last.end` **671**, `wrapPairsMerged` does not rewrite 111). Hide 32 `2208–2975` must not appear on the next resolve.
+**Test:** `test_mover_wrap_length_jump_names_first_writer_193838` — 111 end **671**, projected length **47**, `last.end` **671**. `test_normalize_wrap_merge_skips_other_tagged_note_id` / `test_normalize_wrap_pair_same_note_id_still_merges`.
 
-**Not this RC:** note 14 `2256–2304`, paint 59 vs 60, undo-warm.
+**Not this RC:** note 14 `2256–2304`, paint 59 vs 60, undo-warm. Device gate below.
 
 ---
 
@@ -140,8 +140,8 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 ### Open before RC1 firmware
 
-1. Wrap-merge `noteId` identity — require matching `noteId` when both ons/offs are tagged, or skip when they disagree. Confirm against existing wrap-pair fixtures before coding.
+1. Device gate on the 34-note 193838 loop after flash.
 
 ### Proceed?
 
-YES for RC1 after the user says go. Writer is named.
+YES — RC1 native. Device after upload.

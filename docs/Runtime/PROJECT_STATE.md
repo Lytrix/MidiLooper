@@ -8,7 +8,7 @@ Last updated: 2026-08-13 (NOTE_EDIT mover wrap-length jump)
 
 ## Current branch
 
-**NOTE_EDIT mover wrap-length jump:** RC0 shipped (writer named) — [`note_edit_mover_wrap_length_jump_bugfix.md`](../Plans/note_edit_mover_wrap_length_jump_bugfix.md). Evidence [`193838`](../../captures/session_20260813_193838.log): apply leaves 111 at 671; `LoopTickNormalize` wrap merge + sync writes 2975; then `DNTE` 2351 / `focus.last` 2975. RC1 next.
+**NOTE_EDIT mover wrap-length jump:** RC1 native shipped — [`note_edit_mover_wrap_length_jump_bugfix.md`](../Plans/note_edit_mover_wrap_length_jump_bugfix.md). `LoopTickNormalize` Pass 1 skips wrap merge when tagged `noteId`s disagree. Device gate: after Hide 16, 111 `DNTE` length stays 47 (not 2351).
 
 **NOTE_EDIT wrap-stub commit:** RC2 native shipped; device gate FAIL in [`193838`](../../captures/session_20260813_193838.log) — [`note_edit_overlap_action_drop_and_wrap_stub_bugfix.md`](../Plans/note_edit_overlap_action_drop_and_wrap_stub_bugfix.md). RC1 withdrawn (67.824 min-length stay-hidden).
 

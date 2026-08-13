@@ -162,6 +162,69 @@ void test_normalize_note_id_scope_leaves_other_wrap_pair() {
   TEST_ASSERT_TRUE(fullValidation.passed);
 }
 
+void test_normalize_wrap_merge_skips_other_tagged_note_id() {
+  // session_20260813_193838: wrap-window on 32@2208 must not rewrite tagged off 111@671.
+  constexpr uint32_t loopLength = 2304;
+  constexpr NoteId kWrapId = 32;
+  constexpr NoteId kMoverId = 111;
+
+  MidiEventVec events;
+  MidiEvent wrapOn = MidiEvent::NoteOn(2208, 1, 30, 100);
+  wrapOn.noteId = kWrapId;
+  events.push_back(wrapOn);
+  MidiEvent wrapOff = MidiEvent::NoteOff(96, 1, 30, 0);
+  wrapOff.noteId = kWrapId;
+  events.push_back(wrapOff);
+  MidiEvent moverOn = MidiEvent::NoteOn(624, 1, 30, 100);
+  moverOn.noteId = kMoverId;
+  events.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(671, 1, 30, 0);
+  moverOff.noteId = kMoverId;
+  events.push_back(moverOff);
+
+  LoopTickNormalize::NormalizeOptions microOptions;
+  microOptions.closeOpenTails = false;
+  LoopTickNormalize::normalize(events, loopLength,
+                               LoopTickNormalize::NormalizeScope::noteIds({kWrapId, kMoverId}),
+                               microOptions);
+
+  bool moverOffUnchanged = false;
+  bool inflatedMoverOff = false;
+  for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOff() || evt.noteId != kMoverId) {
+      continue;
+    }
+    if (evt.tick == 671u) {
+      moverOffUnchanged = true;
+    }
+    if (evt.tick == 2975u) {
+      inflatedMoverOff = true;
+    }
+  }
+  TEST_ASSERT_TRUE(moverOffUnchanged);
+  TEST_ASSERT_FALSE(inflatedMoverOff);
+}
+
+void test_normalize_wrap_pair_same_note_id_still_merges() {
+  constexpr uint32_t loopLength = 1536;
+  constexpr NoteId kNoteId = 9;
+
+  MidiEventVec events;
+  MidiEvent off = MidiEvent::NoteOff(50, 1, 60, 0);
+  off.noteId = kNoteId;
+  events.push_back(off);
+  MidiEvent on = MidiEvent::NoteOn(1400, 1, 60, 100);
+  on.noteId = kNoteId;
+  events.push_back(on);
+
+  const LoopTickNormalize::NormalizeResult result =
+      LoopTickNormalize::normalizeWindow(events, loopLength, 1400, 1400);
+
+  TEST_ASSERT_GREATER_THAN(0u, result.wrapPairsMerged);
+  TEST_ASSERT_TRUE(hasNoteOffAt(events, 1586, 1, 60));
+  TEST_ASSERT_FALSE(hasNoteOffAt(events, 50, 1, 60));
+}
+
 void test_normalize_micro_scope_skips_open_tail_close() {
   constexpr uint32_t loopLength = 1536;
   constexpr NoteId kNoteId = 7;
@@ -217,6 +280,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_normalize_moved_note_loop_end_off_not_promoted);
   RUN_TEST(test_normalize_all_retains_note_beyond_shortened_loop);
   RUN_TEST(test_normalize_note_id_scope_leaves_other_wrap_pair);
+  RUN_TEST(test_normalize_wrap_merge_skips_other_tagged_note_id);
+  RUN_TEST(test_normalize_wrap_pair_same_note_id_still_merges);
   RUN_TEST(test_normalize_micro_scope_skips_open_tail_close);
   RUN_TEST(test_move_past_loop_end_linear_off_at_macro_commit);
   return UNITY_END();
