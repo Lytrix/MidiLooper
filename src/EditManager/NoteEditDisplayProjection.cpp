@@ -107,13 +107,18 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCaches() {
     invalidateProjectedNoteEditDisplayCache();
 }
 
+EDIT_MANAGER_IMPL_MEM const NoteUtils::DisplayNoteVec& EditManager::visualCacheNotesForSelectedSlot(
+    const Track& track) const {
+    const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
+    return track.getVisualNotesForSlot(slot);
+}
+
 EDIT_MANAGER_IMPL_MEM void EditManager::ensureCurrentStateVisibleRowsFromVisualCache(Track& track) {
     if (!editSession.active) {
         return;
     }
-    const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     editSession.noteEditCurrentState.ensureVisibleRowsForDisplayNotes(
-        track.getVisualNotesForSlot(slot));
+        visualCacheNotesForSelectedSlot(track));
 }
 
 EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsForNoteEditFocus(
