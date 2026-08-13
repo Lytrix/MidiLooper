@@ -25,6 +25,7 @@
 #include "Loop.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
+#include "EditPass.h"
 #include "Utils/NoteUtils.h"
 
 #include <algorithm>
@@ -189,8 +190,10 @@ void test_pending_requires_source_view() {
   LoopEventStore::initPool();
   Loop loop;
   loop.loopLengthTicks = kLoopLen;
+  Loop::resetCommittedPitchQueryWork();
   TEST_ASSERT_FALSE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 100, 20, 40, 99));
   TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
 void test_pending_add_only_when_no_overlap() {
@@ -199,6 +202,7 @@ void test_pending_add_only_when_no_overlap() {
   Loop loop;
   seedLongSourceNote(loop, 1, 10, 58, 60);
   loop.beginCapture(CapturePhase::Overdub);
+  Loop::resetCommittedPitchQueryWork();
 
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 200, 240, 10));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
@@ -206,6 +210,27 @@ void test_pending_add_only_when_no_overlap() {
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
+}
+
+void test_no_overlap_with_companion_edit_does_not_full_materialize() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 10, 58, 60);
+  EditPass hideRow{};
+  hideRow.passType = EditPassType::Note;
+  hideRow.actionType = EditActionType::Delete;
+  hideRow.propertyType = EditPropertyType::None;
+  hideRow.targetNoteId = 2;
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, std::move(hideRow)));
+  loop.beginCapture(CapturePhase::Overdub);
+  Loop::resetCommittedPitchQueryWork();
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 200, 240, 10));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
 void test_pending_shorten_long_source_on_overlap() {
@@ -577,6 +602,7 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
   RUN_TEST(test_pending_add_only_when_no_overlap);
+  RUN_TEST(test_no_overlap_with_companion_edit_does_not_full_materialize);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);

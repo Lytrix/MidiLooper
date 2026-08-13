@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (mute silences track MIDI channel on output ports)
+Last updated: 2026-08-13 (empty overlap candidates do not gather or reconstruct)
 
 ---
 
@@ -41,6 +41,8 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 **Gate 1:** Production selection is normalized note geometry + `[S, E)` intersection (`existingNoteOverlapsIncomingHold`). `OverlapNoteIdObservation` is test/diagnostic only. Split-chunk and prior Shorten/Hide companion fixtures landed. 021304 same-pitch count still open on Gate 0.
 
 **Gate 2 (native landed, device open):** enabled slots keep advancing playback; mute/solo/slot-mute suppress send on that track's MIDI channel and output ports (USB/DIN/USB Host). Track mute sends CC 123 on `midiChannel` only. Native proves cursor/wrap advance while MIDI send is suppressed, unmute does not resend crossed events, and mute does not clear the ledger. Device still owed: mute mid-note silences that channel on the output ports.
+
+**Gate 3 (native landed):** empty candidate set does not look up spans and does not call `gatherCommittedEvents` / `reconstructDisplayNotes` on note-off. `OverlapCandidateLookup` copies from an already-available note list only. RC-K3 note-off still reads `overdubSourceViewNotes_`. `fullMaterializeCount` stays 0 after the work counter is reset, including when companion edit rows exist.
 
 **RC-L2 (shipped, device verify open) — pitch-query full-loop copy:** the pairing change had `gatherCommittedNoteEventsForPitch` build a PSRAM `SessionMidiEventVec` of every committed note event per note-off before filtering. [`013917`](../../captures/session_20260813_013917.log) shows `noterecon` 98–191 ms / `notechg` 99–192 ms on 3554 events (`begin_capture` 11 µs, so Option B held). When `collectNoteIdsRetargetedToPitch` returns nothing — always true during plain overdub — the candidate set is exactly the events at that pitch, so the walk filters inline and skips the trailing re-filter. Pairing path unchanged when retargets exist; both branches covered by `test_overdub_source_view`.
 
