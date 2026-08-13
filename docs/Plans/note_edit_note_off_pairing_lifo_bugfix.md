@@ -1,6 +1,6 @@
 # NOTE_EDIT note-off pairing LIFO — bugfix
 
-**Status:** native shipped; device gate open
+**Status:** native shipped; multi-overlap device PASS in [`213920`](../../captures/session_20260813_213920.log)
 **Owner:** `findNoteOffForOnIndex` (`src/EditManager/EditApply.cpp`)
 **Sibling:** [`note_edit_replay_row_payload_bugfix.md`](note_edit_replay_row_payload_bugfix.md) (device PASS in [`211832`](../../captures/session_20260813_211832.log)), [`note_edit_length_replay_loop_boundary_bugfix.md`](note_edit_length_replay_loop_boundary_bugfix.md)
 
@@ -64,4 +64,4 @@ Confirmed to fail against the pre-fix source on the first assertion (`Expected 0
 
 ## Device gate
 
-Nested same-pitch is HITL-only when an overdub lands inside a long recorded note of the same pitch, then a later NOTE_EDIT delete/move/pitch/length targets the outer note. Native covers the apply helpers. No dedicated HITL preset required for this stage.
+[`213920`](../../captures/session_20260813_213920.log) @43.594: five same-pitch interactions (`Shorten` 1 `0–95`, `Hide` 2/3/4/115, mover 77 `96–788` pitch 60). @45.971 deselect seals `canonical=7 pre_commit=7` — Delete 4/3/2/115, Length 1 `0–95`, NoteRange+Pitch 77. Cache drops 22→18 notes. That is the multi-overlap seal, not the nested LIFO apply-helper path (native-only).
