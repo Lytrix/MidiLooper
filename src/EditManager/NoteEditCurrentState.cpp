@@ -71,6 +71,23 @@ NOTE_EDIT_MEM NoteEditCurrentState NoteEditCurrentState::buildFromSessionStore(
   return built;
 }
 
+NOTE_EDIT_MEM void NoteEditCurrentState::ensureVisibleRowsForDisplayNotes(
+    const NoteUtils::DisplayNoteVec& notes) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (hasRow(note.noteId)) {
+      continue;
+    }
+    if (note.endTick == note.startTick) {
+      continue;
+    }
+    const NoteBaseline span{note.note, note.velocity, note.startTick, note.endTick};
+    upsertRow(note.noteId, span, span, NoteEditPresenceType::Visible);
+  }
+}
+
 NOTE_EDIT_MEM void NoteEditCurrentState::projectToSessionStore(MidiEventVec& store,
                                                               uint8_t channel) const {
   store.erase(std::remove_if(store.begin(), store.end(),

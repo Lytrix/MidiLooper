@@ -243,6 +243,64 @@ void test_display_projection_keeps_committed_note_without_current_state_row() {
   TEST_ASSERT_TRUE(hasLinear);
 }
 
+void test_current_state_upserts_visible_row_from_display_note_without_store_pair() {
+  // 174635 / Stage 6: select painted noteId=78 (presence=-1). Coarse fader computed
+  // 384→336 but NoteGeometryResolver emitted no Move — readEditableCurrentSpan and
+  // rowProjectsToStore both failed. Ensure a Visible row from the committed display
+  // note so the driver and causing-note action path can run. Hidden stays Hidden.
+  // Zero-length display (174635 noteId=14, DNTE length 0) is skipped.
+  constexpr NoteId kCacheOnlyId = 78;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kHiddenId = 42;
+  constexpr NoteId kZeroLengthId = 14;
+  constexpr uint8_t kPitchCacheOnly = 23;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchHidden = 64;
+  constexpr uint8_t kPitchZero = 71;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenId, {kPitchHidden, 100, 384, 575}, {kPitchHidden, 100, 384, 575},
+                         NoteEditPresenceType::Hidden);
+  TEST_ASSERT_NULL(currentState.find(kCacheOnlyId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kCacheOnlyId));
+
+  NoteUtils::DisplayNoteVec displayNotes;
+  displayNotes.push_back({kCacheOnlyId, kPitchCacheOnly, 100, 384, 528});
+  displayNotes.push_back({kWrapId, kPitchWrap, 100, 2208, 96});
+  displayNotes.push_back({kHiddenId, kPitchHidden, 100, 384, 575});
+  displayNotes.push_back({kZeroLengthId, kPitchZero, 100, 0, 0});
+
+  currentState.ensureVisibleRowsForDisplayNotes(displayNotes);
+
+  TEST_ASSERT_NOT_NULL(currentState.find(kCacheOnlyId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kCacheOnlyId));
+  TEST_ASSERT_TRUE(currentState.rowIsVisible(kCacheOnlyId));
+  NoteBaseline cacheOnly{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kCacheOnlyId, cacheOnly));
+  TEST_ASSERT_EQUAL_UINT8(kPitchCacheOnly, cacheOnly.pitch);
+  TEST_ASSERT_EQUAL_UINT32(384u, cacheOnly.startTick);
+  TEST_ASSERT_EQUAL_UINT32(528u, cacheOnly.endTick);
+
+  TEST_ASSERT_NOT_NULL(currentState.find(kWrapId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kWrapId));
+  NoteBaseline wrap{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT32(2208u, wrap.startTick);
+  TEST_ASSERT_EQUAL_UINT32(96u, wrap.endTick);
+
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kHiddenId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kHiddenId));
+  TEST_ASSERT_NULL(currentState.find(kZeroLengthId));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kCacheOnlyId;
+  focus.last = cacheOnly;
+  EditorSelection selection;
+  selection.primaryNote = kCacheOnlyId;
+  TEST_ASSERT_TRUE(isLiveEditDriverValidFromCurrentState(selection, focus, currentState));
+}
+
 void test_selectable_inventory_keeps_painted_note_without_current_state_row() {
   // 174139 / Stage 5: Stage 1 keeps wrap notes on paint; select used
   // rowIncludedInSelectableInventory which is false when find == nullptr, so the
@@ -2107,6 +2165,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_projection_owner_path_after_current_state_edit);
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
   RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
+  RUN_TEST(test_current_state_upserts_visible_row_from_display_note_without_store_pair);
   RUN_TEST(test_selectable_inventory_keeps_painted_note_without_current_state_row);
   RUN_TEST(test_display_projection_paint_matches_committed_base_when_current_state_is_subset);
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);

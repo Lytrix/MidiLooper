@@ -52,6 +52,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     editSession.noteEditCurrentState =
         NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(),
                                                     track.getMidiChannel());
+    ensureCurrentStateVisibleRowsFromVisualCache(track);
     DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;
@@ -236,6 +237,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track
     if (editSession.noteEditCurrentState.empty()) {
         editSession.noteEditCurrentState =
             NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(), channel);
+        ensureCurrentStateVisibleRowsFromVisualCache(track);
     }
     const NoteEditCurrentState undoCurrentState = editSession.noteEditCurrentState.clone();
 

@@ -307,6 +307,7 @@ private:
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
+    void ensureCurrentStateVisibleRowsFromVisualCache(Track& track);
     void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (`filterSelectableDisplayNotes` on paint projection).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
