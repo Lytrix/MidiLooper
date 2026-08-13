@@ -54,9 +54,9 @@ Do not treat observed membership, `collectObservedOverlapNoteIds`, or a later pl
 
 `OverlapNoteIdSet` is a fixed-capacity set (`kOverlapNoteIdSetCapacity = 128`). Insert is contains-then-add. Overflow fails; the set never grows. Invalid `NoteId` 0 is rejected.
 
-Provisional capacity fits an 8-bar 16th-grid same-pitch full-loop hold (128 unique ids). The 68-bar / 3714-event [`021304`](../../captures/session_20260813_021304.log) unique same-pitch count is **not** measured yet. Overflow on that loop is a failed gate, not heap growth.
+Provisional capacity fits an 8-bar 16th-grid same-pitch full-loop hold (128 unique ids). Device same-pitch count is a one-shot idle `#CAP,DIAG,stored_notes,…,max_same_pitch,…` line from a clean visual cache — not a `SEVT` dump and not gated on a Committed overdub. [`150917`](../../captures/session_20260813_150917.log) had no line because that emitter did not exist; empty overdub was `CommitResult::Skipped` so the old dump never queued.
 
-Native: `test_overlap_note_id_observation` Gate 0 cases.
+Native: `test_overlap_note_id_observation` Gate 0 cases; `test_display_note_count` for the inventory helper.
 
 ---
 

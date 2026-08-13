@@ -75,6 +75,46 @@ enum StoredVerificationPhase : uint8_t {
 
 }  // namespace
 
+TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeLogStoredNoteCount() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  Loop& loop = getActiveLoop();
+  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.visualCache.notes.empty()) {
+    return;
+  }
+  const uint8_t slot = getActiveLoopIndex();
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  const uint8_t slotBit = static_cast<uint8_t>(1u << slot);
+  if ((storedNoteCountLoggedMask_ & slotBit) != 0) {
+    return;
+  }
+  // Count in this FLASHMEM function. Do not call the header template — that
+  // instantiation lands in ITCM and crosses a 32 KB RAM1 block.
+  uint32_t notes = 0;
+  uint32_t uniqueNoteIds = 0;
+  uint32_t maxSamePitch = 0;
+  uint16_t pitchCount[128] = {};
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.noteId == kInvalidNoteId || note.startTick == note.endTick) {
+      continue;
+    }
+    ++notes;
+    ++uniqueNoteIds;
+    if (note.note < 128) {
+      ++pitchCount[note.note];
+      if (pitchCount[note.note] > maxSamePitch) {
+        maxSamePitch = pitchCount[note.note];
+      }
+    }
+  }
+  SC_STORED_NOTES(resolveTrackIndexForPersistence(*this), slot, notes, uniqueNoteIds, maxSamePitch);
+  storedNoteCountLoggedMask_ |= slotBit;
+#endif
+}
+
 TRACK_COLD_MEM void Track::resetDeferredStoredMidiVerification() {
   deferredStoredVerificationPending = false;
   deferredStoredVerificationPhase = kStoredVerificationNotes;
@@ -287,6 +327,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
           loop.ensureVisualCacheBuilt();
         }
       }
+      maybeLogStoredNoteCount();
     }
   }
 
