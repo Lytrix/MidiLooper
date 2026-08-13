@@ -124,17 +124,29 @@ EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassT
   return passes.editPasses.back().id;
 }
 
-PassId Loop::saveLoopGeometry(uint32_t loopStartTick, uint32_t loopLengthTicks,
-                              uint32_t startLoopTick) {
-  LoopGeometry row;
+PassId Loop::saveLoopGeometry(LoopGeometry row) {
   row.id = nextPassId_++;
-  row.loopStartTick = loopStartTick;
-  row.loopLengthTicks = loopLengthTicks;
-  row.startLoopTick = startLoopTick;
   row.state = LoopGeometryState::Active;
   passes.loopGeometries.push_back(row);
   editStateDirty_ = true;
   return passes.loopGeometries.back().id;
+}
+
+bool Loop::setLoopGeometryState(PassId id, LoopGeometryState state) {
+  if (id == kInvalidPassId) {
+    return false;
+  }
+  for (LoopGeometry& geometry : passes.loopGeometries) {
+    if (geometry.id != id) {
+      continue;
+    }
+    if (geometry.state != state) {
+      geometry.state = state;
+      editStateDirty_ = true;
+    }
+    return true;
+  }
+  return false;
 }
 
 EditPassIdList Loop::replaceNoteEditPass(uint8_t editPassIndex,

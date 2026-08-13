@@ -18,6 +18,7 @@
 #include "SlotLoadSession.h"
 #include "StorageLoopIo.h"
 #include "TrackManager.h"
+#include "TrackUndo.h"
 #include "Utils/BootLoopSlotRestore.h"
 #include "Utils/BootTelemetry.h"
 #include "Utils/MemoryMonitor.h"
@@ -472,6 +473,7 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
                                                 trackManager.getTrack(t).getGlobalUndoStack())) {
             return false;
         }
+        TrackUndo::rebuildTrackFromLoopContent(trackManager.getTrack(t));
     }
 
     uint32_t tailMarker = 0;

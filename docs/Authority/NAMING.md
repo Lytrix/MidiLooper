@@ -188,7 +188,7 @@ A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEd
 | **BufferedData** | Materialized runtime subset of Loop content (set of ranges) | The entire Loop content in RAM |
 | **lastUnlinkedSlotLink** | Set last-state for one-step clear relink (Layer B) | Loop undo history |
 | **ContentUndoUnit** | Runtime derivation result from `deriveContentUndoUnits` — not persisted | `UndoEntry`; a persist record |
-| **LoopGeometry** | Persisted loop length/start content record (`LoopGeometry.id`) | `UndoLoopGeometry` (in-session GUS payload until Stage 3b); `LoopPass` |
+| **LoopGeometry** | Persisted loop length/start content record (`LoopGeometry.id`, before and after ticks) | `UndoLoopGeometry` (in-session GUS payload until Stage 3b); `LoopPass` |
 
 **Do not** use **Source** as a domain noun in docs, comments, or types (`ClockSource` already exists). Say **Loop content**.
 

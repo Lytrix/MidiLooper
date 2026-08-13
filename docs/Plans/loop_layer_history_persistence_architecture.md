@@ -1,6 +1,6 @@
 # Loop layer history persistence — architecture
 
-**Status:** Active — Stage 1 native audit shipped; Stage 1b `LoopGeometry` content record shipped; Stage 2 next  
+**Status:** Active — Stage 2 load-time editing derivation shipped; Stage 3 next (delete `UndoStacks`)  
 **Date:** 2026-08-14  
 **Decision:** [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only)  
 **OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A only)  
@@ -138,11 +138,11 @@ Native fixtures: `test/test_loop_content_history/`. Derivation: `deriveContentUn
 
 Stage 2 can derive load-time editing state from content including `LoopGeometry`. Keep writing today's bundle undo stack. `GlobalUndoStack` stays in-session authority.
 
-### Stage 2 — Load-time reconstructed editing state
+### Stage 2 — Load-time reconstructed editing state (shipped 2026-08-14)
 
-After loading a Loop, the runtime must answer: current tip; undo-step count; records per undo unit; redo empty at load; which records are effective; walk-to-empty; serialize/reload identity.
+After Loop load / GUS file read, `TrackUndo::rebuildSlotFromLoopContent` replaces that slot's pass-undo entries with `buildContentUndoEntries` from Active content. Cursor is the tip; redo is empty. `ClearSlot` entries are preserved (Layer B). Display `U:nn` is `undoDepthForLoop` over that filled GUS.
 
-`GlobalUndoStack` may remain the runtime implementation temporarily. Display `U:nn` after reboot uses this derivation.
+`LoopGeometry` now stores before ticks so a loaded `LoopBoundaryChange` can walk back. Undo/redo of that kind disables/enables the matching `LoopGeometry.id`. Keep writing today's bundle undo stack.
 
 ### Stage 3 — Delete persisted UndoStacks
 

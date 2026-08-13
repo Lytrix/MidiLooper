@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (DEC-035 Layer A Stage 1b)
+Last updated: 2026-08-14 (DEC-035 Layer A Stage 2)
 
 ---
 
@@ -10,7 +10,7 @@ Last updated: 2026-08-14 (DEC-035 Layer A Stage 1b)
 
 ### Loop content-only history (DEC-035 Layer A)
 
-**Now: Stage 1b shipped.** `LoopGeometry` is a `LoopPasses` content record (`LoopGeometry.id`). Session `editPassIds` stay E:-only; reboot-during-edit already flattens via `markCurrentEditBatchDurable` — no new flatten path. Stage 1 undo-unit-id gap is retracted. Do not delete `UndoStacks`. **Next: Stage 2 load-time editing derivation (including `LoopGeometry`).**
+**Now: Stage 2 shipped.** Load fills in-session `GlobalUndoStack` from Active Loop content (`TrackUndo::rebuildSlotFromLoopContent`). `U:nn` is `undoDepthForLoop` over that stack. Redo empty at load. `ClearSlot` entries are preserved. Do not delete `UndoStacks`. **Next: Stage 3 only after reboot `U:nn` matches tip depth.**
 
 Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
 

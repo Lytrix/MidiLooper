@@ -17,6 +17,7 @@
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Utils/TrackMem.h"
 #include "UndoLoopGeometry.h"
+#include "LoopContentHistory.h"
 
 extern TrackManager trackManager;
 
@@ -178,6 +179,9 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
         case UndoEntryKind::LoopBoundaryChange:
             entry.afterLoopStartTick = loop.loopStartTick;
             entry.afterLoopLengthTicks = loop.loopLengthTicks;
+            if (entry.passId != kInvalidPassId) {
+                (void)loop.setLoopGeometryState(entry.passId, LoopGeometryState::Disabled);
+            }
             loop.loopStartTick = entry.beforeLoopStartTick;
             loop.loopLengthTicks =
                 loop.reconcileLoopLengthWithCommittedPasses(entry.beforeLoopLengthTicks);
@@ -297,6 +301,9 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo boundary payload missing for entry %lu",
                            static_cast<unsigned long>(entry.id));
                 return false;
+            }
+            if (entry.passId != kInvalidPassId) {
+                (void)loop.setLoopGeometryState(entry.passId, LoopGeometryState::Active);
             }
             loop.loopStartTick = entry.afterLoopStartTick;
             loop.loopLengthTicks =
@@ -816,7 +823,8 @@ TRACK_COLD_MEM void TrackUndo::pushLoopStartSnapshot(Track& track, uint8_t slotI
 
 TRACK_COLD_MEM void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
                                               uint32_t beforeLoopStartTick,
-                                              uint32_t beforeLoopLengthTicks) {
+                                              uint32_t beforeLoopLengthTicks,
+                                              PassId geometryId) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
@@ -829,9 +837,35 @@ TRACK_COLD_MEM void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint
     entry.kind = UndoEntryKind::LoopBoundaryChange;
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
+    entry.passId = geometryId;
     entry.beforeLoopStartTick = beforeLoopStartTick;
     entry.beforeLoopLengthTicks = beforeLoopLengthTicks;
     pushUndoEntry(track, std::move(entry));
+}
+
+TRACK_COLD_MEM void TrackUndo::rebuildSlotFromLoopContent(Track& track, uint8_t slotIndex) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !track.loopsAllocated()) {
+        return;
+    }
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    eraseUndoEntriesForSlot(stack, slotIndex, true);
+    const Loop& loop = track.getLoop(slotIndex);
+    UndoEntryVec built;
+    buildContentUndoEntries(loop.passes, slotIndex, loop.loopId, built);
+    for (UndoEntry& entry : built) {
+        entry.id = stack.nextEntryId++;
+        stack.entries.push_back(std::move(entry));
+    }
+    stack.cursor = stack.entries.size();
+}
+
+TRACK_COLD_MEM void TrackUndo::rebuildTrackFromLoopContent(Track& track) {
+    if (!track.loopsAllocated()) {
+        return;
+    }
+    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+        rebuildSlotFromLoopContent(track, slotIndex);
+    }
 }
 
 TRACK_COLD_MEM void TrackUndo::undoLoopStart(Track& track) {

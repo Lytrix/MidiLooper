@@ -10,6 +10,7 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditManager/EditApply.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
+#include "../../src/Loop/LoopContentHistory.cpp"
 #include "../../src/StorageLoopIo.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
@@ -19,6 +20,7 @@
 #include "NoteEditFocus.h"
 #include "StorageLoopIo.h"
 #include "Loop.h"
+#include "LoopContentHistory.h"
 #include "EditPass.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
@@ -307,6 +309,9 @@ void test_write_read_loop_geometry_tail_roundtrip() {
   geometry.loopStartTick = 96;
   geometry.loopLengthTicks = 1536;
   geometry.startLoopTick = 0;
+  geometry.beforeLoopStartTick = 0;
+  geometry.beforeLoopLengthTicks = 768;
+  geometry.beforeStartLoopTick = 0;
   geometry.state = LoopGeometryState::Active;
   original.passes.loopGeometries.push_back(geometry);
 
@@ -323,6 +328,8 @@ void test_write_read_loop_geometry_tail_roundtrip() {
   TEST_ASSERT_EQUAL(96u, restored.passes.loopGeometries[0].loopStartTick);
   TEST_ASSERT_EQUAL(1536u, restored.passes.loopGeometries[0].loopLengthTicks);
   TEST_ASSERT_EQUAL(0u, restored.passes.loopGeometries[0].startLoopTick);
+  TEST_ASSERT_EQUAL(0u, restored.passes.loopGeometries[0].beforeLoopStartTick);
+  TEST_ASSERT_EQUAL(768u, restored.passes.loopGeometries[0].beforeLoopLengthTicks);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LoopGeometryState::Active),
                           static_cast<uint8_t>(restored.passes.loopGeometries[0].state));
 }
@@ -359,12 +366,20 @@ void test_save_loop_geometry_assigns_id_and_marks_dirty() {
   loop.loopStartTick = 0;
   loop.startLoopTick = 0;
   loop.nextPassId_ = 2;
-  const PassId id = loop.saveLoopGeometry(48, 1536, 0);
+  LoopGeometry row;
+  row.loopStartTick = 48;
+  row.loopLengthTicks = 1536;
+  row.startLoopTick = 0;
+  row.beforeLoopStartTick = 0;
+  row.beforeLoopLengthTicks = 768;
+  row.beforeStartLoopTick = 0;
+  const PassId id = loop.saveLoopGeometry(row);
   TEST_ASSERT_EQUAL(2u, id);
   TEST_ASSERT_EQUAL(3u, loop.nextPassId_);
   TEST_ASSERT_EQUAL(1u, loop.passes.loopGeometries.size());
   TEST_ASSERT_EQUAL(48u, loop.passes.loopGeometries[0].loopStartTick);
   TEST_ASSERT_EQUAL(1536u, loop.passes.loopGeometries[0].loopLengthTicks);
+  TEST_ASSERT_EQUAL(768u, loop.passes.loopGeometries[0].beforeLoopLengthTicks);
   TEST_ASSERT_TRUE(loop.isEditStateDirty());
 }
 
@@ -910,6 +925,59 @@ void test_step_persisted_loop_snapshot_parse_resumes() {
   releasePersistedLoopSnapshotChunks(staged);
 }
 
+void test_serialize_reload_content_undo_units_match() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 7;
+  original.loopLengthTicks = 1536;
+  original.loopStartTick = 48;
+  original.nextPassId = 5;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
+  OverdubPass overdub{};
+  overdub.id = 2;
+  overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  original.passes.overdubPasses.push_back(overdub);
+  EditPass editPass{};
+  editPass.id = 3;
+  editPass.passType = EditPassType::Note;
+  editPass.editPassIndex = 0;
+  editPass.actionType = EditActionType::Update;
+  editPass.propertyType = EditPropertyType::Length;
+  editPass.state = EditPassState::Active;
+  editPass.targetNoteId = 1;
+  original.passes.editPasses.push_back(editPass);
+  LoopGeometry geometry{};
+  geometry.id = 4;
+  geometry.loopStartTick = 48;
+  geometry.loopLengthTicks = 1536;
+  geometry.beforeLoopLengthTicks = 768;
+  geometry.state = LoopGeometryState::Active;
+  original.passes.loopGeometries.push_back(geometry);
+
+  std::vector<ContentUndoUnit> before;
+  deriveEffectiveContentUndoUnits(original.passes, before);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+
+  std::vector<ContentUndoUnit> after;
+  deriveEffectiveContentUndoUnits(restored.passes, after);
+  TEST_ASSERT_EQUAL(before.size(), after.size());
+  TEST_ASSERT_EQUAL(4u, after.size());
+  for (size_t i = 0; i < after.size(); ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(before[i].kind), static_cast<int>(after[i].kind));
+    TEST_ASSERT_EQUAL(before[i].primaryPassId, after[i].primaryPassId);
+  }
+  releasePersistedLoopSnapshotChunks(restored);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -935,5 +1003,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_read_loop_snapshot_header_skips_pass_payload);
   RUN_TEST(test_apply_loop_slot_metadata_without_passes);
   RUN_TEST(test_step_persisted_loop_snapshot_parse_resumes);
+  RUN_TEST(test_serialize_reload_content_undo_units_match);
   return UNITY_END();
 }
