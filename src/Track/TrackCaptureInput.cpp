@@ -366,8 +366,14 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
           break;
         }
         const uint32_t noteChangeStartUs = micros();
+        const auto pendingIt = pendingNotes.find({data1, channel});
+        static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
+        const OverlapNoteIdSet& overlapNoteIds = (pendingIt != pendingNotes.end())
+                                                     ? pendingIt->second.overlapNoteIds
+                                                     : kEmptyOverlapNoteIds;
         (void)loop.accumulatePendingNoteChangesForIncomingNote(
-            channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId);
+            channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId,
+            overlapNoteIds);
         RuntimeTimingTelemetry::addNoteChange(micros() - noteChangeStartUs);
         break;
       }

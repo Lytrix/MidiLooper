@@ -26,9 +26,11 @@
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <vector>
 
 namespace {
@@ -177,6 +179,14 @@ void assertSliceCacheMatchesFull(Loop& loop, uint8_t pitch, uint32_t startTick, 
   assertTransformsEqual(reference, candidate);
 }
 
+OverlapNoteIdSet overlapIds(std::initializer_list<NoteId> ids) {
+  OverlapNoteIdSet out;
+  for (NoteId id : ids) {
+    (void)out.insert(id);
+  }
+  return out;
+}
+
 void seedStoreNote(LoopEventStore& store, uint32_t onTick, uint32_t offTick, uint8_t pitch,
                    NoteId id) {
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, 1, pitch, 100, id));
@@ -191,7 +201,8 @@ void test_pending_requires_source_view() {
   Loop loop;
   loop.loopLengthTicks = kLoopLen;
   Loop::resetCommittedPitchQueryWork();
-  TEST_ASSERT_FALSE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 100, 20, 40, 99));
+  TEST_ASSERT_FALSE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 100, 20, 40, 99,
+                                                                    overlapIds({})));
   TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
@@ -204,7 +215,8 @@ void test_pending_add_only_when_no_overlap() {
   loop.beginCapture(CapturePhase::Overdub);
   Loop::resetCommittedPitchQueryWork();
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 200, 240, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 200, 240, 10,
+                                                                   overlapIds({})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
@@ -227,9 +239,26 @@ void test_no_overlap_with_companion_edit_does_not_full_materialize() {
   loop.beginCapture(CapturePhase::Overdub);
   Loop::resetCommittedPitchQueryWork();
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 200, 240, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 200, 240, 10,
+                                                                   overlapIds({})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
+}
+
+void test_empty_overlap_ids_add_only_when_source_overlaps() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  Loop::resetCommittedPitchQueryWork();
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
@@ -240,7 +269,8 @@ void test_pending_shorten_long_source_on_overlap() {
   seedLongSourceNote(loop, 1, 50, 200, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
@@ -263,7 +293,8 @@ void test_pending_shorten_ignores_recorded_channel() {
   seedLongSourceNote(loop, 1, 50, 200, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(2, 60, 90, 120, 160, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(2, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
@@ -291,7 +322,8 @@ void test_pending_hide_when_covered() {
   loop.nextNoteId_ = 4;
   loop.beginCapture(CapturePhase::Overdub);
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 100, 5, 130, 20));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 100, 5, 130, 20,
+                                                                   overlapIds({1, 2, 3})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(3, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
@@ -308,9 +340,11 @@ void test_pending_survives_wraps_and_accumulates() {
   seedLongSourceNote(loop, 1, 50, 200, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
   // Simulate wrap: second insert at low phase against same source view.
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 8, 30, 11));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 72, 90, 8, 30, 11,
+                                                                   overlapIds({})));
   TEST_ASSERT_EQUAL(2, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
@@ -323,7 +357,8 @@ void test_discard_clears_pending_with_source_view() {
   Loop loop;
   seedLongSourceNote(loop, 1, 50, 200, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
   TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
   loop.discardCapture();
   TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
@@ -336,7 +371,8 @@ void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   Loop loop;
   seedLongSourceNote(loop, 1, 50, 200, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(120, 1, 60, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(160, 1, 60, 0)));
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
@@ -603,6 +639,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_requires_source_view);
   RUN_TEST(test_pending_add_only_when_no_overlap);
   RUN_TEST(test_no_overlap_with_companion_edit_does_not_full_materialize);
+  RUN_TEST(test_empty_overlap_ids_add_only_when_source_overlaps);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);
