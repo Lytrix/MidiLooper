@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-14 (DEC-035 Layer A Stage 0)
+Last updated: 2026-08-14 (DEC-035 Layer A Stage 1)
 
 ---
 
 ## Current branch
 
-**Loop content-only history (DEC-035):** Stage 0 on `feature/loop-content-history`. OpenSpec `loop-content-history-persistence` (Layer A). Next is Stage 1 native audit. Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Do not delete `UndoStacks` until Stage 2. Stage 3b / Layers B–D are later.
+**Loop content-only history (DEC-035):** Stage 1 native audit shipped on `feature/loop-content-history`. Prefix holds; undo-unit id and geometry content revision are named gaps. Do not delete `UndoStacks`. Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md).
 
 **NOTE_EDIT leave-restore painted span:** RC1 native shipped; device gate open — [`note_edit_overlap_leave_restore_painted_span_bugfix.md`](../Plans/note_edit_overlap_leave_restore_painted_span_bugfix.md). [`200154`](../../captures/session_20260813_200154.log) Restore 5 `720–2255` / select `DNTE` 1535; same-loop [`193838`](../../captures/session_20260813_193838.log) first-select paints length **47**.
 
@@ -26,7 +26,7 @@ Last updated: 2026-08-14 (DEC-035 Layer A Stage 0)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **Loop content-only history (DEC-035 Layer A)** on `feature/loop-content-history`. Stage 0 shipped; Stage 1 native audit next. Persistence no longer waits on a DEC-024 Phase 2 wire-format gate. Parallel: **Overdub overlap geometry selection** on `feature/overdub-playback-observation-overlap`. Do not start interval reservation or patch RC-J. Scheduling: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
+**Active work:** **Loop content-only history (DEC-035 Layer A)** on `feature/loop-content-history`. Stage 1 native audit shipped; Stage 2 gated on undo-unit id + geometry content revision. Parallel: **Overdub overlap geometry selection** on `feature/overdub-playback-observation-overlap`. Do not start interval reservation or patch RC-J. Scheduling: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
@@ -95,7 +95,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
-| **`loop-content-history-persistence`** | **DEC-035 Layer A** — Stage 0 shipped; Stage 1 native audit next. Task [#33](https://github.com/Lytrix/MidiLooper/issues/33) |
+| **`loop-content-history-persistence`** | **DEC-035 Layer A** — Stage 1 shipped; Stage 2 gated on content metadata. Task [#33](https://github.com/Lytrix/MidiLooper/issues/33) |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |

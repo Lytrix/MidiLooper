@@ -1,6 +1,6 @@
 # Loop layer history persistence — architecture
 
-**Status:** Active — Stage 0 shipped; Layer A next  
+**Status:** Active — Stage 1 native audit shipped; Stage 2 gated on named content metadata  
 **Date:** 2026-08-14  
 **Decision:** [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only)  
 **OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A only)  
@@ -116,15 +116,26 @@ Stage 6   checkpoint + tail
 Stage 7   range-first playback
 ```
 
-### Stage 1 — Content sufficiency
+### Stage 1 — Content sufficiency (shipped 2026-08-14)
 
-Native fixtures only. Central question: can every existing `UndoEntry` operation boundary be derived solely from persisted content records?
+Native fixtures: `test/test_loop_content_history/`. Derivation: `deriveContentUndoUnits` in [`LoopContentHistory.h`](../../include/LoopContentHistory.h).
 
-**Named invariant:** a persisted content prefix must be sufficient to define the effective Loop state. Do not assume `active = records <= tip` until grouped edits, companions, geometry, clear/relink, and `dropRedoBranch` survive.
+| `UndoEntryKind` | Persisted content | Boundary from content? |
+|-----------------|-------------------|------------------------|
+| `RecordPassAdded` | `recordPass.id` | Yes |
+| `OverdubPassAdded` | overdub id + following `editPassIndex == 255` companions | Yes |
+| `NoteEditPassClosed` | consecutive rows with the same `editPassIndex` | Partial — see gap 1 |
+| `ControlChangeEditPassClosed` | same, `EditPassType::ControlChange` | Partial — same gap |
+| `LoopBoundaryChange` | snapshot has only **current** `loopStartTick` / `loopLengthTicks` | No — see gap 2 |
+| `ClearSlot` | not Loop content | Layer B (`lastUnlinkedSlotLink`) |
 
-If the audit fails, add immutable **content metadata** on the content record. Do not persist undo/redo. Do not keep `stateRaw` as hidden undo persist.
+**Prefix invariant:** holding. Omitting a Disabled suffix materializes the same notes as leaving those rows Disabled (`test_active_prefix_materialize_matches_omitted_suffix`). Persisted Active/Disabled is unnecessary if the file stores only the effective prefix.
 
-Keep writing today's bundle undo stack. `GlobalUndoStack` stays in-session authority.
+**Gap 1 — loop-lifetime undo-unit id.** `editPassIndex` is session-local and resets to 0. Two NOTE_EDIT sessions that each persist index 0 as adjacent rows collapse into one unit (`test_session_reused_edit_pass_index_collapses_two_undo_units`). Do not persist undo. Put a monotonic undo-unit id on each content record (or stop reusing session-local `editPassIndex` on disk).
+
+**Gap 2 — geometry content revision.** `LoopBoundaryChange` before/after ticks live only on `UndoEntry`. Name a geometry content record if length/start undo must survive reboot as Loop content. Do not add `LoopPass` merely to absorb this kind.
+
+Stage 2 must encode gap 1 (and gap 2 if geometry undo is in scope) as content metadata before load-time editing state can match today's `UndoEntry` boundaries. Keep writing today's bundle undo stack. `GlobalUndoStack` stays in-session authority.
 
 ### Stage 2 — Load-time reconstructed editing state
 

@@ -187,6 +187,7 @@ A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEd
 | **AvailableData** / **isRangeAvailable** | Runtime predicate over buffered ranges | Stored slot flag; `WINDOW_READY` |
 | **BufferedData** | Materialized runtime subset of Loop content (set of ranges) | The entire Loop content in RAM |
 | **lastUnlinkedSlotLink** | Set last-state for one-step clear relink (Layer B) | Loop undo history |
+| **ContentUndoUnit** | Runtime derivation result from `deriveContentUndoUnits` — not persisted | `UndoEntry`; a persist record |
 
 **Do not** use **Source** as a domain noun in docs, comments, or types (`ClockSource` already exists). Say **Loop content**.
 

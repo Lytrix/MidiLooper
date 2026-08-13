@@ -7,10 +7,10 @@
 
 ## 2. Stage 1 — content sufficiency (native only)
 
-- [ ] 2.1 Inventory every `UndoEntry` kind and grouping field (`editPassIds`, `noteEditPassIndex`, companions, geometry)
-- [ ] 2.2 Native fixtures: A→B→C; A→B→C→undo→undo→D; one edit → multiple records; mixed record/overdub/edit; multi-slot
-- [ ] 2.3 Prove a persisted content prefix defines the effective Loop, or name the missing content metadata field
-- [ ] 2.4 Keep writing today's bundle undo stack; do not delete `UndoStacks`
+- [x] 2.1 Inventory every `UndoEntry` kind and grouping field (`editPassIds`, `noteEditPassIndex`, companions, geometry)
+- [x] 2.2 Native fixtures: A→B→C; A→B→C→undo→undo→D; one edit → multiple records; mixed record/overdub/edit; multi-slot
+- [x] 2.3 Prefix holds; named gaps: loop-lifetime undo-unit id; geometry content revision
+- [x] 2.4 Keep writing today's bundle undo stack; do not delete `UndoStacks`
 
 ## 3. Stage 2 — load-time editing state
 
