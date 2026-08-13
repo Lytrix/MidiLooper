@@ -93,7 +93,7 @@ Shipped bounded-work and display-pressure fixes. Close documentation and remaini
 | Ownership change? | Extending `Loop::establishOverdubSourceView` / `accumulatePendingNoteChangesForIncomingNote`: **NO**. Making `visualCache` the overlap authority: **YES**. |
 | State transition change? | Skipping flatten while still setting `overdubSourceViewEstablished_` at `beginCapture` with equivalent overlap: **NO**. Deferring, slicing across `handleMidiInput()` entries, or precomputing during PLAYING: **YES**. |
 
-**Authorized R1A design (2026-08-13):** playback-observation candidate discovery — [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). PLAYING idle prebuild was implemented then reverted (`73f0489`); it is out of scope. Option B was withdrawn after [`021304`](../../captures/session_20260813_021304.log) (292 ms per note-off). Option A failed wrap/long-note fixtures on slice-built caches.
+**Authorized R1A design (2026-08-13):** collect candidate `NoteId`s during playback; **select** by normalized note geometry + `[S, E)` — [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic, not the production rule. PLAYING idle prebuild was implemented then reverted (`73f0489`); it is out of scope. Option B was withdrawn after [`021304`](../../captures/session_20260813_021304.log) (292 ms per note-off). Option A failed wrap/long-note fixtures on slice-built caches.
 
 **Design session must pin before firmware:**
 

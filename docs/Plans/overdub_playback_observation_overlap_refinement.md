@@ -12,21 +12,30 @@ Do **not** implement overlap-on-`PendingNote` or change `sendMidiEvent` until Ga
 
 ---
 
+## Terminology
+
+`OverlapNoteIdObservation` is a **test/diagnostic** concept, not a production source of truth. Production overlap selection is governed by the **normalized note geometry** and the `[S, E)` intersection rule (`existingNoteOverlapsIncomingHold`).
+
+Do not treat observed membership, `collectObservedOverlapNoteIds`, or a later playback collector as the overlap authority.
+
+---
+
 ## Three-layer invariant
 
 ```text
-1. Playback observation
-   What committed NoteIds sounded during this incoming hold [S, E)?
+1. Diagnostic observation (test only)
+   Which committed NoteIds would a playback-sounding collector report for [S, E)?
+   Used to prove equality with geometry selection. Not the production rule.
 
-2. Authoritative geometry
-   What are the actual [start,end) spans of those NoteIds in committed storage?
+2. Production selection — normalized note geometry
+   Same-pitch notes whose linearized [start,end) intersects incoming [S, E).
 
 3. Edit semantics
    Shorten/Hide via existing accumulatePendingNoteChangesFromSourceNotes
 ```
 
 - `ActiveNoteLedger` = current MIDI voice (one slot per output channel + pitch; clears on off). Not the candidate store.
-- `PendingNote.overlapNoteIds` = historical observations during the incoming hold (set; keep after playback off). Not wired yet.
+- `PendingNote.overlapNoteIds` = candidate ids collected during the incoming hold (set; keep after playback off). Not wired yet. Selection still applies geometry + `[S, E)`.
 - Committed storage = authoritative geometry.
 
 ---
@@ -79,20 +88,22 @@ During this migration, a defensive `startTick >= endTick` rejection may be kept 
 
 ---
 
-## Gate 1 — bidirectional candidate equality
+## Gate 1 — diagnostic equality with production geometry
 
 ```text
 ObservedCandidateIds == GeometrySelectedIds
 ```
 
-- **Observed:** snapshot already-sounding at S, plus note-ons with `S <= t < E`; never drop on off; never include `t == E`. Zero-length notes rejected.
-- **Geometry:** same-pitch notes that pass `existingNoteOverlapsIncomingHold` (half-open intersection above). Not `noteIntersectsWindow`.
+This equality is a **test gate**. `GeometrySelectedIds` is the production selection set.
 
-Helper: `OverlapNoteIdObservation` (native / later Track collector). Not called from production overlap.
+- **Geometry (production):** same-pitch notes that pass `existingNoteOverlapsIncomingHold` (normalized spans + half-open `[S, E)` intersection above). Not `noteIntersectsWindow`.
+- **Observed (diagnostic):** snapshot already-sounding at S, plus note-ons with `S <= t < E`; never drop on off; never include `t == E`. Zero-length notes rejected.
+
+Helper: `OverlapNoteIdObservation` — native/test only. Do not call it from production overlap and do not promote it to a Track owner.
 
 ### Equality holds
 
-Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (observation uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded.
+Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (diagnostic sounding uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded.
 
 Required fixtures still owed: split-chunk on/off; prior Shorten/Hide companions; muted/solo (after Gate 2). 021304 same-pitch count still open on Gate 0.
 

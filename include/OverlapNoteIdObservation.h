@@ -9,10 +9,14 @@
 
 #include <cstdint>
 
-/// Gate 1 observation membership for one incoming hold [startTick, endTick).
-/// Snapshot: same-pitch notes already sounding at startTick (on tick < S, off not yet at S).
-/// Plus committed note-ons whose start tick t satisfies S <= t < E. Playback offs do not erase.
-/// Overlap selection is half-open interval intersection. DisplayWindowUtils is not used.
+/// Test/diagnostic Gate 1 helper. Not a production source of truth.
+/// Production overlap selection: normalized note geometry + [S, E) intersection
+/// (`existingNoteOverlapsIncomingHold`). DisplayWindowUtils is not used.
+///
+/// Diagnostic membership for one incoming hold [startTick, endTick):
+/// same-pitch notes already sounding at startTick (on tick < S, off not yet at S),
+/// plus committed note-ons whose start tick t satisfies S <= t < E. Playback offs
+/// do not erase.
 namespace OverlapNoteIdObservation {
 
 inline uint32_t incomingWindowLength(uint32_t startTick, uint32_t endTick) {

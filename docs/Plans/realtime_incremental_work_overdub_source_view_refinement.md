@@ -3,7 +3,7 @@
 **Status:** Option B withdrawn from production. RC-K3 restored. Native source-view / pending-note tests expect a filled view at `beginCapture`. Device re-measure vs [`225803`](../../captures/session_20260812_225803.log) / [`021304`](../../captures/session_20260813_021304.log) open.  
 **Date:** 2026-08-13  
 **Parent:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md) (RC-K1–K3 / RC-L1 verified)  
-**Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`. Option B pitch-query on note-off is disconnected from that path. Playback-observation: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md) (Gate 0 landed; Gate 1 not closed).  
+**Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`. Option B pitch-query on note-off is disconnected from that path. Long-term candidate collection: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic; production selection is normalized geometry + `[S, E)`.  
 **Scheduling:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §3.1, §6.4, §10 · roadmap R1A / G1 in [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)  
 **Evidence:** RC-K3 known-good [`session_20260812_225803.log`](../../captures/session_20260812_225803.log); Option B stall [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)
 
@@ -273,7 +273,7 @@ Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_00
 
 Do not optimize Option B further. [`021304`](../../captures/session_20260813_021304.log) on a 68-bar / 3714-event loop: `begin_capture` 11 µs; first overdub `noterecon` **291775 µs**, `notechg` **292976 µs**, `notepair` 968 µs, `clockrate` 36. RC-K3 [`225803`](../../captures/session_20260812_225803.log): `begin_capture` 77–83 ms once; overdub `noterecon` 0, `notechg` ~1.09 ms, `clockrate` 47–48.
 
-Playback-observation candidate discovery is the long-term design. Active plan: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). Gate 0 native landed; Gate 1 uses half-open intersection; zero-length notes are invalid. It is not production until Gates 0–4 pass. PLAYING idle prebuild was reverted (`73f0489`).
+Long-term candidate collection is playback-driven; selection stays normalized geometry + `[S, E)`. Active plan: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic, not a production source of truth. It is not production until Gates 0–4 pass. PLAYING idle prebuild was reverted (`73f0489`).
 
 ---
 

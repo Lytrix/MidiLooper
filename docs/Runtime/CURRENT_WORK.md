@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (Gate 1 half-open overlap; zero-length notes invalid)
+Last updated: 2026-08-13 (OverlapNoteIdObservation is diagnostic; geometry selects)
 
 ---
 
@@ -38,7 +38,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. 021304 same-pitch count unmeasured.
 
-**Gate 1:** `ObservedCandidateIds == GeometrySelectedIds` using half-open intersection (`existingStart < incomingEnd && existingEnd > incomingStart`). Zero-length notes (`startTick == endTick`) are invalid and excluded. Endpoint touch is not overlap. `noteIntersectsWindow` is not this rule. Remaining fixtures: split-chunk, companion rows, mute (Gate 2).
+**Gate 1:** Production selection is normalized note geometry + `[S, E)` intersection (`existingNoteOverlapsIncomingHold`). `OverlapNoteIdObservation` is test/diagnostic only — `ObservedCandidateIds == GeometrySelectedIds` proves a playback-sounding collector matches that rule. Zero-length notes (`startTick == endTick`) are invalid. Endpoint touch is not overlap. `noteIntersectsWindow` is not this rule. Remaining fixtures: split-chunk, companion rows, mute (Gate 2).
 
 **RC-L2 (shipped, device verify open) — pitch-query full-loop copy:** the pairing change had `gatherCommittedNoteEventsForPitch` build a PSRAM `SessionMidiEventVec` of every committed note event per note-off before filtering. [`013917`](../../captures/session_20260813_013917.log) shows `noterecon` 98–191 ms / `notechg` 99–192 ms on 3554 events (`begin_capture` 11 µs, so Option B held). When `collectNoteIdsRetargetedToPitch` returns nothing — always true during plain overdub — the candidate set is exactly the events at that pitch, so the walk filters inline and skips the trailing re-filter. Pairing path unchanged when retargets exist; both branches covered by `test_overdub_source_view`.
 
