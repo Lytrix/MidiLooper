@@ -17,13 +17,14 @@
 
 namespace {
 
-NOTE_EDIT_MEM bool committedDisplayNotesContainPaintedSpan(
-    const NoteUtils::DisplayNoteVec* committedDisplayNotes, NoteId noteId) {
+NOTE_EDIT_MEM bool committedDisplayNotesPaintLoopEnd(
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes, NoteId noteId, uint32_t loopLength) {
   if (committedDisplayNotes == nullptr) {
     return true;
   }
   for (const NoteUtils::DisplayNote& displayNote : *committedDisplayNotes) {
-    if (displayNote.noteId == noteId && displayNote.endTick != displayNote.startTick) {
+    if (displayNote.noteId == noteId && displayNote.endTick != displayNote.startTick &&
+        displayNote.endTick == loopLength) {
       return true;
     }
   }
@@ -36,7 +37,7 @@ NOTE_EDIT_MEM bool shouldSkipOverlapDiffToLoopEnd(
   if (loopLength == 0 || live.endTick != loopLength) {
     return false;
   }
-  return !committedDisplayNotesContainPaintedSpan(committedDisplayNotes, noteId);
+  return !committedDisplayNotesPaintLoopEnd(committedDisplayNotes, noteId, loopLength);
 }
 
 }  // namespace
