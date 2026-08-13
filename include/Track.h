@@ -128,6 +128,8 @@ public:
   void queueDeferredStoredMidiVerification();
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(uint32_t nowMs);
+  /// One-shot `#CAP,DIAG,stored_notes` from a clean visual cache. SESSION_CAPTURE only.
+  void maybeLogStoredNoteCount();
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
@@ -360,6 +362,7 @@ private:
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;
   bool deferredStoredVerificationPending = false;
+  uint8_t storedNoteCountLoggedMask_ = 0;
   uint8_t deferredStoredVerificationPhase = 0;
   size_t deferredStoredVerificationCursor = 0;
   SessionMidiEventVec deferredStoredVerificationEvents;

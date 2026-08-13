@@ -576,6 +576,13 @@ SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t n
                 (unsigned long)tick, ch, note);
 }
 
+SC_MEM_ATTR void storedNotes(uint8_t track, uint8_t slot, uint32_t notes, uint32_t uniqueNoteIds,
+                             uint32_t maxSamePitch) {
+  emitCapPrintf("#CAP,%lu,DIAG,stored_notes,track,%u,slot,%u,notes,%lu,unique,%lu,max_same_pitch,%lu\r\n",
+                (unsigned long)micros(), track, slot, (unsigned long)notes,
+                (unsigned long)uniqueNoteIds, (unsigned long)maxSamePitch);
+}
+
 SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
                                    uint32_t displayPhase, uint32_t startLoopTick,
                                    int32_t projectionCycleStartTick, uint32_t loopStartTick,

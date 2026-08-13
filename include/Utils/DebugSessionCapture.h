@@ -127,6 +127,9 @@ SC_MEM_ATTR void overlayRowConfirm(uint8_t mode, uint8_t row);
 SC_MEM_ATTR void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t note);
+/** One-shot idle inventory from a clean visual cache. Tier-A. Not a SEVT dump. */
+SC_MEM_ATTR void storedNotes(uint8_t track, uint8_t slot, uint32_t notes, uint32_t uniqueNoteIds,
+                             uint32_t maxSamePitch);
 SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
                                    uint32_t displayPhase, uint32_t startLoopTick,
                                    int32_t projectionCycleStartTick, uint32_t loopStartTick,
@@ -213,6 +216,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_OVERLAY_CONFIRM(mode, row)      DebugSessionCapture::overlayRowConfirm(mode, row)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
+#define SC_STORED_NOTES(track, slot, notes, uniqueNoteIds, maxSamePitch) \
+  DebugSessionCapture::storedNotes(track, slot, notes, uniqueNoteIds, maxSamePitch)
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   DebugSessionCapture::captureCoordinate(absTick, storageTick, projPhase, displayPhase, \
@@ -294,6 +299,7 @@ inline void restartCaptureBootGrace() {}
 #define SC_OVERLAY_CONFIRM(mode, row)      ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
+#define SC_STORED_NOTES(track, slot, notes, uniqueNoteIds, maxSamePitch) ((void)0)
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   ((void)0)
