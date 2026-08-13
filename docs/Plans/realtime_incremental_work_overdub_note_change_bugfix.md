@@ -162,4 +162,4 @@ The remaining ~80 ms `begin_capture` is the synchronous gather+reconstruct floor
 - **Overdub entry is synchronous.** `establishOverdubSourceView` still runs `gatherCommittedEvents` plus reconstruct inside `startOverdubbing`. [`225803`](../../captures/session_20260812_225803.log) measures that floor at 77–83 ms. Decision plan: [`realtime_incremental_work_overdub_source_view_refinement.md`](realtime_incremental_work_overdub_source_view_refinement.md).
 - **Overdub / final stop.** [`225803`](../../captures/session_20260812_225803.log) at 345.611 s: `midisvc` 132393 (`usbdisp` 132387), `clockrate` 47 → 11 → 0. Same class as [`223033`](../../captures/session_20260812_223033.log) 2.16 s stop `midisvc`. RC-J, behind S0b.
 - **Boot `msi` 748 ms at 10.146 s.** Visual-cache `stale_all` storm after the 1430-note `slice_clean`. Not overdub entry; not RC-L1. Uninvestigated.
-- **RC-S0c** — 8 `RING,overflow` in `225803` (was 20 in `223033`). Envelope windows are present through all four overdubs.
+- **RC-S0c** — 8 `RING,overflow` in `225803` (was 20 in `223033`). DIAG windows are present through all four overdubs.

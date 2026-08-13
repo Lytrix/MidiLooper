@@ -8,7 +8,7 @@
 #include "Logger.h"
 #include "LooperState.h"
 #include "StorageManager.h"
-#include "Utils/RuntimeTimingEnvelope.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
@@ -247,5 +247,5 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       }
     }
   }
-  RuntimeTimingEnvelope::noteTracksUpdate(micros() - tracksStartUs);
+  RuntimeTimingTelemetry::noteTracksUpdate(micros() - tracksStartUs);
 }

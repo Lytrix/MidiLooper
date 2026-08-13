@@ -31,7 +31,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
-#include "Utils/RuntimeTimingEnvelope.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -47,7 +47,7 @@ FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSele
 #if defined(SESSION_CAPTURE)
 FLASHMEM __attribute__((noinline)) static void recordLoopRemainderSpan(const char* span,
                                                                       uint32_t durationUs) {
-  if (durationUs < RuntimeTimingEnvelope::kLoopRemainderOneShotUs) {
+  if (durationUs < RuntimeTimingTelemetry::kLoopRemainderOneShotUs) {
     return;
   }
   bool active = false;
@@ -344,7 +344,7 @@ void loop() {
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
-  RuntimeTimingEnvelope::noteIdleMaint(idleMaintUs);
+  RuntimeTimingTelemetry::noteIdleMaint(idleMaintUs);
   recordLoopRemainderSpan("idle_maint", idleMaintUs);
   remainderStartUs = micros();
 #endif
@@ -354,7 +354,7 @@ void loop() {
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
 #if defined(SESSION_CAPTURE)
   const uint32_t loadFrameUs = micros() - remainderStartUs;
-  RuntimeTimingEnvelope::noteLoadFrame(loadFrameUs);
+  RuntimeTimingTelemetry::noteLoadFrame(loadFrameUs);
   recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
 
@@ -392,7 +392,7 @@ void loop() {
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;
-  RuntimeTimingEnvelope::notePersistSave(persistSaveUs);
+  RuntimeTimingTelemetry::notePersistSave(persistSaveUs);
   recordLoopRemainderSpan("persist_save", persistSaveUs);
 #endif
 
@@ -405,8 +405,8 @@ void loop() {
   StorageManager::processHitlSerialCommands();
 #endif
 
-  // S0: observation-only timing envelope emission (no scheduling decisions).
-  RuntimeTimingEnvelope::maybeEmit(micros());
+  // S0: observation-only timing telemetry emission (no scheduling decisions).
+  RuntimeTimingTelemetry::maybeEmit(micros());
 
   // Log memory every 60 seconds. Reports O(1) fields only: the external-pool free/used walk
   // (sm_malloc_stats_pool) blocked the loop 593 ms in 141815 and lost external MIDI clock.

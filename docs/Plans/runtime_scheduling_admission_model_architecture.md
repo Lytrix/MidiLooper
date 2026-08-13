@@ -1,8 +1,8 @@
-# Runtime Scheduling — Timing Envelope Contract and Admission Prerequisites
+# Runtime Scheduling — Timing Telemetry Contract and Admission Prerequisites
 
 **Status:** Contract stable. S0 telemetry **shipped** (observation only); S0b–S0e **attributed**; RC-K1–K3 / RC-L1 **device-verified**. Owner-Boundary Gate **not complete**. Interval reservation **not authorized**.  
 **Date:** 2026-08-13  
-**Decision:** Do not implement interval reservation or add extra `handleMidiInput()` call sites until the Owner-Boundary Gate has removed or bounded pathological owners and the resulting timing envelope is measured.  
+**Decision:** Do not implement interval reservation or add extra `handleMidiInput()` call sites until the Owner-Boundary Gate has removed or bounded pathological owners and the resulting MIDI Input Gap and path durations are measured.  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
 **Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)  
 **Investigation log:** [`archive/refinements/runtime_scheduling_timing_envelope_investigation.md`](archive/refinements/runtime_scheduling_timing_envelope_investigation.md)  
@@ -33,7 +33,7 @@ Reasons:
 - `admit()` has no operation cost, reservation, or enforcement mechanism.
 - Owner-level gating does not bound nested work.
 - Several operations contain allocation, full scans, callbacks, or variable-cost work.
-- `MidiHandler::handleMidiInput()` itself can be substantial and is part of the envelope, not a zero-cost handling point.
+- `MidiHandler::handleMidiInput()` itself can be substantial and is part of measured timing telemetry, not a zero-cost handling point.
 - Clock dispatch synchronously enters `TrackManager::updateAllTracks()`.
 - Internal-clock ISR execution is not serialized with main-loop work by a shared budget.
 - Transport transitions can synchronously perform substantial work.
@@ -103,7 +103,7 @@ Owner-Boundary Gate
       ├─ remove/reduce synchronous pathological work
       ├─ convert remaining work to resumable units
       ├─ establish enforced unit bounds
-      └─ measure the resulting owner envelopes
+      └─ measure the resulting owner path durations
       ↓
 Interval reservation (OpenSpec + DEC required)
 ```
@@ -178,7 +178,7 @@ Clock property ([`ClockManager::onMidiClockPulse`](../../src/ClockManager.cpp)):
 
 ### 6.1 MIDI Input
 
-MIDI Input is timing-critical. `MidiHandler` owns I/O ingress and dispatch. `MidiHandler::handleMidiInput()` may process USB-device, DIN, and USB-host input, MIDI dispatch, Clock dispatch, channel messages, transport actions, and button-triggered actions. Its duration is part of the envelope. There is no “MIDI service” owner.
+MIDI Input is timing-critical. `MidiHandler` owns I/O ingress and dispatch. `MidiHandler::handleMidiInput()` may process USB-device, DIN, and USB-host input, MIDI dispatch, Clock dispatch, channel messages, transport actions, and button-triggered actions. Its duration is part of measured timing telemetry. There is no “MIDI service” owner.
 
 ### 6.2 Clock dispatch
 
@@ -217,7 +217,7 @@ RECORDING → `stopRecording()` → PLAYING and OVERDUBBING → `stopOverdubbing
 | `validateAndCleanupMidiEvents()` | Full-loop merge | Unbounded once started |
 | display update | Frame-sized | Full frame not capped |
 | display resolve | 5000 µs measured bailout | Bailout does not make computation bounded |
-| load jobs | Local µs budgets | Included in shared envelope |
+| load jobs | Local µs budgets | Included in the shared MIDI Input Gap |
 | persistence | Incremental slices | Local budget; payload can still be workspace-wide |
 | fader motor sync / LED refresh | No shared cap | Potentially unbounded |
 | HITL serial | Drains available bytes | Unbounded |
@@ -289,7 +289,7 @@ The numerical ceiling is not selected before measurement. 2 ms / 5 ms are **with
 | Clause | Statement |
 |--------|-----------|
 | C1 MIDI priority | Timing-critical MIDI processing has highest priority |
-| C2 Bounded interval | Evidence-based ceiling from measured envelope |
+| C2 Bounded interval | Evidence-based ceiling from measured MIDI Input Gap and path durations |
 | C3 Collective reservation | Interval reservation with a structurally bounded or explicitly enforced per-unit cost; not persist `admit(WorkClass)` |
 | C4 Quantum proportionality | Reserved unit costs O(quantum) |
 | C5 Pending is normal | Denied work stays pending; denial never loses work |
@@ -297,11 +297,11 @@ The numerical ceiling is not selected before measurement. 2 ms / 5 ms are **with
 | C7 Symmetric capture | RECORD, OVERDUB, post-record PLAYING same policy; extra PLAYING drain is mitigation only |
 | C8 STOP cooperative | STOP does not become catch-up point |
 | C9 Fairness | Equal-priority classes must not starve indefinitely; fairness never overrides timing safety or reservation fit |
-| C10 Transport transitions | Part of timing envelope; not assumed free |
+| C10 Transport transitions | Part of measured timing telemetry; not assumed free |
 | C11 Callback/re-entry | Nested callbacks and playback re-entry in cost model |
 | C12 Evidence-based ceiling | Final MIDI Input Gap ceiling from device evidence |
 | C13 Dual execution context | ISR `updateInternalClock` overlap is part of the cost model |
-| C14 Observation non-loss | Tier-A DIAG must egress or the envelope is invalid |
+| C14 Observation non-loss | Tier-A DIAG must egress or the timing telemetry is invalid |
 
 If interval reservation is required later, minimum shared state is: interval deadline/remaining budget and generation; per-class fairness cursor; reserved unit cost; re-entry/ISR depth. Owner continuation cursors remain owner state.
 
@@ -313,7 +313,7 @@ Allocation (`assign`, `resize`, `push_back`, sort) is part of unit cost. O(loop)
 
 ## 13. S0 telemetry (shipped, observation only)
 
-`RuntimeTimingEnvelope` emits Tier-A `DIAG` windows every 5 s from `main.cpp::loop()`. No scheduling decision reads these values. Native: `test_runtime_timing_envelope`. `overCount` uses an observational 5000 µs soft ceiling for counting only.
+`RuntimeTimingTelemetry` emits Tier-A `DIAG` windows every 5 s from `main.cpp::loop()`. No scheduling decision reads these values. Native: `test_runtime_timing_telemetry`. `overCount` uses an observational 5000 µs soft ceiling for counting only.
 
 | Metric | Definition | DIAG tag |
 |--------|------------|----------|
@@ -332,7 +332,7 @@ Chronological narrative: [investigation log](archive/refinements/runtime_schedul
 
 | Item | Status | Evidence / notes |
 |------|--------|------------------|
-| S0 probes | **Shipped** | `RuntimeTimingEnvelope` |
+| S0 probes | **Shipped** | `RuntimeTimingTelemetry` |
 | S0b `usbdev` | **Attributed** | [`193645`](../../captures/session_20260812_193645.log) |
 | S0c `usbdisp` | **Attributed** | [`195240`](../../captures/session_20260812_195240.log) |
 | S0d `usbnote` | **Attributed** | [`200452`](../../captures/session_20260812_200452.log) |
@@ -340,7 +340,7 @@ Chronological narrative: [investigation log](archive/refinements/runtime_schedul
 | RC-K1–K3 / RC-L1 | **Device-verified** | [`223033`](../../captures/session_20260812_223033.log), [`225803`](../../captures/session_20260812_225803.log) |
 | RC-S0a Tier-A parse | **Fixed** | `CaptureLineTier::isTierALine` |
 | RC-S0b pool walk | **Fixed** | runtime `logStatus` no longer walks PSRAM |
-| RC-S0c Tier-A transmit | **Open** | RECORD windows and overflow still drop envelope lines |
+| RC-S0c Tier-A transmit | **Open** | RECORD windows and overflow still drop DIAG timing lines |
 | RC-D OLED cadence | **Shipped** | [`155132`](../../captures/session_20260812_155132.log) |
 | RC-E/F/G display | **Shipped** (residuals remain) | see investigation log §31g |
 | RC-J STOPPED persistence stall | **Open** — Owner-Boundary, not S0b | Distinct from PLAYING dump |
@@ -348,7 +348,7 @@ Chronological narrative: [investigation log](archive/refinements/runtime_schedul
 | `begin_capture` | **Open** — sibling source-view plan | 77–83 ms clean ([`225803`](../../captures/session_20260812_225803.log)); multi-second later entries ([`105505`](../../captures/session_20260813_105505.log), [`112104`](../../captures/session_20260813_112104.log)) |
 | Interval reservation | **Not authorized** | Requires Owner-Boundary Gate + OpenSpec + DEC |
 
-S0 exit is **partial**: MIDI-path attribution is complete; envelope trust (Tier-A delivery, remainder coverage, post-stop windows) and an evidence-based MIDI Input Gap ceiling are not.
+S0 exit is **partial**: MIDI-path attribution is complete; telemetry trust (Tier-A delivery, remainder coverage, post-stop windows) and an evidence-based MIDI Input Gap ceiling are not.
 
 ---
 
@@ -379,14 +379,14 @@ This document does **not** authorize: moving MIDI Clock to an ISR; timestamping 
 | G | No full-loop catch-up — dirty state never forces synchronous full-loop reconstruction |
 | H | Loop-length independence — longer loop increases completion time, not max blocking interval of a bounded unit |
 | I | Fairness — never overrides timing safety or reservation fit |
-| J | Transport transitions — part of timing envelope |
+| J | Transport transitions — part of measured timing telemetry |
 | K | Callback/re-entry accounting — nested callbacks in cost model |
 | L | Evidence-based ceiling — final MIDI Input Gap ceiling from device evidence |
 | M | Protected `handleMidiInput()` entry — reservation protects the next MIDI Input handling opportunity, not a `loop()` iteration |
 | N | Bound classification — structural bounds are guarantees; measurements alone are tuning evidence |
 | O | Owner boundary — interval reservation coordinates existing owners and never becomes a domain owner |
 | P | Dual execution context — ISR overlap is accounted for, not assumed serialized |
-| Q | Observation non-loss — Tier-A envelope must survive or measurement is invalid |
+| Q | Observation non-loss — Tier-A timing telemetry must survive or measurement is invalid |
 
 ---
 

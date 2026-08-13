@@ -227,7 +227,7 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   const size_t total = recordTotalBytes(header);
   // Tier-A may only be displaced by Tier-A. Under a timing-critical flush budget the
   // drop-only path in flushCaptureBuffer leaves Tier-A at the head untransmitted, so
-  // eviction here was the only way it could leave the ring: 141815 lost every DIAG envelope
+  // eviction here was the only way it could leave the ring: 141815 lost every DIAG timing
   // window between 21.9s and 318.6s to Tier-B/C appends across a ~296s record/overdub pass.
   // Allowing Tier-A to evict Tier-A keeps the newest windows and cannot wedge the ring.
   const bool incomingTierA =
@@ -449,7 +449,7 @@ SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros) {
                 (unsigned long)maxMicros);
 }
 
-SC_MEM_ATTR void runtimeTimingEnvelope(const char* tag, uint32_t maxUs, uint32_t overCount) {
+SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount) {
   emitCapPrintf("#CAP,%lu,DIAG,%s,%lu,%lu\r\n", (unsigned long)micros(), tag,
                 (unsigned long)maxUs, (unsigned long)overCount);
 }
@@ -488,6 +488,16 @@ SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t he
   emitCapPrintf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
                 (unsigned long)durationUs, (unsigned long)heapBefore, (unsigned long)heapAfter,
                 outcome);
+}
+
+SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
+                                   uint32_t maxSliceUs, uint32_t sliceCount,
+                                   uint32_t undoEntryCount, uint32_t snapshotCount) {
+  emitCapPrintf("#CAP,%lu,PERS,bundle,%s,%lu,%lu,%lu,%lu,%lu\r\n",
+                (unsigned long)micros(), workType == nullptr ? "?" : workType,
+                (unsigned long)totalUs, (unsigned long)maxSliceUs,
+                (unsigned long)sliceCount, (unsigned long)undoEntryCount,
+                (unsigned long)snapshotCount);
 }
 
 SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks, uint16_t reserve,

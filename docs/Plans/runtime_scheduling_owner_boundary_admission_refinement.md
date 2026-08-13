@@ -9,7 +9,7 @@
 
 This is the **sole actionable roadmap** for runtime scheduling work. Historical S1–S8 labels and the Cursor export `runtime_timing_envelope_8db96333.plan.md` are superseded.
 
-**Do not** implement interval reservation, add extra `handleMidiInput()` call sites, or start OpenSpec firmware for stage A until stages O–R exit and the C-stage contract is written from measured envelopes.
+**Do not** implement interval reservation, add extra `handleMidiInput()` call sites, or start OpenSpec firmware for stage A until stages O–R exit and the C-stage contract is written from measured MIDI Input Gap and path durations.
 
 ---
 
@@ -55,7 +55,7 @@ Each firmware slice: one invariant, one owner, focused native tests, `pio test -
 |----|------|-------|----------------------|
 | O1 | Snapshot persist work type at runtime-bundle **start** (`PERS,bundle` attribution) | `StorageManagerInternal::beginPersistenceWorkItem` / `PersistenceWorkItemJob` | Yes |
 | O2 | Close RC-S0c: bounded Tier-A transmit under `SC_CAPTURE_FLUSH(8)` so RECORD and stop windows survive | `DebugSessionCapture::flushCaptureBuffer` | Yes if transmit stays count/time bounded |
-| O3 | Keep `DIAG,midi_gap`, `midi_input`, transition stages, `PERS,bundle`, and `begin_capture` in the same capture; treat `DIAG,noterecon` as a post-RC-K3 zero on the note-off path. Historical captures used `DIAG,msi` / `midisvc` | `RuntimeTimingEnvelope` | Yes |
+| O3 | Keep `DIAG,midi_gap`, `midi_input`, transition stages, `PERS,bundle`, and `begin_capture` in the same capture; treat `DIAG,noterecon` as a post-RC-K3 zero on the note-off path. Historical captures used `DIAG,msi` / `midisvc` | `RuntimeTimingTelemetry` | Yes |
 | O4 | Re-run native suite + ≈100-bar RECORD + two OVERDUB baseline after O1–O2 | — | — |
 
 **Exit:** continuous DIAG through RECORD → stop → PLAYING → two OVERDUB; `PERS,bundle` work type matches the item that opened the bundle; remainder spans plus stop/source-view stages cover the 4–16 s class stalls.
@@ -142,7 +142,7 @@ Do not start firmware until this choice is recorded (plan section or DEC).
 
 ### R1C — Remaining owner inventory
 
-Classify every remaining path as structurally bounded, empirically bounded with overrun policy, or unbounded/unknown / cold-excluded / included in the `handleMidiInput()` duration envelope.
+Classify every remaining path as structurally bounded, empirically bounded with overrun policy, or unbounded/unknown / cold-excluded / included in `handleMidiInput()` duration telemetry.
 
 Required rows (in addition to contract Appendix A):
 
@@ -164,7 +164,7 @@ Required rows (in addition to contract Appendix A):
 
 ---
 
-## Stage C — Contract from measured envelopes
+## Stage C — Contract from measured MIDI Input Gap and path durations
 
 Only after R exits.
 
@@ -248,7 +248,7 @@ RC-J, PLAYING dump (`LoopUndoHistory` bundle), and R1A `begin_capture` are three
 
 ### G7 — Telemetry non-loss
 
-Tier-A DIAG must egress under timing-critical flush or the envelope is invalid (invariant Q). O2 is a prerequisite to claiming S0 exit.
+Tier-A DIAG must egress under timing-critical flush or the timing telemetry is invalid (invariant Q). O2 is a prerequisite to claiming S0 exit.
 
 ### G8 — Nested re-entry
 

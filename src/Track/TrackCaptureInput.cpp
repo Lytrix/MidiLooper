@@ -17,7 +17,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPressurePolicy.h"
 #include "Utils/RecordStopLength.h"
-#include "Utils/RuntimeTimingEnvelope.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 #if defined(SESSION_CAPTURE)
 static void logCaptureAppendDeny(const Loop& loop, const CaptureAppendResult& result,
@@ -276,7 +276,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     const uint32_t appendStartUs = micros();
     const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
-    RuntimeTimingEnvelope::addNoteAppend(micros() - appendStartUs);
+    RuntimeTimingTelemetry::addNoteAppend(micros() - appendStartUs);
     if (!appendResult.accepted) {
       logger.log(CAT_TRACK, LOG_WARNING,
                  "Capture append failed (%s) ch=%u note=%u",
@@ -314,7 +314,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         const uint32_t noteChangeStartUs = micros();
         (void)loop.accumulatePendingNoteChangesForIncomingNote(
             channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId);
-        RuntimeTimingEnvelope::addNoteChange(micros() - noteChangeStartUs);
+        RuntimeTimingTelemetry::addNoteChange(micros() - noteChangeStartUs);
         break;
       }
     }

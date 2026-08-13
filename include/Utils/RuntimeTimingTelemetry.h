@@ -2,8 +2,8 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 /**
- * @file RuntimeTimingEnvelope.h
- * @brief S0 observation-only timing envelope telemetry.
+ * @file RuntimeTimingTelemetry.h
+ * @brief S0 observation-only runtime timing telemetry.
  *
  * Measures the MIDI Input Gap between handleMidiInput() entries, the duration
  * of handleMidiInput(), Clock/track durations, USB/DIN drain segments, and
@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-namespace RuntimeTimingEnvelope {
+namespace RuntimeTimingTelemetry {
 
 /** Rate-limit DIAG emission to once per this many microseconds. */
 constexpr uint32_t kEmitIntervalUs = 5000000u;
@@ -170,4 +170,4 @@ bool maybeEmit(uint32_t nowUs);
 
 Snapshot peek(uint32_t nowUs = 0);
 
-}  // namespace RuntimeTimingEnvelope
+}  // namespace RuntimeTimingTelemetry
