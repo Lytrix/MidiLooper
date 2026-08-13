@@ -459,6 +459,14 @@ SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond) {
                 (unsigned long)pulsesPerSecond);
 }
 
+SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
+                               uint8_t phase, uint8_t isFocus) {
+  emitCapPrintf("#CAP,%lu,DIAG,loop_rem,%s,%lu,%u,%u,%u,%u\r\n", (unsigned long)micros(), span,
+                (unsigned long)durationUs, static_cast<unsigned>(track),
+                static_cast<unsigned>(slot), static_cast<unsigned>(phase),
+                static_cast<unsigned>(isFocus));
+}
+
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,

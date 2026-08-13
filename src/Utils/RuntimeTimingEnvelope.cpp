@@ -43,6 +43,9 @@ struct State {
   Accumulator notechg;
   Accumulator noterecon;
   Accumulator notepair;
+  Accumulator idleMaint;
+  Accumulator loadFrame;
+  Accumulator persistSave;
   uint32_t usbNestedCaptureUs = 0;
   uint32_t usbNestedThruUs = 0;
   uint32_t usbNestedClockUs = 0;
@@ -88,6 +91,9 @@ void clearWindow(State& s) {
   s.notechg = Accumulator{};
   s.noterecon = Accumulator{};
   s.notepair = Accumulator{};
+  s.idleMaint = Accumulator{};
+  s.loadFrame = Accumulator{};
+  s.persistSave = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -113,6 +119,10 @@ void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
   DebugSessionCapture::runtimeTimingEnvelope("notechg", s.notechg.maxUs, s.notechg.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("noterecon", s.noterecon.maxUs, s.noterecon.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("notepair", s.notepair.maxUs, s.notepair.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("idle_maint", s.idleMaint.maxUs, s.idleMaint.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("persist_save", s.persistSave.maxUs,
+                                             s.persistSave.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -284,6 +294,18 @@ void noteClockPulse() {
   ++s.clockPulses;
 }
 
+void noteIdleMaint(uint32_t durationUs) {
+  recordSample(state().idleMaint, durationUs);
+}
+
+void noteLoadFrame(uint32_t durationUs) {
+  recordSample(state().loadFrame, durationUs);
+}
+
+void notePersistSave(uint32_t durationUs) {
+  recordSample(state().persistSave, durationUs);
+}
+
 bool maybeEmit(uint32_t nowUs) {
   State& s = state();
   if (s.windowStartUs == 0) {
@@ -345,6 +367,12 @@ Snapshot peek(uint32_t nowUs) {
   out.notereconOverCount = s.noterecon.overCount;
   out.notepairMaxUs = s.notepair.maxUs;
   out.notepairOverCount = s.notepair.overCount;
+  out.idleMaintMaxUs = s.idleMaint.maxUs;
+  out.idleMaintOverCount = s.idleMaint.overCount;
+  out.loadFrameMaxUs = s.loadFrame.maxUs;
+  out.loadFrameOverCount = s.loadFrame.overCount;
+  out.persistSaveMaxUs = s.persistSave.maxUs;
+  out.persistSaveOverCount = s.persistSave.overCount;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

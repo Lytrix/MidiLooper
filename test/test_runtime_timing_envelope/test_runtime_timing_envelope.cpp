@@ -182,12 +182,32 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.notechgMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.notereconMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.notepairMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.idleMaintMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.persistSaveMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
+}
+
+void test_loop_remainder_spans_accumulate_independently() {
+  RuntimeTimingEnvelope::noteIdleMaint(800);
+  RuntimeTimingEnvelope::noteIdleMaint(1200);
+  RuntimeTimingEnvelope::noteLoadFrame(3981504);
+  RuntimeTimingEnvelope::notePersistSave(80);
+  RuntimeTimingEnvelope::notePersistSave(40);
+
+  const auto snap = RuntimeTimingEnvelope::peek();
+  TEST_ASSERT_EQUAL_UINT32(1200, snap.idleMaintMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.idleMaintOverCount);
+  TEST_ASSERT_EQUAL_UINT32(3981504, snap.loadFrameMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.loadFrameOverCount);
+  TEST_ASSERT_EQUAL_UINT32(80, snap.persistSaveMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.persistSaveOverCount);
 }
 
 void test_emit_interval_constant() {
   TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingEnvelope::kEmitIntervalUs);
   TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingEnvelope::kObservationalSoftCeilingUs);
+  TEST_ASSERT_EQUAL_UINT32(50000u, RuntimeTimingEnvelope::kLoopRemainderOneShotUs);
 }
 
 int main(int argc, char** argv) {
@@ -202,6 +222,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_usb_device_nested_sums_commit_as_one_sample);
   RUN_TEST(test_note_off_nested_sums_commit_and_gate_inactive_window);
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
+  RUN_TEST(test_loop_remainder_spans_accumulate_independently);
   RUN_TEST(test_emit_interval_constant);
   return UNITY_END();
 }

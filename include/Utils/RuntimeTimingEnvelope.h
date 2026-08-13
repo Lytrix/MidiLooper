@@ -68,6 +68,12 @@ struct Snapshot {
   uint32_t notereconOverCount = 0;
   uint32_t notepairMaxUs = 0;
   uint32_t notepairOverCount = 0;
+  uint32_t idleMaintMaxUs = 0;
+  uint32_t idleMaintOverCount = 0;
+  uint32_t loadFrameMaxUs = 0;
+  uint32_t loadFrameOverCount = 0;
+  uint32_t persistSaveMaxUs = 0;
+  uint32_t persistSaveOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
 };
@@ -142,6 +148,18 @@ void commitUsbDeviceNested();
 
 /** Count one external MIDI Clock pulse for clockrate. */
 void noteClockPulse();
+
+/** Post-BAR remainder: Track::processDeferredIdleMaintenance across all tracks. */
+void noteIdleMaint(uint32_t durationUs);
+
+/** Post-BAR remainder: runDeferredLoadAndDisplayFrame (LoadLoopJob + OLED). */
+void noteLoadFrame(uint32_t durationUs);
+
+/** Post-BAR remainder: StorageManager::processDeferredSaveState. */
+void notePersistSave(uint32_t durationUs);
+
+/** Emit a one-shot remainder line when a span exceeds this duration. */
+constexpr uint32_t kLoopRemainderOneShotUs = 50000u;
 
 /**
  * Emit Tier-A DIAG lines if the emit interval has elapsed.

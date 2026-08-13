@@ -2,11 +2,17 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (RC-K3 restored; Option B withdrawn from production note-off)
+Last updated: 2026-08-13 (overdub-stop PLAYING MIDI dump — remainder probe + LoadLoopJob admission)
 
 ---
 
 ## Now implementing
+
+### Overdub-stop MIDI dump during PLAYING
+
+**Now:** Stage 0 remainder DIAG + Stage 1 LoadLoopJob PLAYING admission shipped. Device verify open. Plan: [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md). Evidence: [`034408`](../../captures/session_20260813_034408.log) — ~4 s `msi` after OVERDUBBING→PLAYING while `midisvc` is 5–61 ms; dump is catch-up playback, not All Notes Off and not RC-K3.
+
+Do not patch RC-J, start S1, implement observation Gates 0–4, or filter MIDI catch-up. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of this work.
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing envelope
 
