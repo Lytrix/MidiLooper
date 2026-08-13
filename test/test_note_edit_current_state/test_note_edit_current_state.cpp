@@ -243,6 +243,59 @@ void test_display_projection_keeps_committed_note_without_current_state_row() {
   TEST_ASSERT_TRUE(hasLinear);
 }
 
+void test_selectable_inventory_keeps_painted_note_without_current_state_row() {
+  // 174139 / Stage 5: Stage 1 keeps wrap notes on paint; select used
+  // rowIncludedInSelectableInventory which is false when find == nullptr, so the
+  // fader reported empty_step on painted notes. Inventory must keep those notes.
+  // Hidden still omits — see test_display_projection_inactive_focus_masks_hidden_overlaps.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kLinearId = 41;
+  constexpr NoteId kHiddenId = 42;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchLinear = 62;
+  constexpr uint8_t kPitchHidden = 64;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kLinearId, {kPitchLinear, 100, 192, 383}, {kPitchLinear, 100, 192, 383},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHiddenId, {kPitchHidden, 100, 384, 575}, {kPitchHidden, 100, 384, 575},
+                         NoteEditPresenceType::Hidden);
+  TEST_ASSERT_NULL(currentState.find(kWrapId));
+  TEST_ASSERT_FALSE(currentState.rowIncludedInSelectableInventory(kWrapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitchWrap, 100, 2208, 96});
+  committedBase.push_back({kLinearId, kPitchLinear, 100, 192, 383});
+  committedBase.push_back({kHiddenId, kPitchHidden, 100, 384, 575});
+
+  NoteEditFocus focus;
+  focus.active = false;
+
+  const NoteUtils::DisplayNoteVec paint =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNoteVec selectable =
+      filterSelectableDisplayNotes(paint, &currentState, focus, -1);
+
+  bool selectableHasWrap = false;
+  bool selectableHasLinear = false;
+  for (const NoteUtils::DisplayNote& dn : selectable) {
+    if (dn.noteId == kWrapId) {
+      selectableHasWrap = true;
+    }
+    if (dn.noteId == kLinearId) {
+      selectableHasLinear = true;
+    }
+    TEST_ASSERT_NOT_EQUAL(kHiddenId, dn.noteId);
+  }
+  TEST_ASSERT_TRUE(selectableHasWrap);
+  TEST_ASSERT_TRUE(selectableHasLinear);
+}
+
 void test_display_projection_paint_matches_committed_base_when_current_state_is_subset() {
   // 171219 / Stage 2: visualCache is the committed base (host stand-in list). Current state
   // holds only linear-span rows; paint count must equal the committed-base count. Device
@@ -2054,6 +2107,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_projection_owner_path_after_current_state_edit);
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
   RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
+  RUN_TEST(test_selectable_inventory_keeps_painted_note_without_current_state_row);
   RUN_TEST(test_display_projection_paint_matches_committed_base_when_current_state_is_subset);
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);
   RUN_TEST(test_sync_focus_last_from_current_state);
