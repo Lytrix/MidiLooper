@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (NOTE_EDIT wrap-stub commit RC2)
+Last updated: 2026-08-13 (NOTE_EDIT mover wrap-length jump)
 
 ---
 
@@ -52,7 +52,9 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Wrap-crossing hold consume (tail only):** wrap-head `[0, E)` is not a second incoming hold. Shorten/Hide run on `[S, loopLength)` only. [`170449`](../../captures/session_20260813_170449.log) `hide=14` was the head segment. Native: wrap tail Shorten + skipped head Hide.
 
-**NOTE_EDIT wrap-stub commit (RC2 native shipped; device gate open):** [`192755`](../../captures/session_20260813_192755.log) select-away must not commit noteId **14** as `ChangeLength` `2256–2304`. Plan: [`note_edit_overlap_action_drop_and_wrap_stub_bugfix.md`](../Plans/note_edit_overlap_action_drop_and_wrap_stub_bugfix.md). Macro commit skips Length/NoteRange to `loopLength` when `visualCache.notes` does not paint that participant (or paints `end==start`). RC1 (67.824 Move-only) is withdrawn — remaining stub `855–863` is 8 ticks, below `noteMinLengthTicks` 12. Do not emit Shorten for that step. Do not reopen Stage 8/9 evaluate/select. Do not call overdub consume.
+**NOTE_EDIT mover wrap-length jump (RC0 shipped; RC1 next):** [`193838`](../../captures/session_20260813_193838.log) after `HideNote` 16, mover 111 paints `DNTE` length **2351** and the next bridge uses `focus.last` end **2975**. Plan: [`note_edit_mover_wrap_length_jump_bugfix.md`](../Plans/note_edit_mover_wrap_length_jump_bugfix.md). RC0 fixture: apply leaves 111 at **671**; `LoopTickNormalize::normalize` Pass 1 wrap-merges a same-pitch wrap-window on with 111’s off (no `noteId`) to **2975**; `syncProjectingRowsFromSessionStore` copies it. Do not patch `moveNoteWithOverlapHandling`, projection, or `noteEditFocusApplyDisplayNote`. Do not reopen Stage 8/9 rematerialize. Do not call overdub consume.
+
+**NOTE_EDIT wrap-stub commit (RC2 native shipped; device gate FAIL in 193838):** [`192755`](../../captures/session_20260813_192755.log) / [`193838`](../../captures/session_20260813_193838.log) still save `ChangeLength` 14 `2256–2304`. Plan: [`note_edit_overlap_action_drop_and_wrap_stub_bugfix.md`](../Plans/note_edit_overlap_action_drop_and_wrap_stub_bugfix.md). Stay on that plan; do not fold into the wrap-length jump.
 
 **NOTE_EDIT / LOOP_EDIT display split (Stages 8–9 shipped; [`192007`](../../captures/session_20260813_192007.log) device):** 3-bar / 60-note loop (not 181114’s 64). First NOTE_EDIT `DISP` **59/60**. Hide/Restore of **45** is `1440–1511` (not 2160). **76** as overlap target still Hide/Restore `840–2160`. No MoveNote of 76; select at tick 840 rebuilds 76 (no 168 reset). `GEOM_APPLY,resolve` 16.8–52.3 ms. Paint gap and undo-warm stay open. Plan: [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md).
 

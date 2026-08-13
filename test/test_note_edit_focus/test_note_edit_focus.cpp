@@ -3568,6 +3568,124 @@ void test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114
   TEST_ASSERT_EQUAL_UINT32(kCacheStart, focus.last.startTick);
 }
 
+void test_mover_wrap_length_jump_names_first_writer_193838() {
+  // session_20260813_193838 @156.013: Hide 16 663-854 + Move 111 624-671 on a 2304-tick
+  // loop. Apply leaves 111 at 624-671. Micro normalize wrap-merges a same-pitch wrap-window
+  // on (32 @2208) with 111's off @671 (pitch/channel only; noteId ignored) to linearOff
+  // 2304+671=2975. syncProjectingRowsFromSessionStore copies that into currentSpan.
+  // Projection and noteEditFocusApplyDisplayNote then follow currentSpan (2351 / 2975).
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kChannel = 1;
+  constexpr uint8_t kPitch = 30;
+  constexpr NoteId kMoverId = 111;
+  constexpr NoteId kHideId = 16;
+  constexpr NoteId kShortenId = 96;
+  constexpr NoteId kWrapId = 32;
+  constexpr NoteId kStubId = 14;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {kPitch, 100, 576, 623}, {kPitch, 100, 576, 623},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHideId, {kPitch, 100, 855, 1046}, {kPitch, 100, 663, 854},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kShortenId, {kPitch, 100, 576, 720}, {kPitch, 100, 576, 662},
+                         NoteEditPresenceType::Hidden);
+  currentState.upsertRow(kWrapId, {kPitch, 100, 2208, 96}, {kPitch, 100, 2208, 96},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kStubId, {kPitch, 100, 2256, 2304}, {kPitch, 100, 2256, 2304},
+                         NoteEditPresenceType::Visible);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kMoverId, kPitch, 100, 528, 575});
+  committedBase.push_back({kHideId, kPitch, 100, 855, 1046});
+  committedBase.push_back({kShortenId, kPitch, 100, 576, 720});
+  committedBase.push_back({kWrapId, kPitch, 100, 2208, 96});
+  committedBase.push_back({kStubId, kPitch, 100, 2256, 2304});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 576, 623};
+  focus.commitBaseline = {kPitch, 100, 528, 575};
+  focus.movingNoteRange = {576, 623};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kHideId] = {kPitch, 100, 855, 1046};
+  focus.baselineMap[kShortenId] = {kPitch, 100, 576, 720};
+  focus.baselineMap[kWrapId] = {kPitch, 100, 2208, 96};
+  focus.baselineMap[kStubId] = {kPitch, 100, 2256, 2304};
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  EditSessionActions actions;
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kShortenId;
+  shorten.startTick = 576;
+  shorten.endTick = 623;
+  shorten.pitch = kPitch;
+  shorten.velocity = 100;
+  actions.push_back(shorten);
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kHideId;
+  hide.startTick = 663;
+  hide.endTick = 854;
+  hide.pitch = kPitch;
+  hide.velocity = 100;
+  actions.push_back(hide);
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 624;
+  move.endTick = 671;
+  move.pitch = kPitch;
+  move.velocity = 100;
+  actions.push_back(move);
+
+  applyEditSessionActions(actions, store, focus, kChannel, kLoopLength, nullptr, &currentState);
+
+  NoteBaseline afterApply{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kMoverId, afterApply));
+  TEST_ASSERT_EQUAL_UINT32(624u, afterApply.startTick);
+  TEST_ASSERT_EQUAL_UINT32(671u, afterApply.endTick);
+
+  const std::unordered_set<NoteId> closure =
+      buildEditClosureNoteIds(focus, store, kChannel, kLoopLength);
+  TEST_ASSERT_FALSE(closure.empty());
+  LoopTickNormalize::NormalizeOptions microOptions;
+  microOptions.closeOpenTails = false;
+  const LoopTickNormalize::NormalizeResult normResult = LoopTickNormalize::normalize(
+      store, kLoopLength, LoopTickNormalize::NormalizeScope::noteIds(closure), microOptions);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(normResult.wrapPairsMerged));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(normResult.synthOffsPromoted));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(normResult.openTailsClosed));
+  currentState.syncProjectingRowsFromSessionStore(store, kChannel);
+
+  NoteBaseline currentSpan{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kMoverId, currentSpan));
+  TEST_ASSERT_EQUAL_UINT32(2975u, currentSpan.endTick);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNote* projectedMover = nullptr;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kMoverId) {
+      projectedMover = &dn;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(projectedMover);
+  const uint32_t projectedLength = NoteEditGeometryApply::calculateNoteLength(
+      projectedMover->startTick, projectedMover->endTick, kLoopLength);
+  TEST_ASSERT_EQUAL_UINT32(2351u, projectedLength);
+  TEST_ASSERT_EQUAL_UINT32(2975u, projectedMover->endTick);
+
+  noteEditFocusApplyDisplayNote(focus, *projectedMover, &currentState);
+  TEST_ASSERT_EQUAL_UINT32(2975u, focus.last.endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -3681,5 +3799,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_focus_rebuild_pending_after_pitch_move_stale_display_hint_session_193016);
   RUN_TEST(test_pitch_pre_commit_requires_active_focus);
   RUN_TEST(test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114);
+  RUN_TEST(test_mover_wrap_length_jump_names_first_writer_193838);
   return UNITY_END();
 }
