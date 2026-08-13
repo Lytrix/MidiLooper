@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT shared display representation
 
-**Status:** Active — Stages 1–2 and 5 shipped; Stages 3–4 not started  
+**Status:** Active — Stages 1–2, 5, and 6 shipped; Stages 3–4 not started  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Parent:** [`Display.md`](../Authority/Architecture/Display.md), [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), DEC-029  
@@ -165,6 +165,20 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 **Test:** `test_selectable_inventory_keeps_painted_note_without_current_state_row` — wrap A + linear B + Hidden C; selectable has A and B, not C. Hidden / C9 fixtures stay PASS.
 
+### Stage 6 — Current-state Visible rows for painted notes without a store pair ✅ shipped
+
+**Owner:** `NoteEditCurrentState::ensureVisibleRowsForDisplayNotes` in [`NoteEditCurrentState.cpp`](../../src/EditManager/NoteEditCurrentState.cpp); called from `openNoteEditSession` and `rebuildNoteEditFocusForDisplayNote` via `EditManager::ensureCurrentStateVisibleRowsFromVisualCache`.
+
+**Evidence:** [`174635`](../../captures/session_20260813_174635.log) — Stage 5 select works. noteId **108** (presence=-1) moved and ran overlap. noteId **78** (pitch 23 @ 384, presence=-1): coarse fader computed 384→336, then `NoteGeometryResolver did not apply move` / `GEOM_APPLY,resolve,…,0`. `appendCausingNoteActions` skips the mover when `readEditableCurrentSpan` and `rowProjectsToStore` both fail. noteId **101** later only emitted Shorten/Hide on neighbor 23 — the mover itself never left 1248.
+
+**Invariant:** a painted committed display note with a non-zero span and no current-state row gets a Visible row from `visualCache.notes` at NOTE_EDIT open (and on focus rebuild). Explicit Hidden / Deleted / existing rows are not overwritten. Zero-length display notes (`endTick == startTick`, 174635 noteId=14) are skipped.
+
+**Change:** after `buildFromSessionStore`, upsert missing Visible rows from `track.getVisualNotesForSlot`. Do not make `visualCache` the overlap-consume source. Do not change `readLiveLinearSpan`.
+
+**Test:** `test_current_state_upserts_visible_row_from_display_note_without_store_pair` — cache-only 78 and wrap 40 become Visible + driver-valid; Hidden stays Hidden; zero-length 14 is not inserted.
+
+**Not this stage:** paint 75 vs cache 68. Stage 3 audit. Zero-length reconstruct (noteId=14).
+
 ---
 
 ## Pre-implementation review
@@ -188,7 +202,7 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 ### Open before coding
 
-1. After Stage 5 device retest, re-measure paint 75→69 on focus (174139). New RC if it remains — do not fold into Stage 5.
+1. After Stage 6 device verify, re-measure paint 75 vs cache 68 (174139 / 174635). New RC if it remains — do not fold into Stage 6.
 2. `rg materializedLoopEventsForNoteEditFocus` before shrinking that helper; focus rebuild still reads it.
 
 ### Proceed?
@@ -214,5 +228,7 @@ YES for Stage 1 after this plan is accepted. Stages 2–3 follow only when Stage
 | [`test_note_edit_current_state.cpp`](../../test/test_note_edit_current_state/test_note_edit_current_state.cpp) | 1 |
 | [`NoteEditDisplayProjection.cpp`](../../src/EditManager/NoteEditDisplayProjection.cpp) | 2 |
 | [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) `filterSelectableDisplayNotes` | 5 |
+| [`NoteEditCurrentState.cpp`](../../src/EditManager/NoteEditCurrentState.cpp) `ensureVisibleRowsForDisplayNotes` | 6 |
+| [`NoteEditSessionLifecycle.cpp`](../../src/EditManager/NoteEditSessionLifecycle.cpp) / [`NoteEditFocusRebuild.cpp`](../../src/EditManager/NoteEditFocusRebuild.cpp) | 6 |
 | [`DisplayNoteResolve.cpp`](../../src/DisplayManager/DisplayNoteResolve.cpp) | 3 (only if the branch still reconstructs) |
 | This plan + CURRENT_WORK | each commit |

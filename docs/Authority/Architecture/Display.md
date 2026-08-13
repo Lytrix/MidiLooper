@@ -31,7 +31,7 @@ Display **does not** mutate passes or session store.
 
 | Phase | Policy |
 |-------|--------|
-| Stopped / NOTE_EDIT | Rebuild display representation when revision stale; filter by window on read. NOTE_EDIT paint committed base is `visualCache.notes` (`getVisualNotesForSlot`); `NoteEditCurrentState` overlays this-session Hide / Shorten / move / add only. |
+| Stopped / NOTE_EDIT | Rebuild display representation when revision stale; filter by window on read. NOTE_EDIT paint committed base is `visualCache.notes` (`getVisualNotesForSlot`); `NoteEditCurrentState` overlays this-session Hide / Shorten / move / add only. At NOTE_EDIT open, missing current-state rows are filled as Visible from that same `visualCache.notes` list so geometry/overlap can run; Hidden / Deleted / existing rows are not overwritten. |
 | PLAYING | **Defer** full representation rebuild — use last good representation + playhead overlay; schedule rebuild in `Track::processDeferredIdleMaintenance` |
 | Live record | Incremental `capturePreview` — not full-loop flatten per frame |
 

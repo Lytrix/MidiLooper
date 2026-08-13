@@ -163,6 +163,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
         return;
     }
 
+    ensureCurrentStateVisibleRowsFromVisualCache(track);
+
     const MidiEventVec& committedLoopEvents = materializedLoopEventsForNoteEditFocus(track);
     rebuildNoteEditFocusFromStore(editSession.focus, committedLoopEvents, channel, loopLength, -1);
 
