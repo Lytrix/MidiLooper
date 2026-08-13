@@ -54,7 +54,9 @@ Do not treat observed membership, `collectObservedOverlapNoteIds`, or a later pl
 
 `OverlapNoteIdSet` is a fixed-capacity set (`kOverlapNoteIdSetCapacity = 128`). Insert is contains-then-add. Overflow fails; the set never grows. Invalid `NoteId` 0 is rejected.
 
-Provisional capacity fits an 8-bar 16th-grid same-pitch full-loop hold (128 unique ids). Device same-pitch count is a one-shot idle `#CAP,DIAG,stored_notes,…,max_same_pitch,…` line from a clean visual cache — not a `SEVT` dump and not gated on a Committed overdub. [`150917`](../../captures/session_20260813_150917.log) had no line because that emitter did not exist; empty overdub was `CommitResult::Skipped` so the old dump never queued.
+Provisional capacity fits an 8-bar 16th-grid same-pitch full-loop hold (128 unique ids). Device same-pitch count is a one-shot idle `#CAP,DIAG,stored_notes,…,max_same_pitch,…` line from a clean visual cache.
+
+[`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`. Track 6 slot 0 `max_same_pitch=195`. Both exceed capacity 128. Overflow on that hold is a failed gate, not heap growth. Do not raise capacity without a decision.
 
 Native: `test_overlap_note_id_observation` Gate 0 cases; `test_display_note_count` for the inventory helper.
 
@@ -106,7 +108,7 @@ Helper: `OverlapNoteIdObservation` — native/test only. Do not call it from pro
 
 Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (diagnostic sounding uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded; split-chunk reconstructed span (on@50 / off@400 vs incoming `[300, 350)`); prior Shorten companion uses shortened `[50, 119)`; prior Hide companion absent; unrelated other-pitch companion not selected.
 
-Required fixtures still owed: muted/solo same-id check after playback collection is wired. 021304 same-pitch count still open on Gate 0. Split-chunk storage and companion seal stay owned by `test_pending_note_change`; Gate 1 uses those effective `DisplayNote` spans. Geometry selection does not take mute as an input.
+Required fixtures still owed: muted/solo same-id check after playback collection is wired. Gate 0 same-pitch count is measured in [`152940`](../../captures/session_20260813_152940.log) (`max_same_pitch=322` on the 68-bar loop). Split-chunk storage and companion seal stay owned by `test_pending_note_change`; Gate 1 uses those effective `DisplayNote` spans. Geometry selection does not take mute as an input.
 
 ---
 
