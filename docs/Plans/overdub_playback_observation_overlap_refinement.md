@@ -58,6 +58,8 @@ Provisional capacity fits an 8-bar 16th-grid same-pitch full-loop hold (128 uniq
 
 [`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`. Track 6 slot 0 `max_same_pitch=195`. Both exceed capacity 128. Overflow on that hold is a failed gate, not heap growth. Do not raise capacity without a decision.
 
+This idle `stored_notes` diagnosis taxes the MIDI event runtime (visual-cache rebuild plus the count walk). Disable `maybeLogStoredNoteCount` once later-stage overlap validation proofs exist.
+
 Native: `test_overlap_note_id_observation` Gate 0 cases; `test_display_note_count` for the inventory helper.
 
 ---

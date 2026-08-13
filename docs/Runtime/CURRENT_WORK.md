@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (152940 stored_notes: 68-bar max_same_pitch=322)
+Last updated: 2026-08-13 (stored_notes diagnosis: disable after later-stage proofs)
 
 ---
 
@@ -36,7 +36,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Now: playback-observation overlap on `feature/overdub-playback-observation-overlap`.** Plan: [`overdub_playback_observation_overlap_refinement.md`](../Plans/overdub_playback_observation_overlap_refinement.md). Local `dev` is at `73f0489` so this work can land as its own PR. Production overlap stays RC-K3. Native Gates 0–4 landed. Do not wire `PendingNote.overlapNoteIds` until Gate 2 device check or the user asks. PLAYING idle prebuild reverted (`73f0489`). Option B stays withdrawn ([`021304`](../../captures/session_20260813_021304.log) 292 ms/note-off).
 
-**Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. Idle `stored_notes` measured in [`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`; track 6 `max_same_pitch=195`. Both exceed 128. Do not raise capacity without a decision.
+**Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. Idle `stored_notes` measured in [`152940`](../../captures/session_20260813_152940.log): track 0 slot 4 (68 bars) `notes=1903 unique=1903 max_same_pitch=322`; track 6 `max_same_pitch=195`. Both exceed 128. Do not raise capacity without a decision. This diagnosis taxes the MIDI event runtime — disable `maybeLogStoredNoteCount` once later-stage overlap validation proofs exist.
 
 **Gate 1:** Production selection is normalized note geometry + `[S, E)` intersection (`existingNoteOverlapsIncomingHold`). `OverlapNoteIdObservation` is test/diagnostic only. Split-chunk and prior Shorten/Hide companion fixtures landed. 021304 same-pitch count still open on Gate 0.
 
