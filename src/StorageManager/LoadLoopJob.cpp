@@ -612,6 +612,10 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
     if (!loadLoopJob_.active) {
         return;
     }
+    if (!LoadLoopSelectionPolicy::shouldStepLoadLoopJob(loadLoopJobIsFocusSlot(),
+                                                        canRunBackgroundLoadLoopNow())) {
+        return;
+    }
     if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
         (void)stepLoadLoopJob(frameStartUs + LoadLoopBudget::FocusRestoreUs);
         return;
@@ -622,9 +626,6 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
         }
     }
     if (budgetUs == 0) {
-        return;
-    }
-    if (!loadLoopJobIsFocusSlot() && !canRunBackgroundLoadLoopNow()) {
         return;
     }
     if (activatedThisFrame) {
@@ -665,4 +666,21 @@ bool STORAGE_PERSIST_MEM StorageManager::selectSubmittedLoadJobs() {
 void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs,
                                                               bool activatedThisFrame) {
     StorageManagerInternal::stepSubmittedLoadJobsImpl(budgetUs, activatedThisFrame);
+}
+
+void STORAGE_PERSIST_MEM StorageManager::probeActiveLoadLoopJob(bool& active, uint8_t& track, uint8_t& slot,
+                                            uint8_t& phase, uint8_t& isFocus) {
+    using namespace StorageManagerInternal;
+    active = loadLoopJob_.active;
+    if (!active) {
+        track = 255;
+        slot = 255;
+        phase = 255;
+        isFocus = 0;
+        return;
+    }
+    track = loadLoopJob_.track;
+    slot = loadLoopJob_.slot;
+    phase = static_cast<uint8_t>(loadLoopJob_.phase);
+    isFocus = loadLoopJobIsFocusSlot() ? 1 : 0;
 }

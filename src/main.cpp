@@ -44,6 +44,22 @@ FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSele
   displayManager.update();
 }
 
+#if defined(SESSION_CAPTURE)
+FLASHMEM __attribute__((noinline)) static void recordLoopRemainderSpan(const char* span,
+                                                                      uint32_t durationUs) {
+  if (durationUs < RuntimeTimingEnvelope::kLoopRemainderOneShotUs) {
+    return;
+  }
+  bool active = false;
+  uint8_t track = 255;
+  uint8_t slot = 255;
+  uint8_t phase = 255;
+  uint8_t isFocus = 0;
+  StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
+  DebugSessionCapture::loopRemainder(span, durationUs, track, slot, phase, isFocus);
+}
+#endif
+
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
@@ -320,13 +336,27 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
+#if defined(SESSION_CAPTURE)
+  uint32_t remainderStartUs = micros();
+#endif
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
+#if defined(SESSION_CAPTURE)
+  const uint32_t idleMaintUs = micros() - remainderStartUs;
+  RuntimeTimingEnvelope::noteIdleMaint(idleMaintUs);
+  recordLoopRemainderSpan("idle_maint", idleMaintUs);
+  remainderStartUs = micros();
+#endif
 
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
+#if defined(SESSION_CAPTURE)
+  const uint32_t loadFrameUs = micros() - remainderStartUs;
+  RuntimeTimingEnvelope::noteLoadFrame(loadFrameUs);
+  recordLoopRemainderSpan("load_frame", loadFrameUs);
+#endif
 
   // RC-C C: safety MIDI drain after OLED work during RECORD/OVERDUB only. Not a substitute
   // for bounded display — keeps clock/notes moving if resolve still ran long.
@@ -356,7 +386,15 @@ void loop() {
     trackManager.reclaimUnreferencedDisabledPasses(nullptr, true);
   }
 
+#if defined(SESSION_CAPTURE)
+  const uint32_t persistSaveStartUs = micros();
+#endif
   StorageManager::processDeferredSaveState(looperState.getLooperState());
+#if defined(SESSION_CAPTURE)
+  const uint32_t persistSaveUs = micros() - persistSaveStartUs;
+  RuntimeTimingEnvelope::notePersistSave(persistSaveUs);
+  recordLoopRemainderSpan("persist_save", persistSaveUs);
+#endif
 
   // Poll USB host again after deferred SD/display work so DROID button note-ons are not
   // dropped when the main loop was busy (session_20260810_234059: note-off without note-on).

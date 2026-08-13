@@ -188,6 +188,9 @@ public:
     static void setLoopSlotPayloadOnSdInRam(uint8_t trackIndex, uint8_t slotIndex, bool hasPayload);
     /// Before undo: finish deferred undo snapshot hydration when still pending.
     static void restoreDeferredUndoSnapshotsBeforeUse();
+    /// Observation-only remainder DIAG: active LoadLoopJob identity. 255 = none.
+    static void probeActiveLoadLoopJob(bool& active, uint8_t& track, uint8_t& slot, uint8_t& phase,
+                                       uint8_t& isFocus);
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);
