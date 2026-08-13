@@ -913,6 +913,85 @@ void test_commit_skips_overlap_length_while_visible_tail_active_225025() {
   }
 }
 
+void test_commit_skips_unpainted_loop_end_length_192755() {
+  // session_20260813_192755 @81.670: overlap participant 14 live 2256–2304 is not painted.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapStubId = 14;
+  constexpr NoteId kPaintedShortId = 16;
+  constexpr NoteId kMoverId = 111;
+  constexpr uint8_t kPitch = 30;
+
+  const NoteBaseline kWrapBaseline{kPitch, 100, 2256, 2280};
+  const NoteBaseline kWrapLive{kPitch, 100, 2256, kLoopLength};
+  const NoteBaseline kPaintedBaseline{kPitch, 100, 855, 1046};
+  const NoteBaseline kPaintedLive{kPitch, 100, 855, 911};
+  const NoteBaseline kMoverSpan{kPitch, 100, 1104, 1151};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 528, 575};
+  focus.last = kMoverSpan;
+  focus.baselineMap[kWrapStubId] = kWrapBaseline;
+  focus.baselineMap[kPaintedShortId] = kPaintedBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapStubId, kWrapBaseline, kWrapLive, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kPaintedShortId, kPaintedBaseline, kPaintedLive,
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, kMoverSpan, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  store.push_back(noteOn(kWrapStubId, kPitch, kWrapLive.startTick));
+  store.push_back(noteOff(kWrapStubId, kPitch, kWrapLive.endTick));
+  store.push_back(noteOn(kPaintedShortId, kPitch, kPaintedLive.startTick));
+  store.push_back(noteOff(kPaintedShortId, kPitch, kPaintedLive.endTick));
+  store.push_back(noteOn(kMoverId, kPitch, kMoverSpan.startTick));
+  store.push_back(noteOff(kMoverId, kPitch, kMoverSpan.endTick));
+
+  NoteUtils::DisplayNoteVec cache;
+  cache.push_back(NoteUtils::DisplayNote{kPaintedShortId, kPitch, 100, 855, 1046});
+  cache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 2256});
+
+  const EditPassVec commitRows =
+      buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength, &cache);
+  const EditPassVec preCommitRows = buildPreCommitEditPasses(
+      focus, kChannel, &store, kLoopLength, &currentState, &cache);
+
+  auto hasLoopEndLengthFor = [](const EditPassVec& rows, NoteId noteId) {
+    for (const EditPass& row : rows) {
+      if (row.targetNoteId == noteId && row.actionType == EditActionType::Update &&
+          (row.propertyType == EditPropertyType::Length ||
+           row.propertyType == EditPropertyType::NoteRange) &&
+          row.endTick == kLoopLength) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto hasLengthFor = [](const EditPassVec& rows, NoteId noteId, uint32_t endTick) {
+    for (const EditPass& row : rows) {
+      if (row.targetNoteId == noteId && row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length && row.endTick == endTick) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  TEST_ASSERT_FALSE(hasLoopEndLengthFor(commitRows, kWrapStubId));
+  TEST_ASSERT_FALSE(hasLoopEndLengthFor(preCommitRows, kWrapStubId));
+  TEST_ASSERT_TRUE(hasLengthFor(commitRows, kPaintedShortId, 911u));
+  TEST_ASSERT_TRUE(hasLengthFor(preCommitRows, kPaintedShortId, 911u));
+
+  NoteUtils::DisplayNoteVec paintedWrapCache;
+  paintedWrapCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 2280});
+  const EditPassVec paintedCommitRows = buildCommitRowsFromCurrentState(
+      focus, currentState, kChannel, kLoopLength, &paintedWrapCache);
+  TEST_ASSERT_TRUE(hasLoopEndLengthFor(paintedCommitRows, kWrapStubId));
+}
+
 void test_deselect_clears_overlap_participation_without_geometry_restore_232118() {
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 13;
@@ -2333,6 +2412,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
   RUN_TEST(test_commit_skips_overlap_length_while_visible_tail_active_225025);
+  RUN_TEST(test_commit_skips_unpainted_loop_end_length_192755);
   RUN_TEST(test_deselect_clears_overlap_participation_without_geometry_restore_232118);
   RUN_TEST(test_sync_committed_span_marks_visible_overlap_shorten_sealed);
   RUN_TEST(test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657);
