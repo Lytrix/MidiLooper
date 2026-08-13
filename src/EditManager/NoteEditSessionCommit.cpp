@@ -86,7 +86,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         const EditPassVec parityRows = buildPreCommitEditPasses(
             editSession.focus, channel, &sessionStoreEvents, loopLength,
             &editSession.noteEditCurrentState, &committedDisplayNotes);
-        logApplyOwnedCommitParity(rows, parityRows);
+        logApplyOwnedCommitParity(rows, parityRows, "pre_commit");
 #endif
     } else {
         rows = buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength,
@@ -95,7 +95,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     editSession.applyOwnedEditPassRows.clear();
 #if defined(SESSION_CAPTURE)
     if (!applyOwnedRows.empty()) {
-        logApplyOwnedCommitParity(rows, applyOwnedRows);
+        logApplyOwnedCommitParity(rows, applyOwnedRows, "apply_owned");
     }
 #endif
     if (rows.empty()) {

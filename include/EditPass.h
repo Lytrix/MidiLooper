@@ -31,16 +31,6 @@ enum class EditPropertyType : uint8_t {
   Value,
 };
 
-/// Stable note target on an edit pass row (not a display index).
-struct NoteRef {
-  uint8_t channel = 0;
-  uint8_t note = 0;
-  uint32_t startTick = 0;
-  uint32_t endTick = 0;
-};
-
-/// @deprecated Geometry-only; note targeting uses **NoteId** via **targetNoteId**.
-
 /// Stable control-change target for scoped CC edit rows.
 struct ControlChangeRef {
   uint8_t channel = 0;
