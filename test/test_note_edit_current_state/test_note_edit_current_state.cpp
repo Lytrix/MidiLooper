@@ -881,15 +881,18 @@ void test_commit_rows_from_current_state_overlap_shorten() {
   TEST_ASSERT_TRUE(foundOverlapMove);
 }
 
-void test_commit_skips_overlap_length_while_visible_tail_active_225025() {
-  // session_20260807_225025 @26.3s: macro commit must not seal overlap-elongated same-start tail.
+void test_commit_seals_overlap_length_while_mover_covers_committed_span_225025() {
+  // session_20260807_225025: note 9 is 534 ticks (DNTE 2544 len 534 @15.404), mover 13 parks at
+  // 2832–2879 inside it (@21.545), commit writes Length 2544–2831 (@26.291) and reselect reads
+  // len 287 (@36.927). The sealed length was correct — slice B read the mover's 47 as note 9's.
+  // A parked mover always still covers what it shortened, so closure must not block the seal.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 13;
   constexpr uint8_t kPitch = 88;
 
   const NoteBaseline kCommitted{kPitch, 100, 2544, 3078};
-  const NoteBaseline kBridgeTail{kPitch, 100, 2544, 2831};
+  const NoteBaseline kShortened{kPitch, 100, 2544, 2831};
   const NoteBaseline kMoverSpan{kPitch, 100, 2832, 2879};
 
   NoteEditFocus focus;
@@ -902,15 +905,78 @@ void test_commit_skips_overlap_length_while_visible_tail_active_225025() {
 
   NoteEditCurrentState state;
   state.upsertRow(kMoverId, kCommitted, kMoverSpan, NoteEditPresenceType::Visible);
-  state.upsertRow(kOverlapId, kCommitted, kBridgeTail, NoteEditPresenceType::Visible);
+  state.upsertRow(kOverlapId, kCommitted, kShortened, NoteEditPresenceType::Visible);
 
   const EditPassVec rows = buildCommitRowsFromCurrentState(focus, state, kChannel, kLoopLength);
+  bool foundShortenLength = false;
   for (const EditPass& row : rows) {
-    TEST_ASSERT_FALSE(row.targetNoteId == kOverlapId &&
-                      row.actionType == EditActionType::Update &&
-                      (row.propertyType == EditPropertyType::Length ||
-                       row.propertyType == EditPropertyType::NoteRange));
+    if (row.targetNoteId == kOverlapId && row.actionType == EditActionType::Update &&
+        row.propertyType == EditPropertyType::Length) {
+      TEST_ASSERT_EQUAL_UINT32(kShortened.startTick, row.startTick);
+      TEST_ASSERT_EQUAL_UINT32(kShortened.endTick, row.endTick);
+      foundShortenLength = true;
+    }
   }
+  TEST_ASSERT_TRUE(foundShortenLength);
+}
+
+void test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700() {
+  // session_20260813_204700 @165.462: note 24 reaches pitch 46 at 1248 inside note 10 (960–1727),
+  // geometry emits ShortenNote 10 → 960–1247. The deselect commit @166.809 carried only the mover
+  // Pitch row (parity mismatch canonical=1 apply_owned=2) and the Length row landed one commit
+  // later @166.848 against note 14's focus. Both builders must seal it at the deselect commit.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 24;
+  constexpr uint8_t kPitch = 46;
+
+  const NoteBaseline kCommitted{kPitch, 100, 960, 1727};
+  const NoteBaseline kShortened{kPitch, 100, 960, 1247};
+  const NoteBaseline kMoverSpan{kPitch, 100, 1248, 1343};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = kMoverSpan;
+  focus.last = kMoverSpan;
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = kMoverSpan;
+
+  NoteEditCurrentState state;
+  state.upsertRow(kMoverId, kMoverSpan, kMoverSpan, NoteEditPresenceType::Visible);
+  state.upsertRow(kOverlapId, kCommitted, kShortened, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  store.push_back(noteOn(kOverlapId, kPitch, kShortened.startTick));
+  store.push_back(noteOff(kOverlapId, kPitch, kShortened.endTick));
+  store.push_back(noteOn(kMoverId, kPitch, kMoverSpan.startTick));
+  store.push_back(noteOff(kMoverId, kPitch, kMoverSpan.endTick));
+
+  NoteUtils::DisplayNoteVec cache;
+  cache.push_back(NoteUtils::DisplayNote{kOverlapId, kPitch, 100, kShortened.startTick,
+                                         kShortened.endTick});
+  cache.push_back(NoteUtils::DisplayNote{kMoverId, kPitch, 100, kMoverSpan.startTick,
+                                         kMoverSpan.endTick});
+
+  auto shortenLengthEnd = [](const EditPassVec& rows) {
+    uint32_t end = 0;
+    for (const EditPass& row : rows) {
+      if (row.targetNoteId == kOverlapId && row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length) {
+        end = row.endTick;
+      }
+    }
+    return end;
+  };
+
+  const EditPassVec commitRows =
+      buildCommitRowsFromCurrentState(focus, state, kChannel, kLoopLength, &cache);
+  const EditPassVec parityRows =
+      buildPreCommitEditPasses(focus, kChannel, &store, kLoopLength, &state, &cache);
+
+  TEST_ASSERT_EQUAL_UINT32(kShortened.endTick, shortenLengthEnd(commitRows));
+  TEST_ASSERT_EQUAL_UINT32(kShortened.endTick, shortenLengthEnd(parityRows));
+  TEST_ASSERT_EQUAL(static_cast<int>(parityRows.size()), static_cast<int>(commitRows.size()));
 }
 
 void test_commit_skips_unpainted_loop_end_length_192755() {
@@ -2454,7 +2520,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
-  RUN_TEST(test_commit_skips_overlap_length_while_visible_tail_active_225025);
+  RUN_TEST(test_commit_seals_overlap_length_while_mover_covers_committed_span_225025);
+  RUN_TEST(test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700);
   RUN_TEST(test_commit_skips_unpainted_loop_end_length_192755);
   RUN_TEST(test_commit_skips_painted_wrap_stub_loop_end_length_201948);
   RUN_TEST(test_deselect_clears_overlap_participation_without_geometry_restore_232118);
