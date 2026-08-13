@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (NOTE_EDIT visual-cache display plan)
+Last updated: 2026-08-13 (NOTE_EDIT display Stages 8–9)
 
 ---
 
 ## Current branch
 
-**NOTE_EDIT display unification:** Stages 1–2 and 5–7 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Stage 6 device PASS [`175621`](../../captures/session_20260813_175621.log). Next: Stage 7 device verify (open `DISP` frameNotes == cache; 1344 pitch-12 `DNTE` is not length 720).
+**NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Stage 8/9 native: 181114 overlay end 1536; reselect 76 stays at 840. Device gate after upload: Hide/Restore of 45 must not use 720; reselect 76 must stay at 840. Paint 61 vs 64 and undo-warm stay open.
 
 **Active work:** **Overdub overlap geometry selection** on `feature/overdub-playback-observation-overlap` (local `dev` at `73f0489`). Gates 0–4 native; Gate 2 device open. Withdrawn Option A/B helpers and test matrices removed; `maybeLogStoredNoteCount` kept (`DIAG,stored_notes` in [`152940`](../../captures/session_20260813_152940.log): 68-bar `max_same_pitch=322` exceeds capacity 128). Plan: [`overdub_playback_observation_overlap_refinement.md`](../Plans/overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is diagnostic; production selection is normalized geometry + `[S, E)`. `PendingNote.overlapNoteIds` collection is wired; note-off consumes the set via `appendNotesForIds`. Overlap-hold stop totals measured on 4-bar [`162856`](../../captures/session_20260813_162856.log) and 68-bar slot 4 [`163422`](../../captures/session_20260813_163422.log) (`max_examined` 1592–1612, `max_lookup_us` 439–1100 vs `notechg` 775–2705). Lookup-source change is not started. Parallel: overdub-stop PLAYING dump — Stage 1 LoadLoopJob skip closed in [`105505`](../../captures/session_20260813_105505.log); dump FAIL remains (`LoopUndoHistory` bundle, re-measured 11.7 s in [`154823`](../../captures/session_20260813_154823.log)). Do not start interval reservation or patch RC-J. Persistence payload narrowing is roadmap R1B (wire-format / DEC-024 Phase 2) before firmware. Scheduling: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
 

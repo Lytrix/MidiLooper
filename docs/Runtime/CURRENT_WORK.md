@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (NOTE_EDIT display Stage 7)
+Last updated: 2026-08-13 (NOTE_EDIT display Stages 8–9)
 
 ---
 
@@ -52,7 +52,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Wrap-crossing hold consume (tail only):** wrap-head `[0, E)` is not a second incoming hold. Shorten/Hide run on `[S, loopLength)` only. [`170449`](../../captures/session_20260813_170449.log) `hide=14` was the head segment. Native: wrap tail Shorten + skipped head Hide.
 
-**NOTE_EDIT / LOOP_EDIT display split (Stage 7 shipped, device verify next):** [`175621`](../../captures/session_20260813_175621.log) — Stage 6 move PASS; NOTE_EDIT painted rematerialize-paired length 720 at 1344. Unedited Visible rows now take the `visualCache` span; paint omits rematerialize-only extras except Added. Plan: [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device: open NOTE_EDIT, confirm first `DISP` frameNotes == visualCache; select the 1344 pitch-12 note, `DNTE` length is the cache length (not 720); move it and confirm overlap does not Hide a 720-wide lane. Do not use `visualCache` as the overdub overlap source.
+**NOTE_EDIT / LOOP_EDIT display split (Stages 8–9 shipped, device gate open):** Stage 8 overlap evaluate uses visual-cache / current-state DisplayNote spans. Stage 9 select/rebuild uses `noteEditFocusApplyDisplayNote` (painted id + Visible current-state span); no per-select `materializeToEventVector` / `reconstructNotes`. Device [`181114`](../../captures/session_20260813_181114.log) still the pre-8/9 evidence (Hide 45 as 720; reselect 76→168). Next: same-loop HITL after upload. Paint 61 vs 64 and undo-warm stay open. Plan: [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Do not call overdub consume.
 
 **Withdrawn-path cleanup (removed):** Option A slice tests, Option B windowed matrix, `gatherOverdubSourceView*InWindow`, and `gatherCommittedNoteEventsForPitch`. `maybeLogStoredNoteCount` kept.
 
