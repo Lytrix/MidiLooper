@@ -1,6 +1,6 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gates 0–1 native landed; Gate 2 port-emit mute started  
+**Status:** Active — Gates 0–1 native landed; Gate 2 native landed, device open  
 **Branch:** `feature/overdub-playback-observation-overlap`  
 **Date:** 2026-08-13  
 **Kind:** refinement  
@@ -110,13 +110,13 @@ Required fixtures still owed: muted/solo same-id check after playback collection
 
 ---
 
-## Gate 2 — mute is a last-layer port gate (started)
+## Gate 2 — mute is a last-layer port gate (native landed, device open)
 
 Enabled slots keep running `playMidiEvents` / `playMidiEventsForSlot`. `isTrackAudible` and `slotMuted` feed `PlaybackPortEmit::portShouldEmit` into `Track::sendMidiEvent`. Cursor, merged stream, and `ActiveNoteLedger` still advance.
 
 Mute-edge silence is port-only: track mute sends CC 123; slot mute sends NoteOff for that slot's active ledger notes. Neither clears ledger or `pendingNotes`. Unmute does not dump a backlog.
 
-Native: `test_playback_port_emit`. Device: mute mid-note silences the port; unmute does not replay missed note-ons.
+Native (`test_playback_port_emit`): cursor advances while port is suppressed; unmute does not resend crossed events; wrap still advances while muted; `ledger.clear()` (all-notes-off) empties the ledger, mute silence does not. Device still owed: mute mid-note silences the port; unmute does not replay missed note-ons.
 
 ## Gates 3–4 (not started)
 
