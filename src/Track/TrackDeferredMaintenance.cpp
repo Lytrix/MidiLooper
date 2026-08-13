@@ -3,6 +3,8 @@
 
 #include "TrackInternal.h"
 
+#include <Arduino.h>
+
 #include "Globals.h"
 #include "Logger.h"
 #include "LoopEventStore.h"
@@ -55,6 +57,16 @@ namespace {
 constexpr size_t kMaxWrapPairVerifyEvents = 512;
 constexpr size_t kMaxDisplayNoteVerifyLines = 32;
 
+#if defined(SESSION_CAPTURE)
+// One stored-MIDI verification dump per boot — enough for a single HITL/evidence capture, then
+// off so manual overdub retests are not blocked by merge+SEVT cost on every stop. Reboot to re-arm.
+bool sStoredMidiVerificationArmed = true;
+
+void logStoredMidiVerificationArmState(bool armed) {
+  Serial.printf("#CAP,DIAG,stored_verify,armed,%u\n", armed ? 1u : 0u);
+}
+#endif
+
 enum StoredVerificationPhase : uint8_t {
   kStoredVerificationNotes = 0,
   kStoredVerificationWrapPairs = 1,
@@ -81,7 +93,12 @@ TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
     return;
   }
+  if (!sStoredMidiVerificationArmed) {
+    return;
+  }
   deferredStoredVerificationPending = true;
+  sStoredMidiVerificationArmed = false;
+  logStoredMidiVerificationArmState(false);
 #endif
 }
 
@@ -185,24 +202,17 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
 }
 
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
-  // REVT: emit only when transport is not PLAYING (58d6c08 reference); ring-queue holds
-  // note-ons until flush when idle. Skip during STOPPED_RECORDING stop tail.
+  // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
+  // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
+  // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     size_t revtSlice = 64;
-    if (StorageManager::hasDeferredSaveWork()) {
-      revtSlice = 8;
-    }
-    processDeferredRecordRevts(revtSlice);
-  }
-
-  // Stored-MIDI verification is non-critical evidence, so it drains in slices instead of running
-  // inside the MIDI-dispatched overdub stop. It must still complete before the next overdub
-  // starts (HITL scopes each pass by the following overdub start), so it also runs while PLAYING.
-  if (!isRecording() && !isOverdubbing()) {
     size_t verificationSlice = 64;
     if (StorageManager::hasDeferredSaveWork()) {
+      revtSlice = 8;
       verificationSlice = 16;
     }
+    processDeferredRecordRevts(revtSlice);
     processDeferredStoredMidiVerification(verificationSlice);
   }
 
