@@ -142,7 +142,7 @@ Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not inc
 
 ## Note-off consumes overlapNoteIds (wired)
 
-`Loop::accumulatePendingNoteChangesForIncomingNote` takes `PendingNote.overlapNoteIds`. Empty set skips `appendNotesForIds` (Add only). Non-empty set copies matching notes from `overdubSourceViewNotes_` in one pass, then `accumulatePendingNoteChangesFromSourceNotes` applies geometry + `[S, E)` (`existingNoteOverlapsIncomingHold`, not `noteIntersectsWindow`) and writes Add/Shorten/Hide. The production overlap body lives in `LoopPendingNoteChange.cpp` — do not include `OverlapNoteIdObservation.h` there. Native: `test_pending_note_change` including `test_empty_overlap_ids_add_only_when_source_overlaps`.
+`Loop::accumulatePendingNoteChangesForIncomingNote` takes `PendingNote.overlapNoteIds`. Empty set skips `appendNotesForIds` (Add only). Non-empty set copies matching notes from `overdubSourceViewNotes_` in one pass, then `accumulatePendingNoteChangesFromSourceNotes` applies geometry + `[S, E)` (`existingNoteOverlapsIncomingHold`, not `noteIntersectsWindow`) and writes Shorten/Hide. Wrap-head `endTick < startTick` splits into `[S, loopLength)` and `[0, E)`. Add is written once after those segments. The production overlap body lives in `LoopPendingNoteChange.cpp` — do not include `OverlapNoteIdObservation.h` there. Native: `test_pending_note_change` including wrap-crossing tail Shorten and head Hide.
 
 ## Overlap-hold stop totals (wired)
 
@@ -188,6 +188,18 @@ Option A slice-cache tests, Option B windowed matrix, `gatherOverdubSourceView*I
 
 ---
 
+## Wrap-crossing incoming hold (shipped)
+
+[`162856`](../../captures/session_20260813_162856.log) has two different note-off cases. Do not treat them as one.
+
+**Unpaired off at overdub start (already ignored).** Note 12 held during PLAYING, then `NoteOff … no matching NoteOn` @ 19.449s / 40.569s. Pre-listen stays later.
+
+**Wrap-crossing off in the same pass (shipped).** `recordMidiEvents` no longer skips accumulate when `newEvt.tick < prior.tick`. `accumulatePendingNoteChangesForIncomingNote` splits wrap-head `[S, E)` into `[S, loopLength)` and `[0, E)` so linear `analyzeEditSessionInteractions` can Shorten/Hide. Native: `test_pending_shorten_wrap_crossing_incoming_tail`, `test_pending_hide_wrap_crossing_incoming_head`.
+
+`finalizePendingNotes` at stop can still append a capture off without accumulate (`finalized=1 capture_offs=1 phase=88` on the third stop). That remains open.
+
+---
+
 ## Out of scope
 
-Pitch-retarget discovery, pitch indexes, visual-cache reuse, chunk-sliced source views, PLAYING precompute, interval reservation, RC-J, stored-MIDI verification, deferring capture note-on until note-off.
+Pitch-retarget discovery, pitch indexes, visual-cache reuse, chunk-sliced source views, PLAYING precompute, interval reservation, RC-J, stored-MIDI verification, deferring capture note-on until note-off. Pre-listen of PLAYING holds.

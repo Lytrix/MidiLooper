@@ -166,12 +166,13 @@ struct Loop {
   bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
   const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
   /// Resolve incoming note against hold-candidate ids, then geometry + [S, E).
+  /// Wrap-head off (`endTick < startTick`) splits into `[S, loopLength)` and `[0, E)`.
   /// Empty `overlapNoteIds` skips span lookup (Add only). Returns false when no source view.
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
                                                    NoteId incomingNoteId,
                                                    const OverlapNoteIdSet& overlapNoteIds);
-  /// Pair incoming note against an explicit source-note list (full reconstruct or windowed query).
+  /// Pair one linear incoming `[S, E)` against an explicit source-note list (Shorten/Hide only).
   void accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
                                                    uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,

@@ -289,6 +289,48 @@ void test_discard_clears_pending_with_source_view() {
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
 }
 
+void test_pending_shorten_wrap_crossing_incoming_tail() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, kLoopLen - 80, kLoopLen - 10, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(
+      1, 60, 90, kLoopLen - 40, 20, 10, overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+
+  const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(shorten);
+  TEST_ASSERT_EQUAL_UINT32(kLoopLen - 80u, shorten->startTick);
+  TEST_ASSERT_EQUAL_UINT32(kLoopLen - 41u, shorten->endTick);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().noteOffs);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().add);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().shorten);
+}
+
+void test_pending_hide_wrap_crossing_incoming_head() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 8, 40, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(
+      1, 60, 90, kLoopLen - 40, 50, 10, overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Hide),
+                    static_cast<int>(findTransform(loop.pendingNoteChanges(), 1)->kind));
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().noteOffs);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().hide);
+}
+
 void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -338,6 +380,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_survives_wraps_and_accumulates);
   RUN_TEST(test_establish_resets_overlap_hold_totals);
   RUN_TEST(test_discard_clears_pending_with_source_view);
+  RUN_TEST(test_pending_shorten_wrap_crossing_incoming_tail);
+  RUN_TEST(test_pending_hide_wrap_crossing_incoming_head);
   RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
   return UNITY_END();
 }

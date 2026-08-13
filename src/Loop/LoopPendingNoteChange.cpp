@@ -93,15 +93,6 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
   const NoteId causingId =
       (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
 
-  PendingNoteChange addChange{};
-  addChange.kind = PendingNoteChangeKind::Add;
-  addChange.noteId = causingId;
-  addChange.channel = channel;
-  addChange.pitch = pitch;
-  addChange.velocity = velocity;
-  addChange.startTick = startTick;
-  addChange.endTick = endTick;
-
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0 ? overdubSourceViewLoopLengthTicks_
                                                                  : loopLengthTicks;
 
@@ -164,8 +155,6 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
       }
     }
   }
-
-  pendingNoteChanges_.push_back(addChange);
 }
 
 LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
@@ -174,9 +163,34 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
     return false;
   }
-  if (endTick < startTick) {
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  if (endTick == startTick || loopLen == 0) {
     return false;
   }
+
+  uint32_t firstStart = startTick;
+  uint32_t firstEnd = endTick;
+  uint32_t secondStart = 0;
+  uint32_t secondEnd = 0;
+  bool hasSecond = false;
+  if (endTick < startTick) {
+    firstStart = startTick;
+    firstEnd = loopLen;
+    if (endTick > 0) {
+      secondStart = 0;
+      secondEnd = endTick;
+      hasSecond = true;
+    }
+    if (firstStart >= firstEnd) {
+      if (!hasSecond) {
+        return false;
+      }
+      firstStart = secondStart;
+      firstEnd = secondEnd;
+      hasSecond = false;
+    }
+  }
+
   ++overlapHoldTotals_.noteOffs;
   const uint32_t idCount = static_cast<uint32_t>(overlapNoteIds.size());
   if (idCount > overlapHoldTotals_.maxIds) {
@@ -205,8 +219,25 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   } else {
     ++overlapHoldTotals_.emptySets;
   }
-  accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, startTick,
-                                              endTick, incomingNoteId);
+  const NoteId causingId =
+      (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
+  accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, firstStart,
+                                              firstEnd, causingId);
+  if (hasSecond) {
+    accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, secondStart,
+                                                secondEnd, causingId);
+  }
+
+  PendingNoteChange addChange{};
+  addChange.kind = PendingNoteChangeKind::Add;
+  addChange.noteId = causingId;
+  addChange.channel = channel;
+  addChange.pitch = pitch;
+  addChange.velocity = velocity;
+  addChange.startTick = startTick;
+  addChange.endTick = endTick;
+  pendingNoteChanges_.push_back(addChange);
+
   overlapHoldTotals_.add = 0;
   overlapHoldTotals_.shorten = 0;
   overlapHoldTotals_.hide = 0;

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (withdrawn Option A/B overlap path removed)
+Last updated: 2026-08-13 (wrap-crossing hold consume shipped)
 
 ---
 
@@ -50,7 +50,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Note-off consumes overlapNoteIds (wired):** `accumulatePendingNoteChangesForIncomingNote` looks up the set in `overdubSourceViewNotes_` (`appendNotesForIds`) and applies geometry + `[S, E)`. Empty set skips lookup (Add only; Gate 3). Native: `test_pending_note_change`.
 
-**Overlap-hold stop totals (4-bar [`162856`](../../captures/session_20260813_162856.log) + 68-bar [`163422`](../../captures/session_20260813_163422.log)):** one `#CAP,DIAG,overlap_hold` at overdub-stop seal. 4-bar slot 1: Add/Shorten/Hide + `empty_sets`. 68-bar slot 4 (`VCACHE` 68 bars, 1828 notes): `empty_sets` is the majority; when lookup runs `max_examined` 1592–1612, `max_lookup_us` 439–1100 vs `notechg` 775–2705; `noterecon=0`; `overflows=0`. First 68-bar stop: `notechg` 986 / `max_lookup_us` 959. Lookup-source change is not started.
+**Wrap-crossing hold consume (shipped):** wrap-head offs run accumulate. Incoming `[S, E)` with `end < start` splits into `[S, loopLength)` and `[0, E)`. Unpaired start offs stay ignored. `finalizePendingNotes` still does not accumulate. Pre-listen later. Native: `test_pending_note_change` wrap-crossing cases.
 
 **Withdrawn-path cleanup (removed):** Option A slice tests, Option B windowed matrix, `gatherOverdubSourceView*InWindow`, and `gatherCommittedNoteEventsForPitch`. `maybeLogStoredNoteCount` kept.
 

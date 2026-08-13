@@ -362,9 +362,6 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
             prior.data.noteData.note != data1) {
           continue;
         }
-        if (newEvt.tick < prior.tick) {
-          break;
-        }
         const uint32_t noteChangeStartUs = micros();
         const auto pendingIt = pendingNotes.find({data1, channel});
         static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
