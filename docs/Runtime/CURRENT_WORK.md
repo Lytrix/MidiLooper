@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (NOTE_EDIT edit-pass replay row payload)
+Last updated: 2026-08-13 (NOTE_EDIT note-off pairing LIFO)
 
 ---
 
@@ -56,7 +56,9 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **NOTE_EDIT leave-restore painted span (RC1 native shipped; [`201948`](../../captures/session_20260813_201948.log) device):** 76 Hide/Restore is `840–863` (not 2160). Note **5** first-select is already `DNTE` **1535** — cache span is `720–2255`, not painted `720–767`. Stop on a second owner here. Mover **100** length stays **144**; 39.397 commit still saves only 14 `2256–2304` (wrap-stub plan). Plan: [`note_edit_overlap_leave_restore_painted_span_bugfix.md`](../Plans/note_edit_overlap_leave_restore_painted_span_bugfix.md).
 
-**NOTE_EDIT edit-pass replay row payload (native shipped; device gate open):** replay rewrote a row's `startTick`/`endTick` from an earlier row for the same `targetNoteId`, so a second `Length` or `NoteRange` row became a no-op. In [`210821`](../../captures/session_20260813_210821.log) the sealed `Length 10 801→1055` was rewritten to `1568` by the `205054` `NoteRange 10 → 801–1568` row (reselect @32.833 paints `767`); in [`210945`](../../captures/session_20260813_210945.log) @115.986 `NoteRange 77 → 768–912` was rewritten to the @99.273 `960–1104`, so the mover snapped back. The `tracked` rewrite was a stale-lookup-key mechanism from before stable NoteId (`e9cc97f`) — removed from `applyActiveEditPassesMidi` and `applyNoteEditPassSequence`. Plan: [`note_edit_replay_row_payload_bugfix.md`](../Plans/note_edit_replay_row_payload_bugfix.md).
+**NOTE_EDIT note-off pairing LIFO (native shipped; device gate open):** `findNoteOffForOnIndex` broke on the first later same-pitch note-on, so the outer note of a nested pair (`On(A)`, `On(B)`, `Off(B)`, `Off(A)`) returned `-1`. Delete left an orphaned off, move/pitch split the pair, shorten no-op'd, and Length treated the note as zero-length then pushed a second off. Finder now matches the existing LIFO helpers. Plan: [`note_edit_note_off_pairing_lifo_bugfix.md`](../Plans/note_edit_note_off_pairing_lifo_bugfix.md).
+
+**NOTE_EDIT edit-pass replay row payload (native shipped; [`211832`](../../captures/session_20260813_211832.log) device PASS):** `Length 115 48→287` @35.640 and `Length 115 1008→1103` @55.510 both seal and hold. Replay no longer rewrites a later row's span from an earlier row for the same `targetNoteId`. Plan: [`note_edit_replay_row_payload_bugfix.md`](../Plans/note_edit_replay_row_payload_bugfix.md).
 
 **NOTE_EDIT overlap shorten commit seal (native shipped; device gate open):** the deselect commit dropped the overlap `Length` row because `participatingNoteVisibleOverlapTailInProgress` fired on a parked mover, so the shorten either vanished (display reverted) or landed one commit late against an unrelated focus ([`204700`](../../captures/session_20260813_204700.log) @166.809 `canonical=1 apply_owned=2` → @166.848 `Length 10 960–1247`). Skip removed from `buildCommitOverlapRowsFromCurrentState`; predicate stays in leave-restore. Slice B of the resolver contracts plan is **withdrawn** — [`225025`](../../captures/session_20260807_225025.log) `len=287` was correct. Decisions: seal at the user-triggered commit; host tail stays truncated. Plan: [`note_edit_overlap_shorten_commit_seal_bugfix.md`](../Plans/note_edit_overlap_shorten_commit_seal_bugfix.md).
 

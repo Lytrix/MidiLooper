@@ -1,6 +1,6 @@
 # NOTE_EDIT edit-pass replay row payload — bugfix
 
-**Status:** native shipped; device gate open
+**Status:** native shipped; device PASS in [`211832`](../../captures/session_20260813_211832.log)
 **Owner:** `LoopPasses::materializeToEventVector` (`applyActiveEditPassesMidi`), `applyNoteEditPassSequence`
 **Sibling:** [`note_edit_overlap_shorten_commit_seal_bugfix.md`](note_edit_overlap_shorten_commit_seal_bugfix.md) (RC before this one), [`note_edit_length_replay_loop_boundary_bugfix.md`](note_edit_length_replay_loop_boundary_bugfix.md)
 
