@@ -234,28 +234,29 @@ EDIT_MANAGER_IMPL_MEM void logPreCommitEditPassRows(const NoteEditFocus& focus, 
 
 #if defined(SESSION_CAPTURE)
 EDIT_MANAGER_IMPL_MEM void logApplyOwnedCommitParity(const EditPassVec& canonicalRows,
-                                                     const EditPassVec& applyOwnedRows) {
+                                                     const EditPassVec& comparedRows,
+                                                     const char* comparedSource) {
     int firstMismatch = -1;
-    const size_t sharedCount = std::min(canonicalRows.size(), applyOwnedRows.size());
+    const size_t sharedCount = std::min(canonicalRows.size(), comparedRows.size());
     for (size_t i = 0; i < sharedCount; ++i) {
-        if (!editPassRowsEqualForParity(canonicalRows[i], applyOwnedRows[i])) {
+        if (!editPassRowsEqualForParity(canonicalRows[i], comparedRows[i])) {
             firstMismatch = static_cast<int>(i);
             break;
         }
     }
-    if (firstMismatch < 0 && canonicalRows.size() != applyOwnedRows.size()) {
+    if (firstMismatch < 0 && canonicalRows.size() != comparedRows.size()) {
         firstMismatch = static_cast<int>(sharedCount);
     }
     if (firstMismatch < 0) {
-        logger.log(CAT_TRACK, LOG_INFO, "NOTE_EDIT commit parity ok canonical=%u apply_owned=%u",
-                   static_cast<unsigned>(canonicalRows.size()),
-                   static_cast<unsigned>(applyOwnedRows.size()));
+        logger.log(CAT_TRACK, LOG_INFO, "NOTE_EDIT commit parity ok canonical=%u %s=%u",
+                   static_cast<unsigned>(canonicalRows.size()), comparedSource,
+                   static_cast<unsigned>(comparedRows.size()));
         return;
     }
     logger.log(CAT_TRACK, LOG_WARNING,
-               "NOTE_EDIT commit parity mismatch canonical=%u apply_owned=%u first=%d",
-               static_cast<unsigned>(canonicalRows.size()),
-               static_cast<unsigned>(applyOwnedRows.size()), firstMismatch);
+               "NOTE_EDIT commit parity mismatch canonical=%u %s=%u first=%d",
+               static_cast<unsigned>(canonicalRows.size()), comparedSource,
+               static_cast<unsigned>(comparedRows.size()), firstMismatch);
 }
 #endif
 

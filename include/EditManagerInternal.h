@@ -50,7 +50,8 @@ EDIT_MANAGER_IMPL_MEM void logGeomApplyFocus(uint32_t elapsedUs, NoteEditKind ki
 EDIT_MANAGER_IMPL_MEM void logGeomApplyResolve(uint32_t elapsedUs, bool applied, NoteEditKind kind);
 
 EDIT_MANAGER_IMPL_MEM void logApplyOwnedCommitParity(const EditPassVec& canonicalRows,
-                                                     const EditPassVec& applyOwnedRows);
+                                                     const EditPassVec& comparedRows,
+                                                     const char* comparedSource);
 #endif
 
 EDIT_MANAGER_IMPL_MEM void materializePassesExcludingEditPasses(const Loop& loop,
