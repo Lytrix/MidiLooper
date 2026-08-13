@@ -1,11 +1,11 @@
 # Overdub source-view reuse (80 ms entry floor)
 
-**Status:** Option B shipped. Native PASS. Device [`002329`](../../captures/session_20260813_002329.log): overdub start 183 µs, `notechg` 1.40 ms on a 10-bar / 1220-event loop. Note-off full-flatten after companion edits: native fix shipped, grown-loop device vs [`003009`](../../captures/session_20260813_003009.log) open.  
+**Status:** Option B withdrawn from production. RC-K3 restored. Native source-view / pending-note tests expect a filled view at `beginCapture`. Device re-measure vs [`225803`](../../captures/session_20260812_225803.log) / [`021304`](../../captures/session_20260813_021304.log) open.  
 **Date:** 2026-08-13  
 **Parent:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md) (RC-K1–K3 / RC-L1 verified)  
-**Handoff:** Option B — walk loaded committed chunks by pitch; unpaired note-on stays open until a later chunk supplies the off. Option A rejected.  
+**Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`. Option B pitch-query on note-off is disconnected from that path. Playback-observation candidate discovery is designed, not implemented (Gates 0–4).  
 **Scheduling:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §2.1, §7.3, §14, §15, §31a, §32–§33  
-**Evidence:** [`session_20260813_002329.log`](../../captures/session_20260813_002329.log); prior floor [`session_20260812_225803.log`](../../captures/session_20260812_225803.log)
+**Evidence:** RC-K3 known-good [`session_20260812_225803.log`](../../captures/session_20260812_225803.log); Option B stall [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)
 
 This is a **targeted bounded-work** follow-through, not admission-model S1.
 
@@ -265,7 +265,15 @@ Native: `test_pending_note_change` wrap matrix + `test_windowed_overlap_matches_
 
 **Follow-through (003009):** that edit-pass fallback full-materialized the loop on every note-off once Shorten/Hide companions existed. Replaced by a pitch-relevant source scan + relevant-row `applyNoteEditPassSequence`. Plan: [`realtime_incremental_work_overdub_note_off_pitch_query_refinement.md`](realtime_incremental_work_overdub_note_off_pitch_query_refinement.md). Audit **B**. Native 1072 passed / 2 skipped.
 
-Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_003009.log) — `notechg` must not return to hundreds of ms; full materialization absent on the pitch query.
+Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_003009.log) — **withdrawn.** Option B note-off reconstruct in [`021304`](../../captures/session_20260813_021304.log) was 292 ms per note-off (`noterecon` 291775 µs, `clockrate` 36). Production restored RC-K3: `establishOverdubSourceView` gathers + reconstructs once; `accumulatePendingNoteChangesForIncomingNote` reads `overdubSourceViewNotes_`. `gatherCommittedNoteEventsForPitch` remains for tests only.
+
+---
+
+## Option B withdrawal (2026-08-13)
+
+Do not optimize Option B further. [`021304`](../../captures/session_20260813_021304.log) on a 68-bar / 3714-event loop: `begin_capture` 11 µs; first overdub `noterecon` **291775 µs**, `notechg` **292976 µs**, `notepair` 968 µs, `clockrate` 36. RC-K3 [`225803`](../../captures/session_20260812_225803.log): `begin_capture` 77–83 ms once; overdub `noterecon` 0, `notechg` ~1.09 ms, `clockrate` 47–48.
+
+Playback-observation candidate discovery is the long-term design (Gates 0–4). It is not production until those gates pass.
 
 ---
 

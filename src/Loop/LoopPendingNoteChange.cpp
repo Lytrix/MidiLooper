@@ -132,14 +132,8 @@ bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t 
   if (endTick < startTick) {
     return false;
   }
-  SessionMidiEventVec pitchEvents;
-  const uint32_t reconStartUs = micros();
-  gatherCommittedNoteEventsForPitch(pitch, pitchEvents);
-  const NoteUtils::DisplayNoteVec sourceNotes = NoteUtils::reconstructDisplayNotes(
-      pitchEvents, overdubSourceViewLoopLengthTicks_, false);
-  RuntimeTimingEnvelope::addNoteRecon(micros() - reconStartUs);
-  accumulatePendingNoteChangesFromSourceNotes(sourceNotes, channel, pitch, velocity, startTick,
-                                              endTick, incomingNoteId);
+  accumulatePendingNoteChangesFromSourceNotes(overdubSourceViewNotes_, channel, pitch, velocity,
+                                              startTick, endTick, incomingNoteId);
   return true;
 }
 

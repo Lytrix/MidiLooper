@@ -146,8 +146,10 @@ void test_overdub_start_establishes_source_view() {
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(kLoopLen, loop.overdubSourceViewLoopLengthTicks());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewEvents().empty());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 
   SessionMidiEventVec pitchEvents;
   loop.gatherCommittedNoteEventsForPitch(60, pitchEvents);
@@ -294,7 +296,7 @@ void test_discard_and_commit_clear_source_view() {
 
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   loop.discardCapture();
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
   TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
