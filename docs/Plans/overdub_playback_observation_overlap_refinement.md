@@ -162,7 +162,19 @@ Native: `test_pending_note_change` (empty set increments `emptySets` not `looked
 | 2 | 8 | 0 | 8 | 5 | 82 | 209 | 8 | 1 | 1 | 417 | 136 |
 | 3 | 8 | 3 | 5 | 4 | 84 | 319 | 8 | 4 | 2 | 601 | 231 |
 
-`sum_examined / looked_up` is 57, 82, and 83.6 — each lookup walked the whole source view. `overflows=0`. Third-stop `ODUB,stop,seal` is absent from the log; `overlap_hold` is present (Tier-A). 68-bar slot 4 (`max_same_pitch=322`) is still owed before changing the ID→geometry source.
+`sum_examined / looked_up` is 57, 82, and 83.6 — each lookup walked the whole source view. `overflows=0`. Third-stop `ODUB,stop,seal` is absent from the log; `overlap_hold` is present (Tier-A).
+
+68-bar slot 4 [`163422`](../../captures/session_20260813_163422.log) — `VCACHE` `total,68` `notes,1828`, `loopLengthTicks=52224`, five overdubs, `noterecon=0`. Capture starts mid-session (ring overflow). `overflows=0`, `max_ids` 1–5.
+
+| Stop | note_offs | empty_sets | looked_up | max_ids | max_examined | max_lookup_us | add | shorten | hide | notechg | notepair |
+|------|-----------|------------|-----------|---------|--------------|---------------|-----|---------|------|---------|----------|
+| 1 | 11 | 8 | 3 | 1 | 1592 | 959 | 11 | 0 | 0 | 986 | 3 |
+| 2 | 14 | 11 | 3 | 4 | 1599 | 439 | 14 | 0 | 2 | 961 | 1 |
+| 3 | 14 | 7 | 7 | 4 | 1599 | 1100 | 14 | 0 | 1 | 2705 | 66 |
+| 4 | 29 | 21 | 8 | 2 | 1605 | 1029 | 29 | 1 | 1 | 1052 | 56 |
+| 5 | 21 | 15 | 6 | 5 | 1612 | 543 | 21 | 2 | 2 | 775 | 127 |
+
+Stops 1–3: `sum_examined / looked_up` equals `max_examined` (1592 / 1599 / 1599). First-stop `notechg` 986 and `max_lookup_us` 959. `begin_capture` 83 ms on stop 1; 8.82 / 8.75 / 8.97 s on stops 2, 3, 5 (`PERS,bundle,LoopUndoHistory` 25.2 s / 26.6 s) — not this path.
 
 ---
 
