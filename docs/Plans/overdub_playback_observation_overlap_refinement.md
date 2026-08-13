@@ -1,6 +1,7 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gate 0 native landed; Gate 1 uses half-open intersection; zero-length notes invalid  
+**Status:** Active — Gates 0–1 native landed; Gate 2 port-emit mute started  
+**Branch:** `feature/overdub-playback-observation-overlap`  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Cursor source:** `~/.cursor/plans/restore_overdub_gather_28c7ca69.plan.md`  
@@ -105,13 +106,20 @@ Helper: `OverlapNoteIdObservation` — native/test only. Do not call it from pro
 
 Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (diagnostic sounding uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded; split-chunk reconstructed span (on@50 / off@400 vs incoming `[300, 350)`); prior Shorten companion uses shortened `[50, 119)`; prior Hide companion absent; unrelated other-pitch companion not selected.
 
-Required fixtures still owed: muted/solo (after Gate 2). 021304 same-pitch count still open on Gate 0. Split-chunk storage and companion seal stay owned by `test_pending_note_change`; Gate 1 uses those effective `DisplayNote` spans.
+Required fixtures still owed: muted/solo same-id check after playback collection is wired. 021304 same-pitch count still open on Gate 0. Split-chunk storage and companion seal stay owned by `test_pending_note_change`; Gate 1 uses those effective `DisplayNote` spans. Geometry selection does not take mute as an input.
 
 ---
 
-## Gates 2–4 (not started)
+## Gate 2 — mute is a last-layer port gate (started)
 
-- **Gate 2** — muted / solo / slot-mute continue internal playback; port emit last.
+Enabled slots keep running `playMidiEvents` / `playMidiEventsForSlot`. `isTrackAudible` and `slotMuted` feed `PlaybackPortEmit::portShouldEmit` into `Track::sendMidiEvent`. Cursor, merged stream, and `ActiveNoteLedger` still advance.
+
+Mute-edge silence is port-only: track mute sends CC 123; slot mute sends NoteOff for that slot's active ledger notes. Neither clears ledger or `pendingNotes`. Unmute does not dump a backlog.
+
+Native: `test_playback_port_emit`. Device: mute mid-note silences the port; unmute does not replay missed note-ons.
+
+## Gates 3–4 (not started)
+
 - **Gate 3** — zero candidates must not fall back to `gatherCommittedEvents` / `reconstructDisplayNotes`.
 - **Gate 4** — span lookup cost scales with candidate count, not loop size.
 

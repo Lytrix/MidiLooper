@@ -51,12 +51,19 @@ void TrackManager::setSlotEnabled(uint8_t trackIndex, uint8_t slotIndex, bool en
 
 void TrackManager::setSlotMuted(uint8_t trackIndex, uint8_t slotIndex, bool mutedValue) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  const bool becomingMuted = mutedValue && !slotMuted[trackIndex][slotIndex];
   slotMuted[trackIndex][slotIndex] = mutedValue;
+  if (becomingMuted) {
+    tracks[trackIndex].silencePlaybackPortForSlot(slotIndex);
+  }
 }
 
 void TrackManager::toggleSlotMuted(uint8_t trackIndex, uint8_t slotIndex) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
   slotMuted[trackIndex][slotIndex] = !slotMuted[trackIndex][slotIndex];
+  if (slotMuted[trackIndex][slotIndex]) {
+    tracks[trackIndex].silencePlaybackPortForSlot(slotIndex);
+  }
 }
 
 uint8_t TrackManager::countEnabledSlots(uint8_t trackIndex) const {
