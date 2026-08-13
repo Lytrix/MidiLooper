@@ -36,21 +36,6 @@ NOTE_EDIT_MEM bool currentStateRowIsUneditedExistingVisible(const NoteEditCurren
          baselineSpansEqual(row->committedSpan, row->currentSpan);
 }
 
-NOTE_EDIT_MEM bool displaySpanForNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId,
-                                        NoteBaseline& out) {
-  if (noteId == kInvalidNoteId) {
-    return false;
-  }
-  for (const NoteUtils::DisplayNote& dn : notes) {
-    if (dn.noteId != noteId || dn.endTick == dn.startTick) {
-      continue;
-    }
-    out = {dn.note, dn.velocity, dn.startTick, dn.endTick};
-    return true;
-  }
-  return false;
-}
-
 NOTE_EDIT_MEM bool rowAllowsCommittedDisplaySpanOverlay(const NoteEditCurrentNoteState* row) {
   return row == nullptr || currentStateRowIsUneditedExistingVisible(row);
 }
@@ -115,6 +100,21 @@ NOTE_EDIT_MEM void sortTargetInteractionGroups(
 }
 
 }  // namespace
+
+NOTE_EDIT_MEM bool displaySpanForNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId,
+                                        NoteBaseline& out) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& dn : notes) {
+    if (dn.noteId != noteId || dn.endTick == dn.startTick) {
+      continue;
+    }
+    out = {dn.note, dn.velocity, dn.startTick, dn.endTick};
+    return true;
+  }
+  return false;
+}
 
 NOTE_EDIT_MEM bool isSelectedNote(NoteId noteId, const EditorSelection& selection) {
   if (noteId == kInvalidNoteId) {
