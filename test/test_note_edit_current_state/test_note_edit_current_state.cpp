@@ -989,7 +989,50 @@ void test_commit_skips_unpainted_loop_end_length_192755() {
   paintedWrapCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 2280});
   const EditPassVec paintedCommitRows = buildCommitRowsFromCurrentState(
       focus, currentState, kChannel, kLoopLength, &paintedWrapCache);
-  TEST_ASSERT_TRUE(hasLoopEndLengthFor(paintedCommitRows, kWrapStubId));
+  TEST_ASSERT_FALSE(hasLoopEndLengthFor(paintedCommitRows, kWrapStubId));
+
+  NoteUtils::DisplayNoteVec loopEndCache;
+  loopEndCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, kLoopLength});
+  const EditPassVec loopEndCommitRows = buildCommitRowsFromCurrentState(
+      focus, currentState, kChannel, kLoopLength, &loopEndCache);
+  TEST_ASSERT_TRUE(hasLoopEndLengthFor(loopEndCommitRows, kWrapStubId));
+}
+
+void test_commit_skips_painted_wrap_stub_loop_end_length_201948() {
+  // session_20260813_201948 @30.127 / 39.397: note 14 live 2256–2304 is in visual cache
+  // with a non-zero wrap/short span, not painted end=2304. RC2 still emitted ChangeLength
+  // to loop end. RC3 skips unless the painted end is loopLength.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapStubId = 14;
+  constexpr NoteId kMoverId = 100;
+  constexpr uint8_t kPitch = 46;
+
+  const NoteBaseline kWrapBaseline{kPitch, 100, 2256, 2280};
+  const NoteBaseline kWrapLive{kPitch, 100, 2256, kLoopLength};
+  const NoteBaseline kMoverSpan{kPitch, 100, 432, 576};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 864, 1008};
+  focus.last = kMoverSpan;
+  focus.baselineMap[kWrapStubId] = kWrapBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapStubId, kWrapBaseline, kWrapLive, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, kMoverSpan, NoteEditPresenceType::Visible);
+
+  NoteUtils::DisplayNoteVec wrapPaintCache;
+  wrapPaintCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 96});
+  wrapPaintCache.push_back(NoteUtils::DisplayNote{kMoverId, kPitch, 100, 864, 1008});
+
+  const EditPassVec commitRows =
+      buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength, &wrapPaintCache);
+  for (const EditPass& row : commitRows) {
+    TEST_ASSERT_FALSE(row.targetNoteId == kWrapStubId && row.actionType == EditActionType::Update &&
+                      row.endTick == kLoopLength);
+  }
 }
 
 void test_deselect_clears_overlap_participation_without_geometry_restore_232118() {
@@ -2413,6 +2456,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
   RUN_TEST(test_commit_skips_overlap_length_while_visible_tail_active_225025);
   RUN_TEST(test_commit_skips_unpainted_loop_end_length_192755);
+  RUN_TEST(test_commit_skips_painted_wrap_stub_loop_end_length_201948);
   RUN_TEST(test_deselect_clears_overlap_participation_without_geometry_restore_232118);
   RUN_TEST(test_sync_committed_span_marks_visible_overlap_shorten_sealed);
   RUN_TEST(test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657);

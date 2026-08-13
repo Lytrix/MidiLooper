@@ -1,6 +1,6 @@
 # NOTE_EDIT overlap action drop and wrap-stub commit
 
-**Status:** Active — RC1 withdrawn; RC2 shipped (native); device gate open  
+**Status:** Active — RC1 withdrawn; RC2 native shipped (device FAIL); RC3 native shipped; device gate open  
 **Date:** 2026-08-13  
 **Kind:** bugfix  
 **Parent:** [`note_edit_visual_cache_display_unification_refinement.md`](note_edit_visual_cache_display_unification_refinement.md) (Stages 8–9 shipped; do not reopen evaluate/select rematerialize)  
@@ -104,18 +104,40 @@ If a later capture shows 16 **painted at full `855–1046`** during the 864 step
 
 **Change:** both builders skip Length/NoteRange when `live.endTick == loopLength` and `committedDisplayNotes` has no painted non-zero span for that `NoteId`. `commitAllPendingNoteEditActions` passes `visualCacheNotesForSelectedSlot`. Null `committedDisplayNotes` keeps prior emit (existing tests). Do not change `rowIncludedInSelectableInventory`. Do not call overdub consume.
 
-**Test:** `test_commit_skips_unpainted_loop_end_length_192755` — 14 live `2256–2304` with zero-length cache row emits no loop-end Length; painted 16 `855–911` still emits Length; painted 14 still emits.
+**Test:** `test_commit_skips_unpainted_loop_end_length_192755` — 14 live `2256–2304` with zero-length cache row emits no loop-end Length; painted 16 `855–911` still emits Length.
 
 **Not this RC:** RC1 action emit, open-time rematerialize, undo-warm.
 
 ---
 
-## Device gate (after RC2)
+## Device gate (after RC2) — FAIL
 
-Same post-undo 34-note loop as 192755:
+[`193838`](../../captures/session_20260813_193838.log) and [`201948`](../../captures/session_20260813_201948.log) still write `ChangeLength` 14 `2256–2304`. RC2 only skips when the cache has no non-zero span for 14. Device still emits, so 14 is in `visualCache.notes` with `endTick != startTick`. The RC2 fixture’s “painted 14 still emits” path is the device path.
 
-1. Select away from 111: no `ChangeLength targetNoteId=14 … end=2304`.
-2. 16 still Hide at 816, omit at 864 (stub &lt; 12), Shorten at 912. 96 Hide → Shorten → Restore still runs.
+`commitEditAction incoming` logs Length rows only. 201948 pre-commit still lists mover **100** NoteRange; that is not a dropped mover row in this owner.
+
+---
+
+## RC3 — Skip loop-end Length unless cache paints loop end ✅ shipped (native)
+
+**Owner:** `shouldSkipOverlapDiffToLoopEnd` in [`NoteEditFocusPreCommit.cpp`](../../src/EditManager/NoteEditFocusPreCommit.cpp).
+
+**Invariant:** an overlap participant with live end == `loopLength` must not emit `ChangeLength` / NoteRange to `loopLength` unless `visualCache.notes` paints that `NoteId` with `endTick == loopLength`. Null display list still emits.
+
+**Change:** replace “any non-zero painted span” with “painted end == `loopLength`”. Zero-length / missing / wrap / short painted ends skip. Painted `2256–2304` still emits.
+
+**Test:** `test_commit_skips_unpainted_loop_end_length_192755` — painted `2256–2280` no longer emits loop-end Length; painted `2256–2304` still does. `test_commit_skips_painted_wrap_stub_loop_end_length_201948` — wrap paint `2256–96` + live `2256–2304` emits no loop-end Length.
+
+**Not this RC:** note 5 cache pairing, mover pitch 11 after select-away, undo-warm.
+
+---
+
+## Device gate (after RC3)
+
+Same 34-note loop as 201948 / 193838:
+
+1. Select away after a move: no `ChangeLength targetNoteId=14 … end=2304`.
+2. 16 still Hide at 816, omit at 864 (stub &lt; 12), Shorten at 912. 96 / 76 Hide → Restore still run.
 
 Env: `teensy41-capture-serial`. Ask before upload.
 
@@ -143,4 +165,4 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 ### Proceed?
 
-RC2 native shipped. Device gate remains.
+RC3 native shipped. Device gate open.
