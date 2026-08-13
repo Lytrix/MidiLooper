@@ -166,7 +166,7 @@ struct Loop {
   bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
   const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
   /// Resolve incoming note against hold-candidate ids, then geometry + [S, E).
-  /// Wrap-head off (`endTick < startTick`) splits into `[S, loopLength)` and `[0, E)`.
+  /// Wrap-head off (`endTick < startTick`) consumes the tail `[S, loopLength)` only.
   /// Empty `overlapNoteIds` skips span lookup (Add only). Returns false when no source view.
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (wrap-crossing hold consume shipped)
+Last updated: 2026-08-13 (wrap consume tail only)
 
 ---
 
@@ -50,7 +50,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Note-off consumes overlapNoteIds (wired):** `accumulatePendingNoteChangesForIncomingNote` looks up the set in `overdubSourceViewNotes_` (`appendNotesForIds`) and applies geometry + `[S, E)`. Empty set skips lookup (Add only; Gate 3). Native: `test_pending_note_change`.
 
-**Wrap-crossing hold consume (shipped):** wrap-head offs run accumulate. Incoming `[S, E)` with `end < start` splits into `[S, loopLength)` and `[0, E)`. Unpaired start offs stay ignored. `finalizePendingNotes` still does not accumulate. Pre-listen later. Native: `test_pending_note_change` wrap-crossing cases.
+**Wrap-crossing hold consume (tail only):** wrap-head `[0, E)` is not a second incoming hold. Shorten/Hide run on `[S, loopLength)` only. [`170449`](../../captures/session_20260813_170449.log) `hide=14` was the head segment. Native: wrap tail Shorten + skipped head Hide.
 
 **Withdrawn-path cleanup (removed):** Option A slice tests, Option B windowed matrix, `gatherOverdubSourceView*InWindow`, and `gatherCommittedNoteEventsForPitch`. `maybeLogStoredNoteCount` kept.
 

@@ -142,7 +142,7 @@ Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not inc
 
 ## Note-off consumes overlapNoteIds (wired)
 
-`Loop::accumulatePendingNoteChangesForIncomingNote` takes `PendingNote.overlapNoteIds`. Empty set skips `appendNotesForIds` (Add only). Non-empty set copies matching notes from `overdubSourceViewNotes_` in one pass, then `accumulatePendingNoteChangesFromSourceNotes` applies geometry + `[S, E)` (`existingNoteOverlapsIncomingHold`, not `noteIntersectsWindow`) and writes Shorten/Hide. Wrap-head `endTick < startTick` splits into `[S, loopLength)` and `[0, E)`. Add is written once after those segments. The production overlap body lives in `LoopPendingNoteChange.cpp` — do not include `OverlapNoteIdObservation.h` there. Native: `test_pending_note_change` including wrap-crossing tail Shorten and head Hide.
+`Loop::accumulatePendingNoteChangesForIncomingNote` takes `PendingNote.overlapNoteIds`. Empty set skips `appendNotesForIds` (Add only). Non-empty set copies matching notes from `overdubSourceViewNotes_` in one pass, then `accumulatePendingNoteChangesFromSourceNotes` applies geometry + `[S, E)` (`existingNoteOverlapsIncomingHold`, not `noteIntersectsWindow`) and writes Shorten/Hide. Wrap-head `endTick < startTick` consumes `[S, loopLength)` only. Add is written once after that. The production overlap body lives in `LoopPendingNoteChange.cpp` — do not include `OverlapNoteIdObservation.h` there. Native: `test_pending_note_change` including wrap-crossing tail Shorten and skipped head Hide.
 
 ## Overlap-hold stop totals (wired)
 
@@ -194,9 +194,19 @@ Option A slice-cache tests, Option B windowed matrix, `gatherOverdubSourceView*I
 
 **Unpaired off at overdub start (already ignored).** Note 12 held during PLAYING, then `NoteOff … no matching NoteOn` @ 19.449s / 40.569s. Pre-listen stays later.
 
-**Wrap-crossing off in the same pass (shipped).** `recordMidiEvents` no longer skips accumulate when `newEvt.tick < prior.tick`. `accumulatePendingNoteChangesForIncomingNote` splits wrap-head `[S, E)` into `[S, loopLength)` and `[0, E)` so linear `analyzeEditSessionInteractions` can Shorten/Hide. Native: `test_pending_shorten_wrap_crossing_incoming_tail`, `test_pending_hide_wrap_crossing_incoming_head`.
+**Wrap-crossing off in the same pass (shipped, tail only).** `recordMidiEvents` no longer skips accumulate when `newEvt.tick < prior.tick`. `accumulatePendingNoteChangesForIncomingNote` consumes `[S, loopLength)` only. The head `[0, E)` is not a second incoming hold (that was `OverlapNoteOn` → Hide in [`170449`](../../captures/session_20260813_170449.log) `hide=14`). Native: `test_pending_shorten_wrap_crossing_incoming_tail`, `test_pending_wrap_crossing_incoming_skips_head_hide`.
 
 `finalizePendingNotes` at stop can still append a capture off without accumulate (`finalized=1 capture_offs=1 phase=88` on the third stop). That remains open.
+
+### HITL [`170449`](../../captures/session_20260813_170449.log) — wrap-head Hide
+
+After wrap-crossing consume: second stop `hide=14` / `shorten=1` / `add=17`; third `hide=7` / `shorten=2` / `add=12`. [`162856`](../../captures/session_20260813_162856.log) first stop (before this consume) was `hide=0` / `shorten=0`.
+
+The wrap split fed a head segment `[0, E)` into `analyzeEditSessionInteractions`. For causing `[0, E)`, any overlapping source with `start >= 0` that extends past `E` is `OverlapNoteOn` → Hide. Tail-only consume removes that head call.
+
+Last overdub start: `DISP` 75 → 62 (`50057812` / `50103430`). Prior overdub start in the same log: 72 → 50. [`162856`](../../captures/session_20260813_162856.log) already dropped 104 → 82 at an overdub start before wrap consume.
+
+This capture has no `NOTE_EDIT` session line. Select-fader on/off of overdub notes is not in the log. Hidden companion rows (`kOverdubCompanionEditPassIndex` 255) would be absent from `selectableDisplayNotesAtEditSelect`.
 
 ---
 

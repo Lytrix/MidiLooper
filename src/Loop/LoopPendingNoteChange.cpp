@@ -168,27 +168,14 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     return false;
   }
 
-  uint32_t firstStart = startTick;
-  uint32_t firstEnd = endTick;
-  uint32_t secondStart = 0;
-  uint32_t secondEnd = 0;
-  bool hasSecond = false;
+  uint32_t consumeStart = startTick;
+  uint32_t consumeEnd = endTick;
   if (endTick < startTick) {
-    firstStart = startTick;
-    firstEnd = loopLen;
-    if (endTick > 0) {
-      secondStart = 0;
-      secondEnd = endTick;
-      hasSecond = true;
-    }
-    if (firstStart >= firstEnd) {
-      if (!hasSecond) {
-        return false;
-      }
-      firstStart = secondStart;
-      firstEnd = secondEnd;
-      hasSecond = false;
-    }
+    consumeStart = startTick;
+    consumeEnd = loopLen;
+  }
+  if (consumeStart >= consumeEnd) {
+    return false;
   }
 
   ++overlapHoldTotals_.noteOffs;
@@ -221,12 +208,8 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   }
   const NoteId causingId =
       (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
-  accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, firstStart,
-                                              firstEnd, causingId);
-  if (hasSecond) {
-    accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, secondStart,
-                                                secondEnd, causingId);
-  }
+  accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, consumeStart,
+                                              consumeEnd, causingId);
 
   PendingNoteChange addChange{};
   addChange.kind = PendingNoteChangeKind::Add;
