@@ -273,7 +273,7 @@ Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_00
 
 Do not optimize Option B further. [`021304`](../../captures/session_20260813_021304.log) on a 68-bar / 3714-event loop: `begin_capture` 11 µs; first overdub `noterecon` **291775 µs**, `notechg` **292976 µs**, `notepair` 968 µs, `clockrate` 36. RC-K3 [`225803`](../../captures/session_20260812_225803.log): `begin_capture` 77–83 ms once; overdub `noterecon` 0, `notechg` ~1.09 ms, `clockrate` 47–48.
 
-Playback-observation candidate discovery is the long-term design. Active plan: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). Gate 0 native landed; Gate 1 fixtures landed with two product-rule pins. It is not production until Gates 0–4 pass. PLAYING idle prebuild was reverted (`73f0489`).
+Playback-observation candidate discovery is the long-term design. Active plan: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). Gate 0 native landed; Gate 1 uses half-open intersection; zero-length notes are invalid. It is not production until Gates 0–4 pass. PLAYING idle prebuild was reverted (`73f0489`).
 
 ---
 

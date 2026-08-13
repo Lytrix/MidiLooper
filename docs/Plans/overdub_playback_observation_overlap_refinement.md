@@ -1,6 +1,6 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gate 0 native landed; Gate 1 native fixtures landed, **not closed** (two product-rule pins)  
+**Status:** Active — Gate 0 native landed; Gate 1 uses half-open intersection; zero-length notes invalid  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Cursor source:** `~/.cursor/plans/restore_overdub_gather_28c7ca69.plan.md`  
@@ -50,33 +50,51 @@ Native: `test_overlap_note_id_observation` Gate 0 cases.
 
 ---
 
-## Gate 1 — bidirectional candidate equality (fixtures landed, not closed)
+### Zero-length note invariant
+
+Pin zero-length notes as **invalid**, not as a special overlap case.
+
+A valid sounding note must satisfy:
+
+```cpp
+startTick < endTick
+```
+
+`startTick == endTick` has no meaningful timing duration and must not participate in overdub overlap selection. Do **not** introduce a dedicated zero-length-note resolver.
+
+The overlap rule remains simple half-open interval intersection:
+
+```cpp
+existingStart < incomingEnd &&
+existingEnd > incomingStart
+```
+
+Therefore notes that only touch at an endpoint do not overlap.
+
+Wrap display (`endTick < startTick`) unwraps by `loopLength` so the same `startTick < endTick` test applies. That is linearization, not a second overlap rule. Incoming or existing spans that cross the loop apply the same inequality after a one-loop shift.
+
+During this migration, a defensive `startTick >= endTick` rejection may be kept in the overlap candidate path, but the preferred long-term ownership is to enforce the validity invariant at the note creation/commit boundary.
+
+`DisplayWindowUtils::noteIntersectsWindow` remains unrelated to this domain rule.
+
+---
+
+## Gate 1 — bidirectional candidate equality
 
 ```text
 ObservedCandidateIds == GeometrySelectedIds
 ```
 
-- **Observed:** snapshot already-sounding at S, plus note-ons with `S <= t < E`; never drop on off; never include `t == E`.
-- **Geometry:** same-pitch `DisplayNote.noteId`s selected by `noteIntersectsWindow(start, end, S, E-S, loopLen)`.
+- **Observed:** snapshot already-sounding at S, plus note-ons with `S <= t < E`; never drop on off; never include `t == E`. Zero-length notes rejected.
+- **Geometry:** same-pitch notes that pass `existingNoteOverlapsIncomingHold` (half-open intersection above). Not `noteIntersectsWindow`.
 
 Helper: `OverlapNoteIdObservation` (native / later Track collector). Not called from production overlap.
 
 ### Equality holds
 
-Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0; incoming ending after wrap.
+Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (observation uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded.
 
-### Pins (do not paper over)
-
-| ID | Case | Observed | Geometry (`noteIntersectsWindow`) |
-|----|------|----------|-----------------------------------|
-| **G1-end-touch** | Existing ends exactly at S (`[500,1000)` vs incoming `[1000,1800)`) | not a candidate | **is** a candidate (endTick is a probe) |
-| **G1-wrap-probe** | Wrap note `[L-40,20)` vs incoming `[L-30,L-5)` (25 ticks) | candidate (still sounding) | **miss** (16th-step probes skip the window; wrap on/off sit outside it) |
-
-These are product-rule disagreements, not collector bugs. Do **not** change `DisplayWindowUtils` to make Gate 1 green. Do **not** change observation to match the probe miss.
-
-**Pin before firmware:** overlap selection uses `[S,E)` sounding (observation) **or** stays on `noteIntersectsWindow` (including end-touch and 16th-probe holes). Gate 1 is closed only after that pin and bidirectional equality on the required fixtures.
-
-Required fixtures still owed after the pin: split-chunk on/off; prior Shorten/Hide companions; muted/solo (after Gate 2).
+Required fixtures still owed: split-chunk on/off; prior Shorten/Hide companions; muted/solo (after Gate 2). 021304 same-pitch count still open on Gate 0.
 
 ---
 
