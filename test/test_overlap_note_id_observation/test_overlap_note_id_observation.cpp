@@ -13,7 +13,6 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
-#include "../../src/Utils/DisplayWindowUtils.cpp"
 
 namespace {
 
@@ -187,14 +186,11 @@ void test_gate1_wrap_tail_to_head() {
 void test_gate1_incoming_in_tail_against_wrap() {
   NoteUtils::DisplayNoteVec notes;
   notes.push_back(makeNote(1, kLoopLen - 40, 20));
+  assertObservedEqualsGeometry(notes, kLoopLen - 30, kLoopLen - 5);
   OverlapNoteIdSet observed;
-  OverlapNoteIdSet geometry;
-  collectBoth(notes, kLoopLen - 30, kLoopLen - 5, observed, geometry);
+  OverlapNoteIdObservation::collectObservedOverlapNoteIds(notes, kPitch, kLoopLen - 30,
+                                                          kLoopLen - 5, kLoopLen, observed);
   TEST_ASSERT_TRUE(observed.contains(1));
-  // Pin G1-wrap-probe: noteIntersectsWindow steps by 16th and only also tests note start/end.
-  // Incoming [L-30, L-5) is 25 ticks; wrap on/off sit outside it, so geometry misses a
-  // still-sounding wrap note. Observation keeps it. Do not change DisplayWindowUtils here.
-  TEST_ASSERT_FALSE(geometry.contains(1));
 }
 
 void test_gate1_incoming_ending_after_wrap() {
@@ -208,13 +204,23 @@ void test_gate1_incoming_ending_after_wrap() {
 void test_gate1_ends_exactly_at_incoming_start() {
   NoteUtils::DisplayNoteVec notes;
   notes.push_back(makeNote(1, 500, 1000));
+  assertObservedEqualsGeometry(notes, 1000, 1800);
   OverlapNoteIdSet observed;
-  OverlapNoteIdSet geometry;
-  collectBoth(notes, 1000, 1800, observed, geometry);
+  OverlapNoteIdObservation::collectObservedOverlapNoteIds(notes, kPitch, 1000, 1800, kLoopLen,
+                                                          observed);
   TEST_ASSERT_FALSE(observed.contains(1));
-  // Pin G1-end-touch: noteIntersectsWindow treats endTick as a probe, so a note that ends
-  // exactly at S is a geometry candidate. Observation [S,E) sounding excludes it.
-  TEST_ASSERT_TRUE(geometry.contains(1));
+}
+
+void test_gate1_zero_length_note_excluded() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 1200, 1200));
+  notes.push_back(makeNote(2, 1100, 1400));
+  assertObservedEqualsGeometry(notes, 1000, 1800);
+  OverlapNoteIdSet observed;
+  OverlapNoteIdObservation::collectObservedOverlapNoteIds(notes, kPitch, 1000, 1800, kLoopLen,
+                                                          observed);
+  TEST_ASSERT_FALSE(observed.contains(1));
+  TEST_ASSERT_TRUE(observed.contains(2));
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -233,5 +239,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_gate1_incoming_in_tail_against_wrap);
   RUN_TEST(test_gate1_incoming_ending_after_wrap);
   RUN_TEST(test_gate1_ends_exactly_at_incoming_start);
+  RUN_TEST(test_gate1_zero_length_note_excluded);
   return UNITY_END();
 }
