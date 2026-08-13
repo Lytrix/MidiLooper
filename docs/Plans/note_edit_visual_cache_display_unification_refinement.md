@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT shared display representation
 
-**Status:** Active — Stages 1–2 shipped; Stages 3–4 not started  
+**Status:** Active — Stages 1–2 and 5 shipped; Stages 3–4 not started  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Parent:** [`Display.md`](../Authority/Architecture/Display.md), [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), DEC-029  
@@ -149,6 +149,22 @@ Commit each verified stage before the next.
 
 Env: `teensy41-capture-serial`. Ask before upload.
 
+[`174139`](../../captures/session_20260813_174139.log): Stage 2 paint is on device — LOOP_EDIT `DISP` 68/68; NOTE_EDIT open frame **75** (cache 68). Notes show. Select is Stage 5.
+
+### Stage 5 — Selectable inventory includes painted notes without a current-state row ✅ shipped
+
+**Owner:** `filterSelectableDisplayNotes` in [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp)
+
+**Evidence:** [`174139`](../../captures/session_20260813_174139.log) — paint 75; select only `note_idx=0` (tick 0) and `note_idx=1` (tick 192). Ticks 48, 96, 144, 240, 288, 336 are `empty_step`.
+
+**Invariant:** a painted committed note with no current-state row stays in selectable inventory. Explicit Hidden / Deleted and the existing shortened-tail mask still exclude.
+
+**Change:** drop from inventory only when `hasRow(noteId)` and `!rowIncludedInSelectableInventory(...)`. Do not treat `find == nullptr` as excluded. Do not change `rowIncludedInSelectableInventory` itself (that API answers “does this row qualify”; a missing row is not a qualifying row).
+
+**Not this stage:** paint 75→69 on focus (174139 / 171219 23→17). Stage 3 audit. `visualCache` as overlap source.
+
+**Test:** `test_selectable_inventory_keeps_painted_note_without_current_state_row` — wrap A + linear B + Hidden C; selectable has A and B, not C. Hidden / C9 fixtures stay PASS.
+
 ---
 
 ## Pre-implementation review
@@ -172,7 +188,7 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 ### Open before coding
 
-1. After Stage 2, re-measure select-fader 23→17. If it remains, new RC — do not fold into Stage 1–3.
+1. After Stage 5 device retest, re-measure paint 75→69 on focus (174139). New RC if it remains — do not fold into Stage 5.
 2. `rg materializedLoopEventsForNoteEditFocus` before shrinking that helper; focus rebuild still reads it.
 
 ### Proceed?
@@ -197,5 +213,6 @@ YES for Stage 1 after this plan is accepted. Stages 2–3 follow only when Stage
 | [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) | 1 |
 | [`test_note_edit_current_state.cpp`](../../test/test_note_edit_current_state/test_note_edit_current_state.cpp) | 1 |
 | [`NoteEditDisplayProjection.cpp`](../../src/EditManager/NoteEditDisplayProjection.cpp) | 2 |
+| [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) `filterSelectableDisplayNotes` | 5 |
 | [`DisplayNoteResolve.cpp`](../../src/DisplayManager/DisplayNoteResolve.cpp) | 3 (only if the branch still reconstructs) |
 | This plan + CURRENT_WORK | each commit |

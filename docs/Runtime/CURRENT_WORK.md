@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (NOTE_EDIT display Stage 2)
+Last updated: 2026-08-13 (NOTE_EDIT display Stage 5)
 
 ---
 
@@ -52,7 +52,7 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 
 **Wrap-crossing hold consume (tail only):** wrap-head `[0, E)` is not a second incoming hold. Shorten/Hide run on `[S, loopLength)` only. [`170449`](../../captures/session_20260813_170449.log) `hide=14` was the head segment. Native: wrap tail Shorten + skipped head Hide.
 
-**NOTE_EDIT / LOOP_EDIT display split (Stage 2 shipped):** [`171219`](../../captures/session_20260813_171219.log). `ensureNoteEditDisplayProjectionCachesBuilt` uses `getVisualNotesForSlot` as committed base. Plan: [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Next: Stage 3 `resolveDisplayNotes` audit, then Stage 4 device. Do not use `visualCache` as the overdub overlap source.
+**NOTE_EDIT / LOOP_EDIT display split (Stage 5 shipped):** [`174139`](../../captures/session_20260813_174139.log) paint 75; select only ticks 0 and 192. `filterSelectableDisplayNotes` keeps painted notes with no current-state row. Plan: [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device retest next. Do not use `visualCache` as the overdub overlap source.
 
 **Withdrawn-path cleanup (removed):** Option A slice tests, Option B windowed matrix, `gatherOverdubSourceView*InWindow`, and `gatherCommittedNoteEventsForPitch`. `maybeLogStoredNoteCount` kept.
 

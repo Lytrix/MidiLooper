@@ -384,7 +384,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
   NoteUtils::DisplayNoteVec filtered;
   filtered.reserve(projected.size());
   for (const NoteUtils::DisplayNote& dn : projected) {
-    if (dn.noteId != kInvalidNoteId &&
+    // Missing row is not excluded — keep the painted committed note (174139 / Stage 5).
+    if (dn.noteId != kInvalidNoteId && currentState->hasRow(dn.noteId) &&
         !currentState->rowIncludedInSelectableInventory(dn.noteId, focus, selectedNoteIdx)) {
       continue;
     }
