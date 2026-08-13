@@ -55,10 +55,33 @@ void test_nonempty_candidates_copy_matching_notes_only() {
   TEST_ASSERT_EQUAL_UINT32(3, out[1].noteId);
 }
 
+void test_lookup_examines_through_last_match_not_candidates_times_loop() {
+  constexpr size_t kNoteCount = 3714;
+  NoteUtils::DisplayNoteVec source;
+  source.reserve(kNoteCount);
+  for (size_t i = 0; i < kNoteCount; ++i) {
+    const NoteId id = static_cast<NoteId>(i + 1);
+    const uint32_t start = static_cast<uint32_t>(i) * 8u;
+    source.push_back(makeNote(id, start, start + 4u));
+  }
+  OverlapNoteIdSet ids;
+  TEST_ASSERT_TRUE(ids.insert(10));
+  TEST_ASSERT_TRUE(ids.insert(20));
+  TEST_ASSERT_TRUE(ids.insert(30));
+  NoteUtils::DisplayNoteVec out;
+  size_t examined = 0;
+  OverlapCandidateLookup::appendNotesForIds(source, ids, out, &examined);
+  TEST_ASSERT_EQUAL_UINT32(3, static_cast<uint32_t>(out.size()));
+  TEST_ASSERT_EQUAL_UINT32(30, static_cast<uint32_t>(examined));
+  TEST_ASSERT_TRUE(examined < kNoteCount);
+  TEST_ASSERT_TRUE(examined < kNoteCount * ids.size());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_empty_candidates_do_not_lookup_spans);
   RUN_TEST(test_empty_candidates_append_no_notes);
   RUN_TEST(test_nonempty_candidates_copy_matching_notes_only);
+  RUN_TEST(test_lookup_examines_through_last_match_not_candidates_times_loop);
   return UNITY_END();
 }
