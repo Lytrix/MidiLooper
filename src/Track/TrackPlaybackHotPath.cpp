@@ -206,6 +206,9 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   } else if (evt.isNoteOn()) {
     runtime.ledger.noteOn(evtCopy.channel, evtCopy.data.noteData.note, evt.tick,
                           evtCopy.data.noteData.velocity);
+    if (trackState == TRACK_OVERDUBBING) {
+      collectOverlapHoldPlaybackNoteOn(evt.noteId, evt.data.noteData.note);
+    }
   }
 
   // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.
@@ -225,7 +228,7 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   ignorePlaybackMidiInput = false;  // Reset playback state
 }
 
-void Track::silenceTrackMidiOutput() {
+TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceTrackMidiOutput() {
   if ((midiChannel >= MidiConfig::LED_CHANNEL_MIN &&
        midiChannel <= MidiConfig::LED_CHANNEL_MAX) ||
       (midiChannel >= MidiConfig::RECORD_EXCLUDE_MIN &&
@@ -235,7 +238,7 @@ void Track::silenceTrackMidiOutput() {
   midiHandler.sendControlChange(midiChannel, 123, 0);
 }
 
-void Track::silenceSlotMidiOutput(uint8_t slotIndex) {
+TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceSlotMidiOutput(uint8_t slotIndex) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
@@ -245,7 +248,7 @@ void Track::silenceSlotMidiOutput(uint8_t slotIndex) {
       });
 }
 
-void Track::sendAllNotesOff() {
+TRACK_COLD_MEM __attribute__((noinline)) void Track::sendAllNotesOff() {
   // Control Change 123 = All Notes Off. Skip controller-only channels so we do
   // not clear DROID LEDs/buttons/faders when transport stops.
   for (uint8_t ch = 1; ch <= 16; ++ch) {

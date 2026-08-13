@@ -31,6 +31,60 @@ static void logCaptureAppendDeny(const Loop& loop, const CaptureAppendResult& re
 
 const uint32_t Track::TICKS_PER_BAR = Config::TICKS_PER_BAR;
 
+TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidates(
+    PendingNote& pending) {
+  if (!isOverdubbing()) {
+    return;
+  }
+  Loop& loop = getActiveLoop();
+  if (!loop.hasOverdubSourceView()) {
+    return;
+  }
+  const uint32_t loopLength = loop.overdubSourceViewLoopLengthTicks();
+  if (loopLength == 0) {
+    return;
+  }
+  // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart. Keep the
+  // walk in this FLASHMEM function — do not call the observation header (ITCM).
+  const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.note != pending.note || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    uint32_t linearStart = IntervalProjection::tickPhaseInLoop(note.startTick, 0, loopLength);
+    uint32_t linearEnd = IntervalProjection::tickPhaseInLoop(note.endTick, 0, loopLength);
+    if (linearEnd == linearStart) {
+      continue;
+    }
+    if (linearEnd < linearStart) {
+      linearEnd += loopLength;
+    }
+    if (linearStart >= linearEnd) {
+      continue;
+    }
+    const bool direct = linearStart < holdStart && holdStart < linearEnd;
+    const bool shifted =
+        linearStart < holdStart + loopLength && holdStart + loopLength < linearEnd;
+    if (direct || shifted) {
+      (void)pending.overlapNoteIds.insert(note.noteId);
+    }
+  }
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackNoteOn(
+    NoteId noteId, uint8_t pitch) {
+  if (noteId == kInvalidNoteId || pendingNotes.empty()) {
+    return;
+  }
+  for (auto& entry : pendingNotes) {
+    PendingNote& pending = entry.second;
+    if (pitch != pending.note) {
+      continue;
+    }
+    (void)pending.overlapNoteIds.insert(noteId);
+  }
+}
+
 void Track::startRecording(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   recordCaptureBaselineGeometry_ = {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
@@ -331,7 +385,9 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     // Store pending note for later duration fix
-    pendingNotes[{note, channel}] = PendingNote{note, channel, tick, velocity};
+    PendingNote pending{note, channel, tick, velocity};
+    snapshotOverlapHoldCandidates(pending);
+    pendingNotes[{note, channel}] = pending;
 
     recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
   }

@@ -23,6 +23,7 @@
 #include "Slot.h"
 #include "LoopPool.h"
 #include "Globals.h"
+#include "OverlapNoteIdSet.h"
 
 class TrackUndo; // Forward declaration
 
@@ -32,6 +33,7 @@ struct PendingNote {
   uint8_t channel;         // MIDI channel
   uint32_t startNoteTick;  // tick when note-on occurred
   uint8_t velocity;        // note-on velocity
+  OverlapNoteIdSet overlapNoteIds;  // hold-duration candidates; keep after playback off
 };
 
 // Hash function for pair (used in unordered_map)
@@ -342,6 +344,8 @@ private:
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
   bool playbackEmitMidiOutput_ = false;
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
+  void snapshotOverlapHoldCandidates(PendingNote& pending);
+  void collectOverlapHoldPlaybackNoteOn(NoteId noteId, uint8_t pitch);
 
   // Track data
   bool muted;

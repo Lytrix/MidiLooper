@@ -273,7 +273,7 @@ Device gate: grown-loop overdub vs [`003009`](../../captures/session_20260813_00
 
 Do not optimize Option B further. [`021304`](../../captures/session_20260813_021304.log) on a 68-bar / 3714-event loop: `begin_capture` 11 µs; first overdub `noterecon` **291775 µs**, `notechg` **292976 µs**, `notepair` 968 µs, `clockrate` 36. RC-K3 [`225803`](../../captures/session_20260812_225803.log): `begin_capture` 77–83 ms once; overdub `noterecon` 0, `notechg` ~1.09 ms, `clockrate` 47–48.
 
-Long-term candidate collection is playback-driven; selection stays normalized geometry + `[S, E)`. Active plan: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic, not a production source of truth. Native Gates 0–4 landed; `PendingNote.overlapNoteIds` is still unwired. PLAYING idle prebuild was reverted (`73f0489`).
+Long-term candidate collection is playback-driven; selection stays normalized geometry + `[S, E)`. Active plan: [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md). `OverlapNoteIdObservation` is test/diagnostic, not a production source of truth. Native Gates 0–4 landed; `PendingNote.overlapNoteIds` collection is wired; note-off still RC-K3. PLAYING idle prebuild was reverted (`73f0489`).
 
 ---
 
