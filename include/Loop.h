@@ -27,6 +27,7 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "CaptureAppendResult.h"
+#include "OverlapNoteIdSet.h"
 #include "PassReclaim.h"
 #include "PendingNoteChange.h"
 #include "Utils/LoopStopFinalize.h"
@@ -161,11 +162,12 @@ struct Loop {
   void clearPendingNoteChanges();
   bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
   const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
-  /// Resolve incoming note against overdubSourceView; append/update pending delta.
-  /// Returns false when no source view is established.
+  /// Resolve incoming note against hold-candidate ids, then geometry + [S, E).
+  /// Empty `overlapNoteIds` skips span lookup (Add only). Returns false when no source view.
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
-                                                   NoteId incomingNoteId = kInvalidNoteId);
+                                                   NoteId incomingNoteId,
+                                                   const OverlapNoteIdSet& overlapNoteIds);
   /// Pair incoming note against an explicit source-note list (full reconstruct or windowed query).
   void accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
                                                    uint8_t channel, uint8_t pitch, uint8_t velocity,

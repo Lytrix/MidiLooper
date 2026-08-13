@@ -1,6 +1,6 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gates 0–4 native landed; hold-candidate collection wired; note-off still RC-K3  
+**Status:** Active — Gates 0–4 native landed; collection wired; note-off consumes overlapNoteIds  
 **Branch:** `feature/overdub-playback-observation-overlap`  
 **Date:** 2026-08-13  
 **Kind:** refinement  
@@ -9,7 +9,7 @@
 **Trigger:** [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)  
 **Scheduling:** R1A / G1 in [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
 
-Native Gates 0–4 landed. `PendingNote.overlapNoteIds` collects hold-duration candidates (snapshot already-sounding at S + playback note-ons). Note-off still reads the full RC-K3 `overdubSourceViewNotes_`. Option B stays withdrawn. PLAYING idle prebuild was reverted (`73f0489`).
+Native Gates 0–4 landed. `PendingNote.overlapNoteIds` collects hold-duration candidates (snapshot already-sounding at S + playback note-ons). Note-off looks up those ids in `overdubSourceViewNotes_` via `appendNotesForIds`, then applies geometry + `[S, E)`. Empty set is Add only (Gate 3). Option B stays withdrawn. PLAYING idle prebuild was reverted (`73f0489`).
 
 ---
 
@@ -36,7 +36,7 @@ Do not treat observed membership, `collectObservedOverlapNoteIds`, or a later pl
 ```
 
 - `ActiveNoteLedger` = current MIDI voice (one slot per output channel + pitch; clears on off). Not the candidate store.
-- `PendingNote.overlapNoteIds` = candidate ids collected during the incoming hold (set; keep after playback off). Collection is wired. Note-off does not consume the set yet. Selection still applies geometry + `[S, E)` on the full source view.
+- `PendingNote.overlapNoteIds` = candidate ids collected during the incoming hold (set; keep after playback off). Collection is wired. Note-off consumes the set: `appendNotesForIds` on `overdubSourceViewNotes_`, then geometry + `[S, E)`. Empty set skips lookup.
 - Committed storage = authoritative geometry.
 
 ---
@@ -126,19 +126,23 @@ Native (`test_playback_midi_output`): cursor advances while MIDI send is suppres
 
 If candidate discovery produces zero `NoteId`s, do **not** call `gatherCommittedEvents` / `reconstructDisplayNotes` on note-off. A miss is a failed selection, not a quiet reconstruct.
 
-`OverlapCandidateLookup::shouldLookupSpans` is false for an empty set. `appendNotesForIds` copies from an already-available `DisplayNote` list only. Production note-off still uses RC-K3 `overdubSourceViewNotes_`; it does not fall back to gather when there is no overlap. Native: `test_overlap_candidate_lookup` and `test_pending_note_change` (`fullMaterializeCount == 0` after reset, including companion edit rows).
+`OverlapCandidateLookup::shouldLookupSpans` is false for an empty set. `appendNotesForIds` copies from an already-available `DisplayNote` list only. Production note-off consumes `PendingNote.overlapNoteIds`; empty set is Add only and does not fall back to the full source view or gather. Native: `test_overlap_candidate_lookup` and `test_pending_note_change` (`fullMaterializeCount == 0` after reset, including companion edit rows and empty-id overlap).
 
 ## Gate 4 — lookup cost is one pass, not candidates × loop (native landed)
 
 Do **not** flatten the loop and call `findLinearNoteSpanForNoteId` per id (that helper walks the event vector twice per note). Do **not** build a NoteId index yet.
 
-`appendNotesForIds` walks the already-available `DisplayNote` list once and stops when every candidate is found. On a 3714-note list with ids 10/20/30 it examines 30 notes, not 3714×3. Production overlap still uses RC-K3. Native: `test_lookup_examines_through_last_match_not_candidates_times_loop`.
+`appendNotesForIds` walks the already-available `DisplayNote` list once and stops when every candidate is found. On a 3714-note list with ids 10/20/30 it examines 30 notes, not 3714×3. Production note-off uses this on `overdubSourceViewNotes_`. Native: `test_lookup_examines_through_last_match_not_candidates_times_loop`.
 
-## Hold-candidate collection (wired; note-off not consuming yet)
+## Hold-candidate collection (wired)
 
-`Track::noteOn` snapshots same-pitch notes already sounding at S from `overdubSourceViewNotes_` into `PendingNote.overlapNoteIds`. `Track::sendMidiEvent` inserts committed playback note-on `NoteId`s of the same pitch while the hold is open. Playback offs do not erase. Empty set still means no lookup (Gate 3) when note-off starts consuming the set. Native: `test_overlap_hold_candidates`.
+`Track::noteOn` snapshots same-pitch notes already sounding at S from `overdubSourceViewNotes_` into `PendingNote.overlapNoteIds`. `Track::sendMidiEvent` inserts committed playback note-on `NoteId`s of the same pitch while the hold is open. Playback offs do not erase. Native: `test_overlap_hold_candidates`.
 
-Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block (`teensy41-capture-serial` RAM1 `code:425868` padding:116 free:7936).
+Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block. After note-off consume, `teensy41-capture-serial` RAM1 is `code:424956` padding:1028 free:7936.
+
+## Note-off consumes overlapNoteIds (wired)
+
+`Loop::accumulatePendingNoteChangesForIncomingNote` takes `PendingNote.overlapNoteIds`. Empty set skips `appendNotesForIds` (Add only). Non-empty set copies matching notes from `overdubSourceViewNotes_` in one pass, then `accumulatePendingNoteChangesFromSourceNotes` applies geometry + `[S, E)` (`existingNoteOverlapsIncomingHold`, not `noteIntersectsWindow`) and writes Add/Shorten/Hide. The production overlap body lives in `LoopPendingNoteChange.cpp` — do not include `OverlapNoteIdObservation.h` there. Native: `test_pending_note_change` including `test_empty_overlap_ids_add_only_when_source_overlaps`.
 
 ---
 

@@ -6,8 +6,10 @@
 #include "EditSessionAction.h"
 #include "EditSessionInteraction.h"
 #include "Globals.h"
+#include "OverlapCandidateLookup.h"
 #include "ResolveConstrainedGeometry.h"
-#include "Utils/DisplayWindowUtils.h"
+#include "Utils/IntervalProjection.h"
+#include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
@@ -21,6 +23,48 @@ inline uint32_t micros() { return 0; }
 #endif
 
 namespace {
+
+bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
+                        uint32_t& linearStart, uint32_t& linearEnd) {
+  if (loopLength == 0) {
+    return false;
+  }
+  linearStart = IntervalProjection::tickPhaseInLoop(startTick, 0, loopLength);
+  linearEnd = IntervalProjection::tickPhaseInLoop(endTick, 0, loopLength);
+  if (linearEnd == linearStart) {
+    return false;
+  }
+  if (linearEnd < linearStart) {
+    linearEnd += loopLength;
+  }
+  return linearStart < linearEnd;
+}
+
+/// Same rule as OverlapNoteIdObservation::existingNoteOverlapsIncomingHold.
+/// Body stays in this TU — do not include the observation header (ITCM).
+bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingEnd,
+                                      uint32_t incomingStart, uint32_t incomingEnd,
+                                      uint32_t loopLength) {
+  uint32_t existingLinearStart = 0;
+  uint32_t existingLinearEnd = 0;
+  uint32_t incomingLinearStart = 0;
+  uint32_t incomingLinearEnd = 0;
+  if (!linearSoundingSpan(existingStart, existingEnd, loopLength, existingLinearStart,
+                          existingLinearEnd)) {
+    return false;
+  }
+  if (!linearSoundingSpan(incomingStart, incomingEnd, loopLength, incomingLinearStart,
+                          incomingLinearEnd)) {
+    return false;
+  }
+  const bool direct =
+      existingLinearStart < incomingLinearEnd && existingLinearEnd > incomingLinearStart;
+  const bool existingShifted = existingLinearStart + loopLength < incomingLinearEnd &&
+                               existingLinearEnd + loopLength > incomingLinearStart;
+  const bool incomingShifted = existingLinearStart < incomingLinearEnd + loopLength &&
+                               existingLinearEnd > incomingLinearStart + loopLength;
+  return direct || existingShifted || incomingShifted;
+}
 
 void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChange& change) {
   if (change.kind != PendingNoteChangeKind::Shorten && change.kind != PendingNoteChangeKind::Hide) {
@@ -40,7 +84,8 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
 
 }  // namespace
 
-void Loop::accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
+LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
+    const NoteUtils::DisplayNoteVec& sourceNotes,
                                                        uint8_t channel, uint8_t pitch,
                                                        uint8_t velocity, uint32_t startTick,
                                                        uint32_t endTick, NoteId incomingNoteId) {
@@ -58,7 +103,6 @@ void Loop::accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayN
 
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0 ? overdubSourceViewLoopLengthTicks_
                                                                  : loopLengthTicks;
-  const uint32_t windowLength = (endTick > startTick) ? (endTick - startTick) : 1u;
 
   BaselineMap baseline;
   EditedGeometry edited{};
@@ -73,8 +117,8 @@ void Loop::accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayN
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
       continue;
     }
-    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, startTick,
-                                                  windowLength, loopLen)) {
+    if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, startTick, endTick,
+                                          loopLen)) {
       continue;
     }
     pairs.push_back(CausingTargetPair{causingId, note.noteId});
@@ -123,17 +167,21 @@ void Loop::accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayN
   pendingNoteChanges_.push_back(addChange);
 }
 
-bool Loop::accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch,
-                                                       uint8_t velocity, uint32_t startTick,
-                                                       uint32_t endTick, NoteId incomingNoteId) {
+LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
+    uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t startTick, uint32_t endTick,
+    NoteId incomingNoteId, const OverlapNoteIdSet& overlapNoteIds) {
   if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
     return false;
   }
   if (endTick < startTick) {
     return false;
   }
-  accumulatePendingNoteChangesFromSourceNotes(overdubSourceViewNotes_, channel, pitch, velocity,
-                                              startTick, endTick, incomingNoteId);
+  NoteUtils::DisplayNoteVec selected;
+  if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
+    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected);
+  }
+  accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, startTick,
+                                              endTick, incomingNoteId);
   return true;
 }
 
