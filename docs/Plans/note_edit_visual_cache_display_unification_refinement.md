@@ -5,7 +5,8 @@
 **Kind:** refinement  
 **Parent:** [`Display.md`](../Authority/Architecture/Display.md), [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), DEC-029  
 **Trigger:** [`session_20260813_171219.log`](../../captures/session_20260813_171219.log) — LOOP_EDIT `DFRAME` / `visualCache` **68**; NOTE_EDIT `DISP` frame **23**; cache stays 68; notes return on LOOP_EDIT  
-**Overlap consume (separate owner):** [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md)
+**Overlap consume (separate owner):** [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md)  
+**Sibling (192755 commit):** [`note_edit_overlap_action_drop_and_wrap_stub_bugfix.md`](note_edit_overlap_action_drop_and_wrap_stub_bugfix.md) — RC1 withdrawn; RC2 wrap-stub Length. Do not reopen Stages 8–9.
 
 Align NOTE_EDIT paint with the Loop display representation already used by LOOP_EDIT. No new store. No new domain noun.
 

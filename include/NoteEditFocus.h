@@ -176,12 +176,14 @@ bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
                                      const MidiEventVec* sessionStoreEvents = nullptr,
                                      uint32_t loopLength = 0,
-                                     const NoteEditCurrentState* currentState = nullptr);
+                                     const NoteEditCurrentState* currentState = nullptr,
+                                     const NoteUtils::DisplayNoteVec* committedDisplayNotes = nullptr);
 
 /// Macro commit rows from current state compared to committed baseline (`baselineMap`).
 EditPassVec buildCommitRowsFromCurrentState(const NoteEditFocus& focus,
                                             const NoteEditCurrentState& currentState,
-                                            uint8_t channel, uint32_t loopLength);
+                                            uint8_t channel, uint32_t loopLength,
+                                            const NoteUtils::DisplayNoteVec* committedDisplayNotes = nullptr);
 
 /// NoteIds whose geometry is read from the live session store during NOTE_EDIT display projection.
 /// When \p currentState is non-empty, overlap participants come from current state (C4 display).
