@@ -157,6 +157,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::deleteSelectedNote(Track& track,
     if (currentState.empty()) {
         currentState =
             NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(), channel);
+        ensureCurrentStateVisibleRowsFromVisualCache(track);
     }
     const NoteEditCurrentNoteState* row = currentState.find(deleteTargetNoteId);
     if (row != nullptr && currentStateRowLifecycleIsAdded(*row)) {

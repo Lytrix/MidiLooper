@@ -31,6 +31,15 @@ NOTE_EDIT_MEM bool baselineSpansEqual(const NoteBaseline& left, const NoteBaseli
          left.startTick == right.startTick && left.endTick == right.endTick;
 }
 
+NOTE_EDIT_MEM bool currentStateRowIsUneditedExistingVisible(const NoteEditCurrentNoteState* row) {
+  return row != nullptr && row->presence == NoteEditPresenceType::Visible &&
+         baselineSpansEqual(row->committedSpan, row->currentSpan);
+}
+
+NOTE_EDIT_MEM bool rowAllowsCommittedDisplaySpanOverlay(const NoteEditCurrentNoteState* row) {
+  return row == nullptr || currentStateRowIsUneditedExistingVisible(row);
+}
+
 NOTE_EDIT_MEM bool causingTargetPairBefore(const CausingTargetPair& left,
                                            const CausingTargetPair& right) {
   if (left.causingNoteId != right.causingNoteId) {
@@ -91,6 +100,21 @@ NOTE_EDIT_MEM void sortTargetInteractionGroups(
 }
 
 }  // namespace
+
+NOTE_EDIT_MEM bool displaySpanForNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId,
+                                        NoteBaseline& out) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& dn : notes) {
+    if (dn.noteId != noteId || dn.endTick == dn.startTick) {
+      continue;
+    }
+    out = {dn.note, dn.velocity, dn.startTick, dn.endTick};
+    return true;
+  }
+  return false;
+}
 
 NOTE_EDIT_MEM bool isSelectedNote(NoteId noteId, const EditorSelection& selection) {
   if (noteId == kInvalidNoteId) {
@@ -205,11 +229,32 @@ NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
   return projected;
 }
 
+NOTE_EDIT_MEM void overlayUneditedBaselineMapFromDisplayNotes(
+    NoteEditFocus& focus, const NoteEditCurrentState* currentState,
+    const NoteUtils::DisplayNoteVec& committedDisplayNotes) {
+  if (!focus.active) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& dn : committedDisplayNotes) {
+    if (dn.noteId == kInvalidNoteId || dn.endTick == dn.startTick) {
+      continue;
+    }
+    const NoteEditCurrentNoteState* row =
+        currentState != nullptr ? currentState->find(dn.noteId) : nullptr;
+    if (!rowAllowsCommittedDisplaySpanOverlay(row)) {
+      continue;
+    }
+    focus.baselineMap[dn.noteId] = {dn.note, dn.velocity, dn.startTick, dn.endTick};
+  }
+}
+
 NOTE_EDIT_MEM void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& focus,
                                                               const NoteIdList& evaluationScope,
                                                               const MidiEventVec& liveStore,
                                                               uint8_t channel,
-                                                              const NoteEditCurrentState* currentState) {
+                                                              const NoteEditCurrentState* currentState,
+                                                              const NoteUtils::DisplayNoteVec*
+                                                                  committedDisplayNotes) {
   if (!focus.active) {
     return;
   }
@@ -221,6 +266,13 @@ NOTE_EDIT_MEM void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& foc
       return;
     }
     NoteBaseline span{};
+    const NoteEditCurrentNoteState* row =
+        currentState != nullptr ? currentState->find(noteId) : nullptr;
+    if (committedDisplayNotes != nullptr && rowAllowsCommittedDisplaySpanOverlay(row) &&
+        displaySpanForNoteId(*committedDisplayNotes, noteId, span)) {
+      focus.baselineMap[noteId] = span;
+      return;
+    }
     if (currentState != nullptr && currentState->readCurrentSpan(noteId, span)) {
       focus.baselineMap[noteId] = span;
       return;
@@ -314,7 +366,7 @@ NOTE_EDIT_MEM InteractionType classifyEditSessionInteraction(uint32_t causingSta
 NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
     const BaselineMap& storageBaseline, NoteId movingNoteId, const MidiEventVec& liveStore,
     uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState,
-    const NoteBaseline* causingSpan) {
+    const NoteBaseline* causingSpan, const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   BaselineMap analysis = storageBaseline;
   for (const auto& [noteId, baseline] : storageBaseline) {
     if (noteId == kInvalidNoteId || noteId == movingNoteId) {
@@ -323,6 +375,11 @@ NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
     if (currentState != nullptr) {
       NoteBaseline current{};
       if (!currentState->readCurrentSpan(noteId, current)) {
+        NoteBaseline displaySpan{};
+        if (committedDisplayNotes != nullptr &&
+            displaySpanForNoteId(*committedDisplayNotes, noteId, displaySpan)) {
+          analysis[noteId] = displaySpan;
+        }
         continue;
       }
       const NoteEditCurrentNoteState* row = currentState->find(noteId);
@@ -332,14 +389,32 @@ NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
             causingSpan != nullptr &&
             participatingNoteOverlapClosureActive(participant, *causingSpan)) {
           // Active overlap closure: classify hide/shorten against committed geometry, not stub.
-          analysis[noteId] = row->committedSpan;
+          NoteBaseline displayCommitted{};
+          if (committedDisplayNotes != nullptr && currentStateRowIsUneditedExistingVisible(row) &&
+              displaySpanForNoteId(*committedDisplayNotes, noteId, displayCommitted)) {
+            analysis[noteId] = displayCommitted;
+          } else {
+            analysis[noteId] = row->committedSpan;
+          }
           continue;
         }
+      }
+      NoteBaseline displaySpan{};
+      if (rowAllowsCommittedDisplaySpanOverlay(row) && committedDisplayNotes != nullptr &&
+          displaySpanForNoteId(*committedDisplayNotes, noteId, displaySpan)) {
+        analysis[noteId] = displaySpan;
+        continue;
       }
       if (current.startTick != baseline.startTick || current.endTick != baseline.endTick ||
           current.pitch != baseline.pitch) {
         analysis[noteId] = current;
       }
+      continue;
+    }
+    NoteBaseline displaySpan{};
+    if (committedDisplayNotes != nullptr &&
+        displaySpanForNoteId(*committedDisplayNotes, noteId, displaySpan)) {
+      analysis[noteId] = displaySpan;
       continue;
     }
     NoteBaseline live{};

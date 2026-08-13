@@ -45,7 +45,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     }
     const NoteEditFocus& focus = editSession.focus;
     Loop& loop = const_cast<Loop&>(trackManager.getSelectedLoop(track));
+    const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     const uint32_t playbackRevision = loop.playbackRevision;
+    const uint32_t visualRevision = loop.visualCache.revision;
     const uint32_t previewRevision = sessionPreviewRevision_;
     const uint32_t displayFingerprint =
         noteEditDisplayCacheFingerprint(focus, &editSession.noteEditCurrentState);
@@ -53,20 +55,21 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         displayFingerprint == noteEditSelectableDisplayCacheFingerprint_ &&
         loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
         playbackRevision == noteEditSelectableDisplayCachePlaybackRevision_ &&
+        visualRevision == noteEditSelectableDisplayCacheVisualRevision_ &&
         selectedNoteIdx == noteEditSelectableDisplayCacheSelectedNoteIdx_ &&
         !noteEditPaintDisplayCacheNotes_.empty()) {
         return;
     }
 
-    NoteUtils::DisplayNoteVec committedBase = NoteUtils::reconstructDisplayNotes(
-        const_cast<EditManager*>(this)->materializedLoopEventsForNoteEditFocus(
-            const_cast<Track&>(track)),
-        loopLength, false);
+    // Shared committed display list with LOOP_EDIT (171219 / Stage 2). Do not rematerialize
+    // reconstruct. getVisualNotesForSlot ensures the cache only when STOPPED and short-loop.
+    const NoteUtils::DisplayNoteVec& committedBase = track.getVisualNotesForSlot(slot);
 
     noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
     noteEditSelectableDisplayCacheLoopLength_ = loopLength;
     noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
+    noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
     noteEditPaintDisplayCacheNotes_ =
         projectNoteEditDisplayNotes(committedBase, track.editAwareMidiEvents(), focus,
@@ -85,6 +88,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     noteEditSelectableDisplayCacheLoopLength_ = 0;
     noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
+    noteEditSelectableDisplayCacheVisualRevision_ = UINT32_MAX;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     noteEditPaintDisplayCacheNotes_.clear();
     noteEditSelectableDisplayCacheNotes_.clear();
@@ -101,6 +105,20 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCaches() {
     noteEditFocusMaterializeLoopLength_ = 0;
     noteEditFocusMaterializedLoopEvents_.clear();
     invalidateProjectedNoteEditDisplayCache();
+}
+
+EDIT_MANAGER_IMPL_MEM const NoteUtils::DisplayNoteVec& EditManager::visualCacheNotesForSelectedSlot(
+    const Track& track) const {
+    const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
+    return track.getVisualNotesForSlot(slot);
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::ensureCurrentStateVisibleRowsFromVisualCache(Track& track) {
+    if (!editSession.active) {
+        return;
+    }
+    editSession.noteEditCurrentState.ensureVisibleRowsForDisplayNotes(
+        visualCacheNotesForSelectedSlot(track));
 }
 
 EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsForNoteEditFocus(

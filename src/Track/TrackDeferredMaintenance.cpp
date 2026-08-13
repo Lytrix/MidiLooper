@@ -3,6 +3,8 @@
 
 #include "TrackInternal.h"
 
+#include <Arduino.h>
+
 #include "Globals.h"
 #include "Logger.h"
 #include "LoopEventStore.h"
@@ -49,50 +51,174 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     }
 }
 
-void Track::emitStoredMidiVerification() const {
+namespace {
+
+// Wrap-pair verification is quadratic, so it only runs on loops small enough to afford it.
+constexpr size_t kMaxWrapPairVerifyEvents = 512;
+constexpr size_t kMaxDisplayNoteVerifyLines = 32;
+
+#if defined(SESSION_CAPTURE)
+// One stored-MIDI verification dump per boot — enough for a single HITL/evidence capture, then
+// off so manual overdub retests are not blocked by merge+SEVT cost on every stop. Reboot to re-arm.
+bool sStoredMidiVerificationArmed = true;
+
+void logStoredMidiVerificationArmState(bool armed) {
+  Serial.printf("#CAP,DIAG,stored_verify,armed,%u\n", armed ? 1u : 0u);
+}
+#endif
+
+enum StoredVerificationPhase : uint8_t {
+  kStoredVerificationNotes = 0,
+  kStoredVerificationWrapPairs = 1,
+  kStoredVerificationDisplayNotes = 2,
+};
+
+}  // namespace
+
+// Idle total-notes / max_same_pitch inventory from a clean visual cache.
+TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeLogStoredNoteCount() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  Loop& loop = getActiveLoop();
+  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.visualCache.notes.empty()) {
+    return;
+  }
+  const uint8_t slot = getActiveLoopIndex();
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  const uint8_t slotBit = static_cast<uint8_t>(1u << slot);
+  if ((storedNoteCountLoggedMask_ & slotBit) != 0) {
+    return;
+  }
+  // Count in this FLASHMEM function. Do not call the header template — that
+  // instantiation lands in ITCM and crosses a 32 KB RAM1 block.
+  uint32_t notes = 0;
+  uint32_t uniqueNoteIds = 0;
+  uint32_t maxSamePitch = 0;
+  uint16_t pitchCount[128] = {};
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.noteId == kInvalidNoteId || note.startTick == note.endTick) {
+      continue;
+    }
+    ++notes;
+    ++uniqueNoteIds;
+    if (note.note < 128) {
+      ++pitchCount[note.note];
+      if (pitchCount[note.note] > maxSamePitch) {
+        maxSamePitch = pitchCount[note.note];
+      }
+    }
+  }
+  SC_STORED_NOTES(resolveTrackIndexForPersistence(*this), slot, notes, uniqueNoteIds, maxSamePitch);
+  storedNoteCountLoggedMask_ |= slotBit;
+#endif
+}
+
+TRACK_COLD_MEM void Track::resetDeferredStoredMidiVerification() {
+  deferredStoredVerificationPending = false;
+  deferredStoredVerificationPhase = kStoredVerificationNotes;
+  deferredStoredVerificationCursor = 0;
+  deferredStoredVerificationEvents.clear();
+}
+
+TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
+#if !defined(SESSION_CAPTURE)
+  // Every emission in the drain compiles out without SESSION_CAPTURE; queueing would only buy a
+  // flatten, a wrap-pair scan and a reconstruct that produce nothing.
+  return;
+#else
+  resetDeferredStoredMidiVerification();
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
+    return;
+  }
+  if (!sStoredMidiVerificationArmed) {
+    return;
+  }
+  deferredStoredVerificationPending = true;
+  sStoredMidiVerificationArmed = false;
+  logStoredMidiVerificationArmState(false);
+#endif
+}
+
+TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEventsPerSlice) {
+#if !defined(SESSION_CAPTURE)
+  (void)maxEventsPerSlice;
+  return;
+#else
+  if (!deferredStoredVerificationPending) {
+    return;
+  }
+
+  const Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
+    resetDeferredStoredMidiVerification();
     return;
   }
 
   const uint32_t heapBeforeMerge = MemoryMonitor::getInternalHeapFreeBytes();
   if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(heapBeforeMerge)) {
+    resetDeferredStoredMidiVerification();
     return;
   }
 
-  SessionMidiEventVec flat;
-  loop.mergeActiveCapturePasses(flat);
-  for (const MidiEvent& evt : flat) {
-    if (evt.isNoteOn()) {
-      SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
-    } else if (evt.isNoteOff()) {
-      SC_STORED_NOTE_EVENT('F', evt.tick, evt.channel, evt.data.noteData.note);
+  // Flatten once, on the first idle slice — never on the stop path.
+  if (deferredStoredVerificationEvents.empty() && deferredStoredVerificationCursor == 0 &&
+      deferredStoredVerificationPhase == kStoredVerificationNotes) {
+    loop.mergeActiveCapturePasses(deferredStoredVerificationEvents);
+    if (deferredStoredVerificationEvents.empty()) {
+      resetDeferredStoredMidiVerification();
+      return;
     }
   }
 
-  constexpr size_t kMaxWrapPairVerifyEvents = 512;
-  if (flat.size() > kMaxWrapPairVerifyEvents) {
-    return;
-  }
+  const SessionMidiEventVec& flat = deferredStoredVerificationEvents;
 
-  for (size_t i = 0; i < flat.size(); ++i) {
-    const MidiEvent& on = flat[i];
-    if (!on.isNoteOn()) {
-      continue;
-    }
-    for (const MidiEvent& off : flat) {
-      if (!off.isNoteOff() || off.channel != on.channel ||
-          off.data.noteData.note != on.data.noteData.note) {
+  if (deferredStoredVerificationPhase == kStoredVerificationNotes) {
+    size_t emitted = 0;
+    while (deferredStoredVerificationCursor < flat.size() && emitted < maxEventsPerSlice) {
+      const MidiEvent& evt = flat[deferredStoredVerificationCursor++];
+      if (evt.isNoteOn()) {
+        SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
+      } else if (evt.isNoteOff()) {
+        SC_STORED_NOTE_EVENT('F', evt.tick, evt.channel, evt.data.noteData.note);
+      } else {
         continue;
       }
-      if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
-        SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
-        break;
-      }
+      ++emitted;
     }
+    if (deferredStoredVerificationCursor < flat.size()) {
+      return;
+    }
+    deferredStoredVerificationPhase = kStoredVerificationWrapPairs;
+    return;
   }
 
-#if defined(SESSION_CAPTURE)
+  if (deferredStoredVerificationPhase == kStoredVerificationWrapPairs) {
+    if (flat.size() <= kMaxWrapPairVerifyEvents) {
+      for (size_t i = 0; i < flat.size(); ++i) {
+        const MidiEvent& on = flat[i];
+        if (!on.isNoteOn()) {
+          continue;
+        }
+        for (const MidiEvent& off : flat) {
+          if (!off.isNoteOff() || off.channel != on.channel ||
+              off.data.noteData.note != on.data.noteData.note) {
+            continue;
+          }
+          if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
+            SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
+            break;
+          }
+        }
+      }
+    }
+    deferredStoredVerificationPhase = kStoredVerificationDisplayNotes;
+    return;
+  }
+
   const auto reconstructed = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
   size_t reconLogged = 0;
   for (const NoteUtils::DisplayNote& note : reconstructed) {
@@ -108,22 +234,27 @@ void Track::emitStoredMidiVerification() const {
     }
     SC_DNTE(note.note, note.startTick, displayStart, length, static_cast<int>(reconLogged));
     ++reconLogged;
-    if (reconLogged >= 32) {
+    if (reconLogged >= kMaxDisplayNoteVerifyLines) {
       break;
     }
   }
-#endif
+  resetDeferredStoredMidiVerification();
+#endif  // SESSION_CAPTURE
 }
 
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
-  // REVT: emit only when transport is not PLAYING (58d6c08 reference); ring-queue holds
-  // note-ons until flush when idle. Skip during STOPPED_RECORDING stop tail.
+  // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
+  // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
+  // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     size_t revtSlice = 64;
+    size_t verificationSlice = 64;
     if (StorageManager::hasDeferredSaveWork()) {
       revtSlice = 8;
+      verificationSlice = 16;
     }
     processDeferredRecordRevts(revtSlice);
+    processDeferredStoredMidiVerification(verificationSlice);
   }
 
   const bool deferredDerivedViewMaintenance =
@@ -135,16 +266,43 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
       }
-      uint32_t priorityBar = 0;
+      uint32_t playheadBar = 0;
       if (loop.lastTickInLoop != UINT32_MAX) {
-        priorityBar = visualBarForTick(loop.lastTickInLoop, Config::TICKS_PER_BAR);
+        playheadBar = visualBarForTick(loop.lastTickInLoop, Config::TICKS_PER_BAR);
       }
-      // PLAYING: only backfill near the playhead/paint window so idle reconstruct does not
+      const uint32_t totalBars =
+          (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+      // One slice per maintenance: alternate playhead vs loop-tail priority so tail fills
+      // over time without doubling gather cost in one main-loop iteration (122003 MIDI lag).
+      static bool sPrioritizeLoopTailVisualCache = false;
+      uint32_t priorityBar = playheadBar;
+      if (totalBars > 0 && sPrioritizeLoopTailVisualCache) {
+        priorityBar = totalBars - 1;
+      }
+      sPrioritizeLoopTailVisualCache = !sPrioritizeLoopTailVisualCache;
+      // PLAYING/OVERDUB: backfill near the playhead/paint window so idle reconstruct does not
       // race the OLED path across a full long loop (session_20260811_030614).
       constexpr uint32_t kPlayingVisualCacheNeighborhoodBars =
           DisplayWindowUtils::kMaxDetailedWindowBars + 4u;
-      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar,
-                                       kPlayingVisualCacheNeighborhoodBars);
+      uint32_t maxBarDistanceFromPriority = kPlayingVisualCacheNeighborhoodBars;
+      // Partial adopt (RC-E): some bars clean and some dirty — the neighborhood cap leaves a
+      // dead zone on long loops (bars 36–62 on an 84-bar loop). Allow any dirty bar while mixed.
+      if (loop.visualCache.dirtyBars.size() == totalBars && totalBars > 0) {
+        bool sawCleanBar = false;
+        bool sawDirtyBar = false;
+        for (uint8_t flag : loop.visualCache.dirtyBars) {
+          if (flag != 0) {
+            sawDirtyBar = true;
+          } else {
+            sawCleanBar = true;
+          }
+          if (sawCleanBar && sawDirtyBar) {
+            maxBarDistanceFromPriority = UINT32_MAX;
+            break;
+          }
+        }
+      }
+      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar, maxBarDistanceFromPriority);
     }
   }
 
@@ -170,6 +328,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
           loop.ensureVisualCacheBuilt();
         }
       }
+      maybeLogStoredNoteCount();
     }
   }
 

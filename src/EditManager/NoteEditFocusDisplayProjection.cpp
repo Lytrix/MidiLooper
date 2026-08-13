@@ -127,9 +127,29 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
   return false;
 }
 
+bool currentStateRowMatchesCommittedDisplayNote(
+    const NoteEditCurrentNoteState& row, const NoteUtils::DisplayNoteVec& committedBaseNotes) {
+  // visual-cache rows can lack NoteId (161117). Span match still means the row is in the
+  // committed base — rematerialize-only extras have a different end (175621 id 63).
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.note == row.committedSpan.pitch && dn.startTick == row.committedSpan.startTick &&
+        dn.endTick == row.committedSpan.endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool currentStateRowAllowedAsPaintExtra(const NoteEditCurrentNoteState& row,
+                                        const NoteUtils::DisplayNoteVec& committedBaseNotes) {
+  return currentStateRowLifecycleIsAdded(row) ||
+         currentStateRowMatchesCommittedDisplayNote(row, committedBaseNotes);
+}
+
 bool nonVisibleParticipantSuppressedFromProjection(const NoteEditCurrentState& currentState,
                                                    NoteId noteId) {
-  return noteId != kInvalidNoteId && !currentState.rowIsVisible(noteId);
+  // Missing row is not Hidden — keep the committed display note (171219 / Stage 1).
+  return noteId != kInvalidNoteId && currentState.isRowHiddenOrDeleted(noteId);
 }
 
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
@@ -220,6 +240,10 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       if (noteId == kInvalidNoteId || !currentState->rowIsVisible(noteId)) {
         continue;
       }
+      const bool inCommittedBase = committedIds.find(noteId) != committedIds.end();
+      if (!inCommittedBase && !currentStateRowAllowedAsPaintExtra(row, committedBaseNotes)) {
+        continue;
+      }
       if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
         participants.push_back(noteId);
       }
@@ -230,6 +254,12 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       continue;
     }
     if (committedIds.find(evt.noteId) != committedIds.end()) {
+      continue;
+    }
+    const NoteEditCurrentNoteState* storeRow =
+        currentState != nullptr ? currentState->find(evt.noteId) : nullptr;
+    if (storeRow == nullptr ||
+        !currentStateRowAllowedAsPaintExtra(*storeRow, committedBaseNotes)) {
       continue;
     }
     if (focus.baselineMap.find(evt.noteId) != focus.baselineMap.end()) {
@@ -354,6 +384,15 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       continue;
     }
 
+    if (committedIds.find(noteId) == committedIds.end()) {
+      const NoteEditCurrentNoteState* extraRow =
+          currentState != nullptr ? currentState->find(noteId) : nullptr;
+      if (extraRow == nullptr ||
+          !currentStateRowAllowedAsPaintExtra(*extraRow, committedBaseNotes)) {
+        continue;
+      }
+    }
+
     result.push_back(participantDn);
     indexById[noteId] = result.size() - 1;
     needsSort = true;
@@ -383,7 +422,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
   NoteUtils::DisplayNoteVec filtered;
   filtered.reserve(projected.size());
   for (const NoteUtils::DisplayNote& dn : projected) {
-    if (dn.noteId != kInvalidNoteId &&
+    // Missing row is not excluded — keep the painted committed note (174139 / Stage 5).
+    if (dn.noteId != kInvalidNoteId && currentState->hasRow(dn.noteId) &&
         !currentState->rowIncludedInSelectableInventory(dn.noteId, focus, selectedNoteIdx)) {
       continue;
     }

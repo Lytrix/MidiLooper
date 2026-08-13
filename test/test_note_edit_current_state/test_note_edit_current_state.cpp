@@ -197,6 +197,334 @@ void test_display_projection_same_pitch_reorder_uses_current_span() {
   TEST_ASSERT_EQUAL_UINT32(3504u, projected[1].startTick);
 }
 
+void test_display_projection_keeps_committed_note_without_current_state_row() {
+  // 171219 / Stage 1: buildFromSessionStore skips wrap (end < start) so that NoteId has
+  // no current-state row. Paint must keep the committed-base note. Explicit Hidden still
+  // omits — see test_display_projection_inactive_focus_masks_hidden_overlaps.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kLinearId = 41;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchLinear = 62;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kLinearId, {kPitchLinear, 100, 192, 383}, {kPitchLinear, 100, 192, 383},
+                         NoteEditPresenceType::Visible);
+  TEST_ASSERT_NULL(currentState.find(kWrapId));
+  TEST_ASSERT_FALSE(currentState.isRowHiddenOrDeleted(kWrapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitchWrap, 100, 2208, 96});
+  committedBase.push_back({kLinearId, kPitchLinear, 100, 192, 383});
+
+  NoteEditFocus focus;
+  focus.active = false;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  bool hasWrap = false;
+  bool hasLinear = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kWrapId) {
+      TEST_ASSERT_EQUAL_UINT32(2208u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(96u, dn.endTick);
+      hasWrap = true;
+    }
+    if (dn.noteId == kLinearId) {
+      hasLinear = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasWrap);
+  TEST_ASSERT_TRUE(hasLinear);
+}
+
+void test_current_state_upserts_visible_row_from_display_note_without_store_pair() {
+  // 174635 / Stage 6: select painted noteId=78 (presence=-1). Coarse fader computed
+  // 384→336 but NoteGeometryResolver emitted no Move — readEditableCurrentSpan and
+  // rowProjectsToStore both failed. Ensure a Visible row from the committed display
+  // note so the driver and causing-note action path can run. Hidden stays Hidden.
+  // Zero-length display (174635 noteId=14, DNTE length 0) is skipped.
+  constexpr NoteId kCacheOnlyId = 78;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kHiddenId = 42;
+  constexpr NoteId kZeroLengthId = 14;
+  constexpr uint8_t kPitchCacheOnly = 23;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchHidden = 64;
+  constexpr uint8_t kPitchZero = 71;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenId, {kPitchHidden, 100, 384, 575}, {kPitchHidden, 100, 384, 575},
+                         NoteEditPresenceType::Hidden);
+  TEST_ASSERT_NULL(currentState.find(kCacheOnlyId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kCacheOnlyId));
+
+  NoteUtils::DisplayNoteVec displayNotes;
+  displayNotes.push_back({kCacheOnlyId, kPitchCacheOnly, 100, 384, 528});
+  displayNotes.push_back({kWrapId, kPitchWrap, 100, 2208, 96});
+  displayNotes.push_back({kHiddenId, kPitchHidden, 100, 384, 575});
+  displayNotes.push_back({kZeroLengthId, kPitchZero, 100, 0, 0});
+
+  currentState.ensureVisibleRowsForDisplayNotes(displayNotes);
+
+  TEST_ASSERT_NOT_NULL(currentState.find(kCacheOnlyId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kCacheOnlyId));
+  TEST_ASSERT_TRUE(currentState.rowIsVisible(kCacheOnlyId));
+  NoteBaseline cacheOnly{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kCacheOnlyId, cacheOnly));
+  TEST_ASSERT_EQUAL_UINT8(kPitchCacheOnly, cacheOnly.pitch);
+  TEST_ASSERT_EQUAL_UINT32(384u, cacheOnly.startTick);
+  TEST_ASSERT_EQUAL_UINT32(528u, cacheOnly.endTick);
+
+  TEST_ASSERT_NOT_NULL(currentState.find(kWrapId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kWrapId));
+  NoteBaseline wrap{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT32(2208u, wrap.startTick);
+  TEST_ASSERT_EQUAL_UINT32(96u, wrap.endTick);
+
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kHiddenId));
+  TEST_ASSERT_FALSE(currentState.rowProjectsToStore(kHiddenId));
+  TEST_ASSERT_NULL(currentState.find(kZeroLengthId));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kCacheOnlyId;
+  focus.last = cacheOnly;
+  EditorSelection selection;
+  selection.primaryNote = kCacheOnlyId;
+  TEST_ASSERT_TRUE(isLiveEditDriverValidFromCurrentState(selection, focus, currentState));
+}
+
+void test_ensure_aligns_unedited_visible_row_to_display_span() {
+  // 175621 / Stage 7: buildFromSessionStore paired noteId 45 at 1344 to end 2064
+  // (DNTE length 720). Visual cache length is 240. Unedited Visible rows must take
+  // the display span. This-session geometry and Hidden stay.
+  constexpr NoteId kPairedId = 45;
+  constexpr NoteId kEditedId = 87;
+  constexpr NoteId kHiddenId = 42;
+  constexpr uint8_t kPitch = 12;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kPairedId, {kPitch, 100, 1344, 2064}, {kPitch, 100, 1344, 2064},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kEditedId, {kPitch, 100, 1440, 1680}, {kPitch, 100, 1392, 1632},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHiddenId, {kPitch, 100, 384, 575}, {kPitch, 100, 384, 575},
+                         NoteEditPresenceType::Hidden);
+
+  NoteUtils::DisplayNoteVec displayNotes;
+  displayNotes.push_back({kPairedId, kPitch, 100, 1344, 1584});
+  displayNotes.push_back({kEditedId, kPitch, 100, 1440, 1680});
+  displayNotes.push_back({kHiddenId, kPitch, 100, 384, 575});
+
+  currentState.ensureVisibleRowsForDisplayNotes(displayNotes);
+
+  NoteBaseline aligned{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kPairedId, aligned));
+  TEST_ASSERT_EQUAL_UINT32(1344u, aligned.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1584u, aligned.endTick);
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kEditedId, aligned));
+  TEST_ASSERT_EQUAL_UINT32(1392u, aligned.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1632u, aligned.endTick);
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kHiddenId));
+}
+
+void test_display_projection_omits_rematerialize_only_visible_row() {
+  // 175621 / Stage 7: open DISP 74 vs cache 68. Rematerialize-only Visible rows
+  // (ids 25 and 63 both at 1344) must not paint. This-session Added still paints.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCacheId = 87;
+  constexpr NoteId kRematerializeOnlyId = 63;
+  constexpr NoteId kAddedId = 200;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kCacheId, {kPitch, 100, 1344, 1584}, {kPitch, 100, 1344, 1584},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kRematerializeOnlyId, {kPitch, 100, 1344, 2064},
+                         {kPitch, 100, 1344, 2064}, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kAddedId, {60, 100, 0, 48}, {60, 100, 0, 48},
+                         NoteEditPresenceType::Added);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kCacheId, kPitch, 100, 1344, 1584});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kCacheId;
+  focus.last = {kPitch, 100, 1344, 1584};
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  bool hasCache = false;
+  bool hasRematerializeOnly = false;
+  bool hasAdded = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kCacheId) {
+      TEST_ASSERT_EQUAL_UINT32(1344u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1584u, dn.endTick);
+      hasCache = true;
+    }
+    if (dn.noteId == kRematerializeOnlyId) {
+      hasRematerializeOnly = true;
+    }
+    if (dn.noteId == kAddedId) {
+      hasAdded = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasCache);
+  TEST_ASSERT_FALSE(hasRematerializeOnly);
+  TEST_ASSERT_TRUE(hasAdded);
+}
+
+void test_display_projection_binds_visible_row_to_invalid_id_committed_note() {
+  // 161117 / Stage 7: visual-cache note without NoteId is still the committed
+  // base. A Visible row with the same span paints under its session NoteId.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kRestoredId = 40;
+  constexpr NoteId kMoverId = 23;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kRestoredId, {30, 100, 0, 3071}, {30, 100, 0, 3071},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, {29, 100, 1296, 1487}, {29, 100, 1296, 1487},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kInvalidNoteId, 30, 100, 0, 3071});
+  committedBase.push_back({kMoverId, 29, 100, 1296, 1487});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {29, 100, 1296, 1487};
+  focus.baselineMap[kRestoredId] = {30, 100, 0, 3071};
+  focus.baselineMap[kMoverId] = focus.last;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  bool foundRestored = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kRestoredId) {
+      TEST_ASSERT_EQUAL_UINT8(30, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(0u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(3071u, dn.endTick);
+      foundRestored = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundRestored);
+}
+
+void test_selectable_inventory_keeps_painted_note_without_current_state_row() {
+  // 174139 / Stage 5: Stage 1 keeps wrap notes on paint; select used
+  // rowIncludedInSelectableInventory which is false when find == nullptr, so the
+  // fader reported empty_step on painted notes. Inventory must keep those notes.
+  // Hidden still omits — see test_display_projection_inactive_focus_masks_hidden_overlaps.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kLinearId = 41;
+  constexpr NoteId kHiddenId = 42;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchLinear = 62;
+  constexpr uint8_t kPitchHidden = 64;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kLinearId, {kPitchLinear, 100, 192, 383}, {kPitchLinear, 100, 192, 383},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHiddenId, {kPitchHidden, 100, 384, 575}, {kPitchHidden, 100, 384, 575},
+                         NoteEditPresenceType::Hidden);
+  TEST_ASSERT_NULL(currentState.find(kWrapId));
+  TEST_ASSERT_FALSE(currentState.rowIncludedInSelectableInventory(kWrapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitchWrap, 100, 2208, 96});
+  committedBase.push_back({kLinearId, kPitchLinear, 100, 192, 383});
+  committedBase.push_back({kHiddenId, kPitchHidden, 100, 384, 575});
+
+  NoteEditFocus focus;
+  focus.active = false;
+
+  const NoteUtils::DisplayNoteVec paint =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  const NoteUtils::DisplayNoteVec selectable =
+      filterSelectableDisplayNotes(paint, &currentState, focus, -1);
+
+  bool selectableHasWrap = false;
+  bool selectableHasLinear = false;
+  for (const NoteUtils::DisplayNote& dn : selectable) {
+    if (dn.noteId == kWrapId) {
+      selectableHasWrap = true;
+    }
+    if (dn.noteId == kLinearId) {
+      selectableHasLinear = true;
+    }
+    TEST_ASSERT_NOT_EQUAL(kHiddenId, dn.noteId);
+  }
+  TEST_ASSERT_TRUE(selectableHasWrap);
+  TEST_ASSERT_TRUE(selectableHasLinear);
+}
+
+void test_display_projection_paint_matches_committed_base_when_current_state_is_subset() {
+  // 171219 / Stage 2: visualCache is the committed base (host stand-in list). Current state
+  // holds only linear-span rows; paint count must equal the committed-base count. Device
+  // wiring is ensureNoteEditDisplayProjectionCachesBuilt → getVisualNotesForSlot.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kLinearA = 2;
+  constexpr NoteId kLinearB = 3;
+  constexpr NoteId kLinearC = 4;
+  constexpr NoteId kWrapIds[] = {10, 11, 12, 13, 14};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kLinearA, {kPitch, 100, 0, 191}, {kPitch, 100, 0, 191},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kLinearB, {kPitch, 100, 192, 383}, {kPitch, 100, 192, 383},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kLinearC, {kPitch, 100, 384, 575}, {kPitch, 100, 384, 575},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kLinearA, kPitch, 100, 0, 191});
+  committedBase.push_back({kLinearB, kPitch, 100, 192, 383});
+  committedBase.push_back({kLinearC, kPitch, 100, 384, 575});
+  uint32_t wrapStart = 1728;
+  for (NoteId wrapId : kWrapIds) {
+    committedBase.push_back({wrapId, kPitch, 100, wrapStart, 96});
+    wrapStart += 96;
+  }
+
+  NoteEditFocus focus;
+  focus.active = false;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(static_cast<int>(committedBase.size()), static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL(8, static_cast<int>(projected.size()));
+}
+
 void test_display_projection_inactive_focus_masks_hidden_overlaps() {
   // RC10b / session_20260807_140022: empty-step deselect clears focus.active but overlaps stay
   // Hidden in current state — display must not paint committed-pass ghost rows.
@@ -553,15 +881,18 @@ void test_commit_rows_from_current_state_overlap_shorten() {
   TEST_ASSERT_TRUE(foundOverlapMove);
 }
 
-void test_commit_skips_overlap_length_while_visible_tail_active_225025() {
-  // session_20260807_225025 @26.3s: macro commit must not seal overlap-elongated same-start tail.
+void test_commit_seals_overlap_length_while_mover_covers_committed_span_225025() {
+  // session_20260807_225025: note 9 is 534 ticks (DNTE 2544 len 534 @15.404), mover 13 parks at
+  // 2832–2879 inside it (@21.545), commit writes Length 2544–2831 (@26.291) and reselect reads
+  // len 287 (@36.927). The sealed length was correct — slice B read the mover's 47 as note 9's.
+  // A parked mover always still covers what it shortened, so closure must not block the seal.
   constexpr uint32_t kLoopLength = 5376;
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 13;
   constexpr uint8_t kPitch = 88;
 
   const NoteBaseline kCommitted{kPitch, 100, 2544, 3078};
-  const NoteBaseline kBridgeTail{kPitch, 100, 2544, 2831};
+  const NoteBaseline kShortened{kPitch, 100, 2544, 2831};
   const NoteBaseline kMoverSpan{kPitch, 100, 2832, 2879};
 
   NoteEditFocus focus;
@@ -574,14 +905,199 @@ void test_commit_skips_overlap_length_while_visible_tail_active_225025() {
 
   NoteEditCurrentState state;
   state.upsertRow(kMoverId, kCommitted, kMoverSpan, NoteEditPresenceType::Visible);
-  state.upsertRow(kOverlapId, kCommitted, kBridgeTail, NoteEditPresenceType::Visible);
+  state.upsertRow(kOverlapId, kCommitted, kShortened, NoteEditPresenceType::Visible);
 
   const EditPassVec rows = buildCommitRowsFromCurrentState(focus, state, kChannel, kLoopLength);
+  bool foundShortenLength = false;
   for (const EditPass& row : rows) {
-    TEST_ASSERT_FALSE(row.targetNoteId == kOverlapId &&
-                      row.actionType == EditActionType::Update &&
-                      (row.propertyType == EditPropertyType::Length ||
-                       row.propertyType == EditPropertyType::NoteRange));
+    if (row.targetNoteId == kOverlapId && row.actionType == EditActionType::Update &&
+        row.propertyType == EditPropertyType::Length) {
+      TEST_ASSERT_EQUAL_UINT32(kShortened.startTick, row.startTick);
+      TEST_ASSERT_EQUAL_UINT32(kShortened.endTick, row.endTick);
+      foundShortenLength = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundShortenLength);
+}
+
+void test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700() {
+  // session_20260813_204700 @165.462: note 24 reaches pitch 46 at 1248 inside note 10 (960–1727),
+  // geometry emits ShortenNote 10 → 960–1247. The deselect commit @166.809 carried only the mover
+  // Pitch row (parity mismatch canonical=1 apply_owned=2) and the Length row landed one commit
+  // later @166.848 against note 14's focus. Both builders must seal it at the deselect commit.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kMoverId = 24;
+  constexpr uint8_t kPitch = 46;
+
+  const NoteBaseline kCommitted{kPitch, 100, 960, 1727};
+  const NoteBaseline kShortened{kPitch, 100, 960, 1247};
+  const NoteBaseline kMoverSpan{kPitch, 100, 1248, 1343};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = kMoverSpan;
+  focus.last = kMoverSpan;
+  focus.baselineMap[kOverlapId] = kCommitted;
+  focus.baselineMap[kMoverId] = kMoverSpan;
+
+  NoteEditCurrentState state;
+  state.upsertRow(kMoverId, kMoverSpan, kMoverSpan, NoteEditPresenceType::Visible);
+  state.upsertRow(kOverlapId, kCommitted, kShortened, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  store.push_back(noteOn(kOverlapId, kPitch, kShortened.startTick));
+  store.push_back(noteOff(kOverlapId, kPitch, kShortened.endTick));
+  store.push_back(noteOn(kMoverId, kPitch, kMoverSpan.startTick));
+  store.push_back(noteOff(kMoverId, kPitch, kMoverSpan.endTick));
+
+  NoteUtils::DisplayNoteVec cache;
+  cache.push_back(NoteUtils::DisplayNote{kOverlapId, kPitch, 100, kShortened.startTick,
+                                         kShortened.endTick});
+  cache.push_back(NoteUtils::DisplayNote{kMoverId, kPitch, 100, kMoverSpan.startTick,
+                                         kMoverSpan.endTick});
+
+  auto shortenLengthEnd = [](const EditPassVec& rows) {
+    uint32_t end = 0;
+    for (const EditPass& row : rows) {
+      if (row.targetNoteId == kOverlapId && row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length) {
+        end = row.endTick;
+      }
+    }
+    return end;
+  };
+
+  const EditPassVec commitRows =
+      buildCommitRowsFromCurrentState(focus, state, kChannel, kLoopLength, &cache);
+  const EditPassVec parityRows =
+      buildPreCommitEditPasses(focus, kChannel, &store, kLoopLength, &state, &cache);
+
+  TEST_ASSERT_EQUAL_UINT32(kShortened.endTick, shortenLengthEnd(commitRows));
+  TEST_ASSERT_EQUAL_UINT32(kShortened.endTick, shortenLengthEnd(parityRows));
+  TEST_ASSERT_EQUAL(static_cast<int>(parityRows.size()), static_cast<int>(commitRows.size()));
+}
+
+void test_commit_skips_unpainted_loop_end_length_192755() {
+  // session_20260813_192755 @81.670: overlap participant 14 live 2256–2304 is not painted.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapStubId = 14;
+  constexpr NoteId kPaintedShortId = 16;
+  constexpr NoteId kMoverId = 111;
+  constexpr uint8_t kPitch = 30;
+
+  const NoteBaseline kWrapBaseline{kPitch, 100, 2256, 2280};
+  const NoteBaseline kWrapLive{kPitch, 100, 2256, kLoopLength};
+  const NoteBaseline kPaintedBaseline{kPitch, 100, 855, 1046};
+  const NoteBaseline kPaintedLive{kPitch, 100, 855, 911};
+  const NoteBaseline kMoverSpan{kPitch, 100, 1104, 1151};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 528, 575};
+  focus.last = kMoverSpan;
+  focus.baselineMap[kWrapStubId] = kWrapBaseline;
+  focus.baselineMap[kPaintedShortId] = kPaintedBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapStubId, kWrapBaseline, kWrapLive, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kPaintedShortId, kPaintedBaseline, kPaintedLive,
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, kMoverSpan, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  store.push_back(noteOn(kWrapStubId, kPitch, kWrapLive.startTick));
+  store.push_back(noteOff(kWrapStubId, kPitch, kWrapLive.endTick));
+  store.push_back(noteOn(kPaintedShortId, kPitch, kPaintedLive.startTick));
+  store.push_back(noteOff(kPaintedShortId, kPitch, kPaintedLive.endTick));
+  store.push_back(noteOn(kMoverId, kPitch, kMoverSpan.startTick));
+  store.push_back(noteOff(kMoverId, kPitch, kMoverSpan.endTick));
+
+  NoteUtils::DisplayNoteVec cache;
+  cache.push_back(NoteUtils::DisplayNote{kPaintedShortId, kPitch, 100, 855, 1046});
+  cache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 2256});
+
+  const EditPassVec commitRows =
+      buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength, &cache);
+  const EditPassVec preCommitRows = buildPreCommitEditPasses(
+      focus, kChannel, &store, kLoopLength, &currentState, &cache);
+
+  auto hasLoopEndLengthFor = [](const EditPassVec& rows, NoteId noteId) {
+    for (const EditPass& row : rows) {
+      if (row.targetNoteId == noteId && row.actionType == EditActionType::Update &&
+          (row.propertyType == EditPropertyType::Length ||
+           row.propertyType == EditPropertyType::NoteRange) &&
+          row.endTick == kLoopLength) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto hasLengthFor = [](const EditPassVec& rows, NoteId noteId, uint32_t endTick) {
+    for (const EditPass& row : rows) {
+      if (row.targetNoteId == noteId && row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length && row.endTick == endTick) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  TEST_ASSERT_FALSE(hasLoopEndLengthFor(commitRows, kWrapStubId));
+  TEST_ASSERT_FALSE(hasLoopEndLengthFor(preCommitRows, kWrapStubId));
+  TEST_ASSERT_TRUE(hasLengthFor(commitRows, kPaintedShortId, 911u));
+  TEST_ASSERT_TRUE(hasLengthFor(preCommitRows, kPaintedShortId, 911u));
+
+  NoteUtils::DisplayNoteVec paintedWrapCache;
+  paintedWrapCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 2280});
+  const EditPassVec paintedCommitRows = buildCommitRowsFromCurrentState(
+      focus, currentState, kChannel, kLoopLength, &paintedWrapCache);
+  TEST_ASSERT_FALSE(hasLoopEndLengthFor(paintedCommitRows, kWrapStubId));
+
+  NoteUtils::DisplayNoteVec loopEndCache;
+  loopEndCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, kLoopLength});
+  const EditPassVec loopEndCommitRows = buildCommitRowsFromCurrentState(
+      focus, currentState, kChannel, kLoopLength, &loopEndCache);
+  TEST_ASSERT_TRUE(hasLoopEndLengthFor(loopEndCommitRows, kWrapStubId));
+}
+
+void test_commit_skips_painted_wrap_stub_loop_end_length_201948() {
+  // session_20260813_201948 @30.127 / 39.397: note 14 live 2256–2304 is in visual cache
+  // with a non-zero wrap/short span, not painted end=2304. RC2 still emitted ChangeLength
+  // to loop end. RC3 skips unless the painted end is loopLength.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapStubId = 14;
+  constexpr NoteId kMoverId = 100;
+  constexpr uint8_t kPitch = 46;
+
+  const NoteBaseline kWrapBaseline{kPitch, 100, 2256, 2280};
+  const NoteBaseline kWrapLive{kPitch, 100, 2256, kLoopLength};
+  const NoteBaseline kMoverSpan{kPitch, 100, 432, 576};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 864, 1008};
+  focus.last = kMoverSpan;
+  focus.baselineMap[kWrapStubId] = kWrapBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapStubId, kWrapBaseline, kWrapLive, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, kMoverSpan, NoteEditPresenceType::Visible);
+
+  NoteUtils::DisplayNoteVec wrapPaintCache;
+  wrapPaintCache.push_back(NoteUtils::DisplayNote{kWrapStubId, kPitch, 100, 2256, 96});
+  wrapPaintCache.push_back(NoteUtils::DisplayNote{kMoverId, kPitch, 100, 864, 1008});
+
+  const EditPassVec commitRows =
+      buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength, &wrapPaintCache);
+  for (const EditPass& row : commitRows) {
+    TEST_ASSERT_FALSE(row.targetNoteId == kWrapStubId && row.actionType == EditActionType::Update &&
+                      row.endTick == kLoopLength);
   }
 }
 
@@ -1965,6 +2481,13 @@ int main(int argc, char** argv) {
   RUN_TEST(test_compat_direct_store_mutation_breaks_projection_parity);
   RUN_TEST(test_projection_owner_path_after_current_state_edit);
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
+  RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
+  RUN_TEST(test_current_state_upserts_visible_row_from_display_note_without_store_pair);
+  RUN_TEST(test_ensure_aligns_unedited_visible_row_to_display_span);
+  RUN_TEST(test_display_projection_omits_rematerialize_only_visible_row);
+  RUN_TEST(test_display_projection_binds_visible_row_to_invalid_id_committed_note);
+  RUN_TEST(test_selectable_inventory_keeps_painted_note_without_current_state_row);
+  RUN_TEST(test_display_projection_paint_matches_committed_base_when_current_state_is_subset);
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);
   RUN_TEST(test_sync_focus_last_from_current_state);
   RUN_TEST(test_hide_then_shorten_stays_hidden_and_masks_on_deselect);
@@ -1997,7 +2520,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_apply_hide_through_current_state_owner);
   RUN_TEST(test_mark_deleted_and_remove_added_row);
   RUN_TEST(test_commit_rows_from_current_state_overlap_shorten);
-  RUN_TEST(test_commit_skips_overlap_length_while_visible_tail_active_225025);
+  RUN_TEST(test_commit_seals_overlap_length_while_mover_covers_committed_span_225025);
+  RUN_TEST(test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700);
+  RUN_TEST(test_commit_skips_unpainted_loop_end_length_192755);
+  RUN_TEST(test_commit_skips_painted_wrap_stub_loop_end_length_201948);
   RUN_TEST(test_deselect_clears_overlap_participation_without_geometry_restore_232118);
   RUN_TEST(test_sync_committed_span_marks_visible_overlap_shorten_sealed);
   RUN_TEST(test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657);

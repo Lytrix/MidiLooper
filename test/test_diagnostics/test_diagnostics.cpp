@@ -31,14 +31,22 @@ void test_architecture_counter_enum_layout() {
   TEST_ASSERT_EQUAL(6, static_cast<int>(Diagnostics::Counter::DisplayCaptureFullGather));
   TEST_ASSERT_EQUAL(7, static_cast<int>(Diagnostics::Counter::DisplayResolveOverBudgetCount));
   TEST_ASSERT_EQUAL(8, static_cast<int>(Diagnostics::Counter::DisplayCaptureEventsAdded));
-  TEST_ASSERT_EQUAL(14, static_cast<int>(Diagnostics::Counter::Count));
+  // Compose sub-step counters append after the original 14 so existing indices stay stable.
+  TEST_ASSERT_EQUAL(14, static_cast<int>(Diagnostics::Counter::DisplayCommittedWindowFilter));
+  TEST_ASSERT_EQUAL(15, static_cast<int>(Diagnostics::Counter::DisplayCommittedFullAssign));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(Diagnostics::Counter::Count));
 }
 
 void test_architecture_timing_enum_layout() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(Diagnostics::Timing::PlaybackBuild));
   TEST_ASSERT_EQUAL(1, static_cast<int>(Diagnostics::Timing::DisplayBuild));
   TEST_ASSERT_EQUAL(2, static_cast<int>(Diagnostics::Timing::DisplayResolveLiveCapture));
-  TEST_ASSERT_EQUAL(7, static_cast<int>(Diagnostics::Timing::Count));
+  TEST_ASSERT_EQUAL(3, static_cast<int>(Diagnostics::Timing::DisplayCaptureGather));
+  TEST_ASSERT_EQUAL(4, static_cast<int>(Diagnostics::Timing::DisplayCaptureCompose));
+  TEST_ASSERT_EQUAL(7, static_cast<int>(Diagnostics::Timing::DisplayCommittedRebuild));
+  TEST_ASSERT_EQUAL(8, static_cast<int>(Diagnostics::Timing::DisplayCaptureReplace));
+  TEST_ASSERT_EQUAL(9, static_cast<int>(Diagnostics::Timing::DisplayCaptureSync));
+  TEST_ASSERT_EQUAL(10, static_cast<int>(Diagnostics::Timing::Count));
 }
 
 int main(int argc, char** argv) {

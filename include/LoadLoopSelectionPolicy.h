@@ -34,4 +34,10 @@ ParkedIdleAction resolveParkedIdleAction(bool parkedIsFocus, bool focusQueued,
 EmptyIdleAction resolveEmptyIdleAction(bool focusQueued, bool backgroundQueued,
                                        bool backgroundAllowed);
 
+/// Step the already-active LoadLoopJob this frame?
+/// Focus High always steps (including Committing). Non-focus Low steps only when
+/// background is allowed — same PLAYING/capture skip as SkipKeepParked, including Committing
+/// (session_20260813_034408: Committing ran before canRunBackgroundLoadLoopNow).
+bool shouldStepLoadLoopJob(bool jobIsFocus, bool backgroundAllowed);
+
 }  // namespace LoadLoopSelectionPolicy

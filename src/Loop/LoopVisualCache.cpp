@@ -4,6 +4,7 @@
 #include "Loop.h"
 
 #include "Globals.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
@@ -19,6 +20,35 @@ uint32_t totalVisualBarsForLoop(uint32_t loopLengthTicks) {
     return 0;
   }
   return (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+}
+
+// Coverage of the cached notes over the loop, for RC-E attribution. Bounds only, so no
+// per-bar allocation on the commit path.
+struct VisualCacheCoverage {
+  uint32_t firstBar = UINT32_MAX;
+  uint32_t lastBar = 0;
+  uint32_t dirtyCount = 0;
+};
+
+VisualCacheCoverage measureVisualCacheCoverage(const VisualCache& cache) {
+  VisualCacheCoverage coverage;
+  for (const NoteUtils::DisplayNote& note : cache.notes) {
+    const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
+    const uint32_t startBar = visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
+    const uint32_t endBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
+    if (startBar < coverage.firstBar) {
+      coverage.firstBar = startBar;
+    }
+    if (endBar > coverage.lastBar) {
+      coverage.lastBar = endBar;
+    }
+  }
+  for (uint8_t flag : cache.dirtyBars) {
+    if (flag != 0) {
+      ++coverage.dirtyCount;
+    }
+  }
+  return coverage;
 }
 
 void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
@@ -115,6 +145,20 @@ size_t Loop::displayEventCountHint() const {
   return count;
 }
 
+LOOP_COLD_MEM void Loop::emitVisualCacheState(const char* phase, int32_t gatheredEvents) const {
+  const VisualCacheCoverage coverage = measureVisualCacheCoverage(visualCache);
+  SC_VCACHE(phase, gatheredEvents, static_cast<uint32_t>(visualCache.notes.size()),
+            coverage.firstBar, coverage.lastBar, totalVisualBarsForLoop(loopLengthTicks),
+            static_cast<uint32_t>(visualCache.dirtyBars.size()), coverage.dirtyCount,
+            visualCacheDirty ? 1 : 0);
+}
+
+void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
+  adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
+                               Config::TICKS_PER_BAR);
+  emitVisualCacheState("adopt_partial", -1);
+}
+
 LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
                                                      uint32_t maxBarDistanceFromPriority) {
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
@@ -140,6 +184,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     }
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
+    emitVisualCacheState("slice_nodirty", -1);
     return;
   }
 
@@ -191,6 +236,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
     ++visualCache.revision;
+    emitVisualCacheState("slice_clean", -1);
   }
 }
 
@@ -213,6 +259,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   }
   ++visualCache.revision;
   visualCacheDirty = false;
+  emitVisualCacheState("full", static_cast<int32_t>(flat.size()));
 }
 
 void Loop::ensureVisualCacheBuilt() {
@@ -226,6 +273,7 @@ void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
   visualCacheDirty = true;
   markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
+  emitVisualCacheState("stale_all", -1);
 }
 
 void Loop::invalidateDisplayCaches() {

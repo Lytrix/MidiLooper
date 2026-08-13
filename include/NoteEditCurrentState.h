@@ -10,6 +10,7 @@
 #include "MidiEvent.h"
 #include "NoteEditFocus.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
+#include "Utils/NoteUtils.h"
 
 struct EditSessionAction;
 
@@ -85,6 +86,13 @@ class NoteEditCurrentState {
 
   /// Build visible rows from a stamped NOTE_EDIT session store at open/reopen boundaries.
   static NoteEditCurrentState buildFromSessionStore(const MidiEventVec& store, uint8_t channel);
+
+  /// Insert Visible rows for committed display notes that have no current-state row.
+  /// Unedited Existing Visible rows (`committedSpan == currentSpan`) take the display
+  /// span so rematerialize off-pairing cannot keep a longer end. Does not overwrite
+  /// Hidden / Deleted / Added / this-session geometry. Skips invalid NoteId and
+  /// zero-length display spans (`endTick == startTick`).
+  void ensureVisibleRowsForDisplayNotes(const NoteUtils::DisplayNoteVec& notes);
 
   /// Canonical lossy projection: Visible/Added rows only.
   void projectToSessionStore(MidiEventVec& store, uint8_t channel) const;

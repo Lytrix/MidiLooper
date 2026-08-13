@@ -245,6 +245,8 @@ Owned by constrained-target determination + `constrainedGeometryFromRestoreCandi
 **Path:** `commitAllPendingNoteEditActions` → when current state non-empty, `buildCommitRowsFromCurrentState` (overlap rows only for Active participants).
 
 - Macro commit seals overlap geometry into passes and may `syncCommittedSpan` so leave-restore does not flash a pre-shorten length.
+- **An active overlap closure does not defer the seal.** A parked mover still covers the span it shortened, so gating the row on closure meant the shorten never sealed at the commit the user triggers. Closure defers **leave-restore** only. `commitEditAction` reloads the session store from committed passes, so a skipped row is lost, not postponed.
+- A sealed row must replay **as stored** — see the row payload invariant in [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md). A note edited across two commits (moved in one session, shortened or moved again in a later one) has two rows for the same `targetNoteId`; the newer row's span wins.
 - F1 select / empty-step deselect may seal pending mover geometry when bracket-aligned (`isMacroCommitAlignedWithSelectTarget`).
 - Empty-step deselect can call sticky clear (`Ended`) without rewriting shortened `currentSpan`.
 

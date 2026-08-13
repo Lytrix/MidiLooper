@@ -49,10 +49,22 @@ BaselineMap projectTransactionBaselineForEvaluationScope(const EditorSelection& 
                                                         int32_t originTick);
 
 /// Insert missing evaluation-scope spans into focus.baselineMap from the live store (D19).
+/// Unedited Existing Visible rows take `committedDisplayNotes` when present (181114 / Stage 8).
 void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& focus,
                                                 const NoteIdList& evaluationScope,
                                                 const MidiEventVec& liveStore, uint8_t channel,
-                                                const NoteEditCurrentState* currentState = nullptr);
+                                                const NoteEditCurrentState* currentState = nullptr,
+                                                const NoteUtils::DisplayNoteVec* committedDisplayNotes =
+                                                    nullptr);
+
+/// First matching non-zero-length DisplayNote for `noteId`.
+bool displaySpanForNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId, NoteBaseline& out);
+
+/// Replace rematerialize ends on unedited Existing Visible `baselineMap` rows with the
+/// committed display span so leave-restore cannot write a longer pairing (181114 note 45).
+void overlayUneditedBaselineMapFromDisplayNotes(
+    NoteEditFocus& focus, const NoteEditCurrentState* currentState,
+    const NoteUtils::DisplayNoteVec& committedDisplayNotes);
 
 std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,
@@ -78,7 +90,9 @@ BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(const BaselineMap& st
                                                            const NoteEditCurrentState* currentState =
                                                                nullptr,
                                                            const NoteBaseline* causingSpan =
-                                                               nullptr);
+                                                               nullptr,
+                                                           const NoteUtils::DisplayNoteVec*
+                                                               committedDisplayNotes = nullptr);
 
 std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
 analyzeEditSessionInteractions(

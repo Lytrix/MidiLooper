@@ -113,13 +113,10 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
-        // Promote/adopt composed display notes as the revision-matched committed representation.
-        // Replaces prior visualCache notes in place (ExternalMemoryFirst); does not materialize
-        // canonical MIDI or allocate a second long-lived full-loop event buffer (5a-3).
-        loop.visualCache.setNotes(liveDisplayNotes);
-        loop.visualCache.dirtyBars.clear();
-        ++loop.visualCache.revision;
-        loop.visualCacheDirty = false;
+        // RC5c: adopt composed display notes without claiming the whole loop is built.
+        // RC-E: clearing dirtyBars and visualCacheDirty here left only the 16-bar window in
+        // cache and blocked idle backfill (session_20260812_162230).
+        loop.adoptComposedDisplayNotesFromViewport(liveDisplayNotes);
         liveWindowVisualCacheRevision_ = loop.visualCache.revision;
     } else {
         livePlaybackDisplaySlot_ = 255;

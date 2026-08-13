@@ -1,6 +1,6 @@
 # Long overdub Stage 5 — memory / persistence pressure
 
-**Status:** In progress — 5a-1/5a-2 on `dev` (PR #29); 5a-3 `duplicate` class closed via overdub OpenSpec; `pool_alloc` proof still open  
+**Status:** 5a **closed** (5a-3 abandoned 2026-08-12); 5b backlog parked — 5a-1/5a-2 on `dev` (PR #29); 5a-3 `duplicate` closed via overdub OpenSpec; `pool_alloc` proof **not pursued**  
 **Parent:** [`long_overdub_display_freeze_bugfix.md`](long_overdub_display_freeze_bugfix.md) §19  
 **Branch:** merged via PR #29; overlap follow-up `feature/overdub-pass-overlap-resolution`
 
@@ -49,7 +49,7 @@ After `tryReclaimDerivedViewCachesUnderPressure`, when `pressure >= Critical`, c
 | Class | Status |
 |-------|--------|
 | `duplicate` (`183525`) | **Closed** — not reclaim; OpenSpec G2 + device [`010000`](../../captures/session_20260812_010000.log); [`wrap_duplicate` plan](long_overdub_wrap_duplicate_display_freeze_bugfix.md) **FROZEN** |
-| `pool_alloc` / Critical reclaim | **Open** — still need `021117`-comparable pressure capture; see [`stage5a3` plan](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) |
+| `pool_alloc` / Critical reclaim | **Abandoned** — verification not pursued; see [`stage5a3` plan](long_overdub_stage5a3_critical_reclaim_verification_refinement.md) |
 
 ### RC4e — Rolling window overdub (shipped, verify pending)
 
@@ -76,11 +76,36 @@ Bounded `rebuildVisualCacheIdleSlice` during overdub — [`long_overdub_rolling_
 - Clear without full workspace sync drain when only selected slot mutates
 - `shouldDeferHeavyDisplayRebuild` coupling to full `hasPersistenceWorkPending()`
 
+### 5b observability — save/load buildup pointers
+
+**Firmware** (`teensy41-capture-serial`):
+
+| Line | When | Key fields |
+|------|------|------------|
+| `#CAP,<us>,PERS,backlog,...` | Every ~5s during capture (~10s idle) while save pending or transport active | `workQ`, `writingItems`, `chunkQ`, `dirtyAgeMs`, `estSliceSteps`, `estSdBytes`, `savePending`, `urgent`, `transportBlk`, `budgetBlk`, `heapBlk` |
+| `#CAP,<us>,PERS,diag,...` | Same interval | Chunk pool + block counters (`transportBlk`, `budgetBlk`, `heapBlk`, `sliceDone`) — **chunkQ only**, not workspace work queue |
+| `#CAP,<us>,PERS,request,...` | Save admission | `queued`, `sync_drain`, `sync_drain_already_pending`, `already_pending` |
+| `#CAP,<us>,PERS,work,...` | Work-item slice progress | `LoopPersist`, `slot:t:s`, `start` / `complete` |
+| `#CAP,<us>,PERS,drain,...` | Sync drain failure (clear path) | `stuck`, `budget`, `flush_pending`, `failed` + queue depths + est drain size |
+| `#CAP,<us>,SAVE,<phase>,rotate` | Save spinner FSM transitions | `pending`, `in_progress`, `completed`, `idle` |
+| `#CAP,<us>,DIAG,pressure,...` | Memory pressure FSM | Last field is **mid-pass chunk queue** only |
+
+**Host parse:**
+
+```bash
+python scripts/parse_persistence_buildup.py captures/session_*.log
+rg 'PERS,backlog|PERS,drain|Clear aborted|Persistence drain stuck' captures/session.log
+```
+
+**Hypothesis — save more often:** compare `est_slice_steps` / `est_sd_bytes` peaks and `dirty_age_ms` growth between sessions. If cooperative slices shrink peak `workQ` but `transportBlk` stays high during RECORD, transport gating is still the limiter. If peaks drop after a policy change, more frequent idle saves help.
+
+**Evidence gap (`014136`):** pre-backlog captures only had `PERS,diag` chunk-queue depth; the ~3359-step / ~117KB stuck drain was Serial-only. Re-run long RECORD with capture-serial after flashing backlog telemetry.
+
 ---
 
 ## Acceptance
 
-- [ ] **5a:** 0× sustained `Capture append failed` in long multi-track session comparable to `021117`
+- [x] **5a:** 5a-1/5a-2 shipped; 5a-3 `pool_alloc` proof abandoned (not `021117`-verified)
 - [ ] **5b:** Clear selected slot within bounded time after boot (or documented policy)
 - [ ] No sustained `save_state fail` through normal record/stop/play
 - [ ] `pio test -e native`

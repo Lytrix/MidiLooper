@@ -15,6 +15,16 @@
 
 namespace {
 
+struct CommittedPitchQueryWork {
+  uint32_t fullMaterializeCount = 0;
+};
+
+}  // namespace
+
+static CommittedPitchQueryWork g_committedPitchQueryWork;
+
+namespace {
+
 template <typename MidiEventVector>
 void mergeSortedLoopCaptureLayers(MidiEventVector& base, MidiEventVector&& addition) {
   if (addition.empty()) {
@@ -189,6 +199,7 @@ LOOP_COLD_MEM void Loop::gatherCommittedEvents(SessionMidiEventVec& out) const {
   if (hasActiveEditPasses(passes)) {
     DIAG_COUNTER_INC(LegacyMidiEvents);
     DIAG_COUNTER_INC(PlaybackFullMaterialize);
+    ++g_committedPitchQueryWork.fullMaterializeCount;
     const SessionMidiEventVec& materialized = midiEvents();
     out.assign(materialized.begin(), materialized.end());
     return;
@@ -205,6 +216,14 @@ LOOP_COLD_MEM void Loop::gatherCommittedEvents(SessionMidiEventVec& out) const {
   }
   CommittedEventRange::full(lists.data(), lists.size(), loopLengthTicks).appendTo(out);
   sortMidiEventsByTick(out);
+}
+
+LOOP_COLD_MEM void Loop::resetCommittedPitchQueryWork() {
+  g_committedPitchQueryWork = CommittedPitchQueryWork{};
+}
+
+LOOP_COLD_MEM uint32_t Loop::committedEventsFullMaterializeCount() {
+  return g_committedPitchQueryWork.fullMaterializeCount;
 }
 
 LOOP_COLD_MEM void Loop::gatherCommittedEvents(MidiEventVec& out) const {

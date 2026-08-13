@@ -1349,6 +1349,163 @@ void test_pitch_vacated_lane_visible_shortened_leave_restore_021407() {
   TEST_ASSERT_NOT_EQUAL(kStub.endTick, constrained[0].endTick);
 }
 
+void test_leave_restore_note5_names_first_writer_200154() {
+  // session_20260813_200154 @75.292–75.459: Shorten 5 720–1007 then Restore 720–2255.
+  // Same loop 193838 @122.818: first select of note 5 paints DNTE length 47 (720–767).
+  constexpr NoteId kTarget = 5;
+  constexpr NoteId kMover = 22;
+  constexpr uint8_t kPitch = 71;
+  constexpr uint8_t kLeftPitch = 72;
+  constexpr uint8_t kChannel = 1;
+  constexpr uint32_t kLoopLength = 2304;
+
+  const NoteBaseline rematerialize{kPitch, 100, 720, 2255};
+  const NoteBaseline painted{kPitch, 100, 720, 767};
+  const NoteBaseline moverOnLane{kPitch, 100, 1008, 1103};
+  const NoteBaseline moverLeft{kLeftPitch, 100, 1008, 1103};
+  const NoteBaseline shortened{kPitch, 100, 720, 1007};
+
+  MidiEventVec rematerializeStore;
+  MidiEvent targetOn = MidiEvent::NoteOn(720, kChannel, kPitch, 100);
+  targetOn.noteId = kTarget;
+  rematerializeStore.push_back(targetOn);
+  MidiEvent targetOff = MidiEvent::NoteOff(2255, kChannel, kPitch, 0);
+  targetOff.noteId = kTarget;
+  rematerializeStore.push_back(targetOff);
+  MidiEvent moverOn = MidiEvent::NoteOn(1008, kChannel, kPitch, 100);
+  moverOn.noteId = kMover;
+  rematerializeStore.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1103, kChannel, kPitch, 0);
+  moverOff.noteId = kMover;
+  rematerializeStore.push_back(moverOff);
+
+  NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(rematerializeStore, kChannel);
+  NoteBaseline afterBuild{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kTarget, afterBuild));
+  TEST_ASSERT_EQUAL_UINT32(2255u, afterBuild.endTick);
+
+  NoteUtils::DisplayNoteVec paintedCache;
+  paintedCache.push_back({kTarget, kPitch, 100, 720, 767});
+  paintedCache.push_back({kMover, kPitch, 100, 1008, 1103});
+  currentState.ensureVisibleRowsForDisplayNotes(paintedCache);
+  NoteBaseline afterEnsure{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kTarget, afterEnsure));
+  const uint32_t committedAfterEnsure = afterEnsure.endTick;
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.last = moverOnLane;
+  focus.baselineMap[kTarget] = rematerialize;
+  focus.baselineMap[kMover] = moverOnLane;
+  overlayUneditedBaselineMapFromDisplayNotes(focus, &currentState, paintedCache);
+  const uint32_t overlayUneditedEnd = focus.baselineMap[kTarget].endTick;
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry onLane{};
+  EditedNoteSpan causingOnLane{};
+  causingOnLane.noteId = kMover;
+  causingOnLane.span = moverOnLane;
+  onLane.causingSpans.push_back(causingOnLane);
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMover};
+  const NoteIdList scope = {kTarget, kMover};
+  const auto pairs = determineEligiblePairs(selection, changed, scope);
+  const BaselineMap analysisAfterOverlay = overlayAnalysisBaselineForSessionMovedOverlaps(
+      focus.baselineMap, kMover, rematerializeStore, kChannel, kLoopLength, &currentState,
+      &moverOnLane, &paintedCache);
+  const auto interactions = analyzeEditSessionInteractions(pairs, onLane, analysisAfterOverlay);
+  const int analysisOverlapCount = static_cast<int>(interactions.size());
+
+  currentState.upsertRow(kTarget, rematerialize, shortened, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, moverOnLane, moverLeft, NoteEditPresenceType::Visible);
+  focus.last = moverLeft;
+  focus.baselineMap[kTarget] = rematerialize;
+  focus.baselineMap[kMover] = moverOnLane;
+  overlayUneditedBaselineMapFromDisplayNotes(focus, &currentState, paintedCache);
+  const uint32_t overlayAfterShortenEnd = focus.baselineMap[kTarget].endTick;
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+  EditedGeometry leftLane{};
+  EditedNoteSpan causingLeft{};
+  causingLeft.noteId = kMover;
+  causingLeft.span = moverLeft;
+  leftLane.causingSpans.push_back(causingLeft);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  NoteIdList leaveRestore;
+  const auto constrained = resolveAllConstrainedGeometry(
+      emptyGrouped, focus.baselineMap, focus.baselineMap, liveStore, kChannel, kLoopLength, 12,
+      true, selection, leftLane, focus, leaveRestore, &currentState);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
+  TEST_ASSERT_EQUAL_UINT32(kTarget, leaveRestore[0]);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
+  const uint32_t restoreEnd = constrained[0].endTick;
+
+  TEST_ASSERT_EQUAL_UINT32(767u, committedAfterEnsure);
+  TEST_ASSERT_EQUAL_UINT32(767u, overlayUneditedEnd);
+  TEST_ASSERT_EQUAL(0, analysisOverlapCount);
+  TEST_ASSERT_EQUAL_UINT32(2255u, overlayAfterShortenEnd);
+  TEST_ASSERT_EQUAL_UINT32(2255u, restoreEnd);
+}
+
+void test_leave_restore_note5_uses_painted_span_not_rematerialize_200154() {
+  // RC1: same 200154 Shorten then pitch-leave, with Stage 8 painted cache 720–767.
+  // Leave-restore must write 767, not rematerialize 2255.
+  constexpr NoteId kTarget = 5;
+  constexpr NoteId kMover = 22;
+  constexpr uint8_t kPitch = 71;
+  constexpr uint8_t kLeftPitch = 72;
+  constexpr uint8_t kChannel = 1;
+  constexpr uint32_t kLoopLength = 2304;
+
+  const NoteBaseline rematerialize{kPitch, 100, 720, 2255};
+  const NoteBaseline moverOnLane{kPitch, 100, 1008, 1103};
+  const NoteBaseline moverLeft{kLeftPitch, 100, 1008, 1103};
+  const NoteBaseline shortened{kPitch, 100, 720, 1007};
+
+  NoteUtils::DisplayNoteVec paintedCache;
+  paintedCache.push_back({kTarget, kPitch, 100, 720, 767});
+  paintedCache.push_back({kMover, kPitch, 100, 1008, 1103});
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kTarget, rematerialize, shortened, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMover, moverOnLane, moverLeft, NoteEditPresenceType::Visible);
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.last = moverLeft;
+  focus.baselineMap[kTarget] = rematerialize;
+  focus.baselineMap[kMover] = moverOnLane;
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes.push_back(kMover);
+  EditedGeometry leftLane{};
+  EditedNoteSpan causingLeft{};
+  causingLeft.noteId = kMover;
+  causingLeft.span = moverLeft;
+  leftLane.causingSpans.push_back(causingLeft);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  NoteIdList leaveRestore;
+  const auto constrained = resolveAllConstrainedGeometry(
+      emptyGrouped, focus.baselineMap, focus.baselineMap, liveStore, kChannel, kLoopLength, 12,
+      true, selection, leftLane, focus, leaveRestore, &currentState, &paintedCache);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(leaveRestore.size()));
+  TEST_ASSERT_EQUAL_UINT32(kTarget, leaveRestore[0]);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(constrained.size()));
+  TEST_ASSERT_EQUAL_UINT32(720u, constrained[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(767u, constrained[0].endTick);
+  TEST_ASSERT_EQUAL_UINT8(kPitch, constrained[0].pitch);
+}
+
 void test_determine_targets_excludes_ended_participation_even_with_stale_latch() {
   // §11 step 5.4: Ended rows are not leave-restore targets even if Focus latch still lists them.
   constexpr NoteId kMover = 7;
@@ -1432,6 +1589,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_ltr_time_axis_visible_shortened_leave_restore_022151);
   RUN_TEST(test_pitch_vacated_lane_hidden_leave_restore_target_020050);
   RUN_TEST(test_pitch_vacated_lane_visible_shortened_leave_restore_021407);
+  RUN_TEST(test_leave_restore_note5_names_first_writer_200154);
+  RUN_TEST(test_leave_restore_note5_uses_painted_span_not_rematerialize_200154);
   RUN_TEST(test_determine_targets_excludes_ended_participation_even_with_stale_latch);
   return UNITY_END();
 }

@@ -88,7 +88,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         const bool incrementalCommittedDisplay =
             DisplayWindowUtils::preferIncrementalCommittedDisplay(deferVisualRebuild,
                                                                   track.isStopped());
-
         // RC5b: only a clean visualCache may authorize committed display after a revision bump.
         // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
         if (visualCacheAuthoritative && !avoidFullVisualRebuild) {

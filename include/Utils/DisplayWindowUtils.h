@@ -154,4 +154,36 @@ void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEven
 void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,
                           uint32_t ticksPerBar);
 
+/// Overview strip rows, and therefore the number of pitch bands the density mask carries.
+constexpr uint8_t kOverviewBandCount = 8;
+
+/// Pitch band for the overview density mask: 8 bands of 16 semitones over the MIDI range.
+inline uint8_t overviewBandForNote(uint8_t note) {
+    const uint8_t band = static_cast<uint8_t>(note / 16u);
+    return band < kOverviewBandCount ? band : static_cast<uint8_t>(kOverviewBandCount - 1);
+}
+
+/// Set the band bit of every bar the note spans. Bars outside `mask` are ignored, so a mask
+/// sized to the loop-so-far stays valid while a record pass grows (RC-G).
+template <typename Note>
+inline void accumulateOverviewBandMask(std::vector<uint8_t>& mask, const Note& note,
+                                       uint32_t ticksPerBar) {
+    if (mask.empty() || ticksPerBar == 0) {
+        return;
+    }
+    const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
+    const uint32_t startBar = note.startTick / ticksPerBar;
+    if (startBar >= mask.size()) {
+        return;
+    }
+    uint32_t endBar = endTick / ticksPerBar;
+    if (endBar >= mask.size()) {
+        endBar = static_cast<uint32_t>(mask.size()) - 1;
+    }
+    const uint8_t bit = static_cast<uint8_t>(1u << overviewBandForNote(note.note));
+    for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+        mask[bar] |= bit;
+    }
+}
+
 }  // namespace DisplayWindowUtils

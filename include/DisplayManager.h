@@ -233,6 +233,20 @@ private:
     /// When window paint was filtered from `visualCache`, matches `visualCache.revision`.
     uint32_t liveWindowVisualCacheRevision_ = UINT32_MAX;
 
+    /// RC-F follow-up: committed layer is being held because the visual cache is dirty. Cache
+    /// recovery belongs to idle work, so the layer is rebuilt once the cache goes clean again.
+    bool liveCommittedLayerHeldForDirtyCache_ = false;
+
+    /// RC-G: bounded overview density for capture states with no usable `visualCache`.
+    /// One byte per loop bar; bit N set when a preview note in that bar falls in pitch band N
+    /// (band = note / 16, so the 8 bands map onto the 8 overview strip rows). Built by appending
+    /// only preview notes not yet processed, so cost per frame is O(new notes), never O(loop).
+    VisualBarVec overviewCaptureBandMask_;
+    size_t overviewCaptureProcessedNotes_ = 0;
+    uint32_t overviewCaptureReplacementRevision_ = UINT32_MAX;
+    uint8_t overviewCaptureSlot_ = 255;
+    uint8_t overviewCaptureTrack_ = 255;
+
     static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
     uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};
     uint8_t detailedWindowBars_[kDisplaySlotCount] = {16, 16, 16, 16, 16, 16, 16, 16};
@@ -272,7 +286,12 @@ private:
     void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const DisplayNoteVec& notes);
     void drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOriginTick, uint32_t windowStart,
                            uint32_t windowLength, uint32_t playheadTick, int minPitch, int maxPitch,
-                           const DisplayNoteVec& notes, int y0, int y1);
+                           const DisplayNoteVec& notes, int y0, int y1,
+                           const VisualBarVec* barBandMask = nullptr);
+    /// RC-G: fold newly appended capture-preview notes into `overviewCaptureBandMask_`.
+    /// Returns the mask when it can stand in for a full-loop note scan, else nullptr.
+    const VisualBarVec* updateOverviewCaptureDensity(const Track& track, const Loop& loop,
+                                                     uint8_t displaySlot, uint32_t loopLength);
     bool shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const;
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, uint32_t nowMs);

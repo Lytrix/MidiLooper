@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-034](#dec-034-overlap-shorten-seals-at-the-user-triggered-commit) | 2026-08-13 | Overlap shorten seals at the user-triggered commit; closure defers leave-restore only | Accepted |
+| [DEC-033](#dec-033-overdub-overlap-ignores-per-note-channel) | 2026-08-12 | Overdub overlap uses loop-scoped notes; no per-note channel filter | Accepted |
 | [DEC-032](#dec-032-overdub-editpass-unification-reassessment) | 2026-08-12 | G2: unify resolution; dual storage transitional | Accepted |
 | [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) | 2026-08-12 | Transitional dual-seal encode + undo/restore pins | Accepted (encoding) |
 | [DEC-030](#dec-030-sticky-overlap-end-of-participation-on-current-state) | 2026-08-08 | Sticky overlap end-of-participation on NoteEditCurrentState | Accepted |
@@ -47,7 +49,42 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-033 -->
+<!-- Append new entries below (newest first). Next ID: DEC-035 -->
+
+## DEC-034 — Overlap shorten seals at the user-triggered commit
+
+**Date:** 2026-08-13  
+**Status:** Accepted  
+**Plan:** [`note_edit_overlap_shorten_commit_seal_bugfix.md`](Plans/note_edit_overlap_shorten_commit_seal_bugfix.md)  
+**Withdraws:** slice B of [`note_edit_resolver_authority_contracts_refinement.md`](Plans/note_edit_resolver_authority_contracts_refinement.md) § Stage 7.5
+
+**Context:** `buildCommitOverlapRowsFromCurrentState` skipped an overlap participant while `participatingNoteVisibleOverlapTailInProgress` held — the mover's live span still overlapping the participant's `committedSpan`. At a deselect that is true by construction, since the mover is parked on the note it just shortened. `commitEditAction` then reloads the session store from committed passes, so a skipped row is lost, not postponed: the shorten either vanished (display reverted to the pre-shorten length) or landed on the next commit against an unrelated focus ([`204700`](../captures/session_20260813_204700.log) @166.809 `canonical=1 apply_owned=2`, then @166.848 `Length 10 960–1247` while the mover was already note 14). Slice B was misattributed: [`225025`](../captures/session_20260807_225025.log) shows note 9 at 534 ticks, mover parked at 2832, commit `2544–2831` @26.291 and reselect `len=287` @36.927 — the correct truncation. "Stub was 47" was the mover's length.
+
+**Decision:** An overlap shorten seals at the commit the user triggers. Active overlap closure defers **leave-restore** only, never persistence. The host note's tail after the mover stays discarded (truncate to `moverStart − 1`); no split, no restore-on-leave.
+
+**Owner:** Unchanged — `buildCommitOverlapRowsFromCurrentState`. The predicate keeps its original home in `determineConstrainedGeometryTargetNoteIds` and `appendOverlapTargetActions`.
+
+**Validation:** Native `test_commit_seals_overlap_length_while_mover_covers_committed_span_225025` and `test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700` (canonical rows equal parity rows). `test_deselect_clears_overlap_participation_without_geometry_restore_232118` unchanged — `Ended` participation still blocks the row.
+
+---
+
+## DEC-033 — Overdub overlap ignores per-note channel
+
+**Date:** 2026-08-12  
+**Status:** Accepted  
+**Plan:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](Plans/realtime_incremental_work_overdub_note_change_bugfix.md)
+
+**Context:** `Loop::accumulatePendingNoteChangesForIncomingNote` filtered overlap candidates with `noteIdHasChannel`, which scanned every `overdubSourceViewEvents_` row per same-pitch reconstructed note. S0e measured that scan as `notepair` 98 ms on a 4257-event / 2109-note loop ([`204221`](../captures/session_20260812_204221.log)). `NoteUtils::DisplayNote` has no channel field; the lookup existed only to recover channel from events.
+
+**Decision:** A loop's committed notes are already scoped to that loop. Overdub G2 overlap resolution matches NOTE_EDIT: geometry uses pitch + tick window, not a per-note channel check. `noteIdHasChannel` is removed. A stored same-pitch note whose recorded channel differs from the incoming channel participates in overlap resolution.
+
+**Previous owner:** File-local `noteIdHasChannel` in `LoopPendingNoteChange.cpp`.
+
+**New owner:** None — filter deleted. Incoming `channel` still stamps the pending Add / Shorten / Hide row.
+
+**Validation:** Native `test_pending_shorten_ignores_recorded_channel` — source note on channel 1, incoming on channel 2, same pitch and overlapping ticks, produces Shorten.
+
+---
 
 ## DEC-032 — Overdub / EditPass unification reassessment
 

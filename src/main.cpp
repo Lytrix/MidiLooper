@@ -31,6 +31,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -42,6 +43,22 @@ FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSele
   lastDisplayUpdate = now;
   displayManager.update();
 }
+
+#if defined(SESSION_CAPTURE)
+FLASHMEM __attribute__((noinline)) static void recordLoopRemainderSpan(const char* span,
+                                                                      uint32_t durationUs) {
+  if (durationUs < RuntimeTimingTelemetry::kLoopRemainderOneShotUs) {
+    return;
+  }
+  bool active = false;
+  uint8_t track = 255;
+  uint8_t slot = 255;
+  uint8_t phase = 255;
+  uint8_t isFocus = 0;
+  StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
+  DebugSessionCapture::loopRemainder(span, durationUs, track, slot, phase, isFocus);
+}
+#endif
 
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -75,13 +92,15 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
       !bootSlotLoadRefreshPending && !focusSlotRestoreWork;
   // Paint before any background-only LoadLoopJob frame (PLAYING or STOPPED fill).
   const bool playBackgroundLoad = backgroundOnlyLoad;
+  // session_20260812_012342: focus SlotLoadSession must not suppress OLED during capture.
+  const bool skipFocusLoadForSlotSession =
+      focusSlotRestoreWork && SlotLoadSession::isActive() && !captureActive;
 
   // Paint before background LoadLoopJob while PLAYING (session_20260718_213044).
   // Skip OLED only on focus Commit / focus-load session — not every SlotLoadSession.
   if (playBackgroundLoad) {
     const bool skipFocusLoad =
-        skipDisplayAfterFocusCommit ||
-        (focusSlotRestoreWork && SlotLoadSession::isActive());
+        skipDisplayAfterFocusCommit || skipFocusLoadForSlotSession;
     if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
                            now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
@@ -117,8 +136,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 
   if (!playBackgroundLoad) {
     const bool skipFocusLoad =
-        skipDisplayAfterFocusCommit ||
-        (focusSlotRestoreWork && SlotLoadSession::isActive());
+        skipDisplayAfterFocusCommit || skipFocusLoadForSlotSession;
     if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
                            now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
@@ -174,7 +192,7 @@ void setup() {
   // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
   trackManager.allocateLoopsEarly();
   trackManager.prewarmPlaybackRuntime();
-  MemoryMonitor::logStatus();  // Log heap after loops allocated
+  MemoryMonitor::logStatus(true);  // Log heap after loops allocated
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);  // Turn on LED for 200ms
@@ -240,7 +258,7 @@ void setup() {
 
   logger.info("Performance monitoring initialized");
   MemoryMonitor::resetInternalHeapWatermark();
-  MemoryMonitor::logStatus();  // Log heap after full setup
+  MemoryMonitor::logStatus(true);  // Log heap after full setup
   {
     char heapDetail[16];
     snprintf(heapDetail, sizeof(heapDetail), "%lu",
@@ -318,13 +336,41 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
+#if defined(SESSION_CAPTURE)
+  uint32_t remainderStartUs = micros();
+#endif
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
+#if defined(SESSION_CAPTURE)
+  const uint32_t idleMaintUs = micros() - remainderStartUs;
+  RuntimeTimingTelemetry::noteIdleMaint(idleMaintUs);
+  recordLoopRemainderSpan("idle_maint", idleMaintUs);
+  remainderStartUs = micros();
+#endif
 
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
+#if defined(SESSION_CAPTURE)
+  const uint32_t loadFrameUs = micros() - remainderStartUs;
+  RuntimeTimingTelemetry::noteLoadFrame(loadFrameUs);
+  recordLoopRemainderSpan("load_frame", loadFrameUs);
+#endif
+
+  // RC-C C: safety MIDI drain after OLED work during RECORD/OVERDUB only. Not a substitute
+  // for bounded display — keeps clock/notes moving if resolve still ran long.
+  bool captureActiveForMidiDrain = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isRecording() || t.isOverdubbing()) {
+      captureActiveForMidiDrain = true;
+      break;
+    }
+  }
+  if (captureActiveForMidiDrain) {
+    midiHandler.handleMidiInput();
+  }
 
   controlSurfaceManager.processDeferredFaderMotorSync();
 
@@ -340,7 +386,15 @@ void loop() {
     trackManager.reclaimUnreferencedDisabledPasses(nullptr, true);
   }
 
+#if defined(SESSION_CAPTURE)
+  const uint32_t persistSaveStartUs = micros();
+#endif
   StorageManager::processDeferredSaveState(looperState.getLooperState());
+#if defined(SESSION_CAPTURE)
+  const uint32_t persistSaveUs = micros() - persistSaveStartUs;
+  RuntimeTimingTelemetry::notePersistSave(persistSaveUs);
+  recordLoopRemainderSpan("persist_save", persistSaveUs);
+#endif
 
   // Poll USB host again after deferred SD/display work so DROID button note-ons are not
   // dropped when the main loop was busy (session_20260810_234059: note-off without note-on).
@@ -351,9 +405,13 @@ void loop() {
   StorageManager::processHitlSerialCommands();
 #endif
 
-  // Log memory every 60 seconds only when transport/capture is idle.
-  // Runtime PSRAM stats walk (sm_malloc_stats_pool) can take hundreds of ms
-  // on large pools and must never run during PLAYING/RECORDING/OVERDUBBING.
+  // S0: observation-only timing telemetry emission (no scheduling decisions).
+  RuntimeTimingTelemetry::maybeEmit(micros());
+
+  // Log memory every 60 seconds. Reports O(1) fields only: the external-pool free/used walk
+  // (sm_malloc_stats_pool) blocked the loop 593 ms in 141815 and lost external MIDI clock.
+  // timingCriticalTrackActive is derived from track state, so it cannot tell whether a clock
+  // is still streaming — the walk stays in setup, where no transport can run.
   static uint32_t lastMemoryLog = 0;
   constexpr uint32_t MEMORY_LOG_INTERVAL_MS = 60000;
   if (!timingCriticalTrackActive && now - lastMemoryLog >= MEMORY_LOG_INTERVAL_MS) {

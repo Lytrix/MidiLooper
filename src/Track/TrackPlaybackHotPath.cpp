@@ -154,31 +154,30 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   runtime.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
-void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
+void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
   if (isStoppedRecording()) {
     return;
   }
   Loop& loop = getActiveLoop();
-  if (!isAudible || muted || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
+  playbackEmitMidiOutput_ = emitMidiOutput && !muted;
   playCommittedLoopMidi(activeLoopIndex, currentTick, PlaybackMidiTarget::ActiveSlot);
 }
 
-void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible) {
+void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
   if (isStoppedRecording()) {
     return;
   }
-  if (!isAudible || muted) {
-    return;
-  }
   Loop& loop = getLoop(slotIndex);
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
+  playbackEmitMidiOutput_ = emitMidiOutput && !muted;
   playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
 }
 
@@ -207,6 +206,9 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   } else if (evt.isNoteOn()) {
     runtime.ledger.noteOn(evtCopy.channel, evtCopy.data.noteData.note, evt.tick,
                           evtCopy.data.noteData.velocity);
+    if (trackState == TRACK_OVERDUBBING) {
+      collectOverlapHoldPlaybackNoteOn(evt.noteId, evt.data.noteData.note);
+    }
   }
 
   // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.
@@ -220,11 +222,33 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
                evtCopy.channel, noteName, octave,
                evtCopy.data.noteData.note, evtCopy.data.noteData.velocity, evt.tick);
   }
-  midiHandler.sendMidiEvent(evtCopy);
+  if (playbackEmitMidiOutput_) {
+    midiHandler.sendMidiEvent(evtCopy);
+  }
   ignorePlaybackMidiInput = false;  // Reset playback state
 }
 
-void Track::sendAllNotesOff() {
+TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceTrackMidiOutput() {
+  if ((midiChannel >= MidiConfig::LED_CHANNEL_MIN &&
+       midiChannel <= MidiConfig::LED_CHANNEL_MAX) ||
+      (midiChannel >= MidiConfig::RECORD_EXCLUDE_MIN &&
+       midiChannel <= MidiConfig::RECORD_EXCLUDE_MAX)) {
+    return;
+  }
+  midiHandler.sendControlChange(midiChannel, 123, 0);
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceSlotMidiOutput(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  playbackRuntime.slot(slotIndex).ledger.forEachActive(
+      [](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+        midiHandler.sendMidiEvent(MidiEvent::NoteOff(0, channel, note, 0));
+      });
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) void Track::sendAllNotesOff() {
   // Control Change 123 = All Notes Off. Skip controller-only channels so we do
   // not clear DROID LEDs/buttons/faders when transport stops.
   for (uint8_t ch = 1; ch <= 16; ++ch) {

@@ -81,6 +81,9 @@ void Track::forceSetState(TrackState newState) { trackState = newState; }
 
 void Track::toggleMuteTrack() {
   muted = !muted;
+  if (muted) {
+    silenceTrackMidiOutput();
+  }
 }
 
 bool Track::isMuted() const {

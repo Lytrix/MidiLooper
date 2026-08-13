@@ -7,14 +7,48 @@
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Logger.h"
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <set>
-#include <tuple>
 #include "Utils/NoteEditMem.h"
 
 namespace {
 
 constexpr size_t kReconstructVerboseMaxEvents = 32;
+
+struct RankedNote {
+    uint8_t note = 0;
+    uint32_t startTick = 0;
+    uint32_t endTick = 0;
+    uint32_t index = 0;
+};
+
+NOTE_EDIT_MEM int compareRankedNoteKeyThenIndex(const void* lhs, const void* rhs) {
+    const RankedNote& a = *static_cast<const RankedNote*>(lhs);
+    const RankedNote& b = *static_cast<const RankedNote*>(rhs);
+    if (a.note != b.note) {
+        return a.note < b.note ? -1 : 1;
+    }
+    if (a.startTick != b.startTick) {
+        return a.startTick < b.startTick ? -1 : 1;
+    }
+    if (a.endTick != b.endTick) {
+        return a.endTick < b.endTick ? -1 : 1;
+    }
+    if (a.index != b.index) {
+        return a.index < b.index ? -1 : 1;
+    }
+    return 0;
+}
+
+NOTE_EDIT_MEM int compareRankedNoteIndex(const void* lhs, const void* rhs) {
+    const RankedNote& a = *static_cast<const RankedNote*>(lhs);
+    const RankedNote& b = *static_cast<const RankedNote*>(rhs);
+    if (a.index == b.index) {
+        return 0;
+    }
+    return a.index < b.index ? -1 : 1;
+}
 
 template <typename Alloc>
 NOTE_EDIT_MEM NoteId noteIdAtOnTick(const std::vector<MidiEvent, Alloc>& events, uint8_t channel,
@@ -583,18 +617,31 @@ NoteVector reconstructNotesImpl(const std::vector<MidiEvent, EventAlloc>& midiEv
         IntervalProjection::projectDisplayNotes(spans, context);
 
     const size_t originalCount = projected.size();
-    for (const DisplayNote& note : projected) {
-        const bool alreadySeen = std::any_of(
-            finalNotes.begin(), finalNotes.end(), [&](const DisplayNote& existing) {
-                return existing.note == note.note && existing.startTick == note.startTick &&
-                       existing.endTick == note.endTick;
-            });
-        if (!alreadySeen) {
-            finalNotes.push_back(note);
-        } else if (logDetails) {
-            logger.log(CAT_TRACK, LOG_DEBUG, "Deduplicated note: pitch=%d, start=%lu, end=%lu",
-                       note.note, note.startTick, note.endTick);
+    using RankedNoteVec = std::vector<RankedNote, ExternalMemoryFirstAllocator<RankedNote>>;
+    RankedNoteVec ranked;
+    ranked.reserve(projected.size());
+    for (uint32_t i = 0; i < static_cast<uint32_t>(projected.size()); ++i) {
+        const DisplayNote& note = projected[i];
+        ranked.push_back(RankedNote{note.note, note.startTick, note.endTick, i});
+    }
+    if (!ranked.empty()) {
+        qsort(ranked.data(), ranked.size(), sizeof(RankedNote), compareRankedNoteKeyThenIndex);
+    }
+    size_t uniqueCount = 0;
+    for (size_t i = 0; i < ranked.size(); ++i) {
+        if (uniqueCount == 0 || ranked[i].note != ranked[uniqueCount - 1].note ||
+            ranked[i].startTick != ranked[uniqueCount - 1].startTick ||
+            ranked[i].endTick != ranked[uniqueCount - 1].endTick) {
+            ranked[uniqueCount++] = ranked[i];
         }
+    }
+    ranked.resize(uniqueCount);
+    if (!ranked.empty()) {
+        qsort(ranked.data(), ranked.size(), sizeof(RankedNote), compareRankedNoteIndex);
+    }
+    finalNotes.reserve(ranked.size());
+    for (const RankedNote& row : ranked) {
+        finalNotes.push_back(projected[row.index]);
     }
 
     if (logDetails) {

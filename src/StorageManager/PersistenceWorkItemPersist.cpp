@@ -82,6 +82,11 @@ STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& 
   job.itemActive = false;
   job.bundleWriteActive = false;
   job.skipLoopSlotStage = false;
+  job.bundleStartedAtUs = 0;
+  job.bundleSliceCount = 0;
+  job.bundleMaxSliceUs = 0;
+  job.bundleUndoEntryCount = 0;
+  job.bundleSnapshotCount = 0;
   job.item = PersistWorkItem{};
   job.trackIndex = 0xFF;
   job.slotIndex = 0xFF;
@@ -172,6 +177,15 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
     if (!beginDeferredRuntimeBundleWrite(state)) {
       return completePersistenceWorkItem(job, "bundle_begin", false);
     }
+    job.bundleStartedAtUs = micros();
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+      const GlobalUndoStack& stack = trackManager.getTrack(trackIndex).getGlobalUndoStack();
+      job.bundleUndoEntryCount += static_cast<uint32_t>(stack.entries.size());
+      for (const UndoEntry& entry : stack.entries) {
+        job.bundleSnapshotCount += entry.beforeSnapshot != nullptr ? 1u : 0u;
+        job.bundleSnapshotCount += entry.afterSnapshot != nullptr ? 1u : 0u;
+      }
+    }
     return true;
   }
 
@@ -235,15 +249,25 @@ STORAGE_PERSIST_MEM bool stepRuntimeBundleWorkItem(PersistenceWorkItemJob& job) 
     return true;
   }
 
+  const uint32_t sliceStartUs = micros();
   bool bundleDone = false;
   if (!stepDeferredRuntimeBundleSlice(bundleDone)) {
     return completePersistenceWorkItem(job, "bundle_slice", false);
+  }
+  const uint32_t sliceDurationUs = micros() - sliceStartUs;
+  ++job.bundleSliceCount;
+  if (sliceDurationUs > job.bundleMaxSliceUs) {
+    job.bundleMaxSliceUs = sliceDurationUs;
   }
   if (!bundleDone) {
     emitPersistenceWorkTelemetry(job.item, "bundle_slice", "ok");
     return true;
   }
 
+  SC_PERSIST_BUNDLE(persistWorkTypeName(job.item.type),
+                    micros() - job.bundleStartedAtUs, job.bundleMaxSliceUs,
+                    job.bundleSliceCount, job.bundleUndoEntryCount,
+                    job.bundleSnapshotCount);
   job.bundleWriteActive = false;
   job.skipLoopSlotStage = false;
   return completePersistenceWorkItem(job, "bundle_done", true);

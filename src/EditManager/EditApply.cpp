@@ -28,16 +28,26 @@ int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
   const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
   const uint8_t channel = onEvt.channel;
   const uint8_t note = onEvt.data.noteData.note;
-  const uint32_t startTick = onEvt.tick;
 
-  for (size_t i = static_cast<size_t>(onIndex) + 1; i < events.size(); ++i) {
+  // Same-pitch pairing is LIFO everywhere else (findLinearOffForNoteOnLifo,
+  // findCorrespondingNoteOff, pairedNoteOnTickForOffAtIndex). Walk from the start of the
+  // vector: an earlier unclosed same-pitch note-on changes which off closes this on.
+  std::vector<size_t> openNoteOnIndices;
+  for (size_t i = 0; i < events.size(); ++i) {
     const MidiEvent& evt = events[i];
-    if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note &&
-        evt.tick > startTick) {
-      break;
+    if (evt.channel != channel || evt.data.noteData.note != note) {
+      continue;
     }
-    if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
-        evt.tick >= startTick) {
+    if (evt.isNoteOn()) {
+      openNoteOnIndices.push_back(i);
+      continue;
+    }
+    if (!evt.isNoteOff() || openNoteOnIndices.empty()) {
+      continue;
+    }
+    const size_t pairedOnIndex = openNoteOnIndices.back();
+    openNoteOnIndices.pop_back();
+    if (pairedOnIndex == static_cast<size_t>(onIndex)) {
       return static_cast<int>(i);
     }
   }
@@ -107,8 +117,12 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
   const uint32_t refStart = onEvt.tick;
   const int offIndex = findNoteOffForOnIndex(events, onIndex);
+  loopLength = inferLoopLength(events, loopLength);
   const uint32_t refEnd =
       offIndex >= 0 ? events[static_cast<size_t>(offIndex)].tick : refStart;
+  if (offIndex < 0 && newEnd == loopLength) {
+    return;
+  }
 
   if (newEnd == refEnd) {
     return;
@@ -119,9 +133,8 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
     return;
   }
 
-  loopLength = inferLoopLength(events, loopLength);
   const uint32_t newStart = refStart;
-  const uint32_t displayNewEnd = newEnd % loopLength;
+  const uint32_t displayNewEnd = (newEnd > loopLength) ? (newEnd % loopLength) : newEnd;
 
   const std::vector<NoteUtils::DisplayNote> allNotes =
       NoteUtils::reconstructNotes(events, loopLength, false);
@@ -254,31 +267,12 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
 
 void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
                                uint32_t loopLengthTicks) {
-  NoteId trackedNoteId = kInvalidNoteId;
-  uint32_t trackedStart = 0;
-  uint32_t trackedEnd = 0;
-  bool tracked = false;
-
+  // Rows locate their note by targetNoteId, so startTick / endTick are payload only. Before
+  // stable NoteId they doubled as the span lookup key and a later row had to be re-pointed at
+  // an earlier row's span; carrying that rewrite forward overwrote the payload of a second row
+  // for the same note.
   for (const EditPass& row : rows) {
-    EditPass resolved = row;
-    if (tracked && resolved.targetNoteId == trackedNoteId) {
-      resolved.startTick = trackedStart;
-      resolved.endTick = trackedEnd;
-    }
-    applyNoteEditPass(events, resolved, loopLengthTicks);
-    if (resolved.actionType == EditActionType::Update &&
-        resolved.propertyType == EditPropertyType::NoteRange) {
-      trackedNoteId = row.targetNoteId;
-      trackedStart = row.startTick;
-      trackedEnd = row.endTick;
-      tracked = true;
-    } else if (resolved.actionType == EditActionType::Update &&
-               resolved.propertyType == EditPropertyType::Length) {
-      trackedNoteId = row.targetNoteId;
-      trackedStart = resolved.startTick;
-      trackedEnd = row.endTick;
-      tracked = true;
-    }
+    applyNoteEditPass(events, row, loopLengthTicks);
   }
 }
 

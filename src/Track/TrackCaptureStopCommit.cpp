@@ -123,7 +123,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       queueDeferredRecordRevts();
     }
     if (overdubStop) {
-      emitStoredMidiVerification();
+      queueDeferredStoredMidiVerification();
     }
   }
   return result;

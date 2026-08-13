@@ -116,7 +116,7 @@ bool isLowMemory(uint32_t thresholdBytes) {
   return getInternalHeapFreeBytes() < thresholdBytes;
 }
 
-void logStatus() {
+void logStatus(bool includeExternalPoolUsage) {
   const uint32_t freeK = getInternalHeapFreeBytes() / 1024;
   const uint32_t totalK = getInternalHeapTotalBytes() / 1024;
   const uint32_t usedK = getInternalHeapUsedBytes() / 1024;
@@ -125,7 +125,9 @@ void logStatus() {
              "[Memory] heap free=%lu used=%lu total=%lu KB min_ever=%lu KB",
              (unsigned long)freeK, (unsigned long)usedK, (unsigned long)totalK,
              (unsigned long)minEverK);
-  if (isExternalMemoryPoolAvailable()) {
+  if (!isExternalMemoryPoolAvailable()) {
+    logger.log(CAT_GENERAL, LOG_INFO, "[Memory] psram unavailable");
+  } else if (includeExternalPoolUsage) {
     logger.log(CAT_GENERAL, LOG_INFO,
                "[Memory] psram chip=%u MB free=%lu used=%lu pool=%lu KB",
                (unsigned)external_psram_size,
@@ -133,7 +135,11 @@ void logStatus() {
                (unsigned long)(getExternalMemoryPoolUsedBytes() / 1024),
                (unsigned long)(getExternalMemoryPoolTotalBytes() / 1024));
   } else {
-    logger.log(CAT_GENERAL, LOG_INFO, "[Memory] psram unavailable");
+    // pool_size only — free/used walk the header chain and must not run once the
+    // transport or an external clock can be live (141815: 593 ms, MIDI clock lost).
+    logger.log(CAT_GENERAL, LOG_INFO, "[Memory] psram chip=%u MB pool=%lu KB",
+               (unsigned)external_psram_size,
+               (unsigned long)(getExternalMemoryPoolTotalBytes() / 1024));
   }
   if (isLowMemory(20 * 1024)) {
     logger.log(CAT_GENERAL, LOG_WARNING, "[Memory] Low heap - consider reducing undo/loops");
@@ -302,7 +308,7 @@ uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
 uint32_t getInternalHeapMinEverFreeBytes() { return getInternalHeapFreeBytes(); }
 void resetInternalHeapWatermark() {}
-void logStatus() {}
+void logStatus(bool) {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 namespace {
@@ -397,7 +403,7 @@ uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
 uint32_t getInternalHeapMinEverFreeBytes() { return 0; }
 void resetInternalHeapWatermark() {}
-void logStatus() {}
+void logStatus(bool) {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 }  // namespace MemoryMonitor

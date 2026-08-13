@@ -306,7 +306,7 @@ Extension of Stage 7. Geometry/apply failure modes — **not** Stage 8 display p
 | Slice | Symptom | Captures | Primary fix owner |
 |-------|---------|----------|-------------------|
 | **A — premature leave-restore** | `RestoreNote` fires on pipeline `interactions=0` while overlap closure still active → stationary note jumps to full `committedSpan` | `222418`, `224633`, `223447` | `determineConstrainedGeometryTargetNoteIds`; `EditSessionActionBuilder` |
-| **B — macro commit seals elongated span** | F1 macro commit writes overlap-elongated `currentSpan` onto stationary participant | `225025` | `buildCommitOverlapRowsFromCurrentState` |
+| **B — WITHDRAWN (misattributed)** | `225025` `len=287` was the correct truncation; the skip then dropped real shortens | `225025`, `204700` | reverted — see [`note_edit_overlap_shorten_commit_seal_bugfix.md`](note_edit_overlap_shorten_commit_seal_bugfix.md) |
 | **C — select-fader seal** | Empty-step deselect skipped seal / painted previous length | `004532`, `013500`, `020050` PASS | `isMacroCommitAlignedWithSelectTarget`; `syncCommittedSpan`; projection `currentSpan` only |
 | **D — leave without restore** | Pitch + time-axis leave after Hide/Shorten: **fixed** (`RestoreNote` to `committedSpan`). Slice A still defers while closure active. | `020050`, `021407`, `022151` | `determineConstrainedGeometryTargetNoteIds` |
 | **E — multi-note hide + post-deselect restore** | Elongated mover CompleteCover of shortened stubs: **HideNote** each; sealed Deleted after deselect: no reinsert/Restore | `022849` | `appendOverlapTargetActions`; `markRowDeleted` on commit; leave-restore Hidden-only |
@@ -424,7 +424,7 @@ One **participant projection contract** (same participant, visibility gate, auth
 | `a2ddd90` | 8.2 fader/snapshot paint-cache span | 928 tests | — |
 | `fc84652` | 8.3 paint base from materialized passes (not `visualCache`) | 928 tests | — |
 | *(224633)* | 8.4 HITL — V5/C5 DISP paint≠visualCache; DNTE stub/mover split | — | `224633` PASS |
-| *(225025)* | Stage 7.5 slice B — macro commit `2544–2831` then select DNTE len 287 (no `RestoreNote`) | — | parked → § Stage 7.5 |
+| *(225025)* | Slice B **withdrawn** — commit `2544–2831` and DNTE len 287 were correct | — | § Stage 7.5 slice B |
 
 **HITL `session_20260807_220917` (~35s):** L→R shorten on overlap 17 while mover 13 advanced — grid dropped overlap note when mover cleared committed closure; fixed by painting `committedSpan` once `participatingNoteOverlapInteractionCleared`.
 
@@ -447,15 +447,15 @@ Geometry/apply layer — **not** Stage 8 projection. See §7 Stage 7.5 summary t
 - [x] 7.5.A3 Native: `test_leave_restore_deferred_visible_overlap_tail_224633`, `test_builder_skips_restore_visible_overlap_tail_224633`.
 - [ ] 7.5.A4 HITL replay on `222418` / `224633` overlap chains.
 
-**Slice B — macro commit seals overlap-elongated span** (no `RestoreNote`; commit writes wrong length):
+**Slice B — WITHDRAWN 2026-08-13: misattributed.** Reverted by [`note_edit_overlap_shorten_commit_seal_bugfix.md`](note_edit_overlap_shorten_commit_seal_bugfix.md). Do not reopen from a `len=287` symptom.
 
-| Capture | Anchor |
-|---------|--------|
-| `225025` | macro commit @ 26.3s seals note 9 `2544–2831`; F1 select @ 36.9s / 48.7s → DNTE `len=287` (stub was **47**) |
+`225025` shows the sealed length was **correct**: note 9 is `DNTE,88,2544,2544,534` @15.404, mover 13 parks at `DNTE,88,2832,2832,47` @21.545, commit writes `Length 2544–2831` @26.291, reselect reads `DNTE,88,2544,2544,287` @36.927 — the truncation to `moverStart − 1`. "Stub was **47**" was the **mover's** length, not note 9's.
 
-- [x] 7.5.B1 `buildCommitOverlapRowsFromCurrentState` skips overlap length/range while visible tail + closure active.
-- [x] 7.5.B2 Native: `test_commit_skips_overlap_length_while_visible_tail_active_225025`.
-- [ ] 7.5.B3 HITL: overlap shorten → macro commit → select stationary note (`225025` chain).
+7.5.B1 made the commit builder skip an overlap participant while closure was active. A parked mover always still covers what it shortened, so the shorten could never seal at the commit the user triggers: it was dropped (display reverted) or landed one commit late against an unrelated focus (`204700` @166.809 → @166.848).
+
+- [x] 7.5.B1 **reverted** — skip removed from `buildCommitOverlapRowsFromCurrentState`; predicate stays in slice A (`determineConstrainedGeometryTargetNoteIds`, `EditSessionActionBuilder`).
+- [x] 7.5.B2 **replaced** — `test_commit_seals_overlap_length_while_mover_covers_committed_span_225025` plus `test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700`.
+- [ ] 7.5.B3 HITL: park a shorter same-pitch note inside a long note, deselect — length holds, `NOTE_EDIT commit parity ok`.
 
 **Slice C — select-fader seal on every F1 navigation** (empty-step deselect skipped overlap commit):
 
@@ -475,7 +475,7 @@ Geometry/apply layer — **not** Stage 8 projection. See §7 Stage 7.5 summary t
 - [ ] 7.5.C5 HITL: `010657` post-seal F1 scrub — no stub **47** flash on overlap note grid/sidebar.
 - [x] 7.5.C7 HITL: `020050` PASS vs `013500` — empty deselect seals (`pre-commit` @21.5s / @42.7s); **0** `macro commit skipped` (was 2); post-seal DNTE sealed lengths **335** then **191** with no previous-length flash.
 
-**Not the fix location:** Stage 8 sidebar/paint (`SidebarAndInfo`, `liveEditDisplayNoteAtSelect`) — symptom in `225025` is wrong committed span after macro commit, not projection read path.
+**Not the fix location:** Stage 8 sidebar/paint (`SidebarAndInfo`, `liveEditDisplayNoteAtSelect`) — and, since slice B is withdrawn, neither is the commit builder. `225025` has no defect.
 
 **Slice D — leave without restore** (**shipped native**; HITL next):
 
@@ -704,7 +704,7 @@ Pitch edit tail (~68s): note **9** `2256–2591`, DNTE stable `len=335` across F
 | V5 DNTE | Mover **13** shorten: `len=47`; note **9** @ 1728 after restore select: `len=335` (post-restore geometry) |
 | Parked (7.5 A) | `RestoreNote` note **9** @ 24.3s (`interactions=0`) |
 
-**HITL `session_20260807_225025` — Stage 7.5 slice B (parked):** No `RestoreNote`. Macro commit @ 26.3s seals note 9 `2544–2831`; F1 select @ 36.9s → `DNTE,len=287` (not stub 47). User: lengthened once, resolved after deselect/reselect. See §8 Stage 7.5 slice B.
+**HITL `session_20260807_225025` — slice B WITHDRAWN:** macro commit @ 26.3s sealed note 9 `2544–2831`, and `DNTE,len=287` @36.9s is that span, correct for a mover parked at 2832. 47 was the mover's length. No defect here — see §8 Stage 7.5 slice B.
 
 ### Step 5 — semantic cleanup (explicit refactor phase)
 
