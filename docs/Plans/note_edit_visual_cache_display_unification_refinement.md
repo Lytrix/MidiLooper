@@ -261,14 +261,18 @@ Rematerialize on the NOTE_EDIT fader path:
 
 ### Device gate (after Stage 8+9)
 
-Same loop as 181114:
+**[`192007`](../../captures/session_20260813_192007.log)** — 3-bar loop (`2304` ticks), visual cache **60** notes. Not the 181114 64-note loop. Mover in the overlap gestures is noteId **108**, not 76.
 
-1. First NOTE_EDIT `DISP` still recorded (61 vs 64 is not this gate).
-2. Pitch 76 onto the lane of 45: Hide/Shorten uses cache length, not 720; leave-restore does not lengthen 45 to 2160.
-3. Move 76 to 840, browse away, reselect 76: `DNTE` start stays 840.
-4. Time/pitch fader: select-path `materializeToEventVector` is absent from rebuild; `GEOM_APPLY,resolve` is re-measured (no target number until the new capture).
+| Gate | Result |
+|------|--------|
+| 1. First NOTE_EDIT `DISP` | LOOP_EDIT `60/60`; first NOTE_EDIT `59/60`. Paint gap open (same class as 61 vs 64). |
+| 2. Hide/Restore of 45 must not use 720 / 2160 | **45 PASS.** Pitch of 108 onto 46: `HideNote` 45 as `1440–1511`; `RestoreNote` 45 as `1440–1511`. Never `1440–2160`. **76 as target still uses `840–2160`** on Hide and Restore (29.806 / 29.836 and again 63.866 Shorten `840–959` then Restore `840–2160`). |
+| 3. Reselect 76 at 840 | **Not the 181114 gesture.** No `MoveNote` of 76. Select “note 21 at tick 840” rebuilds noteId **76** at 38.795 and again at 67.229. No reset to 168 in this capture. |
+| 4. `GEOM_APPLY,resolve` | **161** samples, **16.8–52.3 ms** (16813–52256 µs). 181114 was 24–51 ms. `UNDO_WARM,build,total` **35–185 ms** (still open, not this gate). |
 
-Env: `teensy41-capture-serial`. Ask before upload.
+At 27.194 noteId 108 is `240–480`; next `DNTE` is `24,240,240,2544`; next pitch step already reads `focus.last` end **2784**. Mover wrap-length jump is recorded; not Stage 8/9 target-span.
+
+Env: `teensy41-capture-serial`.
 
 ---
 
