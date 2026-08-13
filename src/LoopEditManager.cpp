@@ -89,11 +89,18 @@ void LoopEditManager::commitPendingLoopGeometry(Track& track) {
 
     const uint32_t beforeStart = sessionBaselineLoopStart_;
     const uint32_t beforeLength = sessionBaselineLoopLength_;
-    TrackUndo::pushLoopGeometryDepartSnapshot(track, sessionSlot_, sessionBaselineLoopStart_,
-                                              sessionBaselineLoopLength_);
+    LoopGeometry geometry;
+    geometry.loopStartTick = loop.loopStartTick;
+    geometry.loopLengthTicks = loop.loopLengthTicks;
+    geometry.startLoopTick = loop.startLoopTick;
+    geometry.beforeLoopStartTick = beforeStart;
+    geometry.beforeLoopLengthTicks = beforeLength;
+    geometry.beforeStartLoopTick = loop.startLoopTick;
+    const PassId geometryId = loop.saveLoopGeometry(geometry);
     sessionBaselineLoopStart_ = loop.loopStartTick;
     sessionBaselineLoopLength_ = loop.loopLengthTicks;
-    (void)loop.saveLoopGeometry(loop.loopStartTick, loop.loopLengthTicks, loop.startLoopTick);
+    TrackUndo::pushLoopGeometryDepartSnapshot(track, sessionSlot_, beforeStart, beforeLength,
+                                              geometryId);
     logger.log(CAT_TRACK, LOG_INFO,
                "Loop geometry settled slot=%u start=%lu->%lu len=%lu->%lu (undo pushed)",
                static_cast<unsigned>(sessionSlot_) + 1u,
@@ -337,15 +344,7 @@ void LoopEditManager::commitLoopEditOnDepart(Track& track) {
         loop.loopStartTick != sessionBaselineLoopStart_ ||
         loop.loopLengthTicks != sessionBaselineLoopLength_;
     if (geometryChanged) {
-        TrackUndo::pushLoopGeometryDepartSnapshot(track, sessionSlot_, sessionBaselineLoopStart_,
-                                                  sessionBaselineLoopLength_);
-        logger.log(CAT_TRACK, LOG_INFO,
-                   "Loop geometry committed on depart slot=%u start=%lu->%lu len=%lu->%lu",
-                   static_cast<unsigned>(sessionSlot_) + 1u,
-                   static_cast<unsigned long>(sessionBaselineLoopStart_),
-                   static_cast<unsigned long>(loop.loopStartTick),
-                   static_cast<unsigned long>(sessionBaselineLoopLength_),
-                   static_cast<unsigned long>(loop.loopLengthTicks));
+        commitPendingLoopGeometry(track);
     }
 
     sessionSlot_ = 255;

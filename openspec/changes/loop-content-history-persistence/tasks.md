@@ -22,11 +22,11 @@
 
 ## 3. Stage 2 — load-time editing state
 
-- [ ] 3.1 On Loop load, derive tip, undo units, undo-step count, effective records; redo empty
-- [ ] 3.2 Fill in-session `GlobalUndoStack` from that derivation (GUS remains runtime owner)
-- [ ] 3.3 Display `U:nn` after load/reboot uses the derived count
-- [ ] 3.4 Native: walk-to-empty; serialize + reload identity
-- [ ] 3.5 `pio test -e native`
+- [x] 3.1 On Loop load, derive tip, undo units, undo-step count, effective records; redo empty
+- [x] 3.2 Fill in-session `GlobalUndoStack` from that derivation (GUS remains runtime owner)
+- [x] 3.3 Display `U:nn` after load/reboot uses the derived count
+- [x] 3.4 Native: walk-to-empty; serialize + reload identity
+- [x] 3.5 `pio test -e native`
 
 ## 4. Stage 3 — delete persisted UndoStacks
 

@@ -12,6 +12,7 @@
 #include "Loop.h"
 #include "StorageLoopIo.h"
 #include "TrackManager.h"
+#include "TrackUndo.h"
 #include <Arduino.h>
 #include <SD.h>
 #include <vector>
@@ -249,6 +250,7 @@ bool STORAGE_PERSIST_MEM StorageManager::loadV5MonolithIntoRam(LooperState& stat
             Serial.println(t);
             return failAfterPartialLoad();
         }
+        TrackUndo::rebuildTrackFromLoopContent(track);
     }
 
     uint32_t svokToken = 0;

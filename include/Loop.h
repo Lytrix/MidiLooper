@@ -131,8 +131,8 @@ struct Loop {
 
   EditPassId saveNoteEditPass(uint8_t editPassIndex, EditPass row,
                               EditPassType passType = EditPassType::Note);
-  PassId saveLoopGeometry(uint32_t loopStartTick, uint32_t loopLengthTicks,
-                          uint32_t startLoopTick);
+  PassId saveLoopGeometry(LoopGeometry row);
+  bool setLoopGeometryState(PassId id, LoopGeometryState state);
   EditPassIdList replaceNoteEditPass(uint8_t editPassIndex,
                                      const EditPassIdList& staleEditPassIds,
                                      EditPassVec rows);

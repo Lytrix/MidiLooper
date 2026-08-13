@@ -19,6 +19,9 @@ struct LoopGeometry {
   uint32_t loopStartTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t startLoopTick = 0;
+  uint32_t beforeLoopStartTick = 0;
+  uint32_t beforeLoopLengthTicks = 0;
+  uint32_t beforeStartLoopTick = 0;
   LoopGeometryState state = LoopGeometryState::Active;
 };
 

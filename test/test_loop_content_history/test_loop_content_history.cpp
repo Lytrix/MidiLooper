@@ -12,6 +12,7 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditManager/EditApply.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
+#include "../../src/Loop/LoopContentHistory.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 
@@ -233,6 +234,97 @@ void test_loop_geometry_is_one_undo_unit() {
   TEST_ASSERT_EQUAL(2u, units[1].primaryPassId);
 }
 
+void test_effective_units_omit_disabled_records() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  OverdubPass disabled;
+  disabled.id = 2;
+  disabled.state = CapturePassState::Disabled;
+  passes.overdubPasses.push_back(disabled);
+  OverdubPass active;
+  active.id = 4;
+  active.state = CapturePassState::Active;
+  passes.overdubPasses.push_back(active);
+  passes.editPasses.push_back(makeNoteEdit(3, 0, 1, 0, 96));
+  passes.editPasses.back().state = EditPassState::Disabled;
+
+  std::vector<ContentUndoUnit> allUnits;
+  deriveContentUndoUnits(passes, allUnits);
+  TEST_ASSERT_EQUAL(4u, allUnits.size());
+
+  std::vector<ContentUndoUnit> effective;
+  deriveEffectiveContentUndoUnits(passes, effective);
+  TEST_ASSERT_EQUAL(2u, effective.size());
+  TEST_ASSERT_EQUAL(1u, effective[0].primaryPassId);
+  TEST_ASSERT_EQUAL(4u, effective[1].primaryPassId);
+}
+
+void test_build_content_undo_entries_at_tip() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  OverdubPass overdub;
+  overdub.id = 2;
+  overdub.state = CapturePassState::Active;
+  passes.overdubPasses.push_back(overdub);
+  passes.editPasses.push_back(makeNoteEdit(3, 0, 1, 0, 96));
+  LoopGeometry geometry;
+  geometry.id = 4;
+  geometry.loopStartTick = 0;
+  geometry.loopLengthTicks = 1536;
+  geometry.beforeLoopLengthTicks = 768;
+  geometry.state = LoopGeometryState::Active;
+  passes.loopGeometries.push_back(geometry);
+
+  UndoEntryVec entries;
+  buildContentUndoEntries(passes, 1, 99, entries);
+  TEST_ASSERT_EQUAL(4u, entries.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::RecordPassAdded),
+                    static_cast<int>(entries[0].kind));
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::OverdubPassAdded),
+                    static_cast<int>(entries[1].kind));
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::NoteEditPassClosed),
+                    static_cast<int>(entries[2].kind));
+  TEST_ASSERT_EQUAL(1u, entries[2].editPassIds.size());
+  TEST_ASSERT_EQUAL(3u, entries[2].editPassIds[0]);
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::LoopBoundaryChange),
+                    static_cast<int>(entries[3].kind));
+  TEST_ASSERT_EQUAL(4u, entries[3].passId);
+  TEST_ASSERT_EQUAL(768u, entries[3].beforeLoopLengthTicks);
+  TEST_ASSERT_EQUAL(1536u, entries[3].afterLoopLengthTicks);
+  TEST_ASSERT_EQUAL(1u, entries[0].slotIndex);
+  TEST_ASSERT_EQUAL(99u, entries[0].loopId);
+}
+
+void test_walk_effective_units_to_empty() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  OverdubPass overdub;
+  overdub.id = 2;
+  overdub.state = CapturePassState::Active;
+  passes.overdubPasses.push_back(overdub);
+  passes.editPasses.push_back(makeNoteEdit(3, 0, 1, 0, 96));
+
+  std::vector<ContentUndoUnit> units;
+  deriveEffectiveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(3u, units.size());
+
+  passes.editPasses[0].state = EditPassState::Disabled;
+  deriveEffectiveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(2u, units.size());
+
+  passes.overdubPasses[0].state = CapturePassState::Disabled;
+  deriveEffectiveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(1u, units.size());
+  TEST_ASSERT_EQUAL(1u, units[0].primaryPassId);
+
+  passes.recordPass.state = CapturePassState::Disabled;
+  deriveEffectiveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(0u, units.size());
+}
+
 void test_two_loops_derive_independently() {
   LoopPasses slot0;
   slot0.recordPass.id = 1;
@@ -266,6 +358,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_reused_edit_pass_index_collapses_two_undo_units);
   RUN_TEST(test_loop_boundary_change_absent_without_geometry_record);
   RUN_TEST(test_loop_geometry_is_one_undo_unit);
+  RUN_TEST(test_effective_units_omit_disabled_records);
+  RUN_TEST(test_build_content_undo_entries_at_tip);
+  RUN_TEST(test_walk_effective_units_to_empty);
   RUN_TEST(test_two_loops_derive_independently);
   return UNITY_END();
 }
