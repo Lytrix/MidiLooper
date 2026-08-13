@@ -57,6 +57,9 @@ void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& focus,
                                                 const NoteUtils::DisplayNoteVec* committedDisplayNotes =
                                                     nullptr);
 
+/// First matching non-zero-length DisplayNote for `noteId`.
+bool displaySpanForNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId, NoteBaseline& out);
+
 /// Replace rematerialize ends on unedited Existing Visible `baselineMap` rows with the
 /// committed display span so leave-restore cannot write a longer pairing (181114 note 45).
 void overlayUneditedBaselineMapFromDisplayNotes(

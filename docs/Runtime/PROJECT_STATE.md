@@ -8,7 +8,9 @@ Last updated: 2026-08-13 (NOTE_EDIT mover wrap-length jump)
 
 ## Current branch
 
-**NOTE_EDIT mover wrap-length jump:** RC1 native shipped — [`note_edit_mover_wrap_length_jump_bugfix.md`](../Plans/note_edit_mover_wrap_length_jump_bugfix.md). `LoopTickNormalize` Pass 1 skips wrap merge when tagged `noteId`s disagree. Device gate: after Hide 16, 111 `DNTE` length stays 47 (not 2351).
+**NOTE_EDIT leave-restore painted span:** RC1 native shipped; device gate open — [`note_edit_overlap_leave_restore_painted_span_bugfix.md`](../Plans/note_edit_overlap_leave_restore_painted_span_bugfix.md). [`200154`](../../captures/session_20260813_200154.log) Restore 5 `720–2255` / select `DNTE` 1535; same-loop [`193838`](../../captures/session_20260813_193838.log) first-select paints length **47**.
+
+**NOTE_EDIT mover wrap-length jump:** RC1 device PASS in [`200154`](../../captures/session_20260813_200154.log) — [`note_edit_mover_wrap_length_jump_bugfix.md`](../Plans/note_edit_mover_wrap_length_jump_bugfix.md). No `2351`/`2975`. Note 14 `2256–2304` stays on the wrap-stub plan.
 
 **NOTE_EDIT wrap-stub commit:** RC2 native shipped; device gate FAIL in [`193838`](../../captures/session_20260813_193838.log) — [`note_edit_overlap_action_drop_and_wrap_stub_bugfix.md`](../Plans/note_edit_overlap_action_drop_and_wrap_stub_bugfix.md). RC1 withdrawn (67.824 min-length stay-hidden).
 

@@ -120,6 +120,13 @@ Same 34-note loop as 193838:
 
 Env: `teensy41-capture-serial`. Ask before upload.
 
+**[`200154`](../../captures/session_20260813_200154.log) — RC1 gate PASS for the 111 jump.** No `2351` / `2975` / `3023`. Pitch-30 `DNTE` stays **47**. Mover **22** (pitch 29) keeps `Movement` / `DNTE` length **95** while overlap Shorten/Hide/Restore runs on 115, 87, 100, 7, 5, 6, 4, 8, 9, 23, 101, 25.
+
+Remaining (not this RC):
+
+- Note **5** leave-restore `720–2255`; later select `DNTE,71,720,720,1535`.  
+- Note **14** `ChangeLength` `2256–2304` still on the wrap-stub plan.
+
 ---
 
 ## Pre-implementation review

@@ -33,4 +33,5 @@ resolveAllConstrainedGeometry(
     uint32_t loopLength, uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
     const NoteEditFocus& focus, NoteIdList& leaveRestoreTargetNoteIds,
-    const NoteEditCurrentState* currentState = nullptr);
+    const NoteEditCurrentState* currentState = nullptr,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes = nullptr);
