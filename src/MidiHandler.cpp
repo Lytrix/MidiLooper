@@ -16,7 +16,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "LooperState.h"
 #include "Utils/MidiDispatchOrder.h"
-#include "Utils/RuntimeTimingEnvelope.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
@@ -159,24 +159,24 @@ void MidiHandler::beginUsbHost() {
 
 void MidiHandler::handleMidiInput() {
   const uint32_t inputEnterUs = micros();
-  RuntimeTimingEnvelope::noteMidiInputEnter(inputEnterUs);
+  RuntimeTimingTelemetry::noteMidiInputEnter(inputEnterUs);
 
   MidiInputMsg batch[kMidiInputBatchMax];
   size_t count = 0;
 
   // --- USB MIDI Input (transport before notes within each poll) ---
-  RuntimeTimingEnvelope::beginUsbDeviceNested();
+  RuntimeTimingTelemetry::beginUsbDeviceNested();
   uint32_t segmentStartUs = micros();
   while (count < kMidiInputBatchMax && usbMIDI.read()) {
     batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
                       usbMIDI.getData2(), SOURCE_USB};
   }
-  RuntimeTimingEnvelope::noteUsbDeviceRead(micros() - segmentStartUs);
+  RuntimeTimingTelemetry::noteUsbDeviceRead(micros() - segmentStartUs);
   const uint32_t dispatchStartUs = micros();
   dispatchMidiBatch(batch, count);
-  RuntimeTimingEnvelope::noteUsbDeviceDispatch(micros() - dispatchStartUs);
-  RuntimeTimingEnvelope::commitUsbDeviceNested();
-  RuntimeTimingEnvelope::noteUsbDeviceDrain(micros() - segmentStartUs);
+  RuntimeTimingTelemetry::noteUsbDeviceDispatch(micros() - dispatchStartUs);
+  RuntimeTimingTelemetry::commitUsbDeviceNested();
+  RuntimeTimingTelemetry::noteUsbDeviceDrain(micros() - segmentStartUs);
 
   // --- Serial MIDI Input (DIN) ---
   count = 0;
@@ -186,10 +186,10 @@ void MidiHandler::handleMidiInput() {
                       MIDIserial.getData2(), SOURCE_SERIAL};
   }
   dispatchMidiBatch(batch, count);
-  RuntimeTimingEnvelope::noteDinDrain(micros() - segmentStartUs);
+  RuntimeTimingTelemetry::noteDinDrain(micros() - segmentStartUs);
 
   if (!usbHostReady_) {
-    RuntimeTimingEnvelope::noteMidiInputExit(micros());
+    RuntimeTimingTelemetry::noteMidiInputExit(micros());
     return;
   }
 
@@ -199,7 +199,7 @@ void MidiHandler::handleMidiInput() {
   // pairs are not left queued across a long main-loop frame.
   segmentStartUs = micros();
   usbHost.Task();
-  RuntimeTimingEnvelope::noteUsbHostTask(micros() - segmentStartUs);
+  RuntimeTimingTelemetry::noteUsbHostTask(micros() - segmentStartUs);
 
   static bool lastConnected = false;
   bool currentlyConnected = usbHostMIDI;
@@ -217,14 +217,14 @@ void MidiHandler::handleMidiInput() {
   while (hostReads < kMidiInputBatchMax && usbHostMIDI.read()) {
     ++hostReads;
   }
-  RuntimeTimingEnvelope::noteUsbHostDrain(micros() - segmentStartUs);
+  RuntimeTimingTelemetry::noteUsbHostDrain(micros() - segmentStartUs);
   if (hostReads >= kMidiInputBatchMax) {
     logger.log(CAT_MIDI, LOG_DEBUG,
                "USB Host MIDI drain hit batch cap (%u)",
                static_cast<unsigned>(kMidiInputBatchMax));
   }
 
-  RuntimeTimingEnvelope::noteMidiInputExit(micros());
+  RuntimeTimingTelemetry::noteMidiInputExit(micros());
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
@@ -233,7 +233,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     if (source == SOURCE_USB) {
       const uint32_t captureStartUs = micros();
       SC_MIDI_IN('U', type, channel, data1, data2);
-      RuntimeTimingEnvelope::addUsbDeviceCapture(micros() - captureStartUs);
+      RuntimeTimingTelemetry::addUsbDeviceCapture(micros() - captureStartUs);
     } else {
       SC_MIDI_IN(source == SOURCE_SERIAL ? 'S' : 'H', type, channel, data1, data2);
     }
@@ -274,7 +274,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     if (source == SOURCE_USB) {
       const uint32_t thruStartUs = micros();
       sendMidiThru(type, outCh, data1, data2);
-      RuntimeTimingEnvelope::addUsbDeviceThru(micros() - thruStartUs);
+      RuntimeTimingTelemetry::addUsbDeviceThru(micros() - thruStartUs);
     } else {
       sendMidiThru(type, outCh, data1, data2);
     }
@@ -287,7 +287,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       if (source == SOURCE_USB) {
         const uint32_t clockStartUs = micros();
         clockManager.onMidiClockPulse();
-        RuntimeTimingEnvelope::addUsbDeviceClock(micros() - clockStartUs);
+        RuntimeTimingTelemetry::addUsbDeviceClock(micros() - clockStartUs);
       } else {
         clockManager.onMidiClockPulse();
       }
@@ -305,7 +305,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
         handleMidiContinue();
       }
       if (source == SOURCE_USB) {
-        RuntimeTimingEnvelope::addUsbDeviceTransport(micros() - transportStartUs);
+        RuntimeTimingTelemetry::addUsbDeviceTransport(micros() - transportStartUs);
       }
       return;
     }
@@ -352,10 +352,10 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   if (source == SOURCE_USB) {
     const uint32_t channelDurationUs = micros() - channelStartUs;
     if (type == midi::NoteOn || type == midi::NoteOff) {
-      RuntimeTimingEnvelope::addUsbDeviceNote(channelDurationUs);
+      RuntimeTimingTelemetry::addUsbDeviceNote(channelDurationUs);
     } else if (type == midi::ControlChange || type == midi::PitchBend ||
                type == midi::AfterTouchChannel || type == midi::ProgramChange) {
-      RuntimeTimingEnvelope::addUsbDeviceCc(channelDurationUs);
+      RuntimeTimingTelemetry::addUsbDeviceCc(channelDurationUs);
     }
   }
 }

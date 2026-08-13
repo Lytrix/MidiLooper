@@ -1,11 +1,11 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include "Utils/RuntimeTimingEnvelope.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 #include "Utils/DebugSessionCapture.h"
 
-namespace RuntimeTimingEnvelope {
+namespace RuntimeTimingTelemetry {
 namespace {
 
 struct Accumulator {
@@ -99,29 +99,29 @@ void clearWindow(State& s) {
 
 void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
 #if defined(SESSION_CAPTURE)
-  DebugSessionCapture::runtimeTimingEnvelope("midi_gap", s.midiGap.maxUs, s.midiGap.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("clk", s.clk.maxUs, s.clk.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("tracks", s.tracks.maxUs, s.tracks.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbdev", s.usbdev.maxUs, s.usbdev.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("din", s.din.maxUs, s.din.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("hosttask", s.hosttask.maxUs, s.hosttask.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("hostdrain", s.hostdrain.maxUs, s.hostdrain.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbread", s.usbread.maxUs, s.usbread.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbdisp", s.usbdisp.maxUs, s.usbdisp.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbcap", s.usbcap.maxUs, s.usbcap.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbthru", s.usbthru.maxUs, s.usbthru.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbclk", s.usbclk.maxUs, s.usbclk.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbnote", s.usbnote.maxUs, s.usbnote.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbcc", s.usbcc.maxUs, s.usbcc.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("usbtrans", s.usbtrans.maxUs, s.usbtrans.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("noteappend", s.noteappend.maxUs, s.noteappend.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("notechg", s.notechg.maxUs, s.notechg.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("noterecon", s.noterecon.maxUs, s.noterecon.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("notepair", s.notepair.maxUs, s.notepair.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("idle_maint", s.idleMaint.maxUs, s.idleMaint.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("persist_save", s.persistSave.maxUs,
+  DebugSessionCapture::runtimeTimingTelemetry("midi_gap", s.midiGap.maxUs, s.midiGap.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("clk", s.clk.maxUs, s.clk.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("tracks", s.tracks.maxUs, s.tracks.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbdev", s.usbdev.maxUs, s.usbdev.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("din", s.din.maxUs, s.din.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("hosttask", s.hosttask.maxUs, s.hosttask.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("hostdrain", s.hostdrain.maxUs, s.hostdrain.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbread", s.usbread.maxUs, s.usbread.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbdisp", s.usbdisp.maxUs, s.usbdisp.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbcap", s.usbcap.maxUs, s.usbcap.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbthru", s.usbthru.maxUs, s.usbthru.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbclk", s.usbclk.maxUs, s.usbclk.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbnote", s.usbnote.maxUs, s.usbnote.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbcc", s.usbcc.maxUs, s.usbcc.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("usbtrans", s.usbtrans.maxUs, s.usbtrans.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("noteappend", s.noteappend.maxUs, s.noteappend.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("notechg", s.notechg.maxUs, s.notechg.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("noterecon", s.noterecon.maxUs, s.noterecon.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("notepair", s.notepair.maxUs, s.notepair.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("idle_maint", s.idleMaint.maxUs, s.idleMaint.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("persist_save", s.persistSave.maxUs,
                                              s.persistSave.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
@@ -380,4 +380,4 @@ Snapshot peek(uint32_t nowUs) {
   return out;
 }
 
-}  // namespace RuntimeTimingEnvelope
+}  // namespace RuntimeTimingTelemetry

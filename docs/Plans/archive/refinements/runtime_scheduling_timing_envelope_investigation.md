@@ -5,9 +5,9 @@
 **Parent contract:** [`runtime_scheduling_admission_model_architecture.md`](../../runtime_scheduling_admission_model_architecture.md)  
 **Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](../../runtime_scheduling_owner_boundary_admission_refinement.md)
 
-This file preserves the chronological S0 device-run narrative and root-cause log formerly in the architecture document (§31a–§31p). It is **not** implementation authority. Current status and next work live in the parent contract and the owner-boundary roadmap. In this log, “S1” means the withdrawn interval-reservation stage, not persist `admit*`.
+This file preserves the chronological S0 device-run narrative and root-cause log formerly in the architecture document (§31a–§31p). It is **not** implementation authority. Current status and next work live in the parent contract and the owner-boundary roadmap. In this log, “S1” means the withdrawn interval-reservation stage, not persist `admit*`. The filename keeps “envelope” as a historical label; the module is `RuntimeTimingTelemetry`.
 
-**Telemetry naming (2026-08-13):** firmware now emits `DIAG,midi_gap` / `DIAG,midi_input` from `RuntimeTimingEnvelope::noteMidiInputEnter` / `noteMidiInputExit`. Tables below cite historical captures that still contain `DIAG,msi` / `DIAG,midisvc`. Mapping: `msi` = MIDI Input Gap; `midisvc` = `handleMidiInput()` duration. Do not rewrite measurement tables.
+**Telemetry naming (2026-08-13):** firmware now emits `DIAG,midi_gap` / `DIAG,midi_input` from `RuntimeTimingTelemetry::noteMidiInputEnter` / `noteMidiInputExit`. Tables below cite historical captures that still contain `DIAG,msi` / `DIAG,midisvc`. Mapping: `msi` = MIDI Input Gap; `midisvc` = `handleMidiInput()` duration. Do not rewrite measurement tables.
 
 Section numbers below keep their original §31* labels so existing capture and plan links remain locatable.
 
@@ -613,7 +613,7 @@ First stop 437.7 s: `clockrate` 48 → 24 → 0, `msi` 467 ms. Final stop 1230 s
 
 **Authorized next stage: S0b device re-run** — firmware already segments `MidiHandler::handleMidiInput`. See §31c. **Closed in §31i** ([`193645`](../../../../captures/session_20260812_193645.log)): named drain is `usbdev`.
 
-- **Owner:** `MidiHandler::handleMidiInput` (and the four sequential drains it already runs). `RuntimeTimingEnvelope` emits `DIAG,usbdev` / `din` / `hosttask` / `hostdrain`. Do not add a scheduler or change MIDI service density.
+- **Owner:** `MidiHandler::handleMidiInput` (and the four sequential drains it already runs). `RuntimeTimingTelemetry` emits `DIAG,usbdev` / `din` / `hosttask` / `hostdrain`. Do not add a scheduler or change MIDI service density.
 - **Invariant:** S0b takes no scheduling decision. `micros()` deltas into the existing 5 s window; emit Tier-A `DIAG` lines.
 - **Ownership / transition change:** NO.
 - **Baseline to beat:** this capture. Attribute the 218–221 ms sustained overdub `midisvc` and the 110–125 ms later-overdub samples to a named drain. The 762.5 ms overdub-entry sample from [`145555`](../../../../captures/session_20260812_145555.log) remains in the exit criterion.
@@ -678,7 +678,7 @@ At 337.2 s and 342.2 s, after `PLAYING → STOPPED`, `msi` max is 140.6 ms and 1
 
 ## 31i. Run [`193645`](../../../../captures/session_20260812_193645.log) — S0b attributed to `usbdev`
 
-Firmware: `d99576c` (S0b drain probes). RECORD then multiple overdubs on a 64-bar loop (`RECS,stop` length 49152). Envelope tags `usbdev` / `din` / `hosttask` / `hostdrain` present. Capture starts at boot (`HDR` 5.770 s).
+Firmware: `d99576c` (S0b drain probes). RECORD then multiple overdubs on a 64-bar loop (`RECS,stop` length 49152). DIAG tags `usbdev` / `din` / `hosttask` / `hostdrain` present. Capture starts at boot (`HDR` 5.770 s).
 
 ### Named drain
 
@@ -784,7 +784,7 @@ Remainder of `usbdisp` after `usbcap` + `usbthru` + nested `clk` is channel/butt
 
 ## 31k. Run [`195240`](../../../../captures/session_20260812_195240.log) — S0c attributed to `usbdisp`
 
-Firmware: `c33a30a` (S0c probes). RECORD (~64 bars, `RECS,stop` length 36864) then multiple overdubs. Envelope tags `usbread` / `usbdisp` / `usbcap` / `usbthru` present. Capture starts at boot (`HDR` ~7.6 s). `clockrate` 47–48 through RECORD and PLAYING/OVERDUB.
+Firmware: `c33a30a` (S0c probes). RECORD (~64 bars, `RECS,stop` length 36864) then multiple overdubs. DIAG tags `usbread` / `usbdisp` / `usbcap` / `usbthru` present. Capture starts at boot (`HDR` ~7.6 s). `clockrate` 47–48 through RECORD and PLAYING/OVERDUB.
 
 ### Named sub-segment
 
@@ -844,7 +844,7 @@ In every complete PLAYING/OVERDUB window, `usbdisp` max equals `usbdev` / `midis
 
 ## 31m. Run [`200452`](../../../../captures/session_20260812_200452.log) — S0d attributed to `usbnote`
 
-Firmware: `89cf3b3` (S0d probes). RECORD (`RECS,stop` length 78336) then multiple overdubs. Envelope tags `usbclk` / `usbnote` / `usbcc` / `usbtrans` present. Capture starts at boot (`HDR` ~6.8 s). `clockrate` 47–48 through RECORD and most PLAYING/OVERDUB.
+Firmware: `89cf3b3` (S0d probes). RECORD (`RECS,stop` length 78336) then multiple overdubs. DIAG tags `usbclk` / `usbnote` / `usbcc` / `usbtrans` present. Capture starts at boot (`HDR` ~6.8 s). `clockrate` 47–48 through RECORD and most PLAYING/OVERDUB.
 
 ### Named sub-segment
 

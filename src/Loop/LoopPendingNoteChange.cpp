@@ -9,7 +9,7 @@
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
-#include "Utils/RuntimeTimingEnvelope.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 #include <algorithm>
 
@@ -80,7 +80,7 @@ void Loop::accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayN
     pairs.push_back(CausingTargetPair{causingId, note.noteId});
     baseline[note.noteId] = NoteBaseline{note.note, note.velocity, note.startTick, note.endTick};
   }
-  RuntimeTimingEnvelope::addNotePair(micros() - pairStartUs);
+  RuntimeTimingTelemetry::addNotePair(micros() - pairStartUs);
 
   if (!pairs.empty()) {
     const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);

@@ -1,57 +1,57 @@
 #include <unity.h>
 
-#include "../../src/Utils/RuntimeTimingEnvelope.cpp"
+#include "../../src/Utils/RuntimeTimingTelemetry.cpp"
 
 void setUp() {
-  RuntimeTimingEnvelope::resetForTest();
+  RuntimeTimingTelemetry::resetForTest();
 }
 
 void tearDown() {}
 
 void test_midi_input_gap_recorded_between_handle_midi_input_calls() {
-  RuntimeTimingEnvelope::noteMidiInputEnter(1000);
-  RuntimeTimingEnvelope::noteMidiInputExit(1200);
-  RuntimeTimingEnvelope::noteMidiInputEnter(5200);  // gap = 4000
-  RuntimeTimingEnvelope::noteMidiInputExit(5300);
+  RuntimeTimingTelemetry::noteMidiInputEnter(1000);
+  RuntimeTimingTelemetry::noteMidiInputExit(1200);
+  RuntimeTimingTelemetry::noteMidiInputEnter(5200);  // gap = 4000
+  RuntimeTimingTelemetry::noteMidiInputExit(5300);
 
-  const auto snap = RuntimeTimingEnvelope::peek(5300);
+  const auto snap = RuntimeTimingTelemetry::peek(5300);
   TEST_ASSERT_EQUAL_UINT32(4000, snap.midiGapMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.midiGapOverCount);
   TEST_ASSERT_EQUAL_UINT32(200, snap.midiInputMaxUs);
 }
 
 void test_observational_over_count_uses_soft_ceiling() {
-  RuntimeTimingEnvelope::noteMidiInputEnter(0);
-  RuntimeTimingEnvelope::noteMidiInputExit(100);
-  RuntimeTimingEnvelope::noteMidiInputEnter(100 + 6000);  // gap 6000 > soft ceiling
-  RuntimeTimingEnvelope::noteMidiInputExit(100 + 6000 + 50);
+  RuntimeTimingTelemetry::noteMidiInputEnter(0);
+  RuntimeTimingTelemetry::noteMidiInputExit(100);
+  RuntimeTimingTelemetry::noteMidiInputEnter(100 + 6000);  // gap 6000 > soft ceiling
+  RuntimeTimingTelemetry::noteMidiInputExit(100 + 6000 + 50);
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(6000, snap.midiGapMaxUs);
   TEST_ASSERT_EQUAL_UINT32(1, snap.midiGapOverCount);
 }
 
 void test_clock_and_tracks_accumulate_independently() {
-  RuntimeTimingEnvelope::noteClockDispatch(800);
-  RuntimeTimingEnvelope::noteClockDispatch(1200);
-  RuntimeTimingEnvelope::noteTracksUpdate(400);
-  RuntimeTimingEnvelope::noteTracksUpdate(900);
-  RuntimeTimingEnvelope::noteClockPulse();
-  RuntimeTimingEnvelope::noteClockPulse();
+  RuntimeTimingTelemetry::noteClockDispatch(800);
+  RuntimeTimingTelemetry::noteClockDispatch(1200);
+  RuntimeTimingTelemetry::noteTracksUpdate(400);
+  RuntimeTimingTelemetry::noteTracksUpdate(900);
+  RuntimeTimingTelemetry::noteClockPulse();
+  RuntimeTimingTelemetry::noteClockPulse();
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(1200, snap.clkMaxUs);
   TEST_ASSERT_EQUAL_UINT32(900, snap.tracksMaxUs);
   TEST_ASSERT_EQUAL_UINT32(2, snap.clockPulses);
 }
 
 void test_usb_device_subsegments_accumulate_independently() {
-  RuntimeTimingEnvelope::noteUsbDeviceRead(40);
-  RuntimeTimingEnvelope::noteUsbDeviceRead(80);
-  RuntimeTimingEnvelope::noteUsbDeviceDispatch(154000);
-  RuntimeTimingEnvelope::noteUsbDeviceDispatch(108000);
+  RuntimeTimingTelemetry::noteUsbDeviceRead(40);
+  RuntimeTimingTelemetry::noteUsbDeviceRead(80);
+  RuntimeTimingTelemetry::noteUsbDeviceDispatch(154000);
+  RuntimeTimingTelemetry::noteUsbDeviceDispatch(108000);
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(80, snap.usbreadMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.usbreadOverCount);
   TEST_ASSERT_EQUAL_UINT32(154000, snap.usbdispMaxUs);
@@ -59,24 +59,24 @@ void test_usb_device_subsegments_accumulate_independently() {
 }
 
 void test_usb_device_nested_sums_commit_as_one_sample() {
-  RuntimeTimingEnvelope::beginUsbDeviceNested();
-  RuntimeTimingEnvelope::addUsbDeviceCapture(100);
-  RuntimeTimingEnvelope::addUsbDeviceCapture(200);
-  RuntimeTimingEnvelope::addUsbDeviceThru(50);
-  RuntimeTimingEnvelope::addUsbDeviceThru(60);
-  RuntimeTimingEnvelope::addUsbDeviceClock(4000);
-  RuntimeTimingEnvelope::addUsbDeviceClock(5000);
-  RuntimeTimingEnvelope::addUsbDeviceNote(100);
-  RuntimeTimingEnvelope::addUsbDeviceCc(40);
-  RuntimeTimingEnvelope::addUsbDeviceTransport(20);
-  RuntimeTimingEnvelope::commitUsbDeviceNested();
+  RuntimeTimingTelemetry::beginUsbDeviceNested();
+  RuntimeTimingTelemetry::addUsbDeviceCapture(100);
+  RuntimeTimingTelemetry::addUsbDeviceCapture(200);
+  RuntimeTimingTelemetry::addUsbDeviceThru(50);
+  RuntimeTimingTelemetry::addUsbDeviceThru(60);
+  RuntimeTimingTelemetry::addUsbDeviceClock(4000);
+  RuntimeTimingTelemetry::addUsbDeviceClock(5000);
+  RuntimeTimingTelemetry::addUsbDeviceNote(100);
+  RuntimeTimingTelemetry::addUsbDeviceCc(40);
+  RuntimeTimingTelemetry::addUsbDeviceTransport(20);
+  RuntimeTimingTelemetry::commitUsbDeviceNested();
 
-  RuntimeTimingEnvelope::beginUsbDeviceNested();
-  RuntimeTimingEnvelope::addUsbDeviceCapture(10000);
-  RuntimeTimingEnvelope::addUsbDeviceClock(90000);
-  RuntimeTimingEnvelope::commitUsbDeviceNested();
+  RuntimeTimingTelemetry::beginUsbDeviceNested();
+  RuntimeTimingTelemetry::addUsbDeviceCapture(10000);
+  RuntimeTimingTelemetry::addUsbDeviceClock(90000);
+  RuntimeTimingTelemetry::commitUsbDeviceNested();
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(10000, snap.usbcapMaxUs);
   TEST_ASSERT_EQUAL_UINT32(1, snap.usbcapOverCount);
   TEST_ASSERT_EQUAL_UINT32(110, snap.usbthruMaxUs);
@@ -92,32 +92,32 @@ void test_usb_device_nested_sums_commit_as_one_sample() {
 }
 
 void test_note_off_nested_sums_commit_and_gate_inactive_window() {
-  RuntimeTimingEnvelope::addNoteAppend(5000);
-  RuntimeTimingEnvelope::addNoteChange(6000);
-  RuntimeTimingEnvelope::addNoteRecon(7000);
-  RuntimeTimingEnvelope::addNotePair(8000);
+  RuntimeTimingTelemetry::addNoteAppend(5000);
+  RuntimeTimingTelemetry::addNoteChange(6000);
+  RuntimeTimingTelemetry::addNoteRecon(7000);
+  RuntimeTimingTelemetry::addNotePair(8000);
 
-  const auto outside = RuntimeTimingEnvelope::peek();
+  const auto outside = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(0, outside.noteappendMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, outside.notechgMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, outside.notereconMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, outside.notepairMaxUs);
 
-  RuntimeTimingEnvelope::beginUsbDeviceNested();
-  RuntimeTimingEnvelope::addNoteAppend(100);
-  RuntimeTimingEnvelope::addNoteAppend(200);
-  RuntimeTimingEnvelope::addNoteChange(300);
-  RuntimeTimingEnvelope::addNoteRecon(4000);
-  RuntimeTimingEnvelope::addNoteRecon(5000);
-  RuntimeTimingEnvelope::addNotePair(50);
-  RuntimeTimingEnvelope::addNotePair(60);
-  RuntimeTimingEnvelope::commitUsbDeviceNested();
+  RuntimeTimingTelemetry::beginUsbDeviceNested();
+  RuntimeTimingTelemetry::addNoteAppend(100);
+  RuntimeTimingTelemetry::addNoteAppend(200);
+  RuntimeTimingTelemetry::addNoteChange(300);
+  RuntimeTimingTelemetry::addNoteRecon(4000);
+  RuntimeTimingTelemetry::addNoteRecon(5000);
+  RuntimeTimingTelemetry::addNotePair(50);
+  RuntimeTimingTelemetry::addNotePair(60);
+  RuntimeTimingTelemetry::commitUsbDeviceNested();
 
-  RuntimeTimingEnvelope::beginUsbDeviceNested();
-  RuntimeTimingEnvelope::addNoteChange(90000);
-  RuntimeTimingEnvelope::commitUsbDeviceNested();
+  RuntimeTimingTelemetry::beginUsbDeviceNested();
+  RuntimeTimingTelemetry::addNoteChange(90000);
+  RuntimeTimingTelemetry::commitUsbDeviceNested();
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(300, snap.noteappendMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.noteappendOverCount);
   TEST_ASSERT_EQUAL_UINT32(90000, snap.notechgMaxUs);
@@ -129,16 +129,16 @@ void test_note_off_nested_sums_commit_and_gate_inactive_window() {
 }
 
 void test_midi_input_drains_accumulate_independently() {
-  RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
-  RuntimeTimingEnvelope::noteUsbDeviceDrain(110000);
-  RuntimeTimingEnvelope::noteDinDrain(40);
-  RuntimeTimingEnvelope::noteDinDrain(80);
-  RuntimeTimingEnvelope::noteUsbHostTask(1200);
-  RuntimeTimingEnvelope::noteUsbHostTask(900);
-  RuntimeTimingEnvelope::noteUsbHostDrain(800);
-  RuntimeTimingEnvelope::noteUsbHostDrain(6001);
+  RuntimeTimingTelemetry::noteUsbDeviceDrain(221000);
+  RuntimeTimingTelemetry::noteUsbDeviceDrain(110000);
+  RuntimeTimingTelemetry::noteDinDrain(40);
+  RuntimeTimingTelemetry::noteDinDrain(80);
+  RuntimeTimingTelemetry::noteUsbHostTask(1200);
+  RuntimeTimingTelemetry::noteUsbHostTask(900);
+  RuntimeTimingTelemetry::noteUsbHostDrain(800);
+  RuntimeTimingTelemetry::noteUsbHostDrain(6001);
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(221000, snap.usbdevMaxUs);
   TEST_ASSERT_EQUAL_UINT32(2, snap.usbdevOverCount);
   TEST_ASSERT_EQUAL_UINT32(80, snap.dinMaxUs);
@@ -150,20 +150,20 @@ void test_midi_input_drains_accumulate_independently() {
 }
 
 void test_maybe_emit_rate_limits_and_resets_window() {
-  RuntimeTimingEnvelope::noteClockDispatch(9000);
-  RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
-  RuntimeTimingEnvelope::noteUsbDeviceDispatch(154000);
-  TEST_ASSERT_FALSE(RuntimeTimingEnvelope::maybeEmit(1000));  // first call arms window
+  RuntimeTimingTelemetry::noteClockDispatch(9000);
+  RuntimeTimingTelemetry::noteUsbDeviceDrain(221000);
+  RuntimeTimingTelemetry::noteUsbDeviceDispatch(154000);
+  TEST_ASSERT_FALSE(RuntimeTimingTelemetry::maybeEmit(1000));  // first call arms window
 
-  RuntimeTimingEnvelope::noteClockDispatch(9000);
-  RuntimeTimingEnvelope::noteUsbDeviceDrain(221000);
-  RuntimeTimingEnvelope::noteUsbDeviceDispatch(154000);
+  RuntimeTimingTelemetry::noteClockDispatch(9000);
+  RuntimeTimingTelemetry::noteUsbDeviceDrain(221000);
+  RuntimeTimingTelemetry::noteUsbDeviceDispatch(154000);
   TEST_ASSERT_FALSE(
-      RuntimeTimingEnvelope::maybeEmit(1000 + RuntimeTimingEnvelope::kEmitIntervalUs - 1));
+      RuntimeTimingTelemetry::maybeEmit(1000 + RuntimeTimingTelemetry::kEmitIntervalUs - 1));
 
-  TEST_ASSERT_TRUE(RuntimeTimingEnvelope::maybeEmit(1000 + RuntimeTimingEnvelope::kEmitIntervalUs));
+  TEST_ASSERT_TRUE(RuntimeTimingTelemetry::maybeEmit(1000 + RuntimeTimingTelemetry::kEmitIntervalUs));
 
-  const auto after = RuntimeTimingEnvelope::peek(1000 + RuntimeTimingEnvelope::kEmitIntervalUs);
+  const auto after = RuntimeTimingTelemetry::peek(1000 + RuntimeTimingTelemetry::kEmitIntervalUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.midiGapMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.midiInputMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clkMaxUs);
@@ -191,13 +191,13 @@ void test_maybe_emit_rate_limits_and_resets_window() {
 }
 
 void test_loop_remainder_spans_accumulate_independently() {
-  RuntimeTimingEnvelope::noteIdleMaint(800);
-  RuntimeTimingEnvelope::noteIdleMaint(1200);
-  RuntimeTimingEnvelope::noteLoadFrame(3981504);
-  RuntimeTimingEnvelope::notePersistSave(80);
-  RuntimeTimingEnvelope::notePersistSave(40);
+  RuntimeTimingTelemetry::noteIdleMaint(800);
+  RuntimeTimingTelemetry::noteIdleMaint(1200);
+  RuntimeTimingTelemetry::noteLoadFrame(3981504);
+  RuntimeTimingTelemetry::notePersistSave(80);
+  RuntimeTimingTelemetry::notePersistSave(40);
 
-  const auto snap = RuntimeTimingEnvelope::peek();
+  const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(1200, snap.idleMaintMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.idleMaintOverCount);
   TEST_ASSERT_EQUAL_UINT32(3981504, snap.loadFrameMaxUs);
@@ -207,9 +207,9 @@ void test_loop_remainder_spans_accumulate_independently() {
 }
 
 void test_emit_interval_constant() {
-  TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingEnvelope::kEmitIntervalUs);
-  TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingEnvelope::kObservationalSoftCeilingUs);
-  TEST_ASSERT_EQUAL_UINT32(50000u, RuntimeTimingEnvelope::kLoopRemainderOneShotUs);
+  TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingTelemetry::kEmitIntervalUs);
+  TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingTelemetry::kObservationalSoftCeilingUs);
+  TEST_ASSERT_EQUAL_UINT32(50000u, RuntimeTimingTelemetry::kLoopRemainderOneShotUs);
 }
 
 int main(int argc, char** argv) {

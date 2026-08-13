@@ -25,7 +25,7 @@ inline const char* tagOf(const char* line) {
 
 /**
  * Transport state, persistence, record stage, session header, visual cache coverage, and
- * timing envelope lines.
+ * timing telemetry lines.
  */
 inline bool isTierALine(const char* line) {
   const char* tag = tagOf(line);
