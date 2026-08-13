@@ -88,8 +88,10 @@ class NoteEditCurrentState {
   static NoteEditCurrentState buildFromSessionStore(const MidiEventVec& store, uint8_t channel);
 
   /// Insert Visible rows for committed display notes that have no current-state row.
-  /// Does not overwrite Hidden / Deleted / existing Visible / Added. Skips invalid
-  /// NoteId and zero-length display spans (`endTick == startTick`).
+  /// Unedited Existing Visible rows (`committedSpan == currentSpan`) take the display
+  /// span so rematerialize off-pairing cannot keep a longer end. Does not overwrite
+  /// Hidden / Deleted / Added / this-session geometry. Skips invalid NoteId and
+  /// zero-length display spans (`endTick == startTick`).
   void ensureVisibleRowsForDisplayNotes(const NoteUtils::DisplayNoteVec& notes);
 
   /// Canonical lossy projection: Visible/Added rows only.

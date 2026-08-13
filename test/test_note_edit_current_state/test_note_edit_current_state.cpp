@@ -301,6 +301,135 @@ void test_current_state_upserts_visible_row_from_display_note_without_store_pair
   TEST_ASSERT_TRUE(isLiveEditDriverValidFromCurrentState(selection, focus, currentState));
 }
 
+void test_ensure_aligns_unedited_visible_row_to_display_span() {
+  // 175621 / Stage 7: buildFromSessionStore paired noteId 45 at 1344 to end 2064
+  // (DNTE length 720). Visual cache length is 240. Unedited Visible rows must take
+  // the display span. This-session geometry and Hidden stay.
+  constexpr NoteId kPairedId = 45;
+  constexpr NoteId kEditedId = 87;
+  constexpr NoteId kHiddenId = 42;
+  constexpr uint8_t kPitch = 12;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kPairedId, {kPitch, 100, 1344, 2064}, {kPitch, 100, 1344, 2064},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kEditedId, {kPitch, 100, 1440, 1680}, {kPitch, 100, 1392, 1632},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kHiddenId, {kPitch, 100, 384, 575}, {kPitch, 100, 384, 575},
+                         NoteEditPresenceType::Hidden);
+
+  NoteUtils::DisplayNoteVec displayNotes;
+  displayNotes.push_back({kPairedId, kPitch, 100, 1344, 1584});
+  displayNotes.push_back({kEditedId, kPitch, 100, 1440, 1680});
+  displayNotes.push_back({kHiddenId, kPitch, 100, 384, 575});
+
+  currentState.ensureVisibleRowsForDisplayNotes(displayNotes);
+
+  NoteBaseline aligned{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kPairedId, aligned));
+  TEST_ASSERT_EQUAL_UINT32(1344u, aligned.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1584u, aligned.endTick);
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kEditedId, aligned));
+  TEST_ASSERT_EQUAL_UINT32(1392u, aligned.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1632u, aligned.endTick);
+  TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kHiddenId));
+}
+
+void test_display_projection_omits_rematerialize_only_visible_row() {
+  // 175621 / Stage 7: open DISP 74 vs cache 68. Rematerialize-only Visible rows
+  // (ids 25 and 63 both at 1344) must not paint. This-session Added still paints.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCacheId = 87;
+  constexpr NoteId kRematerializeOnlyId = 63;
+  constexpr NoteId kAddedId = 200;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kCacheId, {kPitch, 100, 1344, 1584}, {kPitch, 100, 1344, 1584},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kRematerializeOnlyId, {kPitch, 100, 1344, 2064},
+                         {kPitch, 100, 1344, 2064}, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kAddedId, {60, 100, 0, 48}, {60, 100, 0, 48},
+                         NoteEditPresenceType::Added);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kCacheId, kPitch, 100, 1344, 1584});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kCacheId;
+  focus.last = {kPitch, 100, 1344, 1584};
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  bool hasCache = false;
+  bool hasRematerializeOnly = false;
+  bool hasAdded = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kCacheId) {
+      TEST_ASSERT_EQUAL_UINT32(1344u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1584u, dn.endTick);
+      hasCache = true;
+    }
+    if (dn.noteId == kRematerializeOnlyId) {
+      hasRematerializeOnly = true;
+    }
+    if (dn.noteId == kAddedId) {
+      hasAdded = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasCache);
+  TEST_ASSERT_FALSE(hasRematerializeOnly);
+  TEST_ASSERT_TRUE(hasAdded);
+}
+
+void test_display_projection_binds_visible_row_to_invalid_id_committed_note() {
+  // 161117 / Stage 7: visual-cache note without NoteId is still the committed
+  // base. A Visible row with the same span paints under its session NoteId.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kRestoredId = 40;
+  constexpr NoteId kMoverId = 23;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kRestoredId, {30, 100, 0, 3071}, {30, 100, 0, 3071},
+                         NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, {29, 100, 1296, 1487}, {29, 100, 1296, 1487},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kInvalidNoteId, 30, 100, 0, 3071});
+  committedBase.push_back({kMoverId, 29, 100, 1296, 1487});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {29, 100, 1296, 1487};
+  focus.baselineMap[kRestoredId] = {30, 100, 0, 3071};
+  focus.baselineMap[kMoverId] = focus.last;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  bool foundRestored = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kRestoredId) {
+      TEST_ASSERT_EQUAL_UINT8(30, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(0u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(3071u, dn.endTick);
+      foundRestored = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundRestored);
+}
+
 void test_selectable_inventory_keeps_painted_note_without_current_state_row() {
   // 174139 / Stage 5: Stage 1 keeps wrap notes on paint; select used
   // rowIncludedInSelectableInventory which is false when find == nullptr, so the
@@ -2166,6 +2295,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
   RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
   RUN_TEST(test_current_state_upserts_visible_row_from_display_note_without_store_pair);
+  RUN_TEST(test_ensure_aligns_unedited_visible_row_to_display_span);
+  RUN_TEST(test_display_projection_omits_rematerialize_only_visible_row);
+  RUN_TEST(test_display_projection_binds_visible_row_to_invalid_id_committed_note);
   RUN_TEST(test_selectable_inventory_keeps_painted_note_without_current_state_row);
   RUN_TEST(test_display_projection_paint_matches_committed_base_when_current_state_is_subset);
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);

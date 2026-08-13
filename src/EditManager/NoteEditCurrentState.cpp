@@ -77,14 +77,23 @@ NOTE_EDIT_MEM void NoteEditCurrentState::ensureVisibleRowsForDisplayNotes(
     if (note.noteId == kInvalidNoteId) {
       continue;
     }
-    if (hasRow(note.noteId)) {
-      continue;
-    }
     if (note.endTick == note.startTick) {
       continue;
     }
     const NoteBaseline span{note.note, note.velocity, note.startTick, note.endTick};
-    upsertRow(note.noteId, span, span, NoteEditPresenceType::Visible);
+    NoteEditCurrentNoteState* row = find(note.noteId);
+    if (row == nullptr) {
+      upsertRow(note.noteId, span, span, NoteEditPresenceType::Visible);
+      continue;
+    }
+    if (row->presence != NoteEditPresenceType::Visible) {
+      continue;
+    }
+    if (!spansEqual(row->committedSpan, row->currentSpan)) {
+      continue;
+    }
+    row->committedSpan = span;
+    row->currentSpan = span;
   }
 }
 
