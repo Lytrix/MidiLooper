@@ -9,6 +9,8 @@ void tearDown() {}
 // failed to match and the ring evicted protected lines (session_20260812_144323 lost all
 // DIAG envelope windows between 32.8s and 304.1s).
 void test_tag_is_the_field_after_micros() {
+  TEST_ASSERT_EQUAL_STRING("DIAG,midi_gap,27834,1",
+                           CaptureLineTier::tagOf("#CAP,6701437,DIAG,midi_gap,27834,1"));
   TEST_ASSERT_EQUAL_STRING("DIAG,msi,27834,1",
                            CaptureLineTier::tagOf("#CAP,6701437,DIAG,msi,27834,1"));
   TEST_ASSERT_EQUAL_STRING("ST,Track,STOPPED,ARMED",
@@ -16,6 +18,8 @@ void test_tag_is_the_field_after_micros() {
 }
 
 void test_envelope_lines_are_tier_a() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701437,DIAG,midi_gap,27834,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701449,DIAG,midi_input,9,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701437,DIAG,msi,27834,1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701449,DIAG,midisvc,9,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701454,DIAG,clk,0,0"));

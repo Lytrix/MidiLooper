@@ -158,8 +158,8 @@ void MidiHandler::beginUsbHost() {
 }
 
 void MidiHandler::handleMidiInput() {
-  const uint32_t serviceEnterUs = micros();
-  RuntimeTimingEnvelope::noteMidiServiceEnter(serviceEnterUs);
+  const uint32_t inputEnterUs = micros();
+  RuntimeTimingEnvelope::noteMidiInputEnter(inputEnterUs);
 
   MidiInputMsg batch[kMidiInputBatchMax];
   size_t count = 0;
@@ -189,13 +189,13 @@ void MidiHandler::handleMidiInput() {
   RuntimeTimingEnvelope::noteDinDrain(micros() - segmentStartUs);
 
   if (!usbHostReady_) {
-    RuntimeTimingEnvelope::noteMidiServiceExit(micros());
+    RuntimeTimingEnvelope::noteMidiInputExit(micros());
     return;
   }
 
   // --- USB Host MIDI Input ---
   // USBHost_t36 delivers one MIDI message per read() via callbacks. Drain a bounded
-  // batch each service pass (same cap as USB-device / DIN) so DROID NoteOn/NoteOff
+  // batch each handleMidiInput() call (same cap as USB-device / DIN) so DROID NoteOn/NoteOff
   // pairs are not left queued across a long main-loop frame.
   segmentStartUs = micros();
   usbHost.Task();
@@ -224,7 +224,7 @@ void MidiHandler::handleMidiInput() {
                static_cast<unsigned>(kMidiInputBatchMax));
   }
 
-  RuntimeTimingEnvelope::noteMidiServiceExit(micros());
+  RuntimeTimingEnvelope::noteMidiInputExit(micros());
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {

@@ -43,7 +43,7 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Resolution** | Deterministic synchronous conflict solving — geometry constraint analysis → actions | Runtime scheduling; pipeline or queue metaphors |
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
-| **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress | Control-surface motor path (Outbound) |
+| **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress (`handleMidiInput`) | Control-surface motor path (Outbound); **MIDI service** (not a domain noun or owner) |
 | **Manager** | Domain owner coordinating lifecycle over a scope | Controller (not used); thin routing (Handler) |
 | **Capture** | Live record or overdub append buffer until stop | Committed timeline rows |
 | **pass** / **passes** | Bounded capture or edit stretch ending in commit; canonical timeline on `LoopPasses` | Moving note range; single-note focus lifecycle |
@@ -78,6 +78,21 @@ Do not use for synchronous algorithms that run to completion in one call.
 ### Deferred, Pending, Scheduled
 
 These are **intentionally distinct** (see concept boundaries). Do not collapse into one umbrella term.
+
+### Timing-critical MIDI Input
+
+MIDI Input is timing-critical. The owner is `MidiHandler`; the operation is `handleMidiInput()`. Do **not** introduce **MIDI service** as an architectural noun or owner.
+
+`main.cpp::loop()` owns runtime service ordering / scheduling integration. Domain work stays with Track / Loop / StorageManager / DisplayManager.
+
+| Term | Meaning |
+|------|---------|
+| **MIDI Input handling duration** | Time spent inside `handleMidiInput()` (`DIAG,midi_input`) |
+| **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`) |
+| **RuntimeTimingEnvelope** | Instrumentation that measures that relationship — not a MIDI owner |
+| **Runtime admission** | Future coordinator of which bounded runtime units may execute between MIDI Input handling opportunities |
+
+Historical captures (2026-08-12) emit `DIAG,msi` / `DIAG,midisvc` for the same two measurements. Do not rename `MidiHandler` or `handleMidiInput()` to fit scheduling prose.
 
 ---
 
@@ -119,7 +134,7 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 
 | Verb prefix | Architectural meaning | Examples |
 |-------------|----------------------|----------|
-| **handle*** | Hardware or MIDI ingress routing | `handleMidiNote`, `handleCoarseFaderInput` |
+| **handle*** | Hardware or MIDI ingress routing | `handleMidiInput`, `handleMidiNote`, `handleCoarseFaderInput` |
 | **process*** | Poll, defer, or drain work queues | `processDeferredSaveState`, `processPendingPresses` |
 | **apply*** | Commit domain mutations to live state | `applyEditSessionActions`, `applyGeometryKindFromControl` |
 | **resolve*** | Synchronous constraint solving | `resolveAllConstrainedGeometry`, `resolveConstrainedGeometry` |

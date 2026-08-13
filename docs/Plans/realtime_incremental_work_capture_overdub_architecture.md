@@ -342,7 +342,7 @@ Do not introduce new SyncDrain on RECORD/OVERDUB or normal STOP paths.
 ### Cooperative scheduling
 
 - Extra MIDI drain after heavy work = **safety net**, never the fundamental fix.
-- Fundamental fix = **no unbounded lower-priority work** between MIDI service points.
+- Fundamental fix = **no unbounded lower-priority work** between `handleMidiInput()` entries.
 - Prefer extending existing deferred/sliced patterns (LoadLoop budget, mid-pass budget, `rebuildVisualCacheIdleSlice`) rather than new Managers/ISRs.
 
 ### Memory / backpressure
@@ -537,14 +537,16 @@ Do **not** expand RC-C into a general runtime scheduler rewrite unless sliced/de
 
 **Re-verify:** flash `teensy41-capture-serial`; ≈100-bar RECORD + overdub; heard grid in time after stop and through overdub; no external clock loss; display tail fill may be slower (acceptable vs half-tempo).
 
-### 9.2 Scheduling admission follow-on (2026-08-12)
+### 9.2 Scheduling follow-on (2026-08-13)
 
-**Architecture:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) — timing envelope investigation and admission prerequisites (42 sections; audit complete).
+**Contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md)  
+**Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)  
+**Investigation log:** [`archive/refinements/runtime_scheduling_timing_envelope_investigation.md`](archive/refinements/runtime_scheduling_timing_envelope_investigation.md)
 
-RC-C slice C (extra MIDI drain) masked but did not bound the sum of work between service points. The [`122003`](../../captures/session_20260812_122003.log) regression proved that individually bounded slices plus an extra service point are insufficient when post-record PLAYING has fewer service points than RECORD/OVERDUB.
+RC-C slice C (extra MIDI drain) masked but did not bound the sum of work between `handleMidiInput()` entries. The [`122003`](../../captures/session_20260812_122003.log) regression proved that individually bounded slices plus an extra `handleMidiInput()` call are insufficient when post-record PLAYING has fewer `handleMidiInput()` call sites than RECORD/OVERDUB.
 
-**Audit conclusion:** collective admission is the right goal; stateless `RuntimeWorkBudget::admit(WorkClass)` with assumed 2 ms / 5 ms MSI ceiling is **not sufficient**. The 2 ms / 5 ms proposal is withdrawn as an established contract until S0 device evidence.
+**Audit conclusion:** collective interval reservation is the right goal; stateless `RuntimeWorkBudget::admit(WorkClass)` with assumed 2 ms / 5 ms MIDI Input Gap ceiling is **not sufficient**. The 2 ms / 5 ms proposal is withdrawn.
 
-**Hard constraint:** no runtime admission, reservation mechanism, service-density change, or scheduler until **S0 timing-envelope telemetry** establishes dominant paths and an evidence-based MSI ceiling.
+**Hard constraint:** no interval reservation, extra `handleMidiInput()` call sites, or new global scheduler until the Owner-Boundary Gate exits. This does not replace shipped `DeferredJobScheduler` (DEC-027) or persist `admit*`.
 
-**S0 (shipped 2026-08-12):** `RuntimeTimingEnvelope` + Tier-A `DIAG,msi` / `DIAG,midisvc` / `DIAG,clk` / `DIAG,tracks` / `DIAG,clockrate` (5 s rate limit). **S0b (attributed [`193645`](../../captures/session_20260812_193645.log)):** PLAYING/OVERDUB `midisvc` is `usbdev`. **S0c (attributed [`195240`](../../captures/session_20260812_195240.log)):** `usbdev` is `usbdisp`. **S0d (attributed [`200452`](../../captures/session_20260812_200452.log)):** `usbdisp` is `usbnote`. **S0e (attributed [`204221`](../../captures/session_20260812_204221.log)):** `usbnote` is `notechg` = `noterecon` 177 ms + `notepair` 98 ms. **RC-K1–K3 (firmware shipped):** quadratic reconstruct dedup, drop per-note channel scan (DEC-033), cache source-view notes once per pass. Plan [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md). Observation probes stay. **Next:** device re-measure vs [`204221`](../../captures/session_20260812_204221.log). Admission S1 not authorized.
+**S0 (shipped 2026-08-12):** `RuntimeTimingEnvelope` + Tier-A DIAG. S0b–S0e attributed PLAYING/OVERDUB `handleMidiInput()` duration (`midisvc` in those captures) as `usbdev` → `usbdisp` → `usbnote` → `notechg`. **RC-K1–K3 / RC-L1 device-verified** [`225803`](../../captures/session_20260812_225803.log). Observation probes stay. Interval reservation is not authorized. Firmware now emits `DIAG,midi_gap` / `DIAG,midi_input` for the same two measurements.
