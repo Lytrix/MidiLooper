@@ -33,6 +33,7 @@ void Loop::resetPassTimeline() {
   }
   passes.overdubPasses.clear();
   passes.editPasses.clear();
+  passes.loopGeometries.clear();
   nextPassId_ = 1;
   nextNoteId_ = 1;
   nextMergeSequence_ = 0;

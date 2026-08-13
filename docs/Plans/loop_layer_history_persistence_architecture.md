@@ -1,6 +1,6 @@
 # Loop layer history persistence — architecture
 
-**Status:** Active — Stage 1 native audit shipped; Stage 2 gated on named content metadata  
+**Status:** Active — Stage 1 native audit shipped; Stage 1b `LoopGeometry` content record shipped; Stage 2 next  
 **Date:** 2026-08-14  
 **Decision:** [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only)  
 **OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A only)  
@@ -38,8 +38,8 @@ Loop
  └── ordered immutable content-layer records
       ├── RecordPass
       ├── OverdubPass
-      ├── EditPass
-      └── geometry/content revision only if required
+      ├── EditPass          (committed noteEditPass batch)
+      └── LoopGeometry      (LoopGeometry.id)
 ```
 
 Undo/redo is not persisted. After reboot, reconstruct the current Loop at the **tip**. Mid-session editor cursor does not survive. Redo is empty at load. Undo can walk content until empty.
@@ -107,6 +107,7 @@ Boot `load_frame` is a separate owner. Layer A does not target it.
 ```text
 Stage 0   architecture + gates          (this document)
 Stage 1   prove content contains enough
+Stage 1b  LoopGeometry content record
 Stage 2   load-time replay + history derivation
 Stage 3   delete persisted UndoStacks
 Stage 3b  separate DEC: replace GlobalUndoStack
@@ -124,18 +125,18 @@ Native fixtures: `test/test_loop_content_history/`. Derivation: `deriveContentUn
 |-----------------|-------------------|------------------------|
 | `RecordPassAdded` | `recordPass.id` | Yes |
 | `OverdubPassAdded` | overdub id + following `editPassIndex == 255` companions | Yes |
-| `NoteEditPassClosed` | consecutive rows with the same `editPassIndex` | Partial — see gap 1 |
-| `ControlChangeEditPassClosed` | same, `EditPassType::ControlChange` | Partial — same gap |
-| `LoopBoundaryChange` | snapshot has only **current** `loopStartTick` / `loopLengthTicks` | No — see gap 2 |
+| `NoteEditPassClosed` | consecutive rows with the same `editPassIndex` | Yes — persist unit is the committed noteEditPass batch (`primaryPassId` = first row id) |
+| `ControlChangeEditPassClosed` | same, `EditPassType::ControlChange` | Yes — same batch rule |
+| `LoopBoundaryChange` | `LoopGeometry.id` + ticks on `passes.loopGeometries` | Yes — Stage 1b |
 | `ClearSlot` | not Loop content | Layer B (`lastUnlinkedSlotLink`) |
 
 **Prefix invariant:** holding. Omitting a Disabled suffix materializes the same notes as leaving those rows Disabled (`test_active_prefix_materialize_matches_omitted_suffix`). Persisted Active/Disabled is unnecessary if the file stores only the effective prefix.
 
-**Gap 1 — loop-lifetime undo-unit id.** `editPassIndex` is session-local and resets to 0. Two NOTE_EDIT sessions that each persist index 0 as adjacent rows collapse into one unit (`test_session_reused_edit_pass_index_collapses_two_undo_units`). Do not persist undo. Put a monotonic undo-unit id on each content record (or stop reusing session-local `editPassIndex` on disk).
+**Retracted — loop-lifetime undo-unit id.** Session `editPassId` / `editPassIds` are temporary runtime for in-session `E:` undo. That path does not change. On commit, the batch is one noteEditPass (`closeNoteEditPass`). Reboot during an active NOTE_EDIT already flattens via `processEditAutosave` → `markCurrentEditBatchDurable` → `pushNoteEditPassClosed` (HITL PASS [`session_20260805_212234`](../../captures/session_20260805_212234.log)). Do not add a second flatten path or a new undo-unit id field.
 
-**Gap 2 — geometry content revision.** `LoopBoundaryChange` before/after ticks live only on `UndoEntry`. Name a geometry content record if length/start undo must survive reboot as Loop content. Do not add `LoopPass` merely to absorb this kind.
+**Stage 1b — `LoopGeometry` content record (shipped 2026-08-14).** `LoopGeometry` sits next to `recordPass` / `editPasses` with `LoopGeometry.id` from `nextPassId_++`. `commitPendingLoopGeometry` appends a record and still pushes in-session `UndoEntry` `LoopBoundaryChange` until Stage 3b. `UndoLoopGeometry` remains the GUS payload shape. Persist is an additive `GEO1` tail after `EPT3`; cards without the tail still load.
 
-Stage 2 must encode gap 1 (and gap 2 if geometry undo is in scope) as content metadata before load-time editing state can match today's `UndoEntry` boundaries. Keep writing today's bundle undo stack. `GlobalUndoStack` stays in-session authority.
+Stage 2 can derive load-time editing state from content including `LoopGeometry`. Keep writing today's bundle undo stack. `GlobalUndoStack` stays in-session authority.
 
 ### Stage 2 — Load-time reconstructed editing state
 
@@ -175,3 +176,23 @@ Only the most recent clear is undoable as a Set relink. After relink, pass undo/
 - Transition change: NO for Layer A
 - Reuse: YES — extend `LoopPasses` / `LoadLoopJob` / `TrackUndo`; no new Manager
 - Phase scope: Stages 1–3 only
+
+## Pre-implementation review (Stage 1b)
+
+### Ready
+- Reboot-during-edit flatten already exists (`markCurrentEditBatchDurable`). No new NOTE_EDIT path.
+- `LoopGeometry` is a `LoopPasses` content record; persist owner stays `StorageManager`.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Session `editPassIds` | Unchanged (E: only) |
+| Persist unit | Committed noteEditPass batch |
+| `UndoLoopGeometry` | GUS payload until Stage 3b |
+| `LoopGeometry` | Content record, not `LoopPass` |
+
+### Open before coding
+None.
+
+### Proceed?
+YES

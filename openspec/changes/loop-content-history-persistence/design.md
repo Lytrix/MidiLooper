@@ -55,5 +55,5 @@ Primary files: `src/StorageManager/DeferredSaveJobStages.cpp`, `src/Track/TrackC
 
 ## Open Questions
 
-- Stage 1 outcome: is a content prefix sufficient, or is a named content-metadata field required?
+- Stage 1 outcome: content prefix is sufficient for record/overdub/edit batches. Session `editPassIds` stay E:-only (no new undo-unit id). `LoopGeometry` is the named content record for `LoopBoundaryChange` (Stage 1b).
 - After Stage 3, is a one-time legacy bundle-undo reader required for existing cards, or can load ignore that section?

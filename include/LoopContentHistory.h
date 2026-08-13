@@ -19,6 +19,7 @@ enum class ContentUndoUnitKind : uint8_t {
   OverdubPassAdded = 1,
   NoteEditPassClosed = 2,
   ControlChangeEditPassClosed = 3,
+  LoopBoundaryChange = 4,
 };
 
 struct ContentUndoUnit {
@@ -29,16 +30,17 @@ struct ContentUndoUnit {
 };
 
 /// Group persisted content records into undo units using only Loop file fields:
-/// pass id order, capture vs edit, and editPassIndex (255 = overdub companions).
+/// pass id order, capture vs edit vs LoopGeometry, and editPassIndex
+/// (255 = overdub companions).
 ///
-/// Cannot derive ClearSlot (Set last-state) or LoopBoundaryChange (no geometry
-/// content record). Session-local editPassIndex reuse collapses adjacent NOTE_EDIT
-/// batches that share index 0 — see Stage 1 audit.
+/// Session `editPassIds` are E:-only and stay out of this derivation. A committed
+/// noteEditPass batch is the persist unit (`primaryPassId` = first row id).
+/// ClearSlot is Set last-state (Layer B), not Loop content.
 inline void deriveContentUndoUnits(const LoopPasses& passes, std::vector<ContentUndoUnit>& out) {
   out.clear();
 
   struct Row {
-    enum class Type : uint8_t { Record, Overdub, Edit };
+    enum class Type : uint8_t { Record, Overdub, Edit, Geometry };
     Type type = Type::Record;
     PassId id = kInvalidPassId;
     uint8_t editPassIndex = 0;
@@ -72,6 +74,15 @@ inline void deriveContentUndoUnits(const LoopPasses& passes, std::vector<Content
     row.editPassType = pass.passType;
     rows.push_back(row);
   }
+  for (const LoopGeometry& geometry : passes.loopGeometries) {
+    if (geometry.id == kInvalidPassId) {
+      continue;
+    }
+    Row row;
+    row.type = Row::Type::Geometry;
+    row.id = geometry.id;
+    rows.push_back(row);
+  }
   std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.id < b.id; });
 
   size_t i = 0;
@@ -97,6 +108,14 @@ inline void deriveContentUndoUnits(const LoopPasses& passes, std::vector<Content
         ++i;
       }
       out.push_back(std::move(unit));
+      continue;
+    }
+    if (row.type == Row::Type::Geometry) {
+      ContentUndoUnit unit;
+      unit.kind = ContentUndoUnitKind::LoopBoundaryChange;
+      unit.primaryPassId = row.id;
+      out.push_back(std::move(unit));
+      ++i;
       continue;
     }
     ContentUndoUnit unit;

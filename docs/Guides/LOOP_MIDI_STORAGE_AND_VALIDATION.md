@@ -13,7 +13,7 @@ Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **
 | Store | Type | Role |
 |-------|------|------|
 | `capture` | `Capture` | Live record/overdub append buffer (`capture.store`, `capture.phase`) |
-| `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
+| `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]**, **loopGeometries[]** |
 | `passesMaterializedStore_` | `CowLoopEventStore` | Derived materialized MIDI cache behind `midiEvents()` (non-canonical) |
 
 ```mermaid
