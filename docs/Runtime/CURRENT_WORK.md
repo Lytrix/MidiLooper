@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (note-off consumes PendingNote.overlapNoteIds)
+Last updated: 2026-08-13 (overlap-hold stop totals logging)
 
 ---
 
@@ -49,6 +49,8 @@ Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`T
 **Hold-candidate collection (wired):** `PendingNote.overlapNoteIds` snapshots already-sounding same-pitch ids at incoming note-on and inserts playback note-on ids while the hold is open. Offs do not erase. Native: `test_overlap_hold_candidates`.
 
 **Note-off consumes overlapNoteIds (wired):** `accumulatePendingNoteChangesForIncomingNote` looks up the set in `overdubSourceViewNotes_` (`appendNotesForIds`) and applies geometry + `[S, E)`. Empty set skips lookup (Add only; Gate 3). Native: `test_pending_note_change`.
+
+**Overlap-hold stop totals (wired, device open):** one `#CAP,DIAG,overlap_hold` at overdub-stop seal. Counters increment on note-off; reset in `establishOverdubSourceView` only (clear runs before seal emit). FLASHMEM / `LOOP_COLD_MEM`. Native: empty set → `emptySets`; non-empty → `lookedUp` + `examined`. Device still owed: 4-bar confirm and 68-bar `max_examined` / `max_lookup_us` vs `notechg`. Do not change the lookup source until that measurement exists.
 
 **RC-L2 (shipped, device verify open) — pitch-query full-loop copy:** the pairing change had `gatherCommittedNoteEventsForPitch` build a PSRAM `SessionMidiEventVec` of every committed note event per note-off before filtering. [`013917`](../../captures/session_20260813_013917.log) shows `noterecon` 98–191 ms / `notechg` 99–192 ms on 3554 events (`begin_capture` 11 µs, so Option B held). When `collectNoteIdsRetargetedToPitch` returns nothing — always true during plain overdub — the candidate set is exactly the events at that pitch, so the walk filters inline and skips the trailing re-filter. Pairing path unchanged when retargets exist; both branches covered by `test_overdub_source_view`.
 

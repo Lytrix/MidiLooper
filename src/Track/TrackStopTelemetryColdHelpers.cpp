@@ -115,6 +115,9 @@ TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStart
   const uint32_t elapsedUs = micros() - stopStartUs;
   SC_ODUB_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
                      stats.chunkRefCount, outcome);
+  if (stage != nullptr && std::strcmp(stage, "seal") == 0) {
+    loop.emitOverlapHoldTotals();
+  }
   if (stage != nullptr && std::strcmp(stage, "display") == 0) {
     Diagnostics::emitArchitectureMetricsSnapshot();
   }

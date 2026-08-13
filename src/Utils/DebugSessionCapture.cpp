@@ -583,6 +583,21 @@ SC_MEM_ATTR void storedNotes(uint8_t track, uint8_t slot, uint32_t notes, uint32
                 (unsigned long)uniqueNoteIds, (unsigned long)maxSamePitch);
 }
 
+SC_MEM_ATTR void overlapHold(uint32_t noteOffs, uint32_t emptySets, uint32_t maxIds,
+                             uint32_t overflows, uint32_t lookedUp, uint32_t maxExamined,
+                             uint32_t sumExamined, uint32_t maxLookupUs, uint32_t sumLookupUs,
+                             uint32_t add, uint32_t shorten, uint32_t hide) {
+  emitCapPrintf(
+      "#CAP,%lu,DIAG,overlap_hold,note_offs,%lu,empty_sets,%lu,max_ids,%lu,overflows,%lu,"
+      "looked_up,%lu,max_examined,%lu,sum_examined,%lu,max_lookup_us,%lu,sum_lookup_us,%lu,"
+      "add,%lu,shorten,%lu,hide,%lu\r\n",
+      (unsigned long)micros(), (unsigned long)noteOffs, (unsigned long)emptySets,
+      (unsigned long)maxIds, (unsigned long)overflows, (unsigned long)lookedUp,
+      (unsigned long)maxExamined, (unsigned long)sumExamined, (unsigned long)maxLookupUs,
+      (unsigned long)sumLookupUs, (unsigned long)add, (unsigned long)shorten,
+      (unsigned long)hide);
+}
+
 SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
                                    uint32_t displayPhase, uint32_t startLoopTick,
                                    int32_t projectionCycleStartTick, uint32_t loopStartTick,

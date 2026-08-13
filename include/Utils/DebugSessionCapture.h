@@ -130,6 +130,11 @@ SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t n
 /** One-shot idle inventory from a clean visual cache. Tier-A. Not a SEVT dump. */
 SC_MEM_ATTR void storedNotes(uint8_t track, uint8_t slot, uint32_t notes, uint32_t uniqueNoteIds,
                              uint32_t maxSamePitch);
+/** One-shot overdub-stop overlap totals. Tier-A. Not a SEVT dump. */
+SC_MEM_ATTR void overlapHold(uint32_t noteOffs, uint32_t emptySets, uint32_t maxIds,
+                             uint32_t overflows, uint32_t lookedUp, uint32_t maxExamined,
+                             uint32_t sumExamined, uint32_t maxLookupUs, uint32_t sumLookupUs,
+                             uint32_t add, uint32_t shorten, uint32_t hide);
 SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
                                    uint32_t displayPhase, uint32_t startLoopTick,
                                    int32_t projectionCycleStartTick, uint32_t loopStartTick,
@@ -218,6 +223,11 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
 #define SC_STORED_NOTES(track, slot, notes, uniqueNoteIds, maxSamePitch) \
   DebugSessionCapture::storedNotes(track, slot, notes, uniqueNoteIds, maxSamePitch)
+#define SC_OVERLAP_HOLD(noteOffs, emptySets, maxIds, overflows, lookedUp, maxExamined, \
+                        sumExamined, maxLookupUs, sumLookupUs, add, shorten, hide) \
+  DebugSessionCapture::overlapHold(noteOffs, emptySets, maxIds, overflows, lookedUp, \
+                                   maxExamined, sumExamined, maxLookupUs, sumLookupUs, add, \
+                                   shorten, hide)
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   DebugSessionCapture::captureCoordinate(absTick, storageTick, projPhase, displayPhase, \
@@ -300,6 +310,9 @@ inline void restartCaptureBootGrace() {}
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
 #define SC_STORED_NOTES(track, slot, notes, uniqueNoteIds, maxSamePitch) ((void)0)
+#define SC_OVERLAP_HOLD(noteOffs, emptySets, maxIds, overflows, lookedUp, maxExamined, \
+                        sumExamined, maxLookupUs, sumLookupUs, add, shorten, hide) \
+  ((void)0)
 #define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
                          projectionCycleStartTick, loopStartTick, ch, note) \
   ((void)0)
