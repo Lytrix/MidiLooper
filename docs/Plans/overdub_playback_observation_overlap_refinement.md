@@ -208,6 +208,8 @@ Last overdub start: `DISP` 75 → 62 (`50057812` / `50103430`). Prior overdub st
 
 This capture has no `NOTE_EDIT` session line. Select-fader on/off of overdub notes is not in the log. Hidden companion rows (`kOverdubCompanionEditPassIndex` 255) would be absent from `selectableDisplayNotesAtEditSelect`.
 
+NOTE_EDIT vs LOOP_EDIT paint split is a different owner (`visualCache` vs `projectNoteEditDisplayNotes`). Evidence: [`171219`](../../captures/session_20260813_171219.log). Plan: [`note_edit_visual_cache_display_unification_refinement.md`](note_edit_visual_cache_display_unification_refinement.md).
+
 ---
 
 ## Out of scope
