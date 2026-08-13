@@ -9,8 +9,16 @@
 
 - [x] 2.1 Inventory every `UndoEntry` kind and grouping field (`editPassIds`, `noteEditPassIndex`, companions, geometry)
 - [x] 2.2 Native fixtures: A→B→C; A→B→C→undo→undo→D; one edit → multiple records; mixed record/overdub/edit; multi-slot
-- [x] 2.3 Prefix holds; named gaps: loop-lifetime undo-unit id; geometry content revision
+- [x] 2.3 Prefix holds; undo-unit-id gap retracted (session `editPassIds` are E:-only; reboot flatten already exists)
 - [x] 2.4 Keep writing today's bundle undo stack; do not delete `UndoStacks`
+
+## 2b. Stage 1b — LoopGeometry content record
+
+- [x] 2b.1 Add `LoopGeometry` next to `recordPass` / `editPasses` with `LoopGeometry.id` from `nextPassId_++`
+- [x] 2b.2 Persist additive `GEO1` tail; old cards without the tail still load
+- [x] 2b.3 `commitPendingLoopGeometry` appends a `LoopGeometry` record; in-session GUS `LoopBoundaryChange` unchanged
+- [x] 2b.4 `deriveContentUndoUnits` emits `LoopBoundaryChange` from `passes.loopGeometries`
+- [x] 2b.5 Native: `test_loop_content_history` + `test_storage_loop_io` geometry fixtures; `pio test -e native`
 
 ## 3. Stage 2 — load-time editing state
 

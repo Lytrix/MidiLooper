@@ -61,6 +61,7 @@ void test_inventory_kinds_not_all_in_content() {
   TEST_ASSERT_TRUE(static_cast<uint8_t>(ContentUndoUnitKind::OverdubPassAdded) == 1);
   TEST_ASSERT_TRUE(static_cast<uint8_t>(ContentUndoUnitKind::NoteEditPassClosed) == 2);
   TEST_ASSERT_TRUE(static_cast<uint8_t>(ContentUndoUnitKind::ControlChangeEditPassClosed) == 3);
+  TEST_ASSERT_TRUE(static_cast<uint8_t>(ContentUndoUnitKind::LoopBoundaryChange) == 4);
 }
 
 void test_abc_record_overdub_edit_three_units() {
@@ -198,11 +199,10 @@ void test_session_reused_edit_pass_index_collapses_two_undo_units() {
   deriveContentUndoUnits(passes, units);
   TEST_ASSERT_EQUAL(2u, units.size());
   TEST_ASSERT_EQUAL_MESSAGE(2u, units[1].editPassIds.size(),
-                            "editPassIndex is session-local; two NOTE_EDIT sessions both "
-                            "persist index 0 as adjacent rows and collapse into one unit");
+                            "same-index adjacent edit rows are one committed noteEditPass");
 }
 
-void test_loop_boundary_change_has_no_content_unit() {
+void test_loop_boundary_change_absent_without_geometry_record() {
   LoopPasses passes;
   passes.recordPass.id = 1;
   std::vector<ContentUndoUnit> units;
@@ -210,6 +210,27 @@ void test_loop_boundary_change_has_no_content_unit() {
   TEST_ASSERT_EQUAL(1u, units.size());
   TEST_ASSERT_EQUAL(static_cast<int>(ContentUndoUnitKind::RecordPassAdded),
                     static_cast<int>(units[0].kind));
+}
+
+void test_loop_geometry_is_one_undo_unit() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  LoopGeometry geometry;
+  geometry.id = 2;
+  geometry.loopStartTick = 0;
+  geometry.loopLengthTicks = 1536;
+  geometry.startLoopTick = 0;
+  geometry.state = LoopGeometryState::Active;
+  passes.loopGeometries.push_back(geometry);
+
+  std::vector<ContentUndoUnit> units;
+  deriveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(2u, units.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(ContentUndoUnitKind::RecordPassAdded),
+                    static_cast<int>(units[0].kind));
+  TEST_ASSERT_EQUAL(static_cast<int>(ContentUndoUnitKind::LoopBoundaryChange),
+                    static_cast<int>(units[1].kind));
+  TEST_ASSERT_EQUAL(2u, units[1].primaryPassId);
 }
 
 void test_two_loops_derive_independently() {
@@ -243,7 +264,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_undo_undo_new_work_drops_suffix_units);
   RUN_TEST(test_active_prefix_materialize_matches_omitted_suffix);
   RUN_TEST(test_session_reused_edit_pass_index_collapses_two_undo_units);
-  RUN_TEST(test_loop_boundary_change_has_no_content_unit);
+  RUN_TEST(test_loop_boundary_change_absent_without_geometry_record);
+  RUN_TEST(test_loop_geometry_is_one_undo_unit);
   RUN_TEST(test_two_loops_derive_independently);
   return UNITY_END();
 }

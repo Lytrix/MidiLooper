@@ -39,6 +39,7 @@ class MemoryStorageIo {
     return StorageIo{
         [this](const void* data, size_t size) { return write(data, size); },
         [this](void* data, size_t size) { return read(data, size); },
+        [this](void* data, size_t size) { return peek(data, size); },
     };
   }
 
@@ -58,6 +59,14 @@ class MemoryStorageIo {
     }
     std::memcpy(data, buffer_->data() + readPos_, size);
     readPos_ += size;
+    return true;
+  }
+
+  bool peek(void* data, size_t size) {
+    if (readPos_ + size > buffer_->size()) {
+      return false;
+    }
+    std::memcpy(data, buffer_->data() + readPos_, size);
     return true;
   }
 
@@ -278,6 +287,85 @@ void test_write_read_edits_tail_roundtrip() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
                           static_cast<uint8_t>(restored.passes.editPasses[0].propertyType));
   TEST_ASSERT_EQUAL(restored.passes.editPasses[0].targetNoteId, editPass.targetNoteId);
+  TEST_ASSERT_TRUE(restored.passes.loopGeometries.empty());
+}
+
+void test_write_read_loop_geometry_tail_roundtrip() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 4;
+  original.loopLengthTicks = 1536;
+  original.loopStartTick = 96;
+  original.startLoopTick = 0;
+  original.nextPassId = 5;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
+
+  LoopGeometry geometry{};
+  geometry.id = 4;
+  geometry.loopStartTick = 96;
+  geometry.loopLengthTicks = 1536;
+  geometry.startLoopTick = 0;
+  geometry.state = LoopGeometryState::Active;
+  original.passes.loopGeometries.push_back(geometry);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+
+  TEST_ASSERT_EQUAL(1u, restored.passes.loopGeometries.size());
+  TEST_ASSERT_EQUAL(4u, restored.passes.loopGeometries[0].id);
+  TEST_ASSERT_EQUAL(96u, restored.passes.loopGeometries[0].loopStartTick);
+  TEST_ASSERT_EQUAL(1536u, restored.passes.loopGeometries[0].loopLengthTicks);
+  TEST_ASSERT_EQUAL(0u, restored.passes.loopGeometries[0].startLoopTick);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LoopGeometryState::Active),
+                          static_cast<uint8_t>(restored.passes.loopGeometries[0].state));
+}
+
+void test_legacy_snapshot_without_geometry_tail_loads() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 3;
+  original.loopLengthTicks = 768;
+  original.nextPassId = 2;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+  TEST_ASSERT_TRUE(buffer.size() >= 8u);
+  buffer.resize(buffer.size() - 8u);
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_TRUE(restored.passes.loopGeometries.empty());
+}
+
+void test_save_loop_geometry_assigns_id_and_marks_dirty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.loopStartTick = 0;
+  loop.startLoopTick = 0;
+  loop.nextPassId_ = 2;
+  const PassId id = loop.saveLoopGeometry(48, 1536, 0);
+  TEST_ASSERT_EQUAL(2u, id);
+  TEST_ASSERT_EQUAL(3u, loop.nextPassId_);
+  TEST_ASSERT_EQUAL(1u, loop.passes.loopGeometries.size());
+  TEST_ASSERT_EQUAL(48u, loop.passes.loopGeometries[0].loopStartTick);
+  TEST_ASSERT_EQUAL(1536u, loop.passes.loopGeometries[0].loopLengthTicks);
+  TEST_ASSERT_TRUE(loop.isEditStateDirty());
 }
 
 void test_legacy_edit_tail_v4_rejected() {
@@ -828,6 +916,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_read_disabled_take_preserved);
   RUN_TEST(test_pending_take_not_persisted);
   RUN_TEST(test_write_read_edits_tail_roundtrip);
+  RUN_TEST(test_write_read_loop_geometry_tail_roundtrip);
+  RUN_TEST(test_legacy_snapshot_without_geometry_tail_loads);
+  RUN_TEST(test_save_loop_geometry_assigns_id_and_marks_dirty);
   RUN_TEST(test_legacy_edit_tail_v4_rejected);
   RUN_TEST(test_legacy_deferred_header_without_note_id_reads);
   RUN_TEST(test_zero_loop_length_with_committed_events_loads_and_reconciles);

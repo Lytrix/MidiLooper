@@ -494,7 +494,8 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             const StorageIo io = crcMode == LoopPersistPayloadCrc::RevisionCommit
                                      ? storageIoFromFileWriteWithRevisionPayloadCrc(file)
                                      : storageIoFromFileWrite(file);
-            if (!writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses)) {
+            if (!writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses,
+                                         loop.passes.loopGeometries)) {
                 return false;
             }
             resetDeferredLoopWriteState();
@@ -525,7 +526,8 @@ STORAGE_PERSIST_MEM bool stepDeferredEmptyLoopPersist(File& file, LoopId loopId,
 
         case DeferredLoopWriteStage::EditTail: {
             const StorageIo io = storageIoFromFileWrite(file);
-            if (!writePersistedEditsTail(io, 1, emptyPasses.editPasses)) {
+            if (!writePersistedEditsTail(io, 1, emptyPasses.editPasses,
+                                         emptyPasses.loopGeometries)) {
                 return false;
             }
             resetDeferredLoopWriteState();
@@ -598,7 +600,8 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
 
         case DeferredLoopWriteStage::EditTail: {
             const StorageIo io = storageIoFromFileWrite(file);
-            if (!writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses)) {
+            if (!writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses,
+                                         snapshot.passes.loopGeometries)) {
                 return false;
             }
             resetDeferredLoopWriteState();

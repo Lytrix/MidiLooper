@@ -2,7 +2,7 @@
 
 ### Requirement: Loop persists content records only
 
-The Loop file SHALL persist ordered immutable content records (`RecordPass`, `OverdubPass`, `EditPass`, and a geometry/content revision only if required). The system SHALL NOT persist an undo stack, history cursor, history transition, or undo/redo record. NOTE_EDIT session undo (`E:`) is pre-commit and SHALL remain outside this persist model.
+The Loop file SHALL persist ordered immutable content records (`RecordPass`, `OverdubPass`, `EditPass`, and `LoopGeometry`). The system SHALL NOT persist an undo stack, history cursor, history transition, or undo/redo record. NOTE_EDIT session undo (`E:`) is pre-commit and SHALL remain outside this persist model. Session `editPassIds` SHALL stay in-session only; a committed or reboot-durable noteEditPass batch is one persist unit.
 
 #### Scenario: Stop does not write undo history
 

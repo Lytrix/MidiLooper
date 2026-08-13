@@ -21,9 +21,12 @@
 struct StorageIo {
   std::function<bool(const void*, size_t)> write;
   std::function<bool(void*, size_t)> read;
+  /// Optional non-consuming read. Used to probe the additive GEO1 tail without
+  /// eating the next bundle field on cards that predate LoopGeometry.
+  std::function<bool(void*, size_t)> peek;
 };
 
-/// v6 loop slot file body in RAM (capture passes + editPasses tail).
+/// v6 loop slot file body in RAM (capture passes + editPasses + loopGeometries tails).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;
@@ -52,7 +55,8 @@ bool writeCapturePassSlotFileHeader(const StorageIo& io, const CapturePassSlotFi
 bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
                                   CommittedChunkIdList& committedChunkIds, uint32_t loopLengthTicks);
 bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
-                             const EditPassVec& editPasses);
+                             const EditPassVec& editPasses,
+                             const LoopGeometryVec& loopGeometries);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t getLastPersistedCapturePassWriteMaxBatchEvents();
@@ -68,7 +72,8 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
 
 /// Resumable parse of a buffered snapshot payload (Phase A.6). Grains:
 /// snapshot header, capture-pass header, one event batch (CHUNK_CAPACITY),
-/// edits-tail header, or one edit pass. Mid-pass batches respect \p deadlineUs
+/// edits-tail header, one edit pass, geometry-tail header, or one LoopGeometry.
+/// Mid-pass batches respect \p deadlineUs
 /// so a large capture pass cannot monopolize the main loop (session_20260718_223130).
 /// \p deadlineUs == 0 means unlimited; otherwise stop when micros() >= deadlineUs.
 enum class PersistedLoopParseStepResult : uint8_t {
@@ -107,6 +112,9 @@ struct PersistedLoopParseState {
   bool editsHeaderDone = false;
   uint32_t editCount = 0;
   uint32_t editsDone = 0;
+  bool geometryHeaderDone = false;
+  uint32_t geometryCount = 0;
+  uint32_t geometriesDone = 0;
 };
 
 PersistedLoopParseStepResult stepPersistedLoopSnapshotParse(

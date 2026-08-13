@@ -78,7 +78,7 @@ void LoopEditManager::commitPendingLoopGeometry(Track& track) {
         return;
     }
     const uint8_t slotIndex = sessionSlot_;
-    const Loop& loop = track.getLoop(sessionSlot_);
+    Loop& loop = track.getLoop(sessionSlot_);
     if (selectedSlotForTrack(track) != sessionSlot_) {
         return;
     }
@@ -93,6 +93,7 @@ void LoopEditManager::commitPendingLoopGeometry(Track& track) {
                                               sessionBaselineLoopLength_);
     sessionBaselineLoopStart_ = loop.loopStartTick;
     sessionBaselineLoopLength_ = loop.loopLengthTicks;
+    (void)loop.saveLoopGeometry(loop.loopStartTick, loop.loopLengthTicks, loop.startLoopTick);
     logger.log(CAT_TRACK, LOG_INFO,
                "Loop geometry settled slot=%u start=%lu->%lu len=%lu->%lu (undo pushed)",
                static_cast<unsigned>(sessionSlot_) + 1u,
