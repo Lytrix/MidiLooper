@@ -152,7 +152,17 @@ Reset in `establishOverdubSourceView` only. `clearOverdubSourceView` runs inside
 
 `establishOverdubSourceView`, `clearOverdubSourceView`, the note-off increment, and `emitOverlapHoldTotals` are `LOOP_COLD_MEM` / `FLASHMEM`. Do not include `OverlapHoldCandidates.h` or `OverlapNoteIdObservation.h` from firmware TUs. Counters sit on the EXTMEM `Loop` shell, not RAM1.
 
-Native: `test_pending_note_change` (empty set increments `emptySets` not `lookedUp`; non-empty increments `lookedUp` and `examined`; establish resets). Device still owed: 4-bar Add/Shorten/Hide + `empty_sets`, then 68-bar slot 4 `max_examined` / `max_lookup_us` vs `notechg`. Do not change the ID→geometry source until that measurement exists.
+Native: `test_pending_note_change` (empty set increments `emptySets` not `lookedUp`; non-empty increments `lookedUp` and `examined`; establish resets).
+
+4-bar device confirm [`162856`](../../captures/session_20260813_162856.log) — slot 1, 57 notes, `max_same_pitch=4`, three overdubs, `noterecon=0`, `clockrate=47` after the first window. Display 57→84→104→112.
+
+| Stop | note_offs | empty_sets | looked_up | max_ids | max_examined | max_lookup_us | add | shorten | hide | notechg | notepair |
+|------|-----------|------------|-----------|---------|--------------|---------------|-----|---------|------|---------|----------|
+| 1 | 19 | 0 | 19 | 7 | 57 | 41 | 19 | 0 | 0 | 68 | 3 |
+| 2 | 8 | 0 | 8 | 5 | 82 | 209 | 8 | 1 | 1 | 417 | 136 |
+| 3 | 8 | 3 | 5 | 4 | 84 | 319 | 8 | 4 | 2 | 601 | 231 |
+
+`sum_examined / looked_up` is 57, 82, and 83.6 — each lookup walked the whole source view. `overflows=0`. Third-stop `ODUB,stop,seal` is absent from the log; `overlap_hold` is present (Tier-A). 68-bar slot 4 (`max_same_pitch=322`) is still owed before changing the ID→geometry source.
 
 ---
 
