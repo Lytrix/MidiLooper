@@ -1,6 +1,6 @@
 # Overdub overlap — playback observation (Gates 0–4)
 
-**Status:** Active — Gates 0–1 native landed; Gate 2 native landed, device open  
+**Status:** Active — Gates 0–3 native landed; Gate 2 device open; Gate 4 not started  
 **Branch:** `feature/overdub-playback-observation-overlap`  
 **Date:** 2026-08-13  
 **Kind:** refinement  
@@ -118,10 +118,15 @@ Mute-edge silence is MIDI-output only: track mute sends CC 123 on that track's `
 
 Native (`test_playback_midi_output`): cursor advances while MIDI send is suppressed; unmute does not resend crossed events; wrap still advances while muted; `ledger.clear()` (all-notes-off) empties the ledger, mute silence does not. Device still owed: mute mid-note silences that track channel on the output ports; unmute does not replay missed note-ons.
 
-## Gates 3–4 (not started)
+## Gate 3 — empty candidates do not gather or reconstruct (native landed)
 
-- **Gate 3** — zero candidates must not fall back to `gatherCommittedEvents` / `reconstructDisplayNotes`.
-- **Gate 4** — span lookup cost scales with candidate count, not loop size.
+If candidate discovery produces zero `NoteId`s, do **not** call `gatherCommittedEvents` / `reconstructDisplayNotes` on note-off. A miss is a failed selection, not a quiet reconstruct.
+
+`OverlapCandidateLookup::shouldLookupSpans` is false for an empty set. `appendNotesForIds` copies from an already-available `DisplayNote` list only. Production note-off still uses RC-K3 `overdubSourceViewNotes_`; it does not fall back to gather when there is no overlap. Native: `test_overlap_candidate_lookup` and `test_pending_note_change` (`fullMaterializeCount == 0` after reset, including companion edit rows).
+
+## Gate 4 (not started)
+
+- Span lookup cost scales with candidate count, not loop size.
 
 ---
 
