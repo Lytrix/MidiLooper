@@ -6,7 +6,8 @@
 **Parent:** [`note_edit_visual_cache_display_unification_refinement.md`](note_edit_visual_cache_display_unification_refinement.md) (Stages 8–9 shipped; do not reopen evaluate/select rematerialize)  
 **Evidence:** [`session_20260813_192755.log`](../../captures/session_20260813_192755.log)  
 **Overlap consume:** out of scope — [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md)  
-**Sibling (193838 mover jump):** [`note_edit_mover_wrap_length_jump_bugfix.md`](note_edit_mover_wrap_length_jump_bugfix.md) — do not fold 47→2351 into RC2.
+**Sibling (193838 mover jump):** [`note_edit_mover_wrap_length_jump_bugfix.md`](note_edit_mover_wrap_length_jump_bugfix.md) — do not fold 47→2351 into RC2.  
+**Sibling (replay writer):** [`note_edit_length_replay_loop_boundary_bugfix.md`](note_edit_length_replay_loop_boundary_bugfix.md) — persisted `2256–2304` Length row is destructive on rematerialize; keep RC2/RC3 emit filter.
 
 After overdub undo (cache **60 → 34**), moving noteId **111** on pitch 30: the resolve at 67.824 emits only `MoveNote` for an already-hidden neighbor. That step is min-length stay-hidden, not a dropped Shorten. Select-away commits noteId **14** as `ChangeLength` `2256–2304` (loop end).
 
