@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (overdub-stop PLAYING MIDI dump — remainder probe + LoadLoopJob admission)
+Last updated: 2026-08-13 (MIDI Input Gap naming; scheduling contract/roadmap split; overdub-stop dump remainder re-gate)
 
 ---
 
 ## Current branch
 
-**Active work:** **Overdub-stop MIDI dump during PLAYING** — remainder-split DIAG + non-focus LoadLoopJob skip during PLAYING (including Committing). Device verify vs [`034408`](../../captures/session_20260813_034408.log). Plan: [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md). RC-K3 restore remains production overlap. Do not start S1 / RC-J.
+**Active work:** **Overdub-stop MIDI dump during PLAYING** — Stage 1 LoadLoopJob skip closed in [`105505`](../../captures/session_20260813_105505.log); dump FAIL remains (stop 4 BPM 274 + 5.59 s silence, `msi` 5.62 s). The owner is the deferred `LoopUndoHistory` runtime bundle; `PERS,bundle` telemetry is now available for re-measurement. Plan: [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md). RC-K3 restore remains production overlap. Do not start interval reservation or patch RC-J. Persistence payload narrowing is roadmap R1B and needs a design gate (wire format / DEC-024 Phase 2) before firmware. Scheduling contract: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); roadmap: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
@@ -144,3 +144,4 @@ Full log: [DECISION_LOG.md](../DECISION_LOG.md).
 - **Interval projection:** `IntervalProjection` engine owns all wrap math — **`include/Utils/IntervalProjection.h`** + **`src/Utils/IntervalProjection.cpp`**; Phases 1–5.1–5.4 + 5.6 shipped (grep gate on D7 consumers); `Track.projectionCycleStartTick` + queued start at grid; `PlaybackCursor` retired; **5.5 HITL** pending
 - `ButtonManager` / GPIO dormant (DEC-005)
 - M8 edit + pool-budget archived to `openspec/specs/`
+- **Runtime scheduling:** contract [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); roadmap [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Interval reservation is **not** authorized. Persist `admit*` and `DeferredJobScheduler` (DEC-027) remain separate.

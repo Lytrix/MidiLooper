@@ -2,11 +2,11 @@
 
 **Status:** RC-K1 / RC-K2 / RC-K3 / RC-L1 verified on device ([`225803`](../../captures/session_20260812_225803.log))  
 **Date:** 2026-08-12  
-**Parent:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §31n / §31o  
+**Parent:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) · investigation [§31n](archive/refinements/runtime_scheduling_timing_envelope_investigation.md#31n-s0e--split-overdub-note-off-path-observation-only) / [§31o](archive/refinements/runtime_scheduling_timing_envelope_investigation.md#31o-s0e-follow-through--rc-k1--rc-k2--rc-k3)  
 **Evidence (before):** [`session_20260812_204221.log`](../../captures/session_20260812_204221.log)  
 **Decision:** [DEC-033](../DECISION_LOG.md#dec-033-overdub-overlap-ignores-per-note-channel)
 
-This is a **targeted bounded-work fix** on the measured overdub note-off path. It is **not** admission-model S1 (`RuntimeWorkBudget`). Admission remains deferred.
+This is a **targeted bounded-work fix** on the measured overdub note-off path. It is **not** interval reservation. Interval reservation remains deferred behind the Owner-Boundary Gate.
 
 ---
 
@@ -99,7 +99,7 @@ RECORD stays cheap (`midisvc` 0.6–0.7 ms, `clockrate` 47–48).
 
 **Invariant:** a reconstruct performs a constant number of external-memory pool operations, not one per note.
 
-RC-K3 exposed this; it did not create it. Total work per overdub pass fell, but the reconstruct that used to be spread one-per-note-off now runs in a single synchronous block inside `Track::startOverdubbing` → `Loop::beginCapture` → `establishOverdubSourceView`, with no MIDI service point. [`223033`](../../captures/session_20260812_223033.log) `ODUB,stage,begin_capture`:
+RC-K3 exposed this; it did not create it. Total work per overdub pass fell, but the reconstruct that used to be spread one-per-note-off now runs in a single synchronous block inside `Track::startOverdubbing` → `Loop::beginCapture` → `establishOverdubSourceView`, with no `handleMidiInput()` entry. [`223033`](../../captures/session_20260812_223033.log) `ODUB,stage,begin_capture`:
 
 | Loop | Notes | `begin_capture` |
 |------|-------|-----------------|

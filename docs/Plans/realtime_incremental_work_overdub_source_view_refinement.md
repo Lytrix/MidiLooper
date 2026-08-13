@@ -4,10 +4,10 @@
 **Date:** 2026-08-13  
 **Parent:** [`realtime_incremental_work_overdub_note_change_bugfix.md`](realtime_incremental_work_overdub_note_change_bugfix.md) (RC-K1–K3 / RC-L1 verified)  
 **Handoff:** Production overlap uses RC-K3 `overdubSourceViewNotes_` filled once at `establishOverdubSourceView`. Option B pitch-query on note-off is disconnected from that path. Playback-observation candidate discovery is designed, not implemented (Gates 0–4).  
-**Scheduling:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §2.1, §7.3, §14, §15, §31a, §32–§33  
+**Scheduling:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) §3.1, §6.4, §10 · roadmap R1A / G1 in [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)  
 **Evidence:** RC-K3 known-good [`session_20260812_225803.log`](../../captures/session_20260812_225803.log); Option B stall [`session_20260813_021304.log`](../../captures/session_20260813_021304.log)
 
-This is a **targeted bounded-work** follow-through, not admission-model S1.
+This is a **targeted bounded-work** follow-through, not interval reservation.
 
 ---
 
@@ -18,7 +18,7 @@ This is a **targeted bounded-work** follow-through, not admission-model S1.
 1. `gatherCommittedEvents(overdubSourceViewEvents_)` — flatten every committed chunk, then `sortMidiEventsByTick`
 2. `NoteUtils::reconstructDisplayNotes` — full-loop spans + projection into `overdubSourceViewNotes_`
 
-That runs inside the overdub **button** dispatch (`SC_ODUB_STAGE begin_capture`). There is no MIDI service point inside it. [`225803`](../../captures/session_20260812_225803.log): 76.7 / 80.2 / 78.6 / 82.9 ms across four overdubs on a ~64-bar loop (`loop_events` 2639 → 2949). First USB note 108–242 ms after PLAYING→OVERDUBBING.
+That runs inside the overdub **button** dispatch (`SC_ODUB_STAGE begin_capture`). There is no `handleMidiInput()` entry inside it. [`225803`](../../captures/session_20260812_225803.log): 76.7 / 80.2 / 78.6 / 82.9 ms across four overdubs on a ~64-bar loop (`loop_events` 2639 → 2949). First USB note 108–242 ms after PLAYING→OVERDUBBING.
 
 RC-K3 moved this work off the note-off path (where it was 177 ms **per note-off**). RC-L1 removed the per-span PSRAM allocation inside reconstruct. The remaining cost is one full flatten+reconstruct per overdub **entry**.
 
@@ -35,7 +35,7 @@ RC-K3 moved this work off the note-off path (where it was 177 ms **per note-off*
 
 If either answer is YES without an explicit choice below → stop, do not patch.
 
-This is the §15 invariant (overdub mutation must not rebuild the pre-existing loop) applied to the **entry** edge that RC-K3 created. It is also the measured proof of §7.3: PLAYING→OVERDUBBING is not constant-cost.
+This is the contract §10 overdub-delta invariant (overdub mutation must not rebuild the pre-existing loop) applied to the **entry** edge that RC-K3 created. It is also the measured proof of contract §6.4: PLAYING→OVERDUBBING is not constant-cost.
 
 ---
 
@@ -65,7 +65,7 @@ Preferred direction: **query the committed chunks or the already-built note list
 
 | Open item | Relation |
 |-----------|----------|
-| **S1 admission** | Wrong tool. §31a: no admission over background work can bound MSI while a MIDI-dispatched control action is the cost. This 80 ms **is** that control action (`startOverdubbing` from the button). |
+| **Interval reservation** | Wrong tool. Investigation §31a: no reservation over background work can bound the MIDI Input Gap while a MIDI-dispatched control action is the cost. This 80 ms **is** that control action (`startOverdubbing` from the button). |
 | **S3 service density** | Extra MIDI drains would not run *during* `beginCapture`. |
 | **RC-J** | Same *class* (transport edge does loop-sized work) on STOP, different owner (`timingCriticalTrackActive` false → deferred save). Do not bundle. |
 | **RC-S0c** | Tier-A serial transmit. Helps *see* RECORD windows; does not shorten `begin_capture`. |
@@ -123,7 +123,7 @@ Fill `overdubSourceViewNotes_` from `rebuildVisualCacheIdleSlice` / a sibling sl
 | Transitions | YES — `overdubSourceViewEstablished_` becomes true in PLAYING, must invalidate on undo, slot switch, edit commit, overdub stop. Design session required. |
 | Verdict | Do not take this unless A and B both fail the wrap fixture. It duplicates visual-cache lifetime. |
 
-### Option D — slice establish across MIDI service points at the button
+### Option D — slice establish across `handleMidiInput()` entries at the button
 
 Keep the full rebuild, cut it into quanta with `handleMidiInput` between slices.
 
@@ -154,7 +154,7 @@ If the wrap fixture fails even with wrap-region padding:
 2. Fall back to **Option A** (copy `visualCache.notes` when non-empty) plus the slice-vs-full fixture.
 3. Do not invent a third cache (Option C) and do not slice the button (Option D).
 
-Do not start S1, RC-J, or RC-S0c as part of this work.
+Do not start interval reservation, RC-J, or RC-S0c as part of this work.
 
 ---
 
@@ -288,7 +288,7 @@ Playback-observation candidate discovery is the long-term design (Gates 0–4). 
 
 | Topic | Decision |
 |-------|----------|
-| S1 cannot bound this | §31a; work is inside button dispatch |
+| Interval reservation cannot bound this | investigation §31a; work is inside button dispatch |
 | Event-window gather is not equivalent | fixture; long-note events sit outside the incoming span |
 | Whole intersecting chunks are not equivalent | split-chunk gap window; 1 Shorten vs 0 |
 | “Sounding chunk” expansion of all pitches | full gather |

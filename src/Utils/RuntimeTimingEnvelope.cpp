@@ -23,8 +23,8 @@ void recordSample(Accumulator& acc, uint32_t durationUs) {
 }
 
 struct State {
-  Accumulator msi;
-  Accumulator midisvc;
+  Accumulator midiGap;
+  Accumulator midiInput;
   Accumulator clk;
   Accumulator tracks;
   Accumulator usbdev;
@@ -58,9 +58,9 @@ struct State {
   uint32_t usbNestedNotePairUs = 0;
   bool usbNestedActive = false;
   uint32_t clockPulses = 0;
-  uint32_t lastServiceExitUs = 0;
-  uint32_t serviceEnterUs = 0;
-  bool serviceActive = false;
+  uint32_t lastInputExitUs = 0;
+  uint32_t inputEnterUs = 0;
+  bool inputActive = false;
   uint32_t windowStartUs = 0;
   uint32_t lastEmitUs = 0;
 };
@@ -71,8 +71,8 @@ State& state() {
 }
 
 void clearWindow(State& s) {
-  s.msi = Accumulator{};
-  s.midisvc = Accumulator{};
+  s.midiGap = Accumulator{};
+  s.midiInput = Accumulator{};
   s.clk = Accumulator{};
   s.tracks = Accumulator{};
   s.usbdev = Accumulator{};
@@ -99,8 +99,8 @@ void clearWindow(State& s) {
 
 void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
 #if defined(SESSION_CAPTURE)
-  DebugSessionCapture::runtimeTimingEnvelope("msi", s.msi.maxUs, s.msi.overCount);
-  DebugSessionCapture::runtimeTimingEnvelope("midisvc", s.midisvc.maxUs, s.midisvc.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("midi_gap", s.midiGap.maxUs, s.midiGap.overCount);
+  DebugSessionCapture::runtimeTimingEnvelope("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("clk", s.clk.maxUs, s.clk.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("tracks", s.tracks.maxUs, s.tracks.overCount);
   DebugSessionCapture::runtimeTimingEnvelope("usbdev", s.usbdev.maxUs, s.usbdev.overCount);
@@ -144,25 +144,25 @@ void resetForTest() {
   s = State{};
 }
 
-void noteMidiServiceEnter(uint32_t nowUs) {
+void noteMidiInputEnter(uint32_t nowUs) {
   State& s = state();
   if (s.windowStartUs == 0) {
     s.windowStartUs = nowUs;
   }
-  if (s.lastServiceExitUs != 0) {
-    recordSample(s.msi, nowUs - s.lastServiceExitUs);
+  if (s.lastInputExitUs != 0) {
+    recordSample(s.midiGap, nowUs - s.lastInputExitUs);
   }
-  s.serviceEnterUs = nowUs;
-  s.serviceActive = true;
+  s.inputEnterUs = nowUs;
+  s.inputActive = true;
 }
 
-void noteMidiServiceExit(uint32_t nowUs) {
+void noteMidiInputExit(uint32_t nowUs) {
   State& s = state();
-  if (s.serviceActive) {
-    recordSample(s.midisvc, nowUs - s.serviceEnterUs);
-    s.serviceActive = false;
+  if (s.inputActive) {
+    recordSample(s.midiInput, nowUs - s.inputEnterUs);
+    s.inputActive = false;
   }
-  s.lastServiceExitUs = nowUs;
+  s.lastInputExitUs = nowUs;
 }
 
 void noteClockDispatch(uint32_t durationUs) {
@@ -327,10 +327,10 @@ bool maybeEmit(uint32_t nowUs) {
 Snapshot peek(uint32_t nowUs) {
   const State& s = state();
   Snapshot out;
-  out.msiMaxUs = s.msi.maxUs;
-  out.msiOverCount = s.msi.overCount;
-  out.midisvcMaxUs = s.midisvc.maxUs;
-  out.midisvcOverCount = s.midisvc.overCount;
+  out.midiGapMaxUs = s.midiGap.maxUs;
+  out.midiGapOverCount = s.midiGap.overCount;
+  out.midiInputMaxUs = s.midiInput.maxUs;
+  out.midiInputOverCount = s.midiInput.overCount;
   out.clkMaxUs = s.clk.maxUs;
   out.clkOverCount = s.clk.overCount;
   out.tracksMaxUs = s.tracks.maxUs;

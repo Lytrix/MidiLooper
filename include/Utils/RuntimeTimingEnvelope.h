@@ -5,12 +5,12 @@
  * @file RuntimeTimingEnvelope.h
  * @brief S0 observation-only timing envelope telemetry.
  *
- * Measures MSI gaps, MIDI/Clock/track durations, S0b MIDI-service drain
- * segments, S0c USB-device sub-segments, and S0d handleMidiMessage
- * remainder sums, and S0e overdub note-off path sums. Does not admit work,
- * change service density, or drive any scheduling decision.
+ * Measures the MIDI Input Gap between handleMidiInput() entries, the duration
+ * of handleMidiInput(), Clock/track durations, USB/DIN drain segments, and
+ * nested dispatch sums. Does not admit work, add handleMidiInput() call sites,
+ * or drive any scheduling decision.
  *
- * See docs/Plans/runtime_scheduling_admission_model_architecture.md §26–31m.
+ * See docs/Plans/runtime_scheduling_admission_model_architecture.md.
  */
 #pragma once
 
@@ -23,15 +23,15 @@ constexpr uint32_t kEmitIntervalUs = 5000000u;
 
 /**
  * Soft ceiling used only to count `overCount` samples in S0 telemetry.
- * Not an admission contract and not an MSI ceiling (see architecture §25).
+ * Not a runtime-admission contract and not a MIDI Input Gap ceiling.
  */
 constexpr uint32_t kObservationalSoftCeilingUs = 5000u;
 
 struct Snapshot {
-  uint32_t msiMaxUs = 0;
-  uint32_t msiOverCount = 0;
-  uint32_t midisvcMaxUs = 0;
-  uint32_t midisvcOverCount = 0;
+  uint32_t midiGapMaxUs = 0;
+  uint32_t midiGapOverCount = 0;
+  uint32_t midiInputMaxUs = 0;
+  uint32_t midiInputOverCount = 0;
   uint32_t clkMaxUs = 0;
   uint32_t clkOverCount = 0;
   uint32_t tracksMaxUs = 0;
@@ -80,11 +80,11 @@ struct Snapshot {
 
 void resetForTest();
 
-/** Call on entry to MidiHandler::handleMidiInput — records MSI gap from prior exit. */
-void noteMidiServiceEnter(uint32_t nowUs);
+/** Call on entry to MidiHandler::handleMidiInput — records MIDI Input Gap from prior exit. */
+void noteMidiInputEnter(uint32_t nowUs);
 
-/** Call on exit from MidiHandler::handleMidiInput — records service duration. */
-void noteMidiServiceExit(uint32_t nowUs);
+/** Call on exit from MidiHandler::handleMidiInput — records handleMidiInput() duration. */
+void noteMidiInputExit(uint32_t nowUs);
 
 /** Record duration of ClockManager::onMidiClockPulse (includes nested updateAllTracks). */
 void noteClockDispatch(uint32_t durationUs);
