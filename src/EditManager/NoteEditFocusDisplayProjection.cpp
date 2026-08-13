@@ -129,7 +129,8 @@ bool noteEditCurrentStateOverlapRowIsDisplayMasked(const NoteEditCurrentState& c
 
 bool nonVisibleParticipantSuppressedFromProjection(const NoteEditCurrentState& currentState,
                                                    NoteId noteId) {
-  return noteId != kInvalidNoteId && !currentState.rowIsVisible(noteId);
+  // Missing row is not Hidden — keep the committed display note (171219 / Stage 1).
+  return noteId != kInvalidNoteId && currentState.isRowHiddenOrDeleted(noteId);
 }
 
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,

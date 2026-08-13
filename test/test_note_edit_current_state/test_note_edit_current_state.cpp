@@ -197,6 +197,52 @@ void test_display_projection_same_pitch_reorder_uses_current_span() {
   TEST_ASSERT_EQUAL_UINT32(3504u, projected[1].startTick);
 }
 
+void test_display_projection_keeps_committed_note_without_current_state_row() {
+  // 171219 / Stage 1: buildFromSessionStore skips wrap (end < start) so that NoteId has
+  // no current-state row. Paint must keep the committed-base note. Explicit Hidden still
+  // omits — see test_display_projection_inactive_focus_masks_hidden_overlaps.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kLinearId = 41;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchLinear = 62;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kLinearId, {kPitchLinear, 100, 192, 383}, {kPitchLinear, 100, 192, 383},
+                         NoteEditPresenceType::Visible);
+  TEST_ASSERT_NULL(currentState.find(kWrapId));
+  TEST_ASSERT_FALSE(currentState.isRowHiddenOrDeleted(kWrapId));
+
+  MidiEventVec store;
+  currentState.projectToSessionStore(store, kChannel);
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitchWrap, 100, 2208, 96});
+  committedBase.push_back({kLinearId, kPitchLinear, 100, 192, 383});
+
+  NoteEditFocus focus;
+  focus.active = false;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  bool hasWrap = false;
+  bool hasLinear = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kWrapId) {
+      TEST_ASSERT_EQUAL_UINT32(2208u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(96u, dn.endTick);
+      hasWrap = true;
+    }
+    if (dn.noteId == kLinearId) {
+      hasLinear = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasWrap);
+  TEST_ASSERT_TRUE(hasLinear);
+}
+
 void test_display_projection_inactive_focus_masks_hidden_overlaps() {
   // RC10b / session_20260807_140022: empty-step deselect clears focus.active but overlaps stay
   // Hidden in current state — display must not paint committed-pass ghost rows.
@@ -1965,6 +2011,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_compat_direct_store_mutation_breaks_projection_parity);
   RUN_TEST(test_projection_owner_path_after_current_state_edit);
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
+  RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
   RUN_TEST(test_display_projection_inactive_focus_masks_hidden_overlaps);
   RUN_TEST(test_sync_focus_last_from_current_state);
   RUN_TEST(test_hide_then_shorten_stays_hidden_and_masks_on_deselect);
