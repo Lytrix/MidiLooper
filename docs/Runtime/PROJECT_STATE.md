@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (152940 stored_notes: 68-bar max_same_pitch=322)
+Last updated: 2026-08-13 (stored_notes diagnosis: disable after later-stage proofs)
 
 ---
 
