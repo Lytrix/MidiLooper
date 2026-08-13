@@ -257,31 +257,12 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
 
 void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
                                uint32_t loopLengthTicks) {
-  NoteId trackedNoteId = kInvalidNoteId;
-  uint32_t trackedStart = 0;
-  uint32_t trackedEnd = 0;
-  bool tracked = false;
-
+  // Rows locate their note by targetNoteId, so startTick / endTick are payload only. Before
+  // stable NoteId they doubled as the span lookup key and a later row had to be re-pointed at
+  // an earlier row's span; carrying that rewrite forward overwrote the payload of a second row
+  // for the same note.
   for (const EditPass& row : rows) {
-    EditPass resolved = row;
-    if (tracked && resolved.targetNoteId == trackedNoteId) {
-      resolved.startTick = trackedStart;
-      resolved.endTick = trackedEnd;
-    }
-    applyNoteEditPass(events, resolved, loopLengthTicks);
-    if (resolved.actionType == EditActionType::Update &&
-        resolved.propertyType == EditPropertyType::NoteRange) {
-      trackedNoteId = row.targetNoteId;
-      trackedStart = row.startTick;
-      trackedEnd = row.endTick;
-      tracked = true;
-    } else if (resolved.actionType == EditActionType::Update &&
-               resolved.propertyType == EditPropertyType::Length) {
-      trackedNoteId = row.targetNoteId;
-      trackedStart = resolved.startTick;
-      trackedEnd = row.endTick;
-      tracked = true;
-    }
+    applyNoteEditPass(events, row, loopLengthTicks);
   }
 }
 
