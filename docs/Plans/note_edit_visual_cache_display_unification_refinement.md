@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT shared display representation
 
-**Status:** Active — Stages 1–2, 5, and 6 shipped; Stages 3–4 not started  
+**Status:** Active — Stages 1–2 and 5–7 shipped; Stages 3–4 not started  
 **Date:** 2026-08-13  
 **Kind:** refinement  
 **Parent:** [`Display.md`](../Authority/Architecture/Display.md), [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), DEC-029  
@@ -179,6 +179,26 @@ Env: `teensy41-capture-serial`. Ask before upload.
 
 **Not this stage:** paint 75 vs cache 68. Stage 3 audit. Zero-length reconstruct (noteId=14).
 
+### Stage 7 — Visual-cache span is the open-time length (not rematerialize pairing) ✅ shipped
+
+**Owner:** `NoteEditCurrentState::ensureVisibleRowsForDisplayNotes` / `projectNoteEditDisplayNotes`
+
+**Evidence:** [`175621`](../../captures/session_20260813_175621.log)
+
+- Stage 6 gate met: `presence=0 rowProjectsToStore=1`; `GEOM_APPLY,resolve,…,1` on former `-1` notes.
+- Open `DISP` **74** vs cache **68**. Empty-step `DISP` **73** vs **69**.
+- noteId **25** and **63** both receive Shorten at pitch 12 start **1344** (two current-state rows, one musical place).
+- Select noteId **45** at 1344: `DNTE,12,1344,1344,720,33` — painted length **720** before the next move. Move then uses `focus.last` end **2064**, Hides six same-pitch neighbors, `DNTE` length stays 720.
+- LOOP_EDIT exit: `DISP` **64/64**. The committed visual-cache reconstruct does not keep the 720-span.
+
+**Invariant:** at NOTE_EDIT open, a Visible row whose `NoteId` is in `visualCache.notes` uses that display span. Paint overlay does not add rematerialize-only Visible rows that are not in the committed base (except this-session Added). A Visible row that matches a committed display note by span still paints when the cache row has no `NoteId` (161117). Hidden / Deleted unchanged.
+
+**Change:** `ensureVisibleRowsForDisplayNotes` writes the display span onto unedited Existing Visible rows (`committedSpan == currentSpan`). `projectNoteEditDisplayNotes` adds rematerialize-only Visible rows to paint only when lifecycle is Added or the row matches a committed display note by span.
+
+**Test:** `test_ensure_aligns_unedited_visible_row_to_display_span` (45: 2064 → 1584; edited 87 and Hidden stay). `test_display_projection_omits_rematerialize_only_visible_row` (63 omitted; Added paints). `test_display_projection_binds_visible_row_to_invalid_id_committed_note` (161117). Hidden / C9 fixtures stay PASS.
+
+**Not this stage:** zero-length noteId 94 (`DNTE` length 0). Overlap consume. Making `visualCache` the overdub source.
+
 ---
 
 ## Pre-implementation review
@@ -230,5 +250,7 @@ YES for Stage 1 after this plan is accepted. Stages 2–3 follow only when Stage
 | [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) `filterSelectableDisplayNotes` | 5 |
 | [`NoteEditCurrentState.cpp`](../../src/EditManager/NoteEditCurrentState.cpp) `ensureVisibleRowsForDisplayNotes` | 6 |
 | [`NoteEditSessionLifecycle.cpp`](../../src/EditManager/NoteEditSessionLifecycle.cpp) / [`NoteEditFocusRebuild.cpp`](../../src/EditManager/NoteEditFocusRebuild.cpp) | 6 |
+| [`NoteEditCurrentState.cpp`](../../src/EditManager/NoteEditCurrentState.cpp) `ensureVisibleRowsForDisplayNotes` align | 7 |
+| [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) `projectNoteEditDisplayNotes` | 7 |
 | [`DisplayNoteResolve.cpp`](../../src/DisplayManager/DisplayNoteResolve.cpp) | 3 (only if the branch still reconstructs) |
 | This plan + CURRENT_WORK | each commit |
