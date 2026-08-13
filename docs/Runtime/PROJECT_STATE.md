@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (overdub note-off pitch query native)
+Last updated: 2026-08-13 (RC-K3 restored; Option B withdrawn)
 
 ---
 
 ## Current branch
 
-**Active work:** **S0e follow-through** — pitch-scoped overdub note-off query (no full materialize). Native PASS. Device vs [`003009`](../../captures/session_20260813_003009.log) (`notechg` 227–868 ms) still open. Do not start S1 / RC-J. Plan: [`realtime_incremental_work_overdub_note_off_pitch_query_refinement.md`](../Plans/realtime_incremental_work_overdub_note_off_pitch_query_refinement.md).
+**Active work:** **S0e follow-through** — RC-K3 restored as production overdub overlap (gather+reconstruct once at `establishOverdubSourceView`). Option B pitch-query note-off withdrawn after [`021304`](../../captures/session_20260813_021304.log) (`noterecon` 292 ms). Playback-observation design is gated, not firmware. Do not start S1 / RC-J. Plan: [`realtime_incremental_work_overdub_source_view_refinement.md`](../Plans/realtime_incremental_work_overdub_source_view_refinement.md).
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

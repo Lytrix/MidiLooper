@@ -205,7 +205,7 @@ void test_pending_add_only_when_no_overlap() {
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
 }
 
 void test_pending_shorten_long_source_on_overlap() {
@@ -228,7 +228,7 @@ void test_pending_shorten_long_source_on_overlap() {
   TEST_ASSERT_EQUAL_UINT32(119u, shorten->endTick);
 
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
 }
 
 void test_pending_shorten_ignores_recorded_channel() {
@@ -289,7 +289,7 @@ void test_pending_survives_wraps_and_accumulates() {
   TEST_ASSERT_EQUAL(2, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
 }
 
 void test_discard_clears_pending_with_source_view() {

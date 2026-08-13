@@ -1,6 +1,6 @@
 # Overdub note-off pitch-query optimization
 
-**Status:** Native PASS — audit **B**; device vs [`003009`](../../captures/session_20260813_003009.log) open  
+**Status:** Withdrawn from production note-off. Helper `gatherCommittedNoteEventsForPitch` remains for native tests. RC-K3 restored as the production overlap path.  
 **Parent:** [`realtime_incremental_work_overdub_source_view_refinement.md`](realtime_incremental_work_overdub_source_view_refinement.md)  
 **Trigger:** [`captures/session_20260813_003009.log`](../../captures/session_20260813_003009.log)  
 **Related:** Option B — pitch-scoped overdub source query (windowed chunk gather already rejected)  
