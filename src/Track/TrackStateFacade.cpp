@@ -82,7 +82,7 @@ void Track::forceSetState(TrackState newState) { trackState = newState; }
 void Track::toggleMuteTrack() {
   muted = !muted;
   if (muted) {
-    silencePlaybackPort();
+    silenceTrackMidiOutput();
   }
 }
 

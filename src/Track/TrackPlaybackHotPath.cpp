@@ -154,7 +154,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   runtime.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
-void Track::playMidiEvents(uint32_t currentTick, bool emitToPort) {
+void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
   if (isStoppedRecording()) {
     return;
   }
@@ -162,11 +162,11 @@ void Track::playMidiEvents(uint32_t currentTick, bool emitToPort) {
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
-  playbackEmitToPort_ = emitToPort && !muted;
+  playbackEmitMidiOutput_ = emitMidiOutput && !muted;
   playCommittedLoopMidi(activeLoopIndex, currentTick, PlaybackMidiTarget::ActiveSlot);
 }
 
-void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitToPort) {
+void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
@@ -177,7 +177,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
-  playbackEmitToPort_ = emitToPort && !muted;
+  playbackEmitMidiOutput_ = emitMidiOutput && !muted;
   playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
 }
 
@@ -219,23 +219,23 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
                evtCopy.channel, noteName, octave,
                evtCopy.data.noteData.note, evtCopy.data.noteData.velocity, evt.tick);
   }
-  if (playbackEmitToPort_) {
+  if (playbackEmitMidiOutput_) {
     midiHandler.sendMidiEvent(evtCopy);
   }
   ignorePlaybackMidiInput = false;  // Reset playback state
 }
 
-void Track::silencePlaybackPort() {
-  for (uint8_t ch = 1; ch <= 16; ++ch) {
-    if ((ch >= MidiConfig::LED_CHANNEL_MIN && ch <= MidiConfig::LED_CHANNEL_MAX) ||
-        (ch >= MidiConfig::RECORD_EXCLUDE_MIN && ch <= MidiConfig::RECORD_EXCLUDE_MAX)) {
-      continue;
-    }
-    midiHandler.sendControlChange(ch, 123, 0);
+void Track::silenceTrackMidiOutput() {
+  if ((midiChannel >= MidiConfig::LED_CHANNEL_MIN &&
+       midiChannel <= MidiConfig::LED_CHANNEL_MAX) ||
+      (midiChannel >= MidiConfig::RECORD_EXCLUDE_MIN &&
+       midiChannel <= MidiConfig::RECORD_EXCLUDE_MAX)) {
+    return;
   }
+  midiHandler.sendControlChange(midiChannel, 123, 0);
 }
 
-void Track::silencePlaybackPortForSlot(uint8_t slotIndex) {
+void Track::silenceSlotMidiOutput(uint8_t slotIndex) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
