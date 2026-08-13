@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (RuntimeTimingTelemetry rename; MIDI Input Gap naming; overdub-stop dump remainder re-gate)
+Last updated: 2026-08-13 (playback-observation overlap Gates 0–1 native; idle prebuild reverted)
 
 ---
 
@@ -12,7 +12,7 @@ Last updated: 2026-08-13 (RuntimeTimingTelemetry rename; MIDI Input Gap naming; 
 
 **Now:** Stage 1 LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log) (`load_frame` 16–32 ms after overdub stop). Dump **FAIL** remains: stop 4 BPM 274 then 5.59 s CAP silence, `msi` 5.62 s; the owner is now identified as the deferred `LoopUndoHistory` runtime bundle. Added `PERS,bundle` summary telemetry; re-measure before changing scheduling. Plan: [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md). Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) (R1B design gate before payload firmware).
 
-Do not patch RC-J, start interval reservation, implement observation Gates 0–4, or filter MIDI catch-up. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of this work. Persistence payload narrowing needs the wire-format / DEC-024 design gate before firmware.
+Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of the dump work. Persistence payload narrowing needs the wire-format / DEC-024 design gate before firmware.
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing telemetry
 
@@ -34,7 +34,11 @@ Do not patch RC-J, start interval reservation, implement observation Gates 0–4
 
 **S1 RC-L1 (shipped, verified [`225803`](../../captures/session_20260812_225803.log)):** per-span `ProjectedIntervalVec` allocation in `projectDisplayNotes` / `projectNoteIntervals`. Four overdubs on a grown 64-bar loop: `begin_capture` 77 / 80 / 79 / 83 ms (was 1.378 s, and 58 → 410 ms as passes accumulated in [`223033`](../../captures/session_20260812_223033.log)). First USB note 108–242 ms after PLAYING→OVERDUBBING (was 1.76 s). `noterecon` 0; `notechg`/`notepair` 1.09 ms; `usbnote` 1.20 ms; overdub `clockrate` 47–48; overdub `midisvc` 4–14 ms. Remaining ~80 ms is the synchronous gather+reconstruct floor.
 
-**Open after RC-L1 (Option B withdrawn; RC-K3 restored):** Option B native PASS on small loops ([`002329`](../../captures/session_20260813_002329.log)) but grown-loop note-off reconstruct in [`021304`](../../captures/session_20260813_021304.log) was **292 ms per note-off** (`noterecon` 291775 µs, `clockrate` 36). Production overlap is RC-K3 again: `establishOverdubSourceView` runs `gatherCommittedEvents` + `reconstructDisplayNotes` once; `accumulatePendingNoteChangesForIncomingNote` reads `overdubSourceViewNotes_` (no pitch query, no reconstruct on note-off). `gatherCommittedNoteEventsForPitch` stays as a test helper. Playback-observation candidate discovery is designed, not implemented. Do not start interval reservation / RC-J / Option A / Option C / Option D. Do not optimize Option B further.
+**Now: playback-observation overlap (Gates 0–1 native).** Plan: [`overdub_playback_observation_overlap_refinement.md`](../Plans/overdub_playback_observation_overlap_refinement.md). Production overlap stays RC-K3. Do not wire `PendingNote.overlapNoteIds` or `sendMidiEvent` until Gate 1 is pinned and Gates 2–4 pass. PLAYING idle prebuild reverted (`73f0489`). Option B stays withdrawn ([`021304`](../../captures/session_20260813_021304.log) 292 ms/note-off).
+
+**Gate 0:** `OverlapNoteIdSet` fixed capacity 128; overflow does not grow. Native PASS. 021304 same-pitch count unmeasured.
+
+**Gate 1:** observed `[S,E)` sounding vs `noteIntersectsWindow`. Equality holds for interior / wrap-at-0 / ended-during-span / nested. Two pins block close: **G1-end-touch** (geometry selects a note that ends exactly at S; observation does not) and **G1-wrap-probe** (observation keeps a still-sounding wrap note in a 25-tick tail window; 16th-step geometry misses it). Do not change `DisplayWindowUtils` to green the gate.
 
 **RC-L2 (shipped, device verify open) — pitch-query full-loop copy:** the pairing change had `gatherCommittedNoteEventsForPitch` build a PSRAM `SessionMidiEventVec` of every committed note event per note-off before filtering. [`013917`](../../captures/session_20260813_013917.log) shows `noterecon` 98–191 ms / `notechg` 99–192 ms on 3554 events (`begin_capture` 11 µs, so Option B held). When `collectNoteIdsRetargetedToPitch` returns nothing — always true during plain overdub — the candidate set is exactly the events at that pitch, so the walk filters inline and skips the trailing re-filter. Pairing path unchanged when retargets exist; both branches covered by `test_overdub_source_view`.
 
