@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (overlap-hold stop totals logging)
+Last updated: 2026-08-13 (overlap-hold 4-bar + 68-bar measured)
 
 ---
 

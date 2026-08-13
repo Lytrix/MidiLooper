@@ -176,6 +176,37 @@ Native: `test_pending_note_change` (empty set increments `emptySets` not `looked
 
 Stops 1–3: `sum_examined / looked_up` equals `max_examined` (1592 / 1599 / 1599). First-stop `notechg` 986 and `max_lookup_us` 959. `begin_capture` 83 ms on stop 1; 8.82 / 8.75 / 8.97 s on stops 2, 3, 5 (`PERS,bundle,LoopUndoHistory` 25.2 s / 26.6 s) — not this path.
 
+The 4-bar and 68-bar lookup numbers exist. Production note-off is `PendingNote.overlapNoteIds` → `appendNotesForIds(overdubSourceViewNotes_)` → geometry + `[S, E)`. Lookup-source change is not started.
+
+---
+
+## Skipped native tests — not owed
+
+`pio test -e native` skips exactly two cases, both in `test_pending_note_change`:
+
+- `test_slice_cache_overlap_matches_full_wrap_tail_to_head`
+- `test_slice_cache_overlap_matches_full_long_note_spanning_bars`
+
+These are **Option A rejection fixtures**, not unfinished wiring. Option A (copy slice-built `visualCache.notes` as the overdub source) misses wrap notes and notes longer than the idle-slice pad. The `TEST_IGNORE_MESSAGE` text is the rejection. Two sibling slice tests still run (`interior`, `note_split_across_chunks`) and only cover cases that happen to pass on a rejected approach.
+
+Do not implement those skipped tests. Gate 1 still owes a muted/solo same-id check after collection; that is a different fixture and is not these two.
+
+---
+
+## Safe to remove (withdrawn paths — not current production)
+
+Current production overlap does not call these. Removing them does not change note-off behavior. Do not remove `overdubSourceViewNotes_`, `establishOverdubSourceView`, `accumulatePendingNoteChangesFromSourceNotes`, `OverlapNoteIdObservation` tests, or `findLinearNoteSpanForNoteId` (NOTE_EDIT).
+
+| Item | Why removable | Keep if |
+|------|----------------|---------|
+| `test_slice_cache_overlap_matches_full_*` (4 tests) + `assertSliceCacheMatchesFull` / `drainIdleVisualCache` | Option A rejected | documenting the rejection in-tree |
+| `test_windowed_overlap_matches_full_*` (18 tests) + `assertWindowedMatchesFull` | Option B wrap-equivalence; compares full reconstruct vs `gatherCommittedNoteEventsForPitch`, not `overlapNoteIds` | reviving pitch-query |
+| `gatherOverdubSourceViewEventsInWindow` / `gatherOverdubSourceViewNotesInWindow` | No callers in `src/` or `test/` | — |
+| `gatherCommittedNoteEventsForPitch` + `CommittedPitchQueryWork` counters + `test_overdub_source_view` pitch-query cases | Option B / RC-L2; no `src/` callers | reviving pitch-query |
+| `maybeLogStoredNoteCount` emit | Gate 0 count is in [`152940`](../../captures/session_20260813_152940.log); overlap_hold proofs exist in [`162856`](../../captures/session_20260813_162856.log) / [`163422`](../../captures/session_20260813_163422.log). The walk taxes MIDI. | another same-pitch inventory |
+
+`gatherCommittedEventsInWindow` stays — visual cache, display, and playback still call it.
+
 ---
 
 ## Out of scope
