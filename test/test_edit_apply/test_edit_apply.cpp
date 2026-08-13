@@ -121,6 +121,22 @@ RecordPass makeEditRecordFixtureRecordPassCh5(PassId id) {
   return pass;
 }
 
+RecordPass makeLengthReplayLoopBoundaryRecordPass(PassId id) {
+  resetNoteIdCounter();
+  LoopEventStore store;
+  appendFixtureNotePair(store, 0, 143, 1, 71, 1);
+  appendFixtureNotePair(store, 720, 766, 1, 71, 2);
+  appendFixtureNotePair(store, 1488, 1535, 1, 71, 3);
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 2256, 1, 71, 100, 14));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = CapturePassState::Active;
+  pass.committedChunkIds = std::move(committedChunkIds);
+  return pass;
+}
+
 RecordPass makeEditRecordFixtureRecordPassCh5_195830(PassId id) {
   resetNoteIdCounter();
   LoopEventStore store;
@@ -314,6 +330,53 @@ void test_change_length_rematerialize_keeps_p0_off_not_loop_end() {
     }
   }
   TEST_ASSERT_TRUE(foundP0);
+}
+
+// session_20260813_203140: ChangeLength stub 14 2256–2304 must not wrap and
+// shorten same-pitch neighbors to 2255, or delete the note at tick 0.
+void test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_203140() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kPitch = 71;
+  LoopPasses passes;
+  passes.recordPass = makeLengthReplayLoopBoundaryRecordPass(1);
+  pushEditPassRow(passes, 1, makeLengthRow(14, 2256, 2304, kLoopLength));
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+
+  TEST_ASSERT_EQUAL(0, countMatching(flat, false, kPitch, kLoopLength));
+
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundTickZero = false;
+  bool foundA = false;
+  bool foundB = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == kPitch && note.endTick == 2255u);
+    if (note.noteId == 1) {
+      foundTickZero = true;
+      TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+      TEST_ASSERT_EQUAL_UINT32(0u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(143u, note.endTick);
+    }
+    if (note.noteId == 2) {
+      foundA = true;
+      TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+      TEST_ASSERT_EQUAL_UINT32(720u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(766u, note.endTick);
+    }
+    if (note.noteId == 3) {
+      foundB = true;
+      TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+      TEST_ASSERT_EQUAL_UINT32(1488u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1535u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundTickZero);
+  TEST_ASSERT_TRUE(foundA);
+  TEST_ASSERT_TRUE(foundB);
 }
 
 // Regression for the HITL overlap round-trip: M0 lengthened to 681 overlaps P0 (585..682)
@@ -903,6 +966,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor);
   RUN_TEST(test_lengthen_after_move_keeps_p0_fixture_gate);
   RUN_TEST(test_change_length_rematerialize_keeps_p0_off_not_loop_end);
+  RUN_TEST(test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_203140);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
   RUN_TEST(test_save_edit_appends_without_collapsing_takes);

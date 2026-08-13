@@ -107,8 +107,12 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
   const uint32_t refStart = onEvt.tick;
   const int offIndex = findNoteOffForOnIndex(events, onIndex);
+  loopLength = inferLoopLength(events, loopLength);
   const uint32_t refEnd =
       offIndex >= 0 ? events[static_cast<size_t>(offIndex)].tick : refStart;
+  if (offIndex < 0 && newEnd == loopLength) {
+    return;
+  }
 
   if (newEnd == refEnd) {
     return;
@@ -119,9 +123,8 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
     return;
   }
 
-  loopLength = inferLoopLength(events, loopLength);
   const uint32_t newStart = refStart;
-  const uint32_t displayNewEnd = newEnd % loopLength;
+  const uint32_t displayNewEnd = (newEnd > loopLength) ? (newEnd % loopLength) : newEnd;
 
   const std::vector<NoteUtils::DisplayNote> allNotes =
       NoteUtils::reconstructNotes(events, loopLength, false);
