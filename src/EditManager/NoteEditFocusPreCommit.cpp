@@ -206,11 +206,9 @@ NOTE_EDIT_MEM EditPassVec buildCommitOverlapRowsFromCurrentState(
       continue;
     }
 
-    const ParticipatingNoteState participant = buildParticipatingNoteState(*row);
-    if (participatingNoteVisibleOverlapTailInProgress(participant, focus.last)) {
-      continue;
-    }
-
+    // A parked mover always still covers the span it shortened, so deferring on active overlap
+    // closure meant the shorten could never seal at the commit the user triggers. Closure defers
+    // leave-restore (ResolveConstrainedGeometry), not persistence.
     if (loopLength > 0 && !isPlausibleStorageSpan(live.startTick, live.endTick, loopLength)) {
 #if defined(SESSION_CAPTURE)
       logger.log(CAT_TRACK, LOG_WARNING,
