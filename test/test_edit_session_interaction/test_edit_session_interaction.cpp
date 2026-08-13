@@ -952,6 +952,75 @@ void test_overlay_committed_span_shortened_stub_ltr_overlap_181859() {
                     static_cast<int>(interactions[0].type));
 }
 
+void test_overlay_unedited_row_uses_display_span_not_rematerialize_181114() {
+  // session_20260813_181114: note 45 rematerialize 1440–2160; visual cache 1344–1536.
+  // Pitch of mover 76 onto 46 must Hide/Restore against the cache end, not 2160.
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kTargetId = 45;
+  constexpr NoteId kMoverId = 76;
+  constexpr uint8_t kPitch = 46;
+  constexpr uint8_t kChannel = 1;
+
+  const NoteBaseline rematerialize{kPitch, 100, 1440, 2160};
+  const NoteBaseline cacheSpan{kPitch, 100, 1344, 1536};
+  const NoteBaseline moverSpan{kPitch, 100, 840, 1511};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kTargetId] = rematerialize;
+  focus.baselineMap[kMoverId] = moverSpan;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kTargetId, rematerialize, rematerialize, NoteEditPresenceType::Visible);
+  currentState.upsertRow(kMoverId, moverSpan, moverSpan, NoteEditPresenceType::Visible);
+
+  NoteUtils::DisplayNoteVec committedDisplay;
+  committedDisplay.push_back({kTargetId, kPitch, 100, 1344, 1536});
+  committedDisplay.push_back({kMoverId, kPitch, 100, 840, 1511});
+
+  MidiEventVec liveStore;
+  currentState.projectToSessionStore(liveStore, kChannel);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = moverSpan;
+  geometry.causingSpans.push_back(causing);
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kMoverId};
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(focus.baselineMap, liveStore, kMoverId, kPitch, &currentState);
+  const auto pairs = determineEligiblePairs(selection, changed, scope);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(pairs.size()));
+
+  const auto rematerializeInteractions =
+      analyzeEditSessionInteractions(pairs, geometry, focus.baselineMap);
+  TEST_ASSERT_TRUE(static_cast<int>(rematerializeInteractions.size()) >= 1);
+  TEST_ASSERT_EQUAL_UINT32(2160u, rematerializeInteractions[0].baselineSpan.endTick);
+
+  overlayUneditedBaselineMapFromDisplayNotes(focus, &currentState, committedDisplay);
+  TEST_ASSERT_EQUAL_UINT32(cacheSpan.startTick, focus.baselineMap[kTargetId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(cacheSpan.endTick, focus.baselineMap[kTargetId].endTick);
+
+  const BaselineMap analysis = overlayAnalysisBaselineForSessionMovedOverlaps(
+      focus.baselineMap, kMoverId, liveStore, kChannel, kLoopLength, &currentState, nullptr,
+      &committedDisplay);
+  const auto analysisIt = analysis.find(kTargetId);
+  TEST_ASSERT_TRUE(analysisIt != analysis.end());
+  TEST_ASSERT_EQUAL_UINT32(cacheSpan.startTick, analysisIt->second.startTick);
+  TEST_ASSERT_EQUAL_UINT32(cacheSpan.endTick, analysisIt->second.endTick);
+
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, analysis);
+  TEST_ASSERT_TRUE(static_cast<int>(interactions.size()) >= 1);
+  TEST_ASSERT_EQUAL_UINT32(kTargetId, interactions[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(1536u, interactions[0].baselineSpan.endTick);
+}
+
 void test_evaluation_scope_excludes_ended_participation_even_with_stale_latch() {
   // §11 step 5.4: when current state is present, sticky off-lane membership follows Ended, not latch.
   constexpr NoteId kMoverId = 11;
@@ -1046,6 +1115,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600);
   RUN_TEST(test_overlap_analyze_uses_current_span_not_stale_baseline_021939);
   RUN_TEST(test_overlay_committed_span_shortened_stub_ltr_overlap_181859);
+  RUN_TEST(test_overlay_unedited_row_uses_display_span_not_rematerialize_181114);
   RUN_TEST(test_evaluation_scope_excludes_ended_participation_even_with_stale_latch);
   RUN_TEST(test_evaluation_scope_excludes_sealed_deleted_022849);
   return UNITY_END();

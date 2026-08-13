@@ -165,6 +165,8 @@ public:
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
     /// Single cached NOTE_EDIT display projection (session store + focus) for grid paint.
     NoteUtils::DisplayNoteVec projectedNoteEditDisplayNotes(const Track& track) const;
+    const NoteUtils::DisplayNoteVec& visualCacheNotesForSelectedSlot(const Track& track) const;
+    void ensureCurrentStateVisibleRowsFromVisualCache(Track& track);
     void invalidateProjectedNoteEditDisplayCache() const;
     uint32_t noteEditDisplayInvalidateEpoch() const { return noteEditDisplayInvalidateEpoch_; }
     uint32_t noteEditDisplayPaintedEpoch() const { return noteEditDisplayPaintedEpoch_; }
@@ -307,7 +309,6 @@ private:
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
-    void ensureCurrentStateVisibleRowsFromVisualCache(Track& track);
     void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (`filterSelectableDisplayNotes` on paint projection).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;

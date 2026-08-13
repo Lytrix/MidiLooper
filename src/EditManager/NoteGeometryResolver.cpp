@@ -78,12 +78,17 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         return false;
     }
 
+    manager.ensureCurrentStateVisibleRowsFromVisualCache(track);
+    const NoteUtils::DisplayNoteVec& committedDisplayNotes =
+        manager.visualCacheNotesForSelectedSlot(track);
+    overlayUneditedBaselineMapFromDisplayNotes(focus, currentStateReader, committedDisplayNotes);
+
     const NoteIdList evaluationScope =
         collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.movingNoteId,
                                       overlapPitchLane, currentStateReader);
 
     ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel,
-                                               currentStateReader);
+                                               currentStateReader, &committedDisplayNotes);
     const BaselineMap& transactionBaselineAfterEnsure = focus.baselineMap;
 
     const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
@@ -107,7 +112,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         overlayAnalysisBaselineForSessionMovedOverlaps(transactionBaselineAfterEnsure,
                                                        focus.movingNoteId, liveStore, channel,
                                                        loopLength, currentStateReader,
-                                                       causingSpan);
+                                                       causingSpan, &committedDisplayNotes);
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
         interactions =
             analyzeEditSessionInteractions(overlapPairs, editedGeometry, analysisBaseline);
