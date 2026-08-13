@@ -3570,10 +3570,8 @@ void test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114
 
 void test_mover_wrap_length_jump_names_first_writer_193838() {
   // session_20260813_193838 @156.013: Hide 16 663-854 + Move 111 624-671 on a 2304-tick
-  // loop. Apply leaves 111 at 624-671. Micro normalize wrap-merges a same-pitch wrap-window
-  // on (32 @2208) with 111's off @671 (pitch/channel only; noteId ignored) to linearOff
-  // 2304+671=2975. syncProjectingRowsFromSessionStore copies that into currentSpan.
-  // Projection and noteEditFocusApplyDisplayNote then follow currentSpan (2351 / 2975).
+  // loop. Apply leaves 111 at 624-671. Wrap merge must not retarget 111's tagged off
+  // from a different noteId (32 @2208). 111 stays 624-671 / length 47.
   constexpr uint32_t kLoopLength = 2304;
   constexpr uint8_t kChannel = 1;
   constexpr uint8_t kPitch = 30;
@@ -3657,14 +3655,14 @@ void test_mover_wrap_length_jump_names_first_writer_193838() {
   microOptions.closeOpenTails = false;
   const LoopTickNormalize::NormalizeResult normResult = LoopTickNormalize::normalize(
       store, kLoopLength, LoopTickNormalize::NormalizeScope::noteIds(closure), microOptions);
-  TEST_ASSERT_EQUAL(1, static_cast<int>(normResult.wrapPairsMerged));
   TEST_ASSERT_EQUAL(0, static_cast<int>(normResult.synthOffsPromoted));
   TEST_ASSERT_EQUAL(0, static_cast<int>(normResult.openTailsClosed));
   currentState.syncProjectingRowsFromSessionStore(store, kChannel);
 
   NoteBaseline currentSpan{};
   TEST_ASSERT_TRUE(currentState.readCurrentSpan(kMoverId, currentSpan));
-  TEST_ASSERT_EQUAL_UINT32(2975u, currentSpan.endTick);
+  TEST_ASSERT_EQUAL_UINT32(624u, currentSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(671u, currentSpan.endTick);
 
   const NoteUtils::DisplayNoteVec projected =
       projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
@@ -3679,11 +3677,11 @@ void test_mover_wrap_length_jump_names_first_writer_193838() {
   TEST_ASSERT_NOT_NULL(projectedMover);
   const uint32_t projectedLength = NoteEditGeometryApply::calculateNoteLength(
       projectedMover->startTick, projectedMover->endTick, kLoopLength);
-  TEST_ASSERT_EQUAL_UINT32(2351u, projectedLength);
-  TEST_ASSERT_EQUAL_UINT32(2975u, projectedMover->endTick);
+  TEST_ASSERT_EQUAL_UINT32(47u, projectedLength);
+  TEST_ASSERT_EQUAL_UINT32(671u, projectedMover->endTick);
 
   noteEditFocusApplyDisplayNote(focus, *projectedMover, &currentState);
-  TEST_ASSERT_EQUAL_UINT32(2975u, focus.last.endTick);
+  TEST_ASSERT_EQUAL_UINT32(671u, focus.last.endTick);
 }
 
 int main(int /*argc*/, char** /*argv*/) {

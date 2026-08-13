@@ -88,6 +88,7 @@ NormalizeResult normalizeStore(MidiEventVec& events, uint32_t loopLength, const 
   std::vector<bool> remove(events.size(), false);
 
   // Pass 1: merge legacy head/tail wrap pairs into one linear off.
+  // Skip when both events are tagged and the noteIds disagree (193838 mover off).
   for (size_t onIdx = 0; onIdx < events.size(); ++onIdx) {
     const MidiEvent& onEvt = events[onIdx];
     if (remove[onIdx] || !noteOnParticipates(onEvt, scope, loopLength, wrapWindowTicks)) {
@@ -100,6 +101,10 @@ NormalizeResult normalizeStore(MidiEventVec& events, uint32_t loopLength, const 
       }
       const MidiEvent& offEvt = events[offIdx];
       if (offEvt.channel != onEvt.channel || offEvt.data.noteData.note != onEvt.data.noteData.note) {
+        continue;
+      }
+      if (onEvt.noteId != kInvalidNoteId && offEvt.noteId != kInvalidNoteId &&
+          onEvt.noteId != offEvt.noteId) {
         continue;
       }
       if (!NoteUtils::isHeadTailWrappedPair(onEvt.tick, offEvt.tick, loopLength, wrapWindowTicks)) {
