@@ -379,6 +379,83 @@ void test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_2031
   TEST_ASSERT_TRUE(foundB);
 }
 
+// session_20260813_210821: the host was moved to 801-1568 and pitched to 36 in an earlier
+// session, so its pass list already holds a NoteRange row. The overlap shorten committed at
+// 31.988 (Length 10 -> 1055) must survive replay instead of being rewritten to the earlier
+// row's end, which reselect at 32.833 read back as the original 767 ticks.
+void test_length_row_after_earlier_move_row_on_same_note_seals_210821() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kPitch = 36;
+  LoopPasses passes;
+  // note 1 = mover (18 in the capture), note 2 = host (10 in the capture), both pitch 26.
+  passes.recordPass = makeRecordPassWithTwoNotes(1, 480, 575, 768, 863, 26);
+
+  pushEditPassRows(passes, 1,
+                   {makeNoteRangeRow(2, 768, 863, 801, 1568), makePitchRow(2, 801, 1568, kPitch),
+                    makeLengthRow(2, 801, 1568, 1055), makeNoteRangeRow(1, 480, 575, 1056, 1151),
+                    makePitchRow(1, 1056, 1151, kPitch)});
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundHost = false;
+  bool foundMover = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == 2) {
+      foundHost = true;
+      TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+      TEST_ASSERT_EQUAL_UINT32(801u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1055u, note.endTick);
+    }
+    if (note.noteId == 1) {
+      foundMover = true;
+      TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+      TEST_ASSERT_EQUAL_UINT32(1056u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1151u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundHost);
+  TEST_ASSERT_TRUE(foundMover);
+}
+
+// session_20260813_210945: the mover was committed to 960-1104 at 99.273, then the host was
+// hidden and the mover moved to 768-912 at 115.986. The second NoteRange row must win instead
+// of being rewritten back to the first row's span.
+void test_second_move_row_on_same_note_wins_over_earlier_span_210945() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kPitch = 36;
+  LoopPasses passes;
+  // note 1 = mover (77 in the capture), note 2 = host (10 in the capture).
+  passes.recordPass = makeRecordPassWithTwoNotes(1, 480, 575, 801, 1568, 26);
+
+  pushEditPassRows(passes, 1,
+                   {makeNoteRangeRow(1, 480, 575, 960, 1104), makePitchRow(1, 960, 1104, kPitch),
+                    makeDeleteRow(2), makeNoteRangeRow(1, 960, 1104, 768, 912)});
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundMover = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_TRUE(note.noteId != 2);
+    if (note.noteId == 1) {
+      foundMover = true;
+      TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+      TEST_ASSERT_EQUAL_UINT32(768u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(912u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMover);
+}
+
 // Regression for the HITL overlap round-trip: M0 lengthened to 681 overlaps P0 (585..682)
 // without nesting. A pitch edit on M0 must not relabel P0's note-off (tick 682).
 void test_change_pitch_on_overlapping_note_keeps_neighbor_endtick() {
@@ -967,6 +1044,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_lengthen_after_move_keeps_p0_fixture_gate);
   RUN_TEST(test_change_length_rematerialize_keeps_p0_off_not_loop_end);
   RUN_TEST(test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_203140);
+  RUN_TEST(test_length_row_after_earlier_move_row_on_same_note_seals_210821);
+  RUN_TEST(test_second_move_row_on_same_note_wins_over_earlier_span_210945);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
   RUN_TEST(test_save_edit_appends_without_collapsing_takes);

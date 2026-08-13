@@ -74,40 +74,15 @@ void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVector& 
 template <typename MidiEventVector>
 void applyActiveEditPassesMidi(MidiEventVector& events, const EditPassVec& editPasses,
                                uint32_t loopLengthTicks) {
-  NoteId trackedNoteId = kInvalidNoteId;
-  uint32_t trackedStart = 0;
-  uint32_t trackedEnd = 0;
-  bool tracked = false;
-
-  auto applyNoteRow = [&](const EditPass& editPass) {
-    EditPass resolved = editPass;
-    if (tracked && resolved.targetNoteId == trackedNoteId) {
-      resolved.startTick = trackedStart;
-      resolved.endTick = trackedEnd;
-    }
-    applyNoteEditPass(events, resolved, loopLengthTicks);
-    if (resolved.actionType == EditActionType::Update &&
-        resolved.propertyType == EditPropertyType::NoteRange) {
-      trackedNoteId = editPass.targetNoteId;
-      trackedStart = editPass.startTick;
-      trackedEnd = editPass.endTick;
-      tracked = true;
-    } else if (resolved.actionType == EditActionType::Update &&
-               resolved.propertyType == EditPropertyType::Length) {
-      trackedNoteId = editPass.targetNoteId;
-      trackedStart = resolved.startTick;
-      trackedEnd = editPass.endTick;
-      tracked = true;
-    }
-  };
-
+  // Rows locate their note by targetNoteId; startTick / endTick are payload only. See
+  // applyNoteEditPassSequence for why no span rewrite happens between rows.
   for (const EditPass& editPass : editPasses) {
     if (editPass.state != EditPassState::Active) {
       continue;
     }
     switch (editPass.passType) {
       case EditPassType::Note:
-        applyNoteRow(editPass);
+        applyNoteEditPass(events, editPass, loopLengthTicks);
         break;
       case EditPassType::ControlChange:
       case EditPassType::Audio:
