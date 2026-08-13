@@ -103,9 +103,9 @@ Helper: `OverlapNoteIdObservation` — native/test only. Do not call it from pro
 
 ### Equality holds
 
-Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (diagnostic sounding uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded.
+Interior start-during-hold; start exactly at E excluded; start at E−1; already sounding at S; ended-during-span kept; nested same-pitch; other pitch excluded; wrap tail→head vs incoming at tick 0 (diagnostic sounding uses the same one-loop shift so a wrap note is still sounding at S=0); incoming in tail against wrap; incoming ending after wrap; endpoint touch at S excluded; zero-length excluded; split-chunk reconstructed span (on@50 / off@400 vs incoming `[300, 350)`); prior Shorten companion uses shortened `[50, 119)`; prior Hide companion absent; unrelated other-pitch companion not selected.
 
-Required fixtures still owed: split-chunk on/off; prior Shorten/Hide companions; muted/solo (after Gate 2). 021304 same-pitch count still open on Gate 0.
+Required fixtures still owed: muted/solo (after Gate 2). 021304 same-pitch count still open on Gate 0. Split-chunk storage and companion seal stay owned by `test_pending_note_change`; Gate 1 uses those effective `DisplayNote` spans.
 
 ---
 

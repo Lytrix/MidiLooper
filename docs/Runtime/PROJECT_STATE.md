@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (OverlapNoteIdObservation is diagnostic; geometry selects)
+Last updated: 2026-08-13 (Gate 1 split-chunk + companion fixtures)
 
 ---
 

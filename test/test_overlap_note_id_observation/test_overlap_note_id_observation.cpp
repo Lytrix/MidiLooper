@@ -224,6 +224,63 @@ void test_gate1_zero_length_note_excluded() {
   TEST_ASSERT_TRUE(observed.contains(2));
 }
 
+// Reconstructed split-chunk span from test_windowed_overlap_matches_full_note_split_across_chunks:
+// NoteOn@50 in chunk 0, NoteOff@400 in chunk 1, incoming [300, 350) in the sounding gap.
+void test_gate1_split_chunk_on_off_outside_incoming_window() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 50, 400));
+  notes.push_back(makeNote(10, 0, 1, 72));
+  notes.push_back(makeNote(11, 254, 255, 72));
+  assertObservedEqualsGeometry(notes, 300, 350);
+  OverlapNoteIdSet observed;
+  OverlapNoteIdObservation::collectObservedOverlapNoteIds(notes, kPitch, 300, 350, kLoopLen,
+                                                          observed);
+  TEST_ASSERT_TRUE(observed.contains(1));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(observed.size()));
+}
+
+// After seal, source [50, 200) is shortened to endTick 119
+// (test_seal_pending_shorten_to_edit_pass_after_overdub_publish).
+void test_gate1_prior_shorten_companion_uses_shortened_span() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 50, 119));
+  assertObservedEqualsGeometry(notes, 80, 110);
+  OverlapNoteIdSet stillOverlaps;
+  OverlapNoteIdObservation::collectGeometryOverlapNoteIds(notes, kPitch, 80, 110, kLoopLen,
+                                                          stillOverlaps);
+  TEST_ASSERT_TRUE(stillOverlaps.contains(1));
+
+  assertObservedEqualsGeometry(notes, 130, 170);
+  OverlapNoteIdSet afterShortenedEnd;
+  OverlapNoteIdObservation::collectGeometryOverlapNoteIds(notes, kPitch, 130, 170, kLoopLen,
+                                                          afterShortenedEnd);
+  TEST_ASSERT_FALSE(afterShortenedEnd.contains(1));
+}
+
+void test_gate1_prior_hide_companion_absent_from_geometry() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(2, 2000, 2200));
+  assertObservedEqualsGeometry(notes, 1100, 1300);
+  OverlapNoteIdSet observed;
+  OverlapNoteIdObservation::collectObservedOverlapNoteIds(notes, kPitch, 1100, 1300, kLoopLen,
+                                                          observed);
+  TEST_ASSERT_FALSE(observed.contains(1));
+  TEST_ASSERT_FALSE(observed.contains(2));
+}
+
+void test_gate1_unrelated_companion_other_pitch_does_not_select() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 1000, 1800));
+  notes.push_back(makeNote(2, 100, 150, 72));
+  assertObservedEqualsGeometry(notes, 1200, 1600);
+  OverlapNoteIdSet observed;
+  OverlapNoteIdObservation::collectObservedOverlapNoteIds(notes, kPitch, 1200, 1600, kLoopLen,
+                                                          observed);
+  TEST_ASSERT_TRUE(observed.contains(1));
+  TEST_ASSERT_FALSE(observed.contains(2));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(observed.size()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_gate0_insert_contains_and_duplicate);
@@ -241,5 +298,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_gate1_incoming_ending_after_wrap);
   RUN_TEST(test_gate1_ends_exactly_at_incoming_start);
   RUN_TEST(test_gate1_zero_length_note_excluded);
+  RUN_TEST(test_gate1_split_chunk_on_off_outside_incoming_window);
+  RUN_TEST(test_gate1_prior_shorten_companion_uses_shortened_span);
+  RUN_TEST(test_gate1_prior_hide_companion_absent_from_geometry);
+  RUN_TEST(test_gate1_unrelated_companion_other_pitch_does_not_select);
   return UNITY_END();
 }
