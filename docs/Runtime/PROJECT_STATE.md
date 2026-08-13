@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-13 (Gate 2 native: unmute does not resend crossed events)
+Last updated: 2026-08-13 (mute silences track MIDI channel on output ports)
 
 ---
 

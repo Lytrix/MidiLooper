@@ -8,7 +8,7 @@
 #include "Logger.h"
 #include "LooperState.h"
 #include "StorageManager.h"
-#include "Utils/PlaybackPortEmit.h"
+#include "Utils/PlaybackMidiOutput.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
@@ -235,18 +235,18 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
 
     const uint8_t activeSlot = tracks[i].getActiveLoopIndex();
 
-    // Primary (active) slot playback. Mute/solo/slot-mute gate the port, not the engine.
-    if (PlaybackPortEmit::engineShouldRun(slotEnabled[i][activeSlot])) {
+    // Primary (active) slot playback. Mute/solo/slot-mute suppress MIDI send, not the engine.
+    if (PlaybackMidiOutput::engineShouldRun(slotEnabled[i][activeSlot])) {
       tracks[i].playMidiEvents(
-          playTick, PlaybackPortEmit::portShouldEmit(audible, slotMuted[i][activeSlot]));
+          playTick, PlaybackMidiOutput::shouldSend(audible, slotMuted[i][activeSlot]));
     }
 
     // Additional enabled slots.
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       if (s == activeSlot) continue;
-      if (PlaybackPortEmit::engineShouldRun(slotEnabled[i][s])) {
+      if (PlaybackMidiOutput::engineShouldRun(slotEnabled[i][s])) {
         tracks[i].playMidiEventsForSlot(
-            s, playTick, PlaybackPortEmit::portShouldEmit(audible, slotMuted[i][s]));
+            s, playTick, PlaybackMidiOutput::shouldSend(audible, slotMuted[i][s]));
       }
     }
   }

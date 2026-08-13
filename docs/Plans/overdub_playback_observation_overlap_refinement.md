@@ -46,7 +46,7 @@ Do not treat observed membership, `collectObservedOverlapNoteIds`, or a later pl
 | Question | Answer |
 |----------|--------|
 | **Ownership change?** | NO. Track owns `PendingNote` and `sendMidiEvent`. Loop owns committed geometry + Shorten/Hide. |
-| **State transition change?** | NO for Gate 0/1 fixtures. YES later: committed playback note-ons mutate `PendingNote` ids. YES (Gate 2): mute becomes a port gate. |
+| **State transition change?** | NO for Gate 0/1 fixtures. YES later: committed playback note-ons mutate `PendingNote` ids. YES (Gate 2): mute suppresses the track MIDI channel on the output ports. |
 
 ---
 
@@ -110,13 +110,13 @@ Required fixtures still owed: muted/solo same-id check after playback collection
 
 ---
 
-## Gate 2 — mute is a last-layer port gate (native landed, device open)
+## Gate 2 — mute suppresses the track MIDI channel on the output ports (native landed, device open)
 
-Enabled slots keep running `playMidiEvents` / `playMidiEventsForSlot`. `isTrackAudible` and `slotMuted` feed `PlaybackPortEmit::portShouldEmit` into `Track::sendMidiEvent`. Cursor, merged stream, and `ActiveNoteLedger` still advance.
+Enabled slots keep running `playMidiEvents` / `playMidiEventsForSlot`. `isTrackAudible` and `slotMuted` feed `PlaybackMidiOutput::shouldSend` into `Track::sendMidiEvent`. Cursor, merged stream, and `ActiveNoteLedger` still advance.
 
-Mute-edge silence is port-only: track mute sends CC 123; slot mute sends NoteOff for that slot's active ledger notes. Neither clears ledger or `pendingNotes`. Unmute does not dump a backlog.
+Mute-edge silence is MIDI-output only: track mute sends CC 123 on that track's `midiChannel` through `MidiHandler` (USB, DIN, USB Host). Slot mute sends NoteOff for that slot's active ledger notes on the same channel/ports. Neither clears ledger or `pendingNotes`. Unmute does not dump a backlog.
 
-Native (`test_playback_port_emit`): cursor advances while port is suppressed; unmute does not resend crossed events; wrap still advances while muted; `ledger.clear()` (all-notes-off) empties the ledger, mute silence does not. Device still owed: mute mid-note silences the port; unmute does not replay missed note-ons.
+Native (`test_playback_midi_output`): cursor advances while MIDI send is suppressed; unmute does not resend crossed events; wrap still advances while muted; `ledger.clear()` (all-notes-off) empties the ledger, mute silence does not. Device still owed: mute mid-note silences that track channel on the output ports; unmute does not replay missed note-ons.
 
 ## Gates 3–4 (not started)
 
