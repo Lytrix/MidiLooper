@@ -456,6 +456,85 @@ void test_second_move_row_on_same_note_wins_over_earlier_span_210945() {
   TEST_ASSERT_TRUE(foundMover);
 }
 
+MidiEvent noteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
+                       NoteId noteId) {
+  MidiEvent evt = MidiEvent::NoteOn(tick, channel, pitch, velocity);
+  evt.noteId = noteId;
+  return evt;
+}
+
+// Nested same-pitch pair: On(A)@100, On(B)@150, Off(B)@180, Off(A)@300.
+// findNoteOffForOnIndex must pair the outer note by LIFO, not break on the inner on.
+MidiEventVec makeNestedSamePitchPair() {
+  MidiEventVec events;
+  events.push_back(noteOnWithId(100, 1, 60, 100, 1));
+  events.push_back(noteOnWithId(150, 1, 60, 100, 2));
+  events.push_back(MidiEvent::NoteOff(180, 1, 60, 0));
+  events.push_back(MidiEvent::NoteOff(300, 1, 60, 0));
+  return events;
+}
+
+void assertInnerNoteUnchanged(const MidiEventVec& events) {
+  const int innerOn = findNoteOnById(events, 2);
+  TEST_ASSERT_TRUE(innerOn >= 0);
+  TEST_ASSERT_EQUAL_UINT32(150u, events[static_cast<size_t>(innerOn)].tick);
+  TEST_ASSERT_EQUAL_UINT8(60, events[static_cast<size_t>(innerOn)].data.noteData.note);
+  TEST_ASSERT_EQUAL(1, countMatching(events, false, 60, 180));
+}
+
+void test_nested_same_pitch_outer_apply_helpers_use_lifo_off() {
+  constexpr uint32_t kLoopLength = 768;
+  constexpr NoteId kOuterId = 1;
+
+  {
+    MidiEventVec events = makeNestedSamePitchPair();
+    applyNoteEditPass(events, makeDeleteRow(kOuterId), kLoopLength);
+    TEST_ASSERT_EQUAL(-1, findNoteOnById(events, kOuterId));
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, 60, 300));
+    assertInnerNoteUnchanged(events);
+  }
+
+  {
+    MidiEventVec events = makeNestedSamePitchPair();
+    applyNoteEditPass(events, makeNoteRangeRow(kOuterId, 100, 300, 200, 400), kLoopLength);
+    const int outerOn = findNoteOnById(events, kOuterId);
+    TEST_ASSERT_TRUE(outerOn >= 0);
+    TEST_ASSERT_EQUAL_UINT32(200u, events[static_cast<size_t>(outerOn)].tick);
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, 60, 400));
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, 60, 300));
+    assertInnerNoteUnchanged(events);
+  }
+
+  {
+    MidiEventVec events = makeNestedSamePitchPair();
+    applyNoteEditPass(events, makePitchRow(kOuterId, 100, 300, 67), kLoopLength);
+    const int outerOn = findNoteOnById(events, kOuterId);
+    TEST_ASSERT_TRUE(outerOn >= 0);
+    TEST_ASSERT_EQUAL_UINT8(67, events[static_cast<size_t>(outerOn)].data.noteData.note);
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, 67, 300));
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, 60, 300));
+    assertInnerNoteUnchanged(events);
+  }
+
+  {
+    MidiEventVec events = makeNestedSamePitchPair();
+    applyNoteEditPass(events, makeLengthRow(kOuterId, 100, 300, 250), kLoopLength);
+    const int outerOn = findNoteOnById(events, kOuterId);
+    TEST_ASSERT_TRUE(outerOn >= 0);
+    TEST_ASSERT_EQUAL_UINT32(100u, events[static_cast<size_t>(outerOn)].tick);
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, 60, 250));
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, 60, 300));
+    int outerOffs = 0;
+    for (const MidiEvent& evt : events) {
+      if (evt.isNoteOff() && evt.data.noteData.note == 60 && evt.tick != 180) {
+        ++outerOffs;
+      }
+    }
+    TEST_ASSERT_EQUAL(1, outerOffs);
+    assertInnerNoteUnchanged(events);
+  }
+}
+
 // Regression for the HITL overlap round-trip: M0 lengthened to 681 overlaps P0 (585..682)
 // without nesting. A pitch edit on M0 must not relabel P0's note-off (tick 682).
 void test_change_pitch_on_overlapping_note_keeps_neighbor_endtick() {
@@ -1046,6 +1125,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_203140);
   RUN_TEST(test_length_row_after_earlier_move_row_on_same_note_seals_210821);
   RUN_TEST(test_second_move_row_on_same_note_wins_over_earlier_span_210945);
+  RUN_TEST(test_nested_same_pitch_outer_apply_helpers_use_lifo_off);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
   RUN_TEST(test_save_edit_appends_without_collapsing_takes);

@@ -28,16 +28,26 @@ int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
   const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
   const uint8_t channel = onEvt.channel;
   const uint8_t note = onEvt.data.noteData.note;
-  const uint32_t startTick = onEvt.tick;
 
-  for (size_t i = static_cast<size_t>(onIndex) + 1; i < events.size(); ++i) {
+  // Same-pitch pairing is LIFO everywhere else (findLinearOffForNoteOnLifo,
+  // findCorrespondingNoteOff, pairedNoteOnTickForOffAtIndex). Walk from the start of the
+  // vector: an earlier unclosed same-pitch note-on changes which off closes this on.
+  std::vector<size_t> openNoteOnIndices;
+  for (size_t i = 0; i < events.size(); ++i) {
     const MidiEvent& evt = events[i];
-    if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note &&
-        evt.tick > startTick) {
-      break;
+    if (evt.channel != channel || evt.data.noteData.note != note) {
+      continue;
     }
-    if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
-        evt.tick >= startTick) {
+    if (evt.isNoteOn()) {
+      openNoteOnIndices.push_back(i);
+      continue;
+    }
+    if (!evt.isNoteOff() || openNoteOnIndices.empty()) {
+      continue;
+    }
+    const size_t pairedOnIndex = openNoteOnIndices.back();
+    openNoteOnIndices.pop_back();
+    if (pairedOnIndex == static_cast<size_t>(onIndex)) {
       return static_cast<int>(i);
     }
   }
