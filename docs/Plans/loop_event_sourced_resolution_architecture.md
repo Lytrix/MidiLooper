@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; production MIDI/display stay on materialize until three gates pass  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 native µs recorded, device probe blocked by capture-serial RAM1; production MIDI/display stay on materialize until three gates pass  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -243,7 +243,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate on `035414` class | keep 3b copy path until this wins |
+| 9 | Device three-part gate on `035414` class — **native µs recorded; on-device probe blocked** (`teensy41-capture-serial` RAM1 / ~25 KB ITCM when `LoopContentResolution.cpp` is linked) | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 

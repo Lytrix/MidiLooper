@@ -34,9 +34,11 @@
 
 ## 5. Stage 9 — Device gate (after native 2–4)
 
+- [x] 5.3 Record worst-case µs, not only totals (native 64-bar fixture: materialize 145 µs, window 28 µs, rebuild 214 µs, `resolveState` 1 µs). Device `035414`-class numbers are **not** recorded yet.
 - [ ] 5.1 `035414`-class worst-case latency: no multi-second MIDI stall, no multi-second OLED stall
 - [ ] 5.2 Overdub entry remains cheap (3b copy); no `VCACHE,full` on the normal path; no full materialize after commit
-- [ ] 5.3 Record worst-case µs, not only totals
+
+Device probe blocker: linking `src/LoopContentResolution.cpp` into `teensy41-capture-serial` overflows RAM1 (~25 KB ITCM). The TU is excluded via `build_src_filter` until that budget exists. Production consumers stay on materialize / 3b copy.
 
 ## 6. Production swap (only after all three gates + user approval)
 

@@ -24,7 +24,7 @@
 #include "../test_support/NoteIdTestFixtures.h"
 #include "CanonicalResolutionFixture.h"
 #include "LoopContentResolution.h"
-#include "LoopContentResolutionImpl.h"
+#include "../../src/LoopContentResolution.cpp"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 
@@ -916,6 +916,33 @@ void test_stage7_resolve_state_matches_oracle_mid_and_wrap() {
   }
 }
 
+void test_stage9_native_worst_case_micros() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(fixture.passes, fixture.loopLengthTicks, sample);
+  printCounters("stage9_index_commit", sample.indexCommit);
+  printCounters("stage9_materialize", sample.materialize);
+  printCounters("stage9_window", sample.window);
+  printCounters("stage9_rebuild", sample.rebuild);
+  printCounters("stage9_state", sample.state);
+  std::printf(
+      "stage9 us materialize=%llu window=%llu rebuild=%llu state=%llu replay_start=%u "
+      "replayed=%u history=%u\n",
+      static_cast<unsigned long long>(sample.materialize.elapsedMicros),
+      static_cast<unsigned long long>(sample.window.elapsedMicros),
+      static_cast<unsigned long long>(sample.rebuild.elapsedMicros),
+      static_cast<unsigned long long>(sample.state.elapsedMicros), sample.state.replayStartTick,
+      sample.state.eventsReplayed, sample.state.eventsInHistory);
+  TEST_ASSERT_EQUAL_UINT32(0u, sample.window.passChunkListsWalked);
+  TEST_ASSERT_EQUAL_UINT32(0u, sample.state.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, sample.state.replayStartTick);
+  TEST_ASSERT_LESS_THAN(sample.state.eventsInHistory, sample.state.eventsReplayed);
+  TEST_ASSERT_GREATER_THAN(0u, sample.materialize.elapsedMicros);
+  TEST_ASSERT_GREATER_THAN(0u, sample.window.elapsedMicros);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -941,5 +968,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage7_resolve_state_from_checkpoint_not_tick_zero);
   RUN_TEST(test_stage7_resolve_state_matches_oracle_mid_and_wrap);
   RUN_TEST(test_stage8_loop_switch_high_tick_bounded_replay);
+  RUN_TEST(test_stage9_native_worst_case_micros);
   return UNITY_END();
 }

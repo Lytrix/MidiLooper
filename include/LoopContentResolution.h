@@ -39,7 +39,7 @@ struct SoundingNote {
   uint32_t onTick = 0;
 };
 
-using SoundingNoteVec = std::vector<SoundingNote>;
+using SoundingNoteVec = std::vector<SoundingNote, ExternalMemoryFirstAllocator<SoundingNote>>;
 
 // Stage 1 vocabulary pin (DEC-037): three roles, no fourth synonym.
 // RawMidiEvent  — MIDI shape stored on capture passes (today: MidiEvent).
@@ -55,6 +55,7 @@ struct LoopContentResolution {
   struct TickIndex {
     void commitCapturePass(PassId id, const CommittedChunkIdList& chunks, CapturePassState state,
                            uint32_t mergeSequence, ResolutionCostCounters* counters = nullptr);
+    void commitLoopPasses(const LoopPasses& passes, ResolutionCostCounters* counters = nullptr);
     void setCapturePassState(PassId id, CapturePassState state);
 
     void findRawWindow(uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
@@ -94,7 +95,7 @@ struct LoopContentResolution {
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
     std::vector<SoundingNoteVec> soundingAt;
-    std::vector<NoteSpan> spans;
+    std::vector<NoteSpan, ExternalMemoryFirstAllocator<NoteSpan>> spans;
     /// Start and exclusive-end ticks for tail replay (both keyed here).
     std::multimap<uint32_t, size_t> startsByTick;
 
@@ -121,4 +122,16 @@ struct LoopContentResolution {
   static void resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
                            uint32_t windowLength, NoteUtils::DisplayNoteVec& out,
                            ResolutionCostCounters* counters = nullptr);
+
+  struct DeviceGateSample {
+    ResolutionCostCounters indexCommit;
+    ResolutionCostCounters materialize;
+    ResolutionCostCounters window;
+    ResolutionCostCounters rebuild;
+    ResolutionCostCounters state;
+  };
+
+  /// One-shot host/device sample. Does not keep the index. Not a production consumer.
+  static void measureDeviceGate(const LoopPasses& passes, uint32_t loopLengthTicks,
+                                DeviceGateSample& out);
 };
