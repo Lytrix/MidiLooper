@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (reboot undo tip device PASS)
+Last updated: 2026-08-14 (NOTE_EDIT exit bake device PASS)
 
 ---
 
@@ -16,9 +16,9 @@ Last updated: 2026-08-14 (reboot undo tip device PASS)
 
 **Fix 3 (Stage 2) device PASS [`024428`](../../captures/session_20260814_024428.log):** after reboot, selected slot 5 undoes immediately — `Undo (entries=17)` kind=4 `NoteEditPassClosed`, then `Undo (entries=16)` kind=1 `OverdubPassAdded`. `rebuildSlotFromLoopContent` keeps the tip on the selected slot so later LoadLoopJob restores do not steal it ([`024004`](../../captures/session_20260814_024004.log) was the FAIL).
 
-### Overdub lost on NOTE_EDIT exit (blocks Stage 3)
+### Overdub lost on NOTE_EDIT exit — device PASS
 
-**P0 regression in [`014553`](../../captures/session_20260814_014553.log)** on `feature/loop-content-history`. Record + overdub on track 5 slot 5: overdub stop `DISP` **48** notes; NOTE_EDIT exit `#CAP,135857227` `DISP` **32**; reboot `stored_notes` **32**. Overdub is destroyed by `bakeNoteEditSessionStoreToPasses` / `buildSessionStoreEditPasses` on NOTE_EDIT close (`NoteEditPass replaced … rows=19`), not by Stage 2 load rebuild. Selection: overdub pitches visible in `DNTE` but `stored_notes` counts only **32** `noteId`-valid rows in `visualCache` during NOTE_EDIT. Do not delete `UndoStacks` or treat `U:04` as Stage 3 pass until this is fixed.
+**Device PASS [`025322`](../../captures/session_20260814_025322.log):** overdub → NOTE_EDIT (`visual_notes=102`, `session_events=234`) → pitch/range on note 194 → exit `NoteEditPass replaced … rows=1 saved=1` (not 19 Deletes). Commit flats stay 234. After later overdub, STOPPED `DISP` **103** — not the boot record-only **91**. Contrast [`014553`](../../captures/session_20260814_014553.log) `rows=19` / `DISP` 48→32.
 
 ### OLED first-frame mismatch — RC3 device PASS
 
@@ -26,7 +26,7 @@ Last updated: 2026-08-14 (reboot undo tip device PASS)
 
 ### Loop content-only history (DEC-035 Layer A)
 
-**Now: Stage 2 shipped; reboot undo tip device PASS [`024428`](../../captures/session_20260814_024428.log).** Load fills in-session `GlobalUndoStack` from Active Loop content (`TrackUndo::rebuildSlotFromLoopContent`). `U:nn` is `undoDepthForLoop` over that stack. Redo empty at load. `ClearSlot` entries are preserved. Do not delete `UndoStacks`. **Next: Stage 3 only after overdub+NOTE_EDIT exit regression ([`014553`](../../captures/session_20260814_014553.log)) is fixed.**
+**Now: Stage 3 — delete persisted `UndoStacks`.** Stage 2 reboot undo PASS [`024428`](../../captures/session_20260814_024428.log). NOTE_EDIT exit bake PASS [`025322`](../../captures/session_20260814_025322.log). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
 
 Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
 

@@ -3,6 +3,8 @@
 
 #include "NoteEditSessionUndo.h"
 
+#include <algorithm>
+
 #include "EditApply.h"
 #include "Globals.h"
 #include "Loop.h"
@@ -345,6 +347,19 @@ buildSessionStoreEditPasses<InternalHeapFirstAllocator<MidiEvent>,
                             InternalHeapFirstAllocator<MidiEvent>>(const MidiEventVec&,
                                                                    const MidiEventVec&, uint8_t,
                                                                    uint32_t);
+
+void dropUnrequestedSessionStoreDeletes(EditPassVec& rows,
+                                        const NoteEditCurrentState& currentState) {
+  if (currentState.empty() || rows.empty()) {
+    return;
+  }
+  rows.erase(std::remove_if(rows.begin(), rows.end(),
+                            [&currentState](const EditPass& row) {
+                              return row.actionType == EditActionType::Delete &&
+                                     !currentState.isRowHiddenOrDeleted(row.targetNoteId);
+                            }),
+             rows.end());
+}
 
 namespace {
 
