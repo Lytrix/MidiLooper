@@ -115,6 +115,22 @@ void test_overdub_entry_does_not_rebuild_effective_store() {
   TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
 }
 
+void test_ensure_effective_store_does_not_rebuild_when_fresh() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  (void)loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 67));
+
+  SessionMidiEventVec warm;
+  loop.copyEffectiveCommittedEvents(warm);
+  const uint32_t revAfterWarm = loop.effectiveEventStoreRevision();
+  TEST_ASSERT_GREATER_THAN(0u, revAfterWarm);
+
+  loop.copyEffectiveCommittedEventsInRange(warm, 0, kLoopLen);
+  TEST_ASSERT_EQUAL(revAfterWarm, loop.effectiveEventStoreRevision());
+}
+
 void test_overdub_entry_uses_windowed_source_on_long_loop() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -171,6 +187,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_effective_store_matches_materialize_after_seed);
   RUN_TEST(test_effective_store_updates_on_edit_pass_save);
   RUN_TEST(test_overdub_entry_does_not_rebuild_effective_store);
+  RUN_TEST(test_ensure_effective_store_does_not_rebuild_when_fresh);
   RUN_TEST(test_overdub_entry_uses_windowed_source_on_long_loop);
   RUN_TEST(test_undo_pass_toggle_rebuilds_effective_store);
   return UNITY_END();
