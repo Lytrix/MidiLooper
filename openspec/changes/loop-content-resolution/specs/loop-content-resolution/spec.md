@@ -1,0 +1,81 @@
+## ADDED Requirements
+
+### Requirement: LoopContentResolution owns effective-state queries
+
+The system SHALL provide `LoopContentResolution` as the owner of query-time effective musical state from the **active** pass set plus edit history. `LoopPasses` SHALL remain the content authority. `NoteGeometryResolver` SHALL remain the owner of live NOTE_EDIT overlap Resolution.
+
+Primary APIs SHALL be `resolveState` and `resolveWindow`. `resolveNotes` SHALL be a derived consumer of a resolved window, not the playback primitive.
+
+#### Scenario: Primary queries exist without Notes as authority
+
+- **WHEN** a native fixture requests effective MIDI for a tick range
+- **THEN** `resolveWindow` returns `ResolvedEvent` values
+- **AND** `resolveState` returns sounding MIDI state at the requested tick
+- **AND** `resolveNotes` MAY be derived from that result and MUST NOT be required to produce `resolveWindow`
+
+### Requirement: Resolution uses active history only
+
+Committed pass **content** SHALL be immutable. Active/Disabled SHALL be mutable history state. Resolution MUST use the active pass set plus active edit history, not every stored pass.
+
+#### Scenario: Disabled suffix is not resolved
+
+- **WHEN** a later overdub pass is Disabled
+- **THEN** `resolveWindow` for the loop matches materialize of the remaining Active prefix
+- **AND** the Disabled pass content is unchanged
+
+### Requirement: Deterministic resolution independent of cache and chunks
+
+For a fixed active pass set and fixed edit history, resolution SHALL be deterministic and independent of cache state, PSRAM chunk boundaries, or previous resolution order.
+
+#### Scenario: Cold and warm cache agree
+
+- **WHEN** `resolveWindow` runs on an empty cache and again after a prior overlapping window populated a cache
+- **THEN** the `ResolvedEvent` sequences are identical
+
+### Requirement: Candidate find does not walk every pass
+
+After indexing, finding candidates for a window MUST NOT iterate every historical pass list. Cost SHALL be proportional to candidate events (and index lookup), not pass count.
+
+Walking `for each pass if intersects(window)` SHALL fail this requirement even when the window is small.
+
+#### Scenario: Commit of pass N does not traverse P0 through P(N-1)
+
+- **WHEN** pass N is committed on the canonical stress fixture (45+ passes)
+- **THEN** candidate find for the affected region uses indexed references
+- **AND** the operation does not scan every prior pass’s chunk list except via those indexed affected regions
+
+### Requirement: resolveState has bounded replay distance
+
+`resolveState(tick)` MUST have a bounded historical replay distance through checkpoints spaced by `checkpointIntervalTicks`. It MUST NOT require replaying the loop from tick 0.
+
+#### Scenario: High-tick loop switch
+
+- **WHEN** `resolveState` is requested at a tick far from 0 on a 64-bar or longer fixture
+- **THEN** replay starts from a checkpoint at most `checkpointIntervalTicks` before the target
+- **AND** the call does not scan events from tick 0
+
+### Requirement: Physical chunks are not resolution boundaries
+
+`LoopEventStore` chunks SHALL remain a storage packing detail. Resolution MUST operate on ticks, identities, and events. A note, edit, or checkpoint MAY span chunk boundaries.
+
+#### Scenario: Note spanning two chunks
+
+- **WHEN** a NOTE_ON and matching NOTE_OFF reside in different chunks
+- **THEN** `resolveWindow` that covers both ticks still yields the same effective note as a single-chunk fixture with the same ticks
+
+### Requirement: Canonical fixture and three gates before production
+
+A canonical native fixture SHALL exist before Stage 1 is treated as proven: 64 or 128 bars, 45+ passes, multiple channels, same-pitch overlaps, shorten, extend, delete, move, wrap-around. Every stage SHALL report events in history, passes in history, events in query window, candidate events, resolution operations, and elapsed µs.
+
+Production MIDI, display, overdub entry, and NOTE_EDIT MUST stay on `materializeToEventVector` / Layer D 3b until all three gates pass: correctness vs materialize+reconstruct; complexity (this spec’s candidate-find requirement); device worst-case latency on the `035414` class (no multi-second MIDI or OLED stall, no `VCACHE,full` on the normal path, no full materialization after commit).
+
+#### Scenario: Prototype does not replace production materialize yet
+
+- **WHEN** native stages 0–8 run
+- **THEN** firmware record/overdub/playback/display call sites still use the existing materialize and 3b visual-cache overdub copy
+- **AND** `handleMidiInput` does not call `LoopContentResolution`
+
+#### Scenario: Correctness vs materialize
+
+- **WHEN** the same fixture is resolved and materialized+reconstructed for a window
+- **THEN** effective MIDI (or documented semantic equivalence) matches

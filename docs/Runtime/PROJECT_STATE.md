@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-14 (Layer D active; overlay Track A parked)
+Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b shipped)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-14 (Layer D active; overlay Track A parked)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-036** D1+D2 **shipped** (incremental effective store + windowed overdub source; native 1142/1142). **Device gate open** — `035414` class `ODUB,begin_capture` < 50 ms ([`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/)).
+**Active work:** **DEC-037** `LoopContentResolution` native prototype — [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md). Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
@@ -103,6 +103,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`loop-content-resolution`** | **DEC-037 native prototype** — `resolveState` / `resolveWindow`; materialize stays until three gates |
+| **`loop-effective-event-source`** | DEC-036 D1+D2+3b **closeout done** — overdub entry PASS; successor is `loop-content-resolution` |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |

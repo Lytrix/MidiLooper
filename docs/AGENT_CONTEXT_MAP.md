@@ -48,6 +48,7 @@ Always load first:
 - [plans/record_overdub_memory_display_timeline_enhancement.md](Plans/record_overdub_memory_display_timeline_enhancement.md)
 - `openspec/specs/timeline-epochs/` (if present)
 - `Track`, `Loop`, `LoopEventStore` headers
+- [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037 `LoopContentResolution` (native prototype; materialize stays until gates)
 
 **Optional**
 
@@ -69,6 +70,7 @@ Always load first:
 - [Authority/Architecture/Playback.md](Authority/Architecture/Playback.md)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
 - `TrackManager`, `LoopPasses` materialize APIs
+- [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037; do not treat `materializeToEventVector` as the long-term playback owner
 
 **Optional**
 

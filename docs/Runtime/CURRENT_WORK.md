@@ -2,23 +2,34 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (Layer D active; Track A parked)
+Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b shipped)
 
 ---
 
 ## Now implementing
 
-### DEC-035 Layer D — overdub rebuild delay (large loops, many undos)
+### DEC-037 — LoopContentResolution parallel prototype
 
 **Parked:** overlay loop picker (`set-revision-persistence` §4.8–4.10) — WIP stashed on `feature/set-revision-loop-picker`.
 
-**Active:** Layer D overdub/display rebuild stall after Layer A closed the `UndoStacks` bundle walk. Symptom: synchronous full-loop materialize on overdub entry (`establishOverdubSourceView`), visual-cache rebuild, and load hydration — not the removed 1300+ persist slices.
+**Active:** native `LoopContentResolution` prototype. Do **not** optimize `materializeToEventVector` again. Do not wire resolution onto MIDI/display until three gates pass.
 
-**Plan:** [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md)  
-**Authority:** [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) Layers C–D (Stages 6–7)
+**Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
+**Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
+
+**Now:** Stage 1 native `resolveState` / `resolveWindow` against the Stage 0 canonical fixture (`test/test_loop_content_resolution/`). Production consumers stay on today’s materialize / 3b visual-cache overdub copy.
+
+**Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
+
+### DEC-036 Layer D 3b — overdub entry without display reconstruct (shipped)
+
+**Plan:** [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md)
 
 **D0:** **PASS** [`035414`](../captures/session_20260814_035414.log) — 6.78 s `begin_capture`; source-view problem, not overdub FSM.  
-**OpenSpec:** [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/) + **DEC-036** — D1+D2 **shipped** (native 1142/1142); **device gate open** — `ODUB,begin_capture` < 50 ms on `035414` class loop.
+**Device FAIL [`042909`](../captures/session_20260814_042909.log):** undo **14.3 s / 14.6 s** (`VCACHE,full`); overdub **7.1 s**.  
+**Device PASS [`045556`](../captures/session_20260814_045556.log):** `slice_clean` 1809 notes then overdub `begin_capture` **2214 µs**.  
+**Device PASS [`112909`](../captures/session_20260814_112909.log):** undo **3 ms** (`MIDI: Undo` 143.169 → `Overdub undone` 143.172, `kind=3`); no `VCACHE,full`. Boot `load_frame` ~9.9 s remains D3/D4.  
+**OpenSpec:** [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/) closeout **4.1/4.2**. Successor: DEC-037 (post-commit rebuild / pass-list walks).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches.
 
@@ -183,7 +194,7 @@ LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_2
 | **A — Overlay loop picker** | `set-revision-persistence` §4.8–4.10 | **Parked** — WIP stashed on `feature/set-revision-loop-picker` | User requests overlay milestone |
 | **B — Crash recovery** | `continuous-runtime-persistence` Phase 5 | `.sealj` / slot **prefix load**, quarantine tail, native fixtures | After Layer D gate; orthogonal to overlay |
 | **C — Admit API migration** | [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 1.3 | `admitLoopSlotPersist` → `admitLoopPersist(LoopId)` at domain call sites | Hygiene with #18 closeout |
-| **D — Layer D overdub rebuild** | DEC-035 Stages 6–7 | **NOW** — [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md) | Active |
+| **D — Layer D overdub rebuild** | DEC-035 Stages 6–7 / DEC-037 | **3b shipped** — successor [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md) | Active prototype |
 | **E — Parked** | overlay hang, 3.9 failsafe | [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md); set-revision §3.9 | Investigation only |
 
 **DeferredJobScheduler Phase B:** **Archived** [`2026-07-19-deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/). Specs: `deferred-job-scheduler/`, `lazy-slot-hydration`.
