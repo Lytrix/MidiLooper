@@ -2,8 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // DEC-037 LoopContentResolution implementation.
-// Native tests include this TU. Teensy builds exclude it (platformio.ini src filter)
-// until capture-serial RAM1 has room (~25 KB ITCM overflow when linked).
+// Native tests include this TU. Teensy links via linker/imxrt1062_t41_lcr.ld when referenced.
 
 #include "LoopContentResolution.h"
 
@@ -485,11 +484,9 @@ TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes
   }
 }
 
-TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickIndex& index,
-                                                      const EditPassVec& editPasses,
-                                                      uint32_t loopLength,
-                                                      uint32_t checkpointIntervalTicks,
-                                                      ResolutionCostCounters* counters) {
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans(
+    const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
+    uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters) {
   intervalTicks = checkpointIntervalTicks;
   loopLengthTicks = loopLength;
   soundingAt.clear();
@@ -530,15 +527,30 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickI
   }
   const uint32_t count = loopLength / checkpointIntervalTicks;
   soundingAt.resize(count);
-  for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t checkpointTick = i * checkpointIntervalTicks;
+  if (counters != nullptr) {
+    counters->checkpointIntervalTicks = intervalTicks;
+    counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
+    counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::fillCheckpointRange(
+    uint32_t beginIndex, uint32_t endIndexExclusive, ResolutionCostCounters* counters) {
+  if (intervalTicks == 0 || loopLengthTicks == 0 || soundingAt.empty()) {
+    return;
+  }
+  if (endIndexExclusive > soundingAt.size()) {
+    endIndexExclusive = static_cast<uint32_t>(soundingAt.size());
+  }
+  for (uint32_t i = beginIndex; i < endIndexExclusive; ++i) {
+    const uint32_t checkpointTick = i * intervalTicks;
     for (const NoteSpan& span : spans) {
       NoteUtils::DisplayNote probe{};
       probe.noteId = span.note.noteId;
       probe.note = span.note.pitch;
       probe.startTick = span.startTick;
       probe.endTick = span.endTick;
-      if (!noteSoundsAt(probe, checkpointTick, loopLength)) {
+      if (!noteSoundsAt(probe, checkpointTick, loopLengthTicks)) {
         continue;
       }
       soundingAt[i].push_back(span.note);
@@ -547,8 +559,17 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickI
   if (counters != nullptr) {
     counters->checkpointIntervalTicks = intervalTicks;
     counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
-    counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
+    counters->eventsInHistory = static_cast<uint32_t>(spans.size());
   }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickIndex& index,
+                                                      const EditPassVec& editPasses,
+                                                      uint32_t loopLength,
+                                                      uint32_t checkpointIntervalTicks,
+                                                      ResolutionCostCounters* counters) {
+  prepareRebuildSpans(index, editPasses, loopLength, checkpointIntervalTicks, counters);
+  fillCheckpointRange(0, static_cast<uint32_t>(soundingAt.size()), counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick, SoundingNoteVec& out,
@@ -610,57 +631,255 @@ TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes
   out = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
 }
 
-TRACK_COLD_MEM void LoopContentResolution::measureDeviceGate(const LoopPasses& passes, uint32_t loopLengthTicks,
-                                              DeviceGateSample& out) {
+namespace {
+
+TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes);
+TRACK_COLD_MEM bool commitIndexPassAtCursor(LoopContentResolution::TickIndex& index,
+                                            const LoopPasses& passes, size_t cursor,
+                                            ResolutionCostCounters* counters);
+
+struct DeviceGateSession {
+  enum class Phase : uint8_t {
+    Idle,
+    IndexCommit,
+    Materialize,
+    Window,
+    RebuildPrepare,
+    RebuildCheckpoints,
+    State,
+    Done,
+  };
+
+  bool isActive() const { return phase != Phase::Idle && phase != Phase::Done; }
+
+  void reset() {
+    phase = Phase::Idle;
+    loopLengthTicks = 0;
+    indexPassCursor = 0;
+    checkpointCursor = 0;
+    index = LoopContentResolution::TickIndex{};
+    checkpoints = LoopContentResolution::StateCheckpoints{};
+    sample_ = LoopContentResolution::DeviceGateSample{};
+  }
+
+  void begin(uint32_t ticks) {
+    reset();
+    if (ticks == 0) {
+      return;
+    }
+    loopLengthTicks = ticks;
+    phase = Phase::IndexCommit;
+  }
+
+  LoopContentResolution::DeviceGateSliceResult runOneSlice(const LoopPasses& passes,
+                                                           uint32_t ticks) {
+    if (phase == Phase::Idle || phase == Phase::Done) {
+      return LoopContentResolution::DeviceGateSliceResult::Inactive;
+    }
+    if (ticks == 0 || ticks != loopLengthTicks) {
+      reset();
+      return LoopContentResolution::DeviceGateSliceResult::Inactive;
+    }
+
+    switch (phase) {
+      case Phase::IndexCommit: {
+        if (indexPassCursor == 0 && countIndexCommitPasses(passes) == 0) {
+#if defined(ARDUINO)
+          phase = Phase::RebuildPrepare;
+#else
+          phase = Phase::Materialize;
+#endif
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
+        }
+        ElapsedTimer timer;
+        if (!commitIndexPassAtCursor(index, passes, indexPassCursor, &sample_.indexCommit)) {
+          reset();
+          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        }
+      sample_.indexCommit.elapsedMicros += timer.elapsed();
+      indexPassCursor += 1;
+      if (indexPassCursor >= countIndexCommitPasses(passes)) {
+#if defined(ARDUINO)
+        // Device idle gate: skip full materialize/window oracle phases — each blocks seconds on
+        // 64+ bar loops and stalls MIDI/OLED (OpenSpec device worst-case gate).
+        phase = Phase::RebuildPrepare;
+#else
+        phase = Phase::Materialize;
+#endif
+      }
+      return LoopContentResolution::DeviceGateSliceResult::Continue;
+    }
+    case Phase::Materialize: {
+        ElapsedTimer timer;
+        SessionMidiEventVec materialized;
+        passes.materializeToEventVector(materialized, loopLengthTicks);
+        (void)NoteUtils::reconstructDisplayNotes(materialized, loopLengthTicks, false);
+        sample_.materialize.elapsedMicros += timer.elapsed();
+        sample_.materialize.eventsInHistory = static_cast<uint32_t>(materialized.size());
+        sample_.materialize.passesInHistory = index.indexedPassCount();
+        phase = Phase::Window;
+        return LoopContentResolution::DeviceGateSliceResult::Continue;
+      }
+      case Phase::Window: {
+        uint32_t windowLength = DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+        if (windowLength > loopLengthTicks) {
+          windowLength = loopLengthTicks;
+        }
+        uint32_t windowStart = 0;
+        if (loopLengthTicks > windowLength / 2u) {
+          windowStart = loopLengthTicks - windowLength / 2u;
+        }
+        SessionMidiEventVec window;
+        LoopContentResolution::resolveWindow(index, passes.editPasses, loopLengthTicks, windowStart,
+                                             windowLength, window, &sample_.window);
+        phase = Phase::RebuildPrepare;
+        return LoopContentResolution::DeviceGateSliceResult::Continue;
+      }
+      case Phase::RebuildPrepare: {
+        ElapsedTimer timer;
+#if defined(ARDUINO)
+        constexpr uint32_t kDeviceGateCheckpointBarStride = 4u;
+        const uint32_t checkpointInterval = Config::TICKS_PER_BAR * kDeviceGateCheckpointBarStride;
+#else
+        const uint32_t checkpointInterval = Config::TICKS_PER_BAR;
+#endif
+        checkpoints.prepareRebuildSpans(index, passes.editPasses, loopLengthTicks,
+                                        checkpointInterval, &sample_.rebuild);
+        sample_.rebuild.elapsedMicros += timer.elapsed();
+        checkpointCursor = 0;
+        phase = Phase::RebuildCheckpoints;
+        return LoopContentResolution::DeviceGateSliceResult::Continue;
+      }
+      case Phase::RebuildCheckpoints: {
+        constexpr uint32_t kCheckpointsPerSlice = 1;
+        const uint32_t total = static_cast<uint32_t>(checkpoints.soundingAt.size());
+        if (checkpointCursor >= total) {
+          phase = Phase::State;
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
+        }
+        ElapsedTimer timer;
+        const uint32_t end = std::min(checkpointCursor + kCheckpointsPerSlice, total);
+        checkpoints.fillCheckpointRange(checkpointCursor, end, &sample_.rebuild);
+        sample_.rebuild.elapsedMicros += timer.elapsed();
+        checkpointCursor = end;
+        if (checkpointCursor >= total) {
+          phase = Phase::State;
+        }
+        return LoopContentResolution::DeviceGateSliceResult::Continue;
+      }
+      case Phase::State: {
+        const uint32_t highTick = loopLengthTicks > 24u ? loopLengthTicks - 24u : 0u;
+        ElapsedTimer timer;
+        SoundingNoteVec sounding;
+        LoopContentResolution::resolveState(checkpoints, highTick, sounding, &sample_.state);
+        sample_.state.elapsedMicros += timer.elapsed();
+        phase = Phase::Done;
+        return LoopContentResolution::DeviceGateSliceResult::Complete;
+      }
+      case Phase::Idle:
+      case Phase::Done:
+        break;
+    }
+    reset();
+    return LoopContentResolution::DeviceGateSliceResult::Inactive;
+  }
+
+  Phase phase = Phase::Idle;
+  uint32_t loopLengthTicks = 0;
+  size_t indexPassCursor = 0;
+  uint32_t checkpointCursor = 0;
+  LoopContentResolution::TickIndex index;
+  LoopContentResolution::StateCheckpoints checkpoints;
+  LoopContentResolution::DeviceGateSample sample_;
+};
+
+TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes) {
+  size_t count = 0;
+  if (passes.hasRecordPass() && !passes.recordPass.committedChunkIds.empty()) {
+    count += 1;
+  }
+  count += passes.overdubPasses.size();
+  return count;
+}
+
+TRACK_COLD_MEM bool commitIndexPassAtCursor(LoopContentResolution::TickIndex& index,
+                                            const LoopPasses& passes, size_t cursor,
+                                            ResolutionCostCounters* counters) {
+  size_t seen = 0;
+  if (passes.hasRecordPass() && !passes.recordPass.committedChunkIds.empty()) {
+    if (cursor == seen) {
+      index.commitCapturePass(passes.recordPass.id, passes.recordPass.committedChunkIds,
+                              passes.recordPass.state, 0, counters);
+      return true;
+    }
+    seen += 1;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (cursor == seen) {
+      index.commitCapturePass(pass.id, pass.committedChunkIds, pass.state, pass.mergeSequence,
+                              counters);
+      return true;
+    }
+    seen += 1;
+  }
+  return false;
+}
+
+bool sDeviceGateFinished = false;
+DeviceGateSession sDeviceGateSession;
+
+}  // namespace
+
+bool LoopContentResolution::deviceGateFinished() { return sDeviceGateFinished; }
+
+bool LoopContentResolution::deviceGateActive() { return sDeviceGateSession.isActive(); }
+
+void LoopContentResolution::deviceGateBegin(uint32_t loopLengthTicks) {
+  sDeviceGateSession.begin(loopLengthTicks);
+}
+
+void LoopContentResolution::deviceGateReset() { sDeviceGateSession.reset(); }
+
+void LoopContentResolution::deviceGateComplete() {
+  sDeviceGateSession.reset();
+  sDeviceGateFinished = true;
+}
+
+void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) {
+  if (line == nullptr || cap == 0) {
+    return;
+  }
+  const DeviceGateSample& sample = sDeviceGateSession.sample_;
+#if defined(ARDUINO)
+  const unsigned long stamp = static_cast<unsigned long>(micros());
+#else
+  const unsigned long stamp = 0UL;
+#endif
+  snprintf(line, cap,
+           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u", stamp,
+           static_cast<unsigned long>(sample.materialize.elapsedMicros),
+           static_cast<unsigned long>(sample.window.elapsedMicros),
+           static_cast<unsigned long>(sample.rebuild.elapsedMicros),
+           static_cast<unsigned long>(sample.state.elapsedMicros),
+           static_cast<unsigned>(sample.state.eventsReplayed),
+           static_cast<unsigned>(sample.state.eventsInHistory),
+           static_cast<unsigned>(sample.window.passChunkListsWalked));
+}
+
+LoopContentResolution::DeviceGateSliceResult LoopContentResolution::deviceGateRunOneSlice(
+    const LoopPasses& passes, uint32_t loopLengthTicks) {
+  return sDeviceGateSession.runOneSlice(passes, loopLengthTicks);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::measureDeviceGate(const LoopPasses& passes,
+                                                             uint32_t loopLengthTicks,
+                                                             DeviceGateSample& out) {
   out = DeviceGateSample{};
   if (loopLengthTicks == 0) {
     return;
   }
-
-  TickIndex index;
-  {
-    ElapsedTimer timer;
-    index.commitLoopPasses(passes, &out.indexCommit);
-    out.indexCommit.elapsedMicros = timer.elapsed();
+  deviceGateBegin(loopLengthTicks);
+  while (deviceGateRunOneSlice(passes, loopLengthTicks) == DeviceGateSliceResult::Continue) {
   }
-
-  {
-    ElapsedTimer timer;
-    SessionMidiEventVec materialized;
-    passes.materializeToEventVector(materialized, loopLengthTicks);
-    (void)NoteUtils::reconstructDisplayNotes(materialized, loopLengthTicks, false);
-    out.materialize.elapsedMicros = timer.elapsed();
-    out.materialize.eventsInHistory = static_cast<uint32_t>(materialized.size());
-    out.materialize.passesInHistory = index.indexedPassCount();
-  }
-
-  uint32_t windowLength = DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-  if (windowLength > loopLengthTicks) {
-    windowLength = loopLengthTicks;
-  }
-  uint32_t windowStart = 0;
-  if (loopLengthTicks > windowLength / 2u) {
-    windowStart = loopLengthTicks - windowLength / 2u;
-  }
-  {
-    SessionMidiEventVec window;
-    resolveWindow(index, passes.editPasses, loopLengthTicks, windowStart, windowLength, window,
-                  &out.window);
-  }
-
-  StateCheckpoints checkpoints;
-  {
-    ElapsedTimer timer;
-    checkpoints.rebuild(index, passes.editPasses, loopLengthTicks, Config::TICKS_PER_BAR,
-                        &out.rebuild);
-    out.rebuild.elapsedMicros = timer.elapsed();
-  }
-
-  const uint32_t highTick = loopLengthTicks > 24u ? loopLengthTicks - 24u : 0u;
-  {
-    ElapsedTimer timer;
-    SoundingNoteVec sounding;
-    resolveState(checkpoints, highTick, sounding, &out.state);
-    out.state.elapsedMicros = timer.elapsed();
-  }
+  out = sDeviceGateSession.sample_;
 }

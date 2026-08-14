@@ -4,14 +4,15 @@
 #include "TrackInternal.h"
 
 #include <Arduino.h>
-#include <cstdio>
 
+#include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
-#include "LoopEventStore.h"
 #include "LoopContentResolution.h"
+#include "LoopEventStore.h"
 #include "SlotLoadSession.h"
 #include "StorageManager.h"
+#include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
@@ -19,6 +20,49 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "VisualCache.h"
+
+extern TrackManager trackManager;
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+namespace {
+
+constexpr uint32_t kContentResolutionDeviceGateMaxLoopBars = 16;
+
+bool contentResolutionDeviceGateLoopEligible(uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0) {
+    return false;
+  }
+  const uint32_t bars =
+      (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  return bars <= kContentResolutionDeviceGateMaxLoopBars;
+}
+
+bool contentResolutionDeviceGateRuntimeAllowed() {
+  if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
+    return false;
+  }
+  if (editManager.isNoteEditActive()) {
+    return false;
+  }
+  return true;
+}
+
+void logContentResolutionDeviceGateSkipOnce(uint32_t loopLengthTicks) {
+  static bool logged = false;
+  if (logged) {
+    return;
+  }
+  logged = true;
+  const uint32_t bars =
+      (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  char line[96];
+  snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,skip,bars,%u,max,%u",
+           static_cast<unsigned long>(micros()), bars, kContentResolutionDeviceGateMaxLoopBars);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+
+}  // namespace
+#endif
 
 void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     (void)openTailCloseTick;
@@ -118,40 +162,72 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeLogStoredNoteCount() {
 #endif
 }
 
-TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeMeasureContentResolution() {
+TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
 #if !defined(SESSION_CAPTURE)
   return;
 #else
+  if (LoopContentResolution::deviceGateFinished() || LoopContentResolution::deviceGateActive()) {
+    return;
+  }
+  if (this != &trackManager.getSelectedTrack()) {
+    return;
+  }
   Loop& loop = getActiveLoop();
   if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
     return;
   }
-  if (SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate() ||
-      StorageManager::hasDeferredSaveWork()) {
+  if (SlotLoadSession::isActive() || StorageManager::hasPendingLoopSlotRestore() ||
+      StorageManager::hasPendingUndoSnapshotHydrate() || StorageManager::hasDeferredSaveWork()) {
     return;
   }
-  const uint8_t slot = getActiveLoopIndex();
-  if (slot >= Config::MAX_LOOPS_PER_TRACK) {
+#if defined(ARDUINO)
+  if (!contentResolutionDeviceGateRuntimeAllowed()) {
     return;
   }
-  const uint8_t slotBit = static_cast<uint8_t>(1u << slot);
-  if ((contentResolutionMeasuredMask_ & slotBit) != 0) {
+  if (!contentResolutionDeviceGateLoopEligible(loop.loopLengthTicks)) {
+    logContentResolutionDeviceGateSkipOnce(loop.loopLengthTicks);
     return;
   }
-  LoopContentResolution::DeviceGateSample sample;
-  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+#endif
+  LoopContentResolution::deviceGateBegin(loop.loopLengthTicks);
+#endif
+}
+
+TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  if (this != &trackManager.getSelectedTrack()) {
+    return;
+  }
+  if (LoopContentResolution::deviceGateFinished() || !LoopContentResolution::deviceGateActive()) {
+    return;
+  }
+  Loop& loop = getActiveLoop();
+#if defined(ARDUINO)
+  if (!contentResolutionDeviceGateRuntimeAllowed() ||
+      !contentResolutionDeviceGateLoopEligible(loop.loopLengthTicks)) {
+    LoopContentResolution::deviceGateReset();
+    return;
+  }
+#endif
+  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
+    LoopContentResolution::deviceGateReset();
+    return;
+  }
+  if (SlotLoadSession::isActive() || StorageManager::hasPendingLoopSlotRestore() ||
+      StorageManager::hasPendingUndoSnapshotHydrate() || StorageManager::hasDeferredSaveWork()) {
+    return;
+  }
+  const LoopContentResolution::DeviceGateSliceResult result =
+      LoopContentResolution::deviceGateRunOneSlice(loop.passes, loop.loopLengthTicks);
+  if (result != LoopContentResolution::DeviceGateSliceResult::Complete) {
+    return;
+  }
   char line[192];
-  snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u",
-           static_cast<unsigned long>(micros()),
-           static_cast<unsigned long>(sample.materialize.elapsedMicros),
-           static_cast<unsigned long>(sample.window.elapsedMicros),
-           static_cast<unsigned long>(sample.rebuild.elapsedMicros),
-           static_cast<unsigned long>(sample.state.elapsedMicros),
-           sample.state.eventsReplayed, sample.state.eventsInHistory,
-           sample.window.passChunkListsWalked);
+  LoopContentResolution::deviceGateFormatCaptureLine(line, sizeof(line));
   DebugSessionCapture::appendCaptureTextLine(line);
-  contentResolutionMeasuredMask_ |= slotBit;
+  LoopContentResolution::deviceGateComplete();
 #endif
 }
 
@@ -294,6 +370,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
     }
     processDeferredRecordRevts(revtSlice);
     processDeferredStoredMidiVerification(verificationSlice);
+    processDeferredContentResolutionDeviceGate();
   }
 
   const bool deferredDerivedViewMaintenance =
@@ -368,7 +445,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
         }
       }
       maybeLogStoredNoteCount();
-      maybeMeasureContentResolution();
+      maybeQueueContentResolutionDeviceGate();
     }
   }
 
