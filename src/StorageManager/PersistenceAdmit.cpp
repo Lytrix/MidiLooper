@@ -124,17 +124,8 @@ void StorageManager::admitLoopPersist(LoopId loopId) {
 }
 
 void StorageManager::admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex) {
-#if BYPASS_STOP_UNDO_SAVE
     (void)trackIndex;
     (void)slotIndex;
-    return;
-#else
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return;
-    }
-    PersistenceWorkQueue::admitWork(PersistWorkType::LoopUndoHistory,
-                                    persistKeyForSlot(trackIndex, slotIndex));
-#endif
 }
 
 void StorageManager::admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex) {

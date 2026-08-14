@@ -354,9 +354,30 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobFooter() {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing global undo stack token");
                         return false;
                     }
-                    storageSession.currentWorkspaceSave.undoTrackCursor = 0;
-                    resetDeferredUndoWriteState();
-                    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::UndoStacks;
+                    // Stage 3: persist empty GUS headers only. Load fills GUS from Loop content.
+                    {
+                        GlobalUndoStack emptyUndoStack{};
+                        emptyUndoStack.clear();
+                        for (uint8_t trackIndex = 0;
+                             trackIndex < storageSession.currentWorkspaceSave.numTracks;
+                             ++trackIndex) {
+                            if (!writeGlobalUndoStackToFile(
+                                    storageSession.currentWorkspaceSave.file, emptyUndoStack)) {
+                                Serial.println(
+                                    "[StorageManager] ERROR: Deferred save failed writing empty undo stack");
+                                return false;
+                            }
+                        }
+                    }
+                    if (!finalizeDeferredMetaTempFile()) {
+                        Serial.println("[StorageManager] ERROR: Deferred save failed finalizing CurrentSet meta");
+                        return false;
+                    }
+                    if (storageSession.persistenceWorkItem.bundleWriteActive) {
+                        storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
+                        return true;
+                    }
+                    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
                     return true;
             }
             return false;
@@ -364,18 +385,16 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobFooter() {
 }
 
 STORAGE_PERSIST_MEM bool stepDeferredSaveJobUndoStacks() {
-
-            if (storageSession.currentWorkspaceSave.undoTrackCursor < storageSession.currentWorkspaceSave.numTracks) {
-                const Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.undoTrackCursor);
-                bool stackDone = false;
-                if (!stepDeferredUndoStackPersist(storageSession.currentWorkspaceSave.file, track.getGlobalUndoStack(),
-                                                  stackDone)) {
-                    Serial.print("[StorageManager] ERROR: Deferred save failed writing global undo stack for track ");
+            // Stage 3: in-flight saves that still enter this stage write empty headers only.
+            if (storageSession.currentWorkspaceSave.undoTrackCursor <
+                storageSession.currentWorkspaceSave.numTracks) {
+                GlobalUndoStack emptyUndoStack{};
+                emptyUndoStack.clear();
+                if (!writeGlobalUndoStackToFile(storageSession.currentWorkspaceSave.file,
+                                                emptyUndoStack)) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing empty undo stack for track ");
                     Serial.println(storageSession.currentWorkspaceSave.undoTrackCursor);
                     return false;
-                }
-                if (!stackDone) {
-                    return true;
                 }
                 storageSession.currentWorkspaceSave.undoTrackCursor++;
                 resetDeferredUndoWriteState();

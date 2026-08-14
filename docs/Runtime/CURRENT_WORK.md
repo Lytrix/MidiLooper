@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (NOTE_EDIT exit bake device PASS)
+Last updated: 2026-08-14 (Stage 3 native shipped; device gate open)
 
 ---
 
@@ -26,7 +26,7 @@ Last updated: 2026-08-14 (NOTE_EDIT exit bake device PASS)
 
 ### Loop content-only history (DEC-035 Layer A)
 
-**Now: Stage 3 — delete persisted `UndoStacks`.** Stage 2 reboot undo PASS [`024428`](../../captures/session_20260814_024428.log). NOTE_EDIT exit bake PASS [`025322`](../../captures/session_20260814_025322.log). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
+**Now: Stage 3 native shipped — device gate.** Footer writes empty GUS headers; `admitLoopUndoHistory` is a no-op; leftover `UndoStacks` does not walk live entries. Native 1137/1137. Device: overdub stop must not show UndoStacks-scale `PERS,bundle,LoopUndoHistory`; reboot undo still from content rebuild ([`024428`](../../captures/session_20260814_024428.log)). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
 
 Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
 

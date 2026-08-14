@@ -1,6 +1,6 @@
 # Loop layer history persistence — architecture
 
-**Status:** Active — Stage 2 load-time editing derivation shipped; Stage 3 next (delete `UndoStacks`)  
+**Status:** Active — Stage 3 native shipped (empty GUS headers); device gate open  
 **Date:** 2026-08-14  
 **Decision:** [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only)  
 **OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A only)  
@@ -144,9 +144,9 @@ After Loop load / GUS file read, `TrackUndo::rebuildSlotFromLoopContent` replace
 
 `LoopGeometry` now stores before ticks so a loaded `LoopBoundaryChange` can walk back. Undo/redo of that kind disables/enables the matching `LoopGeometry.id`. Keep writing today's bundle undo stack.
 
-### Stage 3 — Delete persisted UndoStacks
+### Stage 3 — Delete persisted UndoStacks (native shipped 2026-08-14; device gate open)
 
-Gated on Stage 2. Remove `DeferredSaveStage::UndoStacks`, `LoopUndoHistory` from runtime-bundle types, and `admitLoopUndoHistory` call sites. In-session undo still uses `GlobalUndoStack`.
+Gated on Stage 2 + exit-bake PASS [`025322`](../../captures/session_20260814_025322.log). Footer writes empty GUS headers; `admitLoopUndoHistory` is a no-op; leftover `UndoStacks` stage does not walk live entries. Legacy bundle-undo **read** remains. In-session undo still uses `GlobalUndoStack`. Device gate: no UndoStacks-scale `PERS,bundle`; reboot undo still from content rebuild.
 
 ### Stage 3b — later DEC
 
