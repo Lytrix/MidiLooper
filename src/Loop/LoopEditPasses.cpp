@@ -80,8 +80,8 @@ void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
   snapshot.passes = LoopPasses{};
   loopLengthTicks = reconcileLoopLengthWithCommittedPasses(loopLengthTicks);
   ++playbackRevision;
-  discardPassesMaterializedCache();
   markDisplayCachesStale();
+  notifyCommittedContentChanged();
 }
 
 void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
@@ -101,8 +101,8 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   playbackOrderDirty = true;
   passes = deepClonePasses(snapshot.passes);
   ++playbackRevision;
-  discardPassesMaterializedCache();
   markDisplayCachesStale();
+  notifyCommittedContentChanged();
 }
 
 EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType) {
@@ -120,7 +120,7 @@ EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassT
   passes.editPasses.push_back(std::move(row));
   ++playbackRevision;
   editStateDirty_ = true;
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
   return passes.editPasses.back().id;
 }
 
@@ -184,7 +184,7 @@ void Loop::disableEditPasses(const EditPassIdList& ids) {
     }
   }
   ++playbackRevision;
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
 }
 
 void Loop::enableEditPasses(const EditPassIdList& ids) {
@@ -196,7 +196,7 @@ void Loop::enableEditPasses(const EditPassIdList& ids) {
     }
   }
   ++playbackRevision;
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
 }
 
 void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,

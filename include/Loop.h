@@ -126,6 +126,13 @@ struct Loop {
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
 
+  /// DEC-036 D1: incrementally maintained committed content (valid before overdub entry).
+  void ensureEffectiveEventStoreCurrent() const;
+  void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
+  void copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
+                                           uint32_t windowLength) const;
+  uint32_t effectiveEventStoreRevision() const { return effectiveEventStoreRevision_; }
+
   SessionMidiEventVec& midiEvents();
   const SessionMidiEventVec& midiEvents() const;
 
@@ -282,8 +289,11 @@ struct Loop {
 
   PassesMaterializedEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
+  uint32_t effectiveEventStoreRevision_ = 0;
 
-  /// Stable materialize-aware source for one overdub session (not a loop freeze).
+  /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
+  void notifyCommittedContentChanged();
+  void rebuildEffectiveEventStore() const;
   SessionMidiEventVec overdubSourceViewEvents_;
   NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;

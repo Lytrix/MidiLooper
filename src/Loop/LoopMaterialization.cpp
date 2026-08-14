@@ -139,18 +139,47 @@ void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
 }
 
 void Loop::materializeEditViewFromPasses() const {
+  ensureEffectiveEventStoreCurrent();
+}
+
+void Loop::rebuildEffectiveEventStore() const {
   Loop* self = const_cast<Loop*>(this);
+  SessionMidiEventVec flat;
+  passes.materializeToEventVector(flat, self->loopLengthTicks);
+  self->passesMaterializedStore_.mutStore().clear();
+  self->passesMaterializedStore_.discardEventsCache();
+  SessionMidiEventVec& events = self->passesMaterializedStore_.mutEvents();
+  events = std::move(flat);
+  self->passesMaterializedStoreStale_ = false;
+  ++self->effectiveEventStoreRevision_;
+}
+
+void Loop::ensureEffectiveEventStoreCurrent() const {
   const bool storeEmptyMaterialized =
-      self->hasCommittedPasses() && self->passesMaterializedStore_.readStore().empty() &&
-      self->passes.editPasses.empty();
+      hasCommittedPasses() && passesMaterializedStore_.readStore().empty() &&
+      passes.editPasses.empty();
   if (!passesMaterializedStoreStale_ && !storeEmptyMaterialized) {
     return;
   }
-  LoopEventStore::enterEphemeralSeal();
-  passes.materialize(self->passesMaterializedStore_.mutStore(), self->loopLengthTicks);
-  LoopEventStore::leaveEphemeralSeal();
-  self->passesMaterializedStore_.discardEventsCache();
-  self->passesMaterializedStoreStale_ = false;
+  rebuildEffectiveEventStore();
+}
+
+void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
+  ensureEffectiveEventStoreCurrent();
+  const SessionMidiEventVec& events = passesMaterializedStore_.readEvents();
+  out.assign(events.begin(), events.end());
+}
+
+void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
+                                               uint32_t windowLength) const {
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    out.clear();
+    return;
+  }
+  ensureEffectiveEventStoreCurrent();
+  const SessionMidiEventVec& events = passesMaterializedStore_.readEvents();
+  DisplayWindowUtils::filterMidiEventsToWindow(events, out, windowStart, windowLength,
+                                               loopLengthTicks);
 }
 
 void Loop::rematerializeEditView(LoopEventStore& store) const {
@@ -196,26 +225,7 @@ void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
 }
 
 LOOP_COLD_MEM void Loop::gatherCommittedEvents(SessionMidiEventVec& out) const {
-  if (hasActiveEditPasses(passes)) {
-    DIAG_COUNTER_INC(LegacyMidiEvents);
-    DIAG_COUNTER_INC(PlaybackFullMaterialize);
-    ++g_committedPitchQueryWork.fullMaterializeCount;
-    const SessionMidiEventVec& materialized = midiEvents();
-    out.assign(materialized.begin(), materialized.end());
-    return;
-  }
-  if (isPassesMaterializedStoreFresh()) {
-    passes.materializeToEventVector(out, loopLengthTicks);
-    return;
-  }
-  std::vector<const CommittedChunkIdList*> lists;
-  collectActiveCommittedChunkLists(passes, lists);
-  if (lists.empty()) {
-    out.clear();
-    return;
-  }
-  CommittedEventRange::full(lists.data(), lists.size(), loopLengthTicks).appendTo(out);
-  sortMidiEventsByTick(out);
+  copyEffectiveCommittedEvents(out);
 }
 
 LOOP_COLD_MEM void Loop::resetCommittedPitchQueryWork() {
@@ -239,16 +249,17 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindow(SessionMidiEventVec& out,
     return;
   }
   if (hasActiveEditPasses(passes) && !shouldAvoidFullVisualRebuild(loopLengthTicks)) {
-    SessionMidiEventVec full;
-    gatherCommittedEvents(full);
-    DisplayWindowUtils::filterMidiEventsToWindow(full, out, windowStart, windowLength,
-                                                 loopLengthTicks);
+    copyEffectiveCommittedEventsInRange(out, windowStart, windowLength);
     return;
   }
   std::vector<const CommittedChunkIdList*> lists;
   collectActiveCommittedChunkLists(passes, lists);
   if (lists.empty()) {
     out.clear();
+    return;
+  }
+  if (isPassesMaterializedStoreFresh()) {
+    copyEffectiveCommittedEventsInRange(out, windowStart, windowLength);
     return;
   }
   CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,

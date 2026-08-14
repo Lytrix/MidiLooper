@@ -8,6 +8,11 @@ void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
   reclaimUnreferencedDisabledEditPasses(refs);
 }
 
+void Loop::notifyCommittedContentChanged() {
+  markPassDerivedStale();
+  rebuildEffectiveEventStore();
+}
+
 void Loop::markPassDerivedStale() {
   passesMaterializedStoreStale_ = true;
   playbackOrderDirty = true;

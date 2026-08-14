@@ -2,11 +2,26 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (DEC-035 Layer A archived)
+Last updated: 2026-08-14 (Layer D active; Track A parked)
 
 ---
 
 ## Now implementing
+
+### DEC-035 Layer D — overdub rebuild delay (large loops, many undos)
+
+**Parked:** overlay loop picker (`set-revision-persistence` §4.8–4.10) — WIP stashed on `feature/set-revision-loop-picker`.
+
+**Active:** Layer D overdub/display rebuild stall after Layer A closed the `UndoStacks` bundle walk. Symptom: synchronous full-loop materialize on overdub entry (`establishOverdubSourceView`), visual-cache rebuild, and load hydration — not the removed 1300+ persist slices.
+
+**Plan:** [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md)  
+**Authority:** [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) Layers C–D (Stages 6–7)
+
+**D0:** **PASS** [`035414`](../captures/session_20260814_035414.log) — 6.78 s `begin_capture`; source-view problem, not overdub FSM.  
+**OpenSpec:** [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/) + **DEC-036** — D1 incremental effective store **shipped** (native 1141/1141); **D2 next** — range-driven overdub window + remove full `reconstructDisplayNotes` at overdub entry.  
+**Next:** `/opsx:apply` tasks §3 (D2); device gate `ODUB,begin_capture` < 50 ms on `035414` class loop.
+
+**Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches.
 
 ### NOTE_EDIT on lengthened loop + overdub entry (shipped this session)
 
@@ -166,10 +181,11 @@ LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_2
 
 | Track | OpenSpec / plan | Remaining | When to pick |
 |-------|-----------------|-----------|--------------|
-| **A — Overlay loop picker** | `set-revision-persistence` §4.8–4.10 | Loop picker UI polish + HITL `set_revision_overlay` | Product overlay milestone |
-| **B — Crash recovery** | `continuous-runtime-persistence` Phase 5 | `.sealj` / slot **prefix load**, quarantine tail, native fixtures | After architecture gate; orthogonal to overlay |
+| **A — Overlay loop picker** | `set-revision-persistence` §4.8–4.10 | **Parked** — WIP stashed on `feature/set-revision-loop-picker` | User requests overlay milestone |
+| **B — Crash recovery** | `continuous-runtime-persistence` Phase 5 | `.sealj` / slot **prefix load**, quarantine tail, native fixtures | After Layer D gate; orthogonal to overlay |
 | **C — Admit API migration** | [#18](https://github.com/Lytrix/MidiLooper/issues/18) Phase 1.3 | `admitLoopSlotPersist` → `admitLoopPersist(LoopId)` at domain call sites | Hygiene with #18 closeout |
-| **D — Parked** | overlay hang, 3.9 failsafe | [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md); set-revision §3.9 | Investigation only |
+| **D — Layer D overdub rebuild** | DEC-035 Stages 6–7 | **NOW** — [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md) | Active |
+| **E — Parked** | overlay hang, 3.9 failsafe | [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../Plans/persistence_overlay_large_slot_focus_restore_bugfix.md); set-revision §3.9 | Investigation only |
 
 **DeferredJobScheduler Phase B:** **Archived** [`2026-07-19-deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/). Specs: `deferred-job-scheduler/`, `lazy-slot-hydration`.
 
