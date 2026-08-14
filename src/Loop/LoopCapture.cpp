@@ -132,7 +132,7 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
     passes.recordPass.committedChunkIds.clear();
     passes.recordPass.id = kInvalidPassId;
     ++playbackRevision;
-    markPassDerivedStale();
+    notifyCommittedContentChanged();
     return true;
   }
   for (auto it = passes.overdubPasses.begin(); it != passes.overdubPasses.end(); ++it) {
@@ -142,7 +142,7 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
     LoopEventStore::releaseChunkRefs(it->committedChunkIds);
     passes.overdubPasses.erase(it);
     ++playbackRevision;
-    markPassDerivedStale();
+    notifyCommittedContentChanged();
     return true;
   }
   return false;
@@ -174,7 +174,7 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     }
     passes.recordPass.state = state;
     ++playbackRevision;
-    markPassDerivedStale();
+    notifyCommittedContentChanged();
     return true;
   }
   for (OverdubPass& pass : passes.overdubPasses) {
@@ -186,7 +186,7 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     }
     pass.state = state;
     ++playbackRevision;
-    markPassDerivedStale();
+    notifyCommittedContentChanged();
     return true;
   }
   return false;
@@ -267,13 +267,13 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     }
   }
   ++playbackRevision;
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
 }
 
 LOOP_COLD_MEM void Loop::establishOverdubSourceView() {
   overlapHoldTotals_ = {};
   overdubSourceViewEvents_.clear();
-  gatherCommittedEvents(overdubSourceViewEvents_);
+  copyEffectiveCommittedEvents(overdubSourceViewEvents_);
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
   overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
       overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
@@ -511,26 +511,25 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
   }
 
   ++playbackRevision;
-  discardPassesMaterializedCache();
-  markDisplayCachesStale();
+  notifyCommittedContentChanged();
 }
 
 void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   resetPassTimeline();
   if (store.empty()) {
-    discardPassesMaterializedCache();
+    notifyCommittedContentChanged();
     return;
   }
   CaptureChunkIdList captureIds;
   store.detachChunksTo(captureIds);
   if (captureIds.empty()) {
-    discardPassesMaterializedCache();
+    notifyCommittedContentChanged();
     return;
   }
   CommittedChunkIdList committedChunkIds;
   if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(committedChunkIds, captureIds)) {
     LoopEventStore::releaseChunkRefs(captureIds);
-    discardPassesMaterializedCache();
+    notifyCommittedContentChanged();
     return;
   }
   RecordPass record{};
@@ -540,8 +539,7 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   passes.recordPass = std::move(record);
   lastCommittedPassId_ = passes.recordPass.id;
   ++playbackRevision;
-  markPassDerivedStale();
-  discardPassesMaterializedCache();
+  notifyCommittedContentChanged();
   rebuildVisualCacheFromPasses();
 }
 
@@ -596,7 +594,7 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
 
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
   return CommitResult::Committed;
 }
 
