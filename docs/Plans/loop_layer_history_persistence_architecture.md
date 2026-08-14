@@ -1,6 +1,6 @@
 # Loop layer history persistence — architecture
 
-**Status:** Active — Stage 3 native shipped (empty GUS headers); device gate open  
+**Status:** Active — Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log); do not start Stage 3b  
 **Date:** 2026-08-14  
 **Decision:** [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only)  
 **OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A only)  
@@ -144,9 +144,11 @@ After Loop load / GUS file read, `TrackUndo::rebuildSlotFromLoopContent` replace
 
 `LoopGeometry` now stores before ticks so a loaded `LoopBoundaryChange` can walk back. Undo/redo of that kind disables/enables the matching `LoopGeometry.id`. Keep writing today's bundle undo stack.
 
-### Stage 3 — Delete persisted UndoStacks (native shipped 2026-08-14; device gate open)
+### Stage 3 — Delete persisted UndoStacks (device PASS [`030147`](../../captures/session_20260814_030147.log) 2026-08-14)
 
-Gated on Stage 2 + exit-bake PASS [`025322`](../../captures/session_20260814_025322.log). Footer writes empty GUS headers; `admitLoopUndoHistory` is a no-op; leftover `UndoStacks` stage does not walk live entries. Legacy bundle-undo **read** remains. In-session undo still uses `GlobalUndoStack`. Device gate: no UndoStacks-scale `PERS,bundle`; reboot undo still from content rebuild.
+Gated on Stage 2 + exit-bake PASS [`025322`](../../captures/session_20260814_025322.log). Footer writes empty GUS headers; `admitLoopUndoHistory` is a no-op; leftover `UndoStacks` stage does not walk live entries. Legacy bundle-undo **read** remains. In-session undo still uses `GlobalUndoStack`.
+
+Device: zero `LoopUndoHistory` / `UndoStacks` lines. Overdub-stop persist is `SlotMeta` 348 ms / 241 slices then `LoopPersist` ~152 ms. After reboot, selected slot 5 undoes: `entries=22` kind=1 `OverdubPassAdded` (DISP 112→103), then `entries=21` kind=4 `NoteEditPassClosed` (DISP 103→102). Remaining floor is `SlotMeta` + `LoopPersist`, not undo-entry count.
 
 ### Stage 3b — later DEC
 
