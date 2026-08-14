@@ -598,7 +598,10 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
             }
             const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
             StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
-            StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
+            if (entryKind == UndoEntryKind::ClearSlot) {
+                StorageManager::admitSlotMeta(persistTrackIndex, slotIndex);
+            }
+            StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
             break;
@@ -662,7 +665,10 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
             }
             const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
             StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
-            StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
+            if (entryKind == UndoEntryKind::ClearSlot) {
+                StorageManager::admitSlotMeta(persistTrackIndex, slotIndex);
+            }
+            StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
             break;

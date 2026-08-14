@@ -1,6 +1,6 @@
 # Overdub-stop MIDI dump during PLAYING
 
-**Status:** LoadLoopJob PLAYING skip closed. `UndoStacks` / `LoopUndoHistory` stall closed — Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log). Remaining persist floor is `SlotMeta` + `LoopPersist`.  
+**Status:** LoadLoopJob PLAYING skip closed. `UndoStacks` / `LoopUndoHistory` stall closed — Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log). **Follow-up shipped (native):** content-only paths admit `LoopPersist` only; `SlotMeta` bundle on overdub stop should drop. Device gate open.  
 **Date:** 2026-08-14  
 **Evidence:** fail [`session_20260813_034408.log`](../../captures/session_20260813_034408.log); Stage 1 device [`session_20260813_105505.log`](../../captures/session_20260813_105505.log); bundle [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)  
 **Relief plan:** [`loop_layer_history_persistence_architecture.md`](loop_layer_history_persistence_architecture.md) (DEC-035)  

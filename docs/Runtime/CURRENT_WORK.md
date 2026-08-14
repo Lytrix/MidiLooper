@@ -28,13 +28,15 @@ Last updated: 2026-08-14 (Stage 3 device PASS 030147)
 
 **Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log):** zero `LoopUndoHistory`. Overdub-stop `PERS,bundle` is `SlotMeta` 348 ms / 241 slices, then `LoopPersist` ~152 ms. After reboot, selected slot 5 undoes immediately (`entries=22` kind=1, then `entries=21` kind=4). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
 
+**Stage 3 follow-up (native):** record/overdub/undo/redo/edit autosave admit `LoopPersist` only (`admitLoopPersist`); `SlotMeta` stays on clear-slot undo/redo and `admitTrackSlotPersistence`. Device gate: overdub stop should not queue `PERS,bundle,SlotMeta`.
+
 Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
 
 Do not start Stage 3b (replace `GlobalUndoStack`), Layer B clear-as-unlink, Layer D range-first load, interval reservation, or MIDI catch-up suppression. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of this work. DEC-024 Phase 2 (move GUS Track → Loop) is **not** the Layer A path.
 
 ### Overdub-stop MIDI dump during PLAYING
 
-LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log). `UndoStacks` stall closed in Stage 3 [`030147`](../../captures/session_20260814_030147.log) (no `LoopUndoHistory`; overdub-stop `SlotMeta` 348 ms then `LoopPersist`). Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Do not patch RC-J.
+LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log). `UndoStacks` stall closed in Stage 3 [`030147`](../../captures/session_20260814_030147.log). **Follow-up:** capture stop admitted bundled `SlotMeta` (348 ms / 241 slices); content-only paths now admit `LoopPersist` only — device gate open. Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Do not patch RC-J.
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing telemetry
 

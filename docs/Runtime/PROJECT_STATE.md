@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-14 (Stage 3 device PASS 030147)
+Last updated: 2026-08-14 (Stage 3 follow-up: LoopPersist-only admit on content paths)
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-14 (Stage 3 device PASS 030147)
 
 **OLED first-frame mismatch:** RC3 device PASS [`014553`](../../captures/session_20260814_014553.log). Plan: [`oled_dma_partial_frame_bugfix.md`](../Plans/oled_dma_partial_frame_bugfix.md).
 
-**Loop content-only history (DEC-035):** Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log) — empty GUS headers; no `LoopUndoHistory`; reboot undo from content. Do not start Stage 3b. Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md).
+**Loop content-only history (DEC-035):** Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log). Follow-up: content-only admit uses `admitLoopPersist` only (no bundled `SlotMeta` on overdub stop). Device gate open.
 
 **NOTE_EDIT leave-restore painted span:** RC1 native shipped; device gate open — [`note_edit_overlap_leave_restore_painted_span_bugfix.md`](../Plans/note_edit_overlap_leave_restore_painted_span_bugfix.md). [`200154`](../../captures/session_20260813_200154.log) Restore 5 `720–2255` / select `DNTE` 1535; same-loop [`193838`](../../captures/session_20260813_193838.log) first-select paints length **47**.
 
