@@ -148,7 +148,7 @@ After Loop load / GUS file read, `TrackUndo::rebuildSlotFromLoopContent` replace
 
 Gated on Stage 2 + exit-bake PASS [`025322`](../../captures/session_20260814_025322.log). Footer writes empty GUS headers; `admitLoopUndoHistory` is a no-op; leftover `UndoStacks` stage does not walk live entries. Legacy bundle-undo **read** remains. In-session undo still uses `GlobalUndoStack`.
 
-Device: zero `LoopUndoHistory` / `UndoStacks` lines. Overdub-stop persist is `SlotMeta` 348 ms / 241 slices then `LoopPersist` ~152 ms. After reboot, selected slot 5 undoes: `entries=22` kind=1 `OverdubPassAdded` (DISP 112→103), then `entries=21` kind=4 `NoteEditPassClosed` (DISP 103→102). Remaining floor is `SlotMeta` + `LoopPersist`, not undo-entry count.
+Device: zero `LoopUndoHistory` / `UndoStacks` lines. Overdub-stop persist was `SlotMeta` 348 ms / 241 slices then `LoopPersist` ~152 ms ([`030147`](../../captures/session_20260814_030147.log)). **Follow-up:** content-only admit paths use `admitLoopPersist` only; `admitLoopSlotPersist` reserved for clear / full-track rewrite. Device gate: no `PERS,bundle,SlotMeta` on overdub stop.
 
 ### Stage 3b — later DEC
 

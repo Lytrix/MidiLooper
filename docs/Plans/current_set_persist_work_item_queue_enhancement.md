@@ -472,9 +472,9 @@ Empty work queue + no in-flight work → **no SD I/O**.
 
 | Transition | Admit (stale) |
 |------------|----------------|
-| Record / overdub publish | `LoopPersist`; `LoopUndoHistory` if stack touched |
-| Undo / redo | `LoopPersist`, `LoopUndoHistory` |
-| Clear slot | `LoopPersist`, `SlotMeta`, `LoopUndoHistory` if needed |
+| Record / overdub publish | `LoopPersist` |
+| Undo / redo | `LoopPersist` (`SlotMeta` when `ClearSlot`) |
+| Clear slot | `LoopPersist`, `SlotMeta` |
 | Slot selection | `WorkspaceFooter` |
 | Transport stop (playback only) | `GlobalMeta` if looper meta stale; else none |
 | Slot enable / mute | `SlotMeta` |

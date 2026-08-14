@@ -244,7 +244,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
                     const uint8_t trackIndex = t;
                     const uint8_t slotIndex = s;
                     StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
-                    StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
+                    StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
                 }
             }
         }
@@ -281,7 +281,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
                 const uint8_t trackIndex = t;
                 const uint8_t slotIndex = s;
                 StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
-                StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
+                StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
             }
         }
     }
