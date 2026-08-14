@@ -4,10 +4,12 @@
 #include "TrackInternal.h"
 
 #include <Arduino.h>
+#include <cstdio>
 
 #include "Globals.h"
 #include "Logger.h"
 #include "LoopEventStore.h"
+#include "LoopContentResolution.h"
 #include "SlotLoadSession.h"
 #include "StorageManager.h"
 #include "Utils/DebugSessionCapture.h"
@@ -113,6 +115,43 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeLogStoredNoteCount() {
   }
   SC_STORED_NOTES(resolveTrackIndexForPersistence(*this), slot, notes, uniqueNoteIds, maxSamePitch);
   storedNoteCountLoggedMask_ |= slotBit;
+#endif
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeMeasureContentResolution() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  Loop& loop = getActiveLoop();
+  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
+    return;
+  }
+  if (SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate() ||
+      StorageManager::hasDeferredSaveWork()) {
+    return;
+  }
+  const uint8_t slot = getActiveLoopIndex();
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  const uint8_t slotBit = static_cast<uint8_t>(1u << slot);
+  if ((contentResolutionMeasuredMask_ & slotBit) != 0) {
+    return;
+  }
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  char line[192];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u",
+           static_cast<unsigned long>(micros()),
+           static_cast<unsigned long>(sample.materialize.elapsedMicros),
+           static_cast<unsigned long>(sample.window.elapsedMicros),
+           static_cast<unsigned long>(sample.rebuild.elapsedMicros),
+           static_cast<unsigned long>(sample.state.elapsedMicros),
+           sample.state.eventsReplayed, sample.state.eventsInHistory,
+           sample.window.passChunkListsWalked);
+  DebugSessionCapture::appendCaptureTextLine(line);
+  contentResolutionMeasuredMask_ |= slotBit;
 #endif
 }
 
@@ -329,6 +368,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
         }
       }
       maybeLogStoredNoteCount();
+      maybeMeasureContentResolution();
     }
   }
 
