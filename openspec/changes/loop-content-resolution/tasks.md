@@ -25,11 +25,11 @@
 
 ## 4. Stages 6–8 — Index and checkpoints
 
-- [ ] 4.1 Tick (and NoteId as needed) index; candidate find MUST NOT walk every pass list
-- [ ] 4.2 Prove `commit P(N)` does not traverse P0…P(N-1) except indexed affected regions (complexity gate on the canonical fixture)
+- [x] 4.1 Tick (and NoteId as needed) index; candidate find MUST NOT walk every pass list
+- [x] 4.2 Prove `commit P(N)` does not traverse P0…P(N-1) except indexed affected regions (complexity gate on the canonical fixture)
 - [ ] 4.3 In-RAM checkpoints at `checkpointIntervalTicks`; measure the interval on the fixture (do not persist)
 - [ ] 4.4 `resolveState` at a high tick starts from a checkpoint, never from tick 0
-- [ ] 4.5 Note spanning two chunks still resolves (chunks are not boundaries)
+- [x] 4.5 Note spanning two chunks still resolves (chunks are not boundaries)
 
 ## 5. Stage 9 — Device gate (after native 2–4)
 

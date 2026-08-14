@@ -167,6 +167,29 @@ void printCounters(const char* label, const ResolutionCostCounters& counters) {
       static_cast<unsigned long long>(counters.elapsedMicros));
 }
 
+void commitFixtureIndex(const CanonicalResolutionFixture& fixture,
+                        LoopContentResolution::TickIndex& index) {
+  ResolutionCostCounters recordCounters;
+  index.commitCapturePass(fixture.passes.recordPass.id, fixture.passes.recordPass.committedChunkIds,
+                          fixture.passes.recordPass.state, 0, &recordCounters);
+  TEST_ASSERT_EQUAL_UINT32(1u, recordCounters.passChunkListsWalked);
+  for (const OverdubPass& pass : fixture.passes.overdubPasses) {
+    ResolutionCostCounters commitCounters;
+    index.commitCapturePass(pass.id, pass.committedChunkIds, pass.state, pass.mergeSequence,
+                            &commitCounters);
+    TEST_ASSERT_EQUAL_UINT32(1u, commitCounters.passChunkListsWalked);
+  }
+}
+
+void oracleWindowEvents(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
+                        uint32_t windowLength, SessionMidiEventVec& out) {
+  SessionMidiEventVec materialized;
+  passes.materializeToEventVector(materialized, loopLengthTicks);
+  DisplayWindowUtils::filterMidiEventsToWindow(materialized, out, windowStart, windowLength,
+                                               loopLengthTicks);
+  sortOracleEvents(out);
+}
+
 }  // namespace
 
 CanonicalResolutionFixture buildCanonicalResolutionFixture() {
@@ -592,6 +615,122 @@ void test_stage_determinism_cold_warm() {
   assertResolvedEventsMatch(first, second);
 }
 
+void test_stage6_commit_does_not_scan_prior_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+  TEST_ASSERT_EQUAL_UINT32(1u + kCanonicalOverdubPasses, index.indexedPassCount());
+  TEST_ASSERT_GREATER_THAN(0u, index.indexedEventCount());
+}
+
+void test_stage6_window_find_matches_materialize_filter() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  SessionMidiEventVec expected;
+  oracleWindowEvents(fixture.passes, fixture.loopLengthTicks, 0, windowLength, expected);
+
+  ResolutionCostCounters counters;
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(index, fixture.passes.editPasses, fixture.loopLengthTicks, 0,
+                                       windowLength, actual, &counters);
+  printCounters("stage6_window", counters);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, counters.indexEntriesVisited);
+  TEST_ASSERT_LESS_THAN(counters.eventsInHistory, counters.indexEntriesVisited);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, fixture.movedNoteId));
+}
+
+void test_stage6_wrap_window_matches_oracle() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  const uint32_t windowStart = fixture.loopLengthTicks - (windowLength / 2u);
+  SessionMidiEventVec expected;
+  oracleWindowEvents(fixture.passes, fixture.loopLengthTicks, windowStart, windowLength, expected);
+
+  ResolutionCostCounters counters;
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                       windowStart, windowLength, actual, &counters);
+  printCounters("stage6_wrap_window", counters);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, fixture.wrapNoteId));
+}
+
+void test_stage6_disable_without_walking_pass_lists() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+  TEST_ASSERT_FALSE(fixture.passes.overdubPasses.empty());
+  index.setCapturePassState(fixture.passes.overdubPasses.back().id, CapturePassState::Disabled);
+  fixture.passes.overdubPasses.back().state = CapturePassState::Disabled;
+
+  SessionMidiEventVec expected;
+  oracleWindowEvents(fixture.passes, fixture.loopLengthTicks, 0, fixture.loopLengthTicks, expected);
+  ResolutionCostCounters counters;
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(index, fixture.passes.editPasses, fixture.loopLengthTicks, 0,
+                                       fixture.loopLengthTicks, actual, &counters);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  assertResolvedEventsMatch(expected, actual);
+}
+
+void test_stage6_note_spanning_two_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetNoteIdCounter(1);
+  const uint32_t loopLength = 4u * Config::TICKS_PER_BAR;
+  const NoteId spanId = 99;
+  LoopEventStore store;
+  const uint32_t fillerNotes = (LoopEventStoreConfig::CHUNK_CAPACITY - 1u) / 2u;
+  for (uint32_t i = 0; i < fillerNotes; ++i) {
+    const NoteId fillerId = static_cast<NoteId>(1000u + i);
+    TEST_ASSERT_TRUE(storeAppendNoteOn(store, 2000u + i, 1, 10, 100, fillerId));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(2100u + i, 1, 10, 0)));
+  }
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1, 1, 1, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 40, 1, 72, 100, spanId));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(80, 1, 72, 0)));
+  CommittedChunkIdList ids;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, ids));
+  TEST_ASSERT_GREATER_THAN(1u, ids.size());
+
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = ids;
+
+  LoopContentResolution::TickIndex index;
+  ResolutionCostCounters commitCounters;
+  index.commitCapturePass(1, ids, CapturePassState::Active, 0, &commitCounters);
+  TEST_ASSERT_EQUAL_UINT32(1u, commitCounters.passChunkListsWalked);
+
+  SessionMidiEventVec expected;
+  oracleWindowEvents(passes, loopLength, 0, loopLength, expected);
+  ResolutionCostCounters findCounters;
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(index, passes.editPasses, loopLength, 0, loopLength, actual,
+                                       &findCounters);
+  TEST_ASSERT_EQUAL_UINT32(0u, findCounters.passChunkListsWalked);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, spanId));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -608,5 +747,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage5_move_matches_reconstruct);
   RUN_TEST(test_stage_disabled_pass_excluded);
   RUN_TEST(test_stage_determinism_cold_warm);
+  RUN_TEST(test_stage6_commit_does_not_scan_prior_passes);
+  RUN_TEST(test_stage6_window_find_matches_materialize_filter);
+  RUN_TEST(test_stage6_wrap_window_matches_oracle);
+  RUN_TEST(test_stage6_disable_without_walking_pass_lists);
+  RUN_TEST(test_stage6_note_spanning_two_chunks);
   return UNITY_END();
 }

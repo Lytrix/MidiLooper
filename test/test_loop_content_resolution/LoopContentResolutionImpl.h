@@ -1,17 +1,22 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Native prototype implementation (DEC-037 Stages 1–5). Included into the test TU.
+// Native prototype implementation (DEC-037 Stages 1–6). Included into the test TU.
 // Not compiled into firmware yet.
 
 #include "LoopContentResolution.h"
 
 #include "CommittedEventRange.h"
 #include "EditApply.h"
+#include "Utils/DisplayWindowUtils.h"
+#include "Utils/IntervalProjection.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <iterator>
+#include <map>
+#include <set>
 #include <vector>
 
 namespace {
@@ -145,8 +150,7 @@ void gatherActiveResolvedEvents(const LoopPasses& passes, uint32_t loopLengthTic
   if (wholeLoop) {
     appendActiveCapturePassesMerged(passes, out);
   } else {
-    // Stage 1–5: windowed chunk walk. Stage 6 must replace this with a tick index so
-    // find does not iterate every pass list.
+    // Stages 1–5 fallback. Indexed find is LoopContentResolution::resolveWindow(TickIndex, …).
     CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,
                                   windowLength)
         .appendTo(out);
@@ -156,6 +160,211 @@ void gatherActiveResolvedEvents(const LoopPasses& passes, uint32_t loopLengthTic
 }
 
 }  // namespace
+
+struct EventRef {
+  PassId passId = kInvalidPassId;
+  uint32_t eventIndex = 0;
+  bool operator<(const EventRef& other) const {
+    return passId < other.passId || (passId == other.passId && eventIndex < other.eventIndex);
+  }
+};
+
+void pairNotesInPass(LoopContentResolution::TickIndex::CapturePassEntry& pass,
+                     std::unordered_map<NoteId, LoopContentResolution::TickIndex::NoteLocation>& byNoteId) {
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
+    const MidiEvent& event = pass.events[i];
+    if (event.isNoteOn()) {
+      openOnByPitch[event.data.noteData.note].push_back(i);
+      if (event.noteId != kInvalidNoteId) {
+        LoopContentResolution::TickIndex::NoteLocation loc;
+        loc.passId = pass.id;
+        loc.onIndex = i;
+        loc.offIndex = -1;
+        byNoteId[event.noteId] = loc;
+      }
+      continue;
+    }
+    if (!event.isNoteOff()) {
+      continue;
+    }
+    std::vector<uint32_t>& stack = openOnByPitch[event.data.noteData.note];
+    if (stack.empty()) {
+      continue;
+    }
+    const uint32_t onIndex = stack.back();
+    stack.pop_back();
+    const NoteId noteId = pass.events[onIndex].noteId;
+    if (noteId == kInvalidNoteId) {
+      continue;
+    }
+    auto found = byNoteId.find(noteId);
+    if (found != byNoteId.end() && found->second.passId == pass.id) {
+      found->second.offIndex = static_cast<int32_t>(i);
+    }
+  }
+}
+
+const LoopContentResolution::TickIndex::CapturePassEntry* findPass(
+    const LoopContentResolution::TickIndex& index, PassId id) {
+  const auto found = index.passById.find(id);
+  if (found == index.passById.end() || found->second >= index.capturePasses.size()) {
+    return nullptr;
+  }
+  return &index.capturePasses[found->second];
+}
+
+void visitTickRange(const LoopContentResolution::TickIndex& index, uint32_t beginTick,
+                    uint32_t endTickExclusive, std::set<EventRef>& refs,
+                    ResolutionCostCounters* counters) {
+  auto it = index.byTick.lower_bound(beginTick);
+  const auto stop = index.byTick.lower_bound(endTickExclusive);
+  for (; it != stop; ++it) {
+    if (counters != nullptr) {
+      counters->indexEntriesVisited += 1;
+    }
+    const PassId passId = it->second.first;
+    const auto* pass = findPass(index, passId);
+    if (pass == nullptr || pass->state != CapturePassState::Active) {
+      continue;
+    }
+    EventRef ref;
+    ref.passId = passId;
+    ref.eventIndex = it->second.second;
+    refs.insert(ref);
+  }
+}
+
+void LoopContentResolution::TickIndex::commitCapturePass(PassId id, const CommittedChunkIdList& chunks,
+                                                         CapturePassState state, uint32_t mergeSequence,
+                                                         ResolutionCostCounters* counters) {
+  if (id == kInvalidPassId) {
+    return;
+  }
+  CapturePassEntry pass;
+  pass.id = id;
+  pass.mergeSequence = mergeSequence;
+  pass.state = state;
+  LoopEventStore::appendChunkRefEvents(chunks, pass.events);
+  if (counters != nullptr) {
+    counters->passChunkListsWalked += 1;
+    counters->resolutionOperations += static_cast<uint32_t>(pass.events.size());
+  }
+
+  pairNotesInPass(pass, byNoteId);
+  for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
+    byTick.emplace(pass.events[i].tick, std::make_pair(id, i));
+  }
+
+  passById[id] = capturePasses.size();
+  capturePasses.push_back(std::move(pass));
+}
+
+void LoopContentResolution::TickIndex::setCapturePassState(PassId id, CapturePassState state) {
+  const auto found = passById.find(id);
+  if (found == passById.end() || found->second >= capturePasses.size()) {
+    return;
+  }
+  capturePasses[found->second].state = state;
+}
+
+void LoopContentResolution::TickIndex::findRawWindow(uint32_t loopLengthTicks, uint32_t windowStart,
+                                                     uint32_t windowLength, SessionMidiEventVec& out,
+                                                     ResolutionCostCounters* counters) const {
+  out.clear();
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    return;
+  }
+  std::set<EventRef> refs;
+  if (windowLength >= loopLengthTicks) {
+    visitTickRange(*this, 0, loopLengthTicks, refs, counters);
+  } else {
+    const uint32_t start = IntervalProjection::tickPhaseInLoop(windowStart, 0, loopLengthTicks);
+    if (start + windowLength <= loopLengthTicks) {
+      visitTickRange(*this, start, start + windowLength, refs, counters);
+    } else {
+      visitTickRange(*this, start, loopLengthTicks, refs, counters);
+      visitTickRange(*this, 0, start + windowLength - loopLengthTicks, refs, counters);
+    }
+  }
+  out.reserve(refs.size());
+  for (const EventRef& ref : refs) {
+    const auto* pass = findPass(*this, ref.passId);
+    if (pass == nullptr || ref.eventIndex >= pass->events.size()) {
+      continue;
+    }
+    out.push_back(pass->events[ref.eventIndex]);
+  }
+}
+
+void LoopContentResolution::TickIndex::appendNoteEvents(NoteId noteId, SessionMidiEventVec& out) const {
+  if (noteId == kInvalidNoteId) {
+    return;
+  }
+  const auto found = byNoteId.find(noteId);
+  if (found == byNoteId.end()) {
+    return;
+  }
+  const auto* pass = findPass(*this, found->second.passId);
+  if (pass == nullptr || pass->state != CapturePassState::Active) {
+    return;
+  }
+  if (found->second.onIndex < pass->events.size()) {
+    out.push_back(pass->events[found->second.onIndex]);
+  }
+  if (found->second.offIndex >= 0 &&
+      static_cast<uint32_t>(found->second.offIndex) < pass->events.size()) {
+    out.push_back(pass->events[static_cast<uint32_t>(found->second.offIndex)]);
+  }
+}
+
+uint32_t LoopContentResolution::TickIndex::indexedEventCount() const {
+  return static_cast<uint32_t>(byTick.size());
+}
+
+uint32_t LoopContentResolution::TickIndex::indexedPassCount() const {
+  return static_cast<uint32_t>(capturePasses.size());
+}
+
+void LoopContentResolution::resolveWindow(const TickIndex& index, const EditPassVec& editPasses,
+                                          uint32_t loopLengthTicks, uint32_t windowStart,
+                                          uint32_t windowLength, SessionMidiEventVec& out,
+                                          ResolutionCostCounters* counters) {
+  const auto started = std::chrono::steady_clock::now();
+  SessionMidiEventVec working;
+  index.findRawWindow(loopLengthTicks, windowStart, windowLength, working, counters);
+  EditPassVec activeRows;
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+      index.appendNoteEvents(editPass.targetNoteId, working);
+    }
+  }
+  sortResolvedEvents(working);
+  working.erase(std::unique(working.begin(), working.end(),
+                            [](const MidiEvent& a, const MidiEvent& b) {
+                              return a.tick == b.tick && a.type == b.type && a.channel == b.channel &&
+                                     a.data.noteData.note == b.data.noteData.note &&
+                                     a.noteId == b.noteId;
+                            }),
+                working.end());
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
+  }
+  DisplayWindowUtils::filterMidiEventsToWindow(working, out, windowStart, windowLength,
+                                               loopLengthTicks);
+  sortResolvedEvents(out);
+  if (counters != nullptr) {
+    counters->candidateEvents = static_cast<uint32_t>(working.size());
+    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
+    counters->eventsInHistory = index.indexedEventCount();
+    counters->passesInHistory = index.indexedPassCount();
+    counters->elapsedMicros = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
+                                                              started)
+            .count());
+  }
+}
 
 void LoopContentResolution::resolveWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                                           uint32_t windowStart, uint32_t windowLength,
