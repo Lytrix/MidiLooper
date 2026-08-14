@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-14 (follow-up device PASS 032227)
+Last updated: 2026-08-14 (DEC-035 Layer A archived)
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-14 (follow-up device PASS 032227)
 
 **OLED first-frame mismatch:** RC3 device PASS [`014553`](../../captures/session_20260814_014553.log). Plan: [`oled_dma_partial_frame_bugfix.md`](../Plans/oled_dma_partial_frame_bugfix.md).
 
-**Loop content-only history (DEC-035):** Stage 3 + follow-up device PASS [`030147`](../../captures/session_20260814_030147.log) / [`032227`](../../captures/session_20260814_032227.log). Overdub stop: `LoopPersist` only ~139 ms. Do not start Stage 3b.
+**Loop content-only history (DEC-035):** **Archived** 2026-08-14 — OpenSpec `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../../captures/session_20260814_030147.log) / [`032227`](../../captures/session_20260814_032227.log).
 
 **NOTE_EDIT leave-restore painted span:** RC1 native shipped; device gate open — [`note_edit_overlap_leave_restore_painted_span_bugfix.md`](../Plans/note_edit_overlap_leave_restore_painted_span_bugfix.md). [`200154`](../../captures/session_20260813_200154.log) Restore 5 `720–2255` / select `DNTE` 1535; same-loop [`193838`](../../captures/session_20260813_193838.log) first-select paints length **47**.
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-14 (follow-up device PASS 032227)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **Loop content-only history (DEC-035 Layer A)** on `feature/loop-content-history`. Stage 3 + follow-up device PASS [`032227`](../../captures/session_20260814_032227.log). Do not start Stage 3b. Parallel: **Overdub overlap geometry selection** on `feature/overdub-playback-observation-overlap`. Do not start interval reservation or patch RC-J. Scheduling: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
+**Active work:** **Overdub overlap geometry selection** on `feature/overdub-playback-observation-overlap`. DEC-035 Layer A archived on `feature/loop-content-history`. Do not start interval reservation or patch RC-J. Scheduling: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
@@ -103,7 +103,6 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
-| **`loop-content-history-persistence`** | **DEC-035 Layer A** — Stage 1 shipped; Stage 2 gated on content metadata. Task [#33](https://github.com/Lytrix/MidiLooper/issues/33) |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
@@ -121,6 +120,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Archived | Normative spec |
 |--------|----------|----------------|
+| **`loop-content-history-persistence`** | 2026-08-14 | [`loop-content-history/`](../../openspec/specs/loop-content-history/) |
 | **`note-edit-current-state`** | 2026-08-08 | [`note-edit-current-state/`](../../openspec/specs/note-edit-current-state/) — [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md) |
 | **`edit-session-action-geometry`** | 2026-08-05 | [`edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/) |
 | **`deferred-job-scheduler`** | 2026-07-19 | [`deferred-job-scheduler/`](../../openspec/specs/deferred-job-scheduler/) |
@@ -143,7 +143,7 @@ Parked (not active): `currentset-savedset-storage-layout`
 - Governance docs do not change firmware by themselves
 - Do not implement from [ROADMAP.md](ROADMAP.md) — scope is [CURRENT_WORK.md](CURRENT_WORK.md) only
 - **`edit-session-action-geometry`** — **archived** 2026-08-05; normative `openspec/specs/edit-session-action-geometry/`
-- **`note-edit-current-state`** — **archived** 2026-08-08; normative `openspec/specs/note-edit-current-state/`
+- **`loop-content-history-persistence`** — **archived** 2026-08-14; normative `openspec/specs/loop-content-history/`
 
 ## Current blockers
 

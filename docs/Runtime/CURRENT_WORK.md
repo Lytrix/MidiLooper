@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (Stage 3 device PASS 030147)
+Last updated: 2026-08-14 (DEC-035 Layer A archived)
 
 ---
 
@@ -24,15 +24,11 @@ Last updated: 2026-08-14 (Stage 3 device PASS 030147)
 
 **RC3 PASS [`014553`](../../captures/session_20260814_014553.log)** — dcache flush before SPI + STOPPED boot restore paints. Plan: [`oled_dma_partial_frame_bugfix.md`](../Plans/oled_dma_partial_frame_bugfix.md).
 
-### Loop content-only history (DEC-035 Layer A)
+### Loop content-only history (DEC-035 Layer A) — archived
 
-**Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log):** zero `LoopUndoHistory`. Overdub-stop `PERS,bundle` is `SlotMeta` 348 ms / 241 slices, then `LoopPersist` ~152 ms. After reboot, selected slot 5 undoes immediately (`entries=22` kind=1, then `entries=21` kind=4). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
+**Shipped + archived 2026-08-14.** Stage 3 + follow-up device PASS [`030147`](../../captures/session_20260814_030147.log) / [`032227`](../../captures/session_20260814_032227.log). OpenSpec `openspec/changes/archive/2026-08-14-loop-content-history-persistence/`; normative `openspec/specs/loop-content-history/`. Do not start Stage 3b without new DEC.
 
-**Stage 3 follow-up device PASS [`032227`](../../captures/session_20260814_032227.log):** overdub stop queues `LoopPersist` only (no `SlotMeta` / `LoopUndoHistory` bundle). `LoopPersist` ~139 ms; post-stop `midi_gap` 76 ms. Reboot undo on slot 5: `entries=17` kind=1 (DISP 100→91), `entries=16` kind=1 (DISP 91→63).
-
-Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
-
-Do not start Stage 3b (replace `GlobalUndoStack`), Layer B clear-as-unlink, Layer D range-first load, interval reservation, or MIDI catch-up suppression. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of this work. DEC-024 Phase 2 (move GUS Track → Loop) is **not** the Layer A path.
+Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) stall closed.
 
 ### Overdub-stop MIDI dump during PLAYING
 
