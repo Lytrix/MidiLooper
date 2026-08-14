@@ -35,9 +35,9 @@
 - [x] 4.3 `admitLoopUndoHistory` is a no-op; `LoopUndoHistory` is not runtime-bundle work
 - [x] 4.4 Legacy bundle-undo read kept; load still rebuilds GUS from Loop content
 - [x] 4.5 `pio test -e native` (1137/1137)
-- [x] 4.6 Device PASS [`030147`](../../../captures/session_20260814_030147.log): no `LoopUndoHistory`; overdub-stop `PERS,bundle` is `SlotMeta` 348 ms / 241 slices then `LoopPersist`; reboot undo on selected slot 5 (`entries=22` kind=1, then `entries=21` kind=4)
+- [x] 4.6 Device PASS [`030147`](../../../captures/session_20260814_030147.log) / follow-up [`032227`](../../../captures/session_20260814_032227.log): no `LoopUndoHistory` or `SlotMeta` bundle on overdub stop; `LoopPersist` only ~139 ms; reboot undo on selected slot 5
 
 ## 5. Closeout
 
 - [x] 5.1 Update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING, LOOP_MIDI / deferred-persist guides
-- [ ] 5.2 Do not start Stage 3b, Layer B, or Layer D in this change
+- [x] 5.2 Do not start Stage 3b, Layer B, or Layer D in this change (scope guard — archived without those tracks)

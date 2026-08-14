@@ -1,9 +1,9 @@
 # Loop layer history persistence — architecture
 
-**Status:** Active — Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log); do not start Stage 3b  
+**Status:** Shipped — Stage 3 + follow-up device PASS; OpenSpec archived 2026-08-14  
 **Date:** 2026-08-14  
 **Decision:** [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only)  
-**OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A only)  
+**OpenSpec:** archived `openspec/changes/archive/2026-08-14-loop-content-history-persistence/` (Layer A only)  
 **Cursor plan:** `~/.cursor/plans/scoped_undo_persist_aa3b7a01.plan.md`  
 **Bug (functional failure):** [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](overdub_stop_playing_midi_dump_bugfix.md)  
 **Task (migration):** [#33](https://github.com/Lytrix/MidiLooper/issues/33)  
