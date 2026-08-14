@@ -44,7 +44,7 @@ void Track::setLoopLength(uint32_t ticks) {
   const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
   const uint8_t persistSlotIndex = getActiveLoopIndex();
   StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
   invalidateCaches();
 }
 
@@ -58,7 +58,7 @@ void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
   const uint8_t persistSlotIndex = getActiveLoopIndex();
   StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
   invalidateCaches();
   logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loop.loopLengthTicks);
 }
@@ -76,7 +76,7 @@ void Track::setLoopStartTick(uint32_t startTick) {
   const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
   const uint8_t persistSlotIndex = getActiveLoopIndex();
   StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
   invalidateCaches();
 }
 
@@ -93,7 +93,7 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
   const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
   const uint8_t persistSlotIndex = getActiveLoopIndex();
   StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
   invalidateCaches();
 }
 

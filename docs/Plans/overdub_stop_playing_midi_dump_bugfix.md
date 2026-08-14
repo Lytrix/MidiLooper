@@ -1,9 +1,10 @@
 # Overdub-stop MIDI dump during PLAYING
 
-**Status:** Stage 0 probe + Stage 1 admission shipped. Device verify FAIL — LoadLoopJob owner closed; remaining stall is outside remainder spans. Re-gate.  
-**Date:** 2026-08-13  
-**Evidence:** fail [`session_20260813_034408.log`](../../captures/session_20260813_034408.log); Stage 1 device [`session_20260813_105505.log`](../../captures/session_20260813_105505.log)  
-**Not:** RC-K3 restore, RC-J (STOPPED deferred save), observation Gates 0–4, interval reservation. Persistence payload narrowing is roadmap R1B (design gate required).
+**Status:** LoadLoopJob PLAYING skip closed. `UndoStacks` / `LoopUndoHistory` closed [`030147`](../../captures/session_20260814_030147.log). SlotMeta overdub-stop bundle closed [`032227`](../../captures/session_20260814_032227.log) — `LoopPersist` only ~139 ms.  
+**Date:** 2026-08-14  
+**Evidence:** fail [`session_20260813_034408.log`](../../captures/session_20260813_034408.log); Stage 1 device [`session_20260813_105505.log`](../../captures/session_20260813_105505.log); bundle [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)  
+**Relief plan:** [`loop_layer_history_persistence_architecture.md`](loop_layer_history_persistence_architecture.md) (DEC-035)  
+**Not:** RC-K3 restore, RC-J, observation Gates 0–4, interval reservation, DEC-024 Phase 2 move of `GlobalUndoStack`.
 
 ---
 

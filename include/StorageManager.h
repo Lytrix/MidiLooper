@@ -31,7 +31,7 @@ class StorageManager {
 public:
     /// Admit stale loop payload persistence (record, overdub, undo, edit, …).
     static void admitLoopPersist(LoopId loopId);
-    /// Admit stale loop undo history for a track slot (DEC-024 interim wire).
+    /// Stage 3 no-op — Loop undo history is derived from content at load (DEC-035).
     static void admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex);
     /// Admit stale slot assignment / enable row (interim UI assignment).
     static void admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex);
@@ -48,7 +48,7 @@ public:
     static void markLoopSlotMaterialDirty(uint8_t trackIndex, uint8_t slotIndex);
     /// Mark all slots on a track dirty (does not admit persistence work).
     static void markTrackSlotsMaterialDirty(uint8_t trackIndex);
-    /// Admit slot meta + slot-keyed loop payload persist for one slot.
+    /// Admit slot meta + slot-keyed loop payload persist for one slot (clear / full slot rewrite).
     static void admitLoopSlotPersist(uint8_t trackIndex, uint8_t slotIndex);
     /// Admit track meta + slot-keyed loop persist for every slot on a track.
     static void admitTrackSlotPersistence(uint8_t trackIndex);

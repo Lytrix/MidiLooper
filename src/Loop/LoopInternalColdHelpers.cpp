@@ -321,6 +321,7 @@ LOOP_INTERNAL_MEM LoopPasses deepClonePasses(const LoopPasses& passes) {
     cloned.overdubPasses.push_back(deepCloneOverdubPass(pass));
   }
   cloned.editPasses = passes.editPasses;
+  cloned.loopGeometries = passes.loopGeometries;
   return cloned;
 }
 

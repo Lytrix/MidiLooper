@@ -136,8 +136,9 @@ STORAGE_PERSIST_MEM bool isRuntimeBundleWorkType(PersistWorkType type) {
     case PersistWorkType::TrackMeta:
     case PersistWorkType::SlotMeta:
     case PersistWorkType::WorkspaceFooter:
-    case PersistWorkType::LoopUndoHistory:
       return true;
+    case PersistWorkType::LoopUndoHistory:
+      return false;
     default:
       return false;
   }
@@ -151,6 +152,10 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
   job.itemActive = true;
   job.stateSnapshot = state;
   emitPersistenceWorkTelemetry(job.item, "start", "ok");
+
+  if (job.item.type == PersistWorkType::LoopUndoHistory) {
+    return completePersistenceWorkItem(job, "skip_stage3", true);
+  }
 
   if (job.item.type == PersistWorkType::LoopPersist) {
     if (!resolvePersistKeyToTrackSlot(job.item.key, job.trackIndex, job.slotIndex)) {
@@ -410,8 +415,9 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
     case PersistWorkType::TrackMeta:
     case PersistWorkType::SlotMeta:
     case PersistWorkType::WorkspaceFooter:
-    case PersistWorkType::LoopUndoHistory:
       return stepRuntimeBundleWorkItem(job);
+    case PersistWorkType::LoopUndoHistory:
+      return completePersistenceWorkItem(job, "skip_stage3", true);
     case PersistWorkType::FinalizeWorkspace:
       return stepFinalizeWorkspaceWorkItem(job);
   }

@@ -134,3 +134,34 @@ inline size_t countRedoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slot
   }
   return count;
 }
+
+/// Move one slot's entries to the stack tip so `canUndoForLoop` works after content rebuild.
+inline void repositionGlobalUndoStackTipForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
+  if (stack.entries.empty()) {
+    stack.cursor = 0;
+    return;
+  }
+  UndoEntryVec otherEntries;
+  UndoEntryVec slotEntries;
+  otherEntries.reserve(stack.entries.size());
+  slotEntries.reserve(stack.entries.size());
+  for (UndoEntry& entry : stack.entries) {
+    if (entry.slotIndex == slotIndex) {
+      slotEntries.push_back(std::move(entry));
+    } else {
+      otherEntries.push_back(std::move(entry));
+    }
+  }
+  if (slotEntries.empty()) {
+    stack.cursor = stack.entries.size();
+    return;
+  }
+  stack.entries.clear();
+  for (UndoEntry& entry : otherEntries) {
+    stack.entries.push_back(std::move(entry));
+  }
+  for (UndoEntry& entry : slotEntries) {
+    stack.entries.push_back(std::move(entry));
+  }
+  stack.cursor = stack.entries.size();
+}

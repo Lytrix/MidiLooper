@@ -52,6 +52,9 @@ template <typename AllocA, typename AllocB>
 EditPassVec buildSessionStoreEditPasses(const std::vector<MidiEvent, AllocA>& baselineStoreEvents,
                                         const std::vector<MidiEvent, AllocB>& sessionStoreEvents,
                                         uint8_t channel, uint32_t loopLength);
+/// Drop store-diff Deletes that current state did not Hide/Delete (stale session vs overdub).
+void dropUnrequestedSessionStoreDeletes(EditPassVec& rows,
+                                        const NoteEditCurrentState& currentState);
 
 void restoreSessionStoreFromCurrentState(CowLoopEventStore& store,
                                          const NoteEditCurrentState& currentState,

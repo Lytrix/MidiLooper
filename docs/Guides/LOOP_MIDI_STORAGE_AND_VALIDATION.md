@@ -13,7 +13,7 @@ Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **
 | Store | Type | Role |
 |-------|------|------|
 | `capture` | `Capture` | Live record/overdub append buffer (`capture.store`, `capture.phase`) |
-| `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
+| `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]**, **loopGeometries[]** |
 | `passesMaterializedStore_` | `CowLoopEventStore` | Derived materialized MIDI cache behind `midiEvents()` (non-canonical) |
 
 ```mermaid
@@ -53,7 +53,7 @@ flowchart LR
 - **`saveNoteEditPass()`** — one committed **editPass** row; may share a **noteEditPassIndex** batch.
 - **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for **editPass** ids not yet checkpointed on the global stack.
 - **`markCurrentEditBatchDurable()`** — mid-session durability boundary (autosave, slot depart); pushes **NoteEditPassClosed** for newly committed ids while **NoteEditSession** stays open. **NoteEditPassClosed** means the batch is independently undoable (**U:**), not that NOTE_EDIT ended.
-- **Durability invariant:** any **editPass** row persisted outside active **NoteEditSession** RAM must have a matching global undo entry with **`editPassIds`** (runtime bundle **STK1** extension serializes `editPassIndex`, `editPassType`, ids).
+- **Durability invariant:** any **editPass** row persisted outside active **NoteEditSession** RAM must have a matching in-session global undo entry with **`editPassIds`**. After DEC-035 Stage 3 the runtime bundle writes empty GUS headers; load fills GUS from Loop content (`rebuildTrackFromLoopContent`). Legacy bundle-undo **read** remains.
 - **§0.6.1 record routing** — at most one **recordPass** per slot; a second record stop routes to **overdubPass** (`effectiveCapturePassPhase` in `sealCapture`).
 - **SD v5** — `StorageLoopIo` writes **passes** to each **slot file** (slot file layout for capture passes + **editPasses** tail); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
 

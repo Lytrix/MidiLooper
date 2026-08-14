@@ -180,8 +180,8 @@ Top-level stages (`DeferredSaveStage` in `StorageManager.cpp`):
 | `CurrentSetMeta` | v6 meta header + BPM, looper state, master length, track count |
 | `TrackHeaderAndSlots` | Per-track header + slot metadata (enabled, muted, loop id) |
 | `CurrentSetLoopSlot` | Per-slot `loop_TT_SS.bin` via `stepDeferredLoopPersist` / `StorageLoopIo`; clean slots are skipped via CurrentSet dirty tracking |
-| `Footer` | Selected track, active loop indices, undo magic |
-| `UndoStacks` | Global undo entries (bounded per slice — no full-pass flatten) |
+| `Footer` | Selected track, active loop indices, undo magic, then empty GUS headers (DEC-035 Stage 3 — no live-stack walk) |
+| `UndoStacks` | Leftover in-flight stage only: writes empty GUS headers per track. New saves finish in Footer. |
 | `CurrentSetCompletion` | Patch `lastActiveUnix`; write `workspace.bin`; `PERS,result,...,ok` |
 
 Nested cursors (`deferredSaveTrackCursor`, `deferredSavePoolCursor`, `deferredSaveChunkCursor`, `deferredSaveUndoEntryCursor`, …) resume mid-stage on the next main-loop call.

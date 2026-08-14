@@ -31,6 +31,10 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
   return io.read && io.read(data, size);
 }
 
+bool ioPeek(const StorageIo& io, void* data, size_t size) {
+  return io.peek && io.peek(data, size);
+}
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
 size_t g_lastPersistedCapturePassReadMaxBatchEvents = 0;
@@ -40,6 +44,8 @@ constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
     static_cast<uint32_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT) *
     LoopEventStoreConfig::CHUNK_CAPACITY;
 constexpr uint32_t PERSISTED_EDITS_TAIL_MARKER = 0x45505433u;  // "EPT3"
+constexpr uint32_t PERSISTED_GEOMETRY_TAIL_MARKER = 0x314F4547u;  // "GEO1"
+constexpr uint32_t MAX_PERSISTED_LOOP_GEOMETRIES = 4096;
 
 uint32_t maxPersistedEventTick(uint32_t loopLengthTicks) {
   if (loopLengthTicks >= 0x80000000u) {
@@ -212,7 +218,7 @@ bool isValidEditPassStateRaw(uint8_t raw) {
   return raw <= static_cast<uint8_t>(EditPassState::Disabled);
 }
 
-bool writePersistedEditPass(const StorageIo& io, const EditPass& editPass) {
+bool STORAGE_LOOP_IO_MEM writePersistedEditPass(const StorageIo& io, const EditPass& editPass) {
   const uint8_t passTypeRaw = static_cast<uint8_t>(editPass.passType);
   const uint8_t stateRaw = static_cast<uint8_t>(editPass.state);
   const uint8_t actionTypeRaw = static_cast<uint8_t>(editPass.actionType);
@@ -237,7 +243,7 @@ bool writePersistedEditPass(const StorageIo& io, const EditPass& editPass) {
   return true;
 }
 
-bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
+bool STORAGE_LOOP_IO_MEM readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
   uint8_t passTypeRaw = 0;
   uint8_t stateRaw = 0;
   uint8_t actionTypeRaw = 0;
@@ -289,8 +295,138 @@ bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
   return true;
 }
 
-bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
-                             const EditPassVec& editPasses) {
+bool STORAGE_LOOP_IO_MEM writePersistedGeometryRecord(const StorageIo& io, const LoopGeometry& geometry) {
+  if (!ioWrite(io, &geometry.id, sizeof(geometry.id))) return false;
+  if (!ioWrite(io, &geometry.loopStartTick, sizeof(geometry.loopStartTick))) return false;
+  if (!ioWrite(io, &geometry.loopLengthTicks, sizeof(geometry.loopLengthTicks))) return false;
+  if (!ioWrite(io, &geometry.startLoopTick, sizeof(geometry.startLoopTick))) return false;
+  if (!ioWrite(io, &geometry.beforeLoopStartTick, sizeof(geometry.beforeLoopStartTick))) {
+    return false;
+  }
+  if (!ioWrite(io, &geometry.beforeLoopLengthTicks, sizeof(geometry.beforeLoopLengthTicks))) {
+    return false;
+  }
+  if (!ioWrite(io, &geometry.beforeStartLoopTick, sizeof(geometry.beforeStartLoopTick))) {
+    return false;
+  }
+  const uint8_t stateRaw = static_cast<uint8_t>(geometry.state);
+  return ioWrite(io, &stateRaw, sizeof(stateRaw));
+}
+
+bool STORAGE_LOOP_IO_MEM readPersistedGeometryRecord(const StorageIo& io, LoopGeometry& geometry) {
+  uint8_t stateRaw = 0;
+  if (!ioRead(io, &geometry.id, sizeof(geometry.id))) return false;
+  if (!ioRead(io, &geometry.loopStartTick, sizeof(geometry.loopStartTick))) return false;
+  if (!ioRead(io, &geometry.loopLengthTicks, sizeof(geometry.loopLengthTicks))) return false;
+  if (!ioRead(io, &geometry.startLoopTick, sizeof(geometry.startLoopTick))) return false;
+  if (!ioRead(io, &geometry.beforeLoopStartTick, sizeof(geometry.beforeLoopStartTick))) {
+    return false;
+  }
+  if (!ioRead(io, &geometry.beforeLoopLengthTicks, sizeof(geometry.beforeLoopLengthTicks))) {
+    return false;
+  }
+  if (!ioRead(io, &geometry.beforeStartLoopTick, sizeof(geometry.beforeStartLoopTick))) {
+    return false;
+  }
+  if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
+  if (stateRaw > static_cast<uint8_t>(LoopGeometryState::Disabled)) {
+    return false;
+  }
+  geometry.state = static_cast<LoopGeometryState>(stateRaw);
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM writePersistedGeometryTail(const StorageIo& io, const LoopGeometryVec& loopGeometries) {
+  const uint32_t marker = PERSISTED_GEOMETRY_TAIL_MARKER;
+  if (!ioWrite(io, &marker, sizeof(marker))) return false;
+  const uint32_t geometryCount = static_cast<uint32_t>(loopGeometries.size());
+  if (!ioWrite(io, &geometryCount, sizeof(geometryCount))) return false;
+  for (const LoopGeometry& geometry : loopGeometries) {
+    if (!writePersistedGeometryRecord(io, geometry)) return false;
+  }
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM probePersistedGeometryTail(const StorageIo& io, bool& present) {
+  present = false;
+  uint32_t marker = 0;
+  if (io.peek) {
+    if (!ioPeek(io, &marker, sizeof(marker))) {
+      return true;
+    }
+    if (marker != PERSISTED_GEOMETRY_TAIL_MARKER) {
+      return true;
+    }
+    if (!ioRead(io, &marker, sizeof(marker))) {
+      return false;
+    }
+    present = true;
+    return true;
+  }
+  if (!ioRead(io, &marker, sizeof(marker))) {
+    return true;
+  }
+  if (marker != PERSISTED_GEOMETRY_TAIL_MARKER) {
+    return false;
+  }
+  present = true;
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM readPersistedGeometryTail(const StorageIo& io, LoopGeometryVec& loopGeometries) {
+  loopGeometries.clear();
+  bool present = false;
+  if (!probePersistedGeometryTail(io, present)) {
+    return false;
+  }
+  if (!present) {
+    return true;
+  }
+  uint32_t geometryCount = 0;
+  if (!ioRead(io, &geometryCount, sizeof(geometryCount))) {
+    return false;
+  }
+  if (geometryCount > MAX_PERSISTED_LOOP_GEOMETRIES) {
+    return false;
+  }
+  loopGeometries.reserve(geometryCount);
+  for (uint32_t i = 0; i < geometryCount; ++i) {
+    LoopGeometry geometry{};
+    if (!readPersistedGeometryRecord(io, geometry)) {
+      return false;
+    }
+    loopGeometries.push_back(geometry);
+  }
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM skipPersistedGeometryTail(const StorageIo& io) {
+  bool present = false;
+  if (!probePersistedGeometryTail(io, present)) {
+    return false;
+  }
+  if (!present) {
+    return true;
+  }
+  uint32_t geometryCount = 0;
+  if (!ioRead(io, &geometryCount, sizeof(geometryCount))) {
+    return false;
+  }
+  if (geometryCount > MAX_PERSISTED_LOOP_GEOMETRIES) {
+    return false;
+  }
+  for (uint32_t i = 0; i < geometryCount; ++i) {
+    LoopGeometry geometry{};
+    if (!readPersistedGeometryRecord(io, geometry)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
+                             const EditPassVec& editPasses,
+                             const LoopGeometryVec& loopGeometries) {
   if (!ioWrite(io, &nextPassId, sizeof(nextPassId))) return false;
   const uint32_t marker = PERSISTED_EDITS_TAIL_MARKER;
   if (!ioWrite(io, &marker, sizeof(marker))) return false;
@@ -299,10 +435,10 @@ bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
   for (const EditPass& editPass : editPasses) {
     if (!writePersistedEditPass(io, editPass)) return false;
   }
-  return true;
+  return writePersistedGeometryTail(io, loopGeometries);
 }
 
-bool readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
+bool STORAGE_LOOP_IO_MEM readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
   if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) {
     return false;
   }
@@ -327,7 +463,7 @@ bool readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot
   if (snapshot.nextPassId == 0) {
     snapshot.nextPassId = 1;
   }
-  return true;
+  return readPersistedGeometryTail(io, snapshot.passes.loopGeometries);
 }
 
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot) {
@@ -371,7 +507,8 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
       return false;
     }
   }
-  return writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses);
+  return writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses,
+                                snapshot.passes.loopGeometries);
 }
 
 size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot) {
@@ -457,6 +594,7 @@ void STORAGE_LOOP_IO_MEM releasePersistedLoopSnapshotChunks(PersistedLoopSnapsho
   }
   snapshot.passes.overdubPasses.clear();
   snapshot.passes.editPasses.clear();
+  snapshot.passes.loopGeometries.clear();
   snapshot = PersistedLoopSnapshot{};
 }
 
@@ -483,6 +621,13 @@ StorageIo STORAGE_LOOP_IO_MEM bufferIoFromParseState(const uint8_t* data, size_t
                      }
                      std::memcpy(out, data + state.pos, n);
                      state.pos += n;
+                     return true;
+                   },
+                   [data, size, &state](void* out, size_t n) {
+                     if (state.pos + n > size) {
+                       return false;
+                     }
+                     std::memcpy(out, data + state.pos, n);
                      return true;
                    }};
 }
@@ -770,6 +915,58 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
     }
   }
 
+  if (!state.geometryHeaderDone) {
+    if (state.pos >= size) {
+      state.geometryCount = 0;
+      state.geometriesDone = 0;
+      state.geometryHeaderDone = true;
+    } else {
+      if (parseBudgetExhausted(deadlineUs)) {
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+      StorageIo io = bufferIoFromParseState(data, size, state);
+      uint32_t marker = 0;
+      if (!ioRead(io, &marker, sizeof(marker)) || marker != PERSISTED_GEOMETRY_TAIL_MARKER) {
+        return failAndReset();
+      }
+      uint32_t geometryCount = 0;
+      if (!ioRead(io, &geometryCount, sizeof(geometryCount))) {
+        return failAndReset();
+      }
+      if (geometryCount > MAX_PERSISTED_LOOP_GEOMETRIES) {
+        return failAndReset();
+      }
+      state.geometryCount = geometryCount;
+      state.geometriesDone = 0;
+      snapshot.passes.loopGeometries.clear();
+      snapshot.passes.loopGeometries.reserve(geometryCount);
+      state.geometryHeaderDone = true;
+      if (deadlineUs != 0 || maxGrains != 0) {
+        (void)grainDone();
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+      if (grainDone()) {
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+    }
+  }
+
+  while (state.geometriesDone < state.geometryCount) {
+    if (parseBudgetExhausted(deadlineUs)) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+    StorageIo io = bufferIoFromParseState(data, size, state);
+    LoopGeometry geometry{};
+    if (!readPersistedGeometryRecord(io, geometry)) {
+      return failAndReset();
+    }
+    snapshot.passes.loopGeometries.push_back(geometry);
+    ++state.geometriesDone;
+    if (grainDone()) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+  }
+
   if (snapshot.nextPassId == 0) {
     snapshot.nextPassId = 1;
   }
@@ -839,7 +1036,7 @@ bool skipPersistedEditsTailPayload(const StorageIo& io) {
   for (uint32_t i = 0; i < editCount; ++i) {
     if (!skipPersistedEditPassPayload(io)) return false;
   }
-  return true;
+  return skipPersistedGeometryTail(io);
 }
 
 bool skipCapturePassSlotFilePayload(const StorageIo& io, uint32_t loopLengthTicks) {
@@ -966,7 +1163,8 @@ bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
     }
   }
 
-  return writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses);
+  return writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses,
+                                loop.passes.loopGeometries);
 }
 
 size_t measureLoopSlotFileBytes(const Loop& loop) {

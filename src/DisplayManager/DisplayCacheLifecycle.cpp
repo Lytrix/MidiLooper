@@ -110,7 +110,18 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     liveMergePlaybackRevision_ = playbackRevision;
     liveMergeCaptureRevision_ = captureDisplayRevision;
-    if (!liveDisplayNotes.empty()) {
+    const uint32_t loopLength =
+        resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
+    if (!shouldAvoidFullVisualRebuild(loop, loopLength)) {
+        loop.rebuildVisualCacheFromPasses();
+        liveDisplayCacheCommittedNoteCount_ = loop.visualCache.notes.size();
+        liveDisplayCacheBaseNoteCount_ = loop.visualCache.notes.size();
+        liveMergePlaybackRevision_ = playbackRevision;
+        liveMergeCaptureRevision_ = captureDisplayRevision;
+        livePlaybackDisplaySlot_ = displaySlot;
+        livePlaybackDisplayTrack_ = trackIndex;
+        liveWindowVisualCacheRevision_ = loop.visualCache.revision;
+    } else if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
         // RC5c: adopt composed display notes without claiming the whole loop is built.
@@ -122,8 +133,6 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
     }
-    const uint32_t loopLength =
-        resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
     const uint32_t boundedThreshold =
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
     if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {

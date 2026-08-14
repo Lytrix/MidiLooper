@@ -2,17 +2,37 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-13 (NOTE_EDIT multi-overlap device PASS)
+Last updated: 2026-08-14 (DEC-035 Layer A archived)
 
 ---
 
 ## Now implementing
 
+### NOTE_EDIT on lengthened loop + overdub entry (shipped this session)
+
+**Fix 1:** `openNoteEditSession` stops active overdub (`stopOverdubbing` → PLAYING) before rematerialize so live capture is committed and editable. **RC2:** always `rebuildVisualCacheFromPasses` on NOTE_EDIT open; short-loop overdub stop also full-rebuilds visual cache (partial viewport adopt was stale vs `passes.materialize` — [`020910`](../../captures/session_20260814_020910.log), [`021959`](../../captures/session_20260814_021959.log)).
+
+**Fix 2:** Lengthened loop (4-bar loop, 2-bar content) — NOTE_EDIT select skips detailed-window note filter; bracket clamps to committed content span; select nav slots trimmed past content; nav length extends to painted note tail when overdub exceeds bar-aligned content. Fixture: [`015731`](../../captures/session_20260814_015731.log).
+
+**Fix 3 (Stage 2) device PASS [`024428`](../../captures/session_20260814_024428.log):** after reboot, selected slot 5 undoes immediately — `Undo (entries=17)` kind=4 `NoteEditPassClosed`, then `Undo (entries=16)` kind=1 `OverdubPassAdded`. `rebuildSlotFromLoopContent` keeps the tip on the selected slot so later LoadLoopJob restores do not steal it ([`024004`](../../captures/session_20260814_024004.log) was the FAIL).
+
+### Overdub lost on NOTE_EDIT exit — device PASS
+
+**Device PASS [`025322`](../../captures/session_20260814_025322.log):** overdub → NOTE_EDIT (`visual_notes=102`, `session_events=234`) → pitch/range on note 194 → exit `NoteEditPass replaced … rows=1 saved=1` (not 19 Deletes). Commit flats stay 234. After later overdub, STOPPED `DISP` **103** — not the boot record-only **91**. Contrast [`014553`](../../captures/session_20260814_014553.log) `rows=19` / `DISP` 48→32.
+
+### OLED first-frame mismatch — RC3 device PASS
+
+**RC3 PASS [`014553`](../../captures/session_20260814_014553.log)** — dcache flush before SPI + STOPPED boot restore paints. Plan: [`oled_dma_partial_frame_bugfix.md`](../Plans/oled_dma_partial_frame_bugfix.md).
+
+### Loop content-only history (DEC-035 Layer A) — archived
+
+**Shipped + archived 2026-08-14.** Stage 3 + follow-up device PASS [`030147`](../../captures/session_20260814_030147.log) / [`032227`](../../captures/session_20260814_032227.log). OpenSpec `openspec/changes/archive/2026-08-14-loop-content-history-persistence/`; normative `openspec/specs/loop-content-history/`. Do not start Stage 3b without new DEC.
+
+Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) stall closed.
+
 ### Overdub-stop MIDI dump during PLAYING
 
-**Now:** Stage 1 LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log) (`load_frame` 16–32 ms after overdub stop). Dump **FAIL** remains: stop 4 BPM 274 then 5.59 s CAP silence, `msi` 5.62 s; the owner is now identified as the deferred `LoopUndoHistory` runtime bundle. Added `PERS,bundle` summary telemetry; re-measure before changing scheduling. Plan: [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md). Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) (R1B design gate before payload firmware).
-
-Do not patch RC-J, start interval reservation, or filter MIDI catch-up. Keep [`TrackDeferredMaintenance.cpp`](../../src/Track/TrackDeferredMaintenance.cpp) out of the dump work. Persistence payload narrowing needs the wire-format / DEC-024 design gate before firmware.
+LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log). `UndoStacks` stall closed Stage 3 [`030147`](../../captures/session_20260814_030147.log). SlotMeta bundle on overdub stop closed follow-up [`032227`](../../captures/session_20260814_032227.log) — `LoopPersist` only ~139 ms. Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Do not patch RC-J.
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing telemetry
 

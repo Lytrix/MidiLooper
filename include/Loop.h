@@ -7,6 +7,7 @@
  *
  * committed passes MIDI lives in passes (recordPass, overdubPasses). Note edits are stored
  * in passes.editPasses and materialized via LoopPasses::materialize for playback/display.
+ * Committed length/start revisions live in passes.loopGeometries.
  */
 #ifndef LOOP_H
 #define LOOP_H
@@ -95,6 +96,8 @@ struct Loop {
 
   bool hasCommittedPasses() const;
   uint32_t findLastCommittedEventTick() const;
+  /// Bar-aligned span of committed pass MIDI (0 when no committed passes).
+  uint32_t committedBarAlignedContentLengthTicks() const;
   /// When committed passes MIDI exists, never return a length below content-derived bars.
   uint32_t reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const;
 
@@ -130,6 +133,8 @@ struct Loop {
 
   EditPassId saveNoteEditPass(uint8_t editPassIndex, EditPass row,
                               EditPassType passType = EditPassType::Note);
+  PassId saveLoopGeometry(LoopGeometry row);
+  bool setLoopGeometryState(PassId id, LoopGeometryState state);
   EditPassIdList replaceNoteEditPass(uint8_t editPassIndex,
                                      const EditPassIdList& staleEditPassIds,
                                      EditPassVec rows);

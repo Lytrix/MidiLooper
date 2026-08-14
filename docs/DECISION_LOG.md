@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-035](#dec-035-loop-persists-content-only) | 2026-08-14 | Loop persists content only; undo/redo is derived and not persisted | Accepted |
 | [DEC-034](#dec-034-overlap-shorten-seals-at-the-user-triggered-commit) | 2026-08-13 | Overlap shorten seals at the user-triggered commit; closure defers leave-restore only | Accepted |
 | [DEC-033](#dec-033-overdub-overlap-ignores-per-note-channel) | 2026-08-12 | Overdub overlap uses loop-scoped notes; no per-note channel filter | Accepted |
 | [DEC-032](#dec-032-overdub-editpass-unification-reassessment) | 2026-08-12 | G2: unify resolution; dual storage transitional | Accepted |
@@ -49,7 +50,33 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-035 -->
+<!-- Append new entries below (newest first). Next ID: DEC-036 -->
+
+## DEC-035 — Loop persists content only
+
+**Date:** 2026-08-14  
+**Status:** Accepted  
+**Owner:** `StorageManager` persist; `Loop` content records; `TrackUndo` in-session undo until a later DEC  
+**Plan:** [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md)  
+**OpenSpec:** `openspec/changes/loop-content-history-persistence/` (Layer A)  
+**GitHub:** Task [#33](https://github.com/Lytrix/MidiLooper/issues/33); Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32)  
+**Does not supersede:** [DEC-024](#dec-024-loop-owned-undo-ownership-direction) Phase 2 (move `GlobalUndoStack` Track → Loop). Stage 3b will be a new DEC that **replaces** that stack with derived Loop editing state.
+
+**Context:** 64-bar overdub stop walks `DeferredSaveStage::UndoStacks` for ~1300 slices (`LoopUndoHistory` 4–16 s; `SlotMeta` the same walk). The loop file already stores the content those entries describe. A scoped `undo_TT_SS.bin` was withdrawn — it still serializes the duplicate payload.
+
+**Decision:**
+
+1. The Loop persists **content records only**. Undo/redo is runtime/editor behavior derived from ordered content plus grouping rules. Do not persist an undo stack, history cursor, history transition, or undo/redo record.
+2. **Layer A (now):** prove content is sufficient (Stage 1); reconstruct load-time editing state while `GlobalUndoStack` remains in-session authority (Stage 2); then delete `UndoStacks` / `admitLoopUndoHistory` (Stage 3). Stage 3 is gated on Stage 2: reboot must reconstruct equivalent undo depth (`U:nn`) from content.
+3. A persisted content prefix must be sufficient to define the effective Loop. If Stage 1 finds a gap, add immutable **content metadata** on the content record. Do not restore persisted `stateRaw` as hidden undo persist, and do not assume `active = records <= tip` until the audit survives grouping, companions, geometry, and `dropRedoBranch`.
+4. Persisted content and runtime-resident content are different. Chunk-pool occupancy bounds how much history stays in RAM.
+5. **Recorded, not authorized now:** publication uses `isRangeAvailable(PlaybackWindow)`, not `COMMITTED` (Layer D; conflicts with `lazy-slot-hydration` — reassessment before that firmware). Clear-as-unlink is Set last-state (`lastUnlinkedSlotLink`) (Layer B). Journal is append-structured with redo-tail reclamation (Layer B). Do not use **Source** as a domain noun.
+
+**Consequences:** First persistence-level lever is deleting the `UndoStacks` stage. New floor is remaining `LoopPersist`, not cheap persist. In-session undo is unchanged until Stage 3b. DEC-024 Phase 1 filter stays until then.
+
+**Validation:** Native Stage 1 audit + Stage 2 load-time editing-state fixtures. Stage 3 device: no `PERS,bundle` at UndoStacks scale; post-stop MIDI gap bounded by remaining `LoopPersist`; reboot `U:nn` matches pre-reboot tip depth.
+
+---
 
 ## DEC-034 — Overlap shorten seals at the user-triggered commit
 

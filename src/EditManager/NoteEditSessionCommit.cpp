@@ -177,6 +177,7 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
     EditPassVec replacementRows =
         buildSessionStoreEditPasses(baselineStoreEvents, editSession.store.readEvents(),
                                     track.getMidiChannel(), noteEditLoopLengthTicks(track));
+    dropUnrequestedSessionStoreDeletes(replacementRows, editSession.noteEditCurrentState);
     if (replacementRows.empty()) {
         return 0;
     }
@@ -222,6 +223,7 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
         replacementRows = buildSessionStoreEditPasses(
             baselineStoreEvents, editSession.store.readEvents(), track.getMidiChannel(),
             noteEditLoopLengthTicks(track));
+        dropUnrequestedSessionStoreDeletes(replacementRows, editSession.noteEditCurrentState);
         replacementIds = loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds,
                                                   std::move(replacementRows));
     }
