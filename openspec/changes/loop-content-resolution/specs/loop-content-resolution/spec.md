@@ -54,6 +54,14 @@ Walking `for each pass if intersects(window)` SHALL fail this requirement even w
 - **THEN** replay starts from a checkpoint at most `checkpointIntervalTicks` before the target
 - **AND** the call does not scan events from tick 0
 
+#### Scenario: Warm destination loop switch does not rebuild
+
+- **WHEN** destination-loop checkpoints are already built
+- **AND** `resolveState` is requested at the live playhead after leaving another loop
+- **THEN** replay starts from a checkpoint at most `checkpointIntervalTicks` before the target
+- **AND** destination checkpoint snapshots are unchanged
+- **AND** the call does not scan events from tick 0
+
 ### Requirement: Physical chunks are not resolution boundaries
 
 `LoopEventStore` chunks SHALL remain a storage packing detail. Resolution MUST operate on ticks, identities, and events. A note, edit, or checkpoint MAY span chunk boundaries.

@@ -30,6 +30,7 @@
 - [x] 4.3 In-RAM checkpoints at `checkpointIntervalTicks`; measure the interval on the fixture (do not persist)
 - [x] 4.4 `resolveState` at a high tick starts from a checkpoint, never from tick 0
 - [x] 4.5 Note spanning two chunks still resolves (chunks are not boundaries)
+- [x] 4.6 Loop switch: warm destination `resolveState` at the live playhead; replay ≤ `checkpointIntervalTicks`; no checkpoint rebuild; no tick-0 scan
 
 ## 5. Stage 9 — Device gate (after native 2–4)
 

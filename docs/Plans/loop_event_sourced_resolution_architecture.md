@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–7 PASS; production MIDI/display stay on materialize until three gates pass  
+**Status:** Active — native Stages 0–8 PASS; production MIDI/display stay on materialize until three gates pass  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -242,7 +242,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 5 | MOVE | `EditPropertyType::Tick` / `Pitch` |
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
-| 8 | Loop switch at a high tick — bounded replay distance, never from 0 (native proof is Stage 7 high-tick `resolveState`) | `resolveState` is required here |
+| 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
 | 9 | Device three-part gate on `035414` class | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
