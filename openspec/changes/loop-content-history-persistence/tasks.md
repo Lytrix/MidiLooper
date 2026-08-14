@@ -30,7 +30,7 @@
 
 ## 4. Stage 3 — delete persisted UndoStacks
 
-- [ ] 4.1 Confirm Stage 2 reboot `U:nn` matches tip depth before any persist deletion
+- [x] 4.1 Confirm Stage 2 reboot `U:nn` matches tip depth before any persist deletion (`024428` undo 17 then 16; `025322` exit bake rows=1)
 - [ ] 4.2 Remove `DeferredSaveStage::UndoStacks` / `stepDeferredSaveJobUndoStacks`
 - [ ] 4.3 Remove `LoopUndoHistory` from `isRuntimeBundleWorkType` and `admitLoopUndoHistory` call sites
 - [ ] 4.4 Keep legacy bundle-undo read only if existing cards require it
