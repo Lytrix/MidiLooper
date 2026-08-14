@@ -155,11 +155,13 @@ void Loop::rebuildEffectiveEventStore() const {
 }
 
 void Loop::ensureEffectiveEventStoreCurrent() const {
-  const bool storeEmptyMaterialized =
-      hasCommittedPasses() && passesMaterializedStore_.readStore().empty() &&
-      passes.editPasses.empty();
-  if (!passesMaterializedStoreStale_ && !storeEmptyMaterialized) {
-    return;
+  if (!passesMaterializedStoreStale_) {
+    if (!hasCommittedPasses()) {
+      return;
+    }
+    if (!passesMaterializedStore_.readEvents().empty()) {
+      return;
+    }
   }
   rebuildEffectiveEventStore();
 }
