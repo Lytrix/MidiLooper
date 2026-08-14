@@ -17,7 +17,7 @@ Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b sh
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Stage 1 native `resolveState` / `resolveWindow` against the Stage 0 canonical fixture (`test/test_loop_content_resolution/`). Production consumers stay on today’s materialize / 3b visual-cache overdub copy.
+**Now:** Stages 1–5 native `resolveState` / `resolveWindow` / `resolveNotes` PASS against the Stage 0 fixture (`test/test_loop_content_resolution/`, 14 tests). Next: Stage 6 tick index so candidate find does not walk pass lists. Production consumers stay on today’s materialize / 3b visual-cache overdub copy.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

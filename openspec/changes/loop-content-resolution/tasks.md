@@ -13,15 +13,15 @@
 
 ## 3. Stages 1–5 — Native resolveWindow / resolveState
 
-- [ ] 3.1 Module `LoopContentResolution` with `resolveState` / `resolveWindow` primary; `resolveNotes` derived; pin `RawMidiEvent` / `EditAction` / `ResolvedEvent` (alias/`MidiEvent` shape, no fourth synonym)
-- [ ] 3.2 Stage 1: one pass NOTE_ON/OFF → window + state; notes as projection
-- [ ] 3.3 Stage 2: two overlapping same-pitch passes (DEC-031/032 layer semantics)
-- [ ] 3.4 Stage 3: DELETE via EditAction
-- [ ] 3.5 Stage 4: SHORTEN / EXTEND
-- [ ] 3.6 Stage 5: MOVE (tick / pitch)
-- [ ] 3.7 Disabled pass excluded from active set; content unchanged
-- [ ] 3.8 Determinism: cold vs warm cache identical `ResolvedEvent` sequences
-- [ ] 3.9 `pio test -e native` including this suite
+- [x] 3.1 Module `LoopContentResolution` with `resolveState` / `resolveWindow` primary; `resolveNotes` derived; pin `RawMidiEvent` / `EditAction` / `ResolvedEvent` (alias/`MidiEvent` shape, no fourth synonym)
+- [x] 3.2 Stage 1: one pass NOTE_ON/OFF → window + state; notes as projection
+- [x] 3.3 Stage 2: two overlapping same-pitch passes (DEC-031/032 layer semantics)
+- [x] 3.4 Stage 3: DELETE via EditAction
+- [x] 3.5 Stage 4: SHORTEN / EXTEND
+- [x] 3.6 Stage 5: MOVE (tick / pitch)
+- [x] 3.7 Disabled pass excluded from active set; content unchanged
+- [x] 3.8 Determinism: cold vs warm cache identical `ResolvedEvent` sequences
+- [x] 3.9 `pio test -e native` including this suite
 
 ## 4. Stages 6–8 — Index and checkpoints
 
