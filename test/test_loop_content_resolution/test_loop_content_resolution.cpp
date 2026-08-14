@@ -5,6 +5,7 @@
 
 #include <unity.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 
@@ -17,10 +18,13 @@
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
+#include "../../src/CommittedEventRange.cpp"
 
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "CanonicalResolutionFixture.h"
+#include "LoopContentResolution.h"
+#include "LoopContentResolutionImpl.h"
 #include "Utils/DisplayWindowUtils.h"
 
 namespace {
@@ -85,6 +89,84 @@ EditPass makeMove(PassId id, NoteId target, uint32_t start, uint32_t end, uint8_
   return row;
 }
 
+bool oracleEventLess(const MidiEvent& a, const MidiEvent& b) {
+  if (a.tick != b.tick) {
+    return a.tick < b.tick;
+  }
+  if (a.type != b.type) {
+    return static_cast<uint8_t>(a.type) < static_cast<uint8_t>(b.type);
+  }
+  if (a.channel != b.channel) {
+    return a.channel < b.channel;
+  }
+  if (a.data.noteData.note != b.data.noteData.note) {
+    return a.data.noteData.note < b.data.noteData.note;
+  }
+  return a.noteId < b.noteId;
+}
+
+void sortOracleEvents(SessionMidiEventVec& events) {
+  std::sort(events.begin(), events.end(), oracleEventLess);
+}
+
+void assertResolvedEventsMatch(const SessionMidiEventVec& expected,
+                               const SessionMidiEventVec& actual) {
+  TEST_ASSERT_EQUAL(expected.size(), actual.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expected[i].tick, actual[i].tick);
+    TEST_ASSERT_EQUAL(expected[i].type, actual[i].type);
+    TEST_ASSERT_EQUAL(expected[i].channel, actual[i].channel);
+    TEST_ASSERT_EQUAL(expected[i].data.noteData.note, actual[i].data.noteData.note);
+    TEST_ASSERT_EQUAL(expected[i].noteId, actual[i].noteId);
+  }
+}
+
+void materializeSorted(const LoopPasses& passes, uint32_t loopLengthTicks,
+                       SessionMidiEventVec& out) {
+  passes.materializeToEventVector(out, loopLengthTicks);
+  sortOracleEvents(out);
+}
+
+bool hasNoteIdOn(const SessionMidiEventVec& events, NoteId id) {
+  for (const MidiEvent& event : events) {
+    if (event.isNoteOn() && event.noteId == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const NoteUtils::DisplayNote* findNote(const NoteUtils::DisplayNoteVec& notes, NoteId id) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == id) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+LoopPasses recordOnly(const CanonicalResolutionFixture& full) {
+  LoopPasses onePass;
+  onePass.recordPass = full.passes.recordPass;
+  return onePass;
+}
+
+LoopPasses recordPlusOverlap(const CanonicalResolutionFixture& full) {
+  LoopPasses twoPass = recordOnly(full);
+  TEST_ASSERT_EQUAL(kCanonicalOverdubPasses, full.passes.overdubPasses.size());
+  twoPass.overdubPasses.push_back(full.passes.overdubPasses[5]);
+  return twoPass;
+}
+
+void printCounters(const char* label, const ResolutionCostCounters& counters) {
+  std::printf(
+      "%s history_events=%u history_passes=%u window_events=%u candidates=%u resolve_ops=%u "
+      "elapsed_us=%llu\n",
+      label, counters.eventsInHistory, counters.passesInHistory, counters.eventsInQueryWindow,
+      counters.candidateEvents, counters.resolutionOperations,
+      static_cast<unsigned long long>(counters.elapsedMicros));
+}
+
 }  // namespace
 
 CanonicalResolutionFixture buildCanonicalResolutionFixture() {
@@ -119,6 +201,7 @@ CanonicalResolutionFixture buildCanonicalResolutionFixture() {
   fixture.deletedNoteId = kInvalidNoteId;
   fixture.shortenedNoteId = kInvalidNoteId;
   fixture.movedNoteId = kInvalidNoteId;
+  uint32_t shortenedOnTick = 0;
 
   for (uint32_t i = 0; i < kCanonicalOverdubPasses; ++i) {
     const NoteId noteId = nextId++;
@@ -138,6 +221,7 @@ CanonicalResolutionFixture buildCanonicalResolutionFixture() {
     }
     if (i == 11u) {
       fixture.shortenedNoteId = noteId;
+      shortenedOnTick = onTick;
     }
     if (i == 12u) {
       fixture.movedNoteId = noteId;
@@ -153,7 +237,7 @@ CanonicalResolutionFixture buildCanonicalResolutionFixture() {
 
   fixture.passes.editPasses.push_back(makeDelete(nextPassId++, fixture.deletedNoteId));
   fixture.passes.editPasses.push_back(
-      makeLength(nextPassId++, fixture.shortenedNoteId, 24, 48));
+      makeLength(nextPassId++, fixture.shortenedNoteId, shortenedOnTick, shortenedOnTick + 24u));
   fixture.passes.editPasses.push_back(
       makeMove(nextPassId++, fixture.movedNoteId, 400, 496, 70));
 
@@ -260,10 +344,269 @@ void test_canonical_fixture_wrap_and_edits_in_oracle() {
   TEST_ASSERT_TRUE(sawMovedOn);
 }
 
+void test_stage1_one_pass_window_matches_materialize() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture full = buildCanonicalResolutionFixture();
+  const LoopPasses onePass = recordOnly(full);
+
+  SessionMidiEventVec expected;
+  materializeSorted(onePass, full.loopLengthTicks, expected);
+
+  SessionMidiEventVec actual;
+  ResolutionCostCounters counters;
+  LoopContentResolution::resolveWindow(onePass, full.loopLengthTicks, 0, full.loopLengthTicks,
+                                       actual, &counters);
+  printCounters("stage1_window", counters);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_GREATER_THAN(0u, counters.resolutionOperations);
+}
+
+void test_stage1_resolve_state_during_host_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture full = buildCanonicalResolutionFixture();
+  const LoopPasses onePass = recordOnly(full);
+
+  SoundingNoteVec sounding;
+  LoopContentResolution::resolveState(onePass, full.loopLengthTicks, 100, sounding);
+  bool foundHost = false;
+  for (const SoundingNote& note : sounding) {
+    if (note.noteId == full.overlapHostNoteId && note.pitch == 60) {
+      foundHost = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundHost);
+
+  SoundingNoteVec after;
+  LoopContentResolution::resolveState(onePass, full.loopLengthTicks, 201, after);
+  for (const SoundingNote& note : after) {
+    TEST_ASSERT_FALSE(note.noteId == full.overlapHostNoteId);
+  }
+}
+
+void test_stage1_resolve_state_wrap_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture full = buildCanonicalResolutionFixture();
+  const LoopPasses onePass = recordOnly(full);
+
+  auto hasWrap = [&](uint32_t tick) {
+    SoundingNoteVec sounding;
+    LoopContentResolution::resolveState(onePass, full.loopLengthTicks, tick, sounding);
+    for (const SoundingNote& note : sounding) {
+      if (note.noteId == full.wrapNoteId) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  TEST_ASSERT_TRUE(hasWrap(10));
+  TEST_ASSERT_TRUE(hasWrap(full.loopLengthTicks - 24));
+  TEST_ASSERT_FALSE(hasWrap(97));
+}
+
+void test_stage1_resolve_notes_is_projection_of_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture full = buildCanonicalResolutionFixture();
+  const LoopPasses onePass = recordOnly(full);
+
+  SessionMidiEventVec materialized;
+  onePass.materializeToEventVector(materialized, full.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec fromMaterialize =
+      NoteUtils::reconstructDisplayNotes(materialized, full.loopLengthTicks, false);
+  NoteUtils::DisplayNoteVec fromResolve;
+  LoopContentResolution::resolveNotes(onePass, full.loopLengthTicks, 0, full.loopLengthTicks,
+                                      fromResolve);
+  TEST_ASSERT_EQUAL(fromMaterialize.size(), fromResolve.size());
+}
+
+void test_stage2_overlapping_same_pitch_matches_materialize() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture full = buildCanonicalResolutionFixture();
+  const LoopPasses twoPass = recordPlusOverlap(full);
+
+  SessionMidiEventVec expected;
+  materializeSorted(twoPass, full.loopLengthTicks, expected);
+  SessionMidiEventVec actual;
+  ResolutionCostCounters counters;
+  LoopContentResolution::resolveWindow(twoPass, full.loopLengthTicks, 0, full.loopLengthTicks,
+                                       actual, &counters);
+  printCounters("stage2_overlap_window", counters);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, full.overlapHostNoteId));
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, full.overlapIncomingNoteId));
+
+  // DEC-031/032 overlap is a committed EditPass delta, not a query-time re-resolve.
+  // This fixture stores both raw spans; sounding state matches materialize (both On).
+  SoundingNoteVec atOverlap;
+  LoopContentResolution::resolveState(twoPass, full.loopLengthTicks, 100, atOverlap);
+  bool host = false;
+  bool incoming = false;
+  for (const SoundingNote& note : atOverlap) {
+    if (note.noteId == full.overlapHostNoteId) {
+      host = true;
+    }
+    if (note.noteId == full.overlapIncomingNoteId) {
+      incoming = true;
+    }
+  }
+  TEST_ASSERT_TRUE(host);
+  TEST_ASSERT_TRUE(incoming);
+}
+
+void test_stage3_delete_matches_materialize() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+
+  SessionMidiEventVec expected;
+  materializeSorted(fixture.passes, fixture.loopLengthTicks, expected);
+  SessionMidiEventVec actual;
+  ResolutionCostCounters counters;
+  LoopContentResolution::resolveWindow(fixture.passes, fixture.loopLengthTicks, 0,
+                                       fixture.loopLengthTicks, actual, &counters);
+  printCounters("stage3_delete_window", counters);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_FALSE(hasNoteIdOn(actual, fixture.deletedNoteId));
+}
+
+void test_stage4_shorten_matches_reconstruct() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+
+  SessionMidiEventVec expectedEvents;
+  fixture.passes.materializeToEventVector(expectedEvents, fixture.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec expectedNotes =
+      NoteUtils::reconstructDisplayNotes(expectedEvents, fixture.loopLengthTicks, false);
+  NoteUtils::DisplayNoteVec actualNotes;
+  ResolutionCostCounters counters;
+  LoopContentResolution::resolveNotes(fixture.passes, fixture.loopLengthTicks, 0,
+                                      fixture.loopLengthTicks, actualNotes, &counters);
+  printCounters("stage4_shorten_notes", counters);
+
+  const NoteUtils::DisplayNote* expected = findNote(expectedNotes, fixture.shortenedNoteId);
+  const NoteUtils::DisplayNote* actual = findNote(actualNotes, fixture.shortenedNoteId);
+  TEST_ASSERT_NOT_NULL(expected);
+  TEST_ASSERT_NOT_NULL(actual);
+  TEST_ASSERT_EQUAL_UINT32(expected->startTick, actual->startTick);
+  TEST_ASSERT_EQUAL_UINT32(expected->endTick, actual->endTick);
+  TEST_ASSERT_EQUAL(expected->note, actual->note);
+  TEST_ASSERT_EQUAL_UINT32(24u, actual->endTick - actual->startTick);
+}
+
+void test_stage4_extend_matches_reconstruct() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  fixture.passes.editPasses.push_back(
+      makeLength(901, fixture.overlapHostNoteId, 0, 300));
+
+  SessionMidiEventVec expectedEvents;
+  fixture.passes.materializeToEventVector(expectedEvents, fixture.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec expectedNotes =
+      NoteUtils::reconstructDisplayNotes(expectedEvents, fixture.loopLengthTicks, false);
+  NoteUtils::DisplayNoteVec actualNotes;
+  LoopContentResolution::resolveNotes(fixture.passes, fixture.loopLengthTicks, 0,
+                                      fixture.loopLengthTicks, actualNotes);
+
+  const NoteUtils::DisplayNote* expected = findNote(expectedNotes, fixture.overlapHostNoteId);
+  const NoteUtils::DisplayNote* actual = findNote(actualNotes, fixture.overlapHostNoteId);
+  TEST_ASSERT_NOT_NULL(expected);
+  TEST_ASSERT_NOT_NULL(actual);
+  TEST_ASSERT_EQUAL_UINT32(expected->startTick, actual->startTick);
+  TEST_ASSERT_EQUAL_UINT32(expected->endTick, actual->endTick);
+  TEST_ASSERT_EQUAL_UINT32(300u, actual->endTick);
+}
+
+void test_stage5_move_matches_reconstruct() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  // NoteRange apply moves ticks only. Pitch MOVE is EditPropertyType::Pitch (EditApply).
+  EditPass pitchRow{};
+  pitchRow.id = 900;
+  pitchRow.passType = EditPassType::Note;
+  pitchRow.actionType = EditActionType::Update;
+  pitchRow.propertyType = EditPropertyType::Pitch;
+  pitchRow.state = EditPassState::Active;
+  pitchRow.targetNoteId = fixture.movedNoteId;
+  pitchRow.pitch = 70;
+  fixture.passes.editPasses.push_back(pitchRow);
+
+  SessionMidiEventVec expectedEvents;
+  fixture.passes.materializeToEventVector(expectedEvents, fixture.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec expectedNotes =
+      NoteUtils::reconstructDisplayNotes(expectedEvents, fixture.loopLengthTicks, false);
+  NoteUtils::DisplayNoteVec actualNotes;
+  ResolutionCostCounters counters;
+  LoopContentResolution::resolveNotes(fixture.passes, fixture.loopLengthTicks, 0,
+                                      fixture.loopLengthTicks, actualNotes, &counters);
+  printCounters("stage5_move_notes", counters);
+
+  const NoteUtils::DisplayNote* expected = findNote(expectedNotes, fixture.movedNoteId);
+  const NoteUtils::DisplayNote* actual = findNote(actualNotes, fixture.movedNoteId);
+  TEST_ASSERT_NOT_NULL(expected);
+  TEST_ASSERT_NOT_NULL(actual);
+  TEST_ASSERT_EQUAL_UINT32(expected->startTick, actual->startTick);
+  TEST_ASSERT_EQUAL_UINT32(expected->endTick, actual->endTick);
+  TEST_ASSERT_EQUAL(expected->note, actual->note);
+  TEST_ASSERT_EQUAL(70, actual->note);
+  TEST_ASSERT_EQUAL_UINT32(400u, actual->startTick);
+}
+
+void test_stage_disabled_pass_excluded() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  TEST_ASSERT_FALSE(fixture.passes.overdubPasses.empty());
+  fixture.passes.overdubPasses.back().state = CapturePassState::Disabled;
+
+  SessionMidiEventVec expected;
+  materializeSorted(fixture.passes, fixture.loopLengthTicks, expected);
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(fixture.passes, fixture.loopLengthTicks, 0,
+                                       fixture.loopLengthTicks, actual);
+  assertResolvedEventsMatch(expected, actual);
+}
+
+void test_stage_determinism_cold_warm() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+
+  SessionMidiEventVec first;
+  SessionMidiEventVec second;
+  LoopContentResolution::resolveWindow(fixture.passes, fixture.loopLengthTicks, 0,
+                                       fixture.loopLengthTicks, first);
+  LoopContentResolution::resolveWindow(fixture.passes, fixture.loopLengthTicks,
+                                       16u * Config::TICKS_PER_BAR, 16u * Config::TICKS_PER_BAR,
+                                       second);
+  second.clear();
+  LoopContentResolution::resolveWindow(fixture.passes, fixture.loopLengthTicks, 0,
+                                       fixture.loopLengthTicks, second);
+  assertResolvedEventsMatch(first, second);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
   RUN_TEST(test_canonical_fixture_oracle_materialize);
   RUN_TEST(test_canonical_fixture_wrap_and_edits_in_oracle);
+  RUN_TEST(test_stage1_one_pass_window_matches_materialize);
+  RUN_TEST(test_stage1_resolve_state_during_host_note);
+  RUN_TEST(test_stage1_resolve_state_wrap_note);
+  RUN_TEST(test_stage1_resolve_notes_is_projection_of_window);
+  RUN_TEST(test_stage2_overlapping_same_pitch_matches_materialize);
+  RUN_TEST(test_stage3_delete_matches_materialize);
+  RUN_TEST(test_stage4_shorten_matches_reconstruct);
+  RUN_TEST(test_stage4_extend_matches_reconstruct);
+  RUN_TEST(test_stage5_move_matches_reconstruct);
+  RUN_TEST(test_stage_disabled_pass_excluded);
+  RUN_TEST(test_stage_determinism_cold_warm);
   return UNITY_END();
 }

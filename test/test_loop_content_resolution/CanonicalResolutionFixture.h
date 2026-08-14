@@ -9,17 +9,9 @@
 
 #include "EditPass.h"
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "LoopPasses.h"
 #include "MidiEvent.h"
-
-struct ResolutionCostCounters {
-  uint32_t eventsInHistory = 0;
-  uint32_t passesInHistory = 0;
-  uint32_t eventsInQueryWindow = 0;
-  uint32_t candidateEvents = 0;
-  uint32_t resolutionOperations = 0;
-  uint64_t elapsedMicros = 0;
-};
 
 struct CanonicalResolutionFixture {
   LoopPasses passes;
