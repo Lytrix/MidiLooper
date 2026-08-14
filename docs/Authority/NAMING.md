@@ -40,7 +40,9 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Pending** | Queued intent not yet committed — `hasPendingCapturePass`, `pendingOutboundTrigger_` | Idle-deferred maintenance work |
 | **Scheduled** | Work placed on an explicit schedule or queue for later execution — `PersistenceWorkQueue` | Synchronous resolution; generic “later” |
 | **Queue** | Actual pending work held for asynchronous processing | Synchronous multi-step algorithms |
-| **Resolution** | Deterministic synchronous conflict solving — geometry constraint analysis → actions | Runtime scheduling; pipeline or queue metaphors |
+| **Resolution** | Deterministic synchronous conflict solving | Runtime scheduling; pipeline or queue metaphors; a generic `Resolver` type |
+| **NoteGeometryResolver** | Live NOTE_EDIT overlap Resolution (geometry → actions) | Loop history / playback effective-state queries |
+| **LoopContentResolution** | Query-time effective musical state from active pass set + edit history (`resolveState`, `resolveWindow`; `resolveNotes` is a derived consumer) | `LoopPasses::materialize`; `NoteGeometryResolver`; a generic `Resolver` / `LoopContentResolver` |
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
 | **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress (`handleMidiInput`) | Control-surface motor path (Outbound); **MIDI service** (not a domain noun or owner) |
@@ -192,6 +194,20 @@ A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEd
 
 **Do not** use **Source** as a domain noun in docs, comments, or types (`ClockSource` already exists). Say **Loop content**.
 
+### Loop content resolution (DEC-037)
+
+[DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype): parallel prototype. `LoopPasses` stays content authority. Do not name the owner `Resolver`.
+
+| Term | Use | Not this |
+|------|-----|----------|
+| **LoopContentResolution** | Owner of `resolveState` / `resolveWindow` / `resolveNotes` | `NoteGeometryResolver`; `LoopContentResolver` |
+| **RawMidiEvent** | Authoritative recorded MIDI in a pass (`MidiEvent` shape) | Edit rows; resolved output |
+| **EditAction** | `EditPass` row (Create / Delete / ChangeLength / ChangeTick / ChangePitch / …) | Raw MIDI; resolved MIDI |
+| **ResolvedEvent** | Effective MIDI after layer semantics | Raw pass events; `DisplayNote` |
+| **checkpointIntervalTicks** | Measured bound on `resolveState` replay distance | PSRAM chunk size; bar size |
+
+Committed pass **content** is immutable. Active/Disabled is mutable history state. Physical chunks (`LoopEventStore`) are packing, not resolution boundaries.
+
 **Do not** persist undo/redo records, a history cursor, or editor history. NOTE_EDIT `E:` session undo is pre-commit and outside this persist model.
 
 ### Types and ids
@@ -234,6 +250,8 @@ A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEd
 |------|-----|-------|
 | Active capture pass replay | **merge** (`mergeActiveCapturePasses`, `mergeMaterializedPassesWithCapture`) | flatten |
 | Full pass replay to MIDI vector | **materialize** (`materializeToEventVector`) | flat / flatten |
+| Query-time effective MIDI/state | **resolve** (`LoopContentResolution::resolveState`, `resolveWindow`) | materialize as the normal-path owner (DEC-037 prototype until three gates) |
+| Note projection of a resolved window | **resolveNotes** (derived consumer) | treating Notes as playback authority |
 | Internal heap (malloc/new) | **internal heap** (`InternalHeapFirstAllocator`, `getInternalHeapFreeBytes`) | RAM2 in new identifiers |
 | External memory pool (EXTMEM/PSRAM) | **external memory pool** (`ExternalMemoryFirstAllocator`, `isInExternalMemoryPool`) | PSRAM in new identifiers |
 
@@ -414,6 +432,7 @@ Use during code review, OpenSpec implementation review, and before merge:
 - [ ] Public APIs follow established verb conventions
 - [ ] This document updated if a new architectural concept is approved
 - [ ] Pipeline / Queue / Flow not used for synchronous deterministic algorithms (use **Resolution**)
+- [ ] Loop history queries use `LoopContentResolution`, not `NoteGeometryResolver` or a generic `Resolver`
 - [ ] New top-level domain nouns have user approval and `DEC-###` entry
 
 Referenced from [docs/Agents/reviewer.md](../Agents/reviewer.md).

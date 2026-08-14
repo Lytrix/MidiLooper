@@ -1,6 +1,6 @@
 # Layer D — overdub source-view delay (large loops)
 
-**Status:** Active — OpenSpec D1/D2 (`loop-effective-event-source`)  
+**Status:** Visual-cache overdub source device **PASS** — overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2.2 ms; undo [`112909`](../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`. **Successor:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md) (DEC-037) — do not optimize `materializeToEventVector` again.  
 **Date:** 2026-08-14  
 **Decision:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub)  
 **OpenSpec:** [`openspec/changes/loop-effective-event-source/`](../../openspec/changes/loop-effective-event-source/)  
@@ -105,6 +105,8 @@ effectiveEvents().range(window)   // not .all() as the only contract
 
 Reuse: evolve `passesMaterializedStore_` from lazy to eager incremental.
 
+**Shipped implementation (withdrawn as the overdub-open solution):** mutation hooks call `rebuildEffectiveEventStore()` → full `passes.materializeToEventVector`. That is not a delta. Criterion 5's "full internal flat store" clause is the failed path — see reassessment below.
+
 ### D1 acceptance criteria (non-negotiable)
 
 1. No full-loop `gatherCommittedEvents()` in `beginOverdubSession()`.
@@ -128,6 +130,58 @@ beginOverdubSession()
     +-- MIDI capture active immediately
     +-- display async (slice_clean)
 ```
+
+---
+
+## Device FAIL — [`042909`](../captures/session_20260814_042909.log)
+
+Same class as `035414`: 68 bars, ~3600 events, ~1800 display notes, `undo_entries` 117.
+
+| Event | Wall clock | Cost | Owner |
+|-------|------------|------|-------|
+| Boot `load_frame` | `loop_rem,load_frame,6465779` then `7838621` | **6.47 s / 7.84 s** | Load hydration (D3/D4 — **not** this slice) |
+| Undo #1 | 24.388 → 38.721 | **14.3 s** | `notifyCommittedContentChanged` full flatten + `rebuildVisualCacheFromPasses` (`VCACHE,full,ev,3679,notes,1788`) |
+| Undo #2 | 41.570 → 56.192 | **14.6 s** | same (`VCACHE,full,ev,3625,notes,1761`) |
+| Overdub open | 66.705 → 73.817 | **7.1 s** | `beginCapture` → `ensureEffectiveEventStoreCurrent` full rematerialize |
+
+Overdub is still full-loop evaluation. D2's 16-bar window never runs until after `materializeToEventVector` of the whole loop.
+
+### Why the freshness fix could not hold
+
+1. `notifyCommittedContentChanged` rematerializes **all** events on every pass toggle (undo).
+2. `TrackUndo` then calls `rebuildVisualCacheFromPasses()` → `gatherCommittedEvents()` (now the full flatten) + `reconstructDisplayNotes` of ~1800 notes.
+3. `TrackUndo` then calls `invalidateCaches()` which sets `passesMaterializedStoreStale_ = true`.
+4. `startOverdubbing` calls `markDisplayCachesStale()` → `invalidatePlaybackCaches()` → `discardEventsCache()`.
+5. `establishOverdubSourceView` → `copyEffectiveCommittedEventsInRange` → `ensureEffectiveEventStoreCurrent` sees stale or empty cache → **full rematerialize again**.
+
+A warm full flatten cannot survive the existing cache-invalidation contract. Keeping one is the wrong derived view.
+
+---
+
+## Reassessment (2026-08-14) — stop full-loop evaluation
+
+**Reason triggered:** User-requested reassessment after device FAIL; D1 shipped an ownership change (eager full derived store) that conflicts with DEC-035 Layer D (`PlaybackWindow ⊆ AvailableData ⊆ BufferedData ⊆ Loop content`) and with existing `invalidateCaches` / `markDisplayCachesStale`. No reusable "keep entire loop flattened" extension point survives those owners.
+
+**Current architecture:** `LoopPasses` is authoritative. `CommittedEventRange::inWindow` already walks chunks for a tick window without flattening. D1 replaced that with a full `SessionMidiEventVec` rebuilt on every mutation.
+
+**Chosen source (user, 2026-08-14):** when `visualCache` is `slice_clean`, **copy `visualCache.notes` into `overdubSourceViewNotes_`**. That list is already the committed display view overlap consumes. Do not flatten events or `reconstructDisplayNotes` at overdub entry.
+
+Proof in [`043822`](../captures/session_20260814_043822.log): `slice_clean` notes=1799 bars 0–67 dirty=0, then overdub `begin_capture` **425 ms** after `VCACHE,stale_all` (notes still 1799, dirty=1). `startOverdubbing` had called `markDisplayCachesStale()`, so the authoritative check refused the usable cache and walked chunks instead.
+
+```text
+beginOverdubSession()
+    +-- if committedDisplayVisualCacheAuthoritative: copy visualCache.notes
+    +-- else CommittedEventRange::inWindow (fallback only)
+    +-- do not markDisplayCachesStale on overdub entry
+    +-- do not reconstructDisplayNotes at entry
+    +-- overlap: overdubSourceViewNotes_ already populated, or hold-window reconstruct
+    +-- MIDI capture active immediately
+    +-- display: leave clean cache in place
+```
+
+Undo/commit: **mark stale only**. Do not rematerialize. Do not `rebuildVisualCacheFromPasses` on the undo stack. Idle `slice_clean` catches display up.
+
+**Out of scope:** boot `load_frame` 6–8 s (D3/D4); post-stop persist.
 
 ---
 

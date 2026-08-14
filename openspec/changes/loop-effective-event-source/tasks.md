@@ -23,12 +23,21 @@
 - [x] 3.3 Ensure `markDisplayCachesStale` does not synchronously block overdub entry
 - [x] 3.4 Native: `test_overdub_source_view`, overlap hold, pending note change fixtures PASS
 - [x] 3.5 `pio test -e native` — 1142/1142 PASS (2026-08-14)
-- [ ] 3.6 Device gate: `035414` class — `ODUB,begin_capture` < 50 ms; overlap behavior spot-check
+- [x] 3.6 Device gate: `035414` class — `ODUB,begin_capture` < 50 ms; overlap behavior spot-check — **FAIL** [`042909`](../../../captures/session_20260814_042909.log); eager flatten withdrawn
+
+## 3b. Visual-cache overdub source (reassessment)
+
+- [x] 3b.1 `notifyCommittedContentChanged` marks stale only — no `materializeToEventVector`
+- [x] 3b.2 `copyEffectiveCommittedEventsInRange` via `CommittedEventRange::inWindow` + windowed edit apply (fallback only)
+- [x] 3b.3 `establishOverdubSourceView` copies `visualCache.notes` when `committedDisplayVisualCacheAuthoritative`; no `reconstructDisplayNotes` at entry
+- [x] 3b.4 `startOverdubbing` does not call `markDisplayCachesStale`; undo/redo does not `rebuildVisualCacheFromPasses`
+- [x] 3b.5 `pio test -e native` — 1143/1143 PASS (2026-08-14)
+- [x] 3b.6 Device gate: overdub [`045556`](../../../captures/session_20260814_045556.log) `begin_capture` **2214 µs**; undo [`112909`](../../../captures/session_20260814_112909.log) **3 ms** (`kind=3` OverdubPassAdded), no `VCACHE,full`
 
 ## 4. Closeout
 
-- [ ] 4.1 Update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING
-- [ ] 4.2 Scope guard: D3 persist checkpoint and D4 range-first load are **not** in this change
+- [x] 4.1 Update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING — 2026-08-14; successor DEC-037
+- [x] 4.2 Scope guard: D3 persist checkpoint and D4 range-first load are **not** in this change — remain on DEC-035 / DEC-037 Stage 7 shape only
 
 ## Out of scope (separate slices)
 
