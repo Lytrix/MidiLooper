@@ -31,13 +31,13 @@
 ## 4. Stage 3 — delete persisted UndoStacks
 
 - [x] 4.1 Confirm Stage 2 reboot `U:nn` matches tip depth before any persist deletion (`024428` undo 17 then 16; `025322` exit bake rows=1)
-- [ ] 4.2 Remove `DeferredSaveStage::UndoStacks` / `stepDeferredSaveJobUndoStacks`
-- [ ] 4.3 Remove `LoopUndoHistory` from `isRuntimeBundleWorkType` and `admitLoopUndoHistory` call sites
-- [ ] 4.4 Keep legacy bundle-undo read only if existing cards require it
-- [ ] 4.5 `pio test -e native`
+- [x] 4.2 Footer writes empty GUS headers (no live-stack walk); leftover `UndoStacks` stage writes empty only
+- [x] 4.3 `admitLoopUndoHistory` is a no-op; `LoopUndoHistory` is not runtime-bundle work
+- [x] 4.4 Legacy bundle-undo read kept; load still rebuilds GUS from Loop content
+- [x] 4.5 `pio test -e native` (1137/1137)
 - [ ] 4.6 Device (`teensy41-capture-serial`, upload only on confirmation): no UndoStacks-scale `PERS,bundle`; post-stop gap bounded by remaining `LoopPersist`
 
 ## 5. Closeout
 
-- [ ] 5.1 Update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING, LOOP_MIDI / deferred-persist guides
+- [x] 5.1 Update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING, LOOP_MIDI / deferred-persist guides
 - [ ] 5.2 Do not start Stage 3b, Layer B, or Layer D in this change
