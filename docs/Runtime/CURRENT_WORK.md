@@ -17,7 +17,7 @@ Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b sh
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Stage 6 tick index PASS (`LoopContentResolution::TickIndex`). Commit of pass N walks that pass’s chunk list only; window find `passChunkListsWalked=0`. Next: Stage 7 in-RAM checkpoints at `checkpointIntervalTicks`. Production consumers stay on today’s materialize / 3b visual-cache overdub copy.
+**Now:** Stages 6–7 PASS. Tick index + in-RAM checkpoints (`checkpointIntervalTicks` = 1 bar / 64 snapshots on the 64-bar fixture). High-tick `resolveState` replays from the prior checkpoint, not tick 0 (OpenSpec 4.3/4.4). Next: Stage 9 device gate. Production stays on materialize / 3b copy. Do not persist checkpoints (D3).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

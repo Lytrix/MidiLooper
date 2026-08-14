@@ -190,6 +190,35 @@ void oracleWindowEvents(const LoopPasses& passes, uint32_t loopLengthTicks, uint
   sortOracleEvents(out);
 }
 
+void sortSounding(SoundingNoteVec& notes) {
+  std::sort(notes.begin(), notes.end(), [](const SoundingNote& a, const SoundingNote& b) {
+    if (a.noteId != b.noteId) {
+      return a.noteId < b.noteId;
+    }
+    return a.pitch < b.pitch;
+  });
+}
+
+void assertSoundingMatch(SoundingNoteVec expected, SoundingNoteVec actual) {
+  sortSounding(expected);
+  sortSounding(actual);
+  TEST_ASSERT_EQUAL(expected.size(), actual.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_EQUAL(expected[i].noteId, actual[i].noteId);
+    TEST_ASSERT_EQUAL(expected[i].pitch, actual[i].pitch);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].onTick, actual[i].onTick);
+  }
+}
+
+bool hasSoundingNoteId(const SoundingNoteVec& notes, NoteId id) {
+  for (const SoundingNote& note : notes) {
+    if (note.noteId == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 CanonicalResolutionFixture buildCanonicalResolutionFixture() {
@@ -731,6 +760,73 @@ void test_stage6_note_spanning_two_chunks() {
   TEST_ASSERT_TRUE(hasNoteIdOn(actual, spanId));
 }
 
+void test_stage7_checkpoints_measured_interval() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t interval = Config::TICKS_PER_BAR;
+  LoopContentResolution::StateCheckpoints checkpoints;
+  ResolutionCostCounters counters;
+  checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, &counters);
+  printCounters("stage7_checkpoint_rebuild", counters);
+  std::printf("stage7 interval_ticks=%u checkpoints=%u history_events=%u\n",
+              counters.checkpointIntervalTicks, counters.checkpointCount, counters.eventsInHistory);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  TEST_ASSERT_EQUAL_UINT32(interval, checkpoints.intervalTicks);
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, counters.checkpointCount);
+}
+
+void test_stage7_resolve_state_from_checkpoint_not_tick_zero() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t interval = Config::TICKS_PER_BAR;
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
+
+  const uint32_t highTick = fixture.loopLengthTicks - 24u;
+  SoundingNoteVec expected;
+  LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, highTick, expected);
+  ResolutionCostCounters counters;
+  SoundingNoteVec actual;
+  LoopContentResolution::resolveState(checkpoints, highTick, actual, &counters);
+  printCounters("stage7_high_tick", counters);
+  std::printf("stage7 replay_start=%u events_replayed=%u history_events=%u\n",
+              counters.replayStartTick, counters.eventsReplayed, counters.eventsInHistory);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, counters.replayStartTick);
+  TEST_ASSERT_TRUE(highTick - counters.replayStartTick < interval);
+  TEST_ASSERT_LESS_THAN(counters.eventsInHistory, counters.eventsReplayed);
+  assertSoundingMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasSoundingNoteId(actual, fixture.wrapNoteId));
+}
+
+void test_stage7_resolve_state_matches_oracle_mid_and_wrap() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                      Config::TICKS_PER_BAR);
+
+  const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks - 24u};
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec expected;
+    SoundingNoteVec actual;
+    LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, expected);
+    LoopContentResolution::resolveState(checkpoints, tick, actual);
+    assertSoundingMatch(expected, actual);
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -752,5 +848,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6_wrap_window_matches_oracle);
   RUN_TEST(test_stage6_disable_without_walking_pass_lists);
   RUN_TEST(test_stage6_note_spanning_two_chunks);
+  RUN_TEST(test_stage7_checkpoints_measured_interval);
+  RUN_TEST(test_stage7_resolve_state_from_checkpoint_not_tick_zero);
+  RUN_TEST(test_stage7_resolve_state_matches_oracle_mid_and_wrap);
   return UNITY_END();
 }

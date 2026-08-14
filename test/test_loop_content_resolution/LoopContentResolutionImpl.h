@@ -130,6 +130,28 @@ uint8_t channelForNoteId(const SessionMidiEventVec& events, NoteId noteId) {
   return 0;
 }
 
+void upsertSounding(SoundingNoteVec& sounding, const SoundingNote& note) {
+  for (SoundingNote& existing : sounding) {
+    if (note.noteId != kInvalidNoteId && existing.noteId == note.noteId) {
+      existing = note;
+      return;
+    }
+  }
+  sounding.push_back(note);
+}
+
+void eraseSounding(SoundingNoteVec& sounding, const MidiEvent& off) {
+  sounding.erase(std::remove_if(sounding.begin(), sounding.end(),
+                                [&](const SoundingNote& note) {
+                                  if (off.noteId != kInvalidNoteId) {
+                                    return note.noteId == off.noteId;
+                                  }
+                                  return note.channel == off.channel &&
+                                         note.pitch == off.data.noteData.note;
+                                }),
+                 sounding.end());
+}
+
 // Gather + edit in the same order as LoopPasses::materializeToEventVector. Tick-sort is only
 // applied for resolveWindow's deterministic ResolvedEvent sequence (reconstruct is order-sensitive).
 void gatherActiveResolvedEvents(const LoopPasses& passes, uint32_t loopLengthTicks,
@@ -318,6 +340,34 @@ void LoopContentResolution::TickIndex::appendNoteEvents(NoteId noteId, SessionMi
   }
 }
 
+void LoopContentResolution::TickIndex::materializeActive(SessionMidiEventVec& out) const {
+  out.clear();
+  std::vector<const CapturePassEntry*> ordered;
+  ordered.reserve(capturePasses.size());
+  const CapturePassEntry* record = nullptr;
+  for (const CapturePassEntry& pass : capturePasses) {
+    if (pass.state != CapturePassState::Active || pass.events.empty()) {
+      continue;
+    }
+    if (pass.mergeSequence == 0 && record == nullptr) {
+      record = &pass;
+      continue;
+    }
+    ordered.push_back(&pass);
+  }
+  if (record != nullptr) {
+    out = record->events;
+  }
+  std::sort(ordered.begin(), ordered.end(),
+            [](const CapturePassEntry* a, const CapturePassEntry* b) {
+              return a->mergeSequence < b->mergeSequence;
+            });
+  for (const CapturePassEntry* pass : ordered) {
+    SessionMidiEventVec layer = pass->events;
+    mergeSortedMidiVectors(out, std::move(layer));
+  }
+}
+
 uint32_t LoopContentResolution::TickIndex::indexedEventCount() const {
   return static_cast<uint32_t>(byTick.size());
 }
@@ -403,6 +453,122 @@ void LoopContentResolution::resolveState(const LoopPasses& passes, uint32_t loop
     sounding.onTick = note.startTick;
     out.push_back(sounding);
   }
+}
+
+void LoopContentResolution::StateCheckpoints::rebuild(const TickIndex& index,
+                                                      const EditPassVec& editPasses,
+                                                      uint32_t loopLength,
+                                                      uint32_t checkpointIntervalTicks,
+                                                      ResolutionCostCounters* counters) {
+  intervalTicks = checkpointIntervalTicks;
+  loopLengthTicks = loopLength;
+  soundingAt.clear();
+  spans.clear();
+  startsByTick.clear();
+  if (loopLength == 0 || checkpointIntervalTicks == 0) {
+    return;
+  }
+  SessionMidiEventVec resolved;
+  index.materializeActive(resolved);
+  EditPassVec activeRows;
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+    }
+  }
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(resolved, activeRows, loopLength);
+  }
+  if (counters != nullptr) {
+    counters->passChunkListsWalked = 0;
+  }
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(resolved, loopLength, false);
+  spans.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    NoteSpan span{};
+    span.note.channel = channelForNoteId(resolved, note.noteId);
+    span.note.pitch = note.note;
+    span.note.noteId = note.noteId;
+    span.note.onTick = note.startTick;
+    span.startTick = note.startTick;
+    span.endTick = note.endTick;
+    const size_t spanIndex = spans.size();
+    spans.push_back(span);
+    startsByTick.emplace(span.startTick, spanIndex);
+    startsByTick.emplace(span.endTick, spanIndex);
+  }
+  const uint32_t count = loopLength / checkpointIntervalTicks;
+  soundingAt.resize(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t checkpointTick = i * checkpointIntervalTicks;
+    for (const NoteSpan& span : spans) {
+      NoteUtils::DisplayNote probe{};
+      probe.noteId = span.note.noteId;
+      probe.note = span.note.pitch;
+      probe.startTick = span.startTick;
+      probe.endTick = span.endTick;
+      if (!noteSoundsAt(probe, checkpointTick, loopLength)) {
+        continue;
+      }
+      soundingAt[i].push_back(span.note);
+    }
+  }
+  if (counters != nullptr) {
+    counters->checkpointIntervalTicks = intervalTicks;
+    counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
+    counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
+  }
+}
+
+void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick, SoundingNoteVec& out,
+                                                           ResolutionCostCounters* counters) const {
+  out.clear();
+  if (intervalTicks == 0 || loopLengthTicks == 0 || soundingAt.empty()) {
+    return;
+  }
+  const uint32_t queryTick = IntervalProjection::tickPhaseInLoop(tick, 0, loopLengthTicks);
+  uint32_t replayStart = (queryTick / intervalTicks) * intervalTicks;
+  uint32_t checkpointIndex = replayStart / intervalTicks;
+  if (checkpointIndex >= soundingAt.size()) {
+    checkpointIndex = static_cast<uint32_t>(soundingAt.size() - 1);
+    replayStart = checkpointIndex * intervalTicks;
+  }
+  out = soundingAt[checkpointIndex];
+  uint32_t replayed = 0;
+  auto applyRange = [&](uint32_t beginTick, uint32_t endTickExclusive) {
+    auto it = startsByTick.lower_bound(beginTick);
+    const auto stop = startsByTick.lower_bound(endTickExclusive);
+    for (; it != stop; ++it) {
+      replayed += 1;
+      if (it->second >= spans.size()) {
+        continue;
+      }
+      const NoteSpan& span = spans[it->second];
+      if (it->first == span.startTick) {
+        upsertSounding(out, span.note);
+      }
+      if (it->first == span.endTick) {
+        MidiEvent off = MidiEvent::NoteOff(span.endTick, span.note.channel, span.note.pitch, 0);
+        off.noteId = span.note.noteId;
+        eraseSounding(out, off);
+      }
+    }
+  };
+  applyRange(replayStart + 1, queryTick + 1);
+  if (counters != nullptr) {
+    counters->checkpointIntervalTicks = intervalTicks;
+    counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
+    counters->replayStartTick = replayStart;
+    counters->eventsReplayed = replayed;
+    counters->eventsInHistory = static_cast<uint32_t>(spans.size());
+    counters->passChunkListsWalked = 0;
+  }
+}
+
+void LoopContentResolution::resolveState(const StateCheckpoints& checkpoints, uint32_t tick,
+                                         SoundingNoteVec& out, ResolutionCostCounters* counters) {
+  checkpoints.resolveState(tick, out, counters);
 }
 
 void LoopContentResolution::resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
