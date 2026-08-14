@@ -41,8 +41,6 @@ bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLengt
   return linearStart < linearEnd;
 }
 
-/// Same rule as OverlapNoteIdObservation::existingNoteOverlapsIncomingHold.
-/// Body stays in this TU — do not include the observation header (ITCM).
 bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingEnd,
                                       uint32_t incomingStart, uint32_t incomingEnd,
                                       uint32_t loopLength) {
@@ -84,6 +82,60 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
 }
 
 }  // namespace
+
+namespace {
+
+bool displayNoteSoundsAtHold(const NoteUtils::DisplayNote& note, uint32_t holdStart,
+                             uint32_t loopLength) {
+  if (note.noteId == kInvalidNoteId || loopLength == 0) {
+    return false;
+  }
+  uint32_t linearStart = IntervalProjection::tickPhaseInLoop(note.startTick, 0, loopLength);
+  uint32_t linearEnd = IntervalProjection::tickPhaseInLoop(note.endTick, 0, loopLength);
+  if (linearEnd == linearStart) {
+    return false;
+  }
+  if (linearEnd < linearStart) {
+    linearEnd += loopLength;
+  }
+  if (linearStart >= linearEnd) {
+    return false;
+  }
+  const bool direct = linearStart < holdStart && holdStart < linearEnd;
+  const bool shifted =
+      linearStart < holdStart + loopLength && holdStart + loopLength < linearEnd;
+  return direct || shifted;
+}
+
+}  // namespace
+
+LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch) {
+  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
+    return;
+  }
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
+
+  SessionMidiEventVec windowEvents;
+  copyEffectiveCommittedEventsInRange(windowEvents, windowStart, windowLength);
+  if (windowEvents.empty()) {
+    return;
+  }
+  const NoteUtils::DisplayNoteVec windowNotes =
+      NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
+  NoteUtils::DisplayNoteVec toMerge;
+  for (const NoteUtils::DisplayNote& note : windowNotes) {
+    if (note.note != pitch) {
+      continue;
+    }
+    if (displayNoteSoundsAtHold(note, holdPhaseTick, loopLen)) {
+      toMerge.push_back(note);
+    }
+  }
+  mergeDisplayNotesIntoOverdubSourceView(toMerge);
+}
 
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
     const NoteUtils::DisplayNoteVec& sourceNotes,

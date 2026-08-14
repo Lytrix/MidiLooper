@@ -10,6 +10,7 @@
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
@@ -270,11 +271,55 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   notifyCommittedContentChanged();
 }
 
-LOOP_COLD_MEM void Loop::establishOverdubSourceView() {
+uint32_t Loop::overdubSourceWindowLengthTicks() const {
+  return DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+}
+
+void Loop::resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
+                                      uint32_t& windowLength) const {
+  const uint32_t loopLen = loopLengthTicks;
+  windowLength = overdubSourceWindowLengthTicks();
+  if (loopLen == 0 || windowLength >= loopLen) {
+    windowStart = 0;
+    windowLength = loopLen;
+    return;
+  }
+  windowStart =
+      DisplayWindowUtils::resolveCenteredWindowStart(centerPhaseTick, windowLength, loopLen);
+}
+
+void Loop::mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates) {
+  for (const NoteUtils::DisplayNote& candidate : candidates) {
+    if (candidate.noteId == kInvalidNoteId) {
+      continue;
+    }
+    bool found = false;
+    for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
+      if (existing.noteId == candidate.noteId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      overdubSourceViewNotes_.push_back(candidate);
+    }
+  }
+}
+
+LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) {
   overlapHoldTotals_ = {};
   overdubSourceViewEvents_.clear();
-  copyEffectiveCommittedEvents(overdubSourceViewEvents_);
+  overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  if (loopLengthTicks == 0) {
+    overdubSourceViewEstablished_ = true;
+    clearPendingNoteChanges();
+    return;
+  }
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
+  copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
   overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
       overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   overdubSourceViewEstablished_ = true;
@@ -292,7 +337,7 @@ void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
 }
 
-void Loop::beginCapture(CapturePhase phase) {
+void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   discardPendingCapturePass();
   capture.phase = phase;
   capture.store.clear();
@@ -302,7 +347,7 @@ void Loop::beginCapture(CapturePhase phase) {
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
   if (phase == CapturePhase::Overdub) {
-    establishOverdubSourceView();
+    establishOverdubSourceView(playheadPhaseTick);
   } else {
     clearOverdubSourceView();
   }

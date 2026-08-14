@@ -18,8 +18,7 @@ Last updated: 2026-08-14 (Layer D active; Track A parked)
 **Authority:** [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) Layers C–D (Stages 6–7)
 
 **D0:** **PASS** [`035414`](../captures/session_20260814_035414.log) — 6.78 s `begin_capture`; source-view problem, not overdub FSM.  
-**OpenSpec:** [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/) + **DEC-036** — D1 incremental effective store **shipped** (native 1141/1141); **D2 next** — range-driven overdub window + remove full `reconstructDisplayNotes` at overdub entry.  
-**Next:** `/opsx:apply` tasks §3 (D2); device gate `ODUB,begin_capture` < 50 ms on `035414` class loop.
+**OpenSpec:** [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/) + **DEC-036** — D1+D2 **shipped** (native 1142/1142); **device gate open** — `ODUB,begin_capture` < 50 ms on `035414` class loop.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches.
 

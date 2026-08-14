@@ -47,6 +47,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart. Keep the
   // walk in this FLASHMEM function — do not call the observation header (ITCM).
   const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
+  loop.ensureOverdubSourceNotesForHold(holdStart, pending.note);
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
     if (note.note != pending.note || note.noteId == kInvalidNoteId) {
       continue;

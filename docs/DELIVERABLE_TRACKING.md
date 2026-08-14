@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-036 **D1 shipped** — incremental effective event store (`notifyCommittedContentChanged`, `copyEffectiveCommittedEvents`, range API). **D2 next** — range-driven overdub window. [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/). Overlay track A parked.
+**Next (persistence/runtime):** DEC-036 **D1+D2 shipped** — incremental effective store + 16-bar overdub source window (`ensureOverdubSourceNotesForHold` on note-on). Device gate open. [`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/). Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 

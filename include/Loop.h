@@ -163,10 +163,12 @@ struct Loop {
   /// Undo restore: deep-clone passes so live loop does not alias snapshot chunks.
   void restorePassesSnapshot(const PersistedLoopSnapshot& snapshot);
 
-  void beginCapture(CapturePhase phase);
+  void beginCapture(CapturePhase phase, uint32_t playheadPhaseTick = 0);
   void discardCapture();
   /// Establish materialize-aware overdubSourceView for the active overdub session.
-  void establishOverdubSourceView();
+  void establishOverdubSourceView(uint32_t playheadPhaseTick);
+  /// D2: merge hold-window display notes into the session source view for overlap lookup.
+  void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch);
   void clearOverdubSourceView();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
@@ -294,6 +296,10 @@ struct Loop {
   /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
   void notifyCommittedContentChanged();
   void rebuildEffectiveEventStore() const;
+  uint32_t overdubSourceWindowLengthTicks() const;
+  void resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
+                                  uint32_t& windowLength) const;
+  void mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates);
   SessionMidiEventVec overdubSourceViewEvents_;
   NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
