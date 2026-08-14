@@ -30,17 +30,21 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 4. **Primary queries are state and window, not notes.** Playback consumes `ResolvedEvent`. `resolveNotes` is a projection.
 5. **Active set, not all stored passes.** Committed content is immutable; Active/Disabled is mutable history state.
 6. **Two cost legs.** Find via index → candidates. Resolve candidates → layer semantics. `for (pass : passes) if intersects(window)` fails the complexity gate even if the window is small.
-7. **`checkpointIntervalTicks` is a measured parameter.** `resolveState` replay distance is bounded. Loop switch is a fundamental query.
-8. **Determinism.** Same active history ⇒ same answer, independent of cache, chunks, or prior order.
-9. **Chunks are packing.** `LoopEventStore` chunks are not resolution units.
-10. **Layer semantics reuse DEC-031/032.** Do not invent a new overlap model.
-11. **Failure gate.** If the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement range-dirty cache + tick index on existing owners. A weak first tick index does not by itself disprove the architecture.
+7. **`checkpointIntervalTicks` is a measured performance parameter, not a semantic property of the loop.** Native 1-bar, device 8-bar, device 16-bar, and a later adaptive stride MUST produce identical `resolveState` answers for the same active history. Density only bounds replay work and RAM.
+8. **A checkpoint is a jump point, not a copy of the resolved loop.** `soundingAt` MAY exist only at a sparse stride. A full sounding-state snapshot at every bar (1847 spans × 68 bars on the `035414` class — [`225351`](../../../captures/session_20260814_225351.log)) is another O(history) derived store and fails the architecture. `spans` + `startsByTick` are currently sufficient as the base index for `resolveState`; the device probe will measure whether additional indexing is required.
+9. **Determinism.** Same active history ⇒ same answer, independent of cache, chunks, checkpoint density, or prior order.
+10. **Chunks are packing.** `LoopEventStore` chunks are not resolution units.
+11. **Layer semantics reuse DEC-031/032.** Do not invent a new overlap model.
+12. **Failure gate.** If the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement range-dirty cache + tick index on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint **does** disprove that checkpoint representation.
+13. **Device 5.1/5.2 order (after [`225744`](../../../captures/session_20260814_225744.log) short-loop `lcr` and [`225351`](../../../captures/session_20260814_225351.log) heap Critical).** Sparse `soundingAt` first; abort fill under memory pressure; **then** split `prepareRebuildSpans` (`materializeActive` + `reconstructDisplayNotes` MUST NOT remain one idle slice); then measure the 68-bar fixture and `resolveState` replay. Do **not** raise the 16-bar hardware arm cap until those measurements exist. Do not persist. Do not put resolution on overdub or MIDI realtime paths.
 
 ## Risks / Trade-offs
 
 | Risk | Mitigation |
 |------|------------|
 | Prototype becomes a second O(history) store that `invalidateCaches` kills | Complexity gate; never cascade `invalidateCaches` onto the prototype; range caches only |
+| Per-bar `soundingAt` copies the resolved loop ([`225351`](../../../captures/session_20260814_225351.log) Critical / reboot) | Sparse stride; abort under pressure; checkpoint must not scale with bars × notes |
+| `prepareRebuildSpans` stalls MIDI/OLED even if checkpoint RAM is fixed | Split materialize/reconstruct off a single idle slice before raising the 16-bar arm cap |
 | `resolveNotes` becomes the center (play Notes) | Spec: `resolveNotes` is a derived consumer; correctness vs materialize events first |
 | First tick index is slow | Failure gate distinguishes poor index from architectural failure |
 | Layer semantics drift from overdub overlap | Native equivalence vs `materialize` + `reconstruct` on the overlap spec |
@@ -55,5 +59,6 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 
 ## Open Questions
 
-- Exact `checkpointIntervalTicks` default (bars vs ticks) — measure on the canonical fixture; do not guess in firmware.
-- Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pin at Stage 1 with a comment/alias; no fourth synonym.
+- Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
+- Whether `spans` + `startsByTick` remain the long-term `resolveState` index, or a later tick/event index is required — measure on the device probe; do not lock a third structure yet.
+- Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.

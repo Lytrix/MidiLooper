@@ -916,6 +916,42 @@ void test_stage7_resolve_state_matches_oracle_mid_and_wrap() {
   }
 }
 
+void test_stage7_sparse_checkpoints_agree_with_dense() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t denseInterval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
+  const uint32_t sparseInterval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kDeviceCheckpointBarStride;
+  LoopContentResolution::StateCheckpoints dense;
+  LoopContentResolution::StateCheckpoints sparse;
+  dense.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, denseInterval);
+  sparse.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, sparseInterval);
+
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, static_cast<uint32_t>(dense.soundingAt.size()));
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars / LoopContentResolution::kDeviceCheckpointBarStride,
+                           static_cast<uint32_t>(sparse.soundingAt.size()));
+  TEST_ASSERT_TRUE(sparse.soundingAt.size() < dense.soundingAt.size());
+  TEST_ASSERT_EQUAL(dense.spans.size(), sparse.spans.size());
+
+  const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks / 2u,
+                            fixture.loopLengthTicks - 24u};
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec fromDense;
+    SoundingNoteVec fromSparse;
+    SoundingNoteVec fromOracle;
+    LoopContentResolution::resolveState(dense, tick, fromDense);
+    LoopContentResolution::resolveState(sparse, tick, fromSparse);
+    LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, fromOracle);
+    assertSoundingMatch(fromOracle, fromDense);
+    assertSoundingMatch(fromOracle, fromSparse);
+  }
+}
+
 void test_stage9_native_worst_case_micros() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -967,6 +1003,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage7_checkpoints_measured_interval);
   RUN_TEST(test_stage7_resolve_state_from_checkpoint_not_tick_zero);
   RUN_TEST(test_stage7_resolve_state_matches_oracle_mid_and_wrap);
+  RUN_TEST(test_stage7_sparse_checkpoints_agree_with_dense);
   RUN_TEST(test_stage8_loop_switch_high_tick_bounded_replay);
   RUN_TEST(test_stage9_native_worst_case_micros);
   return UNITY_END();

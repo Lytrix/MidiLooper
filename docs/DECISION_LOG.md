@@ -104,11 +104,21 @@ DEC-016 already requires representation × interval. The missing owner is query-
 
 Native prototype first: new `LoopContentResolution` headers/tests. Production later: `LoopMaterialization`, `LoopVisualCache`, `TrackPlaybackWindowBuild`, `establishOverdubSourceView` fallback only. `LoopPasses`, `StorageManager`, `NoteGeometryResolver` unchanged as owners.
 
+### Amendment 2026-08-14 — Checkpoint is a jump point
+
+Device per-bar `soundingAt` on the 68-bar / 1847-note loop is another O(history) derived store ([`225351`](../captures/session_20260814_225351.log) heap Critical). Short-loop sliced `lcr` remains PASS ([`225744`](../captures/session_20260814_225744.log)).
+
+- A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop.
+- Checkpoint density is a performance parameter, not a semantic property of the loop (native 1 bar, device 8/16 bars, later adaptive — identical answers).
+- `spans` + `startsByTick` are currently sufficient as the base index for `resolveState`; the device probe measures whether more index is required.
+- Split `prepareRebuildSpans` before treating RAM as the only stall. Do not raise the 16-bar hardware arm cap until sparse storage, pressure abort, and that split are measured on the 68-bar loop.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.
+- A checkpoint must not be a proportional copy of the resolved loop (per-bar full `soundingAt` fails this).
 - `resolveNotes` must not become the playback primitive.
-- Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture.
+- Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
 
 ### Related OpenSpec
 

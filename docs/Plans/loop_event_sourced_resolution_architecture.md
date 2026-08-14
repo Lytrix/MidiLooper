@@ -181,7 +181,7 @@ Do not recreate: raw events → build all Notes → cache Notes → play Notes.
 2. **After indexing/checkpointing, resolution cost is proportional to the relevant candidate events and affected state, not the number of historical passes.** Two costs, both bounded:
    - **Find:** history → index → candidate events (must not walk every pass list)
    - **Resolve:** candidate events → layer semantics → ResolvedEvent / state
-3. **`resolveState(tick)` must have a bounded historical replay distance through checkpoints. It may not require replaying the loop from tick 0.** Checkpoint spacing is a measured design parameter: `checkpointIntervalTicks`. Fast live loop switching is a fundamental query, not an optional later optimization.
+3. **`resolveState(tick)` must have a bounded historical replay distance through checkpoints. It may not require replaying the loop from tick 0.** Checkpoint spacing is a measured **performance** parameter (`checkpointIntervalTicks`), not a semantic property of the loop. A checkpoint is a jump point: it MUST reduce replay work without becoming a proportional copy of the resolved loop. Per-bar full `soundingAt` fails this ([`225351`](../captures/session_20260814_225351.log)). Fast live loop switching is a fundamental query, not an optional later optimization.
 4. **For a fixed active pass set and fixed edit history, resolution is deterministic and independent of cache state, chunk boundaries, or previous resolution order.** `resolveWindow(A)` and `resolveWindow(B)` cannot disagree because A populated a cache first.
 5. **Valid derived state is never discarded merely because unrelated content changed.**
 6. **No realtime MIDI or display-critical path may perform work proportional to total loop history.**
@@ -243,7 +243,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate on `035414` class — **native µs recorded; on-device probe blocked** (`teensy41-capture-serial` RAM1 / ~25 KB ITCM when `LoopContentResolution.cpp` is linked) | keep 3b copy path until this wins |
+| 9 | Device three-part gate on `035414` class — native µs recorded; short-loop sliced `lcr` PASS [`225744`](../captures/session_20260814_225744.log); per-bar `soundingAt` FAIL [`225351`](../captures/session_20260814_225351.log). Next: sparse stride, split `prepareRebuildSpans`, then 68-bar measure | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 

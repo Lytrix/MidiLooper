@@ -738,10 +738,11 @@ struct DeviceGateSession {
       case Phase::RebuildPrepare: {
         ElapsedTimer timer;
 #if defined(ARDUINO)
-        constexpr uint32_t kDeviceGateCheckpointBarStride = 4u;
-        const uint32_t checkpointInterval = Config::TICKS_PER_BAR * kDeviceGateCheckpointBarStride;
+        const uint32_t checkpointInterval =
+            Config::TICKS_PER_BAR * LoopContentResolution::kDeviceCheckpointBarStride;
 #else
-        const uint32_t checkpointInterval = Config::TICKS_PER_BAR;
+        const uint32_t checkpointInterval =
+            Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
 #endif
         checkpoints.prepareRebuildSpans(index, passes.editPasses, loopLengthTicks,
                                         checkpointInterval, &sample_.rebuild);
