@@ -146,7 +146,7 @@ TRACK_COLD_MEM bool noteSoundsAt(const NoteUtils::DisplayNote& note, uint32_t ti
   return tick >= note.startTick && tick < note.endTick;
 }
 
-uint8_t channelForNoteId(const SessionMidiEventVec& events, NoteId noteId) {
+TRACK_COLD_MEM uint8_t channelForNoteId(const SessionMidiEventVec& events, NoteId noteId) {
   for (const MidiEvent& event : events) {
     if (event.isNoteOn() && event.noteId == noteId) {
       return event.channel;
