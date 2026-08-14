@@ -41,6 +41,16 @@ STORAGE_PERSIST_MEM StorageIo storageIoFromFileRead(File& file) {
     return StorageIo{
         nullptr,
         [&file](void* data, size_t size) { return readRaw(file, data, size); },
+        [&file](void* data, size_t size) {
+            const uint32_t pos = file.position();
+            if ((file.size() - pos) < static_cast<int>(size)) {
+                return false;
+            }
+            const int bytesRead = file.read(static_cast<uint8_t*>(data), size);
+            const bool ok = bytesRead == static_cast<int>(size);
+            (void)file.seek(pos);
+            return ok;
+        },
     };
 }
 

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "EditPass.h"
+#include "LoopGeometry.h"
 #include "LoopEventStore.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/InternalHeapFirstAllocator.h"
@@ -79,6 +80,7 @@ struct LoopPasses {
   RecordPass recordPass{};
   CommittedOverdubPassVec overdubPasses;
   EditPassVec editPasses;
+  LoopGeometryVec loopGeometries;
 
   bool hasRecordPass() const { return recordPass.id != kInvalidPassId; }
 

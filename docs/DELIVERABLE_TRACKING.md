@@ -22,6 +22,10 @@
 - **Playing move/length playback audition (Aug 2026):** `refreshPlaybackPreview` forwarded through move/length geometry paths (`15c5750`). HITL [`113626`](../captures/session_20260808_113626.log), [`115120`](../captures/session_20260808_115120.log). Bugfix: [`note_edit_playing_move_audition_bugfix.md`](Plans/note_edit_playing_move_audition_bugfix.md).
 - **Overdub pass overlap resolution (DEC-031/032 G2, Aug 2026):** `overdubSourceView` + shared geometry Add/Shorten/Hide; dual-seal companions + STK2 undo. OpenSpec archived `2026-08-12-overdub-pass-overlap-resolution`; normative `openspec/specs/overdub-pass-overlap-resolution/`. Device PASS [`010000`](../captures/session_20260812_010000.log); baseline [`183525`](../captures/session_20260811_183525.log). Firmware on `feature/overdub-pass-overlap-resolution` pending merge to `dev`.
 
+- **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
+
+**Next (persistence):** overlay track A or Phase 5 recovery — see [CURRENT_WORK.md](Runtime/CURRENT_WORK.md). Do not start Stage 3b / Layer B without decision.
+
 **Not in firmware** (docs may suggest otherwise):
 
 - Phase 3 jam/arrangement **capture** (recording jam performance into a new slot), Scenes row, Jams row capture — spec exists ([plans/phase-3-multi-loop.md](Plans/phase-3-multi-loop.md)), slots infrastructure shipped, capture itself not built

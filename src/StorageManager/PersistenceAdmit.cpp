@@ -124,17 +124,8 @@ void StorageManager::admitLoopPersist(LoopId loopId) {
 }
 
 void StorageManager::admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex) {
-#if BYPASS_STOP_UNDO_SAVE
     (void)trackIndex;
     (void)slotIndex;
-    return;
-#else
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return;
-    }
-    PersistenceWorkQueue::admitWork(PersistWorkType::LoopUndoHistory,
-                                    persistKeyForSlot(trackIndex, slotIndex));
-#endif
 }
 
 void StorageManager::admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex) {
@@ -253,7 +244,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
                     const uint8_t trackIndex = t;
                     const uint8_t slotIndex = s;
                     StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
-                    StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
+                    StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
                 }
             }
         }
@@ -290,7 +281,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
                 const uint8_t trackIndex = t;
                 const uint8_t slotIndex = s;
                 StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
-                StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
+                StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
             }
         }
     }

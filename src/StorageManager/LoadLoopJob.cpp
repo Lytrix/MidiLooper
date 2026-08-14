@@ -13,6 +13,7 @@
 #include "SlotLoadSession.h"
 #include "StorageLoopIo.h"
 #include "TrackManager.h"
+#include "TrackUndo.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include <Arduino.h>
 #include <SD.h>
@@ -373,6 +374,8 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     const uint32_t applyStartUs = micros();
 #endif
     applySnapshotToLoop(loop, loadLoopJob_.snapshot);
+    TrackUndo::rebuildSlotFromLoopContent(trackManager.getTrack(loadLoopJob_.track),
+                                          loadLoopJob_.slot);
 #if defined(PERF_TELEMETRY)
     const uint32_t applyUs = micros() - applyStartUs;
     if (applyUs > LoadLoopBudget::FocusRestoreUs && loadLoopJobIsFocusSlot()) {

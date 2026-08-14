@@ -50,6 +50,10 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **editPass** | One `saveNoteEditPass()` row in `passes.editPasses[]` | Live edit session store |
 | **merge** | Replay active capture passes into a working view | Full timeline replay (use **materialize**) |
 | **materialize** | Full pass replay to a MIDI event vector | Active capture merge (use **merge**) |
+| **content record** | Immutable persisted Loop layer (`RecordPass` / `OverdubPass` / `EditPass` / `LoopGeometry`) | Persisted undo entry; editor history; `stateRaw` |
+| **content history** | Ordered content records on disk | `GlobalUndoStack`; `LoopUndoHistory`; a Set relink stack |
+| **replay** | Reconstruct current Loop state from content records | Undo/redo derivation (use **editing derivation**) |
+| **editing derivation** | Runtime undo/redo semantics from ordered content plus grouping rules | Persisted undo payload; current notes alone |
 
 ---
 
@@ -170,7 +174,25 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 | **noteEditPass** | `closeNoteEditPass()` (boundary flush) | **NoteEditPassClosed** |
 | **controlChangeEditPass** | (future) | **ControlChangeEditPassClosed** (stub) |
 
-A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEditPassIndex**.
+A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEditPassIndex**. Session `editPassIds` are in-session `E:` undo only; commit (or reboot-during-edit durable checkpoint) is one noteEditPass.
+
+### Loop content history (persistence)
+
+[DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only): the Loop persists content records only. Undo/redo is derived at runtime.
+
+| Term | Use | Not this |
+|------|-----|----------|
+| **content record** / **content layer** | Durable Loop history row | `UndoEntry`, `PassStateChange` |
+| **editing derivation** | Group content records into undo units | Persist those units |
+| **AvailableData** / **isRangeAvailable** | Runtime predicate over buffered ranges | Stored slot flag; `WINDOW_READY` |
+| **BufferedData** | Materialized runtime subset of Loop content (set of ranges) | The entire Loop content in RAM |
+| **lastUnlinkedSlotLink** | Set last-state for one-step clear relink (Layer B) | Loop undo history |
+| **ContentUndoUnit** | Runtime derivation result from `deriveContentUndoUnits` — not persisted | `UndoEntry`; a persist record |
+| **LoopGeometry** | Persisted loop length/start content record (`LoopGeometry.id`, before and after ticks) | `UndoLoopGeometry` (in-session GUS payload until Stage 3b); `LoopPass` |
+
+**Do not** use **Source** as a domain noun in docs, comments, or types (`ClockSource` already exists). Say **Loop content**.
+
+**Do not** persist undo/redo records, a history cursor, or editor history. NOTE_EDIT `E:` session undo is pre-commit and outside this persist model.
 
 ### Types and ids
 
@@ -181,6 +203,7 @@ A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEd
 | **EditActionType** | Stored action on **editPass** (`Create` \| `Update` \| `Delete`) |
 | **EditPropertyType** | Updated field on **editPass** (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
 | **EditPassId** / **PassId** | Stable id per pass row (unified **nextPassId_**) |
+| **LoopGeometry.id** | Stable id per committed loop-geometry content record (same **nextPassId_**) |
 | **NoteRef** | Stable note target in an **EditChange** |
 
 ### Edit sessions (RAM scope)
@@ -203,6 +226,7 @@ A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEd
 | **RecordPassAdded** | undo | **recordPass** |
 | **OverdubPassAdded** | undo | **overdubPass** |
 | **NoteEditPassClosed** | undo | closed **noteEditPass** batch |
+| **LoopGeometry** | content record | committed loop length/start revision (`LoopGeometry.id`) |
 
 ### Merge, materialize, and memory tiers
 

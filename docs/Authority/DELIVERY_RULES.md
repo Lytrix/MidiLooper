@@ -79,7 +79,11 @@ M1–M7 are **shipped**. Post-M7 order is fixed — do not reorder without expli
 
 ### Active changes (check PROJECT_STATE + CURRENT_WORK first)
 
-As of 2026-06-29, non-archived folders with `tasks.md`:
+As of 2026-08-14, Layer A persistence change:
+
+- `loop-content-history-persistence` (DEC-035)
+
+Older non-archived folders with `tasks.md` (check PROJECT_STATE + CURRENT_WORK first):
 
 - `set-revision-persistence`
 - `workspace-session-persistence`

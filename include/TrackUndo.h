@@ -44,6 +44,9 @@ public:
     static void pushLoopStartSnapshot(Track& track, uint8_t slotIndex);
     static void pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
                                                uint32_t beforeLoopStartTick,
-                                               uint32_t beforeLoopLengthTicks);
+                                               uint32_t beforeLoopLengthTicks,
+                                               PassId geometryId = kInvalidPassId);
+    static void rebuildSlotFromLoopContent(Track& track, uint8_t slotIndex);
+    static void rebuildTrackFromLoopContent(Track& track, uint8_t focusSlotIndex);
     static void undoLoopStart(Track& track);
 };

@@ -59,7 +59,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
         const uint8_t persistSlotIndex = getActiveLoopIndex();
         StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-        StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+        StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
         StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                                  MemoryMonitor::getInternalHeapFreeBytes(), true);
       } else {
@@ -80,21 +80,17 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
-        StorageManager::admitLoopUndoHistory(resolveTrackIndexForPersistence(*this),
-                                             getActiveLoopIndex());
       } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
         EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
         TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId,
                                         std::move(companionIds));
-        StorageManager::admitLoopUndoHistory(resolveTrackIndexForPersistence(*this),
-                                             getActiveLoopIndex());
       }
       if (overdubStop) {
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
         const uint8_t persistSlotIndex = getActiveLoopIndex();
         StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-        StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+        StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
         StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                                  MemoryMonitor::getInternalHeapFreeBytes(), true);
       }
@@ -283,7 +279,7 @@ void Track::stopRecording(uint32_t currentTick) {
     const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
     const uint8_t persistSlotIndex = recordedSlotIndex;
     StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
                                              true);
   }
@@ -369,7 +365,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
     const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
     const uint8_t persistSlotIndex = recordedSlotIndex;
     StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
                                              true);
   }

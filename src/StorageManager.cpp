@@ -4,6 +4,7 @@
 #include "StorageManager.h"
 #include "Utils/BootLoopSlotRestore.h"
 #include "TrackManager.h"
+#include "TrackUndo.h"
 #include "Loop.h"
 #include "Slot.h"
 #include "SlotLoadSession.h"
@@ -354,6 +355,8 @@ void STORAGE_PERSIST_MEM StorageManager::processDeferredUndoSnapshots() {
     if (!readGlobalUndoStackFromFile(file, trackManager.getTrack(trackIndex).getGlobalUndoStack())) {
         trackManager.getTrack(trackIndex).getGlobalUndoStack().clear();
     }
+    TrackUndo::rebuildTrackFromLoopContent(trackManager.getTrack(trackIndex),
+                                           trackManager.getSelectedSlotIndex(trackIndex));
     file.close();
     undoHydrateTrackIndex_++;
     if (undoHydrateTrackIndex_ >= Config::NUM_TRACKS) {

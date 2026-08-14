@@ -66,7 +66,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::selectClosestNote(Track& track, uint32_t
         hasMovedBracket = true;
         return;
     }
-    const uint32_t modStart = SelectNavigation::displayPhaseTick(startTick, loopLength);
+    const uint32_t modStart =
+        clampNoteEditBracketPhaseTick(track, SelectNavigation::displayPhaseTick(startTick, loopLength));
     uint32_t bestDist = loopLength;
     int bestIdx = 0;
     for (int i = 0; i < static_cast<int>(notes.size()); ++i) {

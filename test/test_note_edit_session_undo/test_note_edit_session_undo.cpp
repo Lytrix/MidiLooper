@@ -679,6 +679,92 @@ void test_kind_boundary_select_nav_no_push() {
   TEST_ASSERT_EQUAL(0u, stack.undoCount());
 }
 
+void test_overdub_survives_exit_bake_after_note_range_commit() {
+  // session_20260814_014553: NoteRange commit then exit bake replaced 1 row with 19 and
+  // dropped overdub (DISP 48→32). Session rematerialized from full passes, then one move.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 1536;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(5, 240, 91, 2));
+  loop.nextPassId_ = 3;
+
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardEventsCache();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 60, 10, 58));
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 91, 240, 288));
+
+  MidiEventVec& flat = session.mutEvents();
+  for (MidiEvent& evt : flat) {
+    if (evt.isNoteOn() && evt.data.noteData.note == 60 && evt.tick == 10) {
+      evt.tick = 58;
+    }
+    if (evt.isNoteOff() && evt.data.noteData.note == 60 && evt.tick == 58) {
+      evt.tick = 106;
+    }
+  }
+  session.syncEventsToStore();
+
+  EditPass move{};
+  move.actionType = EditActionType::Update;
+  move.propertyType = EditPropertyType::NoteRange;
+  move.targetNoteId = 1;
+  move.startTick = 58;
+  move.endTick = 106;
+  const EditPassId staleId = loop.saveNoteEditPass(0, move);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, staleId);
+
+  MidiEventVec baselineExcludingSessionEdits;
+  loop.materializeExcludingEditPassIds(EditPassIdList{staleId}, baselineExcludingSessionEdits);
+  EditPassVec replacement = buildSessionStoreEditPasses(
+      baselineExcludingSessionEdits, session.readEvents(), 5, loop.loopLengthTicks);
+  const EditPassIdList replacementIds =
+      loop.replaceNoteEditPass(0, EditPassIdList{staleId}, std::move(replacement));
+  TEST_ASSERT_FALSE(replacementIds.empty());
+
+  MidiEventVec materialized;
+  loop.passes.materializeToEventVector(materialized, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 60, 58, 106));
+  TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 91, 240, 288));
+}
+
+void test_stale_record_only_session_bake_must_not_delete_overdub() {
+  // 014553 destroy path: session store is record-only; bake vs full baseline emits Deletes.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 1536;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(5, 240, 91, 2));
+  loop.nextPassId_ = 3;
+
+  MidiEventVec fullBaseline;
+  loop.passes.materializeToEventVector(fullBaseline, loop.loopLengthTicks);
+  MidiEventVec recordOnlySession;
+  RecordPass recordOnly = makeRecordPassWithNote(5, 10);
+  LoopPasses recordPasses;
+  recordPasses.recordPass = std::move(recordOnly);
+  recordPasses.materializeToEventVector(recordOnlySession, loop.loopLengthTicks);
+
+  EditPassVec bakeRows =
+      buildSessionStoreEditPasses(fullBaseline, recordOnlySession, 5, loop.loopLengthTicks);
+  const NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(recordOnlySession, 5);
+  dropUnrequestedSessionStoreDeletes(bakeRows, currentState);
+  size_t deleteRows = 0;
+  for (const EditPass& row : bakeRows) {
+    if (row.actionType == EditActionType::Delete) {
+      ++deleteRows;
+    }
+  }
+  TEST_ASSERT_EQUAL(0u, deleteRows);
+  TEST_ASSERT_TRUE(hasDisplayNote(fullBaseline, loop.loopLengthTicks, 91, 240, 288));
+}
+
 void test_live_capture_baked_on_close_without_prior_edit_passes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -940,6 +1026,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_kind_boundary_reselect_move_pushes_again);
   RUN_TEST(test_kind_boundary_select_nav_no_push);
   RUN_TEST(test_session_undo_entry_trims_baseline_map_to_overlap_closure);
+  RUN_TEST(test_overdub_survives_exit_bake_after_note_range_commit);
+  RUN_TEST(test_stale_record_only_session_bake_must_not_delete_overdub);
   RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
   RUN_TEST(test_current_state_undo_restore_parity_with_clone);
   RUN_TEST(test_current_state_live_capture_undo_redo);
