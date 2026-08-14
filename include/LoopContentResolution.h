@@ -26,6 +26,10 @@ struct ResolutionCostCounters {
   uint32_t passChunkListsWalked = 0;
   /// Tick-index nodes visited during find. Must not require walking pass lists.
   uint32_t indexEntriesVisited = 0;
+  uint32_t checkpointIntervalTicks = 0;
+  uint32_t checkpointCount = 0;
+  uint32_t replayStartTick = 0;
+  uint32_t eventsReplayed = 0;
 };
 
 struct SoundingNote {
@@ -56,6 +60,7 @@ struct LoopContentResolution {
     void findRawWindow(uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
                        SessionMidiEventVec& out, ResolutionCostCounters* counters = nullptr) const;
     void appendNoteEvents(NoteId noteId, SessionMidiEventVec& out) const;
+    void materializeActive(SessionMidiEventVec& out) const;
 
     uint32_t indexedEventCount() const;
     uint32_t indexedPassCount() const;
@@ -78,6 +83,27 @@ struct LoopContentResolution {
     std::unordered_map<NoteId, NoteLocation> byNoteId;
   };
 
+  /// Stage 7 in-RAM sounding snapshots. Not persisted (D3 is out of scope).
+  struct StateCheckpoints {
+    struct NoteSpan {
+      SoundingNote note;
+      uint32_t startTick = 0;
+      uint32_t endTick = 0;
+    };
+
+    uint32_t intervalTicks = 0;
+    uint32_t loopLengthTicks = 0;
+    std::vector<SoundingNoteVec> soundingAt;
+    std::vector<NoteSpan> spans;
+    /// Start and exclusive-end ticks for tail replay (both keyed here).
+    std::multimap<uint32_t, size_t> startsByTick;
+
+    void rebuild(const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
+                 uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters = nullptr);
+    void resolveState(uint32_t tick, SoundingNoteVec& out,
+                      ResolutionCostCounters* counters = nullptr) const;
+  };
+
   static void resolveWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
                             ResolutionCostCounters* counters = nullptr);
@@ -88,6 +114,9 @@ struct LoopContentResolution {
 
   static void resolveState(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t tick,
                            SoundingNoteVec& out, ResolutionCostCounters* counters = nullptr);
+
+  static void resolveState(const StateCheckpoints& checkpoints, uint32_t tick, SoundingNoteVec& out,
+                           ResolutionCostCounters* counters = nullptr);
 
   static void resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
                            uint32_t windowLength, NoteUtils::DisplayNoteVec& out,
