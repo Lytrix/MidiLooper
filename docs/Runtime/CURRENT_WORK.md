@@ -17,7 +17,7 @@ Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b sh
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Stages 6–8 PASS. Stage 9 native worst-case µs recorded. Device `DIAG,lcr` via sliced idle gate (session in `LoopContentResolution.cpp` only; ≤16 bars on hardware; oracle mat/win skipped on device). HITL stable [`225744`](../../captures/session_20260814_225744.log). Open: 5.1/5.2 on `035414`-class capture. Production stays on materialize / 3b copy. Do not persist checkpoints (D3).
+**Now:** 5.4 shipped (device `soundingAt` stride 8 bars; native 1 bar). Next: 5.5 pressure abort in `fillCheckpointRange`, then 5.6 split `prepareRebuildSpans`. Do not raise the 16-bar arm cap. Short-loop `lcr` PASS [`225744`](../../captures/session_20260814_225744.log). Per-bar snapshot FAIL [`225351`](../../captures/session_20260814_225351.log). Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

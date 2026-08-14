@@ -58,13 +58,13 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 | Question | Answer |
 |----------|--------|
-| **Owner module** | Measurement only until gates pass; then consumer swap in a later approved slice |
-| **Primary invariant** | Worst-case latency on `035414` class: no multi-second MIDI/OLED stall; no `VCACHE,full` on the normal path; no full materialize after commit |
-| **Ownership change?** | Production swap is a **later** approved slice after this gate |
+| **Owner module** | `LoopContentResolution::StateCheckpoints` + idle `DeviceGateSession` (measurement only) |
+| **Primary invariant** | Checkpoint is a jump point, not a copy of the resolved loop. Worst-case latency on `035414` class: no multi-second MIDI/OLED stall; no `VCACHE,full` on the normal path; no full materialize after commit |
+| **Ownership change?** | NO — same owner; density is a measured parameter. Production swap is a **later** approved slice |
 | **State transition change?** | NO |
-| **Behavior-preserving?** | YES until swap |
-| **Reuse** | Keep 3b visual-cache overdub copy |
-| **Phase scope** | Device measurement; **no** delete of materialize |
+| **Behavior-preserving?** | YES until swap. Native 1-bar vs device 8/16-bar stride MUST agree |
+| **Reuse** | YES — extend `StateCheckpoints` / `checkpointIntervalTicks`. Keep 3b visual-cache overdub copy |
+| **Phase scope** | Sparse `soundingAt`, pressure abort, split `prepareRebuildSpans`, 68-bar measure; **no** delete of materialize; **no** raise of 16-bar arm cap until 5.8 |
 
 ---
 

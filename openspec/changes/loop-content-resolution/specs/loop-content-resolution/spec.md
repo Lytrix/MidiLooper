@@ -62,6 +62,27 @@ Walking `for each pass if intersects(window)` SHALL fail this requirement even w
 - **AND** destination checkpoint snapshots are unchanged
 - **AND** the call does not scan events from tick 0
 
+### Requirement: Checkpoint is a jump point, not a copy of the resolved loop
+
+A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop. `checkpointIntervalTicks` SHALL be a performance parameter, not a semantic property of the loop. Changing density (native 1 bar, device 8 bars, device 16 bars, later adaptive) MUST NOT change `resolveState` answers for a fixed active history.
+
+`spans` and `startsByTick` are currently sufficient as the base index for `resolveState`. The device probe SHALL measure whether additional indexing is required. The probe MUST NOT assume a per-bar full `soundingAt` snapshot is the checkpoint.
+
+Building a sounding-state snapshot at every bar of an `035414`-class loop (notes × bars membership copies) SHALL fail this requirement.
+
+#### Scenario: Sparse checkpoints agree with dense checkpoints
+
+- **WHEN** `resolveState` runs at the same high tick with `checkpointIntervalTicks` equal to one bar and again equal to eight or sixteen bars
+- **THEN** the sounding-state results are identical
+- **AND** the sparse run stores fewer `soundingAt` snapshots than the one-bar run
+
+#### Scenario: Per-bar sounding copies are not the device checkpoint
+
+- **WHEN** the idle device gate runs on a 64-bar or longer loop with thousands of notes
+- **THEN** it MUST NOT allocate a full sounding vector at every bar
+- **AND** it MUST abort checkpoint fill when advisory memory pressure is Low or Critical
+- **AND** `prepareRebuildSpans` materialize-plus-reconstruct MUST NOT run as a single idle slice
+
 ### Requirement: Physical chunks are not resolution boundaries
 
 `LoopEventStore` chunks SHALL remain a storage packing detail. Resolution MUST operate on ticks, identities, and events. A note, edit, or checkpoint MAY span chunk boundaries.

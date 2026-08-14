@@ -110,6 +110,11 @@ struct LoopContentResolution {
                       ResolutionCostCounters* counters = nullptr) const;
   };
 
+  /// Checkpoint density is a performance parameter (DEC-037). Same active history ⇒ same
+  /// `resolveState` answers. Native Stage 7/8 stay at 1 bar. Device idle gate uses 8 bars.
+  static constexpr uint32_t kNativeCheckpointBarStride = 1;
+  static constexpr uint32_t kDeviceCheckpointBarStride = 8;
+
   static void resolveWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
                             ResolutionCostCounters* counters = nullptr);
