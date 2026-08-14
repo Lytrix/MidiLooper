@@ -309,6 +309,9 @@ private:
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
+    /// Select fader / bracket nav span — committed content bars when loop is lengthened past content.
+    uint32_t noteEditSelectNavigationLengthTicks(const Track& track) const;
+    uint32_t clampNoteEditBracketPhaseTick(const Track& track, uint32_t phaseTick) const;
     void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (`filterSelectableDisplayNotes` on paint projection).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;

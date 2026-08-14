@@ -64,26 +64,35 @@ uint32_t Loop::findLastCommittedEventTick() const {
   return lastTick;
 }
 
-uint32_t Loop::reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const {
+uint32_t Loop::committedBarAlignedContentLengthTicks() const {
   if (!hasCommittedPasses()) {
-    return candidateLengthTicks;
+    return 0;
   }
   const uint32_t lastEventTick = findLastCommittedEventTick();
   if (lastEventTick == 0) {
-    return candidateLengthTicks;
+    return 0;
   }
 
   constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
   const uint32_t fullBars = lastEventTick / ticksPerBar;
   const uint32_t rem = lastEventTick % ticksPerBar;
   const uint32_t grace = ticksPerBar / 6;
-  uint32_t contentLength = 0;
   if (rem <= grace) {
-    contentLength = (fullBars > 0 ? fullBars : 1) * ticksPerBar;
-  } else if (lastEventTick < ticksPerBar / 2) {
-    contentLength = ticksPerBar;
-  } else {
-    contentLength = (fullBars + 1) * ticksPerBar;
+    return (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+  }
+  if (lastEventTick < ticksPerBar / 2) {
+    return ticksPerBar;
+  }
+  return (fullBars + 1) * ticksPerBar;
+}
+
+uint32_t Loop::reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const {
+  if (!hasCommittedPasses()) {
+    return candidateLengthTicks;
+  }
+  const uint32_t contentLength = committedBarAlignedContentLengthTicks();
+  if (contentLength == 0) {
+    return candidateLengthTicks;
   }
 
   if (candidateLengthTicks == 0 || candidateLengthTicks < contentLength) {

@@ -92,9 +92,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
       !bootSlotLoadRefreshPending && !focusSlotRestoreWork;
   // Paint before any background-only LoadLoopJob frame (PLAYING or STOPPED fill).
   const bool playBackgroundLoad = backgroundOnlyLoad;
-  // session_20260812_012342: focus SlotLoadSession must not suppress OLED during capture.
+  // session_20260812_012342: never skip OLED during capture (RC-A).
+  // session_20260814_014156: never skip while STOPPED — boot/background slot restore
+  // left the panel on sparse frame-1 for ~6.8s while load_frame ran.
   const bool skipFocusLoadForSlotSession =
-      focusSlotRestoreWork && SlotLoadSession::isActive() && !captureActive;
+      focusSlotRestoreWork && SlotLoadSession::isActive() && !captureActive &&
+      timingCriticalTrackActive;
 
   // Paint before background LoadLoopJob while PLAYING (session_20260718_213044).
   // Skip OLED only on focus Commit / focus-load session — not every SlotLoadSession.
