@@ -35,7 +35,7 @@
 - [x] 4.3 `admitLoopUndoHistory` is a no-op; `LoopUndoHistory` is not runtime-bundle work
 - [x] 4.4 Legacy bundle-undo read kept; load still rebuilds GUS from Loop content
 - [x] 4.5 `pio test -e native` (1137/1137)
-- [ ] 4.6 Device (`teensy41-capture-serial`, upload only on confirmation): no UndoStacks-scale `PERS,bundle`; post-stop gap bounded by remaining `LoopPersist`
+- [x] 4.6 Device PASS [`030147`](../../../captures/session_20260814_030147.log): no `LoopUndoHistory`; overdub-stop `PERS,bundle` is `SlotMeta` 348 ms / 241 slices then `LoopPersist`; reboot undo on selected slot 5 (`entries=22` kind=1, then `entries=21` kind=4)
 
 ## 5. Closeout
 

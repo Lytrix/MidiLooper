@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-14 (Stage 3 native shipped; device gate open)
+Last updated: 2026-08-14 (Stage 3 device PASS 030147)
 
 ---
 
@@ -26,7 +26,7 @@ Last updated: 2026-08-14 (Stage 3 native shipped; device gate open)
 
 ### Loop content-only history (DEC-035 Layer A)
 
-**Now: Stage 3 native shipped — device gate.** Footer writes empty GUS headers; `admitLoopUndoHistory` is a no-op; leftover `UndoStacks` does not walk live entries. Native 1137/1137. Device: overdub stop must not show UndoStacks-scale `PERS,bundle,LoopUndoHistory`; reboot undo still from content rebuild ([`024428`](../../captures/session_20260814_024428.log)). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
+**Stage 3 device PASS [`030147`](../../captures/session_20260814_030147.log):** zero `LoopUndoHistory`. Overdub-stop `PERS,bundle` is `SlotMeta` 348 ms / 241 slices, then `LoopPersist` ~152 ms. After reboot, selected slot 5 undoes immediately (`entries=22` kind=1, then `entries=21` kind=4). In-session undo still uses `GlobalUndoStack`. Do not start Stage 3b.
 
 Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md). Task [#33](https://github.com/Lytrix/MidiLooper/issues/33). Functional-failure Bug [#32](https://github.com/Lytrix/MidiLooper/issues/32) — [`overdub_stop_playing_midi_dump_bugfix.md`](../Plans/overdub_stop_playing_midi_dump_bugfix.md) (`LoopUndoHistory` / `UndoStacks` stall in [`112104`](../../captures/session_20260813_112104.log) / [`154823`](../../captures/session_20260813_154823.log)).
 
@@ -34,7 +34,7 @@ Do not start Stage 3b (replace `GlobalUndoStack`), Layer B clear-as-unlink, Laye
 
 ### Overdub-stop MIDI dump during PLAYING
 
-LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log). Dump **FAIL** remains the `UndoStacks` walk. Relief is Layer A Stage 3 of the content-history plan above, gated on Stage 2. Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Do not patch RC-J.
+LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_20260813_105505.log). `UndoStacks` stall closed in Stage 3 [`030147`](../../captures/session_20260814_030147.log) (no `LoopUndoHistory`; overdub-stop `SlotMeta` 348 ms then `LoopPersist`). Scheduling: [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Do not patch RC-J.
 
 ### Real-time incremental work (RECORD/OVERDUB) — post–RC-C + S0 timing telemetry
 
