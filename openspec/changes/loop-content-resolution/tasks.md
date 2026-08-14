@@ -38,7 +38,7 @@
 - [ ] 5.1 `035414`-class worst-case latency: no multi-second MIDI stall, no multi-second OLED stall
 - [ ] 5.2 Overdub entry remains cheap (3b copy); no `VCACHE,full` on the normal path; no full materialize after commit
 
-Device probe blocker: linking `src/LoopContentResolution.cpp` into `teensy41-capture-serial` overflows RAM1 (~25 KB ITCM). The TU is excluded via `build_src_filter` until that budget exists. Production consumers stay on materialize / 3b copy.
+Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_t41_lcr.ld`). Open: 5.1/5.2 on `035414`-class capture.
 
 ## 6. Production swap (only after all three gates + user approval)
 

@@ -101,6 +101,11 @@ struct LoopContentResolution {
 
     void rebuild(const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
                  uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters = nullptr);
+    void prepareRebuildSpans(const TickIndex& index, const EditPassVec& editPasses,
+                             uint32_t loopLength, uint32_t checkpointIntervalTicks,
+                             ResolutionCostCounters* counters = nullptr);
+    void fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
+                             ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, SoundingNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;
   };
@@ -134,4 +139,16 @@ struct LoopContentResolution {
   /// One-shot host/device sample. Does not keep the index. Not a production consumer.
   static void measureDeviceGate(const LoopPasses& passes, uint32_t loopLengthTicks,
                                 DeviceGateSample& out);
+
+  enum class DeviceGateSliceResult : uint8_t { Inactive, Continue, Complete };
+
+  /// Sliced device gate for idle maintenance — one heavy step per `deviceGateRunOneSlice`.
+  static bool deviceGateFinished();
+  static bool deviceGateActive();
+  static void deviceGateBegin(uint32_t loopLengthTicks);
+  static DeviceGateSliceResult deviceGateRunOneSlice(const LoopPasses& passes,
+                                                     uint32_t loopLengthTicks);
+  static void deviceGateFormatCaptureLine(char* line, size_t cap);
+  static void deviceGateReset();
+  static void deviceGateComplete();
 };

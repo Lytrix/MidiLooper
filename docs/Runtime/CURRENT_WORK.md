@@ -17,7 +17,7 @@ Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b sh
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Stages 6–8 PASS. Stage 9 native worst-case µs recorded on the 64-bar fixture (host: materialize 145 µs, 16-bar window 28 µs, checkpoint rebuild 214 µs, high-tick `resolveState` 1 µs). `teensy41-capture-serial` links `LoopContentResolution.cpp` + idle `measureDeviceGate` probe: `linker/imxrt1062_t41_lcr.ld` routes that TU's STL `.text*` to FLASH (RAM1 headroom +7968 B). Open: device gate 5.1/5.2 on `035414`-class capture. Production stays on materialize / 3b copy. Do not persist checkpoints (D3).
+**Now:** Stages 6–8 PASS. Stage 9 native worst-case µs recorded. Device `DIAG,lcr` via sliced idle gate (session in `LoopContentResolution.cpp` only; ≤16 bars on hardware; oracle mat/win skipped on device). HITL stable [`225744`](../../captures/session_20260814_225744.log). Open: 5.1/5.2 on `035414`-class capture. Production stays on materialize / 3b copy. Do not persist checkpoints (D3).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 
