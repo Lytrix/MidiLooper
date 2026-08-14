@@ -250,7 +250,7 @@ bool STORAGE_PERSIST_MEM StorageManager::loadV5MonolithIntoRam(LooperState& stat
             Serial.println(t);
             return failAfterPartialLoad();
         }
-        TrackUndo::rebuildTrackFromLoopContent(track);
+        TrackUndo::rebuildTrackFromLoopContent(track, selectedSlotIndex[t]);
     }
 
     uint32_t svokToken = 0;

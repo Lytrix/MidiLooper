@@ -2,13 +2,21 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-14 (DEC-035 Layer A Stage 2)
+Last updated: 2026-08-14 (reboot undo tip device PASS)
 
 ---
 
 ## Current branch
 
-**Loop content-only history (DEC-035):** Stage 2 load-time GUS fill from Active content shipped on `feature/loop-content-history`. Do not delete `UndoStacks` until reboot `U:nn` matches tip depth. Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md).
+**NOTE_EDIT entry while overdubbing:** `openNoteEditSession` calls `stopOverdubbing()` first — live capture commits before rematerialize (quick fix).
+
+**NOTE_EDIT lengthened loop select:** committed-content span for bracket/nav; skip detailed-window filter on selectable inventory. Fixture [`015731`](../../captures/session_20260814_015731.log).
+
+**Overdub + NOTE_EDIT regression:** [`014553`](../../captures/session_20260814_014553.log) — overdub stop 48 notes; NOTE_EDIT exit 32; reboot 32. Owner: `bakeNoteEditSessionStoreToPasses` on NOTE_EDIT close. Blocks DEC-035 Stage 3.
+
+**OLED first-frame mismatch:** RC3 device PASS [`014553`](../../captures/session_20260814_014553.log). Plan: [`oled_dma_partial_frame_bugfix.md`](../Plans/oled_dma_partial_frame_bugfix.md).
+
+**Loop content-only history (DEC-035):** Stage 2 load-time GUS fill from Active content shipped on `feature/loop-content-history`. Reboot undo tip device PASS [`024428`](../../captures/session_20260814_024428.log) (`Undo entries=17` then `16`). Do not delete `UndoStacks` until overdub+NOTE_EDIT exit regression is fixed. Plan: [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md).
 
 **NOTE_EDIT leave-restore painted span:** RC1 native shipped; device gate open — [`note_edit_overlap_leave_restore_painted_span_bugfix.md`](../Plans/note_edit_overlap_leave_restore_painted_span_bugfix.md). [`200154`](../../captures/session_20260813_200154.log) Restore 5 `720–2255` / select `DNTE` 1535; same-loop [`193838`](../../captures/session_20260813_193838.log) first-select paints length **47**.
 

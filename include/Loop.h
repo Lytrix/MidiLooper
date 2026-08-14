@@ -96,6 +96,8 @@ struct Loop {
 
   bool hasCommittedPasses() const;
   uint32_t findLastCommittedEventTick() const;
+  /// Bar-aligned span of committed pass MIDI (0 when no committed passes).
+  uint32_t committedBarAlignedContentLengthTicks() const;
   /// When committed passes MIDI exists, never return a length below content-derived bars.
   uint32_t reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const;
 

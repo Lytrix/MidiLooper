@@ -81,6 +81,46 @@ EDIT_MANAGER_IMPL_MEM uint32_t EditManager::noteEditLoopStartTick(const Track& t
     return loopLength > 0 ? track.getLoopStartTick() % loopLength : 0;
 }
 
+EDIT_MANAGER_IMPL_MEM uint32_t EditManager::noteEditSelectNavigationLengthTicks(
+    const Track& track) const {
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (!isNoteEditActive() || loopLength == 0) {
+        return loopLength;
+    }
+    const Loop& loop = trackManager.getSelectedLoop(track);
+    uint32_t navLength = loopLength;
+    const uint32_t contentLength = loop.committedBarAlignedContentLengthTicks();
+    if (contentLength > 0 && contentLength < loopLength) {
+        navLength = contentLength;
+    }
+    const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
+    const NoteUtils::DisplayNoteVec& visualNotes = track.getVisualNotesForSlot(slot);
+    uint32_t maxCommittedEndTick = 0;
+    for (const NoteUtils::DisplayNote& note : visualNotes) {
+        if (note.endTick > maxCommittedEndTick) {
+            maxCommittedEndTick = note.endTick;
+        }
+    }
+    if (maxCommittedEndTick > navLength && maxCommittedEndTick <= loopLength) {
+        navLength = maxCommittedEndTick;
+    }
+    return navLength;
+}
+
+EDIT_MANAGER_IMPL_MEM uint32_t EditManager::clampNoteEditBracketPhaseTick(const Track& track,
+                                                                          uint32_t phaseTick) const {
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (loopLength == 0) {
+        return 0;
+    }
+    const uint32_t navLength = noteEditSelectNavigationLengthTicks(track);
+    const uint32_t modPhase = phaseTick % loopLength;
+    if (navLength > 0 && navLength < loopLength && modPhase >= navLength) {
+        return navLength > Config::TICKS_PER_16TH_STEP ? navLength - Config::TICKS_PER_16TH_STEP : 0;
+    }
+    return modPhase;
+}
+
 EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::noteEditSessionProjectionEvents() const {
     return editSession.store.readEvents();
 }

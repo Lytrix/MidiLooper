@@ -626,8 +626,13 @@ void MidiButtonActions::handleUndo() {
         TrackUndo::undoForLoop(track, loop);
         return;
     }
-    logger.info("MIDI: No undo available (entries=%d)",
-                static_cast<int>(TrackUndo::undoDepthForLoop(track, loop)));
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    const int tipSlot = (stack.canUndo() && !stack.entries.empty())
+                            ? static_cast<int>(stack.entries[stack.cursor - 1].slotIndex)
+                            : -1;
+    logger.info("MIDI: No undo available (entries=%d selected=%u tip=%d)",
+                static_cast<int>(TrackUndo::undoDepthForLoop(track, loop)),
+                static_cast<unsigned>(slotIndex), tipSlot);
 }
 
 void MidiButtonActions::handleRedo() {

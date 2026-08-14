@@ -3,6 +3,7 @@
 
 #include "EditManagerInternal.h"
 
+#include <algorithm>
 #include <vector>
 
 #include "ClockManager.h"
@@ -194,8 +195,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& 
     const Loop& loop = trackManager.getSelectedLoop(track);
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
     const uint32_t playheadPhase = tickPhaseInLoop(transportTick, loop.startLoopTick, loopLength);
+    const uint32_t bracketPhase = clampNoteEditBracketPhaseTick(track, playheadPhase);
     const uint32_t bracketTick =
-        SelectNavigation::noteRelativeTick(playheadPhase, loopStartTick, loopLength);
+        SelectNavigation::noteRelativeTick(bracketPhase, loopStartTick, loopLength);
     selectNoteAtBracket(track, bracketTick);
     if (selectedNoteIdx < 0) {
         selectClosestNote(track, bracketTick);
@@ -242,7 +244,7 @@ EDIT_MANAGER_IMPL_MEM std::vector<NoteUtils::DisplayNote> EditManager::selectabl
         notes.assign(filtered.begin(), filtered.end());
     }
 
-    if (loopLength > 0) {
+    if (loopLength > 0 && !isNoteEditActive()) {
         const uint32_t currentTick = clockManager.getCurrentTick();
         const DetailedWindowContext window =
             displayManager.resolveDetailedWindow(track, displaySlot, currentTick);
@@ -256,12 +258,23 @@ EDIT_MANAGER_IMPL_MEM std::vector<NoteUtils::DisplayNote> EditManager::selectabl
 
 EDIT_MANAGER_IMPL_MEM std::vector<SelectNavigation::SelectNavSlot> EditManager::buildSelectNavigationSlots(
     const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing) const {
-    const uint32_t loopLength =
+    const uint32_t storageLoopLength =
         isNoteEditActive() ? noteEditLoopLengthTicks(track) : track.getLoopLength();
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
-    return SelectNavigation::buildSelectNavigationSlots(loopLength, noteEditLoopStartTick(track),
-                                                        notes, selectedTick,
-                                                        includeSelectedTickIfMissing);
+    std::vector<SelectNavigation::SelectNavSlot> slots = SelectNavigation::buildSelectNavigationSlots(
+        storageLoopLength, noteEditLoopStartTick(track), notes, selectedTick,
+        includeSelectedTickIfMissing);
+    if (isNoteEditActive() && storageLoopLength > 0) {
+        const uint32_t navLength = noteEditSelectNavigationLengthTicks(track);
+        if (navLength > 0 && navLength < storageLoopLength) {
+            slots.erase(std::remove_if(slots.begin(), slots.end(),
+                                       [navLength](const SelectNavigation::SelectNavSlot& slot) {
+                                           return slot.relativeTick >= navLength;
+                                       }),
+                        slots.end());
+        }
+    }
+    return slots;
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncReferenceStepFromSelectedTick(uint32_t selectedTick) {

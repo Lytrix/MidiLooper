@@ -47,6 +47,6 @@ public:
                                                uint32_t beforeLoopLengthTicks,
                                                PassId geometryId = kInvalidPassId);
     static void rebuildSlotFromLoopContent(Track& track, uint8_t slotIndex);
-    static void rebuildTrackFromLoopContent(Track& track);
+    static void rebuildTrackFromLoopContent(Track& track, uint8_t focusSlotIndex);
     static void undoLoopStart(Track& track);
 };

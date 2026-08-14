@@ -3,6 +3,7 @@
 
 #include <unity.h>
 
+#include <algorithm>
 #include "MidiEvent.h"
 #include <vector>
 
@@ -190,6 +191,36 @@ void test_build_select_slots_no_empty_duplicate_at_note_tick() {
     TEST_ASSERT_FALSE(hasEmpty720);
 }
 
+static std::vector<SelectNavigation::SelectNavSlot> trimSelectSlotsToContentSpan(
+    std::vector<SelectNavigation::SelectNavSlot> slots, uint32_t navLength) {
+    slots.erase(std::remove_if(slots.begin(), slots.end(),
+                               [navLength](const SelectNavigation::SelectNavSlot& slot) {
+                                   return slot.relativeTick >= navLength;
+                               }),
+                slots.end());
+    return slots;
+}
+
+void test_trim_select_slots_to_committed_content_span() {
+    const uint32_t fullLoop = 3072;
+    const uint32_t navLength = 1536;
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({1, 60, 0, 0, 48});
+    notes.push_back({2, 62, 0, 768, 816});
+    const auto fullSlots =
+        SelectNavigation::buildSelectNavigationSlots(fullLoop, 0, notes, 0, false);
+    const auto trimmedSlots = trimSelectSlotsToContentSpan(fullSlots, navLength);
+
+    TEST_ASSERT_EQUAL(64, fullLoop / 48);
+    TEST_ASSERT_EQUAL(32, navLength / 48);
+    TEST_ASSERT_TRUE((int)fullSlots.size() > (int)trimmedSlots.size());
+    for (const SelectNavigation::SelectNavSlot& slot : trimmedSlots) {
+        TEST_ASSERT_LESS_THAN(navLength, slot.relativeTick);
+    }
+    TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(trimmedSlots, 0));
+    TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(trimmedSlots, 768));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -201,5 +232,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_loop_start_offset_maps_first_slot_to_storage_tick);
     RUN_TEST(test_loop_start_offset_no_phantom_slot_at_selected_tick);
     RUN_TEST(test_build_select_slots_no_empty_duplicate_at_note_tick);
+    RUN_TEST(test_trim_select_slots_to_committed_content_span);
     return UNITY_END();
 }

@@ -230,6 +230,50 @@ void test_pass_undo_depth_hidden_when_slot_cleared() {
   TEST_ASSERT_EQUAL(0u, displayDepth);
 }
 
+void test_reposition_undo_tip_after_multi_slot_content_rebuild() {
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.entries.push_back(makeEntry(1, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(7, UndoEntryKind::OverdubPassAdded));
+  stack.cursor = 4;
+
+  TEST_ASSERT_FALSE(stackTipMatchesSlot(stack, 0));
+  repositionGlobalUndoStackTipForSlot(stack, 0);
+  TEST_ASSERT_TRUE(stackTipMatchesSlot(stack, 0));
+  TEST_ASSERT_EQUAL(4u, stack.cursor);
+  TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 0));
+  TEST_ASSERT_EQUAL(1u, countAppliedPassUndoEntriesForSlot(stack, 1));
+}
+
+void test_reposition_undo_tip_for_selected_slot_not_active_slot() {
+  GlobalUndoStack stack;
+  for (uint8_t slot = 0; slot < 8; ++slot) {
+    stack.entries.push_back(makeEntry(slot, UndoEntryKind::RecordPassAdded));
+  }
+  stack.cursor = 8;
+
+  TEST_ASSERT_FALSE(stackTipMatchesSlot(stack, 5));
+  repositionGlobalUndoStackTipForSlot(stack, 5);
+  TEST_ASSERT_TRUE(stackTipMatchesSlot(stack, 5));
+  TEST_ASSERT_EQUAL(1u, countAppliedPassUndoEntriesForSlot(stack, 5));
+}
+
+void test_later_slot_rebuild_keeps_selected_slot_at_tip() {
+  // LoadLoopJob rebuilds every restored slot. After slot 5 then slot 0, tip must stay on 5.
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(5, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(5, UndoEntryKind::OverdubPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.cursor = 3;
+
+  repositionGlobalUndoStackTipForSlot(stack, 5);
+  TEST_ASSERT_TRUE(stackTipMatchesSlot(stack, 5));
+  repositionGlobalUndoStackTipForSlot(stack, 5);
+  TEST_ASSERT_TRUE(stackTipMatchesSlot(stack, 5));
+  TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 5));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_count_applied_undo_entries_per_slot);
@@ -244,5 +288,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stale_redo_skip_removes_redo_tip_for_same_slot);
   RUN_TEST(test_redo_branch_survives_full_undo_for_slot);
   RUN_TEST(test_pass_undo_depth_hidden_when_slot_cleared);
+  RUN_TEST(test_reposition_undo_tip_after_multi_slot_content_rebuild);
+  RUN_TEST(test_reposition_undo_tip_for_selected_slot_not_active_slot);
+  RUN_TEST(test_later_slot_rebuild_keeps_selected_slot_at_tip);
   return UNITY_END();
 }

@@ -473,7 +473,7 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
                                                 trackManager.getTrack(t).getGlobalUndoStack())) {
             return false;
         }
-        TrackUndo::rebuildTrackFromLoopContent(trackManager.getTrack(t));
+        TrackUndo::rebuildTrackFromLoopContent(trackManager.getTrack(t), selectedSlotIndex[t]);
     }
 
     uint32_t tailMarker = 0;

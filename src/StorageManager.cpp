@@ -355,7 +355,8 @@ void STORAGE_PERSIST_MEM StorageManager::processDeferredUndoSnapshots() {
     if (!readGlobalUndoStackFromFile(file, trackManager.getTrack(trackIndex).getGlobalUndoStack())) {
         trackManager.getTrack(trackIndex).getGlobalUndoStack().clear();
     }
-    TrackUndo::rebuildTrackFromLoopContent(trackManager.getTrack(trackIndex));
+    TrackUndo::rebuildTrackFromLoopContent(trackManager.getTrack(trackIndex),
+                                           trackManager.getSelectedSlotIndex(trackIndex));
     file.close();
     undoHydrateTrackIndex_++;
     if (undoHydrateTrackIndex_ >= Config::NUM_TRACKS) {

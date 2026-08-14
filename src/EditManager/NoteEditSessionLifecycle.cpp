@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ClockManager.h"
+#include "Track.h"
 #include "ControlSurfaceManager.h"
 #include "EditManager.h"
 #include "Globals.h"
@@ -27,7 +28,16 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     if (editSession.active) {
         return;
     }
+    const bool committedLiveOverdub = track.isOverdubbing();
+    if (committedLiveOverdub) {
+        track.stopOverdubbing();
+    }
     Loop& loop = trackManager.getSelectedLoop(track);
+    loop.discardPassesMaterializedCache();
+    // NOTE_EDIT committed paint/select base must match passes.materialize — partial viewport
+    // adopt after overdub stop is not sufficient (session_20260814_020910 / 021959).
+    loop.rebuildVisualCacheFromPasses();
+    invalidateNoteEditDerivedCaches();
     editSession.sessionType = EditSessionType::Note;
     editSession.active = true;
     editSession.editPassIndex = 0;
@@ -42,6 +52,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     loop.rematerializeEditView(editSession.store.mutStore());
     DIAG_COUNTER_INC(Materialize);
     DIAG_EVENT(Diagnostics::Edit::AfterRematerializeEditView);
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,NOTE_EDIT_OPEN,sync,visual_notes,%u,session_events,%zu",
+                static_cast<unsigned>(loop.visualCache.notes.size()),
+                editSession.store.readStore().size());
+#endif
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 0
     return;
 #endif
