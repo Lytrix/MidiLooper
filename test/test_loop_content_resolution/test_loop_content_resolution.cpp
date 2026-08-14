@@ -26,6 +26,7 @@
 #include "LoopContentResolution.h"
 #include "LoopContentResolutionImpl.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/IntervalProjection.h"
 
 namespace {
 
@@ -807,6 +808,94 @@ void test_stage7_resolve_state_from_checkpoint_not_tick_zero() {
   TEST_ASSERT_TRUE(hasSoundingNoteId(actual, fixture.wrapNoteId));
 }
 
+void test_stage8_loop_switch_high_tick_bounded_replay() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  const uint32_t interval = Config::TICKS_PER_BAR;
+  const uint32_t playingLength = 4u * Config::TICKS_PER_BAR;
+  const NoteId playingNoteId = 9000;
+  LoopPasses playingPasses;
+  playingPasses.recordPass.id = 100;
+  playingPasses.recordPass.state = CapturePassState::Active;
+  playingPasses.recordPass.committedChunkIds = makeNoteSpan(0, 200, 1, 50, playingNoteId);
+  LoopContentResolution::TickIndex playingIndex;
+  ResolutionCostCounters playingCommit;
+  playingIndex.commitCapturePass(playingPasses.recordPass.id, playingPasses.recordPass.committedChunkIds,
+                                 playingPasses.recordPass.state, 0, &playingCommit);
+  TEST_ASSERT_EQUAL_UINT32(1u, playingCommit.passChunkListsWalked);
+  LoopContentResolution::StateCheckpoints playingCheckpoints;
+  playingCheckpoints.rebuild(playingIndex, playingPasses.editPasses, playingLength, interval);
+
+  CanonicalResolutionFixture destination = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex destinationIndex;
+  commitFixtureIndex(destination, destinationIndex);
+  LoopContentResolution::StateCheckpoints destinationCheckpoints;
+  destinationCheckpoints.rebuild(destinationIndex, destination.passes.editPasses,
+                                 destination.loopLengthTicks, interval);
+  const uint32_t destCheckpointCount =
+      static_cast<uint32_t>(destinationCheckpoints.soundingAt.size());
+  const size_t destSpanCount = destinationCheckpoints.spans.size();
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, destCheckpointCount);
+
+  const uint32_t playheadTick = destination.loopLengthTicks - 24u;
+  const uint32_t playingPhase =
+      IntervalProjection::tickPhaseInLoop(playheadTick, 0, playingLength);
+  const uint32_t destinationPhase =
+      IntervalProjection::tickPhaseInLoop(playheadTick, 0, destination.loopLengthTicks);
+
+  SoundingNoteVec playingExpected;
+  SoundingNoteVec playingActual;
+  LoopContentResolution::resolveState(playingPasses, playingLength, playingPhase, playingExpected);
+  ResolutionCostCounters playingCounters;
+  LoopContentResolution::resolveState(playingCheckpoints, playingPhase, playingActual,
+                                      &playingCounters);
+  TEST_ASSERT_EQUAL_UINT32(0u, playingCounters.passChunkListsWalked);
+  assertSoundingMatch(playingExpected, playingActual);
+
+  SoundingNoteVec destExpected;
+  SoundingNoteVec destActual;
+  LoopContentResolution::resolveState(destination.passes, destination.loopLengthTicks,
+                                      destinationPhase, destExpected);
+  ResolutionCostCounters switchCounters;
+  LoopContentResolution::resolveState(destinationCheckpoints, destinationPhase, destActual,
+                                      &switchCounters);
+  printCounters("stage8_switch_to_destination", switchCounters);
+  std::printf("stage8 replay_start=%u events_replayed=%u history_events=%u dest_phase=%u\n",
+              switchCounters.replayStartTick, switchCounters.eventsReplayed,
+              switchCounters.eventsInHistory, destinationPhase);
+  TEST_ASSERT_EQUAL_UINT32(0u, switchCounters.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, switchCounters.replayStartTick);
+  TEST_ASSERT_TRUE(destinationPhase - switchCounters.replayStartTick < interval);
+  TEST_ASSERT_LESS_THAN(switchCounters.eventsInHistory, switchCounters.eventsReplayed);
+  assertSoundingMatch(destExpected, destActual);
+  TEST_ASSERT_TRUE(hasSoundingNoteId(destActual, destination.wrapNoteId));
+  TEST_ASSERT_EQUAL_UINT32(destCheckpointCount,
+                           static_cast<uint32_t>(destinationCheckpoints.soundingAt.size()));
+  TEST_ASSERT_EQUAL(destSpanCount, destinationCheckpoints.spans.size());
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  const uint32_t windowStart = destination.loopLengthTicks - (windowLength / 2u);
+  SessionMidiEventVec windowExpected;
+  oracleWindowEvents(destination.passes, destination.loopLengthTicks, windowStart, windowLength,
+                     windowExpected);
+  ResolutionCostCounters windowCounters;
+  SessionMidiEventVec windowActual;
+  LoopContentResolution::resolveWindow(destinationIndex, destination.passes.editPasses,
+                                       destination.loopLengthTicks, windowStart, windowLength,
+                                       windowActual, &windowCounters);
+  TEST_ASSERT_EQUAL_UINT32(0u, windowCounters.passChunkListsWalked);
+  assertResolvedEventsMatch(windowExpected, windowActual);
+
+  SoundingNoteVec backExpected;
+  SoundingNoteVec backActual;
+  LoopContentResolution::resolveState(playingPasses, playingLength, playingPhase, backExpected);
+  ResolutionCostCounters backCounters;
+  LoopContentResolution::resolveState(playingCheckpoints, playingPhase, backActual, &backCounters);
+  TEST_ASSERT_EQUAL_UINT32(0u, backCounters.passChunkListsWalked);
+  assertSoundingMatch(backExpected, backActual);
+}
+
 void test_stage7_resolve_state_matches_oracle_mid_and_wrap() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -851,5 +940,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage7_checkpoints_measured_interval);
   RUN_TEST(test_stage7_resolve_state_from_checkpoint_not_tick_zero);
   RUN_TEST(test_stage7_resolve_state_matches_oracle_mid_and_wrap);
+  RUN_TEST(test_stage8_loop_switch_high_tick_bounded_replay);
   return UNITY_END();
 }
