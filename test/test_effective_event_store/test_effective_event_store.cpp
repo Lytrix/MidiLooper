@@ -115,6 +115,36 @@ void test_overdub_entry_does_not_rebuild_effective_store() {
   TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
 }
 
+void test_overdub_entry_uses_windowed_source_on_long_loop() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t longLoopLen = Config::TICKS_PER_BAR * 68;
+  loop.loopLengthTicks = longLoopLen;
+
+  LoopEventStore store;
+  for (uint32_t bar = 0; bar < 68; ++bar) {
+    const uint32_t onTick = bar * Config::TICKS_PER_BAR + 10;
+    const uint32_t offTick = onTick + 40;
+    TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, 1, static_cast<uint8_t>(60 + (bar % 12)), 100,
+                                       static_cast<NoteId>(bar + 1)));
+    TEST_ASSERT_TRUE(store.append(
+        MidiEvent::NoteOff(offTick, 1, static_cast<uint8_t>(60 + (bar % 12)), 0)));
+  }
+  loop.seedRecordPassFromStore(store);
+
+  SessionMidiEventVec fullFlat;
+  loop.copyEffectiveCommittedEvents(fullFlat);
+  TEST_ASSERT_GREATER_THAN(100u, fullFlat.size());
+
+  const uint32_t playhead = 32u * Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Overdub, playhead);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_LESS_THAN(fullFlat.size(), loop.overdubSourceViewEvents().size() + 1u);
+  TEST_ASSERT_GREATER_THAN(0u, loop.overdubSourceViewEvents().size());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+}
+
 void test_undo_pass_toggle_rebuilds_effective_store() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -141,6 +171,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_effective_store_matches_materialize_after_seed);
   RUN_TEST(test_effective_store_updates_on_edit_pass_save);
   RUN_TEST(test_overdub_entry_does_not_rebuild_effective_store);
+  RUN_TEST(test_overdub_entry_uses_windowed_source_on_long_loop);
   RUN_TEST(test_undo_pass_toggle_rebuilds_effective_store);
   return UNITY_END();
 }

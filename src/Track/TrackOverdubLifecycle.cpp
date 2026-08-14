@@ -96,8 +96,13 @@ void Track::startOverdubbing(uint32_t currentTick) {
   recordAddedNoteOnCount = 0;
   Loop& loop = getActiveLoop();
   loop.markDisplayCachesStale();
+  uint32_t playheadPhase = 0;
+  if (loop.loopLengthTicks > 0) {
+    playheadPhase =
+        tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  }
   const uint32_t captureStartUs = micros();
-  loop.beginCapture(CapturePhase::Overdub);
+  loop.beginCapture(CapturePhase::Overdub, playheadPhase);
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   if (loop.loopLengthTicks > 0) {

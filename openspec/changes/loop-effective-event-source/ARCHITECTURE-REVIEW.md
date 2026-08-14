@@ -76,9 +76,9 @@ Overdub entry must consume an **already-existing** effective event source and mu
 
 | Check | Pass |
 |-------|------|
-| Windowed source establishment | [ ] |
-| RC-K3 / overlap hold native PASS | [ ] |
-| `pio test -e native` | [ ] |
+| Windowed source establishment | [x] |
+| RC-K3 / overlap hold native PASS | [x] |
+| `pio test -e native` | [x] |
 | Device overdub overlap HITL or `035414` manual re-run | [ ] |
 
 ---

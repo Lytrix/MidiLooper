@@ -34,7 +34,7 @@ Last updated: 2026-08-14 (Layer D active; overlay Track A parked)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-036** D1 **shipped** (incremental effective store, native 1141/1141); **D2 next** — range-driven overdub window, remove full `reconstructDisplayNotes` at overdub entry ([`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/)). D0 PASS [`035414`](../captures/session_20260814_035414.log). Layer A archived on `feature/loop-content-history`.
+**Active work:** **DEC-036** D1+D2 **shipped** (incremental effective store + windowed overdub source; native 1142/1142). **Device gate open** — `035414` class `ODUB,begin_capture` < 50 ms ([`loop-effective-event-source`](../../openspec/changes/loop-effective-event-source/)).
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

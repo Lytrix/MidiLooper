@@ -18,11 +18,11 @@
 
 ## 3. Phase D2 — Range-driven overdub source
 
-- [ ] 3.1 Rewrite `establishOverdubSourceView` to use `effectiveEvents().range(overdubWindow)` only
-- [ ] 3.2 Remove full-loop `reconstructDisplayNotes` from overdub entry; windowed note/span data for overlap only
-- [ ] 3.3 Ensure `markDisplayCachesStale` does not synchronously block overdub entry
-- [ ] 3.4 Native: `test_overdub_source_view`, overlap hold, pending note change fixtures PASS
-- [ ] 3.5 `pio test -e native`
+- [x] 3.1 Rewrite `establishOverdubSourceView` to use `effectiveEvents().range(overdubWindow)` only
+- [x] 3.2 Remove full-loop `reconstructDisplayNotes` from overdub entry; windowed note/span data for overlap only
+- [x] 3.3 Ensure `markDisplayCachesStale` does not synchronously block overdub entry
+- [x] 3.4 Native: `test_overdub_source_view`, overlap hold, pending note change fixtures PASS
+- [x] 3.5 `pio test -e native` — 1142/1142 PASS (2026-08-14)
 - [ ] 3.6 Device gate: `035414` class — `ODUB,begin_capture` < 50 ms; overlap behavior spot-check
 
 ## 4. Closeout
