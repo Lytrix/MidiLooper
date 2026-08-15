@@ -51,34 +51,23 @@ void discardQueuedSlotActions(uint8_t trackIdx) {
 }
 
 void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, uint32_t now) {
-  const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
-  const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
   trackManager.clearPendingSlotSwitch(trackIdx);
-  const bool editAuditionSingleSlot =
-      editManager.isLoopEditSession() || editManager.isNoteEditActive();
   if (clockManager.shouldQuantizeRecordStart()) {
     trackManager.setSelectedSlotIndex(trackIdx, slotIndex, SyncPlayback::No);
     // Pre-build destination send buffer while the current loop still plays.
     track.ensurePlaybackMergedEventsForSlot(slotIndex);
-    if (enabledCount > 1 && !editAuditionSingleSlot) {
-      trackManager.setPendingEnabledSetReplacement(trackIdx, false);
-      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::LoopEnd, now);
-    } else {
-      if (!slotEnabled || editAuditionSingleSlot) {
-        trackManager.setPendingEnabledSetReplacement(trackIdx, true);
-      }
-      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::LoopEnd, now);
-    }
+    // Short-press queue is always a replace: previous slots stop when this one starts.
+    // Hold-to-add more slots at the same queue point is a later gesture.
+    trackManager.setPendingEnabledSetReplacement(trackIdx, true);
+    trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::LoopEnd, now);
     if (trackIdx == trackManager.getSelectedTrackIndex()) {
       trackManager.refreshPreviewSlotFocus(trackIdx, slotIndex);
     }
   } else {
     trackManager.setPendingEnabledSetReplacement(trackIdx, false);
-    if (enabledCount == 1) {
-      for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-        trackManager.setSlotEnabled(trackIdx, s, (s == slotIndex));
-        trackManager.setSlotMuted(trackIdx, s, false);
-      }
+    for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+      trackManager.setSlotEnabled(trackIdx, s, (s == slotIndex));
+      trackManager.setSlotMuted(trackIdx, s, false);
     }
     trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
     const Loop& targetLoop = track.getLoop(slotIndex);

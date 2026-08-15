@@ -32,9 +32,8 @@ Immediate record sets **`activeLoopIndex`** to the target slot before capture st
   - Departure commits pending edit work (NOTE_EDIT / LOOP_EDIT) before the UI focus index changes.
   - While transport is running (`clockManager.shouldQuantizeRecordStart()`): `setSelectedSlotIndex(..., SyncPlayback::No)` updates **preview** immediately; **playing** slot switches at **loop boundary** via `requestSlotSwitch(LoopEnd)`.
   - Piano roll and edit commit follow preview immediately; bar/16th LEDs and phase grid stay on the **playing** slot until commit.
-  - In multi-slot mode: keep the enabled set; queue playing-slot switch at loop end.
-  - In **LOOP_EDIT** or **NOTE_EDIT**: queue active switch with **single-slot** enabled set replacement so only the selected loop is audible for comparison.
-  - In single-slot mode (non-edit): queue switch at the grid; when committed, enabled set can be replaced with that single slot.
+  - At LoopEnd commit the enabled set becomes **only the queued slot**. Previously playing slots stop. A leftover layered set does not keep sounding.
+  - Adding more slots to the same queued start (hold the current playing slot, short-press others) is not this gesture.
   - On grid commit: **`projectionCycleStartTick`** resets and **`queuedStartTick`** applies once (target slot's **`loopStartTick`**).
   - When transport is not running: immediate `SyncPlayback::Yes` sync.
 - **Pressed slot is empty**: use queued/immediate record flow (bar/phase quantized when configured).
