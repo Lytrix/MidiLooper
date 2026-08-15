@@ -60,7 +60,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [x] 5.17a Contract: `findRawWindow` / `visitTickRange` is `tick ∈ [begin, end)` → Active `(passId, eventIndex)`. Wrap is two ranges. Equal-tick order is `multimap` insertion order. Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](../../../docs/Plans/loop_content_resolution_tick_index_flat_event_index_refinement.md). Entry is `TickEventEntry { tick, passId, eventIndex }`. Do not import span-boundary concepts. Do not touch `recon` / `pair`.
 - [x] 5.17b Native C vs flat A: C-order append + `stable_sort` by tick only. Host (94 entries): C emplace 23 µs, A append 11 + sort 15 = 26 µs, A query 144 vs C 151. Pick **A**. No B. No A2.
 - [x] 5.17c Native equivalence: same `byTick` walk, wrap, disabled-pass skip, `resolveWindow` = C = materialize oracle, `walk=0`. Equal-tick OFF-then-ON at 192 preserved. Production `byTick` stays C.
-- [ ] 5.17d Device append / sort / query on the 139-bar class. C remasure [`155953`](../../../captures/session_20260815_155953.log) matches [`153920`](../../../captures/session_20260815_153920.log). Production `byTick` stays C until this PASS.
+- [ ] 5.17d Device append / sort / query on the 139-bar class. Firmware: IndexCommit appends `tickEvents`, one `isort` slice, Arduino `win` then `prep`. Complete line `iapp=` / `isort=`. C baseline [`155953`](../../../captures/session_20260815_155953.log). Native `commitCapturePass` still fills `byTick`. Device remasure next.
 - [ ] 5.17e Swap `TickIndex` representation only if 5.17d PASS. No B. No A2. No `recon`. No `pair`.
 
 ## 6. Production swap (only after all three gates + user approval)

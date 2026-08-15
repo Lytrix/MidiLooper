@@ -1,6 +1,6 @@
 # Loop content resolution — TickIndex flat event index (5.17)
 
-**Status:** 5.17a–c native **complete** 2026-08-15 — pick **A**. C device remasure [`155953`](../captures/session_20260815_155953.log) matches [`153920`](../captures/session_20260815_153920.log). Production `byTick` stays C until 5.17d/e.  
+**Status:** 5.17d firmware ready 2026-08-15 — device gate IndexCommit is flat A (`iapp` / `isort` / `win`). Awaiting 139-bar remasure vs [`155953`](../captures/session_20260815_155953.log). Native `commitCapturePass` still fills `byTick`.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.16 closed `prep`; next owner from [`153920`](../captures/session_20260815_153920.log) — [`loop_content_resolution_device_phase_budget_refinement.md`](loop_content_resolution_device_phase_budget_refinement.md)
 
@@ -139,8 +139,8 @@ Then implement **only the winner** (5.17e). Production `byTick` stays C until th
 5.17a  contract (this doc) — done
 5.17b  native C vs flat A (append / sort / emplace / query) — done
 5.17c  native equivalence (window, order, wrap, oracle, walk) — done
-5.17d  device append / sort / query  — only after A picked
-5.17e  swap TickIndex representation — only if 5.17d PASS
+5.17d  device append / sort / query  — firmware ready; capture next
+5.17e  keep A / drop `byTick` from `commitCapturePass` — only if 5.17d PASS
 ```
 
 ---
@@ -173,7 +173,17 @@ Host microbench (canonical fixture, 94 entries):
 
 Host malloc is cheap, so C vs A totals are similar. That does not contradict [`153920`](../captures/session_20260815_153920.log): device PSRAM `emplace` is the measured failure (50→83 ms, then 101–121 ms). Query is not worse. Sort is not a material share of a device-class build.
 
-**Pick A.** No B. No A2. Do not swap production `byTick` until 5.17d measures append / sort / query on device.
+**Pick A.** No B. No A2.
+
+### 5.17d device gate (firmware)
+
+IndexCommit appends `TickEventEntry` rows (8 per slice), then one `isort` slice (`stable_sort` by tick). Arduino then runs the existing `Window` sample (`win=`) and goes to `prep`. `findRawWindow` reads `tickEvents` when that list is non-empty.
+
+Complete line adds `iapp=` / `isort=` (tick-event append / sort). Span `app=` / `sort=` are unchanged.
+
+`indexCapturePassEventRange` still `emplace`s `byTick` for native C tests. Device gate does not call it.
+
+Compare the next capture to [`155953`](../captures/session_20260815_155953.log): `idx` p0/p1 `loop_rem` should collapse; `iapp` + `isort` replace map emplace; `win` should be set; `walk=0`; `st` not worse.
 
 ---
 

@@ -1372,9 +1372,14 @@ void test_stage9_native_worst_case_micros() {
   TEST_ASSERT_LESS_THAN(sample.state.eventsInHistory, sample.state.eventsReplayed);
   TEST_ASSERT_GREATER_THAN(0u, sample.materialize.elapsedMicros);
   TEST_ASSERT_GREATER_THAN(0u, sample.window.elapsedMicros);
+  TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.tickEventAppendMicros);
   std::printf("stage515c app=%llu sort=%llu\n",
               static_cast<unsigned long long>(sample.rebuild.spanBoundaryAppendMicros),
               static_cast<unsigned long long>(sample.rebuild.spanBoundarySortMicros));
+  std::printf("stage517d iapp=%llu isort=%llu win=%llu\n",
+              static_cast<unsigned long long>(sample.indexCommit.tickEventAppendMicros),
+              static_cast<unsigned long long>(sample.indexCommit.tickEventSortMicros),
+              static_cast<unsigned long long>(sample.window.elapsedMicros));
 }
 
 uint64_t elapsedMicrosSince(Clock::time_point start) {
