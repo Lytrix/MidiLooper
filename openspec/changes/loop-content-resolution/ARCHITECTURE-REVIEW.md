@@ -94,4 +94,18 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 ---
 
+### Phase 038 — Overdub wrap commit and session undo (DEC-038)
+
+| Question | Answer |
+|----------|--------|
+| **Owner module** | `Track` overdub lifecycle / `Loop::commitCapturePass` / `beginCapture`. LCR `publishPreparedOverdubPass`. `MidiButtonActions::handleUndo` session-gate. `TrackUndo::pushOverdubPassAdded` |
+| **Primary invariant** | Persist grain is one wrap; undo grain is one session. Stay OVERDUBBING. Do not call `finalizePendingNotes` at S. Keep 3b on miss |
+| **Ownership change?** | NO — no new Manager; no `NoteEditSessionUndoStack`; no new undo kind |
+| **State transition change?** | YES — approved by DEC-038: seal while OVERDUBBING, then `beginCapture` again |
+| **Behavior-preserving?** | NO for wrap persist and mid-session undo routing. YES for STOP closer and 3b fallback |
+| **Reuse** | YES — extend `commitCapturePass` + 6D.4 publish + `handleUndo` session-gate. GUS kind stays `OverdubPassAdded` |
+| **Phase scope** | **038.1** after user approval (RAM wrap + session stack). **038.2** later (GUS `passIds`). No SD. No midi_gap / 6.3 |
+
+**Approval:** DEC-038 pins recorded. **Do not edit Track until 038.1 is approved.** Native 6E.1–6E.5 PASS. 6D.4 publish already exists.
+
 **Approval:** APPROVE design gate — native Phase 0–5 may proceed. **6D.4 landed** (`publishPreparedOverdubPass`, `DeviceGateSession::delta`, two-source consume). Prepared validity may come from commit-site restamp, not only `deviceGateComplete`. Do not treat 6D as “LCR is always live.” Device HITL open.

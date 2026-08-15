@@ -1,12 +1,12 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1–6E.5 PASS**; no Track wiring; wrap-commit DEC not started  
+**Status:** Active — native **6E.1–6E.5 PASS**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) recorded; firmware not started  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
-**Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
+**Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) wrap commit + session undo  
 **Parent:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)  
 **Architecture:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
-**Does not authorize:** firmware; deleting 3b; path B; `handleMidiInput` resolve; SD on wrap; one **U:** per wrap; reuse of `NoteEditSessionUndoStack`
+**Does not authorize:** Track firmware until 038.1 approval; deleting 3b; path B; `handleMidiInput` resolve; SD on wrap; one **U:** per wrap; reuse of `NoteEditSessionUndoStack`
 
 ---
 
@@ -87,7 +87,7 @@ Still an `OverdubPass`. No new domain noun.
 
 **Empty wrap:** no pass, no session-stack push, no revision bump, no LCR publish.
 
-**Formal triggers:** commit while still OVERDUBBING; wrap publishes a pass; one-session-one-pass withdrawn. Firmware waits for DEC + 6E PASS.
+**Formal triggers:** commit while still OVERDUBBING; wrap publishes a pass; one-session-one-pass withdrawn; undo routing. **DEC-038 recorded.** Firmware waits for 038.1 approval.
 
 ---
 
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** wrap-commit DEC + production architecture gate, or midi_gap / 6.3. Do not start either until asked.
+**Next when asked:** DEC-038 **038.1** firmware (wrap at S + session stack). Not 038.2 GUS wire. Not midi_gap / 6.3.
 
 ---
 
@@ -265,7 +265,7 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 
 ---
 
-## Production architecture gate (after 6E PASS + DEC)
+## Production architecture gate (DEC-038; firmware after 038.1 approval)
 
 - Keep `spans` + `spanBoundaries` at `deviceGateComplete` (not per-bar `soundingAt`).
 - `tryResolvePreparedState(tick)` — miss → 3b / 6C unchanged.
@@ -273,6 +273,18 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 - Start-tick re-entry: existing commit-site publish, then `beginCapture(Overdub)`, stay OVERDUBBING.
 - `handleUndo` while OVERDUBBING is session-gated. Stop pushes one `OverdubPassAdded` with all wrap `passIds`.
 - Keep 3b on miss.
+- **S** is the first-session `playheadPhaseTick` from `startOverdubbing`. Session-scoped; not cleared by wrap `beginCapture` / `discardCapture`.
+
+### Architecture reassessment (formal triggers)
+
+| Field | Content |
+|-------|---------|
+| **Reason triggered** | State transition (seal while OVERDUBBING); undo routing (session-gate, one U: `passIds`); 038.2 GUS wire |
+| **Current architecture** | One `OverdubPass` at stop. Undo while OVERDUBBING is `discardCapture` via `loopHasLiveOverdubCapture`. `playheadPhaseTick` is computed then discarded |
+| **Proposed evolution** | Extend `Track` / `Loop` / `handleUndo` / `OverdubPassAdded`. No new owner |
+| **Migration impact** | 038.1 RAM only. 038.2 GUS STK2 → next token. No loop-file change |
+| **Recommendation** | 038.1 first. 038.2 after session undo is proven |
+| **Approval required** | YES before Track firmware |
 
 ---
 

@@ -79,6 +79,10 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [ ] After 6C device score — investigate MIDI Input Gap > 50 ms in [`192334`](../../../captures/session_20260815_192334.log): `DIAG,midi_gap` **135 / 119 / 138 ms** at 54.7 / 64.7 / 69.8 s while `clockrate` stayed **47**. Not a 6B fail. Do not start during 6D. Do not treat as RC-J (that is post-STOPPED 48→24→0).
 - [ ] 6.3 Long-loop playback gather → `resolveWindow` / `ResolvedEvent` (after 6C)
 - [ ] 6.4 Short-loop playback / NOTE_EDIT hydrate last
+- [x] **6E** Native overdub evaluation **PASS** (6E.1–6E.5). Plan: [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../../../docs/Plans/loop_content_resolution_overdub_state_evaluation_refinement.md). No Track wiring.
+- [x] **DEC-038** recorded. Preflight: [`PREFLIGHT-WRAP-COMMIT.md`](PREFLIGHT-WRAP-COMMIT.md). Firmware not started.
+- [ ] **038.1** Firmware after approval: wrap at S + session stack. Completed-pair seal + publish + `beginCapture` + stay OVERDUBBING. Session undo/redo while OVERDUBBING. No GUS `passIds`.
+- [ ] **038.2** Stop: one `OverdubPassAdded` with `passIds` + companions. GUS wire. Session stack cleared.
 - [ ] 6.5 Do **not** delete `materializeToEventVector`; do **not** call resolution from `handleMidiInput`; do **not** remove the 3b copy path
 
 ## Out of scope
