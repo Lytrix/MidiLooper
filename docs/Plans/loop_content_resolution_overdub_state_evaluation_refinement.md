@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1 PASS**; 6E.2–6E.5 not started; no firmware  
+**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b planned**; 6E.2–6E.5 not started; no firmware  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
@@ -150,18 +150,54 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1 PASS** (`test_stage6e1_resolve_state_candidates_match_note_map_oracle`). Candidates from prepared `resolveState(S)` plus hold-window NOTE_ONs match the reconstruct note-map oracle for:
+**6E.1 PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten 0–3999. Wrap 4000–200 is the same Shorten, not Hide.
 
-- user example (31 still sounding @125; 32 OFF @150)
-- pending shorten long source
-- pending hide when covered (notes that **start** in the hold — window ONs, not `resolveState` alone)
-- pending add-only other pitch
-- pending wrap-crossing tail shorten
-- pending wrap-crossing skip head Hide
+**Open pin:** user expected wrap 4000–200 to Hide. Production passes the consume window `[4000, loopLength)` into `analyzeEditSessionInteractions` (not the wrap tail `[0, 200)`). That is OverlapNoteOff → Shorten to 3999. Same on the Loop note-map path and on LCR candidates. Hide would need the wrap tail as a second causing span, or a geometry change. Do not change geometry until this pin is chosen.
 
-Geometry stays in `test_pending_note_change` / `test_resolve_constrained_geometry`. No firmware.
+**Next when asked:** native **6E.1b** (session start S as wrap origin) or **6E.2** / **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
 
-**Next when asked:** native **6E.2** (scaling) or **6E.3** (keep spans after drop-rebuild-buffers). Do not start wrap-commit DEC or midi_gap / 6.3.
+---
+
+## 6E.1b — session start tick as wrap origin (planned)
+
+Today every wrap-crossing fixture treats **loop tick 0** as the wrap:
+
+- consume: `end < start` → `[start, loopLength)`
+- incoming `loopLen-40 → 20` and `4000 → 200` cross 0
+
+Pin 2: the overdub session wrap is start-overdub tick **S**, not loop 0. `stage6e1ConsumeHold` / `accumulatePendingNoteChangesForIncomingNote` still clip to `loopLength`.
+
+**Native only. Same TU. Do not implement until asked.**
+
+### Session phase
+
+```text
+sessionPhase(t) = (t - S + loopLength) % loopLength
+```
+
+When S = 0 this is the tick itself. Incoming crosses the session wrap iff `sessionPhase(end) < sessionPhase(start)` — the same test as today’s `end < start`.
+
+Consume then uses S, not loop 0:
+
+```text
+if sessionPhase(end) < sessionPhase(start):
+  consume = [start, next S)   // today: [start, loopLength)
+else:
+  consume = [start, end)
+```
+
+Geometry still receives the real incoming `(start, end)`. Only candidate-find consume changes.
+
+### Cases to replay
+
+Every 6E.1 row, including 60@0–5000 / 4000–4200 and 4000–200.
+
+1. **Rotated (relative geometry unchanged).** Fix `S ≠ 0` (not a fixture boundary). Map every source and incoming tick `t' = (t + S) % loopLength`. Candidate ids and Shorten/Hide kinds must match the S = 0 run.
+2. **Absolute source, wrap at S.** Source stays 60@0–5000. Incoming crosses S the way 4000–200 crosses 0. Consume must clip to S, not `loopLength`. Same transform as the S = 0 wrap row (Shorten 0–3999 unless the Hide pin changes).
+
+FAIL if consume still clips to `loopLength` when S ≠ 0, or if rotating ticks changes the transform kind.
+
+Not firmware. Not 6E.5 (open note at S). Not wrap-commit.
 
 ---
 
@@ -171,7 +207,8 @@ Extend [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](..
 
 | Slice | Prove |
 |-------|--------|
-| **6E.1** | **PASS** — `resolveState(S)` + hold-window NOTE_ONs match note-map oracle on the user example and the pending overlap cases. No `overdubSourceViewNotes_`. |
+| **6E.1** | **PASS** — LCR candidates + existing geometry (consume window, same as `accumulatePendingNoteChangesForIncomingNote`). 60@0–5000 / 4000–4200 → Shorten 0–3999. Wrap 4000–200 is **Shorten 0–3999**, not Hide. |
+| **6E.1b** | **Planned** — session start tick S replaces loop 0 as wrap origin on every 6E.1 case. See below. Not started. |
 | **6E.2** | Consume tracks checkpoint-interval replay, not `history_events`. Full reconstruct / 16-bar `resolveWindow` = FAIL |
 | **6E.3** | Keep `spans` + `spanBoundaries` after drop-rebuild-buffers. Keep-all-`soundingAt` = FAIL |
 | **6E.4** | Wrap-1 publish is wrap-2 source; session-disable wrap 1 hides it; GUS stamp miss → 3b |

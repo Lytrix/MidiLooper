@@ -27,8 +27,17 @@
 #include "../test_support/NoteIdTestFixtures.h"
 #include "CanonicalResolutionFixture.h"
 #include "EditApply.h"
+#include "EditSessionInteraction.h"
+#include "Globals.h"
 #include "LoopContentResolution.h"
+#include "PendingNoteChange.h"
+#include "ResolveConstrainedGeometry.h"
 #include "../../src/LoopContentResolution.cpp"
+#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/NoteEditCurrentState.cpp"
+#include "../../src/EditManager/EditSessionInteraction.cpp"
+#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 
@@ -2804,6 +2813,13 @@ struct Stage6e1SourceSpan {
   uint32_t offTick = 0;
 };
 
+enum class Stage6e1ExpectedTransform : uint8_t {
+  CandidatesOnly = 0,
+  None = 1,
+  Shorten = 2,
+  Hide = 3,
+};
+
 struct Stage6e1OverlapCase {
   const char* name = "";
   Stage6e1SourceSpan sources[4]{};
@@ -2811,6 +2827,10 @@ struct Stage6e1OverlapCase {
   uint8_t incomingPitch = 0;
   uint32_t incomingStart = 0;
   uint32_t incomingEnd = 0;
+  Stage6e1ExpectedTransform expected = Stage6e1ExpectedTransform::CandidatesOnly;
+  uint32_t expectedStart = 0;
+  uint32_t expectedEnd = 0;
+  uint8_t expectedTransformCount = 0;
 };
 
 bool stage6e1LinearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
@@ -2941,6 +2961,97 @@ void stage6e1CollectTreatmentNotes(const LoopContentResolution::TickIndex& index
   }
 }
 
+void stage6e1ApplyGeometry(const NoteUtils::DisplayNoteVec& sourceNotes, uint8_t pitch,
+                           uint32_t incomingStart, uint32_t incomingEnd, uint32_t loopLength,
+                           PendingNoteChangeVec& out) {
+  out.clear();
+  BaselineMap baseline;
+  EditedGeometry edited{};
+  EditedNoteSpan causingSpan{};
+  causingSpan.noteId = 99;
+  causingSpan.span = NoteBaseline{pitch, 100, incomingStart, incomingEnd};
+  edited.causingSpans.push_back(causingSpan);
+
+  std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs;
+  for (const NoteUtils::DisplayNote& note : sourceNotes) {
+    if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == 99) {
+      continue;
+    }
+    if (!stage6e1ExistingOverlapsHold(note.startTick, note.endTick, incomingStart, incomingEnd,
+                                      loopLength)) {
+      continue;
+    }
+    pairs.push_back(CausingTargetPair{99, note.noteId});
+    baseline[note.noteId] = NoteBaseline{note.note, note.velocity, note.startTick, note.endTick};
+  }
+  if (pairs.empty()) {
+    return;
+  }
+
+  const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);
+  const EditSessionInteractionsByTarget grouped =
+      groupEditSessionInteractionsByTarget(interactions);
+  for (const TargetNoteInteractionGroup& group : grouped.groups) {
+    const auto baselineIt = baseline.find(group.targetNoteId);
+    TEST_ASSERT_TRUE(baselineIt != baseline.end());
+    const NoteBaseline& sourceBaseline = baselineIt->second;
+    const ConstrainedNoteGeometry geometry = resolveConstrainedGeometry(
+        group.targetNoteId, sourceBaseline, group.incoming, loopLength,
+        Config::DEFAULT_NOTE_MIN_LENGTH_TICKS, Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED);
+
+    PendingNoteChange transform{};
+    transform.noteId = group.targetNoteId;
+    transform.pitch = sourceBaseline.pitch;
+    transform.velocity = sourceBaseline.velocity;
+    transform.startTick = geometry.startTick;
+    transform.endTick = geometry.endTick;
+    if (!geometry.visible) {
+      transform.kind = PendingNoteChangeKind::Hide;
+      transform.startTick = sourceBaseline.startTick;
+      transform.endTick = sourceBaseline.endTick;
+      out.push_back(transform);
+      continue;
+    }
+    if (geometry.startTick != sourceBaseline.startTick ||
+        geometry.endTick != sourceBaseline.endTick) {
+      transform.kind = PendingNoteChangeKind::Shorten;
+      out.push_back(transform);
+    }
+  }
+}
+
+void stage6e1AssertExpectedTransform(const Stage6e1OverlapCase& overlapCase,
+                                     const PendingNoteChangeVec& transforms) {
+  if (overlapCase.expected == Stage6e1ExpectedTransform::CandidatesOnly) {
+    return;
+  }
+  if (overlapCase.expected == Stage6e1ExpectedTransform::None) {
+    TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(transforms.size()));
+    return;
+  }
+
+  uint8_t matchCount = 0;
+  for (const PendingNoteChange& change : transforms) {
+    if (overlapCase.expected == Stage6e1ExpectedTransform::Shorten &&
+        change.kind == PendingNoteChangeKind::Shorten) {
+      TEST_ASSERT_EQUAL_UINT32(overlapCase.expectedStart, change.startTick);
+      TEST_ASSERT_EQUAL_UINT32(overlapCase.expectedEnd, change.endTick);
+      ++matchCount;
+    } else if (overlapCase.expected == Stage6e1ExpectedTransform::Hide &&
+               change.kind == PendingNoteChangeKind::Hide) {
+      ++matchCount;
+    }
+  }
+  char detail[160];
+  std::snprintf(detail, sizeof(detail), "%s transforms=%u match=%u firstKind=%d",
+                overlapCase.name, static_cast<unsigned>(transforms.size()),
+                static_cast<unsigned>(matchCount),
+                transforms.empty() ? -1 : static_cast<int>(transforms[0].kind));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(overlapCase.expectedTransformCount, matchCount, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(overlapCase.expectedTransformCount,
+                                   static_cast<uint32_t>(transforms.size()), detail);
+}
+
 void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   TEST_MESSAGE(overlapCase.name);
   LoopEventStore::resetPoolForTests();
@@ -2976,6 +3087,18 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   stage6e1CollectTreatmentNotes(index, checkpoints, passes.editPasses, kStage6e1LoopLen,
                                 overlapCase.incomingPitch, consumeStart, consumeEnd, treatment);
   assertDisplayNotesMatch(oracle, treatment);
+
+  if (overlapCase.expected == Stage6e1ExpectedTransform::CandidatesOnly) {
+    return;
+  }
+  if (overlapCase.expected == Stage6e1ExpectedTransform::Shorten ||
+      overlapCase.expected == Stage6e1ExpectedTransform::Hide) {
+    TEST_ASSERT_MESSAGE(!treatment.empty(), overlapCase.name);
+  }
+  PendingNoteChangeVec transforms;
+  stage6e1ApplyGeometry(treatment, overlapCase.incomingPitch, consumeStart, consumeEnd,
+                        kStage6e1LoopLen, transforms);
+  stage6e1AssertExpectedTransform(overlapCase, transforms);
 }
 
 }  // namespace
@@ -2995,21 +3118,76 @@ void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
        32,
        125,
        175},
-      {"pending_shorten_long_source", {{1, 60, 50, 200}}, 1, 60, 120, 160},
+      {"pending_shorten_long_source",
+       {{1, 60, 50, 200}},
+       1,
+       60,
+       120,
+       160,
+       Stage6e1ExpectedTransform::Shorten,
+       50,
+       119,
+       1},
       {"pending_hide_when_covered",
        {{1, 60, 10, 40}, {2, 60, 50, 80}, {3, 60, 90, 120}},
        3,
        60,
        5,
-       130},
-      {"pending_add_only_other_pitch", {{1, 60, 10, 58}}, 1, 72, 200, 240},
+       130,
+       Stage6e1ExpectedTransform::Hide,
+       0,
+       0,
+       3},
+      {"pending_add_only_other_pitch",
+       {{1, 60, 10, 58}},
+       1,
+       72,
+       200,
+       240,
+       Stage6e1ExpectedTransform::None,
+       0,
+       0,
+       0},
       {"pending_wrap_crossing_tail_shorten",
        {{1, 60, loopLen - 80, loopLen - 10}},
        1,
        60,
        loopLen - 40,
-       20},
-      {"pending_wrap_crossing_skips_head", {{1, 60, 8, 40}}, 1, 60, loopLen - 40, 50},
+       20,
+       Stage6e1ExpectedTransform::Shorten,
+       loopLen - 80,
+       loopLen - 41,
+       1},
+      {"pending_wrap_crossing_skips_head",
+       {{1, 60, 8, 40}},
+       1,
+       60,
+       loopLen - 40,
+       50,
+       Stage6e1ExpectedTransform::None,
+       0,
+       0,
+       0},
+      {"user_long_source_contained_shorten",
+       {{1, 60, 0, 5000}},
+       1,
+       60,
+       4000,
+       4200,
+       Stage6e1ExpectedTransform::Shorten,
+       0,
+       3999,
+       1},
+      {"user_long_source_wrap_incoming",
+       {{1, 60, 0, 5000}},
+       1,
+       60,
+       4000,
+       200,
+       Stage6e1ExpectedTransform::Shorten,
+       0,
+       3999,
+       1},
   };
   for (const Stage6e1OverlapCase& overlapCase : cases) {
     stage6e1RunCase(overlapCase);
