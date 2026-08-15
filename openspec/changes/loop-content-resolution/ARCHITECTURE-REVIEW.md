@@ -64,7 +64,7 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **State transition change?** | NO |
 | **Behavior-preserving?** | YES until swap. Native 1-bar vs device 8/16-bar stride MUST agree |
 | **Reuse** | YES — extend `StateCheckpoints` / `checkpointIntervalTicks`. Keep 3b visual-cache overdub copy |
-| **Phase scope** | Sparse `soundingAt`, split `prepareRebuildSpans`, >63-bar measure ([`151450`](../../../captures/session_20260815_151450.log) 139 bars); IndexCommit / pairing / reconstruct / project / RebuildSpans / RebuildPrepare batch `kDeviceGateEventsPerSlice`; 5.15 **complete**; 5.16c `prep` slice; **5.17 complete** [`161355`](../../../captures/session_20260815_161355.log); **no** delete of materialize; arm cap stays off |
+| **Phase scope** | Sparse `soundingAt`, split `prepareRebuildSpans`, >63-bar measure ([`151450`](../../../captures/session_20260815_151450.log) 139 bars); IndexCommit / pairing / reconstruct / project / RebuildSpans / RebuildPrepare batch `kDeviceGateEventsPerSlice`; 5.15 **complete**; 5.16c `prep` slice; **5.17 complete** [`161355`](../../../captures/session_20260815_161355.log); **5.7a** sliced append reserve; **no** delete of materialize; arm cap stays off |
 
 ---
 

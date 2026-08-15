@@ -114,6 +114,7 @@ struct LoopContentResolution {
         std::vector<TickEventEntry, ExternalMemoryFirstAllocator<TickEventEntry>>;
 
     /// C-order append (pass event-index order), then `stable_sort` by tick. 5.17 A.
+    /// A slice at `begin` reserves remaining events in this pass, not this slice only (5.7a).
     static void appendTickEventEntries(const CapturePassEntry& pass, uint32_t begin,
                                        uint32_t endExclusive, TickEventEntryVec& out);
     static void sortTickEventEntriesByTick(TickEventEntryVec& entries);
@@ -179,6 +180,7 @@ struct LoopContentResolution {
     bool finishRebuildSpansFromEvents(const SessionMidiEventVec& resolved,
                                       ResolutionCostCounters* counters = nullptr);
     /// Sliced span + boundary append after reconstruct. `[begin, endExclusive)` notes.
+    /// Reserves `spans` to `notes.size()` and `spanBoundaries` to `2 * notes.size()` (5.7a).
     /// Does not sort; call `sortSpanBoundaries` after the last range.
     bool appendSpansFromNotes(const SessionMidiEventVec& resolved,
                               const NoteUtils::DisplayNoteVec& notes, uint32_t begin,
@@ -204,7 +206,7 @@ struct LoopContentResolution {
   /// 5.7 `idle_maint` bar. Same value as `RuntimeTimingTelemetry::kLoopRemainderOneShotUs`.
   static constexpr uint32_t kDeviceGateSliceBudgetUs = 50000;
   /// Index / span units per idle slice. Device IndexCommit appends this many tick-event
-  /// rows into `tickEvents` (5.17e).
+  /// rows into `tickEvents` (5.17e). Each slice reserves remaining events in the pass (5.7a).
   static constexpr uint32_t kDeviceGateEventsPerSlice = 8;
   /// Phase progress line: on step change, and at most once per this interval on device.
   static constexpr uint32_t kDeviceGatePhaseLogIntervalUs = 1000000;
