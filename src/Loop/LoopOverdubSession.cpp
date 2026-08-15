@@ -77,7 +77,8 @@ LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
   if (!captureActive() || capture.store.empty() || loopLengthTicks == 0) {
     return 0;
   }
-  ensureCaptureEventsSorted();
+  // Append order, not tick order: wrap-held On@tail + Off@0 must pair before a
+  // later same-pitch On in the same wrap (012925 note 30 @ 2976 / 0 / 672).
   SessionMidiEventVec flat;
   capture.store.copyEventsTo(flat);
   if (flat.empty()) {
@@ -116,7 +117,8 @@ LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
   if (!kept.empty()) {
     capture.store.loadFromEvents(kept);
   }
-  captureEventsSortDirty = false;
+  captureEventsSortDirty = true;
+  ensureCaptureEventsSorted();
   rebuildCapturePreviewFromStore(*this);
   ++captureDisplayRevision;
   return out.size();

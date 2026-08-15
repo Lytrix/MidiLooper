@@ -330,6 +330,38 @@ void test_extract_open_note_ons_keeps_same_tick_completed_pair() {
   TEST_ASSERT_EQUAL(1, countNoteOns(live, 30));
 }
 
+void test_extract_keeps_tick0_wrap_held_pair_when_pitch_replays() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.loopLengthTicks = 3072;
+  loop.openOverdubSession(2904);
+  loop.beginCapture(CapturePhase::Overdub, 2904);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2976, 4, 30, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(0, 4, 30, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(672, 4, 30, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(768, 4, 30, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2880, 4, 30, 100)));
+  SessionMidiEventVec held;
+  TEST_ASSERT_EQUAL(1u, loop.extractOpenCaptureNoteOns(held));
+  TEST_ASSERT_EQUAL(2880u, held[0].tick);
+  SessionMidiEventVec remaining;
+  loop.capture.store.copyEventsTo(remaining);
+  bool keptWrapOn = false;
+  bool keptWrapOff = false;
+  for (const MidiEvent& evt : remaining) {
+    if (evt.isNoteOn() && evt.data.noteData.note == 30 && evt.tick == 2976u) {
+      keptWrapOn = true;
+    }
+    if (evt.isNoteOff() && evt.data.noteData.note == 30 && evt.tick == 0u) {
+      keptWrapOff = true;
+    }
+  }
+  TEST_ASSERT_TRUE(keptWrapOn);
+  TEST_ASSERT_TRUE(keptWrapOff);
+}
+
 void test_empty_wrap_does_not_commit_a_pass() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -650,6 +682,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
   RUN_TEST(test_extract_open_note_ons_keeps_same_tick_completed_pair);
+  RUN_TEST(test_extract_keeps_tick0_wrap_held_pair_when_pitch_replays);
   RUN_TEST(test_empty_wrap_does_not_commit_a_pass);
   RUN_TEST(test_wrap_commit_publishes_completed_pair_and_keeps_held);
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
