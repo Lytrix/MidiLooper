@@ -117,6 +117,10 @@ Device per-bar `soundingAt` on the 68-bar / 1847-note loop is another O(history)
 
 Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and the materialize oracle, including equal-tick end-then-start. `walk=0`. Host: A index 5 µs vs C emplace 29 µs; A resolve not worse. 5.15c swapped the device gate to `spanBoundaries`. Device [`151450`](../captures/session_20260815_151450.log): `app=5490706` `sort=10202` `reb=13851136` `st=13045` `walk=0` (was `reb=104359946`). **5.15 complete.** Do not build B or A2. Do not reopen the resolver query model. 5.16c slices `RebuildPrepare` materialize at `kDeviceGateEventsPerSlice`. Device [`153920`](../captures/session_20260815_153920.log) `prep` PASS — no `loop_rem`; `idle_maint` 22–25 ms.
 
+### Amendment 2026-08-15 — 5.17a–c pick flat A for TickIndex
+
+`TickIndex::byTick` query contract is `tick ∈ [begin, end)` → Active `(passId, eventIndex)`. Native A (`TickEventEntry[]`, C-order append + `stable_sort` by tick only) matches C walk, wrap, disabled-pass skip, and `resolveWindow` vs the materialize oracle. Equal-tick insertion order preserved (NOTE_OFF then NOTE_ON at 192). `walk=0`. Host (94 entries): C emplace 23 µs, A 26 µs, A query 144 vs C 151. Pick **A**. Production `byTick` stays C until 5.17d. Do not build B or A2. Do not fold `recon` or `pair`. `TickIndex` and `StateCheckpoints` stay separate owners.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.

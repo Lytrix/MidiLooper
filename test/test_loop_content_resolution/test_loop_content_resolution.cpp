@@ -1522,6 +1522,145 @@ void test_stage515b_flat_span_boundaries_match_map() {
       equalTickPairs, static_cast<unsigned>(checkpoints.spans.size()));
 }
 
+void buildFlatTickEvents(const LoopContentResolution::TickIndex& index,
+                         LoopContentResolution::TickIndex::TickEventEntryVec& out) {
+  out.clear();
+  for (const auto& pass : index.capturePasses) {
+    LoopContentResolution::TickIndex::appendTickEventEntries(
+        pass, 0, static_cast<uint32_t>(pass.events.size()), out);
+  }
+}
+
+uint32_t countEqualTickEventPairs(const LoopContentResolution::TickIndex::TickEventEntryVec& entries) {
+  uint32_t pairs = 0;
+  for (size_t i = 1; i < entries.size(); ++i) {
+    if (entries[i].tick == entries[i - 1].tick) {
+      pairs += 1;
+    }
+  }
+  return pairs;
+}
+
+void test_stage517b_equal_tick_event_order() {
+  LoopContentResolution::TickIndex index;
+  const PassId id = 11;
+  index.beginCapturePass(id, CapturePassState::Active, 0);
+  TEST_ASSERT_EQUAL(1u, index.capturePasses.size());
+  LoopContentResolution::TickIndex::CapturePassEntry& pass = index.capturePasses.back();
+  MidiEvent off = MidiEvent::NoteOff(192, 1, 60, 0);
+  off.noteId = 1;
+  MidiEvent on = MidiEvent::NoteOn(192, 1, 61, 100);
+  on.noteId = 2;
+  pass.events.push_back(off);
+  pass.events.push_back(on);
+  index.indexCapturePassEventRange(id, 0, 2, nullptr);
+
+  LoopContentResolution::TickIndex::TickEventEntryVec flat;
+  LoopContentResolution::TickIndex::appendTickEventEntries(pass, 0, 2, flat);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(flat.size()));
+  TEST_ASSERT_EQUAL_UINT32(0u, flat[0].eventIndex);
+  TEST_ASSERT_EQUAL_UINT32(1u, flat[1].eventIndex);
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(flat);
+  TEST_ASSERT_EQUAL_UINT32(0u, flat[0].eventIndex);
+  TEST_ASSERT_EQUAL_UINT32(1u, flat[1].eventIndex);
+
+  auto it = index.byTick.lower_bound(192u);
+  TEST_ASSERT_TRUE(it != index.byTick.end());
+  TEST_ASSERT_EQUAL_UINT32(0u, it->second.second);
+  ++it;
+  TEST_ASSERT_TRUE(it != index.byTick.end());
+  TEST_ASSERT_EQUAL_UINT32(1u, it->second.second);
+}
+
+void test_stage517b_flat_tick_events_match_map() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  LoopContentResolution::TickIndex::ByTickMap mapIndex;
+  const Clock::time_point cStart = Clock::now();
+  for (const auto& pass : index.capturePasses) {
+    for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
+      mapIndex.emplace(pass.events[i].tick, std::make_pair(pass.id, i));
+    }
+  }
+  const uint64_t cEmplaceUs = elapsedMicrosSince(cStart);
+
+  LoopContentResolution::TickIndex::TickEventEntryVec flat;
+  const Clock::time_point appendStart = Clock::now();
+  buildFlatTickEvents(index, flat);
+  const uint64_t appendUs = elapsedMicrosSince(appendStart);
+  const Clock::time_point sortStart = Clock::now();
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(flat);
+  const uint64_t sortUs = elapsedMicrosSince(sortStart);
+  const uint64_t indexTotalUs = appendUs + sortUs;
+
+  TEST_ASSERT_EQUAL(index.byTick.size(), flat.size());
+  TEST_ASSERT_EQUAL(mapIndex.size(), flat.size());
+  size_t cursor = 0;
+  for (const auto& entry : index.byTick) {
+    TEST_ASSERT_EQUAL_UINT32(entry.first, flat[cursor].tick);
+    TEST_ASSERT_EQUAL(entry.second.first, flat[cursor].passId);
+    TEST_ASSERT_EQUAL_UINT32(entry.second.second, flat[cursor].eventIndex);
+    cursor += 1;
+  }
+  const uint32_t equalTickPairs = countEqualTickEventPairs(flat);
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  const uint32_t wrapStart = fixture.loopLengthTicks - (windowLength / 2u);
+  const uint32_t windows[][2] = {
+      {0u, fixture.loopLengthTicks},
+      {0u, windowLength},
+      {wrapStart, windowLength},
+  };
+  uint64_t cQueryUs = 0;
+  uint64_t aQueryUs = 0;
+  for (const auto& window : windows) {
+    SessionMidiEventVec fromC;
+    SessionMidiEventVec fromA;
+    SessionMidiEventVec fromOracle;
+    ResolutionCostCounters cCounters;
+    ResolutionCostCounters aCounters;
+    const Clock::time_point cQueryStart = Clock::now();
+    LoopContentResolution::resolveWindow(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                         window[0], window[1], fromC, &cCounters);
+    cQueryUs += elapsedMicrosSince(cQueryStart);
+    const Clock::time_point aQueryStart = Clock::now();
+    LoopContentResolution::resolveWindow(index, flat, fixture.passes.editPasses,
+                                         fixture.loopLengthTicks, window[0], window[1], fromA,
+                                         &aCounters);
+    aQueryUs += elapsedMicrosSince(aQueryStart);
+    oracleWindowEvents(fixture.passes, fixture.loopLengthTicks, window[0], window[1], fromOracle);
+    TEST_ASSERT_EQUAL_UINT32(0u, cCounters.passChunkListsWalked);
+    TEST_ASSERT_EQUAL_UINT32(0u, aCounters.passChunkListsWalked);
+    assertResolvedEventsMatch(fromC, fromA);
+    assertResolvedEventsMatch(fromOracle, fromA);
+  }
+
+  TEST_ASSERT_FALSE(fixture.passes.overdubPasses.empty());
+  index.setCapturePassState(fixture.passes.overdubPasses.back().id, CapturePassState::Disabled);
+  fixture.passes.overdubPasses.back().state = CapturePassState::Disabled;
+  SessionMidiEventVec disabledC;
+  SessionMidiEventVec disabledA;
+  SessionMidiEventVec disabledOracle;
+  index.findRawWindow(fixture.loopLengthTicks, 0, fixture.loopLengthTicks, disabledC, nullptr);
+  index.findRawWindowFromTickEvents(flat, fixture.loopLengthTicks, 0, fixture.loopLengthTicks,
+                                    disabledA, nullptr);
+  oracleWindowEvents(fixture.passes, fixture.loopLengthTicks, 0, fixture.loopLengthTicks,
+                     disabledOracle);
+  assertResolvedEventsMatch(disabledC, disabledA);
+
+  std::printf(
+      "stage517b C_emplace_us=%llu A_append_us=%llu A_sort_us=%llu A_index_total_us=%llu "
+      "C_query_us=%llu A_query_us=%llu entries=%u equal_tick_pairs=%u\n",
+      static_cast<unsigned long long>(cEmplaceUs), static_cast<unsigned long long>(appendUs),
+      static_cast<unsigned long long>(sortUs), static_cast<unsigned long long>(indexTotalUs),
+      static_cast<unsigned long long>(cQueryUs), static_cast<unsigned long long>(aQueryUs),
+      static_cast<unsigned>(flat.size()), equalTickPairs);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -1562,5 +1701,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_native_worst_case_micros);
   RUN_TEST(test_stage515b_equal_tick_boundary_order);
   RUN_TEST(test_stage515b_flat_span_boundaries_match_map);
+  RUN_TEST(test_stage517b_equal_tick_event_order);
+  RUN_TEST(test_stage517b_flat_tick_events_match_map);
   return UNITY_END();
 }

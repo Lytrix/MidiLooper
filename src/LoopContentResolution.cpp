@@ -293,24 +293,42 @@ TRACK_COLD_MEM LoopContentResolution::TickIndex::CapturePassEntry* findPassMutab
   return &index.capturePasses[found->second];
 }
 
+TRACK_COLD_MEM void collectTickRangeRefs(const LoopContentResolution::TickIndex& index, PassId passId,
+                          uint32_t eventIndex, std::set<EventRef>& refs,
+                          ResolutionCostCounters* counters) {
+  if (counters != nullptr) {
+    counters->indexEntriesVisited += 1;
+  }
+  const auto* pass = findPass(index, passId);
+  if (pass == nullptr || pass->state != CapturePassState::Active) {
+    return;
+  }
+  EventRef ref;
+  ref.passId = passId;
+  ref.eventIndex = eventIndex;
+  refs.insert(ref);
+}
+
 TRACK_COLD_MEM void visitTickRange(const LoopContentResolution::TickIndex& index, uint32_t beginTick,
                     uint32_t endTickExclusive, std::set<EventRef>& refs,
                     ResolutionCostCounters* counters) {
   auto it = index.byTick.lower_bound(beginTick);
   const auto stop = index.byTick.lower_bound(endTickExclusive);
   for (; it != stop; ++it) {
-    if (counters != nullptr) {
-      counters->indexEntriesVisited += 1;
-    }
-    const PassId passId = it->second.first;
-    const auto* pass = findPass(index, passId);
-    if (pass == nullptr || pass->state != CapturePassState::Active) {
-      continue;
-    }
-    EventRef ref;
-    ref.passId = passId;
-    ref.eventIndex = it->second.second;
-    refs.insert(ref);
+    collectTickRangeRefs(index, it->second.first, it->second.second, refs, counters);
+  }
+}
+
+TRACK_COLD_MEM void visitTickEventRange(const LoopContentResolution::TickIndex& index,
+                         const LoopContentResolution::TickIndex::TickEventEntryVec& entries,
+                         uint32_t beginTick, uint32_t endTickExclusive, std::set<EventRef>& refs,
+                         ResolutionCostCounters* counters) {
+  const auto lessTick = [](const LoopContentResolution::TickIndex::TickEventEntry& entry,
+                           uint32_t tick) { return entry.tick < tick; };
+  auto it = std::lower_bound(entries.begin(), entries.end(), beginTick, lessTick);
+  const auto stop = std::lower_bound(entries.begin(), entries.end(), endTickExclusive, lessTick);
+  for (; it != stop; ++it) {
+    collectTickRangeRefs(index, it->passId, it->eventIndex, refs, counters);
   }
 }
 
@@ -443,6 +461,61 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindow(uint32_t loo
     } else {
       visitTickRange(*this, start, loopLengthTicks, refs, counters);
       visitTickRange(*this, 0, start + windowLength - loopLengthTicks, refs, counters);
+    }
+  }
+  out.reserve(refs.size());
+  for (const EventRef& ref : refs) {
+    const auto* pass = findPass(*this, ref.passId);
+    if (pass == nullptr || ref.eventIndex >= pass->events.size()) {
+      continue;
+    }
+    out.push_back(pass->events[ref.eventIndex]);
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendTickEventEntries(
+    const CapturePassEntry& pass, uint32_t begin, uint32_t endExclusive, TickEventEntryVec& out) {
+  const uint32_t limit = static_cast<uint32_t>(pass.events.size());
+  if (begin >= limit) {
+    return;
+  }
+  if (endExclusive > limit) {
+    endExclusive = limit;
+  }
+  if (out.capacity() < out.size() + (endExclusive - begin)) {
+    out.reserve(out.size() + (endExclusive - begin));
+  }
+  for (uint32_t i = begin; i < endExclusive; ++i) {
+    TickEventEntry entry;
+    entry.tick = pass.events[i].tick;
+    entry.passId = pass.id;
+    entry.eventIndex = i;
+    out.push_back(entry);
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::sortTickEventEntriesByTick(TickEventEntryVec& entries) {
+  std::stable_sort(entries.begin(), entries.end(),
+                   [](const TickEventEntry& a, const TickEventEntry& b) { return a.tick < b.tick; });
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindowFromTickEvents(
+    const TickEventEntryVec& entries, uint32_t loopLengthTicks, uint32_t windowStart,
+    uint32_t windowLength, SessionMidiEventVec& out, ResolutionCostCounters* counters) const {
+  out.clear();
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    return;
+  }
+  std::set<EventRef> refs;
+  if (windowLength >= loopLengthTicks) {
+    visitTickEventRange(*this, entries, 0, loopLengthTicks, refs, counters);
+  } else {
+    const uint32_t start = IntervalProjection::tickPhaseInLoop(windowStart, 0, loopLengthTicks);
+    if (start + windowLength <= loopLengthTicks) {
+      visitTickEventRange(*this, entries, start, start + windowLength, refs, counters);
+    } else {
+      visitTickEventRange(*this, entries, start, loopLengthTicks, refs, counters);
+      visitTickEventRange(*this, entries, 0, start + windowLength - loopLengthTicks, refs, counters);
     }
   }
   out.reserve(refs.size());
@@ -594,6 +667,46 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
     counters->candidateEvents = static_cast<uint32_t>(working.size());
     counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
     counters->eventsInHistory = index.indexedEventCount();
+    counters->passesInHistory = index.indexedPassCount();
+    counters->elapsedMicros = timer.elapsed();
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
+                                          const TickIndex::TickEventEntryVec& tickEvents,
+                                          const EditPassVec& editPasses, uint32_t loopLengthTicks,
+                                          uint32_t windowStart, uint32_t windowLength,
+                                          SessionMidiEventVec& out,
+                                          ResolutionCostCounters* counters) {
+  ElapsedTimer timer;
+  SessionMidiEventVec working;
+  index.findRawWindowFromTickEvents(tickEvents, loopLengthTicks, windowStart, windowLength, working,
+                                    counters);
+  EditPassVec activeRows;
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+      index.appendNoteEvents(editPass.targetNoteId, working);
+    }
+  }
+  sortResolvedEvents(working);
+  working.erase(std::unique(working.begin(), working.end(),
+                            [](const MidiEvent& a, const MidiEvent& b) {
+                              return a.tick == b.tick && a.type == b.type && a.channel == b.channel &&
+                                     a.data.noteData.note == b.data.noteData.note &&
+                                     a.noteId == b.noteId;
+                            }),
+                working.end());
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
+  }
+  DisplayWindowUtils::filterMidiEventsToWindow(working, out, windowStart, windowLength,
+                                               loopLengthTicks);
+  sortResolvedEvents(out);
+  if (counters != nullptr) {
+    counters->candidateEvents = static_cast<uint32_t>(working.size());
+    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
+    counters->eventsInHistory = static_cast<uint32_t>(tickEvents.size());
     counters->passesInHistory = index.indexedPassCount();
     counters->elapsedMicros = timer.elapsed();
   }
