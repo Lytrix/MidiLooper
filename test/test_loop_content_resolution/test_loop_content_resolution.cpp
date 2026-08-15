@@ -3332,6 +3332,77 @@ void test_stage6e1b_session_start_is_wrap_origin() {
   stage6e1RunCase(absolute);
 }
 
+void test_stage6e2_consume_tracks_checkpoint_replay_not_history() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t interval = Config::TICKS_PER_BAR;
+  const uint32_t holdLength = 200;
+  const uint32_t consumeStart = fixture.loopLengthTicks - 240u;
+  const uint32_t sixteenBarLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
+
+  ResolutionCostCounters stateCounters;
+  SoundingNoteVec sounding;
+  LoopContentResolution::resolveState(checkpoints, consumeStart, sounding, &stateCounters);
+  TEST_ASSERT_GREATER_THAN(0u, stateCounters.replayStartTick);
+  TEST_ASSERT_TRUE(consumeStart - stateCounters.replayStartTick < interval);
+  TEST_ASSERT_LESS_THAN(stateCounters.eventsInHistory, stateCounters.eventsReplayed);
+  TEST_ASSERT_EQUAL_UINT32(0u, stateCounters.passChunkListsWalked);
+
+  ResolutionCostCounters holdCounters;
+  SessionMidiEventVec holdWindow;
+  LoopContentResolution::resolveWindow(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                       consumeStart, holdLength, holdWindow, &holdCounters);
+  ResolutionCostCounters sixteenBarCounters;
+  SessionMidiEventVec sixteenBarWindow;
+  LoopContentResolution::resolveWindow(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                       consumeStart, sixteenBarLength, sixteenBarWindow,
+                                       &sixteenBarCounters);
+  ResolutionCostCounters rematerializeCounters;
+  SessionMidiEventVec rematerializeWindow;
+  LoopContentResolution::resolveWindow(fixture.passes, fixture.loopLengthTicks, 0,
+                                       fixture.loopLengthTicks, rematerializeWindow,
+                                       &rematerializeCounters);
+  printCounters("stage6e2_hold", holdCounters);
+  printCounters("stage6e2_16bar", sixteenBarCounters);
+  printCounters("stage6e2_rematerialize", rematerializeCounters);
+  std::printf("stage6e2 replay_start=%u events_replayed=%u history_spans=%u hold_visited=%u "
+              "sixteen_bar_visited=%u\n",
+              stateCounters.replayStartTick, stateCounters.eventsReplayed,
+              stateCounters.eventsInHistory, holdCounters.indexEntriesVisited,
+              sixteenBarCounters.indexEntriesVisited);
+  TEST_ASSERT_LESS_THAN(sixteenBarCounters.indexEntriesVisited, holdCounters.indexEntriesVisited);
+  TEST_ASSERT_LESS_THAN(sixteenBarCounters.eventsInQueryWindow, holdCounters.eventsInQueryWindow);
+  TEST_ASSERT_LESS_THAN(rematerializeCounters.eventsInQueryWindow, holdCounters.eventsInQueryWindow);
+  TEST_ASSERT_LESS_THAN(rematerializeCounters.eventsInQueryWindow, stateCounters.eventsReplayed);
+
+  const uint32_t baselineReplayed = stateCounters.eventsReplayed;
+  const uint32_t extraNotes = 32;
+  PassId extraId = 20000;
+  uint32_t extraMerge = 20000;
+  NoteId extraNoteId = 20000;
+  for (uint32_t i = 0; i < extraNotes; ++i) {
+    fixture.passes.overdubPasses.push_back(makeOverdub(
+        extraId++, extraMerge++, 24u + i * 2u, 48u + i * 2u, 1, 40, extraNoteId++));
+  }
+  LoopContentResolution::TickIndex grownIndex;
+  commitFixtureIndex(fixture, grownIndex);
+  LoopContentResolution::StateCheckpoints grownCheckpoints;
+  grownCheckpoints.rebuild(grownIndex, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
+  ResolutionCostCounters grownState;
+  SoundingNoteVec grownSounding;
+  LoopContentResolution::resolveState(grownCheckpoints, consumeStart, grownSounding, &grownState);
+  TEST_ASSERT_TRUE(consumeStart - grownState.replayStartTick < interval);
+  TEST_ASSERT_LESS_THAN(grownState.eventsInHistory, grownState.eventsReplayed);
+  TEST_ASSERT_TRUE(grownState.eventsInHistory > stateCounters.eventsInHistory);
+  TEST_ASSERT_TRUE(grownState.eventsReplayed <= baselineReplayed + 2u);
+}
+
 void test_stage6d4_publish_restamps_without_device_gate_complete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3465,5 +3536,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6d4_publish_restamps_without_device_gate_complete);
   RUN_TEST(test_stage6e1_resolve_state_candidates_match_note_map_oracle);
   RUN_TEST(test_stage6e1b_session_start_is_wrap_origin);
+  RUN_TEST(test_stage6e2_consume_tracks_checkpoint_replay_not_history);
   return UNITY_END();
 }
