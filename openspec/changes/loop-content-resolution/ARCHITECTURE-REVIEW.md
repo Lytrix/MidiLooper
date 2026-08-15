@@ -68,4 +68,18 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 ---
 
-**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + explicit user approval.
+### Phase 6 — Production swap (overdub never cold-builds LCR)
+
+| Question | Answer |
+|----------|--------|
+| **Owner module** | `establishOverdubSourceView` / idle `DeviceGateSession` — not a new overdub owner |
+| **Primary invariant** | Overdub start/stop MUST NOT cold-build `LoopContentResolution`. Idle/background prepares; overdub consumes already-prepared state. `begin_capture` < 3 ms target, < 50 ms hard gate |
+| **Ownership change?** | NO for record/overdub FSM. YES for later gather owners (`6.2`/`6.3`) only after this invariant holds |
+| **State transition change?** | NO |
+| **Behavior-preserving?** | YES for overdub FSM. Dirty-cache `resolveWindow` on `startOverdubbing` is **forbidden** |
+| **Reuse** | YES — keep 3b visual-cache copy; idle gate already owns LCR construction |
+| **Phase scope** | Invariant pinned 2026-08-15. Firmware `6.1`+ waits for an explicit implement request. Do not use 3b 2214 µs as proof LCR is faster |
+
+---
+
+**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 overdub invariant (never cold-build LCR) + explicit implement request.

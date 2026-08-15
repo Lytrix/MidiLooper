@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 **5.18 FROZEN**, **5.1 idle-path PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 overdub-entry PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs; production MIDI/display stay on materialize; Stage 6 blocked until user approval  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); Stage 6 overdub invariant pinned (never cold-build LCR); production MIDI/display stay on materialize; firmware swap not started  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -299,8 +299,10 @@ A poor first tick-index implementation does **not** by itself disprove the archi
 
 ## Production migration (only after all three gates)
 
-1. **Overdub source fallback** (dirty cache) — `resolveWindow` of the overdub range. Clean-cache copy of `visualCache.notes` stays (3b).
-2. **Idle visual cache slices** — range-dirty bars; gather via `resolveWindow` (A becomes a cache of G, not a second authority).
+**Overdub invariant (DEC-037 amendment 2026-08-15):** Overdub start/stop MUST NOT cold-build `LoopContentResolution`. Idle/background prepares derived state. Overdub consumes it. `begin_capture` **< 3 ms** target, **< 50 ms** hard gate. Original 3b **2214 µs** is not a proof that LCR is faster.
+
+1. **Overdub entry/stop** — consume already-prepared committed display/source. Keep 3b copy of authoritative `visualCache.notes`. Do **not** `resolveWindow`, rebuild LCR indexes, materialize, reconstruct, or `markDisplayCachesStale` on `startOverdubbing` / `stopOverdubbing`. If LCR is not ready, keep the existing non-LCR 3b dirty fallback (`CommittedEventRange::inWindow` + edit apply).
+2. **Idle visual cache slices** — range-dirty bars; gather via `resolveWindow` (A becomes a cache of G, not a second authority). This is where LCR is used, not overdub start.
 3. **Long-loop playback** — already windowed; swap gather to `resolveWindow` / `ResolvedEvent`.
 4. **Short-loop playback / NOTE_EDIT session hydrate** — last.
 5. **D3 persist checkpoint** — same checkpoint type as stage 7; `StorageManager` remains persist owner (DEC-008).

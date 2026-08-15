@@ -230,8 +230,41 @@ Next is the **whole-gate** 5.1 measurement, not another index. Production stays 
 
 Not multi-second MIDI or OLED stall. **5.1 PASS.** 5.2 (overdub entry / `VCACHE,full` on the PLAYING path) is not this measurement. No Stage 6.
 
+### Amendment 2026-08-15 — Stage 6 overdub must not cold-build LCR
+
+Not a new DEC. Stage 9 device gates are complete. **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` **10050 µs** after restoring DEC-036 3b (copy authoritative `visualCache.notes`; no `markDisplayCachesStale` on `startOverdubbing`). Prior FAIL [`175544`](../captures/session_20260815_175544.log) **108979 µs**. Original 3b [`045556`](../captures/session_20260814_045556.log) **2214 µs**.
+
+**Invariant:** Overdub **start and stop** MUST NOT cold-build `LoopContentResolution`. LCR construction belongs to idle/background preparation. Overdub entry consumes already-prepared derived state (3b visual-cache copy when authoritative; already-complete LCR only if that work already finished off the overdub path).
+
+Content authority stays `LoopPasses`. Do not add a `LoopContent` type. Do not treat the 2214 µs 3b number as proof that LCR queries are faster — that number is a cache copy, not an LCR setup/query cost.
+
+**Forbidden on overdub start/stop:**
+
+```
+start/stop overdub
+  → create/rebuild LCR indexes
+  → resolve committed state
+  → construct source view
+```
+
+That recreates [`175544`](../captures/session_20260815_175544.log) (`markDisplayCachesStale` → discard → materialize → reconstruct) under a new owner.
+
+**Acceptance (Stage 6 overdub path):**
+
+| Kind | Bar |
+|------|-----|
+| Architecture | no synchronous full-loop work; no materialize; no reconstruct; no `VCACHE,full`; no cache invalidation on entry |
+| Performance | `begin_capture` **< 3 ms** target; **< 50 ms** hard gate |
+
+A 4–10 ms landing still proves the invariant if those architecture bars hold. Do not optimize the old 2214 µs number at the expense of the invariant.
+
+Dirty-cache is **not** a license to call `resolveWindow` from `startOverdubbing`. Idle slices (`6.2`) own LCR gather. If LCR is not ready, keep the existing non-LCR 3b fallback (`CommittedEventRange::inWindow` + edit apply) — do not cold-build indexes to help.
+
+Firmware production swap (`6.1`+) does not start until an explicit implement request. This amendment pins the invariant only.
+
 ### Constraints created
 
+- Overdub start/stop must not cold-build `LoopContentResolution` (idle/background prepares; overdub consumes already-prepared state).
 - No second O(history) derived owner that `invalidateCaches` will discard.
 - A checkpoint must not be a proportional copy of the resolved loop (per-bar full `soundingAt` fails this).
 - Derived indexes must not per-entry-allocate into PSRAM associative containers on realtime-adjacent construction paths (5.15 / 5.17 / 5.7c). Representation follows the query contract; B only if a measured flat query is too expensive.
