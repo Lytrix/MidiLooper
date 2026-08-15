@@ -41,9 +41,10 @@ Immediate record sets **`activeLoopIndex`** to the target slot before capture st
 
 ### While not playing
 
-- **Pressed slot is empty**: start recording.
-- **Pressed slot has data, LOOP_EDIT or NOTE_EDIT, different slot than selected**: change **selected** focus only (no play/stop toggle).
-- **Pressed slot has data** (otherwise): toggle play/stop on that slot; if global transport is stopped, it starts automatically so the clock advances. `toggleTransport()` may already start the track — play start is not double-toggled off.
+- **Pressed slot is empty**: start recording. Enabled set becomes **only that slot** (a leftover layered set from a previous play does not come back after record-stop).
+- **Pressed slot has data, LOOP_EDIT or NOTE_EDIT, different slot than selected**: change **selected** focus only (no play/stop toggle). Enabled set becomes **only that slot**.
+- **Pressed slot has data** (otherwise): toggle play/stop on that slot; if global transport is stopped, it starts automatically so the clock advances. `toggleTransport()` may already start the track — play start is not double-toggled off. Enabled set becomes **only that slot**.
+- Slot-switch and record **queues** are playing-only. Transport stop and track stop discard pending slot switch, pending record, pending multi-hold commit, and queued playback start. The committed enabled set is not a queue; selecting a slot while stopped replaces it.
 
 ## Long press
 
@@ -62,12 +63,13 @@ Sidebar **`U:nn`** shows applied pass-undo depth for the **selected loop**, not 
 
 ## Hold (multi-slot selection)
 
-Use hold to build a pending enabled-slot set:
+Use hold **while playing** to build a pending enabled-slot set:
 
 - Hold one or more slot buttons to mark target slots.
 - Release the last held slot to queue commit.
 - Commit occurs on next 16th boundary.
 - At commit, enabled set is replaced by held selection, playback indices are realigned for enabled audible slots, and LEDs are refreshed.
+- Hold is ignored while stopped, recording, or overdubbing. Transport/track stop discards an in-progress hold.
 
 ## Capture safety
 

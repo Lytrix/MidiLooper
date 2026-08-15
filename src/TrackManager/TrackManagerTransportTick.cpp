@@ -20,7 +20,14 @@ void TrackManager::startPlayingTrack(uint8_t trackIndex) {
 }
 
 void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
-  if (trackIndex < Config::NUM_TRACKS) tracks[trackIndex].stopPlaying();
+  if (trackIndex >= Config::NUM_TRACKS) {
+    return;
+  }
+  tracks[trackIndex].stopPlaying();
+  clearPendingSlotSwitch(trackIndex);
+  pendingEnabledSetReplacement[trackIndex] = false;
+  cancelSlotSelectionHold(trackIndex);
+  tracks[trackIndex].clearQueuedPlaybackStart();
 }
 
 void TrackManager::handleTransportStop() {
@@ -38,6 +45,7 @@ void TrackManager::handleTransportStop() {
     pendingStop[i] = false;
     slotStateMachine.clearPendingSlotSwitch(i);
     pendingEnabledSetReplacement[i] = false;
+    cancelSlotSelectionHold(i);
     tracks[i].clearQueuedPlaybackStart();
     if (t.isRecording()) {
       // Stop recording BEFORE sendAllNotesOff(): finalizePendingNotes() must record
