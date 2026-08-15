@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — **038.1 landed**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo). Not 038.2.  
+**Status:** Active — **038.1 landed**; issue 1 wrap-tail reconstruct **shipped** (`finishOpenNotes=false` on committed wrap/display). Not 038.2.  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) wrap commit + session undo  
@@ -293,6 +293,53 @@ Native: `test_overdub_source_view` wrap/extract/session + `didPlayheadCrossPhase
 | **Approval required** | YES before Track firmware |
 
 ---
+
+## HITL [`231206`](../../captures/session_20260815_231206.log) (2026-08-15)
+
+Overdub start 44.967 s tick 1752 (S). Wraps 52.995 / 61.053 / 69.077 (ticks 4824 / 7896 / 10968). Transport stop 72.6 s. `#CAP` ring overflow at stop — trust INFO timestamps for order.
+
+**E: count-up** is session undo depth (`overdubSessionUndoDepth` = sealed wraps + live store). Expected for 038.1.
+
+| # | Symptom | Evidence | Not in this log |
+|---|---------|----------|-----------------|
+| 1 | Notes lengthen to loop end at each wrap; correct at stop | Before wrap 1: DISP 83/51. Wrap 1: `wrap_synth=0`, `lcr,6c ev=279 notes=151`, `lcr,6a ev=279 notes=151`, DISP 152/151. Wrap 2: 172. Wrap 3: 194. Stop: `VCACHE,full,ev,267,notes,100`, DISP 100/100 | |
+| 3 | MIDI stream stalls at wrap and after | `clockrate` stays 47. Wrap 1 MO gap 129 ms (52908915→53038453) during 6c/6a. Wrap 2 MO gap 515 ms (60660908→61175703). Then **4.218 s** no MO (65028901→69247836) until wrap 3 rebuild | |
+| 2 | Undo does not remove notes | | No `MIDI: Overdub session undo` / `Overdub session undone` / post-overdub `MIDI: Undo` after 44.967 s |
+
+Issue 1 path: `commitOverdubWrapAtSessionStart` → `publishPreparedOverdubPass` + `beginCapture` → `establishOverdubSourceView` / `rebuildVisualCacheIdleSlice` both `tryResolvePreparedWindow` + `reconstructDisplayNotes`. `finishCanonicalSpansOpenNotes` sets unpaired ON end to `loopLength`. 4-bar loop ⇒ 6c window is the full loop (`kMaxDetailedWindowBars=16`). Stop uses `rebuildVisualCacheFromPasses` (`gatherCommittedEvents`, 267→100).
+
+Issue 2 firmware gap (if undo was during OVERDUBBING): `Loop::undoOverdubSession` / `TrackUndo::undoOverdubSession` never call `LoopContentResolution::setPreparedCapturePassState`. DEC-038 pin required that. After stop, 038.1 GUS still has only the last wrap.
+
+Issue 3 path: `maybeCommitOverdubWrap` runs inside `playCommittedLoopMidi` before emit. Wrap 2/3 LCR `tot` 82 ms / 106 ms on that tick. `invalidateCaches` forces merge rebuild.
+
+## HITL [`232914`](../../captures/session_20260815_232914.log) — undo during + after stop
+
+Baseline STOPPED DISP **110**. Overdub 24.488 s tick 552, `events=280`. Wraps 32.711 / 40.826 / 48.812. Session undos 41.090 / 43.713 / 50.671 (`MIDI: Overdub session undo`). Stop 52.117. GUS undo 56.082 (`MIDI: Undo (entries=10)`, `kind=1` `OverdubPassAdded`).
+
+| Wall | Event | DISP committed |
+|------|--------|----------------|
+| before | STOPPED | 110 |
+| wrap 1 | `6c ev=204 notes=112` | 112 |
+| wrap 2 | `6c ev=237 notes=125` | 125 |
+| 41.090 + 43.713 | session undo ×2 | **125** (no drop) |
+| wrap 3 | `6c ev=248 notes=137` | 137 |
+| 50.671 | session undo | **137** committed; live 145→139 |
+| stop | `VCACHE,full,ev,280,notes,103` | **103** |
+| 56.082 | GUS `Overdub undone` | **103** (`slice_clean` 103, `DFRAME` 103) |
+
+Session undo **fires** while OVERDUBBING. Sealed-wrap committed count does not fall (LCR still serves the pass — no `setPreparedCapturePassState`). Live undo only clears `capture.store` (145→139). Stop rematerialize uses `LoopPasses` (103). After-stop one `passId` + LCR slice leave 103. Issue 1 still paints wrap reconstruct tails, so OLED cannot show the session-undo disable.
+
+## Issue 1 shipped — committed reconstruct omits open tails
+
+`NoteUtils::reconstructDisplayNotes(..., finishOpenNotes=false)` on:
+
+- `rebuildVisualCacheIdleSlice` / `rebuildVisualCacheFromPasses`
+- `establishOverdubSourceView` LCR hit
+- `publishPreparedOverdubPass`
+
+Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`, `test_source_view_prepared_window_omits_unpaired_open_tails`.
+
+Does not fix session-undo LCR sync (issue 2) or wrap-on-clock stall (issue 3).
 
 ## Out of scope
 

@@ -140,6 +140,22 @@ void test_reconstruct_open_note_to_loop_end() {
     assert_has_note(notes, 60, 90, 99, 100);
 }
 
+void test_reconstruct_display_omits_open_tails_when_finish_open_notes_false() {
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(10, 1, 60, 100));
+    ev.push_back(MidiEvent::NoteOff(58, 1, 60, 0));
+    ev.push_back(MidiEvent::NoteOn(80, 1, 72, 90));
+    const NoteUtils::DisplayNoteVec withTails =
+        NoteUtils::reconstructDisplayNotes(ev, 100, false, true);
+    TEST_ASSERT_EQUAL(2u, withTails.size());
+    const NoteUtils::DisplayNoteVec committed =
+        NoteUtils::reconstructDisplayNotes(ev, 100, false, false);
+    TEST_ASSERT_EQUAL(1u, committed.size());
+    TEST_ASSERT_EQUAL(60, committed[0].note);
+    TEST_ASSERT_EQUAL_UINT32(10u, committed[0].startTick);
+    TEST_ASSERT_EQUAL_UINT32(58u, committed[0].endTick);
+}
+
 void test_reconstruct_dedupes_identical_segments() {
     MidiEventVec ev;
     ev.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
@@ -413,6 +429,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_wraps_note_off_past_boundary);
     RUN_TEST(test_reconstruct_lifo_same_pitch);
     RUN_TEST(test_reconstruct_open_note_to_loop_end);
+    RUN_TEST(test_reconstruct_display_omits_open_tails_when_finish_open_notes_false);
     RUN_TEST(test_reconstruct_dedupes_identical_segments);
     RUN_TEST(test_reconstruct_dedupes_many_identical_geometry_notes);
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off);

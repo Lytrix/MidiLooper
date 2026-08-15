@@ -610,7 +610,8 @@ NOTE_EDIT_MEM void finishCanonicalSpansOpenNotes(uint32_t loopLength, CanonicalN
 
 template <typename EventAlloc>
 NOTE_EDIT_MEM CanonicalNoteSpanVec buildCanonicalSpansFromMidi(
-    const std::vector<MidiEvent, EventAlloc>& midiEvents, uint32_t loopLength, bool verboseLog) {
+    const std::vector<MidiEvent, EventAlloc>& midiEvents, uint32_t loopLength, bool verboseLog,
+    bool finishOpenNotes) {
     CanonicalNoteSpanVec spans;
     ActiveNoteStackMap activeNoteStacks;
     WrappedTailOnTickSet wrappedTailOnTicks;
@@ -625,7 +626,9 @@ NOTE_EDIT_MEM CanonicalNoteSpanVec buildCanonicalSpansFromMidi(
     appendCanonicalSpansFromMidiRange(midiEvents, loopLength, verboseLog, 0,
                                       static_cast<uint32_t>(midiEvents.size()), spans,
                                       activeNoteStacks, wrappedTailOnTicks);
-    finishCanonicalSpansOpenNotes(loopLength, spans, activeNoteStacks);
+    if (finishOpenNotes) {
+        finishCanonicalSpansOpenNotes(loopLength, spans, activeNoteStacks);
+    }
     return spans;
 }
 
@@ -687,12 +690,12 @@ NOTE_EDIT_MEM NoteVector displayNotesFromCanonicalSpanVec(const CanonicalNoteSpa
 
 template <typename NoteVector, typename EventAlloc>
 NoteVector reconstructNotesImpl(const std::vector<MidiEvent, EventAlloc>& midiEvents,
-                                uint32_t loopLength, bool verboseLog) {
+                                uint32_t loopLength, bool verboseLog, bool finishOpenNotes = true) {
     if (loopLength == 0) {
         return NoteVector{};
     }
     const CanonicalNoteSpanVec spans =
-        buildCanonicalSpansFromMidi(midiEvents, loopLength, verboseLog);
+        buildCanonicalSpansFromMidi(midiEvents, loopLength, verboseLog, finishOpenNotes);
     return displayNotesFromCanonicalSpanVec<NoteVector>(spans, loopLength, verboseLog);
 }
 
@@ -772,20 +775,22 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
 }
 
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
-    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
-    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog);
+    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog, bool finishOpenNotes) {
+    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog, finishOpenNotes);
 }
 
 template <typename Alloc>
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
-    const std::vector<MidiEvent, Alloc>& midiEvents, uint32_t loopLength, bool verboseLog) {
-    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog);
+    const std::vector<MidiEvent, Alloc>& midiEvents, uint32_t loopLength, bool verboseLog,
+    bool finishOpenNotes) {
+    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog, finishOpenNotes);
 }
 
 template NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
-    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog);
+    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog, bool finishOpenNotes);
 template NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(
-    const SessionMidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog);
+    const SessionMidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog,
+    bool finishOpenNotes);
 
 NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec& midiEvents,
                                                                uint32_t loopLength) {
