@@ -17,7 +17,7 @@ Last updated: 2026-08-14 (DEC-037 LoopContentResolution prototype; Layer D 3b sh
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** 5.4–5.5 shipped (8-bar `soundingAt`; fill aborts at Low/Critical). Next: 5.6 split `prepareRebuildSpans`. Do not raise the 16-bar arm cap. Short-loop `lcr` PASS [`225744`](../../captures/session_20260814_225744.log). Per-bar snapshot FAIL [`225351`](../../captures/session_20260814_225351.log). Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
+**Now:** 5.4–5.6 shipped (8-bar `soundingAt`; fill abort; split rebuild slices). Next: 5.7 68-bar HITL measure — still behind the 16-bar arm cap until 5.7/5.8 say otherwise. Short-loop `lcr` PASS [`225744`](../../captures/session_20260814_225744.log). Per-bar snapshot FAIL [`225351`](../../captures/session_20260814_225351.log). Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 
