@@ -177,6 +177,19 @@ TRACK_COLD_MEM void eraseSounding(SoundingNoteVec& sounding, const MidiEvent& of
                  sounding.end());
 }
 
+TRACK_COLD_MEM void applySpanBoundaryAtTick(
+    SoundingNoteVec& sounding, const LoopContentResolution::StateCheckpoints::NoteSpan& span,
+    uint32_t keyTick) {
+  if (keyTick == span.startTick) {
+    upsertSounding(sounding, span.note);
+  }
+  if (keyTick == span.endTick) {
+    MidiEvent off = MidiEvent::NoteOff(span.endTick, span.note.channel, span.note.pitch, 0);
+    off.noteId = span.note.noteId;
+    eraseSounding(sounding, off);
+  }
+}
+
 // Gather + edit in the same order as LoopPasses::materializeToEventVector. Tick-sort is only
 // applied for resolveWindow's deterministic ResolvedEvent sequence (reconstruct is order-sensitive).
 TRACK_COLD_MEM void gatherActiveResolvedEvents(const LoopPasses& passes, uint32_t loopLengthTicks,
@@ -712,20 +725,75 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickI
   fillCheckpointRange(0, static_cast<uint32_t>(soundingAt.size()), counters);
 }
 
-TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick, SoundingNoteVec& out,
-                                                           ResolutionCostCounters* counters) const {
+TRACK_COLD_MEM bool seedResolveStateFromCheckpoint(
+    const LoopContentResolution::StateCheckpoints& checkpoints, uint32_t tick, SoundingNoteVec& out,
+    uint32_t& replayStart) {
   out.clear();
-  if (intervalTicks == 0 || loopLengthTicks == 0 || soundingAt.empty()) {
+  if (checkpoints.intervalTicks == 0 || checkpoints.loopLengthTicks == 0 ||
+      checkpoints.soundingAt.empty()) {
+    return false;
+  }
+  const uint32_t queryTick =
+      IntervalProjection::tickPhaseInLoop(tick, 0, checkpoints.loopLengthTicks);
+  replayStart = (queryTick / checkpoints.intervalTicks) * checkpoints.intervalTicks;
+  uint32_t checkpointIndex = replayStart / checkpoints.intervalTicks;
+  if (checkpointIndex >= checkpoints.soundingAt.size()) {
+    checkpointIndex = static_cast<uint32_t>(checkpoints.soundingAt.size() - 1);
+    replayStart = checkpointIndex * checkpoints.intervalTicks;
+  }
+  out = checkpoints.soundingAt[checkpointIndex];
+  return true;
+}
+
+TRACK_COLD_MEM void writeResolveStateCounters(const LoopContentResolution::StateCheckpoints& checkpoints,
+                                              uint32_t replayStart, uint32_t replayed,
+                                              ResolutionCostCounters* counters) {
+  if (counters == nullptr) {
+    return;
+  }
+  counters->checkpointIntervalTicks = checkpoints.intervalTicks;
+  counters->checkpointCount = static_cast<uint32_t>(checkpoints.soundingAt.size());
+  counters->replayStartTick = replayStart;
+  counters->eventsReplayed = replayed;
+  counters->eventsInHistory = static_cast<uint32_t>(checkpoints.spans.size());
+  counters->passChunkListsWalked = 0;
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::appendSpanBoundaryEntries(
+    const NoteSpanVec& spans, uint32_t begin, uint32_t endExclusive, SpanBoundaryEntryVec& out) {
+  const uint32_t limit = static_cast<uint32_t>(spans.size());
+  if (begin >= limit) {
+    return;
+  }
+  if (endExclusive > limit) {
+    endExclusive = limit;
+  }
+  const size_t added = static_cast<size_t>(endExclusive - begin) * 2u;
+  if (out.capacity() < out.size() + added) {
+    out.reserve(out.size() + added);
+  }
+  for (uint32_t i = begin; i < endExclusive; ++i) {
+    out.push_back({spans[i].startTick, i});
+    out.push_back({spans[i].endTick, i});
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortSpanBoundaryEntriesByTick(
+    SpanBoundaryEntryVec& entries) {
+  std::stable_sort(entries.begin(), entries.end(),
+                   [](const SpanBoundaryEntry& a, const SpanBoundaryEntry& b) {
+                     return a.tick < b.tick;
+                   });
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick,
+                                                                         SoundingNoteVec& out,
+                                                                         ResolutionCostCounters* counters) const {
+  uint32_t replayStart = 0;
+  if (!seedResolveStateFromCheckpoint(*this, tick, out, replayStart)) {
     return;
   }
   const uint32_t queryTick = IntervalProjection::tickPhaseInLoop(tick, 0, loopLengthTicks);
-  uint32_t replayStart = (queryTick / intervalTicks) * intervalTicks;
-  uint32_t checkpointIndex = replayStart / intervalTicks;
-  if (checkpointIndex >= soundingAt.size()) {
-    checkpointIndex = static_cast<uint32_t>(soundingAt.size() - 1);
-    replayStart = checkpointIndex * intervalTicks;
-  }
-  out = soundingAt[checkpointIndex];
   uint32_t replayed = 0;
   auto applyRange = [&](uint32_t beginTick, uint32_t endTickExclusive) {
     auto it = startsByTick.lower_bound(beginTick);
@@ -735,26 +803,37 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32
       if (it->second >= spans.size()) {
         continue;
       }
-      const NoteSpan& span = spans[it->second];
-      if (it->first == span.startTick) {
-        upsertSounding(out, span.note);
-      }
-      if (it->first == span.endTick) {
-        MidiEvent off = MidiEvent::NoteOff(span.endTick, span.note.channel, span.note.pitch, 0);
-        off.noteId = span.note.noteId;
-        eraseSounding(out, off);
-      }
+      applySpanBoundaryAtTick(out, spans[it->second], it->first);
     }
   };
   applyRange(replayStart + 1, queryTick + 1);
-  if (counters != nullptr) {
-    counters->checkpointIntervalTicks = intervalTicks;
-    counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
-    counters->replayStartTick = replayStart;
-    counters->eventsReplayed = replayed;
-    counters->eventsInHistory = static_cast<uint32_t>(spans.size());
-    counters->passChunkListsWalked = 0;
+  writeResolveStateCounters(*this, replayStart, replayed, counters);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveStateFromSpanBoundaries(
+    const SpanBoundaryEntryVec& entries, uint32_t tick, SoundingNoteVec& out,
+    ResolutionCostCounters* counters) const {
+  uint32_t replayStart = 0;
+  if (!seedResolveStateFromCheckpoint(*this, tick, out, replayStart)) {
+    return;
   }
+  const uint32_t queryTick = IntervalProjection::tickPhaseInLoop(tick, 0, loopLengthTicks);
+  uint32_t replayed = 0;
+  auto applyRange = [&](uint32_t beginTick, uint32_t endTickExclusive) {
+    auto it = std::lower_bound(entries.begin(), entries.end(), beginTick,
+                               [](const SpanBoundaryEntry& entry, uint32_t bound) {
+                                 return entry.tick < bound;
+                               });
+    for (; it != entries.end() && it->tick < endTickExclusive; ++it) {
+      replayed += 1;
+      if (it->spanIndex >= spans.size()) {
+        continue;
+      }
+      applySpanBoundaryAtTick(out, spans[it->spanIndex], it->tick);
+    }
+  };
+  applyRange(replayStart + 1, queryTick + 1);
+  writeResolveStateCounters(*this, replayStart, replayed, counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveState(const StateCheckpoints& checkpoints, uint32_t tick,

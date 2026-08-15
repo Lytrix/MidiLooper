@@ -66,9 +66,16 @@ Walking `for each pass if intersects(window)` SHALL fail this requirement even w
 
 A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop. `checkpointIntervalTicks` SHALL be a performance parameter, not a semantic property of the loop. Changing density (native 1 bar, device 8 bars, device 16 bars, later adaptive) MUST NOT change `resolveState` answers for a fixed active history.
 
-`spans` and `startsByTick` are currently sufficient as the base index for `resolveState`. The device probe SHALL measure whether additional indexing is required. The probe MUST NOT assume a per-bar full `soundingAt` snapshot is the checkpoint.
+`spans` plus a tick-ordered span-boundary index (start **and** exclusive-end) are currently sufficient as the base index for `resolveState`. The index container MUST NOT be required to be a PSRAM associative map. Equal-tick boundaries MUST apply in the same order as C-order insertion (start then end per span, spans in `rebuildNotes` order) after a stable tick sort. The device probe SHALL measure whether additional indexing is required. The probe MUST NOT assume a per-bar full `soundingAt` snapshot is the checkpoint.
 
 Building a sounding-state snapshot at every bar of an `035414`-class loop (notes × bars membership copies) SHALL fail this requirement.
+
+#### Scenario: Flat span-boundary index matches the map
+
+- **WHEN** `resolveState` runs from sparse checkpoints using a flat tick-ordered span-boundary list built by appending start then exclusive-end per span and `stable_sort` by tick
+- **THEN** the sounding-state results match the current `startsByTick` map and the materialize oracle
+- **AND** `passChunkListsWalked` is 0
+- **AND** a span that ends at tick T and another that starts at T produce the same sounding set as the map
 
 #### Scenario: Sparse checkpoints agree with dense checkpoints
 

@@ -114,11 +114,19 @@ struct LoopContentResolution {
       uint32_t startTick = 0;
       uint32_t endTick = 0;
     };
+    /// Private index entry — not a musical noun. Start and exclusive-end both appear.
+    struct SpanBoundaryEntry {
+      uint32_t tick = 0;
+      size_t spanIndex = 0;
+    };
+    using NoteSpanVec = std::vector<NoteSpan, ExternalMemoryFirstAllocator<NoteSpan>>;
+    using SpanBoundaryEntryVec =
+        std::vector<SpanBoundaryEntry, ExternalMemoryFirstAllocator<SpanBoundaryEntry>>;
 
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
     std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> soundingAt;
-    std::vector<NoteSpan, ExternalMemoryFirstAllocator<NoteSpan>> spans;
+    NoteSpanVec spans;
     /// Start and exclusive-end ticks for tail replay (both keyed here).
     std::multimap<uint32_t, size_t, std::less<uint32_t>,
                   ExternalMemoryFirstAllocator<std::pair<const uint32_t, size_t>>>
@@ -145,6 +153,13 @@ struct LoopContentResolution {
                              ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, SoundingNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;
+    /// 5.15b measurement: C-order append (start then end per span), then `stable_sort` by tick.
+    static void appendSpanBoundaryEntries(const NoteSpanVec& spans, uint32_t begin,
+                                          uint32_t endExclusive, SpanBoundaryEntryVec& out);
+    static void sortSpanBoundaryEntriesByTick(SpanBoundaryEntryVec& entries);
+    void resolveStateFromSpanBoundaries(const SpanBoundaryEntryVec& entries, uint32_t tick,
+                                        SoundingNoteVec& out,
+                                        ResolutionCostCounters* counters = nullptr) const;
   };
 
   /// Checkpoint density is a performance parameter (DEC-037). Same active history ⇒ same

@@ -110,8 +110,12 @@ Device per-bar `soundingAt` on the 68-bar / 1847-note loop is another O(history)
 
 - A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop.
 - Checkpoint density is a performance parameter, not a semantic property of the loop (native 1 bar, device 8/16 bars, later adaptive — identical answers).
-- `spans` + `startsByTick` are currently sufficient as the base index for `resolveState`; the device probe measures whether more index is required.
-- Split `prepareRebuildSpans` before treating RAM as the only stall. 5.7 probe is a selected loop **>63 bars** ([`115750`](../captures/session_20260815_115750.log) 139 bars accepted). Arm cap stays off. IndexCommit, `pairCapturePassNotes`, reconstruct span build, display project, and RebuildSpans process `kDeviceGateEventsPerSlice` (8) per idle slice. [`141630`](../captures/session_20260815_141630.log) complete `hist=2394`; leftover project+dedup was 280 ms before 5.14.
+- `spans` plus a tick-ordered span-boundary index (start **and** exclusive-end) are sufficient for `resolveState` tail replay. The container need not be a PSRAM `std::multimap` (5.15).
+- Split `prepareRebuildSpans` before treating RAM as the only stall. 5.7 probe is a selected loop **>63 bars** ([`115750`](../captures/session_20260815_115750.log) 139 bars accepted). Arm cap stays off. [`143009`](../captures/session_20260815_143009.log) complete `hist=2394` `walk=0`; project PASS; `startsByTick` emplace still fails 5.7. Do not change batch size to chase `emplace`. Do not start 5.1/5.2 or Stage 6 until cold-build latency passes.
+
+### Amendment 2026-08-15 — 5.15b pick flat A
+
+Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and the materialize oracle, including equal-tick end-then-start. `walk=0`. Host: A index 5 µs vs C emplace 29 µs; A resolve not worse. Device gate still uses the map until 5.15c. Do not build B or A2. Do not change `TickIndex::byTick` in this slice.
 
 ### Constraints created
 

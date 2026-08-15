@@ -1311,6 +1311,155 @@ void test_stage9_native_worst_case_micros() {
   TEST_ASSERT_GREATER_THAN(0u, sample.window.elapsedMicros);
 }
 
+uint64_t elapsedMicrosSince(Clock::time_point start) {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count());
+}
+
+void rebuildStartsByTickFromSpans(LoopContentResolution::StateCheckpoints& checkpoints) {
+  checkpoints.startsByTick.clear();
+  for (size_t i = 0; i < checkpoints.spans.size(); ++i) {
+    checkpoints.startsByTick.emplace(checkpoints.spans[i].startTick, i);
+    checkpoints.startsByTick.emplace(checkpoints.spans[i].endTick, i);
+  }
+}
+
+uint32_t countEqualTickPairs(
+    const LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& entries) {
+  uint32_t pairs = 0;
+  for (size_t i = 1; i < entries.size(); ++i) {
+    if (entries[i].tick == entries[i - 1].tick) {
+      pairs += 1;
+    }
+  }
+  return pairs;
+}
+
+void test_stage515b_equal_tick_boundary_order() {
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.intervalTicks = Config::TICKS_PER_BAR;
+  checkpoints.loopLengthTicks = 4u * Config::TICKS_PER_BAR;
+  checkpoints.soundingAt.resize(4);
+
+  LoopContentResolution::StateCheckpoints::NoteSpan ending{};
+  ending.note.channel = 1;
+  ending.note.pitch = 60;
+  ending.note.noteId = 7;
+  ending.note.onTick = 0;
+  ending.startTick = 0;
+  ending.endTick = 100;
+
+  LoopContentResolution::StateCheckpoints::NoteSpan starting{};
+  starting.note.channel = 1;
+  starting.note.pitch = 61;
+  starting.note.noteId = 7;
+  starting.note.onTick = 100;
+  starting.startTick = 100;
+  starting.endTick = 200;
+
+  checkpoints.spans.push_back(ending);
+  checkpoints.spans.push_back(starting);
+  checkpoints.soundingAt[0].push_back(ending.note);
+  rebuildStartsByTickFromSpans(checkpoints);
+
+  LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec flat;
+  LoopContentResolution::StateCheckpoints::appendSpanBoundaryEntries(
+      checkpoints.spans, 0, static_cast<uint32_t>(checkpoints.spans.size()), flat);
+  TEST_ASSERT_EQUAL_UINT32(4u, static_cast<uint32_t>(flat.size()));
+  TEST_ASSERT_EQUAL_UINT32(100u, flat[1].tick);
+  TEST_ASSERT_EQUAL(0u, flat[1].spanIndex);
+  TEST_ASSERT_EQUAL_UINT32(100u, flat[2].tick);
+  TEST_ASSERT_EQUAL(1u, flat[2].spanIndex);
+  LoopContentResolution::StateCheckpoints::sortSpanBoundaryEntriesByTick(flat);
+  TEST_ASSERT_EQUAL_UINT32(1u, countEqualTickPairs(flat));
+  TEST_ASSERT_EQUAL(0u, flat[1].spanIndex);
+  TEST_ASSERT_EQUAL(1u, flat[2].spanIndex);
+
+  const uint32_t ticks[] = {99u, 100u, 101u};
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec fromMap;
+    SoundingNoteVec fromFlat;
+    ResolutionCostCounters mapCounters;
+    ResolutionCostCounters flatCounters;
+    checkpoints.resolveState(tick, fromMap, &mapCounters);
+    checkpoints.resolveStateFromSpanBoundaries(flat, tick, fromFlat, &flatCounters);
+    TEST_ASSERT_EQUAL_UINT32(0u, mapCounters.passChunkListsWalked);
+    TEST_ASSERT_EQUAL_UINT32(0u, flatCounters.passChunkListsWalked);
+    TEST_ASSERT_EQUAL_UINT32(mapCounters.eventsReplayed, flatCounters.eventsReplayed);
+    assertSoundingMatch(fromMap, fromFlat);
+  }
+
+  SoundingNoteVec atJoin;
+  checkpoints.resolveStateFromSpanBoundaries(flat, 100u, atJoin, nullptr);
+  TEST_ASSERT_EQUAL(1u, atJoin.size());
+  TEST_ASSERT_EQUAL(starting.note.noteId, atJoin[0].noteId);
+  TEST_ASSERT_EQUAL(starting.note.pitch, atJoin[0].pitch);
+}
+
+void test_stage515b_flat_span_boundaries_match_map() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                      Config::TICKS_PER_BAR);
+  TEST_ASSERT_TRUE(checkpoints.spans.size() > 0);
+  TEST_ASSERT_EQUAL(checkpoints.startsByTick.size(), checkpoints.spans.size() * 2u);
+
+  const Clock::time_point cStart = Clock::now();
+  rebuildStartsByTickFromSpans(checkpoints);
+  const uint64_t cEmplaceUs = elapsedMicrosSince(cStart);
+
+  LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec flat;
+  const Clock::time_point appendStart = Clock::now();
+  LoopContentResolution::StateCheckpoints::appendSpanBoundaryEntries(
+      checkpoints.spans, 0, static_cast<uint32_t>(checkpoints.spans.size()), flat);
+  const uint64_t appendUs = elapsedMicrosSince(appendStart);
+  const Clock::time_point sortStart = Clock::now();
+  LoopContentResolution::StateCheckpoints::sortSpanBoundaryEntriesByTick(flat);
+  const uint64_t sortUs = elapsedMicrosSince(sortStart);
+  const uint64_t indexTotalUs = appendUs + sortUs;
+
+  TEST_ASSERT_EQUAL(checkpoints.startsByTick.size(), flat.size());
+  const uint32_t equalTickPairs = countEqualTickPairs(flat);
+  TEST_ASSERT_GREATER_THAN(0u, equalTickPairs);
+
+  const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks / 2u,
+                            fixture.loopLengthTicks - 24u};
+  uint64_t mapResolveUs = 0;
+  uint64_t flatResolveUs = 0;
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec fromMap;
+    SoundingNoteVec fromFlat;
+    SoundingNoteVec fromOracle;
+    ResolutionCostCounters mapCounters;
+    ResolutionCostCounters flatCounters;
+    const Clock::time_point mapStart = Clock::now();
+    checkpoints.resolveState(tick, fromMap, &mapCounters);
+    mapResolveUs += elapsedMicrosSince(mapStart);
+    const Clock::time_point flatStart = Clock::now();
+    checkpoints.resolveStateFromSpanBoundaries(flat, tick, fromFlat, &flatCounters);
+    flatResolveUs += elapsedMicrosSince(flatStart);
+    LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, fromOracle);
+    TEST_ASSERT_EQUAL_UINT32(0u, mapCounters.passChunkListsWalked);
+    TEST_ASSERT_EQUAL_UINT32(0u, flatCounters.passChunkListsWalked);
+    TEST_ASSERT_EQUAL_UINT32(mapCounters.eventsReplayed, flatCounters.eventsReplayed);
+    assertSoundingMatch(fromOracle, fromMap);
+    assertSoundingMatch(fromMap, fromFlat);
+  }
+
+  std::printf(
+      "stage515b C_emplace_us=%llu A_append_us=%llu A_sort_us=%llu A_index_total_us=%llu "
+      "C_resolve_us=%llu A_resolve_us=%llu entries=%u equal_tick_pairs=%u spans=%u\n",
+      static_cast<unsigned long long>(cEmplaceUs), static_cast<unsigned long long>(appendUs),
+      static_cast<unsigned long long>(sortUs), static_cast<unsigned long long>(indexTotalUs),
+      static_cast<unsigned long long>(mapResolveUs), static_cast<unsigned long long>(flatResolveUs),
+      static_cast<unsigned>(flat.size()), equalTickPairs,
+      static_cast<unsigned>(checkpoints.spans.size()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -1348,5 +1497,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);
   RUN_TEST(test_stage9_native_worst_case_micros);
+  RUN_TEST(test_stage515b_equal_tick_boundary_order);
+  RUN_TEST(test_stage515b_flat_span_boundaries_match_map);
   return UNITY_END();
 }
