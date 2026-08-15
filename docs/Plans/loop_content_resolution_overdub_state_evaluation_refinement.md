@@ -339,7 +339,13 @@ Session undo **fires** while OVERDUBBING. Sealed-wrap committed count does not f
 
 Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`, `test_source_view_prepared_window_omits_unpaired_open_tails`.
 
-Does not fix session-undo LCR sync (issue 2) or wrap-on-clock stall (issue 3).
+Does not fix wrap-on-clock stall (issue 3). After-stop multi-wrap GUS is 038.2.
+
+## Issue 2 shipped — session undo hides the wrap in prepared LCR
+
+`Loop::setCapturePassState` calls `setPreparedCapturePassState` then `restampPreparedPlaybackRevision` after the revision bump. Prepared stays ready; `findRawWindow` / `eraseDisabledSounding` skip the Disabled pass. Native: `test_overdub_session_undo_hides_wrap_from_prepared_lcr`.
+
+After-stop one `OverdubPassAdded` `passId` is still 038.2.
 
 ## Out of scope
 

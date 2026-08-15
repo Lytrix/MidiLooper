@@ -176,7 +176,9 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
       return true;
     }
     passes.recordPass.state = state;
+    LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
+    LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
     notifyCommittedContentChanged();
     return true;
   }
@@ -188,7 +190,9 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
       return true;
     }
     pass.state = state;
+    LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
+    LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
     notifyCommittedContentChanged();
     return true;
   }
