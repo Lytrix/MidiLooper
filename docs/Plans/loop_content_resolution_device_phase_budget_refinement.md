@@ -1,6 +1,6 @@
 # Loop content resolution — device phase-budget audit (5.16)
 
-**Status:** Open 2026-08-15 — 5.16a paper audit recorded; 5.16c `prep` slice shipped native. Device remasure next.  
+**Status:** Open 2026-08-15 — 5.16c device **PASS** for `prep` [`153920`](../captures/session_20260815_153920.log). 182 ms one-shot gone. 5.7 still open on `idx`/`recon` slices and `DFRAME` gaps.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.15 closed — [`loop_content_resolution_span_boundary_index_refinement.md`](loop_content_resolution_span_boundary_index_refinement.md)
 
@@ -77,7 +77,7 @@ Healthy after-complete in [`151450`](../captures/session_20260815_151450.log): `
 
 1. **No phase shows a 1.4–2.2 s uninterrupted slice.** `DFRAME` duration stays 11–25 ms. After complete, `DFRAME` is logged every ~0.96 s. Gaps of 1.4–2.2 s mean the 1 Hz line is late, not that one call ran 1.4 s.
 2. **`DFRAME` gaps >1 s occur in more than one sliced phase:** `idx` pass 0, `pair` pass 0, `proj`, `spans`. They are not unique to the span-boundary index.
-3. **`prep` is the only remaining one-slice rebuild step clearly over 50 ms** (182 ms). Same owner as 5.6; still unsliced.
+3. **`prep` was the only remaining one-slice rebuild step clearly over 50 ms** (182 ms on [`151450`](../captures/session_20260815_151450.log)). 5.16c sliced it.
 4. **`byTick` (`idx`/`pair`) is the largest remaining wall** (pass 0 ≈ 75 s) with per-slice `loop_rem` 63–83 ms on pass 0 and 92–121 ms on pass 1. That is a later representation candidate, not a 5.15 reopen, and not proven to be *the* 1 Hz `DFRAME` culprit.
 5. **Allocations per phase are unmeasured.** Do not add that instrumentation unless a later slice needs it to pick an owner.
 
@@ -94,14 +94,34 @@ Healthy after-complete in [`151450`](../captures/session_20260815_151450.log): `
 - Native `materializeActive` / `prepareRebuildResolvedEvents` still compose the full operation.
 - Native `test_stage9_range_prep_matches_full_prepare` PASS.
 
-Device remasure decides whether `prep` `loop_rem` drops below 50 ms. Do not start `byTick` from this commit.
+## 5.16c device PASS — [`153920`](../captures/session_20260815_153920.log)
 
-## Open after 5.16c
+139 bars, track 0 slot 0, `hist=2394`, complete @ 186.93 s.
 
-1. Device remasure of `prep` largest slice (`loop_rem` / `idle_maint`) on the 139-bar loop.
-2. Leave `byTick` until a named 5.17 (same A lens as 5.15). Do not infer it is next from wall time alone.
-3. Do not treat `reb=13.85 s` as the optimization target.
-4. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
+```
+mat=0,win=0,reb=13803604,st=13046,rep=350,hist=2394,walk=0,app=5485380,sort=10129
+```
+
+| | [`151450`](../captures/session_20260815_151450.log) unsliced `prep` | [`153920`](../captures/session_20260815_153920.log) sliced `prep` |
+|--|--|--|
+| `reb` | 13.85 s | 13.80 s |
+| `st` / `walk` | 13.0 ms / 0 | 13.0 ms / 0 |
+| `prep` wall | 0.31 s | 38.65 s (cooperative) |
+| `prep` `loop_rem` | **182 ms** one-shot | **none** |
+| `prep` `idle_maint` after idx overlap | — | **22–25 ms** (333 µs quiet samples) |
+| `idx` p1 `loop_rem` | 121 ms | 120.6 ms |
+| `recon` `loop_rem` | 116 ms | 115.7 ms |
+| after complete | `idle_maint` 276 µs, `DFRAME` ~0.96 s | `idle_maint` 296 µs, `DFRAME` 0.967–0.969 s |
+
+`prep` phase lines: pass 0 `ev` 0→4440, pass 1 456→4416, pass 2 152→4616, pass 3 328→4792. First 5 s `idle_maint` that overlaps prep start is 102.4 ms — same value as `idx` pass 3 `loop_rem`, not a prep slice.
+
+## Open after 5.16c remasure
+
+1. `prep` slice bar is closed. Do not spend another cycle on `RebuildPrepare`.
+2. Remaining written-bar leftovers: `idx` pass 1 **121 ms**, `recon` **116 ms**, `idx`/`pair` pass 0 63–83 ms, `DFRAME` gaps >1 s in sliced phases.
+3. Leave `byTick` until a named 5.17 (same A lens as 5.15). Do not infer it is next from wall time alone.
+4. Do not treat `reb=13.80 s` as the optimization target.
+5. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
 
 ---
 

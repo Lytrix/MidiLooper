@@ -115,7 +115,7 @@ Device per-bar `soundingAt` on the 68-bar / 1847-note loop is another O(history)
 
 ### Amendment 2026-08-15 — 5.15b pick flat A
 
-Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and the materialize oracle, including equal-tick end-then-start. `walk=0`. Host: A index 5 µs vs C emplace 29 µs; A resolve not worse. 5.15c swapped the device gate to `spanBoundaries`. Device [`151450`](../captures/session_20260815_151450.log): `app=5490706` `sort=10202` `reb=13851136` `st=13045` `walk=0` (was `reb=104359946`). **5.15 complete.** Do not build B or A2. Do not reopen the resolver query model. 5.16c slices `RebuildPrepare` materialize at `kDeviceGateEventsPerSlice`; device remasure next.
+Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and the materialize oracle, including equal-tick end-then-start. `walk=0`. Host: A index 5 µs vs C emplace 29 µs; A resolve not worse. 5.15c swapped the device gate to `spanBoundaries`. Device [`151450`](../captures/session_20260815_151450.log): `app=5490706` `sort=10202` `reb=13851136` `st=13045` `walk=0` (was `reb=104359946`). **5.15 complete.** Do not build B or A2. Do not reopen the resolver query model. 5.16c slices `RebuildPrepare` materialize at `kDeviceGateEventsPerSlice`. Device [`153920`](../captures/session_20260815_153920.log) `prep` PASS — no `loop_rem`; `idle_maint` 22–25 ms.
 
 ### Constraints created
 
