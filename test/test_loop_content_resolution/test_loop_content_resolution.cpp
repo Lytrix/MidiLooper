@@ -2384,6 +2384,9 @@ void buildSplitHistoryAndDelta(uint32_t historyEvents, uint32_t deltaEvents,
   LoopContentResolution::TickIndex::sortTickEventEntriesByTick(history);
   index.tickEvents = history;
 
+  if (deltaEvents == 0) {
+    return;
+  }
   const uint32_t deltaTickBase = 2u * historyEvents + 100u;
   index.beginCapturePass(deltaId, CapturePassState::Active, 1);
   fillSyntheticPassEvents(index.capturePasses.back(), deltaEvents, deltaTickBase, 2, 100000);
@@ -2580,6 +2583,215 @@ void test_stage6d2_split_history_delta_scales() {
   TEST_ASSERT_FALSE(queryTracksHistory);
 }
 
+void appendSyntheticOverdubAsDelta(LoopContentResolution::TickIndex& index, PassId passId,
+                                   uint32_t mergeSequence, uint32_t count, uint32_t tickBase,
+                                   NoteId idBase, TickEventEntryVec& added) {
+  added.clear();
+  index.beginCapturePass(passId, CapturePassState::Active, mergeSequence);
+  fillSyntheticPassEvents(index.capturePasses.back(), count, tickBase, 2, idBase);
+  LoopContentResolution::TickIndex::appendTickEventEntries(
+      index.capturePasses.back(), 0, count, added);
+}
+
+uint64_t minMicrosOverRunsAppendAndSortDelta(uint32_t runs, const TickEventEntryVec& existingDelta,
+                                             const TickEventEntryVec& added) {
+  uint64_t best = UINT64_MAX;
+  for (uint32_t i = 0; i < runs; ++i) {
+    TickEventEntryVec working = existingDelta;
+    const Clock::time_point start = Clock::now();
+    working.insert(working.end(), added.begin(), added.end());
+    LoopContentResolution::TickIndex::sortTickEventEntriesByTick(working);
+    const uint64_t sample = elapsedMicrosSince(start);
+    if (sample < best) {
+      best = sample;
+    }
+  }
+  return best;
+}
+
+void printStage6d3Sample(uint32_t historyEvents, uint32_t overdubCount, uint32_t accumulatedDelta,
+                         uint64_t commitUs, uint64_t queryNoDeltaUs, uint32_t noDeltaHistory,
+                         uint32_t noDeltaDelta, uint64_t queryAllDeltaUs, uint32_t allDeltaHistory,
+                         uint32_t allDeltaDelta) {
+  std::printf(
+      "stage6d3 history_events=%u overdub_count=%u accumulated_delta=%u commit_us=%llu "
+      "query_no_delta_us=%llu candidate_history=%u candidate_delta=%u query_all_delta_us=%llu "
+      "all_delta_candidate_history=%u all_delta_candidate_delta=%u\n",
+      historyEvents, overdubCount, accumulatedDelta, static_cast<unsigned long long>(commitUs),
+      static_cast<unsigned long long>(queryNoDeltaUs), noDeltaHistory, noDeltaDelta,
+      static_cast<unsigned long long>(queryAllDeltaUs), allDeltaHistory, allDeltaDelta);
+}
+
+void test_stage6d3_repeated_overdub_matches_oracle() {
+  constexpr uint32_t kHistoryEvents = 256;
+  constexpr uint32_t kDeltaEvents = 8;
+  constexpr uint32_t kOverdubs = 8;
+  LoopContentResolution::TickIndex index;
+  TickEventEntryVec history;
+  TickEventEntryVec unusedFirstDelta;
+  buildSplitHistoryAndDelta(kHistoryEvents, 0, index, history, unusedFirstDelta);
+  TEST_ASSERT_EQUAL_UINT32(kHistoryEvents, static_cast<uint32_t>(history.size()));
+  TEST_ASSERT_EQUAL_UINT32(kHistoryEvents, static_cast<uint32_t>(index.tickEvents.size()));
+
+  TickEventEntryVec delta;
+  const uint32_t loopLengthTicks = 2u * kHistoryEvents + 512u;
+  for (uint32_t n = 0; n < kOverdubs; ++n) {
+    TickEventEntryVec added;
+    const uint32_t tickBase = 2u * kHistoryEvents + 100u + n * 16u;
+    appendSyntheticOverdubAsDelta(index, static_cast<PassId>(n + 2u), n + 1u, kDeltaEvents, tickBase,
+                                  static_cast<NoteId>(200000u + n * 100u), added);
+    delta.insert(delta.end(), added.begin(), added.end());
+    LoopContentResolution::TickIndex::sortTickEventEntriesByTick(delta);
+    TEST_ASSERT_EQUAL_UINT32(kHistoryEvents, static_cast<uint32_t>(index.tickEvents.size()));
+    TEST_ASSERT_EQUAL_UINT32(kHistoryEvents, static_cast<uint32_t>(history.size()));
+    TEST_ASSERT_EQUAL_UINT32((n + 1u) * kDeltaEvents, static_cast<uint32_t>(delta.size()));
+
+    TickEventEntryVec merged;
+    mergeSortedTickEvents(history, delta, merged);
+    SessionMidiEventVec fromSplit;
+    SessionMidiEventVec fromMerged;
+    index.findRawWindowFromTickEvents(history, delta, loopLengthTicks, 0, loopLengthTicks,
+                                      fromSplit, nullptr);
+    index.findRawWindowFromTickEvents(merged, loopLengthTicks, 0, loopLengthTicks, fromMerged,
+                                      nullptr);
+    assertResolvedEventsMatch(fromMerged, fromSplit);
+  }
+}
+
+void test_stage6d3_repeated_overdub_scales() {
+  constexpr uint32_t kDeltaEvents = 8;
+  constexpr uint32_t kRuns = 5;
+  constexpr uint32_t kHistories[] = {8192u, 32768u};
+  constexpr uint32_t kHistoryCount = sizeof(kHistories) / sizeof(kHistories[0]);
+  constexpr uint32_t kOverdubCounts[] = {1u, 4u, 16u};
+  constexpr uint32_t kOverdubCountN = sizeof(kOverdubCounts) / sizeof(kOverdubCounts[0]);
+
+  uint64_t commitAtMaxN[kHistoryCount] = {};
+  uint64_t queryNoDeltaAtMaxN[kHistoryCount] = {};
+  uint64_t queryNoDeltaAtFirstN[kHistoryCount] = {};
+
+  for (uint32_t h = 0; h < kHistoryCount; ++h) {
+    const uint32_t historyEvents = kHistories[h];
+    LoopContentResolution::TickIndex index;
+    TickEventEntryVec history;
+    TickEventEntryVec unusedFirstDelta;
+    buildSplitHistoryAndDelta(historyEvents, 0, index, history, unusedFirstDelta);
+    TickEventEntryVec delta;
+    const uint32_t historyTickBefore = history.front().tick;
+    const uint32_t historyTickAfter = history.back().tick;
+    const uint32_t loopLengthTicks = 2u * historyEvents + 512u;
+    uint32_t nextOverdub = 0;
+
+    for (uint32_t o = 0; o < kOverdubCountN; ++o) {
+      const uint32_t targetCount = kOverdubCounts[o];
+      uint64_t lastCommitUs = 0;
+      while (nextOverdub < targetCount) {
+        TickEventEntryVec added;
+        const uint32_t tickBase = 2u * historyEvents + 100u + nextOverdub * 16u;
+        appendSyntheticOverdubAsDelta(index, static_cast<PassId>(nextOverdub + 2u), nextOverdub + 1u,
+                                      kDeltaEvents, tickBase,
+                                      static_cast<NoteId>(200000u + nextOverdub * 100u), added);
+        lastCommitUs = minMicrosOverRunsAppendAndSortDelta(kRuns, delta, added);
+        delta.insert(delta.end(), added.begin(), added.end());
+        LoopContentResolution::TickIndex::sortTickEventEntriesByTick(delta);
+        TEST_ASSERT_EQUAL_UINT32(historyEvents, static_cast<uint32_t>(index.tickEvents.size()));
+        TEST_ASSERT_EQUAL_UINT32(historyTickBefore, history.front().tick);
+        TEST_ASSERT_EQUAL_UINT32(historyTickAfter, history.back().tick);
+        nextOverdub += 1;
+      }
+
+      const uint32_t accumulatedDelta = targetCount * kDeltaEvents;
+      TEST_ASSERT_EQUAL_UINT32(accumulatedDelta, static_cast<uint32_t>(delta.size()));
+
+      const uint32_t noDeltaStart = 0;
+      const uint32_t noDeltaLength = 16;
+      const uint32_t allDeltaStart = 2u * historyEvents + 100u;
+      const uint32_t allDeltaLength = targetCount * 16u;
+
+      uint64_t bestNoDeltaUs = UINT64_MAX;
+      uint32_t noDeltaHistory = 0;
+      uint32_t noDeltaDelta = 0;
+      SessionMidiEventVec noDeltaSplit;
+      for (uint32_t run = 0; run < kRuns; ++run) {
+        ResolutionCostCounters counters;
+        SessionMidiEventVec working;
+        const Clock::time_point start = Clock::now();
+        index.findRawWindowFromTickEvents(history, delta, loopLengthTicks, noDeltaStart,
+                                          noDeltaLength, working, &counters);
+        const uint64_t sample = elapsedMicrosSince(start);
+        if (sample < bestNoDeltaUs) {
+          bestNoDeltaUs = sample;
+          noDeltaSplit.swap(working);
+          noDeltaHistory = counters.indexHistoryEntriesVisited;
+          noDeltaDelta = counters.indexDeltaEntriesVisited;
+        }
+      }
+
+      uint64_t bestAllDeltaUs = UINT64_MAX;
+      uint32_t allDeltaHistory = 0;
+      uint32_t allDeltaDelta = 0;
+      SessionMidiEventVec allDeltaSplit;
+      for (uint32_t run = 0; run < kRuns; ++run) {
+        ResolutionCostCounters counters;
+        SessionMidiEventVec working;
+        const Clock::time_point start = Clock::now();
+        index.findRawWindowFromTickEvents(history, delta, loopLengthTicks, allDeltaStart,
+                                          allDeltaLength, working, &counters);
+        const uint64_t sample = elapsedMicrosSince(start);
+        if (sample < bestAllDeltaUs) {
+          bestAllDeltaUs = sample;
+          allDeltaSplit.swap(working);
+          allDeltaHistory = counters.indexHistoryEntriesVisited;
+          allDeltaDelta = counters.indexDeltaEntriesVisited;
+        }
+      }
+
+      TickEventEntryVec merged;
+      mergeSortedTickEvents(history, delta, merged);
+      SessionMidiEventVec noDeltaMerged;
+      SessionMidiEventVec allDeltaMerged;
+      index.findRawWindowFromTickEvents(merged, loopLengthTicks, noDeltaStart, noDeltaLength,
+                                        noDeltaMerged, nullptr);
+      index.findRawWindowFromTickEvents(merged, loopLengthTicks, allDeltaStart, allDeltaLength,
+                                        allDeltaMerged, nullptr);
+      assertResolvedEventsMatch(noDeltaMerged, noDeltaSplit);
+      assertResolvedEventsMatch(allDeltaMerged, allDeltaSplit);
+      TEST_ASSERT_EQUAL_UINT32(8u, noDeltaHistory);
+      TEST_ASSERT_EQUAL_UINT32(0u, noDeltaDelta);
+      TEST_ASSERT_EQUAL_UINT32(0u, allDeltaHistory);
+      TEST_ASSERT_EQUAL_UINT32(accumulatedDelta, allDeltaDelta);
+      printStage6d3Sample(historyEvents, targetCount, accumulatedDelta, lastCommitUs, bestNoDeltaUs,
+                          noDeltaHistory, noDeltaDelta, bestAllDeltaUs, allDeltaHistory,
+                          allDeltaDelta);
+
+      if (o == 0) {
+        queryNoDeltaAtFirstN[h] = bestNoDeltaUs;
+      }
+      if (o + 1u == kOverdubCountN) {
+        commitAtMaxN[h] = lastCommitUs;
+        queryNoDeltaAtMaxN[h] = bestNoDeltaUs;
+      }
+    }
+  }
+
+  const bool commitTracksHistory =
+      commitAtMaxN[kHistoryCount - 1] > 50u &&
+      commitAtMaxN[kHistoryCount - 1] > (commitAtMaxN[0] * 4u + 50u);
+  const bool queryTracksHistory = queryNoDeltaAtMaxN[kHistoryCount - 1] > 100u &&
+                                  queryNoDeltaAtMaxN[kHistoryCount - 1] > (queryNoDeltaAtMaxN[0] * 4u);
+  const bool queryTracksAccumulatedDelta =
+      queryNoDeltaAtMaxN[0] > 100u && queryNoDeltaAtMaxN[0] > (queryNoDeltaAtFirstN[0] * 4u);
+  std::printf(
+      "stage6d3 scaling commit_tracks_history=%d query_no_delta_tracks_history=%d "
+      "query_no_delta_tracks_accumulated_delta=%d "
+      "(FAIL if any is 1; then stop incremental overdub LCR and keep 3b)\n",
+      commitTracksHistory ? 1 : 0, queryTracksHistory ? 1 : 0,
+      queryTracksAccumulatedDelta ? 1 : 0);
+  TEST_ASSERT_FALSE(commitTracksHistory);
+  TEST_ASSERT_FALSE(queryTracksHistory);
+  TEST_ASSERT_FALSE(queryTracksAccumulatedDelta);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -2640,5 +2852,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6d1_tick_events_order_scales_with_history);
   RUN_TEST(test_stage6d2_split_query_matches_merged_oracle);
   RUN_TEST(test_stage6d2_split_history_delta_scales);
+  RUN_TEST(test_stage6d3_repeated_overdub_matches_oracle);
+  RUN_TEST(test_stage6d3_repeated_overdub_scales);
   return UNITY_END();
 }

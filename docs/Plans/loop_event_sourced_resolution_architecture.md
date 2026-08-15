@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); 6C consume-when-ready native landed; **6D.2 native PASS** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) (split history+delta; 6D.1 one-vector FAIL; A/B rejected)  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); 6C consume-when-ready native landed; **6D.3 native PASS** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) (repeated overdubs; 6D.2 split PASS; 6D.1 one-vector FAIL; A/B rejected)  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -78,7 +78,7 @@ A, B, C, and D are not competing architectures. They are capabilities one owner 
 | **D** | Reach a useful state without replaying history from zero |
 | **G** | One owner (`LoopContentResolution`) that can provide all four |
 
-Stage **6D** is capability **B** for the **overdub query** after commit. **6D.1** one-vector mutation **FAIL**. **6D.2** split history+delta **PASS** (native; not live incremental LCR). Not capability letter C. Investigation: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md). Do not implement as a second cache.
+Stage **6D** is capability **B** for the **overdub query** after commit. **6D.1** one-vector mutation **FAIL**. **6D.2** split history+delta **PASS**. **6D.3** repeated overdub commits **PASS** (native; not live incremental LCR). Not capability letter C. Investigation: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md). Do not implement as a second cache.
 
 Shipping A then B then C as separate caches is how DEC-036 D1 died:
 
