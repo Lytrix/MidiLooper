@@ -1,6 +1,6 @@
 # Loop content resolution — 5.7 DFRAME during sliced append (reserve)
 
-**Status:** **5.7c native PASS** — device remasure owed. Flat `{noteId, channel}` replaces the PSRAM map. First `spans` slice must not contain a 14.7 s fill.  
+**Status:** **5.7c device PASS** [`170024`](../captures/session_20260815_170024.log) — `capp=12373` `csort=1779`. First `spans` slice is not a stall. Pair `DFRAME` 1.277 s remains a different owner.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.17 complete — [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md)  
 **Evidence:** [`162630`](../captures/session_20260815_162630.log)
@@ -208,9 +208,9 @@ PSRAM associative-container insertion is a confirmed systemic latency hazard for
 |-----------|--------|----------------|
 | `startsByTick` `std::multimap` | 224–413 ms / 8 inserts | `app` ~1 ms, `sort` ~10 ms |
 | `TickIndex::byTick` `std::multimap` | 50–121 ms / small batches | `iapp` 203 ms after reserve, `isort` 27 ms |
-| `channelByNoteId` `unordered_map` | **14.7 s** for ~2394 `emplace` | this slice |
+| `channelByNoteId` `unordered_map` | **14.7 s** for ~2394 `emplace` | **`capp=12.4 ms` `csort=1.8 ms`** [`170024`](../captures/session_20260815_170024.log) |
 
-Do not promote this to a formal LoopContentResolution invariant until 5.7c device remasure. `walk=0` stays. Do not rewrite `recon` / `pair`.
+5.7c device remasure **PASS**. The representation rule is now measured on three derived indexes. Do not add a new DEC in this commit. `walk=0` stays. Do not rewrite `recon` / `pair`.
 
 ### Contract (from code — pin before the swap)
 
@@ -284,6 +284,34 @@ YES.
 
 ## 5.7c native shipped
 
-`channelByNoteId` is `ChannelByNoteIdEntry[]`. `appendChannelByNoteIdEntries` reserves remaining events in `resolved`. `sortAndUniqueChannelByNoteIdEntries` `stable_sort`s by `noteId` then unique keep-first. Device RebuildSpans runs `chan` then `csort` before `spans`. Complete line adds `capp=` / `csort=`. Native **1191/1191**. Device remasure owed.
+`channelByNoteId` is `ChannelByNoteIdEntry[]`. `appendChannelByNoteIdEntries` reserves remaining events in `resolved`. `sortAndUniqueChannelByNoteIdEntries` `stable_sort`s by `noteId` then unique keep-first. Device RebuildSpans runs `chan` then `csort` before `spans`. Complete line adds `capp=` / `csort=`. Native **1191/1191**.
 
-Do not start 5.1. Do not rewrite `pair` / `recon`.
+---
+
+## 5.7c device PASS — [`170024`](../captures/session_20260815_170024.log)
+
+```
+mat=0,win=14564,reb=1438128,st=3107,rep=350,hist=2394,walk=0,app=1420,sort=9439,iapp=201044,isort=27183,capp=12373,csort=1779
+```
+
+Sequence: `dedup` → `chan` (11.55 ms later) → `csort` → `spans` (22.63 ms after `csort`).
+
+| | [`164922`](../captures/session_20260815_164922.log) 5.7b | [`170024`](../captures/session_20260815_170024.log) 5.7c |
+|--|--:|--:|
+| LCR wall | 56.82 s | 45.07 s |
+| `reb` | 16.305 s | **1.438 s** |
+| `app` / `sort` | 1.2 ms / 10.3 ms | 1.4 ms / 9.4 ms |
+| `iapp` / `isort` | 202 ms / 27.1 ms | 201 ms / 27.2 ms |
+| channel build | **14.7 s** map `emplace` | **`capp=12.4 ms` `csort=1.8 ms`** |
+| `dedup` → first `spans` | 14.75 s | **3.78 s** sliced `chan` (not one-shot) |
+| `idle_maint` `loop_rem` | **14.744 s** first `spans` | **none** (LCR max `idle_maint` **38.7 ms**) |
+| `spans` notes/s | 1000 → 1031 → 969 after fill | **1271 → 1251** (flat, no fill stall) |
+| `chan` events/s | — | **1265 → 1292** (flat) |
+| `idx` p0 events/s | 1315 → 1215 | 1315 → 1223 |
+| `chan`/`spans` `DFRAME` | **15.702 s** | **0.933–0.965 s** (consecutive `frameIndex`) |
+| after complete `DFRAME` | 0.966–0.967 s | 0.964–0.965 s |
+| after complete `idle_maint` | 288–290 µs | 275–277 µs |
+
+The first `spans` slice is no longer a multi-second prerequisite. `walk=0`. `hist=2394`.
+
+**5.7 leftover (different owner):** `pair` `DFRAME` **1.277 s** at 28.46 s (`frameIndex` 390→420, consecutive). Same class as 5.7a 1.275 s. Do not rewrite `pair` / `recon` in this closeout. Do not start 5.1. Arm cap stays off.

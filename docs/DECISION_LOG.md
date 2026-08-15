@@ -131,7 +131,7 @@ Device [`164922`](../captures/session_20260815_164922.log): first `spans` slice 
 
 ### Amendment 2026-08-15 — 5.7c flat channel lookup
 
-Lookup contract from code: `NoteId` → first NOTE_ON channel in resolved C-order. Channel is the value, not a key or partition. First-wins unique on `NoteId` only. `channelByNoteId` is now `{noteId, channel}[]`: C-order append, `stable_sort` by `noteId`, unique keep-first, `lower_bound`. Device sequences `chan` / `csort` before `spans`. Complete line adds `capp=` / `csort=`. Working hypothesis (not a new DEC until device remasure): PSRAM associative-container insertion is a confirmed systemic latency hazard for LoopContentResolution derived indexes (`startsByTick`, `byTick`, `channelByNoteId`). `walk=0` stays. Do not rewrite `pair` / `recon`. Do not start 5.1.
+Lookup contract from code: `NoteId` → first NOTE_ON channel in resolved C-order. Channel is the value, not a key or partition. First-wins unique on `NoteId` only. `channelByNoteId` is now `{noteId, channel}[]`: C-order append, `stable_sort` by `noteId`, unique keep-first, `lower_bound`. Device sequences `chan` / `csort` before `spans`. Complete line adds `capp=` / `csort=`. Device [`170024`](../captures/session_20260815_170024.log) **PASS**: `capp=12373` `csort=1779`; `dedup`→`chan` 11.55 ms; `csort`→`spans` 22.63 ms; no `idle_maint` `loop_rem`; `chan`/`spans` `DFRAME` 0.933–0.965 s. Pair `DFRAME` 1.277 s remains (different owner). Working hypothesis is now measured on three derived indexes (`startsByTick`, `byTick`, `channelByNoteId`). Not a new DEC in this closeout. `walk=0`. Do not rewrite `pair` / `recon`. Do not start 5.1.
 
 ### Constraints created
 
