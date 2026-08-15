@@ -1,9 +1,9 @@
-# Handoff — LoopContentResolution 6D.2 (split history + delta)
+# Handoff — LoopContentResolution 6D.3 (repeated overdub commits)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** local `feature/loop-content-resolution` — 6D.2 native PASS (split history+delta). Not pushed.  
+**HEAD:** local `feature/loop-content-resolution` — 6D.3 native PASS (repeated overdub commits). Not pushed.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** **6D.2 native PASS.** Frozen `tickEvents` + delta `TickEventEntryVec`; two-source `findRawWindow` without compacting. `no_delta` query stays `query_us=4` / `candidate_history=8` from H=8192→65536 at Δ=8. 6D.1 one-vector mutation remains FAIL. Not live incremental LCR. Next: repeated-overdub commit scaling, then a production architecture gate. Production frozen. Do not reopen 5.17. A/B rejected. 6C consume-when-ready.
+> **Now:** **6D.3 native PASS.** Repeated overdubs append into the 6D.2 delta only. History stays H. `no_delta` stays `query_us=4` / 8+0 candidates at H=8192 and 32768 through N=16. 6D.2 split PASS. 6D.1 one-vector FAIL. Not live incremental LCR. Next: consider a production architecture gate. Do not start firmware until that gate. Production frozen. Do not reopen 5.17. A/B rejected. 6C consume-when-ready.
 >
 > Read CURRENT_WORK + the 6D plan first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**6D.2 native PASS** — split history+delta query tracks the window, not H. 6D.1 one-vector mutation FAIL. Production frozen. A/B rejected.
+**6D.3 native PASS** — repeated overdubs track accumulated Δ, not H. 6D.2 split PASS. 6D.1 one-vector FAIL. Production frozen until architecture gate. A/B rejected.
 
 ---
 
@@ -44,8 +44,8 @@ device latency
   6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
   6B commit invalidation PASS  192334  stale_range dcnt 15/5/5 notes kept
   6C overdub source      consume-when-ready native; device recapture optional
-  6D post-commit maint.  6D.2 split history+delta PASS native (not live LCR)
-Stage 6                  6C consume-when-ready; 6D.2 is evidence, not a firmware gate
+  6D post-commit maint.  6D.3 repeated overdub PASS native (not live LCR)
+Stage 6                  6C consume-when-ready; 6D.3 is evidence, not a firmware gate
 ```
 
 ---
@@ -347,5 +347,5 @@ Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirt
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
 - [ ] 6C overdub source — **native landed**; consume-when-ready only. Device recapture optional. Does not address always-ready.
-- [ ] **6D.2** split history+delta — native PASS. Repeated-overdub commit scaling next. Not production incremental LCR. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
+- [ ] **6D.3** repeated overdub commits — native PASS. Production architecture gate may be considered. Not production incremental LCR. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
 - [ ] After 6C device score: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47). Do not start during 6D.

@@ -1,4 +1,4 @@
-# LoopContentResolution — incremental post-commit index (6D / 6D.1 / 6D.2)
+# LoopContentResolution — incremental post-commit index (6D / 6D.1 / 6D.2 / 6D.3)
 
 **Status:** Active — design/measurement investigation. No firmware.  
 **Date:** 2026-08-15  
@@ -19,8 +19,9 @@
 | Investigation **6D** | After a committed content mutation, keep the index required for a **subsequent overdub query** incrementally current, within a bounded maintenance budget |
 | Experiment **6D.1** | One committed `OverdubPass` on an already-prepared index. No edits, undo, disabled passes, checkpoints, or other LCR indexes |
 | Experiment **6D.2** | Frozen historical `tickEvents` + separate delta `TickEventEntryVec`. Two-source `findRawWindow` without compacting. Native only |
+| Experiment **6D.3** | Repeated overdub commits on the 6D.2 split: each pass appends into the same delta vector. History stays frozen. Native only |
 
-**6D.1** measured FAIL for one-vector mutation. **6D.2** is the next experiment: split frozen `tickEvents` + delta `TickEventEntryVec`. It is **not** Stage 6C and **not** “LCR is now always live.”
+**6D.1** measured FAIL for one-vector mutation. **6D.2** PASS: two ordered sources are enough for `findRawWindow`. **6D.3** asks whether that split still holds after N successive overdubs. It is **not** Stage 6C and **not** “LCR is now always live.”
 
 Naming: 6C stays consume. Calling the experiment 6C-1 would collide with that consume path. 6D.1 is the first slice of 6D.
 
@@ -284,7 +285,7 @@ affected tick interval
 
 - A and B
 - 6C consume-path edits (`establishOverdubSourceView`)
-- Production commit, idle gate, overdub start/stop, and `preparedWindowReady` until repeated-overdub scaling and a production architecture gate
+- Production commit, idle gate, overdub start/stop, and `preparedWindowReady` until a production architecture gate
 - Flatten `openOnByPitch`; representation B; rewrite `recon`
 - `ensure*` rebuild helpers on `startOverdubbing` / `stopOverdubbing` / `handleMidiInput`
 - midi_gap ([`192334`](../../captures/session_20260815_192334.log)); 6.3; 6.4
@@ -332,7 +333,7 @@ Answer: NO for `findRawWindow`. Two ordered sources match the compacted oracle; 
 ```text
 6D.2 PASS
    ↓
-prove repeated overdub commits
+6D.3 repeated overdub commits  ← PASS
    ↓
 only then consider production architecture gate
 
@@ -414,4 +415,65 @@ Instrument: `test_stage6d2_split_query_matches_merged_oracle`, `test_stage6d2_sp
 
 **6D.2 PASS.** Commit tracks Δ. Query visit counts track the requested window, not H. A tiny history-only window does not walk thousands of historical entries.
 
-This is **not** authorization to make LCR incrementally live. Next native step is repeated-overdub commit scaling (delta accumulating). Only then a production architecture gate. Firmware stays frozen. Option 1 is unused. Option 3 stays dead.
+This is **not** authorization to make LCR incrementally live. Next native step is **6D.3** repeated-overdub commit scaling (delta accumulating). Only then a production architecture gate. Firmware stays frozen. Option 1 is unused. Option 3 stays dead.
+
+---
+
+## 6D.3 — repeated overdub commits (native experiment only)
+
+**Decision boundary:** 6D.3 asks whether the 6D.2 split remains valid when delta accumulates across successive overdubs. It is **not** authorization to make LCR incrementally live and **not** a production architecture gate.
+
+```text
+6D.2 question:
+Does the query require one globally sorted vector?
+Answer: NO for one Δ.
+
+6D.3 question:
+After N overdubs, does commit still avoid H, and does query still avoid H and the accumulated delta?
+```
+
+Same representation as 6D.2:
+
+```text
+tickEvents        ← frozen; size stays H after every commit
+TickEventEntryVec ← append this pass, sort this vector only
+```
+
+Do not compact into one vector. Do not add a third list. Do not add a `TickIndex` member. No firmware.
+
+### Acceptance
+
+```text
+fixed δ, two H sizes, increasing N
+
+history size        → stays H
+commit of pass N    → tracks accumulated Δ, not H
+no_delta query      → candidate_history=8, candidate_delta=0 at every N and H
+all_delta query     → candidate_history=0, candidate_delta=Nδ
+oracle              → two-source find matches compacted merge after each commit
+```
+
+If commit of pass N tracks H, or a tiny history-only window walks H or the accumulated delta, **FAIL and take option 1**.
+
+### Native results (2026-08-15)
+
+Instrument: `test_stage6d3_repeated_overdub_matches_oracle`, `test_stage6d3_repeated_overdub_scales`. Production untouched. Host native, min of 5 runs, δ **8**.
+
+**Correctness:** eight successive synthetic overdubs keep `tickEvents` at H. After each commit, two-source `findRawWindow` matches compacted merge of history+delta.
+
+**Scaling:**
+
+| H | N | Δ_acc | commit_us | query_no_delta_us | candidate_history | candidate_delta | query_all_delta_us | all_delta candidates |
+|---|---|-------|-----------|-------------------|-------------------|-----------------|--------------------|----------------------|
+| 8192 | 1 | 8 | 0 | 4 | 8 | 0 | 4 | 0 + 8 |
+| 8192 | 4 | 32 | 0 | 4 | 8 | 0 | 15 | 0 + 32 |
+| 8192 | 16 | 128 | 1 | 4 | 8 | 0 | 60 | 0 + 128 |
+| 32768 | 1 | 8 | 0 | 4 | 8 | 0 | 4 | 0 + 8 |
+| 32768 | 4 | 32 | 0 | 4 | 8 | 0 | 15 | 0 + 32 |
+| 32768 | 16 | 128 | 1 | 4 | 8 | 0 | 60 | 0 + 128 |
+
+`no_delta` stays 8/0 and `query_us=4` at both H and every N. `all_delta` visit counts equal Nδ, not H. `query_all_delta_us` tracks the requested window (8 → 32 → 128 events), identically at both history sizes. `commit_us` at N=16 is 1 µs at both H.
+
+**6D.3 PASS.** Repeated commits do not mutate history. Commit tracks accumulated Δ, not H. A tiny history-only window does not walk H or the accumulated delta.
+
+This is **not** authorization to make LCR incrementally live. A production architecture gate may now be considered. Firmware stays frozen until that gate. Option 1 is unused. Option 3 stays dead.

@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — **6D.2 native PASS:** split history+delta query tracks the window, not H. 6D.1 one-vector mutation still FAIL. Production frozen. 6C consume-when-ready. **6B PASS** [`192334`](../captures/session_20260815_192334.log). **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`. No `openOnByPitch` flatten / B. Overlay track A parked.
+**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — **6D.3 native PASS:** repeated overdubs track accumulated Δ, not H. 6D.2 split PASS. 6D.1 one-vector FAIL. Production frozen until architecture gate. 6C consume-when-ready. **6B PASS** [`192334`](../captures/session_20260815_192334.log). **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`. No `openOnByPitch` flatten / B. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 

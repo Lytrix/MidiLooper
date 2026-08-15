@@ -80,18 +80,18 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **Reuse** | YES — idle gate already owns LCR construction; 3b copy stays fallback |
 | **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. **6C native** (`tryResolvePreparedWindow` → `overdubSourceView`; 3b fallback). Consume-when-ready only |
 
-### Phase 6D — Incremental overdub-query index (investigation; 6D.2 now)
+### Phase 6D — Incremental overdub-query index (investigation; 6D.3 now)
 
 | Question | Answer |
 |----------|--------|
 | **Owner module** | `LoopContentResolution::TickIndex`. Commit publishes the pass via `Loop::commitPendingCapturePass`. 6B already marks affected display bars. Consume stays `tryResolvePreparedWindow` |
-| **Primary invariant** | After a committed `OverdubPass`, the index required for a subsequent overdub query is updated incrementally within a bounded budget. Not all of LCR |
-| **Ownership change?** | NO — same derivation owner. 6D.2 adds no `TickIndex` delta member |
-| **State transition change?** | NO — 6D.2 does not touch production. Later firmware placement is not this phase |
+| **Primary invariant** | After N committed `OverdubPass`es, history `tickEvents` stays frozen and the delta vector holds the new passes. Not all of LCR |
+| **Ownership change?** | NO — same derivation owner. 6D.3 adds no `TickIndex` delta member |
+| **State transition change?** | NO — 6D.3 does not touch production. Later firmware placement is not this phase |
 | **Behavior-preserving?** | YES — native tests only |
-| **Reuse** | YES — extend `findRawWindowFromTickEvents` to visit two ordered `TickEventEntryVec`s without compacting. Do not incrementally maintain `openOnByPitch`. Do not repeat DEC-036 D1 |
-| **Phase scope** | **6D.2 native PASS:** frozen `tickEvents` + delta; query visit counts track the window, not H. 6D.1 one-vector mutation FAIL. Not authorization to make LCR incrementally live. Next: repeated-overdub commit scaling, then production architecture gate. Production untouched. Plan [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md). **A rejected. B rejected.** |
+| **Reuse** | YES — same two-source `findRawWindowFromTickEvents`. Each commit appends into the existing delta `TickEventEntryVec` and sorts that vector only |
+| **Phase scope** | **6D.3 native PASS:** N=1/4/16 at H=8192 and 32768, δ=8. `no_delta` stays 8+0. Commit tracks accumulated Δ, not H. Not authorization to make LCR incrementally live. Next: consider production architecture gate. Production untouched. Plan [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md). **A rejected. B rejected.** |
 
 ---
 
-**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 consume-only invariant + explicit implement request (start with **6A**, not overdub). **6D.2** is native measurement only; it is not authorization to make LCR incrementally live. Production stays untouched until a later architecture gate. Do not treat 6D as “LCR is always live.”
+**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 consume-only invariant + explicit implement request (start with **6A**, not overdub). **6D.3** is native measurement only; it is not authorization to make LCR incrementally live. A production architecture gate may now be considered. Do not treat 6D as “LCR is always live.”
