@@ -477,3 +477,228 @@ Instrument: `test_stage6d3_repeated_overdub_matches_oracle`, `test_stage6d3_repe
 **6D.3 PASS.** Repeated commits do not mutate history. Commit tracks accumulated Δ, not H. A tiny history-only window does not walk H or the accumulated delta.
 
 This is **not** authorization to make LCR incrementally live. A production architecture gate may now be considered. Firmware stays frozen until that gate. Option 1 is unused. Option 3 stays dead.
+
+---
+
+## Production architecture gate (6.0 + 6D.4 architecture approved 2026-08-15 — no firmware)
+
+**Status:** 6.0 reading and 6D.4 architecture **approved**. Firmware **not** authorized.  
+**Preflight:** [`openspec/changes/loop-content-resolution/PREFLIGHT.md`](../../openspec/changes/loop-content-resolution/PREFLIGHT.md)
+
+### Formal triggers
+
+| Trigger | Fired? | Evidence |
+|---------|--------|----------|
+| New owner | NO | Extend `DeviceGateSession` |
+| Ownership transfer | NO | `Loop` still publishes the pass; LCR still owns the prepared index |
+| State transition | **YES** | `preparedWindowReady` would become true after a PLAYING overdub commit. Today it is true only after STOPPED `deviceGateComplete` with a matching stamp |
+| OpenSpec vs architecture | **PIN** | 6.0 literal text vs DEC-037 commit-site placement |
+| Schema / undo / timing model | NO | No SD. Undo stays stamp-mismatch → 3b. Commit-site work is the existing 6B site |
+
+Hard stop until approval.
+
+### Current architecture (proven)
+
+```text
+STOPPED idle
+  → deviceGateBegin … deviceGateComplete(playbackRevision)
+  → prepared TickIndex.tickEvents  (5.17 flat)
+  → preparedWindowReady(rev) == true
+
+PLAYING overdub stop
+  → Loop::commitPendingCapturePass
+       ++playbackRevision
+       clearOverdubSourceView
+  → preparedWindowReady(new rev) == false   // stamp mismatch
+  → device gate does not re-run: STOPPED-only, and deviceGateFinished is one-shot
+  → next startOverdubbing
+       establishOverdubSourceView
+         tryResolvePreparedWindow → miss
+         3b visualCache.notes copy
+```
+
+Proof:
+
+- `commitPendingCapturePass` increments `playbackRevision` after publishing the `OverdubPass`.
+- `preparedWindowReady` requires `deviceGateFinished && preparedIndexKept && preparedPlaybackRevision == playbackRevision`.
+- `processDeferredIdleMaintenance` calls `processDeferredContentResolutionDeviceGate` only when not playing, recording, overdubbing, or stopped-recording.
+- `maybeQueueContentResolutionDeviceGate` returns if `deviceGateFinished()`.
+- `tryResolvePreparedWindow` calls one-vector `resolveWindow(index)` (`index.tickEvents` only).
+- 6B already runs in `Track::finalizeCommitSideEffects` on overdub `Committed`.
+
+Native evidence: 6D.1 one-vector mutation **FAIL**. 6D.2/6D.3 split **PASS**.
+
+### 6.0 reading (approval pin)
+
+OpenSpec 6.0: overdub start/stop must not construct, sort, checkpoint, or resolve LCR.
+
+DEC-037: bounded index update belongs at the commit site (with 6B), not on the button that **opens** the source view.
+
+`finalizeCommitSideEffects` runs on overdub **stop**. A delta sort there is a sort on the stop path.
+
+| Reading | Consequence |
+|---------|-------------|
+| **6.0 = do not build LCR to open the view** | Commit-site publish is allowed. Next `establishOverdubSourceView` only consumes. Matches DEC-037 and 6D. |
+| **6.0 = no LCR sort anywhere on start or stop** | Commit-site publish is forbidden. Then only A, B, or keep 3b. A and B are already rejected. |
+
+The gate recommends the first reading and an explicit 6.0 clarification before any firmware.
+
+### Proposed evolution (single preferred path)
+
+If approved, first production slice (**6D.4**):
+
+```text
+finalizeCommitSideEffects (overdub Committed)
+  │
+  ├── 6B mark affected display bars          (already shipped)
+  └── if prepared index kept
+        beginCapturePass + append events into capturePasses
+        append rows into session TickEventEntryVec
+        sort that vector only
+        restamp preparedPlaybackRevision
+        do not write tickEvents
+
+tryResolvePreparedWindow
+  └── two-source find when the session vector is non-empty
+      else existing one-vector find
+```
+
+Constraints for that slice:
+
+- Overdub only. Record still needs a cold prepare.
+- Do not update `byNoteId`, checkpoints, `spanBoundaries`, `openOnByPitch`.
+- Undo / disable: no incremental work. Stamp mismatch keeps 3b.
+- Do not compact history+delta on the overdub path. Optional later: STOPPED idle may run a new full gate and replace both with one 5.17 `tickEvents`.
+- Keep the 3b copy. Miss → 3b.
+- No new Manager. No `TickIndex` delta member. No new domain type.
+- 6.0 unchanged for `startOverdubbing` / `establishOverdubSourceView`: consume only.
+
+Member name for the session `TickEventEntryVec` is an open pin. Candidates (not chosen): keep calling it the delta vector in prose; do not add a new domain noun. Ask before adding the field.
+
+### Rejected here
+
+| Path | Why |
+|------|-----|
+| A — re-arm STOPPED cold-build | 30–60 s. Does not meet PLAYING overdub-over-overdub |
+| B — slice full-history LCR during PLAYING | Another O(H) cache on the perform path |
+| Compact into one `tickEvents` at commit | 6D.1 FAIL |
+| Make all of LCR incrementally live | Checkpoints / `byNoteId` / undo are later slices |
+| Sort/resolve on `startOverdubbing` | Violates 6.0 even under the recommended reading |
+
+### Recommendation
+
+**Approve the 6.0 clarification + 6D.4 slice above.** Do not implement firmware until that approval.
+
+Confidence: high on the native contract (6D.2/6D.3). High that restamp is a state-transition change. High that the commit site is the only placement that is ready at the next button.
+
+### Approval (2026-08-15)
+
+**Accepted:** 6.0 means do not construct/sort/resolve LCR on the overdub button / source-view opening path. Commit-site publish at `finalizeCommitSideEffects` is coherent with that reading.
+
+**Accepted:** 6D.4 architecture as specified below.
+
+**Not accepted:** firmware implementation. The next artifact is the 6D.4 implementation plan, not code.
+
+What passed native is narrower than “LCR is incrementally live”:
+
+> The capture-event index required by the subsequent overdub query can be maintained incrementally using frozen history plus accumulated delta.
+
+### Tightened stamp contract
+
+Today:
+
+```text
+preparedWindowReady(revision)
+  == deviceGateFinished
+  && preparedIndexKept
+  && preparedPlaybackRevision == playbackRevision
+```
+
+After 6D.4, a PLAYING overdub commit may establish that condition **without `deviceGateComplete()` running again**.
+
+> A prepared index may become valid through an incremental commit-site update, not exclusively through the STOPPED device-gate completion path.
+
+`deviceGateFinished` must not be treated as synonymous with “the prepared index is currently valid.” Do not “fix” a stamp miss by re-running the STOPPED gate during PLAYING.
+
+---
+
+## 6D.4 — incremental overdub publish (implementation plan; no firmware yet)
+
+**Status:** Architecture approved. Implementation **not** started.  
+**Does not authorize:** firmware; making all of LCR incrementally live; A; B; undo/disable incrementalization; compacting `tickEvents` at commit
+
+### Architecture gate (6D.4)
+
+| Question | Answer |
+|----------|--------|
+| **Owner module** | `LoopContentResolution` / `DeviceGateSession` owns prepared `tickEvents`, the session delta `TickEventEntryVec`, and the stamp. `Track::finalizeCommitSideEffects` calls publish after an overdub `Committed`. Consume stays `tryResolvePreparedWindow` |
+| **Primary invariant** | After a committed `OverdubPass`, if a prepared index already exists, the overdub-query index is updated by appending/sorting delta only and restamping. Next `establishOverdubSourceView` consumes. Miss → 3b |
+| **Ownership change?** | NO |
+| **State transition change?** | YES — approved: prepared validity may come from commit-site restamp, not only `deviceGateComplete` |
+| **Behavior-preserving?** | NO for the prepared-window stamp after overdub commit. YES for overdub FSM, 6.0 consume-on-button, and 3b fallback |
+| **Reuse** | YES — existing 6B commit site + two-source `findRawWindowFromTickEvents` |
+| **Phase scope** | Plan only until an explicit implement request. Then: LCR publish + two-source consume + native tests. One call from `finalizeCommitSideEffects`. No `startOverdubbing` edits |
+
+### Approved 6.0 reading
+
+```text
+overdub stop / commit
+    │
+    ├─ publish OverdubPass
+    ├─ existing 6B display invalidation
+    │
+    └─ if prepared LCR exists:
+         append new pass to delta
+         sort delta only
+         restamp prepared revision
+
+next overdub button
+    │
+    └─ consume prepared state
+         └─ two-source resolve
+              └─ fallback to 3b if unavailable
+```
+
+`startOverdubbing` / `establishOverdubSourceView` still must not construct, sort, checkpoint, or resolve in order to open the view.
+
+### Scope (exact)
+
+- Overdub commits only
+- Prepared index must already exist
+- Append/sort **delta only**
+- No mutation of historical `tickEvents`
+- Restamp `preparedPlaybackRevision` to the post-commit `playbackRevision`
+- Two-source `findRawWindow` when the session delta vector is non-empty
+- 3b fallback remains
+- No `byNoteId` / checkpoints / undo / disable incrementalization
+- No changes to `startOverdubbing`
+- No new manager or domain type
+- Session field is a `TickEventEntryVec` — **name is an open pin**; ask before adding the member
+
+### Files (when implementation is requested)
+
+- `include/LoopContentResolution.h` / `src/LoopContentResolution.cpp` — publish + two-source `tryResolvePreparedWindow` + stamp contract
+- `src/Track/TrackCaptureStopCommit.cpp` — one call at the existing 6B overdub `Committed` site
+- `test/test_loop_content_resolution/test_loop_content_resolution.cpp` — publish + restamp + consume; miss when unprepared; history size frozen across N commits
+- OpenSpec 6.0 clarification + 6D.4 task; DEC-037 amendment already started above
+
+### Native tests (when implementation is requested)
+
+1. Prepared index + one overdub publish → `preparedWindowReady(newRevision)` true without `deviceGateComplete`.
+2. `tryResolvePreparedWindow` matches compacted-merge oracle; `tickEvents` size unchanged.
+3. N successive publishes: same 6D.3 visit-count contract (`no_delta` stays window-sized).
+4. No prepared index → publish is a no-op; `tryResolvePreparedWindow` false.
+5. Undo-shaped `++playbackRevision` without publish → miss → caller keeps 3b.
+
+Device HITL only after native PASS and an explicit upload request.
+
+### Out of scope
+
+- Record-pass incremental prepare
+- Folding delta into `tickEvents` on STOPPED idle (later, optional)
+- midi_gap, 6.3, 6.4
+- Deleting `materializeToEventVector` or the 3b copy
+
+### Proceed?
+
+**NO firmware** until the user explicitly asks to implement 6D.4. Naming of the session `TickEventEntryVec` member must be pinned in that session before the field is added.

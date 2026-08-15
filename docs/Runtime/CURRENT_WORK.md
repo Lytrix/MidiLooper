@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6D.3 native PASS: repeated overdub commits track Δ not H)
+Last updated: 2026-08-15 (DEC-037 6D.4 architecture approved; firmware not authorized)
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-15 (DEC-037 6D.3 native PASS: repeated overdub commits tra
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6D.3 native PASS.** Repeated overdubs append into the 6D.2 delta vector only. History stays H. `no_delta` stays `query_us=4` / `candidate_history=8` / `candidate_delta=0` at H=8192 and 32768 through N=16 (Δ_acc=128). `commit_us=1` at N=16 on both H. Not authorization to make LCR incrementally live. Next: consider a production architecture gate — do not start firmware until that gate. Production still frozen. Do not start midi_gap / 6.3.
+**Now:** **6D.4 architecture approved; firmware not authorized.** 6.0 = do not construct/sort/resolve LCR on the overdub button / source-view path. Commit-site publish may restamp prepared validity without `deviceGateComplete`. Implementation plan is in the 6D doc § 6D.4. Do **not** start firmware until an explicit implement request. Session `TickEventEntryVec` name is still an open pin. Do not start midi_gap / 6.3.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
