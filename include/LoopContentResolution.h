@@ -104,6 +104,14 @@ struct LoopContentResolution {
     void prepareRebuildSpans(const TickIndex& index, const EditPassVec& editPasses,
                              uint32_t loopLength, uint32_t checkpointIntervalTicks,
                              ResolutionCostCounters* counters = nullptr);
+    /// Idle-slice 1: materialize + apply edits. False when pressure is Low or Critical.
+    bool prepareRebuildResolvedEvents(const TickIndex& index, const EditPassVec& editPasses,
+                                      uint32_t loopLength, uint32_t checkpointIntervalTicks,
+                                      SessionMidiEventVec& resolved,
+                                      ResolutionCostCounters* counters = nullptr);
+    /// Idle-slice 2: reconstruct display notes into spans. False when pressure is Low or Critical.
+    bool finishRebuildSpansFromEvents(const SessionMidiEventVec& resolved,
+                                      ResolutionCostCounters* counters = nullptr);
     /// Returns false when advisory pressure is Low or Critical (no further sounding copies).
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);

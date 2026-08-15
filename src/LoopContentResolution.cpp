@@ -486,18 +486,22 @@ TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes
   }
 }
 
-TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans(
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::prepareRebuildResolvedEvents(
     const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
-    uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters) {
+    uint32_t checkpointIntervalTicks, SessionMidiEventVec& resolved,
+    ResolutionCostCounters* counters) {
   intervalTicks = checkpointIntervalTicks;
   loopLengthTicks = loopLength;
   soundingAt.clear();
   spans.clear();
   startsByTick.clear();
+  resolved.clear();
   if (loopLength == 0 || checkpointIntervalTicks == 0) {
-    return;
+    return true;
   }
-  SessionMidiEventVec resolved;
+  if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
+    return false;
+  }
   index.materializeActive(resolved);
   EditPassVec activeRows;
   for (const EditPass& editPass : editPasses) {
@@ -510,9 +514,24 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans
   }
   if (counters != nullptr) {
     counters->passChunkListsWalked = 0;
+    counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
+  }
+  return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
+    const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
+  spans.clear();
+  startsByTick.clear();
+  soundingAt.clear();
+  if (loopLengthTicks == 0 || intervalTicks == 0) {
+    return true;
+  }
+  if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
+    return false;
   }
   const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(resolved, loopLength, false);
+      NoteUtils::reconstructDisplayNotes(resolved, loopLengthTicks, false);
   spans.reserve(notes.size());
   for (const NoteUtils::DisplayNote& note : notes) {
     NoteSpan span{};
@@ -527,13 +546,24 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans
     startsByTick.emplace(span.startTick, spanIndex);
     startsByTick.emplace(span.endTick, spanIndex);
   }
-  const uint32_t count = loopLength / checkpointIntervalTicks;
-  soundingAt.resize(count);
+  soundingAt.resize(loopLengthTicks / intervalTicks);
   if (counters != nullptr) {
     counters->checkpointIntervalTicks = intervalTicks;
     counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
     counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
   }
+  return true;
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans(
+    const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
+    uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters) {
+  SessionMidiEventVec resolved;
+  if (!prepareRebuildResolvedEvents(index, editPasses, loopLength, checkpointIntervalTicks,
+                                    resolved, counters)) {
+    return;
+  }
+  (void)finishRebuildSpansFromEvents(resolved, counters);
 }
 
 TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::fillCheckpointRange(
@@ -652,6 +682,7 @@ struct DeviceGateSession {
     Materialize,
     Window,
     RebuildPrepare,
+    RebuildSpans,
     RebuildCheckpoints,
     State,
     Done,
@@ -666,6 +697,7 @@ struct DeviceGateSession {
     checkpointCursor = 0;
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
+    rebuildEvents = SessionMidiEventVec{};
     sample_ = LoopContentResolution::DeviceGateSample{};
   }
 
@@ -751,8 +783,23 @@ struct DeviceGateSession {
         const uint32_t checkpointInterval =
             Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
 #endif
-        checkpoints.prepareRebuildSpans(index, passes.editPasses, loopLengthTicks,
-                                        checkpointInterval, &sample_.rebuild);
+        if (!checkpoints.prepareRebuildResolvedEvents(index, passes.editPasses, loopLengthTicks,
+                                                      checkpointInterval, rebuildEvents,
+                                                      &sample_.rebuild)) {
+          reset();
+          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        }
+        sample_.rebuild.elapsedMicros += timer.elapsed();
+        phase = Phase::RebuildSpans;
+        return LoopContentResolution::DeviceGateSliceResult::Continue;
+      }
+      case Phase::RebuildSpans: {
+        ElapsedTimer timer;
+        if (!checkpoints.finishRebuildSpansFromEvents(rebuildEvents, &sample_.rebuild)) {
+          reset();
+          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        }
+        rebuildEvents = SessionMidiEventVec{};
         sample_.rebuild.elapsedMicros += timer.elapsed();
         checkpointCursor = 0;
         phase = Phase::RebuildCheckpoints;
@@ -801,6 +848,7 @@ struct DeviceGateSession {
   uint32_t checkpointCursor = 0;
   LoopContentResolution::TickIndex index;
   LoopContentResolution::StateCheckpoints checkpoints;
+  SessionMidiEventVec rebuildEvents;
   LoopContentResolution::DeviceGateSample sample_;
 };
 
