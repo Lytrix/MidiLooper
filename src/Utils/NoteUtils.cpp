@@ -819,7 +819,7 @@ NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(cons
             if (wrappedTailOnTicks.count({pitch, evt.tick}) != 0) {
                 continue;
             }
-            activeStacks[pitch].push_back({pitch, evt.data.noteData.velocity, evt.tick});
+            activeStacks[pitch].push_back({pitch, evt.data.noteData.velocity, evt.tick, eventIndex});
         } else if (!activeStacks[pitch].empty()) {
             const OpenNoteOn& open = activeStacks[pitch].back();
             const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
