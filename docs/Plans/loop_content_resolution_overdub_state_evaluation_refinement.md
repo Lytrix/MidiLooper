@@ -361,6 +361,12 @@ Overdub 11.112 tick 544. Wraps 19.096 / 27.094 / 35.094. Eight `Overdub session 
 
 Gate: session silence/merge rebuild only when `playbackRevision` changes (`setCapturePassState`). Live store clear does not bump revision. GUS `OverdubPassAdded` unchanged.
 
+## HITL [`000149`](../../captures/session_20260816_000149.log) — stopped record must not layer slot 0
+
+Clear Loop 6 at 184.200. `restorePlaybackAfterSlotClear` started slot 0 at 184.413 (first enabled bit in boot `enabledMask=0x33`). Record Loop 6 from STOPPED at 248.604. `replaceSingleEnabledSlotWithTarget` returned early because enabledCount > 1, so record-stop PLAYING still layered slot 0.
+
+Pin: queues are playing-only and discarded on stop. Hold-while-playing still builds a multi-slot enabled set. Select / record / play from STOPPED replaces the enabled set with that slot only.
+
 ## Out of scope
 
 - midi_gap / 6.3 / 6.4

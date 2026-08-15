@@ -36,6 +36,20 @@ void ensureActiveLoopForRecord(uint8_t trackIdx, Track& track, uint8_t slotIndex
   }
 }
 
+void enableOnlySlot(uint8_t trackIdx, uint8_t slotIndex) {
+  for (uint8_t slot = 0; slot < ::Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    trackManager.setSlotEnabled(trackIdx, slot, slot == slotIndex);
+    trackManager.setSlotMuted(trackIdx, slot, false);
+  }
+}
+
+void discardQueuedSlotActions(uint8_t trackIdx) {
+  trackManager.clearPendingSlotSwitch(trackIdx);
+  trackManager.setPendingEnabledSetReplacement(trackIdx, false);
+  trackManager.cancelSlotSelectionHold(trackIdx);
+  trackManager.getTrack(trackIdx).clearQueuedPlaybackStart();
+}
+
 void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, uint32_t now) {
   const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
   const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
@@ -527,7 +541,9 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
         if (track.isPlaying()) {
             track.stopPlaying();
+            discardQueuedSlotActions(trackIdx);
         } else {
+            enableOnlySlot(trackIdx, slotIndex);
             if (!clockManager.isTransportRunning()) {
                 clockManager.toggleTransport();
             }
@@ -542,6 +558,9 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
 void MidiButtonActions::beginSlotLayerHold(uint8_t slotIndex) {
     if (slotIndex >= ::Config::MAX_LOOPS_PER_TRACK) return;
     uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    if (!trackManager.getTrack(trackIdx).isPlaying()) {
+        return;
+    }
     // Multi-hold selection builds a pending enabled set; it is committed on release.
     trackManager.beginSlotSelectionHold(trackIdx, slotIndex);
     logger.info("Loop %d hold: selected for next multi-slot playback", slotIndex + 1);
@@ -586,6 +605,7 @@ void MidiButtonActions::handleToggleRecord() {
         trackManager.startOverdubbingTrack(idx);
     } else {
         logger.info("MIDI Button A: Toggle Play/Stop");
+        enableOnlySlot(idx, slot);
         track.togglePlayStop();
     }
 }
