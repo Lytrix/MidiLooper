@@ -162,6 +162,14 @@ Representation part of Stage 5.7 is **closed**. Do not reopen 5.7c.
 
 Successor: [`loop_content_resolution_pair_index_refinement.md`](Plans/loop_content_resolution_pair_index_refinement.md). Flatten from the **query**, not the container type. `byNoteId` is last-wins `NoteId → {passId, on, off}`. `openOnByPitch` is a per-pass LIFO stack keyed by **pitch only**. Measure which produces the stall before picking a representation. No 5.1. No Stage 6. No B. Do not rewrite `recon`.
 
+### Amendment 2026-08-15 — Loop-internal channel is not a resolution key
+
+Not a new DEC. Restates [DEC-033](#dec-033-overdub-overlap-ignores-per-note-channel) for LoopContentResolution.
+
+A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiChannel` (`Track::sendMidiEvent` remaps recorded 1–16). `NoteUtils::DisplayNote` has no channel field. Pairing, overlap, and sounding identity use `NoteId` / pitch + tick, not `event.channel`.
+
+`openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `SoundingNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.

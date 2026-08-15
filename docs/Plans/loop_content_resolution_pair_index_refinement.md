@@ -107,6 +107,8 @@ NOTE_OFF: pop_back that pitch’s vector                 // LIFO
 
 Key is `uint8_t` pitch (`event.data.noteData.note`). **Not** `(pitch, channel)`.
 
+Recorded `event.channel` is not a loop-internal identity. [DEC-033](../DECISION_LOG.md#dec-033-overdub-overlap-ignores-per-note-channel): committed notes are loop-scoped; overlap is pitch + tick. Playback remaps channel 1–16 to `Track::midiChannel` in `Track::sendMidiEvent`. `NoteUtils::DisplayNote` has no channel field. Pairing must stay pitch-only.
+
 No `resolveWindow` / `resolveState` reader. It exists so a later NOTE_OFF in this pass (including a later 8-event slice) can find the matching open ON.
 
 ```text
@@ -124,13 +126,13 @@ A sorted unique `{pitch, index}` list is the wrong default. A small working stac
 
 ## Derived-structure contract table
 
-Channel lookup is `NoteId → channel`, not `(NoteId, channel)`.
+Channel lookup copies a stored MIDI byte onto `SoundingNote.channel`. It is **not** a musical query inside a loop (DEC-033; track output channel is `Track::midiChannel`). Do not treat it as a pairing or overlap key. Do not reopen 5.7c to delete it in this investigation.
 
 | Index | Query | Multiplicity | Ordering | Mutation | Candidate |
 |-------|-------|--------------|----------|----------|-----------|
 | `spanBoundaries` | tick range → start/end apply | many | tick + C-order at equal tick | build, then read | flat A (5.15 **frozen**) |
 | `tickEvents` | tick window → Active `(passId, eventIndex)` | many | tick + C-order at equal tick | build, then read | flat A (5.17 **frozen**) |
-| channel lookup | `NoteId` → first NOTE_ON channel | unique, first-wins | `noteId` after sort | build, then read | flat A (5.7c **frozen**) |
+| channel lookup | stored-byte copy: `NoteId` → first NOTE_ON `event.channel` | unique, first-wins | `noteId` after sort | build, then read | flat A (5.7c **frozen**); not a loop identity |
 | `byNoteId` | `NoteId` → `{passId, on, off}` for `appendNoteEvents` | unique key, **last assignment wins** | none | pair walk, then read | **measure** |
 | `openOnByPitch` | pairing walk only: pitch → open ON indexes | many per pitch | **LIFO** | every on/off in the pass | **measure** |
 | `passById` | `PassId` → `capturePasses` slot | unique | none | begin pass | out of 5.18 unless it appears in the stall |
@@ -171,9 +173,9 @@ Do **not** add B. Do not start 5.1. Do not reopen 5.7c. Do not rewrite `recon`.
 | Topic | Decision |
 |-------|----------|
 | Two structures | Do not collapse `byNoteId` and `openOnByPitch` |
-| `openOnByPitch` key | Pitch only, not `(pitch, channel)` |
+| `openOnByPitch` key | Pitch only. Recorded channel is not part of the query (DEC-033; `Track::midiChannel`) |
 | `byNoteId` uniqueness | Last assignment wins |
-| 5.7c | Frozen; this is a new investigation |
+| 5.7c | Frozen; channel index is a stored-byte copy, not a pairing key. Do not delete it in 5.18 |
 
 ### Open before coding
 
