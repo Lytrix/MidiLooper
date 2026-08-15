@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b PASS**; **6E.2 PASS**; 6E.3–6E.5 not started; no firmware  
+**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b PASS**; **6E.2 PASS**; **6E.3 PASS**; 6E.4–6E.5 not started; no Track wiring  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
@@ -137,7 +137,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## What is missing today
 
-- `keepPreparedIndex` → `dropWorkingBuffers()` clears `checkpoints`. After idle complete, only `TickIndex` + 6D.4 `delta` remain. `resolveState` from span boundaries is not consumable during PLAYING/OVERDUB.
+- `keepPreparedIndex` → `dropWorkingBuffers()` now keeps `spans` + `spanBoundaries` + sparse `soundingAt`. Rebuild events/notes are dropped. `tryResolvePreparedState` consumes that keep-set. Not wired to Track.
 - `resolveState(LoopPasses, …)` rematerializes the whole loop. Do not call it on the MIDI path.
 - `SoundingNote` has `onTick` but no `endTick`. Geometry needs `appendNoteEvents(noteId)` or a kept span.
 - 6D.4 publish does not pair the new pass into `byNoteId` / `spanBoundaries`.
@@ -150,7 +150,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1 PASS.** **6E.1b PASS.** **6E.2 PASS** — consume tracks checkpoint-interval replay.
+**6E.1 PASS.** **6E.1b PASS.** **6E.2 PASS.** **6E.3 PASS** — spans stay after drop-rebuild-buffers.
 
 **Hide vs Shorten (loop length):** source fills the loop. Incoming ON@4000 OFF@200.
 
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** native **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
+**Next when asked:** native **6E.4**. Do not start wrap-commit DEC or midi_gap / 6.3.
 
 ---
 
@@ -209,16 +209,28 @@ Not firmware. Not 6C consume-path edits.
 
 ---
 
+## 6E.3 — keep spans after drop-rebuild-buffers (PASS)
+
+`test_stage6e3_keep_spans_after_drop_rebuild_buffers`.
+
+`dropWorkingBuffers` no longer assigns `checkpoints = {}`. It keeps `spans`, `spanBoundaries`, and thins `soundingAt` to the device 8-bar stride. `rebuildEvents` / `rebuildNotes` still drop.
+
+`tryResolvePreparedState(tick, revision)` consumes that keep-set. Stamp miss returns false (3b / 6C unchanged). Not wired to Track.
+
+Keep-all per-bar `soundingAt` is the FAIL path: 64 snapshots / more sounding copies than the 8-bar keep-set. After complete, `checkpointCount` is `kCanonicalBars / 8`. `resolveState` still matches the rematerialize oracle.
+
+---
+
 ## Native 6E (before firmware)
 
-Extend [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](../../test/test_loop_content_resolution/test_loop_content_resolution.cpp) only.
+Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](../../test/test_loop_content_resolution/test_loop_content_resolution.cpp). 6E.3 also keeps prepared checkpoints in `LoopContentResolution`. Do not wire Track.
 
 | Slice | Prove |
 |-------|--------|
 | **6E.1** | **PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten. Loop-filling source + incoming 4000–200: loop 4000 → **Hide**; loop 4100 → **Shorten 0–3999**. |
 | **6E.1b** | **PASS** — S = 777 is wrap origin. Rotated linear 6E.1 rows match. Absolute 0–5000 + incoming across S Shortens. Loop-filling 4000/4100 not rotated. |
 | **6E.2** | **PASS** — checkpoint replay < interval and < history spans. Hold window < 16-bar `resolveWindow` and < full rematerialize. Early-bar history growth does not grow replay. |
-| **6E.3** | Keep `spans` + `spanBoundaries` after drop-rebuild-buffers. Keep-all-`soundingAt` = FAIL |
+| **6E.3** | **PASS** — after `deviceGateComplete`, `tryResolvePreparedState` matches the oracle. `checkpointCount` is the 8-bar stride. Keep-all per-bar `soundingAt` copies fail the size gate. |
 | **6E.4** | Wrap-1 publish is wrap-2 source; session-disable wrap 1 hides it; GUS stamp miss → 3b |
 | **6E.5** | Held note across start-tick S does not seal an incomplete Add |
 
