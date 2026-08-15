@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6B native shipped; device gate open)
+Last updated: 2026-08-15 (DEC-037 6B device PASS [`192334`](../../captures/session_20260815_192334.log))
 
 ---
 
@@ -18,7 +18,7 @@ Last updated: 2026-08-15 (DEC-037 6B native shipped; device gate open)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6B** native shipped (`test_mark_affected_display_cache_ranges_dirties_sparse_bars`). Overdub stop marks only affected visual-cache bars (`VCACHE,stale_range`) and keeps the loop-wide cache (no `adopt_partial` when notes are present). Device gate: no `stale_all` / no cache-shrinking `adopt_partial` on 139-bar overdub stop. **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `DIAG,lcr,6a,…,match=1`. **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`. Do not start 6C.
+**Now:** **6B PASS** [`192334`](../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5, notes kept, no `adopt_partial`, no `VCACHE,full`. Next is **6C** (not started). Keep the 3b copy. Score 6C `begin_capture` against **2214 µs**, not 5.2 **10050 µs**. **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`. Do not construct/sort/checkpoint/resolve LCR on overdub start/stop.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

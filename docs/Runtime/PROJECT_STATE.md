@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-15 (DEC-037 6B native shipped; device gate open)
+Last updated: 2026-08-15 (DEC-037 6B device PASS [`192334`](../../captures/session_20260815_192334.log))
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-037 6B native shipped; device gate open)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-037** `LoopContentResolution` — **6B** native shipped; device gate open (no `stale_all` / no shrinking `adopt_partial` on long-loop overdub stop). **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
+**Active work:** **DEC-037** `LoopContentResolution` — **6B PASS** [`192334`](../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. Next **6C** (not started). **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

@@ -3,7 +3,7 @@
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** 6B firmware (native shipped; device gate open)  
+**HEAD:** `b87dce1` — Overdub stop dirties only affected display bars.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)
@@ -14,7 +14,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** 6B native shipped; device gate open. Keep the 3b copy. Do not start 6C. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
+> **Now:** 6B PASS [`192334`](../../captures/session_20260815_192334.log). Next is **6C** (not started). Keep the 3b copy. Score `begin_capture` against **2214 µs**. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
 >
 > Read CURRENT_WORK + this handoff first.
 
@@ -22,7 +22,7 @@
 
 ## One-line status
 
-**6B native shipped** (device gate open). **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. Overdub stays 3b copy. Do not start 6C.
+**6B PASS** [`192334`](../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. Next **6C**. Overdub stays 3b copy.
 
 ---
 
@@ -41,8 +41,8 @@ device latency
   5.1 idle complete     PASS  173842
   5.2 overdub entry     PASS  180624  10050 µs
   6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
-  6B commit invalidation native shipped; device gate open
-Stage 6                  6B device next; 6C not started
+  6B commit invalidation PASS  192334  stale_range dcnt 15/5/5 notes kept
+Stage 6                  6C next; 3b copy stays
 ```
 
 ---
@@ -57,7 +57,7 @@ Stage 6                  6B device next; 6C not started
 - Delete `materializeToEventVector`
 - Put resolution on `handleMidiInput` or `startOverdubbing` / `stopOverdubbing` (including `ensure*` LCR rebuild helpers)
 - Start Stage 6 firmware without an explicit implement request (first slice is **6A**, not overdub)
-- Start **6C** before 6B device PASS
+- Start **6C** without an explicit implement request
 - Remove the 3b `visualCache.notes` copy
 - Rename `byNoteId` or “clean up” pairing
 - Put probes in `ExternalMemoryFirstAllocator` (ITCM / RAM1 overflow)
@@ -204,27 +204,28 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6560** (6B help
 
 ---
 
-## 6B native (device gate open)
+## 6B PASS — [`192334`](../../captures/session_20260815_192334.log)
 
 Overdub stop commits, marks only affected display bars, returns. No materialize, no whole-loop reconstruct, no LCR construct/sort/checkpoint/resolve on stop.
 
-| Piece | Owner |
-|-------|--------|
-| Dirty only affected bars | `Loop::markAffectedDisplayCacheRanges` — this pass’s chunks via `appendChunkRefEvent`; companion Hide/Shorten spans; `VCACHE,stale_range` |
-| Wire at commit | `Track::finalizeCommitSideEffects` — seal companions, then mark ranges on overdub stop; record stop still `markDisplayCachesStale` |
-| Keep loop-wide cache | `refreshViewportAfterOverdubStop` skips `adopt_partial` when `visualCache.notes` is nonempty |
+Three PLAYING 139-bar overdub stops:
 
-Native: `test_mark_affected_display_cache_ranges_dirties_sparse_bars` (8-bar loop; overdub in bar 3 dirties a neighborhood, not all 8; Hide of bar 0 does not dirty the last bar). `pio test -e native` **1198/1198**.
+| Stop | `stale_range` notes | `dcnt` | `ODUB,stop,display` | idle `slice_clean` |
+|------|--------------------:|-------:|--------------------:|--------------------|
+| 52.028 s | 2375 | 15 | 35 ms | 52.489 s notes **2437** |
+| 59.182 s | 2437 | 5 | 30 ms | 59.389 s notes **2450** |
+| 67.831 s | 2450 | 5 | 26 ms | 67.989 s notes **2464** |
 
-**Device score vs [`185931`](../../captures/session_20260815_185931.log):**
-
-- no `VCACHE,stale_all` on long-loop overdub stop
-- no `adopt_partial` shrinking notes (185931: 2403 → 496, 117 bars dirty)
-- `VCACHE,stale_range` with `dcnt` ≪ 139
+- no `adopt_partial` in the capture
 - no `VCACHE,full`
-- stop bounded; idle sliced
+- 139-bar `stale_all` only at boot (`notes=0`)
+- `DisplayFullRebuild` stays **5** across all three stops
+- `PlaybackFullMaterialize` **0**
+- Contrast [`185931`](../../captures/session_20260815_185931.log): `adopt_partial` 2403 → 496 notes, 117 bars dirty
 
-Do not start 6C until this device gate PASSes.
+`RING,overflow` at each stop is USB CAP drop during flush (same class as [`180624`](../../captures/session_20260815_180624.log)).
+
+Do not start 6C until asked. Score 6C `begin_capture` against 3b **2214 µs**, not 5.2 **10050 µs** / this capture **10339 µs**.
 
 ---
 
@@ -252,6 +253,7 @@ Do not start 6C until this device gate PASSes.
 | `9e075c4` | Pin Stage 6 consume-only invariant |
 | `c3570b5` | 6A firmware: keep TickIndex; idle consume resolveWindow |
 | `27d94bb` | Record 6A device PASS |
+| `b87dce1` | 6B firmware: mark affected display bars only |
 
 ---
 
@@ -260,5 +262,5 @@ Do not start 6C until this device gate PASSes.
 - [x] 5.2 overdub entry — **PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs
 - [x] 6.0 consume-only invariant — **pinned**
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
-- [ ] 6B commit invalidation — native shipped; device gate open
+- [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
 - [ ] 6C overdub source (3b copy stays)

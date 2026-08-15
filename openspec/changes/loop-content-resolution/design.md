@@ -57,11 +57,11 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 
 1. Native stages 0–8 against the canonical fixture.
 2. Device stage 9 (`035414` class) — worst-case µs.
-3. If all three gates pass: **6A** idle display range via `resolveWindow` (old path oracle) → **6B** commit marks affected ranges only → **6C** overdub source from prepared LCR with 3b copy fallback. Long-loop playback / NOTE_EDIT last. Never construct/sort/checkpoint/resolve LCR on overdub start/stop. **6A PASS** [`185931`](../../../captures/session_20260815_185931.log). **6B** native shipped (device gate open).
+3. If all three gates pass: **6A** idle display range via `resolveWindow` (old path oracle) → **6B** commit marks affected ranges only → **6C** overdub source from prepared LCR with 3b copy fallback. Long-loop playback / NOTE_EDIT last. Never construct/sort/checkpoint/resolve LCR on overdub start/stop. **6A PASS** [`185931`](../../../captures/session_20260815_185931.log). **6B PASS** [`192334`](../../../captures/session_20260815_192334.log).
 4. Rollback: leave production on materialize; delete or isolate the prototype module.
 
 ## Open Questions
 
 - Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
-- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B** native shipped (device gate open). 6C not started.
+- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log). 6C not started.
 - Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.
