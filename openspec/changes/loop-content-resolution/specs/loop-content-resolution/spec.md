@@ -80,8 +80,11 @@ Building a sounding-state snapshot at every bar of an `035414`-class loop (notes
 
 - **WHEN** the idle device gate runs on a 64-bar or longer loop with thousands of notes
 - **THEN** it MUST NOT allocate a full sounding vector at every bar
-- **AND** it MUST abort checkpoint fill when advisory memory pressure is Low or Critical
+- **AND** it MUST NOT consult `MemoryMonitor` / advisory pressure to arm, slice, or abort
+- **AND** tick-index and checkpoint maps MUST allocate through `ExternalMemoryFirstAllocator`
 - **AND** `prepareRebuildSpans` materialize-plus-reconstruct MUST NOT run as a single idle slice
+- **AND** IndexCommit and RebuildSpans span emplace MUST yield when `kDeviceGateSliceBudgetUs` (50 ms) is exhausted
+- **AND** those slices MUST NOT commit a whole long-loop pass or emplace every span in one idle call
 
 ### Requirement: Physical chunks are not resolution boundaries
 

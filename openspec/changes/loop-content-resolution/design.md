@@ -36,7 +36,7 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 10. **Chunks are packing.** `LoopEventStore` chunks are not resolution units.
 11. **Layer semantics reuse DEC-031/032.** Do not invent a new overlap model.
 12. **Failure gate.** If the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement range-dirty cache + tick index on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint **does** disprove that checkpoint representation.
-13. **Device 5.1/5.2 order (after [`225744`](../../../captures/session_20260814_225744.log) short-loop `lcr` and [`225351`](../../../captures/session_20260814_225351.log) heap Critical).** Sparse `soundingAt` first; abort fill under memory pressure; **then** split `prepareRebuildSpans` (`materializeActive` + `reconstructDisplayNotes` MUST NOT remain one idle slice); then measure the 68-bar fixture and `resolveState` replay. Do **not** raise the 16-bar hardware arm cap until those measurements exist. Do not persist. Do not put resolution on overdub or MIDI realtime paths.
+13. **Device 5.1/5.2 order (after [`225744`](../../../captures/session_20260814_225744.log) short-loop `lcr` and [`225351`](../../../captures/session_20260814_225351.log) heap Critical).** Sparse `soundingAt` first; LCR MUST NOT consult advisory pressure; **then** split `prepareRebuildSpans` (`materializeActive` + `reconstructDisplayNotes` MUST NOT remain one idle slice); then measure a selected loop **>63 bars** and `resolveState` replay. Size probe accepted: [`115750`](../../../captures/session_20260815_115750.log) (139 bars). Arm cap stays off. IndexCommit and RebuildSpans MUST yield at `kDeviceGateSliceBudgetUs` (50 ms). Do not persist. Do not put resolution on overdub or MIDI realtime paths.
 
 ## Risks / Trade-offs
 
@@ -44,7 +44,7 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 |------|------------|
 | Prototype becomes a second O(history) store that `invalidateCaches` kills | Complexity gate; never cascade `invalidateCaches` onto the prototype; range caches only |
 | Per-bar `soundingAt` copies the resolved loop ([`225351`](../../../captures/session_20260814_225351.log) Critical / reboot) | Sparse stride; abort under pressure; checkpoint must not scale with bars × notes |
-| `prepareRebuildSpans` stalls MIDI/OLED even if checkpoint RAM is fixed | Split materialize/reconstruct off a single idle slice before raising the 16-bar arm cap |
+| `prepareRebuildSpans` stalls MIDI/OLED even if checkpoint RAM is fixed | Split materialize/reconstruct; IndexCommit and span emplace yield at `kDeviceGateSliceBudgetUs`. Arm cap stays off. |
 | `resolveNotes` becomes the center (play Notes) | Spec: `resolveNotes` is a derived consumer; correctness vs materialize events first |
 | First tick index is slow | Failure gate distinguishes poor index from architectural failure |
 | Layer semantics drift from overdub overlap | Native equivalence vs `materialize` + `reconstruct` on the overlap spec |
