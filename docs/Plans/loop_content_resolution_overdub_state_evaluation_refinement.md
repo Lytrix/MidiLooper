@@ -393,7 +393,13 @@ Second overdub 58.598 tick 9048 (S=2904). Note 30 ON at 58.774 storage **2976**,
 
 Tick-sort puts `OFF@0` before `ON@2976`. `tryPairWrappedTailOn` then refused the pair because later same-pitch Ons sit in the body (`allLaterOnsInTailOrNone`). `findOpenNoteOns` treated `ON@2976` as open; extract pulled it; the sealed wrap kept an orphan `OFF@0`.
 
-Same-tick extract (ON@2880 completed + held ON@2880) is a second collision on the later grid. Extract now uses append order + `eventIndex`. Tick-0 Off may wrap-pair even when the pitch is replayed later. Linear playhead close stays. Tick-0 head gate stays reverted.
+Same-tick extract (ON@2880 completed + held ON@2880) is a second collision on the later grid. Extract now uses append order + `eventIndex`. Linear playhead close stays. Tick-0 head gate stays reverted.
+
+## HITL [`014937`](../../captures/session_20260816_014937.log) — head-off at 96 ignored at overdub wrap
+
+Note 12 ON at 2976, OFF at storage **96** (abs 3168; first beat, described as ~192). Wrap resolution at loop wrap is correct. Same pitch is replayed at 288 / 384 / …. Overdub wrap 31.126 `wrap_synth=0`, DISP 88→87. The tail On is extracted and re-appended, so the note appears to wrap to S instead of ending at 96.
+
+Tick-0-only `tryPairWrappedTailOn` does not cover Off@96. Playback / materialize sort live capture, so `findOpenNoteOns` on ticks treats `ON@2976` as open when a later same-pitch On is still held. Pin: extract uses `capturePreview.openNoteIndices` (append-order wrap pairing). `allLaterOnsInTailOrNone` ignores completed body pairs so committed reconstruct still shows the wrap-held note. Orphan Off + two open Ons still blocks.
 
 ## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
 

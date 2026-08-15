@@ -67,14 +67,24 @@ NOTE_EDIT_MEM bool allLaterOnsInTailOrNone(const std::vector<MidiEvent, Alloc>& 
                              uint32_t headOffTick, uint8_t pitch, uint8_t channel,
                              uint32_t loopLength) {
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+    // Completed same-pitch notes after a head Off (014937 note 12 @ 288 after
+    // Off @ 96) are the next performance. Only an unpaired body On blocks.
+    std::vector<uint32_t> openOnTicks;
     for (const MidiEvent& evt : midiEvents) {
-        if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
+        if (evt.channel != channel || evt.data.noteData.note != pitch) {
             continue;
         }
         if (evt.tick >= loopLength) {
             continue;
         }
-        if (evt.tick > headOffTick && evt.tick < tailStart) {
+        if (evt.isNoteOn()) {
+            openOnTicks.push_back(evt.tick);
+        } else if (evt.isNoteOff() && !openOnTicks.empty()) {
+            openOnTicks.pop_back();
+        }
+    }
+    for (const uint32_t onTick : openOnTicks) {
+        if (onTick > headOffTick && onTick < tailStart) {
             return false;
         }
     }
@@ -107,11 +117,7 @@ template <typename Alloc>
 NOTE_EDIT_MEM bool tryPairWrappedTailOn(const std::vector<MidiEvent, Alloc>& midiEvents,
                           uint32_t noteOffTick, uint8_t pitch, uint8_t channel, uint32_t loopLength,
                           uint32_t& outOnTick, uint8_t& outVelocity) {
-    // Tick-0 Off is the loop-wrap release of a tail On. A later same-pitch On in
-    // the body is the next performance (012925 note 30 @ 672 after Off @ 0), not
-    // an intervening owner of that Off.
-    if (noteOffTick != 0 &&
-        !allLaterOnsInTailOrNone(midiEvents, noteOffTick, pitch, channel, loopLength)) {
+    if (!allLaterOnsInTailOrNone(midiEvents, noteOffTick, pitch, channel, loopLength)) {
         return false;
     }
     uint32_t bestOnTick = 0;
