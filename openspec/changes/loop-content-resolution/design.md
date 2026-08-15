@@ -38,7 +38,7 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 12. **Chunks are packing.** `LoopEventStore` chunks are not resolution units.
 13. **Layer semantics reuse DEC-031/032.** Do not invent a new overlap model.
 14. **Failure gate.** If the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement range-dirty cache + tick index on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint **does** disprove that checkpoint representation.
-15. **Device 5.1/5.2 complete; Stage 6 overdub invariant.** 5.15–5.18 **FROZEN**. **5.1 PASS** [`173842`](../../../captures/session_20260815_173842.log). **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Overdub start/stop MUST NOT cold-build LCR. Idle/background prepares; overdub consumes already-prepared state. `begin_capture` **< 3 ms** target, **< 50 ms** hard gate. Do not use 3b 2214 µs as proof LCR is faster. Do not persist. Do not call resolution from `handleMidiInput`. No B. Firmware `6.1`+ waits for an explicit implement request.
+15. **Device 5.1/5.2 complete; Stage 6 consume-only + 6A/6B/6C.** 5.15–5.18 **FROZEN**. **5.1 PASS** [`173842`](../../../captures/session_20260815_173842.log). **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state — consume already-prepared derived state only. LCR is the producer of prepared derived state, not a replacement for `overdubSourceView`. Keep 3b copy. `< 3 ms` is a regression target vs 3b 2214 µs; `< 50 ms` hard gate. Experiment: **6A** idle display range, **6B** commit invalidation, **6C** overdub source. Do not persist. Do not call resolution from `handleMidiInput`. No B. Firmware waits for an explicit implement request.
 
 ## Risks / Trade-offs
 
@@ -50,17 +50,18 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 | `resolveNotes` becomes the center (play Notes) | Spec: `resolveNotes` is a derived consumer; correctness vs materialize events first |
 | Per-entry PSRAM map/multimap insert on derived indexes | DEC-037 derived-index storage invariant; 5.15 / 5.17 / 5.7c **FROZEN**. `pair` / `byNoteId` / `openOnByPitch` are 5.18 |
 | Layer semantics drift from overdub overlap | Native equivalence vs `materialize` + `reconstruct` on the overlap spec |
-| Firmware wired too early | Native-only until all three gates; 3b overdub copy stays; overdub start/stop never cold-builds LCR |
+| Firmware wired too early | Native-only until all three gates; 3b overdub copy stays; overdub start/stop never construct/sort/checkpoint/resolve LCR |
+| Hidden `ensure*` LCR rebuild on overdub start/stop | Consume-only invariant: any synchronous construct/sort/checkpoint/resolve is a violation |
 
 ## Migration Plan
 
 1. Native stages 0–8 against the canonical fixture.
 2. Device stage 9 (`035414` class) — worst-case µs.
-3. If all three gates pass: overdub entry/stop consume already-prepared state (never cold-build LCR) → idle visual slices via `resolveWindow` → long-loop playback gather. Short-loop / NOTE_EDIT hydrate last.
+3. If all three gates pass: **6A** idle display range via `resolveWindow` (old path oracle) → **6B** commit marks affected ranges only → **6C** overdub source from prepared LCR with 3b copy fallback. Long-loop playback / NOTE_EDIT last. Never construct/sort/checkpoint/resolve LCR on overdub start/stop.
 4. Rollback: leave production on materialize; delete or isolate the prototype module.
 
 ## Open Questions
 
 - Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
-- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Stage 6 overdub invariant pinned: never cold-build LCR on start/stop. Firmware swap not started.
+- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Stage 6: consume-only invariant + 6A/6B/6C. Firmware not started.
 - Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.

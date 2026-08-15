@@ -36,7 +36,7 @@
 
 - [x] 5.3 Record worst-case µs, not only totals (native 64-bar fixture: materialize 145 µs, window 28 µs, rebuild 214 µs, `resolveState` 1 µs). Device 139-bar [`173842`](../../../captures/session_20260815_173842.log): `win=7129` `reb=368240` `st=531` `iapp=197743` `isort=28116` `capp=10682` `csort=1897` `bn=225` `nsort=10003`.
 - [x] 5.1 **PASS** [`173842`](../../../captures/session_20260815_173842.log): 139-bar idle complete path. OLED consecutive `DFRAME` 1.034 s vs healthy 0.968 s. `midi_gap` 39.1 ms. `idle_maint` 34.9 ms. No `loop_rem`. No `VCACHE,full` during LCR. Production unchanged. Gate does not run while PLAYING.
-- [x] 5.2 **PASS** [`180624`](../../../captures/session_20260815_180624.log): PLAYING overdub 139-bar / 2388 notes. `begin_capture` **10050 µs** (bar < 50 ms; prior FAIL [`175544`](../../../captures/session_20260815_175544.log) 108979 µs; 3b [`045556`](../../../captures/session_20260814_045556.log) 2214 µs). No `VCACHE,stale_all` on the scored entry; no `VCACHE,full` in the capture. Overdub `clockrate` 47–48. 3b copy restored. Stage 6: never cold-build LCR on start/stop.
+- [x] 5.2 **PASS** [`180624`](../../../captures/session_20260815_180624.log): PLAYING overdub 139-bar / 2388 notes. `begin_capture` **10050 µs** (bar < 50 ms; prior FAIL [`175544`](../../../captures/session_20260815_175544.log) 108979 µs; 3b [`045556`](../../../captures/session_20260814_045556.log) 2214 µs). No `VCACHE,stale_all` on the scored entry; no `VCACHE,full` in the capture. Overdub `clockrate` 47–48. 3b copy restored. Stage 6: consume-only; 6A → 6B → 6C.
 
 Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_t41_lcr.ld`). Does **not** consult `MemoryMonitor`. Tick-index / `startsByTick` use `ExternalMemoryFirstAllocator`. Arm waits for any pending slot restore. CrashReport [`115242`](../../../captures/session_20260815_115242.log) `0x6003616C` `_M_emplace_equal` / `0x10`. 30-bar `hist=832` [`112843`](../../../captures/session_20260815_112843.log). >63-bar size [`115750`](../../../captures/session_20260815_115750.log) `hist=2394` `reb=101s`. [`134954`](../../../captures/session_20260815_134954.log) complete `hist=2394`. IndexCommit / pairing / reconstruct span build / display project / RebuildSpans batch `kDeviceGateEventsPerSlice`. Arm cap stays off. Do not persist or put resolution on overdub/MIDI.
 
@@ -69,14 +69,15 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [x] 5.17d Device append / sort / query on the 139-bar class. [`161355`](../../../captures/session_20260815_161355.log) `iapp=4819607` `isort=27415` `win=13971` `st=3108` `walk=0`. No `idx` `loop_rem`. No B. No A2. Native `commitCapturePass` still fills `byTick`.
 - [x] 5.17e Drop `byTick` from `commitCapturePass` / `indexCapturePassEventRange`. `findRawWindow` reads `tickEvents` only. Device remasure [`162630`](../../../captures/session_20260815_162630.log) matches [`161355`](../../../captures/session_20260815_161355.log) (`iapp=4816490` `isort=27113` `win=14016` `st=3105` `walk=0`; no `idx` `loop_rem`). **5.17 complete.**
 
-## 6. Production swap (invariants pinned; firmware not started)
+## 6. Production swap (6A / 6B / 6C; firmware not started)
 
-- [x] 6.0 Overdub start/stop MUST NOT cold-build `LoopContentResolution`. LCR construction is idle/background. Entry consumes already-prepared derived state. `begin_capture` **< 3 ms** target; **< 50 ms** hard gate. 3b [`045556`](../../../captures/session_20260814_045556.log) 2214 µs is not proof LCR is faster. DEC-037 amendment 2026-08-15.
-- [ ] 6.1 Overdub entry/stop consume already-prepared committed display/source (3b visual-cache copy when authoritative). Do **not** `resolveWindow`, rebuild LCR indexes, materialize, reconstruct, or `markDisplayCachesStale` on `startOverdubbing` / `stopOverdubbing`. If LCR is not ready, keep the existing non-LCR 3b dirty fallback. Do not start firmware until an explicit implement request.
-- [ ] 6.2 Idle visual slices gather via `resolveWindow` (range-dirty bars) — LCR is used here, not on overdub start
-- [ ] 6.3 Long-loop playback gather → `resolveWindow` / `ResolvedEvent`
+- [x] 6.0 Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. Consume already-prepared derived state only. `ensure*` rebuild helpers on that path are violations. LCR is the producer of prepared derived state, not a replacement for `overdubSourceView`. Keep 3b `visualCache.notes` copy. `begin_capture` **< 3 ms** regression target vs 3b [`045556`](../../../captures/session_20260814_045556.log) **2214 µs**; **< 50 ms** hard gate. DEC-037 amendments 2026-08-15.
+- [ ] 6A Prepared display range (idle): one dirty range via `resolveWindow` → display projection instead of `CommittedEventRange` → `reconstructDisplayNotes`. Keep old path as oracle. Measure `resolveWindow`, projection, total/worst slice, `midi_gap`, `DFRAME`. Do not wire LCR into overdub. Wait for an explicit implement request.
+- [ ] 6B Commit invalidation: overdub stop commits, marks **only affected ranges**, returns. No materialize, no whole-loop reconstruct, no `VCACHE,full`. Separate stop-entry / commit / return-to-MIDI (bounded) from idle prep / repaint (sliced) / eventual consistency (async). After 6A.
+- [ ] 6C Prepared LCR range → `overdubSourceView`. Only after 6A/6B. 3b visual-cache copy stays as fallback. Score `begin_capture` against **2214 µs**, not 5.2 **10050 µs**.
+- [ ] 6.3 Long-loop playback gather → `resolveWindow` / `ResolvedEvent` (after 6C)
 - [ ] 6.4 Short-loop playback / NOTE_EDIT hydrate last
-- [ ] 6.5 Do **not** delete `materializeToEventVector`; do **not** call resolution from `handleMidiInput`
+- [ ] 6.5 Do **not** delete `materializeToEventVector`; do **not** call resolution from `handleMidiInput`; do **not** remove the 3b copy path
 
 ## Out of scope
 

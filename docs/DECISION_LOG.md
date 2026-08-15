@@ -262,9 +262,38 @@ Dirty-cache is **not** a license to call `resolveWindow` from `startOverdubbing`
 
 Firmware production swap (`6.1`+) does not start until an explicit implement request. This amendment pins the invariant only.
 
+### Amendment 2026-08-15 — Stage 6 consume-only; 6A / 6B / 6C experiment
+
+Not a new DEC. Strengthens the previous Stage 6 amendment. 5.18 is **FROZEN**; derived-index construction on device is tractable (flat/bulk/sliced). The remaining question is **not** whether the LCR representation is viable.
+
+**Question:** Does migrating remaining production consumers to the already-proven LCR owner recover original ~2–3 ms overdub start/stop, or is there another independent stop-path cost? Do **not** answer by wiring LCR into overdub.
+
+**Two dimensions:**
+
+1. **Entry is largely explained.** 3b [`045556`](../captures/session_20260814_045556.log) `begin_capture` **2214 µs** (copy prepared `visualCache.notes`). Restored production [`180624`](../captures/session_20260815_180624.log) **10050 µs** still under the 50 ms gate. The 3b architecture shows **< 3 ms is achievable when the committed visual/source representation is already prepared**. LCR does **not** yet show that it can improve on that copy. Do not claim “switching everything to LCR makes start < 3 ms.”
+2. **Stop is the interesting path:** `commitCapturePass` → `notifyCommittedContentChanged` → `markDisplayCachesStale` → dirty bars → idle rebuild. LCR restores responsiveness **indirectly**: idle prepares derived state; overdub start/stop consume it and return.
+
+**Invariant (strengthened):** Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. It may only consume already-prepared derived state. `ensureLcrIndexCurrent()` (or any other ensure/rebuild helper) on that path is still a violation.
+
+**Role:** `LoopContentResolution` is the **producer of prepared derived state**, not a replacement for `overdubSourceView`. `establishOverdubSourceView` stays the consumer. Keep the 3b `visualCache.notes` copy as fallback so LCR can fail to be ready without making overdub entry expensive.
+
+**Preparation is established architecture** (cooperative / bulk / sliced). Device complete-path [`173842`](../captures/session_20260815_173842.log) / channel [`170024`](../captures/session_20260815_170024.log): `spanBoundaries` `app=1420` `sort=9439`; `tickEvents` `iapp=197743` `isort=28116`; channel `capp=12373` `csort=1779`; pair `tot=7950` `nsort=10003`. Do not rediscover this in the migration.
+
+**Stage 6 experiment (no new DEC):**
+
+| Slice | What | Oracle / fallback |
+|-------|------|-------------------|
+| **6A** | One dirty display range: `resolveWindow` → display projection instead of `CommittedEventRange` → `reconstructDisplayNotes`. Idle only. | Keep old path as oracle. Measure `resolveWindow`, projection, total slice, worst slice, `midi_gap`, `DFRAME`. |
+| **6B** | Overdub stop: commit → mark **only affected ranges** → return. No materialize, no whole-loop reconstruct, no `VCACHE,full`. | Separate `stopOverdubbing` entry, `commitCapturePass`, bookkeeping, return-to-MIDI, first idle prep, display repaint, eventual consistency. |
+| **6C** | Prepared LCR range → `overdubSourceView`. **Only after 6A/6B.** | Keep 3b visual-cache copy. Score `begin_capture` against 3b **2214 µs**, not against 5.2 **10050 µs**. |
+
+`< 3 ms` is a **regression target**, not an architectural promise. LCR’s job is to eliminate post-commit / full-rebuild machinery, not to make an already-cheap transition intrinsically faster.
+
+Firmware 6A+ waits for an explicit implement request.
+
 ### Constraints created
 
-- Overdub start/stop must not cold-build `LoopContentResolution` (idle/background prepares; overdub consumes already-prepared state).
+- Overdub start/stop must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included).
 - No second O(history) derived owner that `invalidateCaches` will discard.
 - A checkpoint must not be a proportional copy of the resolved loop (per-bar full `soundingAt` fails this).
 - Derived indexes must not per-entry-allocate into PSRAM associative containers on realtime-adjacent construction paths (5.15 / 5.17 / 5.7c). Representation follows the query contract; B only if a measured flat query is too expensive.
