@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 Stage 6A firmware; device measure owed)
+Last updated: 2026-08-15 (DEC-037 6A device PASS [`185931`](../../captures/session_20260815_185931.log))
 
 ---
 
@@ -18,7 +18,7 @@ Last updated: 2026-08-15 (DEC-037 Stage 6A firmware; device measure owed)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6A firmware.** Idle display: `deviceGateComplete` keeps `TickIndex` (drops rebuild/checkpoint buffers). `rebuildVisualCacheIdleSlice` consumes `tryResolvePreparedWindow` when `playbackRevision` still matches; else `gatherCommittedEventsInWindow` (oracle). After gate complete, capture logs `DIAG,lcr,6a,…,match=`. Do **not** start 6B/6C. Overdub still 3b copy. Device measure owed (`match=1`, `midi_gap`, `DFRAME`). **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`.
+**Now:** **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `DIAG,lcr,6a,…,match=1` `win=784` `proj=5539` `oracle=9192` `tot=6323`. `midi_gap` 43.6 ms during LCR, 14.3 ms after. DFRAME 0.977 s at the sample. Next is **6B** (not started). Overdub still 3b copy. **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

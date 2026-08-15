@@ -3,18 +3,10 @@
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
+**HEAD:** `c3570b5` — Keep prepared TickIndex after the idle gate.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)
-
-**Date:** 2026-08-15  
-**Kind:** handoff  
-**Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** `9e075c4` — Pin Stage 6: overdub must never cold-build LoopContentResolution.  
-**OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
-**Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
-**Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
-**Prior chat:** Stage 6 consume-only + 6A/6B/6C after 5.2 PASS [`180624`](../../captures/session_20260815_180624.log).
 
 ---
 
@@ -22,7 +14,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** 6A firmware landed. Native oracle tests added. Device measure owed (`DIAG,lcr,6a,…,match=`, `midi_gap`, `DFRAME`). Do not start 6B/6C. Keep the 3b copy. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
+> **Now:** 6A PASS [`185931`](../../captures/session_20260815_185931.log) `match=1`. Next is **6B** (not started). Keep the 3b copy. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
 >
 > Read CURRENT_WORK + this handoff first.
 
@@ -30,7 +22,7 @@
 
 ## One-line status
 
-**6A firmware landed.** Idle visual slice consumes prepared `resolveWindow` when `playbackRevision` matches; gather stays oracle. Device `DIAG,lcr,6a` measure owed. Do not start 6B/6C. Overdub stays 3b copy.
+**6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1` `win=784` `proj=5539` `oracle=9192`. Next **6B**. Overdub stays 3b copy.
 
 ---
 
@@ -48,7 +40,8 @@ device latency
   pair                  PASS  5.18
   5.1 idle complete     PASS  173842
   5.2 overdub entry     PASS  180624  10050 µs
-Stage 6                  6A/6B/6C PINNED; firmware not started
+  6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
+Stage 6                  6B next; 6C not started
 ```
 
 ---
@@ -230,6 +223,7 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6560**.
 | `0978ffe` | Restore DEC-036 3b overdub entry for 5.2 recapture |
 | `4b82ad3` | Record 5.2 PASS (`begin_capture` 10050 µs) |
 | `9e075c4` | Pin Stage 6 consume-only invariant |
+| `c3570b5` | 6A firmware: keep TickIndex; idle consume resolveWindow |
 
 ---
 
@@ -237,6 +231,6 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6560**.
 
 - [x] 5.2 overdub entry — **PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs
 - [x] 6.0 consume-only invariant — **pinned**
-- [ ] 6A idle display range — firmware landed; native oracle tests added; **device measure owed**
+- [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [ ] 6B commit invalidation
 - [ ] 6C overdub source (3b copy stays)

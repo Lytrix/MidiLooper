@@ -78,7 +78,7 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **State transition change?** | NO |
 | **Behavior-preserving?** | YES for overdub FSM. Keep 3b `visualCache.notes` copy. Dirty-cache `resolveWindow` / `ensure*` on `startOverdubbing` is **forbidden** |
 | **Reuse** | YES — idle gate already owns LCR construction; 3b copy stays fallback |
-| **Phase scope** | **6A** idle display range (oracle) — firmware in this session; device measure owed. **6B** commit affected-range invalidation. **6C** overdub source from prepared LCR. Score 6C vs 3b **2214 µs** |
+| **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B** commit affected-range invalidation. **6C** overdub source from prepared LCR. Score 6C vs 3b **2214 µs** |
 
 ---
 
