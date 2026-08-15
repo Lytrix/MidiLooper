@@ -63,5 +63,5 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 ## Open Questions
 
 - Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
-- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log). 6C not started.
+- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log). 6C not started. After 6C: MIDI Input Gap > 50 ms in [`192334`](../../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47).
 - Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.
