@@ -186,6 +186,7 @@ struct Loop {
   bool redoOverdubSession();
   bool canUndoOverdubSession() const;
   bool canRedoOverdubSession() const;
+  /// Sealed wraps on the cursor, plus 1 when live `capture.store` is non-empty.
   size_t overdubSessionUndoDepth() const;
   size_t overdubSessionRedoDepth() const;
   /// Establish overdubSourceView: consume prepared LCR window when ready, else copy clean
