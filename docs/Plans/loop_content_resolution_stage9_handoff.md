@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** **6D.4 landed.** `publishPreparedOverdubPass` writes `DeviceGateSession::delta` and restamps; `tryResolvePreparedWindow` is two-source when delta is non-empty; `finalizeCommitSideEffects` calls publish after a committed `OverdubPass`. Native PASS. Not all of LCR live. Device HITL open. 6D.3/6D.2 PASS; 6D.1 FAIL. A/B rejected. 6C consume-when-ready.
+> **Now:** **6D.4 restamp holds** on [`210508`](../../captures/session_20260815_210508.log) (same boot as [`205928`](../../captures/session_20260815_205928.log)). Undo miss → 3b `begin_capture` **120 µs**. Next two PLAYING publishes consume `6c` at **31128 µs** then **312636 µs**. Restamp is not the 6C cost. Do not start midi_gap / 6.3.
 >
 > Read CURRENT_WORK + the 6D plan first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**6D.4 landed** — commit-site delta publish + restamp. Native PASS. Not all of LCR live. Device HITL open.
+**6D.4 restamp holds** [`210508`](../../captures/session_20260815_210508.log) — undo → 3b **120 µs**; then `6c` **31128 µs** / **312636 µs**. Not all of LCR live.
 
 ---
 
@@ -281,6 +281,35 @@ PLAYING at 397.8 s. First overdub INFO 402.132 s (button 402.090 → opened **42
 
 Recapture: overdub and stop within ~1 s so entry CAP is not evicted. Score `begin_capture` against **2214 µs**. Do not start midi_gap / 6.3.
 
+### Device [`205928`](../../captures/session_20260815_205928.log) — 6D.4 restamp PASS; 6C consume scored
+
+STOPPED `DIAG,lcr,mat=0,...,hist=91,walk=0` then `6a` `match=0`. No later `lcr,phase`. PLAYING overdub stop 115.796 s (`stale_range` `dcnt=4`, `published`). Next overdub 117.269 s:
+
+`DIAG,lcr,6c,win=23723,proj=13466,tot=37189,ev=363,notes=194` → `begin_capture,37747`.
+
+| Check | Bar | [`205928`](../../captures/session_20260815_205928.log) | Result |
+|-------|-----|----------|--------|
+| `DIAG,lcr,mat=` before scored consume | complete | `hist=91` `walk=0` | holds |
+| Second `deviceGateComplete` before next overdub | none | none | holds |
+| `DIAG,lcr,6c` after PLAYING commit | present | `tot=37189` `ev=363` | **6D.4 PASS** |
+| `ODUB,stage,begin_capture` | vs 3b **2214 µs** | **37747 µs** | 6C consume slower than 3b |
+| 6B `stale_range` on PLAYING stop | present | `dcnt` 8 / 7 / 4 | holds |
+| First post-`mat=` overdub `6c` | present | RING at stop | **not scored** |
+
+`6c` `tot` is `tryResolvePreparedWindow` + `reconstructDisplayNotes`, not the 6D.2 `findRawWindow` 4 µs. Do not start midi_gap / 6.3.
+
+### Device [`210508`](../../captures/session_20260815_210508.log) — same boot; third `6c` 312 ms
+
+No `BOOT`, no `lcr,phase`. Two STOPPED undos (`kind=1`) at 340.053 / 341.339.
+
+| Overdub | `6c` | `begin_capture` | Score |
+|---------|------|-----------------|-------|
+| 352.581 after undo | none | **120 µs** | 3b miss. Expected |
+| 363.558 | `win=14482,proj=16019,tot=30501,ev=427` | **31128 µs** | restamp PASS |
+| 374.884 | `win=298215,proj=13546,tot=311761,ev=289` | **312636 µs** | restamp hits; consume 312 ms |
+
+`win=` is full two-source `resolveWindow`. 6B `stale_range` `dcnt=4` on both scored stops. Do not start midi_gap / 6.3.
+
 ---
 
 ## Why LCR is not ready before overdub (2026-08-15)
@@ -291,7 +320,7 @@ The 3b `visualCache.notes` copy is the path that is ready on a PLAYING overdub. 
 
 2. **Full rebuild is tens of seconds of STOPPED slices.** Uninterrupted: [`173842`](../../captures/session_20260815_173842.log) idx 20.7 s → `mat=` 52.4 s (**31.8 s**). [`185931`](../../captures/session_20260815_185931.log) 14.2 → 53.8 s (**39.6 s**). [`194015`](../../captures/session_20260815_194015.log) armed, then `reset,dirty` at undo 17.358 s, idx restarted, PLAYING at 26.8 s froze the gate; [`194643`](../../captures/session_20260815_194643.log) finished at 285.4 s.
 
-3. **One-shot stamp.** `deviceGateComplete` sets `sDeviceGateFinished`. `maybeQueueContentResolutionDeviceGate` returns immediately after that. Overdub commit increments `playbackRevision`, so `preparedWindowReady` is false, and the gate never rebuilds. [`194643`](../../captures/session_20260815_194643.log) second overdub (INFO **9 ms**) cannot consume LCR even though `mat=` already happened.
+3. **One-shot stamp (closed for overdub publish by 6D.4).** `deviceGateComplete` still does not re-run after the first finish. Overdub commit still increments `playbackRevision`. 6D.4 `publishPreparedOverdubPass` restamps without another gate. [`205928`](../../captures/session_20260815_205928.log) next overdub after a PLAYING commit emitted `6c`. [`194643`](../../captures/session_20260815_194643.log) second overdub (INFO **9 ms**) was before 6D.4.
 
 Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirty (`DIAG,lcr,reset,dirty` in [`194015`](../../captures/session_20260815_194015.log)). Boot/save defer: `skip,restore` / `skip,save`.
 
@@ -301,7 +330,7 @@ Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirt
 |--------|--------|
 | A. Re-arm after stamp mismatch (STOPPED only) | **Rejected** — still tens of seconds STOPPED |
 | B. Slice the existing full-history LCR build while PLAYING | **Rejected** — another continuously maintained O(history) cache on the perform path |
-| C / **6D**. Incremental index + affected checkpoint repair after commit | **Investigation** — native measurement; no firmware until scaling is `O(new events + affected checkpoints)` |
+| C / **6D**. Incremental index + affected checkpoint repair after commit | **6D.4 landed** — overdub-query delta + restamp. Device restamp PASS [`205928`](../../captures/session_20260815_205928.log). Not all of LCR live |
 
 6C recapture (short overdub after `mat=`) still scores consume-when-ready only. It does not address always-ready.
 
@@ -346,6 +375,6 @@ Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirt
 - [x] 6.0 consume-only invariant — **pinned**
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
-- [ ] 6C overdub source — **native landed**; consume-when-ready only. Device recapture optional. Does not address always-ready.
-- [x] **6D.4** incremental overdub publish — native PASS; commit-site call landed. Device HITL open. Not all of LCR live. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) § 6D.4.
-- [ ] After 6C device score: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47). Do not start during 6D.
+- [x] 6C overdub source — consume-when-ready. Device scored [`205928`](../../captures/session_20260815_205928.log) `6c` `begin_capture` **37747 µs** (slower than 3b **2214 µs**). Does not address always-ready.
+- [x] **6D.4** incremental overdub publish — native PASS; device restamp **PASS** [`205928`](../../captures/session_20260815_205928.log) `6c` after PLAYING commit, no second gate. 6C consume **37747 µs** (slower than 3b **2214 µs**). Not all of LCR live.
+- [ ] After 6C device score: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47). Do not start during 6D. 6C consume is now scored in [`205928`](../../captures/session_20260815_205928.log); still do not start midi_gap from that capture.
