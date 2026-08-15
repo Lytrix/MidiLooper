@@ -62,5 +62,5 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 ## Open Questions
 
 - Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
-- `pair` `DFRAME` 1.273 s [`172927`](../../../captures/session_20260815_172927.log) — **5.18a**: `byNoteId` (`bn=5.346 s`). `openOnByPitch` retained (`op=2.4 ms`, `pk=1`). Next: 5.18b last-wins flat. Not 5.7c.
+- `pair` `DFRAME` 1.273 s [`172927`](../../../captures/session_20260815_172927.log) — **5.18a**: `byNoteId` (`bn=5.346 s`). **5.18b native:** last-wins flat `byNoteId`; device remasure next. `openOnByPitch` retained. Not 5.7c.
 - Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.

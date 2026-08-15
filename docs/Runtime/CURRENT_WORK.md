@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.18a pair: byNoteId owns stall)
+Last updated: 2026-08-15 (DEC-037 5.18b native: last-wins flat byNoteId)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.18a pair: byNoteId owns stall)
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **5.18a device PASS** [`172927`](../../captures/session_20260815_172927.log) — `bn=5.346 s` of `tot=5.357 s`; `op=2.4 ms` `pk=1`. **Next:** 5.18b last-wins flat for `byNoteId` only. Retain `openOnByPitch`. 5.7c frozen. No 5.1. No Stage 6. No B. Do not rewrite `recon`. Arm cap stays off. Production stays on materialize / 3b copy.
+**Now:** **5.18b native shipped** — last-wins flat `byNoteId` (append + `stable_sort` + unique keep-last). Device remasure next on the same 139-bar fixture. Expect `bn` to collapse like channel `14.7 s → 12.4 ms`; `pk=1` / `op` stay small; `walk=0`. Retain `openOnByPitch`. 5.7c frozen. No 5.1. No Stage 6. No B. Do not rewrite `recon`. Arm cap stays off. Production stays on materialize / 3b copy.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

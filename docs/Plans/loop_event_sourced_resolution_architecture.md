@@ -186,7 +186,7 @@ Do not recreate: raw events → build all Notes → cache Notes → play Notes.
 5. **Valid derived state is never discarded merely because unrelated content changed.**
 6. **No realtime MIDI or display-critical path may perform work proportional to total loop history.**
 7. **Physical PSRAM chunks are not resolution boundaries.**
-8. **Derived-index storage.** Derived indexes on the target device use contiguous/bulk PSRAM storage. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths. Where the query contract permits, indexes are flat PSRAM arrays built by append/bulk construction and ordered or uniqued in a bounded operation. Flat storage is not an automatic replacement for every associative structure. Representation B is not justified unless a measured flat query is too expensive. Measured: `spanBoundaries` (5.15), `tickEvents` (5.17; `byTick` removed), `channelByNoteId` (5.7c **FROZEN**). `pair` / `byNoteId` / `openOnByPitch` are 5.18 — flatten from the query, not the container type.
+8. **Derived-index storage.** Derived indexes on the target device use contiguous/bulk PSRAM storage. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths. Where the query contract permits, indexes are flat PSRAM arrays built by append/bulk construction and ordered or uniqued in a bounded operation. Flat storage is not an automatic replacement for every associative structure. Representation B is not justified unless a measured flat query is too expensive. Measured: `spanBoundaries` (5.15), `tickEvents` (5.17; `byTick` removed), `channelByNoteId` (5.7c **FROZEN**), `byNoteId` (5.18b native last-wins flat; device remasure next). `openOnByPitch` stays a LIFO stack. Flatten from the query, not the container type.
 
 ### Derived-structure contracts
 
@@ -197,8 +197,8 @@ Do not accumulate unnamed caches. Every derived structure has a query contract b
 | `spanBoundaries` | tick range → start/end apply | many | tick + C-order at equal tick | build, then read | flat A **frozen** |
 | `tickEvents` | tick window → Active `(passId, eventIndex)` | many | tick + C-order at equal tick | build, then read | flat A **frozen** |
 | channel lookup | stored-byte copy onto `SoundingNote.channel`; not loop identity (DEC-033; output is `Track::midiChannel`) | unique, first-wins | `noteId` after sort | build, then read | flat A **frozen**; not a pairing key |
-| `byNoteId` | `NoteId` → `{passId, on, off}` for `appendNoteEvents` | unique key, last assignment wins | none | pair walk, then read | **measure** (5.18) |
-| `openOnByPitch` | pairing walk only: pitch → open ON indexes | many per pitch | LIFO | every on/off in the pass | **measure** (5.18) |
+| `byNoteId` | `NoteId` → `{passId, on, off}` for `appendNoteEvents` | unique key, last assignment wins | none | pair walk, then read | last-wins flat A (5.18b native; device remasure next) |
+| `openOnByPitch` | pairing walk only: pitch → open ON indexes | many per pitch | LIFO | every on/off in the pass | retain stack (5.18a `op=2.4 ms`, `pk=1`) |
 
 Detail: [`loop_content_resolution_pair_index_refinement.md`](loop_content_resolution_pair_index_refinement.md).
 

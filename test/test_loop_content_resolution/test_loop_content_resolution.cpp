@@ -1113,6 +1113,7 @@ void commitPassEventsPerSlice(LoopContentResolution::TickIndex& index, PassId id
     const uint32_t end = std::min(i + step, eventCount);
     index.pairCapturePassEventRange(id, i, end, openOnByPitch, nullptr);
   }
+  index.sortAndUniqueByNoteId();
 }
 
 void assertNoteLocationsMatch(const LoopContentResolution::TickIndex& expected,
@@ -1120,11 +1121,11 @@ void assertNoteLocationsMatch(const LoopContentResolution::TickIndex& expected,
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.byNoteId.size()),
                            static_cast<uint32_t>(actual.byNoteId.size()));
   for (const auto& entry : expected.byNoteId) {
-    const auto found = actual.byNoteId.find(entry.first);
-    TEST_ASSERT_TRUE(found != actual.byNoteId.end());
-    TEST_ASSERT_EQUAL_UINT32(entry.second.passId, found->second.passId);
-    TEST_ASSERT_EQUAL_UINT32(entry.second.onIndex, found->second.onIndex);
-    TEST_ASSERT_EQUAL_INT32(entry.second.offIndex, found->second.offIndex);
+    const auto* found = actual.findByNoteId(entry.noteId);
+    TEST_ASSERT_NOT_NULL(found);
+    TEST_ASSERT_EQUAL_UINT32(entry.loc.passId, found->loc.passId);
+    TEST_ASSERT_EQUAL_UINT32(entry.loc.onIndex, found->loc.onIndex);
+    TEST_ASSERT_EQUAL_INT32(entry.loc.offIndex, found->loc.offIndex);
   }
 }
 
@@ -1413,28 +1414,28 @@ void test_stage57_pair_keeps_open_note_across_event_slice() {
   std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
   index.pairCapturePassEventRange(id, 0, LoopContentResolution::kDeviceGateEventsPerSlice,
                                   openOnByPitch, nullptr);
-  const auto crossedAfterFirst = index.byNoteId.find(10);
-  TEST_ASSERT_TRUE(crossedAfterFirst != index.byNoteId.end());
-  TEST_ASSERT_EQUAL_UINT32(6u, crossedAfterFirst->second.onIndex);
-  TEST_ASSERT_EQUAL_INT32(-1, crossedAfterFirst->second.offIndex);
-  const auto neighborAfterFirst = index.byNoteId.find(11);
-  TEST_ASSERT_TRUE(neighborAfterFirst != index.byNoteId.end());
-  TEST_ASSERT_EQUAL_INT32(-1, neighborAfterFirst->second.offIndex);
-  TEST_ASSERT_TRUE(index.byNoteId.find(12) == index.byNoteId.end());
+  const auto* crossedAfterFirst = index.findByNoteId(10);
+  TEST_ASSERT_NOT_NULL(crossedAfterFirst);
+  TEST_ASSERT_EQUAL_UINT32(6u, crossedAfterFirst->loc.onIndex);
+  TEST_ASSERT_EQUAL_INT32(-1, crossedAfterFirst->loc.offIndex);
+  const auto* neighborAfterFirst = index.findByNoteId(11);
+  TEST_ASSERT_NOT_NULL(neighborAfterFirst);
+  TEST_ASSERT_EQUAL_INT32(-1, neighborAfterFirst->loc.offIndex);
+  TEST_ASSERT_NULL(index.findByNoteId(12));
 
   index.pairCapturePassEventRange(id, LoopContentResolution::kDeviceGateEventsPerSlice,
                                   static_cast<uint32_t>(index.capturePasses.back().events.size()),
                                   openOnByPitch, nullptr);
-  const auto crossed = index.byNoteId.find(10);
-  TEST_ASSERT_TRUE(crossed != index.byNoteId.end());
-  TEST_ASSERT_EQUAL_INT32(8, crossed->second.offIndex);
-  const auto neighbor = index.byNoteId.find(11);
-  TEST_ASSERT_TRUE(neighbor != index.byNoteId.end());
-  TEST_ASSERT_EQUAL_INT32(9, neighbor->second.offIndex);
-  const auto open = index.byNoteId.find(12);
-  TEST_ASSERT_TRUE(open != index.byNoteId.end());
-  TEST_ASSERT_EQUAL_UINT32(10u, open->second.onIndex);
-  TEST_ASSERT_EQUAL_INT32(-1, open->second.offIndex);
+  const auto* crossed = index.findByNoteId(10);
+  TEST_ASSERT_NOT_NULL(crossed);
+  TEST_ASSERT_EQUAL_INT32(8, crossed->loc.offIndex);
+  const auto* neighbor = index.findByNoteId(11);
+  TEST_ASSERT_NOT_NULL(neighbor);
+  TEST_ASSERT_EQUAL_INT32(9, neighbor->loc.offIndex);
+  const auto* open = index.findByNoteId(12);
+  TEST_ASSERT_NOT_NULL(open);
+  TEST_ASSERT_EQUAL_UINT32(10u, open->loc.onIndex);
+  TEST_ASSERT_EQUAL_INT32(-1, open->loc.offIndex);
 }
 
 void test_stage518a_pair_by_note_id_last_wins() {
@@ -1450,13 +1451,41 @@ void test_stage518a_pair_by_note_id_last_wins() {
   ResolutionCostCounters counters;
   index.pairCapturePassEventRange(id, 0, static_cast<uint32_t>(events.size()), openOnByPitch,
                                   &counters);
-  const auto found = index.byNoteId.find(7);
-  TEST_ASSERT_TRUE(found != index.byNoteId.end());
-  TEST_ASSERT_EQUAL_UINT32(1u, found->second.onIndex);
-  TEST_ASSERT_EQUAL_INT32(2, found->second.offIndex);
-  TEST_ASSERT_EQUAL_UINT32(1u, counters.pairByNoteIdInserts);
+  TEST_ASSERT_EQUAL_UINT32(2u, counters.pairByNoteIdInserts);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.pairByNoteIdOverwrites);
+  TEST_ASSERT_EQUAL_UINT32(2u, counters.pairByNoteIdEntries);
+  const auto* beforeUnique = index.findByNoteId(7);
+  TEST_ASSERT_NOT_NULL(beforeUnique);
+  TEST_ASSERT_EQUAL_UINT32(1u, beforeUnique->loc.onIndex);
+  TEST_ASSERT_EQUAL_INT32(2, beforeUnique->loc.offIndex);
+
+  index.sortAndUniqueByNoteId(&counters);
+  TEST_ASSERT_TRUE(index.byNoteIdSorted);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(index.byNoteId.size()));
   TEST_ASSERT_EQUAL_UINT32(1u, counters.pairByNoteIdOverwrites);
   TEST_ASSERT_EQUAL_UINT32(1u, counters.pairByNoteIdEntries);
+  const auto* found = index.findByNoteId(7);
+  TEST_ASSERT_NOT_NULL(found);
+  TEST_ASSERT_EQUAL_UINT32(1u, found->loc.onIndex);
+  TEST_ASSERT_EQUAL_INT32(2, found->loc.offIndex);
+}
+
+void test_stage518b_pair_by_note_id_unique_keep_last() {
+  LoopContentResolution::TickIndex::ByNoteIdEntryVec entries;
+  LoopContentResolution::TickIndex::appendByNoteIdEntry(entries, 7, 1, 0);
+  LoopContentResolution::TickIndex::appendByNoteIdEntry(entries, 7, 1, 1);
+  entries[0].loc.offIndex = -1;
+  entries[1].loc.offIndex = 2;
+  LoopContentResolution::TickIndex::appendByNoteIdEntry(entries, 8, 1, 3);
+  LoopContentResolution::TickIndex::sortAndUniqueByNoteIdEntries(entries);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(entries.size()));
+  const auto* lastSeven = LoopContentResolution::TickIndex::findByNoteIdEntry(entries, 7, true);
+  TEST_ASSERT_NOT_NULL(lastSeven);
+  TEST_ASSERT_EQUAL_UINT32(1u, lastSeven->loc.onIndex);
+  TEST_ASSERT_EQUAL_INT32(2, lastSeven->loc.offIndex);
+  const auto* eight = LoopContentResolution::TickIndex::findByNoteIdEntry(entries, 8, true);
+  TEST_ASSERT_NOT_NULL(eight);
+  TEST_ASSERT_EQUAL_UINT32(3u, eight->loc.onIndex);
 }
 
 void test_stage518a_pair_open_on_peak_depth() {
@@ -1712,10 +1741,11 @@ void test_stage9_native_worst_case_micros() {
               static_cast<unsigned long long>(sample.rebuild.channelByNoteIdAppendMicros),
               static_cast<unsigned long long>(sample.rebuild.channelByNoteIdSortMicros));
   std::printf(
-      "stage518a pair tot=%llu bn=%llu op=%llu lk=%llu oth=%llu ent=%u ins=%u ow=%u "
+      "stage518b pair tot=%llu bn=%llu nsort=%llu op=%llu lk=%llu oth=%llu ent=%u ins=%u ow=%u "
       "pu=%u po=%u pk=%u oa=%u hb=%llu\n",
       static_cast<unsigned long long>(sample.indexCommit.pairTotalMicros),
       static_cast<unsigned long long>(sample.indexCommit.pairByNoteIdMicros),
+      static_cast<unsigned long long>(sample.indexCommit.pairByNoteIdSortMicros),
       static_cast<unsigned long long>(sample.indexCommit.pairOpenOnByPitchMicros),
       static_cast<unsigned long long>(sample.indexCommit.pairLookupMicros),
       static_cast<unsigned long long>(sample.indexCommit.pairOtherMicros),
@@ -1729,6 +1759,7 @@ void test_stage9_native_worst_case_micros() {
   TEST_ASSERT_NOT_NULL(std::strstr(pairLine, "DIAG,lcr,pair,tot="));
   TEST_ASSERT_NOT_NULL(std::strstr(pairLine, ",bn="));
   TEST_ASSERT_NOT_NULL(std::strstr(pairLine, ",op="));
+  TEST_ASSERT_NOT_NULL(std::strstr(pairLine, ",nsort="));
   TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.pairTotalMicros);
   TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.pairByNoteIdInserts);
 }
@@ -2058,6 +2089,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage57_recon_keeps_open_note_across_event_slice);
   RUN_TEST(test_stage57_pair_keeps_open_note_across_event_slice);
   RUN_TEST(test_stage518a_pair_by_note_id_last_wins);
+  RUN_TEST(test_stage518b_pair_by_note_id_unique_keep_last);
   RUN_TEST(test_stage518a_pair_open_on_peak_depth);
   RUN_TEST(test_stage518a_pair_counters_split_owners);
   RUN_TEST(test_stage57_span_channel_uses_full_resolved_not_note_slice);

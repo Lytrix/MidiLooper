@@ -142,12 +142,13 @@ Not a new DEC. Device evidence from three LoopContentResolution derived indexes:
 | `startsByTick` | `multimap` 224–413 ms / 8 inserts | `spanBoundaries` append+sort | 5.15 [`151450`](../captures/session_20260815_151450.log); after reserve [`170024`](../captures/session_20260815_170024.log) `app=1420` `sort=9439` |
 | `TickIndex::byTick` | `multimap` 50–121 ms / small batches | `tickEvents` (5.17e **removed** `byTick`) | [`170024`](../captures/session_20260815_170024.log) `iapp=201044` is **bulk append total**, not map insert (was `iapp=4.82 s` before 5.7a reserve) |
 | `channelByNoteId` | `unordered_map` 14.7 s [`164922`](../captures/session_20260815_164922.log) | `{noteId, channel}[]` append+sort+unique | [`170024`](../captures/session_20260815_170024.log) `capp=12373` `csort=1779` |
+| `TickIndex::byNoteId` | `unordered_map` 5.346 s [`172927`](../captures/session_20260815_172927.log) | `{noteId, loc}[]` append+sort+unique keep-last | 5.18b native; device remasure next |
 
 **Invariant:** Derived indexes used by LoopContentResolution must use contiguous/bulk storage on the target device. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths. Where the query contract permits, indexes are flat PSRAM arrays built by append/bulk construction and ordered or uniqued in a bounded operation. The representation is selected from the query contract; flat storage is not an automatic replacement for every associative structure. Representation B (bucket/offset table) is not justified unless a measured flat query is too expensive.
 
 This is **derived indexes + PSRAM + per-entry construction**. It is not “never use maps anywhere.”
 
-**Still associative (not this invariant’s swap list):** `TickIndex::byNoteId` and pairing `openOnByPitch` (`pair` leftover, `DFRAME` 1.277 s); `TickIndex::passById` (pass-count, not note-count). Do not fold `pair` / `recon` into this rule. Do not start 5.1.
+**Still associative (not this invariant’s swap list):** pairing `openOnByPitch` (LIFO, retained after 5.18a); `TickIndex::passById` (pass-count, not note-count). `byNoteId` is 5.18b last-wins flat (native; device remasure next). Do not fold `recon` into this rule. Do not start 5.1.
 
 ### Amendment 2026-08-15 — 5.7c FROZEN; pair is 5.18
 
@@ -177,6 +178,10 @@ A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiCha
 ### Amendment 2026-08-15 — 5.18a device: byNoteId owns pair
 
 [`172927`](../captures/session_20260815_172927.log): `tot=5356927` `bn=5345535` `op=2433` `lk=1424` `oth=7535` `pk=1` `ins=2396` `ow=0`. Pair `DFRAME` 390→420 is **1.273 s** (consecutive `frameIndex`). `openOnByPitch` is not the stall. Next representation experiment is **last-wins flat `byNoteId` only**. Retain the LIFO stack. No 5.1. No B. No `recon`.
+
+### Amendment 2026-08-15 — 5.18b last-wins flat byNoteId (native)
+
+`TickIndex::byNoteId` query is `NoteId` → last `{passId, on, off}`. Storage is now `{noteId, loc}[]`: C-order NOTE_ON append, reverse-scan OFF during the unsorted walk, one `stable_sort` by `noteId`, unique **keep-last** (opposite of 5.7c channel keep-first). `appendNoteEvents` uses `lower_bound` after unique. Device sequences one `nsort` slice after all pair ranges, before `isort`. Sliced pair ranges do not unique every 8 events. Native last-wins vs keep-first tests. `openOnByPitch` stays a per-pass LIFO stack. Device remasure next on the 139-bar class. No 5.1. No B. No `recon`. Do not flatten `openOnByPitch`.
 
 ### Constraints created
 

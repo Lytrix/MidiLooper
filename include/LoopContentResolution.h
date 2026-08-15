@@ -40,7 +40,7 @@ struct ResolutionCostCounters {
   /// 5.7c channel lookup: sequential NOTE_ON append vs one `stable_sort` + unique.
   uint64_t channelByNoteIdAppendMicros = 0;
   uint64_t channelByNoteIdSortMicros = 0;
-  /// 5.18a pair walk: `byNoteId` vs `openOnByPitch` vs `find` vs remainder.
+  /// 5.18a/b pair walk: `byNoteId` vs `openOnByPitch` vs `find` vs remainder; `nsort` is unique keep-last.
   uint64_t pairTotalMicros = 0;
   uint64_t pairByNoteIdMicros = 0;
   uint64_t pairOpenOnByPitchMicros = 0;
@@ -50,6 +50,7 @@ struct ResolutionCostCounters {
   uint32_t pairByNoteIdInserts = 0;
   uint32_t pairByNoteIdOverwrites = 0;
   uint32_t pairByNoteIdLookups = 0;
+  uint64_t pairByNoteIdSortMicros = 0;
   uint32_t pairOpenOnPushes = 0;
   uint32_t pairOpenOnPops = 0;
   uint32_t pairOpenOnPeakDepth = 0;
@@ -113,15 +114,19 @@ struct LoopContentResolution {
       uint32_t onIndex = 0;
       int32_t offIndex = -1;
     };
+    /// Private index entry — last-wins `NoteId` lookup after sort+unique (5.18b).
+    struct ByNoteIdEntry {
+      NoteId noteId = kInvalidNoteId;
+      NoteLocation loc;
+    };
 
     using CapturePassEntryVec =
         std::vector<CapturePassEntry, ExternalMemoryFirstAllocator<CapturePassEntry>>;
     using PassByIdMap =
         std::unordered_map<PassId, size_t, std::hash<PassId>, std::equal_to<PassId>,
                            ExternalMemoryFirstAllocator<std::pair<const PassId, size_t>>>;
-    using ByNoteIdMap =
-        std::unordered_map<NoteId, NoteLocation, std::hash<NoteId>, std::equal_to<NoteId>,
-                           ExternalMemoryFirstAllocator<std::pair<const NoteId, NoteLocation>>>;
+    using ByNoteIdEntryVec =
+        std::vector<ByNoteIdEntry, ExternalMemoryFirstAllocator<ByNoteIdEntry>>;
 
     /// Private event-index entry — not a span boundary. One row per MIDI event.
     struct TickEventEntry {
@@ -157,7 +162,19 @@ struct LoopContentResolution {
     CapturePassEntryVec capturePasses;
     PassByIdMap passById;
     TickEventEntryVec tickEvents;
-    ByNoteIdMap byNoteId;
+    ByNoteIdEntryVec byNoteId;
+    bool byNoteIdSorted = false;
+
+    static void appendByNoteIdEntry(ByNoteIdEntryVec& entries, NoteId noteId, PassId passId,
+                                    uint32_t onIndex);
+    static void sortAndUniqueByNoteIdEntries(ByNoteIdEntryVec& entries);
+    static const ByNoteIdEntry* findByNoteIdEntry(const ByNoteIdEntryVec& entries, NoteId noteId,
+                                                  bool sorted);
+    static ByNoteIdEntry* findByNoteIdEntryMutable(ByNoteIdEntryVec& entries, NoteId noteId);
+    void sortAndUniqueByNoteId(ResolutionCostCounters* counters = nullptr);
+    const ByNoteIdEntry* findByNoteId(NoteId noteId) const {
+      return findByNoteIdEntry(byNoteId, noteId, byNoteIdSorted);
+    }
   };
 
   /// Stage 7 in-RAM sounding snapshots. Not persisted (D3 is out of scope).

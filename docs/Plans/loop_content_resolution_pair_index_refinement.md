@@ -1,11 +1,11 @@
 # Loop content resolution — pair index (5.18 design)
 
-**Status:** **5.18a device PASS** [`172927`](../captures/session_20260815_172927.log) — `byNoteId` owns pair. `openOnByPitch` retained. Do not flatten `openOnByPitch`. Next: 5.18b last-wins flat for `byNoteId` only.  
+**Status:** **5.18b native shipped** — last-wins flat `byNoteId`. Device remasure next. `openOnByPitch` retained. Do not flatten `openOnByPitch`.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.7c **frozen** — [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md)  
 **Evidence:** [`172927`](../captures/session_20260815_172927.log) `pair tot=5356927 bn=5345535 op=2433 lk=1424`. [`170024`](../captures/session_20260815_170024.log) leftover `DFRAME` 1.277 s.
 
-**Does not start:** flattening `byNoteId` or `openOnByPitch`, `recon`, B, A2, 5.1 / 5.2, Stage 6, restoring the arm cap, reopening 5.7c.
+**Does not start:** flattening `openOnByPitch`, `recon`, B, A2, 5.1 / 5.2, Stage 6, restoring the arm cap, reopening 5.7c.
 
 **Boundary:** trust `resolveState` / `resolveWindow` answers and `walk=0`. Investigate **what pair writes and what later queries read**, not whether pairing notes is the right algorithm.
 
@@ -67,15 +67,15 @@ Device [`170024`](../captures/session_20260815_170024.log) does not yet say whic
 
 ### `byNoteId`
 
-Write in `pairNotesInPassRange` on NOTE_ON:
+Write in `pairNotesInPassRange` on NOTE_ON (5.18b):
 
 ```text
-byNoteId[noteId] = { pass.id, onIndex, offIndex: -1 }
+append {noteId, pass.id, onIndex, offIndex: -1}
 ```
 
-That is **assignment, last-wins**, not `emplace` first-wins.
+That is **append**, then after all pairing unique **keep-last** — not map assignment and not 5.7c first-wins.
 
-On NOTE_OFF, if the stacked ON has a `noteId` and `byNoteId[noteId].passId == pass.id`, set `offIndex`.
+On NOTE_OFF, reverse-scan the unsorted list; if the last matching `noteId` has `passId == pass.id`, set `offIndex`.
 
 Read in `TickIndex::appendNoteEvents`:
 
@@ -253,3 +253,13 @@ openOnByPitch   expensive? NO   → retain LIFO stack
 ```
 
 Do not flatten `openOnByPitch`. `pk=1` on this fixture; a compact stack is not required to close the stall. No 5.1. No B. No `recon`. Do not reopen 5.7c.
+
+---
+
+## 5.18b native shipped
+
+`byNoteId` is `{noteId, loc}[]`. NOTE_ON appends. NOTE_OFF reverse-scans the unsorted list and updates the last matching `noteId` in this pass. After all pairing: `stable_sort` by `noteId`, unique **keep-last**. Device one `nsort` slice after the last pair pass, before `isort`. Pair complete line adds `nsort=`. `openOnByPitch` unchanged.
+
+Native **1195/1195** including `test_stage518a_pair_by_note_id_last_wins` (append then unique) and `test_stage518b_pair_by_note_id_unique_keep_last`. Firmware `teensy41-capture-serial` SUCCESS, RAM1 free **6592**.
+
+Device remasure next: same 139-bar fixture. Compare `bn` / pair `DFRAME` to [`172927`](../captures/session_20260815_172927.log). Expect `bn` to collapse like channel `14.7 s → 12.4 ms`. `pk=1` / `op` stay small. `walk=0`.
