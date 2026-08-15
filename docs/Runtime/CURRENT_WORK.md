@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.15 complete; 5.16 phase-budget audit)
+Last updated: 2026-08-15 (DEC-037 5.16c prep slice; device remasure next)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.15 complete; 5.16 phase-budget audit)
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** 5.16a paper audit **recorded**. 5.15 **complete** — do not spend another cycle on A2/B/`startsByTick`. Plan: [`loop_content_resolution_device_phase_budget_refinement.md`](../Plans/loop_content_resolution_device_phase_budget_refinement.md) from [`151450`](../../captures/session_20260815_151450.log). Target is **largest slice**, not `reb=13.85s`. First implementation candidate: slice `prep` (182 ms one-shot) — not started. Do not start `byTick` swap, 5.1/5.2/6.x. Arm cap stays off. Production stays on materialize / 3b copy.
+**Now:** 5.16c `RebuildPrepare` sliced native — device remasure next. 5.15 **complete**. Plan: [`loop_content_resolution_device_phase_budget_refinement.md`](../Plans/loop_content_resolution_device_phase_budget_refinement.md). Target is **largest slice**, not `reb`. Do not start `byTick` swap, A2/B, 5.1/5.2/6.x. Arm cap stays off. Production stays on materialize / 3b copy.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

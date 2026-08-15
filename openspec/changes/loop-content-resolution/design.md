@@ -44,7 +44,7 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 |------|------------|
 | Prototype becomes a second O(history) store that `invalidateCaches` kills | Complexity gate; never cascade `invalidateCaches` onto the prototype; range caches only |
 | Per-bar `soundingAt` copies the resolved loop ([`225351`](../../../captures/session_20260814_225351.log) Critical / reboot) | Sparse stride; abort under pressure; checkpoint must not scale with bars × notes |
-| `prepareRebuildSpans` stalls MIDI/OLED even if checkpoint RAM is fixed | Split materialize/reconstruct; IndexCommit, pairing, reconstruct span build, display project, and span emplace batch `kDeviceGateEventsPerSlice`. Arm cap stays off. |
+| `prepareRebuildSpans` stalls MIDI/OLED even if checkpoint RAM is fixed | Split materialize/reconstruct; IndexCommit, pairing, reconstruct, project, span append, and `RebuildPrepare` materialize batch `kDeviceGateEventsPerSlice`. Arm cap stays off. |
 | `resolveNotes` becomes the center (play Notes) | Spec: `resolveNotes` is a derived consumer; correctness vs materialize events first |
 | First tick index is slow | Failure gate distinguishes poor index from architectural failure |
 | Layer semantics drift from overdub overlap | Native equivalence vs `materialize` + `reconstruct` on the overlap spec |

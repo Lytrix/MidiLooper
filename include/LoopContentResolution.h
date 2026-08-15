@@ -104,6 +104,18 @@ struct LoopContentResolution {
         std::unordered_map<NoteId, NoteLocation, std::hash<NoteId>, std::equal_to<NoteId>,
                            ExternalMemoryFirstAllocator<std::pair<const NoteId, NoteLocation>>>;
 
+    /// Record first (mergeSequence 0), then overdubs by mergeSequence. Same order as
+    /// `materializeActive`.
+    void collectActiveMaterializePasses(std::vector<const CapturePassEntry*>& ordered) const;
+    /// Sliced copy of one pass into `out`. Used for the record layer and empty-base overdubs.
+    void appendMaterializePassEvents(const CapturePassEntry& pass, uint32_t begin,
+                                     uint32_t endExclusive, SessionMidiEventVec& out) const;
+    /// Same tick compare as `mergeSortedMidiVectors` / `std::merge`. Appends at most `maxEvents`.
+    static uint32_t mergeSortedMidiEventRange(const SessionMidiEventVec& base, uint32_t& baseCursor,
+                                              const SessionMidiEventVec& addition,
+                                              uint32_t& addCursor, SessionMidiEventVec& merged,
+                                              uint32_t maxEvents);
+
     CapturePassEntryVec capturePasses;
     PassByIdMap passById;
     ByTickMap byTick;
@@ -138,7 +150,9 @@ struct LoopContentResolution {
     void prepareRebuildSpans(const TickIndex& index, const EditPassVec& editPasses,
                              uint32_t loopLength, uint32_t checkpointIntervalTicks,
                              ResolutionCostCounters* counters = nullptr);
-    /// Idle-slice 1: materialize + apply edits.
+    /// Clears checkpoint working state. Device `RebuildPrepare` then slices materialize.
+    bool beginRebuildResolvedEvents(uint32_t loopLength, uint32_t checkpointIntervalTicks,
+                                    SessionMidiEventVec& resolved);
     bool prepareRebuildResolvedEvents(const TickIndex& index, const EditPassVec& editPasses,
                                       uint32_t loopLength, uint32_t checkpointIntervalTicks,
                                       SessionMidiEventVec& resolved,

@@ -25,6 +25,7 @@
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "CanonicalResolutionFixture.h"
+#include "EditApply.h"
 #include "LoopContentResolution.h"
 #include "../../src/LoopContentResolution.cpp"
 #include "Utils/DisplayWindowUtils.h"
@@ -1269,6 +1270,64 @@ void test_stage9_range_spans_match_one_span() {
   TEST_ASSERT_EQUAL(oneSpan.spanBoundaries.size(), batched.spanBoundaries.size());
 }
 
+void test_stage9_range_prep_matches_full_prepare() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t interval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
+  SessionMidiEventVec full;
+  LoopContentResolution::StateCheckpoints fullCheckpoints;
+  TEST_ASSERT_TRUE(fullCheckpoints.prepareRebuildResolvedEvents(
+      index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, full, nullptr));
+
+  SessionMidiEventVec sliced;
+  LoopContentResolution::StateCheckpoints slicedCheckpoints;
+  TEST_ASSERT_TRUE(slicedCheckpoints.beginRebuildResolvedEvents(fixture.loopLengthTicks, interval,
+                                                               sliced));
+  std::vector<const LoopContentResolution::TickIndex::CapturePassEntry*> ordered;
+  index.collectActiveMaterializePasses(ordered);
+  TEST_ASSERT_TRUE(ordered.size() >= 1);
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  for (size_t passIndex = 0; passIndex < ordered.size(); ++passIndex) {
+    const LoopContentResolution::TickIndex::CapturePassEntry* pass = ordered[passIndex];
+    TEST_ASSERT_NOT_NULL(pass);
+    const uint32_t eventCount = static_cast<uint32_t>(pass->events.size());
+    if (passIndex == 0 || sliced.empty()) {
+      for (uint32_t i = 0; i < eventCount; i += step) {
+        const uint32_t end = std::min(i + step, eventCount);
+        index.appendMaterializePassEvents(*pass, i, end, sliced);
+      }
+      continue;
+    }
+    SessionMidiEventVec merged;
+    merged.reserve(sliced.size() + pass->events.size());
+    uint32_t baseCursor = 0;
+    uint32_t addCursor = 0;
+    for (;;) {
+      const uint32_t produced = LoopContentResolution::TickIndex::mergeSortedMidiEventRange(
+          sliced, baseCursor, pass->events, addCursor, merged, step);
+      if (produced == 0) {
+        break;
+      }
+    }
+    sliced = std::move(merged);
+  }
+  EditPassVec activeRows;
+  for (const EditPass& editPass : fixture.passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+    }
+  }
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(sliced, activeRows, fixture.loopLengthTicks);
+  }
+  assertResolvedEventsMatch(full, sliced);
+}
+
 void test_stage9_device_gate_slice_budget_matches_idle_maint_bar() {
   TEST_ASSERT_EQUAL_UINT32(50000u, LoopContentResolution::kDeviceGateSliceBudgetUs);
   TEST_ASSERT_EQUAL_UINT32(8u, LoopContentResolution::kDeviceGateEventsPerSlice);
@@ -1497,6 +1556,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_range_recon_matches_full);
   RUN_TEST(test_stage9_range_proj_matches_full);
   RUN_TEST(test_stage9_range_spans_match_one_span);
+  RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);
   RUN_TEST(test_stage9_native_worst_case_micros);
