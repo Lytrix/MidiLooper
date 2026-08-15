@@ -137,7 +137,7 @@ Largest LCR-period `DFRAME` gap is **4.38 s** during `idx` pass 1 (paint duratio
 
 ## Open after this identification
 
-1. 5.17d **PASS**. 5.7a reserve **PASS**. **5.7c FROZEN** [`170024`](../captures/session_20260815_170024.log) `capp=12373` `csort=1779`. Pair `DFRAME` 1.277 s is **5.18**: [`loop_content_resolution_pair_index_refinement.md`](loop_content_resolution_pair_index_refinement.md).
+1. 5.17d **PASS**. 5.7a reserve **PASS**. **5.7c FROZEN** [`170024`](../captures/session_20260815_170024.log) `capp=12373` `csort=1779`. Pair leftover **closed 5.18b** [`173842`](../captures/session_20260815_173842.log): [`loop_content_resolution_pair_index_refinement.md`](loop_content_resolution_pair_index_refinement.md).
 2. Do not treat `reb` as the optimization target.
 3. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
 
