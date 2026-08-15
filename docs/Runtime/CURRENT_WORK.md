@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 LCR readiness: STOPPED-only, one-shot, 30–60 s)
+Last updated: 2026-08-15 (DEC-037 6D incremental post-commit LCR maintenance investigation)
 
 ---
 
@@ -15,10 +15,11 @@ Last updated: 2026-08-15 (DEC-037 LCR readiness: STOPPED-only, one-shot, 30–60
 **Active:** native `LoopContentResolution` prototype. Do **not** optimize `materializeToEventVector` again. Do not wire resolution onto MIDI/display until three gates pass.
 
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
+**6D investigation:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md)  
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6C recapture owed** (short overdub after `mat=` so `DIAG,lcr,6c` survives RING). LCR is not always-ready: STOPPED-only gate, 30–60 s rebuild, one-shot `deviceGateFinished` (stamp dies on the next commit). 3b copy is the path that is ready on PLAYING overdub. Do not start readiness options A/B/C without a pick. Do not start midi_gap / 6.3.
+**Now:** **6D investigation** — can a committed overdub update already-built LCR indexes and invalidate/rebuild only affected resolution state, without cold reconstruction of historical content? Native measurement first. No firmware. **Rejected:** A (re-arm STOPPED cold-build), B (slice the 30–60 s full-history build during PLAYING). **6C** stays consume-when-ready; optional short-overdub recapture does not address always-ready. Do not start midi_gap / 6.3.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
