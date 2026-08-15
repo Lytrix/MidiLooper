@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6B device PASS [`192334`](../../captures/session_20260815_192334.log))
+Last updated: 2026-08-15 (DEC-037 6C native; device score next)
 
 ---
 
@@ -18,7 +18,7 @@ Last updated: 2026-08-15 (DEC-037 6B device PASS [`192334`](../../captures/sessi
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6B PASS** [`192334`](../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5, notes kept, no `adopt_partial`, no `VCACHE,full`. Next is **6C** (not started). Keep the 3b copy. Score 6C `begin_capture` against **2214 µs**, not 5.2 **10050 µs**. **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`. Do not construct/sort/checkpoint/resolve LCR on overdub start/stop.
+**Now:** **6C native** — `establishOverdubSourceView` consumes prepared LCR via `tryResolvePreparedWindow` (miss/stamp mismatch never rebuilds). 3b `visualCache.notes` copy stays fallback. Dirty-cache windowed walk stays last. Device score next: `begin_capture` against **2214 µs**, not 5.2 **10050 µs**. Look for `DIAG,lcr,6c`. **6B PASS** [`192334`](../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`. Do not construct/sort/checkpoint/resolve LCR on overdub start/stop. Do not start midi_gap / 6.3.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

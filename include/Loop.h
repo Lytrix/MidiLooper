@@ -166,7 +166,8 @@ struct Loop {
 
   void beginCapture(CapturePhase phase, uint32_t playheadPhaseTick = 0);
   void discardCapture();
-  /// Establish overdubSourceView: copy clean visualCache.notes, else a windowed chunk walk.
+  /// Establish overdubSourceView: consume prepared LCR window when ready, else copy clean
+  /// visualCache.notes (3b), else a windowed chunk walk.
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
   /// D2: merge hold-window display notes into the session source view for overlap lookup.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch);
