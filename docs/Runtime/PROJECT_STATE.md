@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-038 038.1 landed)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-038 038.1 HITL** — issue 1 + issue 2 LCR + issue 2 playback silence shipped (native). Device HITL next. Issue 3 parked (wrap-on-clock). Fixtures [`231206`](../captures/session_20260815_231206.log) / [`232914`](../captures/session_20260815_232914.log) / [`234535`](../captures/session_20260815_234535.log). Not 038.2. **6D.4 restamp holds** [`210508`](../captures/session_20260815_210508.log). Not all of LCR live.
+**Active work:** **DEC-038 038.1 HITL** — issue 1 + issue 2 LCR shipped. Playback silence gated to committed wrap undo ([`235536`](../captures/session_20260815_235536.log)). Issue 3 parked. Not 038.2. **6D.4 restamp holds** [`210508`](../captures/session_20260815_210508.log). Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

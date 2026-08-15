@@ -417,6 +417,20 @@ void test_overdub_session_undo_disables_sealed_wrap() {
   const PassId wrapId = loop.lastCommittedPassId();
   loop.pushOverdubSessionPass(wrapId, {});
   loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(600, 1, 64, 0)));
+  const uint32_t revisionAfterLive = loop.playbackRevision;
+  TEST_ASSERT_TRUE(loop.canUndoOverdubSession());
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  TEST_ASSERT_EQUAL(revisionAfterLive, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  bool wrapStillActive = false;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapStillActive = pass.state == CapturePassState::Active;
+    }
+  }
+  TEST_ASSERT_TRUE(wrapStillActive);
   TEST_ASSERT_TRUE(loop.canUndoOverdubSession());
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
   bool disabled = false;
