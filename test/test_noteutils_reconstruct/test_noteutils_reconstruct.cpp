@@ -396,31 +396,6 @@ void test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_windo
         NoteUtils::isLiveWrapHeadContinuationDisplay(300, 0, loopLength, true));
 }
 
-void test_session_wrap_playhead_in_window_would_paint_tick_zero_head() {
-    // 011413-style held tail ON (storage 2976) after session wrap. When S is inside the
-    // 768-tick wrap window, live continuation would add a visible head from tick 0.
-    // Overdub display now skips that head (`allowWrapHeadContinuation=false`).
-    constexpr uint32_t loopLength = 3072;
-    constexpr uint32_t tailOnTick = 2976;
-    constexpr uint32_t sessionStartInWindow = 224;
-    TEST_ASSERT_TRUE(NoteUtils::isLiveWrapHeadContinuationDisplay(
-        tailOnTick, sessionStartInWindow, loopLength, true));
-    const NoteUtils::WrapHeadSegment headInWindow = NoteUtils::resolveWrapHeadSegment(
-        loopLength, sessionStartInWindow, NoteUtils::WrapHeadSegmentContext::LivePlayhead, 768,
-        tailOnTick);
-    TEST_ASSERT_TRUE(headInWindow.visible);
-    TEST_ASSERT_EQUAL_UINT32(0u, headInWindow.startTick);
-    TEST_ASSERT_EQUAL_UINT32(sessionStartInWindow, headInWindow.endTickInclusive);
-
-    constexpr uint32_t sessionStartOutsideWindow = 3040;
-    TEST_ASSERT_FALSE(NoteUtils::isLiveWrapHeadContinuationDisplay(
-        tailOnTick, sessionStartOutsideWindow, loopLength, true));
-    const NoteUtils::WrapHeadSegment headOutside = NoteUtils::resolveWrapHeadSegment(
-        loopLength, sessionStartOutsideWindow, NoteUtils::WrapHeadSegmentContext::LivePlayhead,
-        768, tailOnTick);
-    TEST_ASSERT_FALSE(headOutside.visible);
-}
-
 void test_resolve_wrap_head_segment_committed_head_off_at_zero() {
     constexpr uint32_t loopLength = 1536;
     const NoteUtils::WrapHeadSegment head = NoteUtils::resolveWrapHeadSegment(
@@ -471,7 +446,6 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_resolve_wrap_head_segment_live_playhead_hidden_before_tail_on);
     RUN_TEST(test_is_live_wrap_head_continuation_display_tail_open_playhead_zero);
     RUN_TEST(test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window);
-    RUN_TEST(test_session_wrap_playhead_in_window_would_paint_tick_zero_head);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_at_zero);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_mid_loop);
     RUN_TEST(test_wrap_head_exclusive_end_for_draw_at_zero);

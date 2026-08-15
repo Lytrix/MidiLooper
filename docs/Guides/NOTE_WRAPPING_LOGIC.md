@@ -133,8 +133,6 @@ Tail-region open notes without a loop-end off yet use `isLiveWrapHeadContinuatio
 
 **Growing live RECORD** (`isRecording && !isPlaying`): wrap-head continuation is disabled. `closeTick < noteOn` means the playhead is catching up to a frontier note-on, not a loop wrap — open notes get a temporary display note-off at the current capture tick only (no head from tick 0).
 
-**Overdub:** wrap *tail* continuation stays on (held note remains visible to `loopLength - 1` after the playhead returns to S). Wrap *head* continuation is off. Session wrap re-appends a held tail-region ON; if S is inside the 768-tick wrap window, `isLiveWrapHeadContinuationDisplay` would paint a tick-0 head until NoteOff ([`011413`](../../captures/session_20260816_011413.log) note 30). The head appears on NoteOff via the capture-preview wrap path when the pair is sealed.
-
 Piano-roll drawing uses `wrapHeadExclusiveEndForDraw` to map inclusive head ends to exclusive pixel ends (main piano roll and overview strip).
 
 ### 3. Preserve Original MIDI Data
