@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-15 (DEC-037 6D.1 native: sort and merge FAIL history scaling)
+Last updated: 2026-08-15 (DEC-037 6D.2 native PASS: split history+delta)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-037 6D.1 native: sort and merge FAIL history scali
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-037** `LoopContentResolution` — **6D.1 native FAIL scaling** ([`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md)): append+merge oracle PASS; sort 602→2624 µs and merge 46→174 µs at 8192→32768 history, same delta; both < 50 ms and both grow with history. Production frozen. A/B rejected. 6C consume-when-ready. **6B PASS** [`192334`](../../captures/session_20260815_192334.log). **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Layer D 3b **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs.
+**Active work:** **DEC-037** `LoopContentResolution` — **6D.2 native PASS** ([`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md)): split frozen `tickEvents` + delta; `no_delta` query `query_us=4` / `candidate_history=8` at H=8192→65536, Δ=8. 6D.1 one-vector sort/merge still FAIL. Not live incremental LCR. Production frozen. A/B rejected. 6C consume-when-ready. **6B PASS** [`192334`](../../captures/session_20260815_192334.log). **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Layer D 3b **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

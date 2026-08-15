@@ -1,4 +1,4 @@
-# LoopContentResolution — incremental post-commit index (6D / 6D.1)
+# LoopContentResolution — incremental post-commit index (6D / 6D.1 / 6D.2)
 
 **Status:** Active — design/measurement investigation. No firmware.  
 **Date:** 2026-08-15  
@@ -18,8 +18,9 @@
 | Stage **6C** | Consume-when-ready: `tryResolvePreparedWindow` → `overdubSourceView` when the stamp already matches |
 | Investigation **6D** | After a committed content mutation, keep the index required for a **subsequent overdub query** incrementally current, within a bounded maintenance budget |
 | Experiment **6D.1** | One committed `OverdubPass` on an already-prepared index. No edits, undo, disabled passes, checkpoints, or other LCR indexes |
+| Experiment **6D.2** | Frozen historical `tickEvents` + separate delta `TickEventEntryVec`. Two-source `findRawWindow` without compacting. Native only |
 
-**6D.1** is the next experiment. It is **not** Stage 6C and **not** “LCR is now always live.”
+**6D.1** measured FAIL for one-vector mutation. **6D.2** is the next experiment: split frozen `tickEvents` + delta `TickEventEntryVec`. It is **not** Stage 6C and **not** “LCR is now always live.”
 
 Naming: 6C stays consume. Calling the experiment 6C-1 would collide with that consume path. 6D.1 is the first slice of 6D.
 
@@ -99,7 +100,7 @@ consume already-prepared state
 begin_capture
 ```
 
-6B already does bounded work at commit (`Loop::markAffectedDisplayCacheRanges` from `Track::finalizeCommitSideEffects`). That commit site is a **later firmware candidate**, not 6D.1. Production architecture stays untouched until native 6D.1 establishes the mutation contract.
+6B already does bounded work at commit (`Loop::markAffectedDisplayCacheRanges` from `Track::finalizeCommitSideEffects`). That commit site is a **later firmware candidate**, not 6D.1 / 6D.2. Production architecture stays untouched until repeated-overdub scaling and a production architecture gate.
 
 Do not make 6D a “LCR is now always live” change.
 
@@ -283,7 +284,7 @@ affected tick interval
 
 - A and B
 - 6C consume-path edits (`establishOverdubSourceView`)
-- Production commit, idle gate, overdub start/stop, and `preparedWindowReady` until native 6D.1 closes the mutation contract
+- Production commit, idle gate, overdub start/stop, and `preparedWindowReady` until repeated-overdub scaling and a production architecture gate
 - Flatten `openOnByPitch`; representation B; rewrite `recon`
 - `ensure*` rebuild helpers on `startOverdubbing` / `stopOverdubbing` / `handleMidiInput`
 - midi_gap ([`192334`](../../captures/session_20260815_192334.log)); 6.3; 6.4
@@ -311,3 +312,106 @@ Both grow with `history_events` at fixed `commit_delta_events`. Both samples are
 **Mutation contract:** not established for flat `tickEvents`. An `O(commit_delta_events)` update would require a representation that does not rewrite historical entries. Do not reopen 5.17 / add a tree in this slice. Production stays frozen.
 
 Do not check off 6D as “all of LCR incremental.” Firmware needs an architecture gate after a treatment that passes the scaling contract.
+
+---
+
+## 6D.2 — split history + delta (native experiment only)
+
+**Decision boundary:** 6D.2 is the final native test of whether a split historical/delta representation can preserve overdub readiness without mutating the historical index. It is **not** authorization to make LCR incrementally live.
+
+```text
+6D.1 question:
+Can one sorted vector remain incrementally ordered after Δ?
+Answer: NO.
+
+6D.2 question:
+Does the query actually require one globally sorted vector?
+Answer: NO for `findRawWindow`. Two ordered sources match the compacted oracle; visit counts track the requested window.
+```
+
+```text
+6D.2 PASS
+   ↓
+prove repeated overdub commits
+   ↓
+only then consider production architecture gate
+
+6D.2 FAIL
+   ↓
+stop incremental overdub LCR
+   ↓
+keep 3b
+```
+
+Option 1 (stop incremental LCR, keep 3b) is the **failure-gate fallback**, not the next step. Option 3 (reopen the 6D.1 < 50 ms samples as a pass) stays dead. A 2.6 ms full-history operation that grows with the loop is not overdub readiness.
+
+### Representation (preserve frozen 5.17)
+
+```text
+tickEvents        ← frozen 5.17 historical vector; immutable on commit
+TickEventEntryVec ← newly appended pass/delta; not a TickIndex member
+```
+
+Do not add a new domain noun. Do not compact the two vectors into one (that is 6D.1). No tree. No `byTick`. No representation B. No firmware.
+
+Commit:
+
+```text
+append/copy Δ → sort Δ → publish delta
+```
+
+Target commit cost: `O(Δ log Δ)`, not `O(H log H)` and not `O(H + Δ)` from merging.
+
+Query: `findRawWindow` consumes two ordered sources without materializing them back into one.
+
+### Acceptance
+
+```text
+fixed Δ
+increasing H
+
+commit maintenance → should track Δ
+query window        → should NOT track H materially
+oracle              → exact/semantic match
+```
+
+Windows:
+
+1. window with **no** delta events — if a tiny window walks thousands of historical entries, FAIL
+2. window containing delta events
+3. window overlapping old + new events
+
+Record:
+
+```text
+H       Δ       commit_us    query_us
+8192    8       ...          ...
+16384   8       ...          ...
+32768   8       ...          ...
+65536   8       ...          ...
+```
+
+and `candidate_history`, `candidate_delta`, `resolution_ops`.
+
+If `commit ≈ Δ` and `query ≈ H`, **stop immediately and take option 1**.
+
+### Native results (2026-08-15)
+
+Instrument: `test_stage6d2_split_query_matches_merged_oracle`, `test_stage6d2_split_history_delta_scales`. Production untouched. `TickIndex` has no delta member. Host native, min of 5 runs, delta **8**.
+
+**Correctness:** three successive overdubs keep `tickEvents` at the prepared size. Two-source `resolveWindow(history, delta)` matches compacted `tickEvents`, cold `commitCapturePass`, and (after the third) the materialize oracle.
+
+**Scaling** (`no_delta` window of 16 ticks; `delta` and `overlap` visit counts identical at every H):
+
+| H | Δ | commit_us | query_us (no_delta) | candidate_history | candidate_delta | resolution_ops |
+|---|---|-----------|---------------------|-------------------|-----------------|----------------|
+| 8192 | 8 | 0 | 4 | 8 | 0 | 8 |
+| 16384 | 8 | 0 | 4 | 8 | 0 | 8 |
+| 32768 | 8 | 0 | 4 | 8 | 0 | 8 |
+| 65536 | 8 | 0 | 4 | 8 | 0 | 8 |
+
+`delta` window: `candidate_history=0` `candidate_delta=8` `query_us=4`. `overlap` window: `4 + 8` `query_us=6`. `commit_us=0` is below 1 µs timer resolution for an 8-entry sort.
+
+**6D.2 PASS.** Commit tracks Δ. Query visit counts track the requested window, not H. A tiny history-only window does not walk thousands of historical entries.
+
+This is **not** authorization to make LCR incrementally live. Next native step is repeated-overdub commit scaling (delta accumulating). Only then a production architecture gate. Firmware stays frozen. Option 1 is unused. Option 3 stays dead.
