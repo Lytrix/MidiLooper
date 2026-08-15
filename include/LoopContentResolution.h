@@ -31,6 +31,9 @@ struct ResolutionCostCounters {
   uint32_t checkpointCount = 0;
   uint32_t replayStartTick = 0;
   uint32_t eventsReplayed = 0;
+  /// 5.15c span-boundary index: sequential append vs one `stable_sort` by tick.
+  uint64_t spanBoundaryAppendMicros = 0;
+  uint64_t spanBoundarySortMicros = 0;
 };
 
 struct SoundingNote {
@@ -127,10 +130,8 @@ struct LoopContentResolution {
     uint32_t loopLengthTicks = 0;
     std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> soundingAt;
     NoteSpanVec spans;
-    /// Start and exclusive-end ticks for tail replay (both keyed here).
-    std::multimap<uint32_t, size_t, std::less<uint32_t>,
-                  ExternalMemoryFirstAllocator<std::pair<const uint32_t, size_t>>>
-        startsByTick;
+    /// Tick-ordered start and exclusive-end entries for tail replay (flat A).
+    SpanBoundaryEntryVec spanBoundaries;
 
     void rebuild(const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
                  uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters = nullptr);
@@ -145,15 +146,17 @@ struct LoopContentResolution {
     /// Idle-slice 2: reconstruct display notes into spans.
     bool finishRebuildSpansFromEvents(const SessionMidiEventVec& resolved,
                                       ResolutionCostCounters* counters = nullptr);
-    /// Sliced span emplace after reconstruct. `[begin, endExclusive)` notes.
+    /// Sliced span + boundary append after reconstruct. `[begin, endExclusive)` notes.
+    /// Does not sort; call `sortSpanBoundaries` after the last range.
     bool appendSpansFromNotes(const SessionMidiEventVec& resolved,
                               const NoteUtils::DisplayNoteVec& notes, uint32_t begin,
                               uint32_t endExclusive, ResolutionCostCounters* counters = nullptr);
+    void sortSpanBoundaries(ResolutionCostCounters* counters = nullptr);
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, SoundingNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;
-    /// 5.15b measurement: C-order append (start then end per span), then `stable_sort` by tick.
+    /// C-order append (start then end per span), then `stable_sort` by tick.
     static void appendSpanBoundaryEntries(const NoteSpanVec& spans, uint32_t begin,
                                           uint32_t endExclusive, SpanBoundaryEntryVec& out);
     static void sortSpanBoundaryEntriesByTick(SpanBoundaryEntryVec& entries);

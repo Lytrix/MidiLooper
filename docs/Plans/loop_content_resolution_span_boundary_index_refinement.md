@@ -1,6 +1,6 @@
 # Loop content resolution — span-boundary index (5.15 design)
 
-**Status:** 5.15b native A vs C **PASS** 2026-08-15 — pick **A** for 5.15c. No device swap yet. No B. No `byTick`.
+**Status:** 5.15c shipped 2026-08-15 — `spanBoundaries` is production A. Device 5.7 remasure next. No B. No `byTick`.
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Does not start:** 5.1 / 5.2 re-run, Stage 6 production swap, batch-size 1 or 4, deleting `materializeToEventVector`
 
@@ -174,10 +174,22 @@ A resolve is not worse. Sort is most of A’s host total and still 4 µs — **d
 
 These host numbers do **not** prove device append+sort time. 5.15c owns the device measurement (append / sort / total) after the swap.
 
-## Open after 5.15b
+## 5.15c shipped (2026-08-15)
 
-1. **5.15c:** swap `startsByTick` to flat A on the device gate. Identifier stays a private `StateCheckpoints` entry (`tick` + `spanIndex`).
+`StateCheckpoints::spanBoundaries` is the production index. `startsByTick` is removed.
+
+- `appendSpansFromNotes` appends start then exclusive-end (C order). No per-entry map allocation.
+- One idle slice after the last append runs `stable_sort` by tick (`DIAG,lcr,phase,sort`).
+- `resolveState` reads the flat list.
+- Complete line: `app=` / `sort=` (append µs and sort µs).
+- `TickIndex::byTick` unchanged.
+
+Device 5.7 remasure owns whether append+sort beats the 224–413 ms map emplace.
+
+## Open after 5.15c
+
+1. Device remasure of 5.7 on the 139-bar loop. Read `app=` / `sort=` / `phase,sort` / `spans` `idle_maint` / `DFRAME`.
 2. A2 only if device **sort** dominates A’s total.
 3. B only if device A **resolve** is too large.
 4. `byTick` later, same lens — not this change.
-5. Candidate Teensy constraint (confirm after 5.15c device numbers): PSRAM is good for bulk storage, pathological for fine-grained dynamic structures. Do not record it as proven from host µs.
+5. Candidate Teensy constraint (confirm after 5.7 remasure): PSRAM is good for bulk storage, pathological for fine-grained dynamic structures.

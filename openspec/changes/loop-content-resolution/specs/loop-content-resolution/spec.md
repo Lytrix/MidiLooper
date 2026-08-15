@@ -73,7 +73,7 @@ Building a sounding-state snapshot at every bar of an `035414`-class loop (notes
 #### Scenario: Flat span-boundary index matches the map
 
 - **WHEN** `resolveState` runs from sparse checkpoints using a flat tick-ordered span-boundary list built by appending start then exclusive-end per span and `stable_sort` by tick
-- **THEN** the sounding-state results match the current `startsByTick` map and the materialize oracle
+- **THEN** the sounding-state results match the materialize oracle
 - **AND** `passChunkListsWalked` is 0
 - **AND** a span that ends at tick T and another that starts at T produce the same sounding set as the map
 
