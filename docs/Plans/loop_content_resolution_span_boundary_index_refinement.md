@@ -184,12 +184,25 @@ These host numbers do **not** prove device append+sort time. 5.15c owns the devi
 - Complete line: `app=` / `sort=` (append µs and sort µs).
 - `TickIndex::byTick` unchanged.
 
-Device 5.7 remasure owns whether append+sort beats the 224–413 ms map emplace.
+Device 5.7 remasure [`151450`](../captures/session_20260815_151450.log): **append+sort beats the map.**
+
+| Counter | [`143009`](../captures/session_20260815_143009.log) C | [`151450`](../captures/session_20260815_151450.log) A |
+|---------|------|------|
+| complete `reb` | 104.36 s | **13.85 s** |
+| `app` | (map emplace in `spans`) | **5.49 s** |
+| `sort` | — | **10.2 ms** |
+| `st` | 16.4 ms | 13.0 ms |
+| `walk` | 0 | 0 |
+| `spans` wall | ~108 s | **16.5 s** |
+| `spans` `loop_rem` | 206–412 ms / slice | **none** |
+| `spans` `DFRAME` gap | 8.9–13.1 s | 1.4–2.2 s |
+
+**Do not build A2** (sort is 10 ms). **Do not build B** (`resolveState` is 13 ms). `byTick` `idx`/`pair` unchanged (50–83 ms). `prep` still 182 ms.
 
 ## Open after 5.15c
 
-1. Device remasure of 5.7 on the 139-bar loop. Read `app=` / `sort=` / `phase,sort` / `spans` `idle_maint` / `DFRAME`.
-2. A2 only if device **sort** dominates A’s total.
-3. B only if device A **resolve** is too large.
-4. `byTick` later, same lens — not this change.
-5. Candidate Teensy constraint (confirm after 5.7 remasure): PSRAM is good for bulk storage, pathological for fine-grained dynamic structures.
+1. Decide 5.7’s remaining bar: `prep` 182 ms, `byTick` 50–83 ms, `spans` `DFRAME` gaps 1.4–2.2 s. Do not start 5.1/5.2 until that decision.
+2. A2: **no** — sort is 10.2 ms.
+3. B: **no** — `st=13 ms`.
+4. `byTick` later, same lens — not folded into 5.15.
+5. Device evidence for the Teensy constraint on this index: PSRAM map insert of 8 spans was 224–413 ms; sequential append of 8 is ~18 ms average (`app=5.49s` / 299 slices).

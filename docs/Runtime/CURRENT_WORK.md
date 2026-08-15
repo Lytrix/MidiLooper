@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.15c flat spanBoundaries on device gate)
+Last updated: 2026-08-15 (DEC-037 5.15c device PASS [`151450`]; 5.7 size PASS, latency not fully closed)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.15c flat spanBoundaries on device gate)
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Device remasure of 5.7 after 5.15c. `startsByTick` is gone; `spanBoundaries` is C-order append + one `sort` slice. Complete `DIAG,lcr` adds `app=` / `sort=`. Do not touch `byTick`. Do not start B/A2 or 5.1/5.2/6.x. Arm cap stays off. Production stays on materialize / 3b copy. Design: [`loop_content_resolution_span_boundary_index_refinement.md`](../Plans/loop_content_resolution_span_boundary_index_refinement.md).
+**Now:** 5.15c device **PASS** [`151450`](../../captures/session_20260815_151450.log) — `app=5.49s` `sort=10.2ms` `reb=13.85s` `walk=0` (was `reb=104s` map emplace). Do **not** start A2 or B. 5.7 size PASS; written 50 ms / 1 s `DFRAME` bar still open on `prep` 182 ms, `byTick` `idx`/`pair` 50–83 ms, `spans` `DFRAME` gaps 1.4–2.2 s. Do not start 5.1/5.2/6.x until that bar is decided. Arm cap stays off. Production stays on materialize / 3b copy. Design: [`loop_content_resolution_span_boundary_index_refinement.md`](../Plans/loop_content_resolution_span_boundary_index_refinement.md).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 
