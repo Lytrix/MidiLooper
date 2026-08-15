@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — native Stages 0–8 PASS; Stage 9 through 5.15c (`spanBoundaries` append+sort). 5.7 remasure owed after flash. [`loop_content_resolution_span_boundary_index_refinement.md`](Plans/loop_content_resolution_span_boundary_index_refinement.md). DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
+**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — native Stages 0–8 PASS; 5.15c device **PASS** [`151450`](../captures/session_20260815_151450.log) `app=5.49s` `sort=10ms` `reb=13.85s`. 5.7 size PASS; 50 ms / 1 s bar still open on `prep` and `byTick`. [`loop_content_resolution_span_boundary_index_refinement.md`](Plans/loop_content_resolution_span_boundary_index_refinement.md). DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 
