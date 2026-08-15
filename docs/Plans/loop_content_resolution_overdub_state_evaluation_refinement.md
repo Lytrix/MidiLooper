@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1–6E.5 PASS**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) recorded; firmware not started  
+**Status:** Active — **038.1 landed**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo). Not 038.2.  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) wrap commit + session undo  
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** DEC-038 **038.1** firmware (wrap at S + session stack). Not 038.2 GUS wire. Not midi_gap / 6.3.
+**Next when asked:** DEC-038 **038.2** GUS `passIds`. HITL wrap-over-wrap after upload. Not midi_gap / 6.3.
 
 ---
 
@@ -264,6 +264,12 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 | **6E.5** | **PASS** — held ON@500 across S=777 is not published. Reconstruct-to-loop-end and OFF-at-S are the FAIL seals. Owner: `finalizePendingNotes` (STOP). |
 
 ---
+
+## 038.1 landed (2026-08-15)
+
+`Track::commitOverdubWrapAtSessionStart` seals completed pairs at S, publishes, `beginCapture`, stays OVERDUBBING. Held ONs stay on live capture. `handleUndo` / `handleRedo` session-gate while OVERDUBBING. No GUS `passIds`. After stop, existing single-`passId` `OverdubPassAdded` covers the last wrap only.
+
+Native: `test_overdub_source_view` wrap/extract/session + `didPlayheadCrossPhase`. Full native 1222. Firmware RAM1 free 6528 (`TrackUndo` + wrap TUs in FLASH).
 
 ## Production architecture gate (DEC-038; firmware after 038.1 approval)
 

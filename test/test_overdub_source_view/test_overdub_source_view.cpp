@@ -244,6 +244,123 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
+void test_extract_open_note_ons_leaves_completed_pairs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 60, 90)));
+  SessionMidiEventVec held;
+  TEST_ASSERT_EQUAL(1u, loop.extractOpenCaptureNoteOns(held));
+  TEST_ASSERT_EQUAL(1u, held.size());
+  TEST_ASSERT_TRUE(held[0].isNoteOn());
+  TEST_ASSERT_EQUAL(60, held[0].data.noteData.note);
+  TEST_ASSERT_EQUAL(500u, held[0].tick);
+  SessionMidiEventVec remaining;
+  loop.capture.store.copyEventsTo(remaining);
+  TEST_ASSERT_EQUAL(2u, remaining.size());
+}
+
+void test_empty_wrap_does_not_commit_a_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  const PassId before = loop.lastCommittedPassId();
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 60, 90)));
+  SessionMidiEventVec held;
+  TEST_ASSERT_EQUAL(1u, loop.extractOpenCaptureNoteOns(held));
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  TEST_ASSERT_EQUAL(before, loop.lastCommittedPassId());
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_EQUAL(777u, loop.playheadPhaseTick);
+  for (const MidiEvent& evt : held) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(evt));
+  }
+  TEST_ASSERT_FALSE(loop.capture.store.empty());
+}
+
+void test_wrap_commit_publishes_completed_pair_and_keeps_held() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 60, 90)));
+  SessionMidiEventVec held;
+  loop.extractOpenCaptureNoteOns(held);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 777));
+  const PassId wrapId = loop.lastCommittedPassId();
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, wrapId);
+  loop.pushOverdubSessionPass(wrapId, {});
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_EQUAL(777u, loop.playheadPhaseTick);
+  loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
+  for (const MidiEvent& evt : held) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(evt));
+  }
+  SessionMidiEventVec live;
+  loop.capture.store.copyEventsTo(live);
+  TEST_ASSERT_EQUAL(1u, live.size());
+  TEST_ASSERT_EQUAL(60, live[0].data.noteData.note);
+  TEST_ASSERT_EQUAL(2u, loop.overdubSessionUndoDepth());
+}
+
+void test_overdub_session_undo_disables_sealed_wrap() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 777));
+  const PassId wrapId = loop.lastCommittedPassId();
+  loop.pushOverdubSessionPass(wrapId, {});
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.canUndoOverdubSession());
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  bool disabled = false;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      disabled = pass.state == CapturePassState::Disabled;
+    }
+  }
+  TEST_ASSERT_TRUE(disabled);
+  TEST_ASSERT_TRUE(loop.canRedoOverdubSession());
+  TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      TEST_ASSERT_EQUAL(CapturePassState::Active, pass.state);
+    }
+  }
+}
+
+void test_should_commit_overdub_wrap_after_leaving_start() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  loop.openOverdubSession(777);
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
+  loop.armOverdubWrapAfterLeavingStart(778);
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(776, 777));
+  loop.noteOverdubWrapCommitted();
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_overdub_start_establishes_source_view);
@@ -255,5 +372,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_consumes_prepared_lcr_when_cache_dirty);
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_discard_and_commit_clear_source_view);
+  RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
+  RUN_TEST(test_empty_wrap_does_not_commit_a_pass);
+  RUN_TEST(test_wrap_commit_publishes_completed_pair_and_keeps_held);
+  RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
+  RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
   return UNITY_END();
 }

@@ -101,6 +101,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
         tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
   const uint32_t captureStartUs = micros();
+  loop.openOverdubSession(playheadPhase);
   loop.beginCapture(CapturePhase::Overdub, playheadPhase);
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -138,6 +139,7 @@ void Track::stopOverdubbing() {
     closeTick = capturePhaseTick(currentTick);
   }
   if (handleNoteEditFold(true, currentTick, closeTick, stopStartUs)) {
+    loop.closeOverdubSession();
     return;
   }
   finalizePendingNotes(currentTick);
@@ -179,6 +181,7 @@ void Track::stopOverdubbing() {
   logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   HotPathTelemetry::requestDeferredSummary("overdub_stop");
+  loop.closeOverdubSession();
 }
 
 void Track::stopOverdubbingToStopped() {
@@ -191,6 +194,7 @@ void Track::stopOverdubbingToStopped() {
   }
   sendAllNotesOff();
   if (handleNoteEditFold(false, currentTick, closeTick, /*stopStartUs=*/0)) {
+    loop.closeOverdubSession();
     return;
   }
   finalizePendingNotes(currentTick);
@@ -207,4 +211,5 @@ void Track::stopOverdubbingToStopped() {
   displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
   logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
   HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+  loop.closeOverdubSession();
 }

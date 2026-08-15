@@ -111,6 +111,9 @@ public:
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
+  /// DEC-038 038.1: seal completed pairs at S, publish, beginCapture, stay OVERDUBBING.
+  void commitOverdubWrapAtSessionStart();
+  void maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
 
   // Track management
   void clear();

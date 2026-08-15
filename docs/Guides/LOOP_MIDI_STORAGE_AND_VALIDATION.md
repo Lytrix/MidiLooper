@@ -340,10 +340,14 @@ Committed **editPass** rows store canonical **EditPass** row fields (SD v5); liv
 1. If **E:** stack non-empty → session undo/redo (`EditSession undo` / `redo` logs); return.
 2. Else → log `No session undo available` / `No session redo available`; return. **Do not** pop **U:** (no `Scoped edit pass undone`, no capture-pass disable).
 
-**While NOTE_EDIT inactive:**
+**While OVERDUBBING** (DEC-038 038.1; after NOTE_EDIT gate):
+
+1. Session stack only (`Loop` `PassId` list + live `capture.store`). Live wrap first, then disable sealed wraps. **Do not** pop **U:**.
+2. Empty session → log `No overdub session undo available`; return.
+
+**While NOTE_EDIT inactive and not OVERDUBBING:**
 
 1. Global undo/redo for the selected slot via `TrackUndo::undoForLoop` / `redoForLoop` — any `UndoEntryKind` at stack cursor for that slot (**RecordPassAdded**, **OverdubPassAdded**, **NoteEditPassClosed**, **LoopBoundaryChange**, **ClearSlot**, …).
-2. Open overdub capture: if `capture.phase == Overdub` and capture non-empty, undo discards live capture (`discardCapture`) without popping the stack (handled inside the global undo path).
 
 **Separate input path:** `handleUndoClearTrack` / `handleRedoClearTrack` — only when the top global entry is **ClearSlot** for the slot (Button B double-press).
 

@@ -166,6 +166,24 @@ struct Loop {
 
   void beginCapture(CapturePhase phase, uint32_t playheadPhaseTick = 0);
   void discardCapture();
+  /// Overdub session start S (`beginCapture` playheadPhaseTick). UINT32_MAX = no session.
+  uint32_t playheadPhaseTick = UINT32_MAX;
+  void openOverdubSession(uint32_t sessionPlayheadPhaseTick);
+  void closeOverdubSession();
+  bool hasOverdubSession() const { return playheadPhaseTick != UINT32_MAX; }
+  void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
+  bool shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) const;
+  void noteOverdubWrapCommitted();
+  /// Move unpaired capture NoteOns out of `capture.store` (6E.5). Returns extracted count.
+  size_t extractOpenCaptureNoteOns(SessionMidiEventVec& out);
+  void pushOverdubSessionPass(PassId passId, EditPassIdList companionIds);
+  void dropOverdubSessionRedoTail();
+  bool undoOverdubSession();
+  bool redoOverdubSession();
+  bool canUndoOverdubSession() const;
+  bool canRedoOverdubSession() const;
+  size_t overdubSessionUndoDepth() const;
+  size_t overdubSessionRedoDepth() const;
   /// Establish overdubSourceView: consume prepared LCR window when ready, else copy clean
   /// visualCache.notes (3b), else a windowed chunk walk.
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
@@ -310,6 +328,11 @@ struct Loop {
   bool overdubSourceViewEstablished_ = false;
   PendingNoteChangeVec pendingNoteChanges_;
   OverlapHoldTotals overlapHoldTotals_;
+  bool overdubWrapArmed_ = false;
+  std::vector<PassId> overdubSessionPassIds_;
+  std::vector<EditPassIdList> overdubSessionCompanionIds_;
+  size_t overdubSessionCursor_ = 0;
+  SessionMidiEventVec overdubSessionLiveUndoEvents_;
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();

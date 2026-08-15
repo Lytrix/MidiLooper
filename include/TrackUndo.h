@@ -21,6 +21,8 @@ public:
                                    EditPassIdList editPassIds, EditPassType editPassType,
                                    uint8_t slotIndex);
     static void beginOverdubSession(Track& track);
+    static bool undoOverdubSession(Track& track, Loop& loop);
+    static bool redoOverdubSession(Track& track, Loop& loop);
     static void undoOverdub(Track& track);
     static void redoOverdub(Track& track);
     static void undoForLoop(Track& track, Loop& loop);

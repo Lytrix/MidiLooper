@@ -37,6 +37,7 @@ enum class CommitReason : uint8_t {
   RecordStopToStopped,
   OverdubStop,
   OverdubStopToStopped,
+  OverdubWrap,
 };
 
 namespace PassConfig {
