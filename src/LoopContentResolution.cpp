@@ -447,6 +447,11 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::setCapturePassState(PassId
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindow(uint32_t loopLengthTicks, uint32_t windowStart,
                                                      uint32_t windowLength, SessionMidiEventVec& out,
                                                      ResolutionCostCounters* counters) const {
+  if (!tickEvents.empty()) {
+    findRawWindowFromTickEvents(tickEvents, loopLengthTicks, windowStart, windowLength, out,
+                                counters);
+    return;
+  }
   out.clear();
   if (loopLengthTicks == 0 || windowLength == 0) {
     return;
@@ -628,6 +633,9 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::materializeActive(SessionM
 }
 
 TRACK_COLD_MEM uint32_t LoopContentResolution::TickIndex::indexedEventCount() const {
+  if (!tickEvents.empty()) {
+    return static_cast<uint32_t>(tickEvents.size());
+  }
   return static_cast<uint32_t>(byTick.size());
 }
 
@@ -1078,6 +1086,7 @@ struct DeviceGateSession {
     rebuildSpanCursor = 0;
     rebuildNotesReady = false;
     spanBoundariesSorted = false;
+    tickEventsSorted = false;
     reconSpansFinished = false;
     reconEventCursor = 0;
     reconProjectCursor = 0;
@@ -1115,8 +1124,8 @@ struct DeviceGateSession {
 
   void advancePastIndexCommit() {
 #if defined(ARDUINO)
-    phase = Phase::RebuildPrepare;
-    lastStepName = kPrepStep;
+    phase = Phase::Window;
+    lastStepName = "win";
 #else
     phase = Phase::Materialize;
     lastStepName = "mat";
@@ -1149,10 +1158,11 @@ struct DeviceGateSession {
         (name == kPairStep)    ? static_cast<unsigned>(pairEventCursor)
         : (name == kReconStep) ? static_cast<unsigned>(reconEventCursor)
         : (name == kProjStep)  ? static_cast<unsigned>(reconProjectCursor)
-        : (name == kSortStep)  ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
-        : (name == kPrepStep)  ? (prepMergeOpen ? static_cast<unsigned>(prepMerged.size())
-                                                : static_cast<unsigned>(rebuildEvents.size()))
-                               : static_cast<unsigned>(indexEventCursor);
+        : (name == kSortStep)       ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
+        : (name == kIndexSortStep)  ? static_cast<unsigned>(index.tickEvents.size())
+        : (name == kPrepStep)       ? (prepMergeOpen ? static_cast<unsigned>(prepMerged.size())
+                                                     : static_cast<unsigned>(rebuildEvents.size()))
+                                    : static_cast<unsigned>(indexEventCursor);
     const unsigned notesLogged = (name == kProjStep)
                                      ? static_cast<unsigned>(reconProjected.size())
                                      : static_cast<unsigned>(rebuildNotes.size());
@@ -1176,11 +1186,16 @@ struct DeviceGateSession {
 
     switch (phase) {
       case Phase::IndexCommit: {
-        if (indexPassCursor == 0 && countIndexCommitPasses(passes) == 0) {
-          advancePastIndexCommit();
-          return LoopContentResolution::DeviceGateSliceResult::Continue;
-        }
         if (indexPassCursor >= countIndexCommitPasses(passes)) {
+          if (!tickEventsSorted) {
+            ElapsedTimer sortTimer;
+            lastStepName = kIndexSortStep;
+            index.sortTickEventEntriesByTick(index.tickEvents);
+            sample_.indexCommit.tickEventSortMicros += sortTimer.elapsed();
+            sample_.indexCommit.elapsedMicros += sortTimer.elapsed();
+            tickEventsSorted = true;
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
           advancePastIndexCommit();
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
@@ -1244,7 +1259,12 @@ struct DeviceGateSession {
         const uint32_t eventCount = static_cast<uint32_t>(pass->events.size());
         const uint32_t end = std::min(
             indexEventCursor + LoopContentResolution::kDeviceGateEventsPerSlice, eventCount);
-        index.indexCapturePassEventRange(passRef.id, indexEventCursor, end, &sample_.indexCommit);
+        ElapsedTimer appendTimer;
+        index.appendTickEventEntries(*pass, indexEventCursor, end, index.tickEvents);
+        sample_.indexCommit.tickEventAppendMicros += appendTimer.elapsed();
+        if (end > indexEventCursor) {
+          sample_.indexCommit.resolutionOperations += end - indexEventCursor;
+        }
         indexEventCursor = end;
         sample_.indexCommit.elapsedMicros += timer.elapsed();
         return LoopContentResolution::DeviceGateSliceResult::Continue;
@@ -1502,6 +1522,7 @@ struct DeviceGateSession {
   static constexpr const char* kProjStep = "proj";
   static constexpr const char* kDedupStep = "dedup";
   static constexpr const char* kSortStep = "sort";
+  static constexpr const char* kIndexSortStep = "isort";
   static constexpr const char* kPrepStep = "prep";
   bool prepReady = false;
   bool prepMaterializeDone = false;
@@ -1520,6 +1541,7 @@ struct DeviceGateSession {
   uint32_t rebuildSpanCursor = 0;
   bool rebuildNotesReady = false;
   bool spanBoundariesSorted = false;
+  bool tickEventsSorted = false;
   bool reconSpansFinished = false;
   uint32_t reconEventCursor = 0;
   uint32_t reconProjectCursor = 0;
@@ -1575,7 +1597,8 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
   const unsigned long stamp = 0UL;
 #endif
   snprintf(line, cap,
-           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u,app=%lu,sort=%lu",
+           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u,app=%lu,sort=%lu,"
+           "iapp=%lu,isort=%lu",
            stamp, static_cast<unsigned long>(sample.materialize.elapsedMicros),
            static_cast<unsigned long>(sample.window.elapsedMicros),
            static_cast<unsigned long>(sample.rebuild.elapsedMicros),
@@ -1584,7 +1607,9 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
            static_cast<unsigned>(sample.state.eventsInHistory),
            static_cast<unsigned>(sample.window.passChunkListsWalked),
            static_cast<unsigned long>(sample.rebuild.spanBoundaryAppendMicros),
-           static_cast<unsigned long>(sample.rebuild.spanBoundarySortMicros));
+           static_cast<unsigned long>(sample.rebuild.spanBoundarySortMicros),
+           static_cast<unsigned long>(sample.indexCommit.tickEventAppendMicros),
+           static_cast<unsigned long>(sample.indexCommit.tickEventSortMicros));
 }
 
 bool LoopContentResolution::deviceGateFormatPhaseLine(char* line, size_t cap) {

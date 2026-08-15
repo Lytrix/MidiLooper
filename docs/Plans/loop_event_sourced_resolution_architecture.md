@@ -243,7 +243,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate — 5.15 **complete**; 5.16c `prep` device **PASS** [`153920`](../captures/session_20260815_153920.log); 5.17a–c native pick **A** for `byTick`. 5.7 leftovers `idx` p1 / `recon`. Next: 5.17d. Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md). Do not start 6.x | keep 3b copy path until this wins |
+| 9 | Device three-part gate — 5.17d firmware ready (flat `tickEvents` IndexCommit). Remasure vs [`155953`](../captures/session_20260815_155953.log). Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md). Do not start 6.x | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 

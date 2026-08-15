@@ -34,6 +34,9 @@ struct ResolutionCostCounters {
   /// 5.15c span-boundary index: sequential append vs one `stable_sort` by tick.
   uint64_t spanBoundaryAppendMicros = 0;
   uint64_t spanBoundarySortMicros = 0;
+  /// 5.17d TickIndex flat A: sequential append vs one `stable_sort` by tick.
+  uint64_t tickEventAppendMicros = 0;
+  uint64_t tickEventSortMicros = 0;
 };
 
 struct SoundingNote {
@@ -137,6 +140,8 @@ struct LoopContentResolution {
     CapturePassEntryVec capturePasses;
     PassByIdMap passById;
     ByTickMap byTick;
+    /// 5.17d device-gate A. Native `commitCapturePass` still fills `byTick`.
+    TickEventEntryVec tickEvents;
     ByNoteIdMap byNoteId;
   };
 
@@ -203,8 +208,8 @@ struct LoopContentResolution {
   static constexpr uint32_t kDeviceCheckpointBarStride = 8;
   /// 5.7 `idle_maint` bar. Same value as `RuntimeTimingTelemetry::kLoopRemainderOneShotUs`.
   static constexpr uint32_t kDeviceGateSliceBudgetUs = 50000;
-  /// Index / span units per idle slice. One `byTick` emplace already exceeds 50 ms on the
-  /// 139-bar map ([`121702`]); a single emplace must not be a slice.
+  /// Index / span units per idle slice. Device IndexCommit appends this many tick-event
+  /// rows; it does not `emplace` into `byTick` (5.17d).
   static constexpr uint32_t kDeviceGateEventsPerSlice = 8;
   /// Phase progress line: on step change, and at most once per this interval on device.
   static constexpr uint32_t kDeviceGatePhaseLogIntervalUs = 1000000;
