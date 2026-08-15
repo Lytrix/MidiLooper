@@ -16,6 +16,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
+#include "LoopContentResolution.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
@@ -175,6 +176,52 @@ void test_source_view_wrap_safe_high_then_low_capture_order() {
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 71, 12));
 }
 
+void test_source_view_consumes_prepared_lcr_when_cache_dirty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_FALSE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(
+      loop.visualCacheDirty, !loop.visualCache.notes.empty()));
+
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.markDisplayCachesStale();
+
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  ++loop.playbackRevision;
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_discard_and_commit_clear_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -205,6 +252,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);
   RUN_TEST(test_source_view_immutable_when_live_materialize_mutates);
   RUN_TEST(test_source_view_wrap_safe_high_then_low_capture_order);
+  RUN_TEST(test_source_view_consumes_prepared_lcr_when_cache_dirty);
+  RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   return UNITY_END();
 }
