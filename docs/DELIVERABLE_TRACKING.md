@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — Stage 9 complete (**5.1** [`173842`](../captures/session_20260815_173842.log), **5.2** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs). Stage 6 overdub invariant: never cold-build LCR; `< 3 ms` target, `< 50 ms` hard gate. Firmware swap not started. No `openOnByPitch` flatten / B. DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
+**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — Stage 9 complete (**5.1** [`173842`](../captures/session_20260815_173842.log), **5.2** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs). Stage 6: consume-only; **6A** idle display range → **6B** commit invalidation → **6C** overdub source (3b copy stays). Score 6C vs 3b [`045556`](../captures/session_20260814_045556.log) **2214 µs**. Firmware not started. No `openOnByPitch` flatten / B. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 

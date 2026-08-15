@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); Stage 6 overdub invariant pinned (never cold-build LCR); production MIDI/display stay on materialize; firmware swap not started  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); Stage 6 consume-only invariant + 6A/6B/6C experiment pinned; production MIDI/display stay on materialize; firmware swap not started  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -259,7 +259,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log). Do not start 6.x without user approval | keep 3b copy path until this wins |
+| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log). Stage 6 is 6A → 6B → 6C; firmware waits for an explicit implement request | keep 3b copy path |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 
@@ -299,15 +299,56 @@ A poor first tick-index implementation does **not** by itself disprove the archi
 
 ## Production migration (only after all three gates)
 
-**Overdub invariant (DEC-037 amendment 2026-08-15):** Overdub start/stop MUST NOT cold-build `LoopContentResolution`. Idle/background prepares derived state. Overdub consumes it. `begin_capture` **< 3 ms** target, **< 50 ms** hard gate. Original 3b **2214 µs** is not a proof that LCR is faster.
+**Stage 6 question:** Can prepared LCR state replace existing materialized derived views **without introducing synchronous work at the transport transition?**
 
-1. **Overdub entry/stop** — consume already-prepared committed display/source. Keep 3b copy of authoritative `visualCache.notes`. Do **not** `resolveWindow`, rebuild LCR indexes, materialize, reconstruct, or `markDisplayCachesStale` on `startOverdubbing` / `stopOverdubbing`. If LCR is not ready, keep the existing non-LCR 3b dirty fallback (`CommittedEventRange::inWindow` + edit apply).
-2. **Idle visual cache slices** — range-dirty bars; gather via `resolveWindow` (A becomes a cache of G, not a second authority). This is where LCR is used, not overdub start.
-3. **Long-loop playback** — already windowed; swap gather to `resolveWindow` / `ResolvedEvent`.
-4. **Short-loop playback / NOTE_EDIT session hydrate** — last.
+**Overdub invariant (DEC-037 amendment 2026-08-15, strengthened):** Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. They may only consume already-prepared derived state. `ensureLcrIndexCurrent()` (or any ensure/rebuild helper) on that path is a violation.
+
+`LoopContentResolution` is the **producer of prepared derived state**, not a replacement for `overdubSourceView`:
+
+```text
+LoopPasses
+    │
+    ▼
+LoopContentResolution     ← idle / background
+    ├── resolveWindow()   → display-range derived data
+    ├── resolveState()    → playback / loop-switch state
+    └── resolveNotes()    → display/editor projection
+              │
+              ▼  already prepared
+OVERDUB START/STOP consume only
+```
+
+Wrong: `OVERDUB → LCR construction → consume`. Right: `IDLE → LCR construction → READY`; overdub only consumes.
+
+**Entry vs stop:**
+
+- Entry is largely explained. 3b [`045556`](../../captures/session_20260814_045556.log) **2214 µs** shows **< 3 ms is achievable when the committed visual/source representation is already prepared**. [`180624`](../../captures/session_20260815_180624.log) **10050 µs** still passes the 50 ms gate. LCR has not shown it can beat that copy. Do not claim switching everything to LCR makes start < 3 ms.
+- Stop is the remaining expensive path: commit → `notifyCommittedContentChanged` → `markDisplayCachesStale` → idle rebuild. LCR helps **indirectly**: commit raw content, dirty affected ranges, return immediately; idle prepares derived state.
+
+Keep 3b `visualCache.notes` copy as fallback. Do not remove it in 6A–6C. LCR can fail to be ready without making overdub entry expensive.
+
+**Experiment order (firmware waits for an explicit implement request):**
+
+1. **6A — prepared display range (idle).** One dirty display range: `resolveWindow` → display projection instead of `CommittedEventRange` → `reconstructDisplayNotes`. Keep the old path as oracle. Measure `resolveWindow`, projection, total slice, worst slice, `midi_gap`, `DFRAME`.
+2. **6B — commit invalidation.** Overdub stop: commit → mark only affected ranges → return. No materialize, no whole-loop reconstruct, no `VCACHE,full`. Score which work stays synchronous with the transport transition:
+
+| Phase | Desired property |
+|-------|------------------|
+| `stopOverdubbing()` entry | bounded |
+| `commitCapturePass` | bounded |
+| commit bookkeeping | bounded |
+| return to MIDI loop | bounded |
+| first idle derived-state preparation | sliced |
+| display repaint | sliced |
+| eventual full consistency | asynchronous |
+
+3. **6C — overdub source.** Only after 6A/6B: prepared LCR range → `overdubSourceView`, 3b copy remains fallback. Score `begin_capture` against 3b **2214 µs**, not against 5.2 **10050 µs**.
+4. **Later:** long-loop playback gather; short-loop / NOTE_EDIT hydrate.
 5. **D3 persist checkpoint** — same checkpoint type as stage 7; `StorageManager` remains persist owner (DEC-008).
 
-**Forbidden until gate:** delete `materializeToEventVector`; put resolution on `handleMidiInput`; cascade `invalidateCaches` onto the prototype store.
+`< 3 ms` is a **regression target**, not an architectural promise. `< 50 ms` stays the hard gate. LCR’s job is to eliminate post-commit / full-rebuild machinery.
+
+**Forbidden until gate:** delete `materializeToEventVector`; put resolution on `handleMidiInput`; cascade `invalidateCaches` onto the prototype store; call `resolveWindow` / construct / sort / checkpoint LCR from `startOverdubbing` or `stopOverdubbing`.
 
 ---
 

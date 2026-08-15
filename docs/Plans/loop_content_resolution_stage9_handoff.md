@@ -1,13 +1,13 @@
-# Handoff — LoopContentResolution Stage 6 (overdub never cold-builds LCR)
+# Handoff — LoopContentResolution Stage 6 (6A / 6B / 6C; consume-only)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** `4b82ad3` — Record 5.2 PASS.  
+**HEAD:** `9e075c4` — Pin Stage 6: overdub must never cold-build LoopContentResolution.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
-**Prior chat:** Stage 6 overdub invariant pinned after 5.2 PASS [`180624`](../../captures/session_20260815_180624.log).
+**Prior chat:** Stage 6 consume-only + 6A/6B/6C after 5.2 PASS [`180624`](../../captures/session_20260815_180624.log).
 
 ---
 
@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** Stage 9 complete. Stage 6 overdub invariant is pinned: start/stop MUST NOT cold-build LoopContentResolution. Do not start firmware `6.1` until asked. Do not call `resolveWindow` from `startOverdubbing`. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
+> **Now:** Stage 9 complete. Stage 6 is 6A → 6B → 6C. Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR. Do not start firmware until asked; first slice is **6A** (idle display range), not overdub. Keep the 3b copy. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
 >
 > Read CURRENT_WORK + this handoff first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**Stage 9 complete.** **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **Stage 6 invariant:** overdub start/stop never cold-build LCR; idle/background prepares; overdub consumes already-prepared state. `< 3 ms` target, `< 50 ms` hard gate. Firmware swap not started. Production stays on materialize / 3b copy.
+**Stage 9 complete.** **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. LCR representation is viable (5.18 frozen). Stage 6 question: can prepared LCR replace materialized views without synchronous work at the transport transition? Consume-only invariant. Experiment **6A → 6B → 6C**. Firmware not started. Production stays on materialize / 3b copy.
 
 ---
 
@@ -41,7 +41,7 @@ device latency
   pair                  PASS  5.18
   5.1 idle complete     PASS  173842
   5.2 overdub entry     PASS  180624  10050 µs
-Stage 6 production swap INVARIANT PINNED; firmware not started
+Stage 6                  6A/6B/6C PINNED; firmware not started
 ```
 
 ---
@@ -54,8 +54,9 @@ Stage 6 production swap INVARIANT PINNED; firmware not started
 - Build representation B or A2
 - Restore the 16-bar arm cap
 - Delete `materializeToEventVector`
-- Put resolution on `handleMidiInput` or `startOverdubbing` / `stopOverdubbing` (idle `6.2` is the LCR gather path)
-- Start Stage 6 firmware (`6.1`+) without an explicit implement request
+- Put resolution on `handleMidiInput` or `startOverdubbing` / `stopOverdubbing` (including `ensure*` LCR rebuild helpers)
+- Start Stage 6 firmware without an explicit implement request (first slice is **6A**, not overdub)
+- Remove the 3b `visualCache.notes` copy
 - Rename `byNoteId` or “clean up” pairing
 - Put probes in `ExternalMemoryFirstAllocator` (ITCM / RAM1 overflow)
 - Commit `lib/SSD1322_OLED` submodule dirt
@@ -164,22 +165,28 @@ If a fix would put LCR on the overdub path → **stop**, design session.
 
 ---
 
-## After 5.2 PASS — Stage 6 invariant
+## After 5.2 PASS — Stage 6 experiment
+
+LCR is the **producer of prepared derived state**, not a replacement for `overdubSourceView`.
 
 ```text
-5.2 PASS
-    ↓
-Stage 9 complete
-    ↓
-Stage 6 invariant (pinned): overdub start/stop never cold-build LCR
-    6.1 consume already-prepared source (3b copy); no resolveWindow on entry
-    6.2 idle visual slices via resolveWindow  ← LCR is used here
-    6.3 long-loop playback gather
-    6.4 short-loop / NOTE_EDIT hydrate last
-    6.5 never delete materialize; never resolve from handleMidiInput
+WRONG:  OVERDUB → LCR construction → consume
+RIGHT:  IDLE → LCR construction → READY
+                         ↓
+        OVERDUB ──────→ consume
 ```
 
-`begin_capture` **< 3 ms** target, **< 50 ms** hard gate. 3b 2214 µs is not proof LCR is faster. A 4–10 ms landing still proves the invariant. Firmware `6.1` waits for an explicit implement request.
+```text
+6A  idle display range: resolveWindow → projection
+    (CommittedEventRange + reconstruct stays oracle)
+6B  stop: commit → mark affected ranges → return
+    (idle prepares; no VCACHE,full)
+6C  prepared LCR range → overdubSourceView
+    (3b visual-cache copy stays fallback)
+    score begin_capture vs 2214 µs, not 10050 µs
+```
+
+`< 3 ms` is a **regression target**. `< 50 ms` is the hard gate. Firmware waits for an explicit implement request; start with **6A**.
 
 ---
 
@@ -215,11 +222,14 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6592**.
 | `c8c47dd` | 5.18 closed + 5.1 PASS docs |
 | `0978ffe` | Restore DEC-036 3b overdub entry for 5.2 recapture |
 | `4b82ad3` | Record 5.2 PASS (`begin_capture` 10050 µs) |
+| `9e075c4` | Pin Stage 6 consume-only invariant |
 
 ---
 
 ## OpenSpec remaining
 
 - [x] 5.2 overdub entry — **PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs
-- [x] 6.0 overdub never cold-builds LCR — **pinned**
-- [ ] 6.1+ firmware — **wait for explicit implement request**
+- [x] 6.0 consume-only invariant — **pinned**
+- [ ] 6A idle display range — **wait for explicit implement request**
+- [ ] 6B commit invalidation
+- [ ] 6C overdub source (3b copy stays)

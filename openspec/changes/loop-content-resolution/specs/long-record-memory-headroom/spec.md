@@ -12,9 +12,10 @@ Until those gates pass, Layer D 3b (copy clean `visualCache.notes` at overdub en
 - **THEN** the normal path MUST NOT call full-loop `materializeToEventVector` of all prior passes
 - **AND** candidate work is limited to indexed affected regions
 
-#### Scenario: Overdub start does not cold-build LoopContentResolution
+#### Scenario: Overdub start/stop consume prepared state only
 
 - **WHEN** overdub starts or stops
-- **THEN** firmware MUST NOT create or rebuild `LoopContentResolution` indexes, call `resolveWindow` / `resolveState` as a prerequisite, materialize, reconstruct, or `markDisplayCachesStale` on that path
+- **THEN** firmware MUST NOT synchronously construct, sort, checkpoint, or resolve `LoopContentResolution` state (including `ensure*` rebuild helpers)
 - **AND** overdub consumes already-prepared derived state (authoritative `visualCache.notes` copy, or LCR that idle/background already completed)
-- **AND** if LCR is not ready, the existing non-LCR 3b dirty fallback (`CommittedEventRange::inWindow` + edit apply) is used instead of a synchronous LCR build
+- **AND** if LCR is not ready, the 3b visual-cache copy or the existing non-LCR dirty fallback (`CommittedEventRange::inWindow` + edit apply) is used
+- **AND** `LoopContentResolution` remains the producer of prepared derived state, not a replacement for `overdubSourceView`
