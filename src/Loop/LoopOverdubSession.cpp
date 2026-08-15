@@ -14,6 +14,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
   }
   playheadPhaseTick = sessionPlayheadPhaseTick;
   overdubWrapArmed_ = false;
+  overdubWrapSuppressNext_ = false;
   overdubSessionPassIds_.clear();
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
@@ -23,6 +24,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
 LOOP_COLD_MEM void Loop::closeOverdubSession() {
   playheadPhaseTick = UINT32_MAX;
   overdubWrapArmed_ = false;
+  overdubWrapSuppressNext_ = false;
   overdubSessionPassIds_.clear();
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
@@ -30,7 +32,7 @@ LOOP_COLD_MEM void Loop::closeOverdubSession() {
 }
 
 LOOP_COLD_MEM void Loop::armOverdubWrapAfterLeavingStart(uint32_t currentPhase) {
-  if (!hasOverdubSession() || overdubWrapArmed_) {
+  if (!hasOverdubSession() || overdubWrapArmed_ || overdubWrapSuppressNext_) {
     return;
   }
   if (currentPhase != playheadPhaseTick) {
@@ -48,6 +50,26 @@ LOOP_COLD_MEM bool Loop::shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t cu
 
 LOOP_COLD_MEM void Loop::noteOverdubWrapCommitted() {
   overdubWrapArmed_ = false;
+  overdubWrapSuppressNext_ = false;
+}
+
+LOOP_COLD_MEM void Loop::suppressNextOverdubWrap() {
+  overdubWrapArmed_ = false;
+  overdubWrapSuppressNext_ = true;
+}
+
+LOOP_COLD_MEM bool Loop::consumeSuppressedOverdubWrapCrossing(uint32_t prevPhase,
+                                                             uint32_t currentPhase) {
+  if (!hasOverdubSession() || !overdubWrapSuppressNext_ || loopLengthTicks == 0) {
+    return false;
+  }
+  if (!IntervalProjection::didPlayheadCrossPhase(prevPhase, currentPhase, playheadPhaseTick,
+                                                 loopLengthTicks)) {
+    return false;
+  }
+  overdubWrapSuppressNext_ = false;
+  overdubWrapArmed_ = false;
+  return true;
 }
 
 LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
@@ -136,11 +158,13 @@ LOOP_COLD_MEM bool Loop::canRedoOverdubSession() const {
 }
 
 LOOP_COLD_MEM size_t Loop::overdubSessionUndoDepth() const {
-  size_t depth = overdubSessionCursor_;
-  if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
-    ++depth;
+  if (overdubSessionCursor_ > 0) {
+    return overdubSessionCursor_;
   }
-  return depth;
+  if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
+    return 1;
+  }
+  return 0;
 }
 
 LOOP_COLD_MEM size_t Loop::overdubSessionRedoDepth() const {
@@ -155,6 +179,21 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
   if (!hasOverdubSession()) {
     return false;
   }
+  if (overdubSessionCursor_ > 0) {
+    --overdubSessionCursor_;
+    const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
+    disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
+    const bool ok = setCapturePassState(passId, CapturePassState::Disabled);
+    overdubSessionLiveUndoEvents_.clear();
+    if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
+      capture.store.clear();
+      captureEventsSortDirty = false;
+      rebuildCapturePreviewFromStore(*this);
+      ++captureDisplayRevision;
+    }
+    suppressNextOverdubWrap();
+    return ok;
+  }
   if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
     overdubSessionLiveUndoEvents_.clear();
     capture.store.copyEventsTo(overdubSessionLiveUndoEvents_);
@@ -162,15 +201,10 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
     captureEventsSortDirty = false;
     rebuildCapturePreviewFromStore(*this);
     ++captureDisplayRevision;
+    suppressNextOverdubWrap();
     return true;
   }
-  if (overdubSessionCursor_ == 0) {
-    return false;
-  }
-  --overdubSessionCursor_;
-  const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
-  disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
-  return setCapturePassState(passId, CapturePassState::Disabled);
+  return false;
 }
 
 LOOP_COLD_MEM bool Loop::redoOverdubSession() {

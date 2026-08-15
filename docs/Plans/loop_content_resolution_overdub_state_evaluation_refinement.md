@@ -373,6 +373,14 @@ Boot `enabledMask=0x33`. Play Loop 6, short-press Loop 5 at 15.433 (`Queued play
 
 Pin: short-press queue is a replace. Previous slots stop when the queued slot starts. Hold-to-add at the same queue point is later.
 
+## HITL [`003818`](../../captures/session_20260816_003818.log) — session undo must reach wraps
+
+Slot switch PASS. Overdub 132.050 tick 1016. Wrap 140.048. Undo 143.094 then wrap again 148.047 (`n28`). Undo 155.053 then wrap 156.049 (`n5`, 376 ticks later). Mash undos 158–171 never drain wraps; wrap 172.042 (`n1`) 188 ms after the last undo.
+
+`Loop::undoOverdubSession` cleared live first. `MI,U` and the next S crossing pushed a new session pass, so wrap disable never ran ([`235536`](../../captures/session_20260815_235536.log) same trap).
+
+Pin: while a session wrap exists, undo hides that wrap and discards live so S cannot re-push it. The next S crossing is skipped. Live-only undo remains only when no session wrap is on the cursor.
+
 ## Out of scope
 
 - midi_gap / 6.3 / 6.4
