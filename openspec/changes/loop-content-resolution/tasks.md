@@ -61,7 +61,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [x] 5.17b Native C vs flat A: C-order append + `stable_sort` by tick only. Host (94 entries): C emplace 23 µs, A append 11 + sort 15 = 26 µs, A query 144 vs C 151. Pick **A**. No B. No A2.
 - [x] 5.17c Native equivalence: same `byTick` walk, wrap, disabled-pass skip, `resolveWindow` = C = materialize oracle, `walk=0`. Equal-tick OFF-then-ON at 192 preserved. Production `byTick` stays C.
 - [x] 5.17d Device append / sort / query on the 139-bar class. [`161355`](../../../captures/session_20260815_161355.log) `iapp=4819607` `isort=27415` `win=13971` `st=3108` `walk=0`. No `idx` `loop_rem`. No B. No A2. Native `commitCapturePass` still fills `byTick`.
-- [x] 5.17e Drop `byTick` from `commitCapturePass` / `indexCapturePassEventRange`. `findRawWindow` reads `tickEvents` only. Device gate uses the same append. No B. No A2. No `recon`. No `pair`. **5.17 complete.**
+- [x] 5.17e Drop `byTick` from `commitCapturePass` / `indexCapturePassEventRange`. `findRawWindow` reads `tickEvents` only. Device remasure [`162630`](../../../captures/session_20260815_162630.log) matches [`161355`](../../../captures/session_20260815_161355.log) (`iapp=4816490` `isort=27113` `win=14016` `st=3105` `walk=0`; no `idx` `loop_rem`). **5.17 complete.**
 
 ## 6. Production swap (only after all three gates + user approval)
 
