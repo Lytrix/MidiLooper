@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b PASS**; **6E.2 PASS**; **6E.3 PASS**; 6E.4–6E.5 not started; no Track wiring  
+**Status:** Active — native **6E.1–6E.4 PASS**; 6E.5 not started; no Track wiring  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
@@ -81,7 +81,7 @@ start overdub at tick S
 
 Still an `OverdubPass`. No new domain noun.
 
-**6.0 at wrap:** bounded 6D.4 publish only (delta sort + restamp + `O(Δ)` pair/span if 6E.4 PASS). No 6C reconstruct, no full `resolveWindow`, no `VCACHE,full`, no SD.
+**6.0 at wrap:** bounded 6D.4 publish (delta sort + restamp + `O(Δ)` pair/span — **6E.4 PASS**). No 6C reconstruct, no full `resolveWindow`, no `VCACHE,full`, no SD.
 
 **Open note at S:** must not seal an incomplete Add into wrap N. Owner named by native 6E.5 from the existing capture close pipeline.
 
@@ -123,7 +123,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 ### Costs that stay in the DEC
 
 - `UndoEntry` has one `passId` today. One **U:** for N wraps needs a `passIds` list on `OverdubPassAdded` (GUS wire bump). Extend that kind; do not add a new one (DEC-031).
-- Mid-session wrap undo sets that pass `Disabled`. `findRawWindow` already skips non-Active. Stamp/delta policy pinned in 6E.4.
+- Mid-session wrap undo sets that pass `Disabled`. `findRawWindow` already skips non-Active. **6E.4:** `setPreparedCapturePassState` hides it from `tryResolvePreparedState` without restamp. GUS stamp+1 without publish → miss (3b).
 - Session gate blocks undo of an older overdub/record until this session stops (NOTE_EDIT rule; change vs today’s discard-then-**U:**).
 - New wrap commit after session undo drops the session redo tail (same as NOTE_EDIT `pushEntry`).
 
@@ -140,7 +140,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 - `keepPreparedIndex` → `dropWorkingBuffers()` now keeps `spans` + `spanBoundaries` + sparse `soundingAt`. Rebuild events/notes are dropped. `tryResolvePreparedState` consumes that keep-set. Not wired to Track.
 - `resolveState(LoopPasses, …)` rematerializes the whole loop. Do not call it on the MIDI path.
 - `SoundingNote` has `onTick` but no `endTick`. Geometry needs `appendNoteEvents(noteId)` or a kept span.
-- 6D.4 publish does not pair the new pass into `byNoteId` / `spanBoundaries`.
+- 6D.4 publish now pairs the new pass and appends its spans / boundaries (**6E.4**). Not wired to wrap-commit or session undo.
 
 6.0 consume reading:
 
@@ -150,7 +150,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1 PASS.** **6E.1b PASS.** **6E.2 PASS.** **6E.3 PASS** — spans stay after drop-rebuild-buffers.
+**6E.1–6E.4 PASS.** Wrap-1 publish is wrap-2 `resolveState` source.
 
 **Hide vs Shorten (loop length):** source fills the loop. Incoming ON@4000 OFF@200.
 
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** native **6E.4**. Do not start wrap-commit DEC or midi_gap / 6.3.
+**Next when asked:** native **6E.5**. Do not start wrap-commit DEC or midi_gap / 6.3.
 
 ---
 
@@ -221,6 +221,20 @@ Keep-all per-bar `soundingAt` is the FAIL path: 64 snapshots / more sounding cop
 
 ---
 
+## 6E.4 — wrap-1 publish is wrap-2 source (PASS)
+
+`test_stage6e4_publish_is_next_wrap_source`. 8-bar loop. Record 60@0–48. Wrap-1 72@200–400.
+
+`publishPreparedOverdubPass` pairs the new pass, reconstructs that pass only, appends spans, merges `spanBoundaries`, and patches sparse `soundingAt`. Does not write `tickEvents`.
+
+- After publish, `tryResolvePreparedState(300)` matches the rematerialize oracle and includes wrap-1. Span count grows by 1.
+- `setPreparedCapturePassState(Disabled)` hides wrap-1. Stamp stays. Prepared remains true.
+- Stamp+1 without publish → `tryResolvePreparedState` false (3b).
+
+Not Track session-undo. Not wrap-commit DEC.
+
+---
+
 ## Native 6E (before firmware)
 
 Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](../../test/test_loop_content_resolution/test_loop_content_resolution.cpp). 6E.3 also keeps prepared checkpoints in `LoopContentResolution`. Do not wire Track.
@@ -231,7 +245,7 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 | **6E.1b** | **PASS** — S = 777 is wrap origin. Rotated linear 6E.1 rows match. Absolute 0–5000 + incoming across S Shortens. Loop-filling 4000/4100 not rotated. |
 | **6E.2** | **PASS** — checkpoint replay < interval and < history spans. Hold window < 16-bar `resolveWindow` and < full rematerialize. Early-bar history growth does not grow replay. |
 | **6E.3** | **PASS** — after `deviceGateComplete`, `tryResolvePreparedState` matches the oracle. `checkpointCount` is the 8-bar stride. Keep-all per-bar `soundingAt` copies fail the size gate. |
-| **6E.4** | Wrap-1 publish is wrap-2 source; session-disable wrap 1 hides it; GUS stamp miss → 3b |
+| **6E.4** | **PASS** — publish pairs + appends spans. `resolveState(300)` sees wrap-1. Disable hides it without restamp. Stamp+1 → miss. |
 | **6E.5** | Held note across start-tick S does not seal an incomplete Add |
 
 ---

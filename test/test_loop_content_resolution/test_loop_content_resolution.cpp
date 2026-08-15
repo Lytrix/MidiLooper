@@ -3465,6 +3465,68 @@ void test_stage6e3_keep_spans_after_drop_rebuild_buffers() {
   TEST_ASSERT_TRUE(missed.empty());
 }
 
+void test_stage6e4_publish_is_next_wrap_source() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const uint32_t loopLength = 8u * Config::TICKS_PER_BAR;
+  const NoteId recordNoteId = 1;
+  const NoteId wrapNoteId = 9001;
+  LoopPasses prepared;
+  prepared.recordPass.id = 1;
+  prepared.recordPass.state = CapturePassState::Active;
+  prepared.recordPass.committedChunkIds = makeNoteSpan(0, 48, 1, 60, recordNoteId);
+  const OverdubPass wrap1 = makeOverdub(2, 1, 200, 400, 1, 72, wrapNoteId);
+
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(prepared, loopLength, sample);
+  constexpr uint32_t kPreparedRevision = 1;
+  LoopContentResolution::deviceGateComplete(kPreparedRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision));
+
+  SoundingNoteVec before;
+  ResolutionCostCounters beforeCounters;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision, before, &beforeCounters));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(before, wrapNoteId));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(before, recordNoteId));
+  const uint32_t preparedSpans = beforeCounters.eventsInHistory;
+
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(kPreparedRevision));
+
+  LoopPasses live = prepared;
+  live.overdubPasses.push_back(wrap1);
+  SoundingNoteVec expected;
+  LoopContentResolution::resolveState(live, loopLength, 300, expected);
+  SoundingNoteVec actual;
+  ResolutionCostCounters afterCounters;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u,
+                                                                  actual, &afterCounters));
+  assertSoundingMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasSoundingNoteId(actual, wrapNoteId));
+  TEST_ASSERT_EQUAL_UINT32(preparedSpans + 1u, afterCounters.eventsInHistory);
+  TEST_ASSERT_EQUAL_UINT32(0u, afterCounters.passChunkListsWalked);
+
+  SoundingNoteVec outside;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(10, kPreparedRevision + 1u, outside, nullptr));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(outside, wrapNoteId));
+
+  LoopContentResolution::setPreparedCapturePassState(wrap1.id, CapturePassState::Disabled);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
+  SoundingNoteVec hidden;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u, hidden, nullptr));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(hidden, wrapNoteId));
+
+  SoundingNoteVec missed;
+  TEST_ASSERT_FALSE(
+      LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 2u, missed, nullptr));
+  TEST_ASSERT_TRUE(missed.empty());
+}
+
 void test_stage6d4_publish_restamps_without_device_gate_complete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3600,5 +3662,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6e1b_session_start_is_wrap_origin);
   RUN_TEST(test_stage6e2_consume_tracks_checkpoint_replay_not_history);
   RUN_TEST(test_stage6e3_keep_spans_after_drop_rebuild_buffers);
+  RUN_TEST(test_stage6e4_publish_is_next_wrap_source);
   return UNITY_END();
 }

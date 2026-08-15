@@ -335,9 +335,11 @@ struct LoopContentResolution {
   /// Drop rebuild working buffers. Does not construct or sort. Stamp is `playbackRevision`.
   static void deviceGateComplete(uint32_t playbackRevision);
   static bool preparedWindowReady(uint32_t playbackRevision);
-  /// 6D.4: append one committed overdub into the session `delta` vector and restamp.
-  /// No-op when no prepared index is kept. Does not write `tickEvents`.
+  /// 6D.4 / 6E.4: append one committed overdub into the session `delta`, pair it, append
+  /// its spans, and restamp. No-op when no prepared index is kept. Does not write `tickEvents`.
   static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision);
+  /// Session-disable / re-enable a prepared capture pass. Does not restamp.
+  static void setPreparedCapturePassState(PassId id, CapturePassState state);
   /// Consume the kept index. Returns false on miss or stamp mismatch — never rebuilds.
   static bool tryResolvePreparedWindow(const EditPassVec& editPasses, uint32_t loopLengthTicks,
                                        uint32_t windowStart, uint32_t windowLength,
