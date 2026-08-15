@@ -387,13 +387,13 @@ Pin that still holds: the next S crossing after session undo is skipped (`suppre
 
 Withdrawn: wrap-first undo that discarded live with the sealed wrap. That removed the live +1 after wrap 1 ([`010535`](../../captures/session_20260816_010535.log)). DEC-038 order is restored: live wrap first, then sealed wraps.
 
-## HITL [`012925`](../../captures/session_20260816_012925.log) — same-tick extract steals the completed pair
+## HITL [`012925`](../../captures/session_20260816_012925.log) — wrap-held note removed at overdub wrap
 
-Second overdub 58.598 tick 9048 (S=2904). Wrap 66.604 tick 12120: note 30 ON at 66.524 storage **2880**, wrap, NoteOff 30 + NoteOn 12 at 66.775 storage 2976. Same pattern at wrap 74.597 (ON 30 @ 2880, OFF @ 2976). First-session stop 55.805 `finalized=1 capture_offs=1` DISP 88→87. Second-session stop 77.723 `finalized=0` `hot stop verify: non-canonical storage (check=2)` (LinearNoteOff).
+Second overdub 58.598 tick 9048 (S=2904). Note 30 ON at 58.774 storage **2976**, OFF at loop wrap 59.030 storage **0** (abs 9216). Wrap resolution is correct there. Same pitch is replayed at 672 / 768 / … Then overdub wrap 66.604 tick 12120 (`wrap_synth=0`). DISP 112→97. The wrap-held pair is gone from the sealed wrap.
 
-`extractOpenCaptureNoteOns` matched open ONs by pitch + storage tick. After wrap 1 the completed pair is ON@2880 + OFF@2976 and the next held ON is also 30 @ 2880. Extract pulled **both** ONs and left the orphan OFF in the sealed wrap. Live preview then had an unpaired ON painted to loop end until the next NoteOff. Stop never sealed the completed pair (`check=2`).
+Tick-sort puts `OFF@0` before `ON@2976`. `tryPairWrappedTailOn` then refused the pair because later same-pitch Ons sit in the body (`allLaterOnsInTailOrNone`). `findOpenNoteOns` treated `ON@2976` as open; extract pulled it; the sealed wrap kept an orphan `OFF@0`.
 
-Pin: extract by `OpenNoteOn.eventIndex` from `findOpenNoteOns`. Keep the completed same-tick pair in the wrap; re-append only the unpaired ON. Linear playhead close (`allowWrapContinuation=false`) stays. Tick-0 head gate (`86bdc21`) stays reverted.
+Same-tick extract (ON@2880 completed + held ON@2880) is a second collision on the later grid. Extract now uses append order + `eventIndex`. Tick-0 Off may wrap-pair even when the pitch is replayed later. Linear playhead close stays. Tick-0 head gate stays reverted.
 
 ## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
 
