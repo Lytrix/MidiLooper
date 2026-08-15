@@ -1,6 +1,6 @@
 # Loop content resolution — 5.7 DFRAME during sliced append (reserve)
 
-**Status:** **5.7b native PASS** 2026-08-15 — device remasure owed. 5.7a reserve PASS [`163942`](../captures/session_20260815_163942.log).  
+**Status:** **5.7b device FAIL** [`164922`](../captures/session_20260815_164922.log) — `channelByNoteId` PSRAM `emplace` is a 14.7 s one-shot. Lookup after fill is flat. Do not keep this map on device.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.17 complete — [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md)  
 **Evidence:** [`162630`](../captures/session_20260815_162630.log)
@@ -162,4 +162,34 @@ Open notes still evaluate:
 | Pair | `openOnByPitch` persists; `byNoteId.offIndex = -1` until the off slice | `test_stage57_pair_keeps_open_note_across_event_slice` |
 | Span channel | Map built from all resolved NOTE_ONs, including ons whose off is later or missing | `test_stage57_span_channel_uses_full_resolved_not_note_slice` — crossed note channel 5, open note channel 9 |
 
-Do not rewrite `pair` / `recon`. Device remasure owed.
+Do not rewrite `pair` / `recon`. Native contract (full `resolved`, open notes) **held**. Device map fill **FAIL**.
+
+---
+
+## 5.7b device FAIL — [`164922`](../captures/session_20260815_164922.log)
+
+```
+mat=0,win=14503,reb=16305251,st=6725,rep=350,hist=2394,walk=0,app=1160,sort=10284,iapp=201606,isort=27138
+```
+
+| | [`163942`](../captures/session_20260815_163942.log) 5.7a | [`164922`](../captures/session_20260815_164922.log) 5.7b |
+|--|--:|--:|
+| `reb` | 4.420 s | **16.305 s** |
+| `app` | 2.3 ms | 1.2 ms |
+| `iapp` | 203 ms | 202 ms |
+| `st` | 3113 µs | 6725 µs |
+| `walk` / `hist` | 0 / 2394 | 0 / 2394 |
+| `idx` p0 events/s | 1310 → 1212 | 1315 → 1215 |
+| `spans` notes/s | 930 → 169 | **1000 → 1031 → 969** (flat after fill) |
+| `spans` wall | 6.42 s | 2.37 s after fill |
+| `dedup` → first `spans` | ~0 | **14.75 s** |
+| `idle_maint` `loop_rem` | none | **14.744 s** at first `spans` slice |
+| largest LCR `DFRAME` | 1.195 s | **15.702 s** (`frameIndex` +30, real stall) |
+| after complete `DFRAME` | 0.968 s | 0.966–0.967 s |
+| after complete `idle_maint` | 277 µs | 288–290 µs |
+
+First `appendSpansFromNotes` (`begin==0`) calls `fillChannelByNoteId`: one PSRAM `unordered_map` `emplace` per NOTE_ON. Same class of stall as `startsByTick` / `byTick` before 5.15 / 5.17. After the map exists, span rate is flat ~1000 notes/s — the lookup is not the leftover.
+
+Open-note contract is not the fail. Do not shrink the map to the current 8 events.
+
+**Next (if asked):** same 5.15/5.17 move — C-order append of `{noteId, channel}` + one sort + first-wins unique. Not another PSRAM map. Not slicing `emplace`. Not 5.1.
