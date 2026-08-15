@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b planned**; 6E.2–6E.5 not started; no firmware  
+**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b PASS**; 6E.2–6E.5 not started; no firmware  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
@@ -150,7 +150,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1 PASS** — LCR candidates + existing geometry. Contained 4000–4200 Shortens. Loop-filling source + 4000–200: Hide when loop is 4000; Shorten when loop is 4100.
+**6E.1 PASS.** **6E.1b PASS** — session start S = 777 is wrap origin.
 
 **Hide vs Shorten (loop length):** source fills the loop. Incoming ON@4000 OFF@200.
 
@@ -159,50 +159,30 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** native **6E.1b** (session start S as wrap origin) or **6E.2** / **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
+**Next when asked:** native **6E.2** or **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
 
 ---
 
-## 6E.1b — session start tick as wrap origin (planned)
+## 6E.1b — session start tick as wrap origin (PASS)
 
-Today every wrap-crossing fixture treats **loop tick 0** as the wrap:
-
-- consume: `end < start` → `[start, loopLength)`
-- incoming `loopLen-40 → 20` and `4000 → 200` cross 0
-
-Pin 2: the overdub session wrap is start-overdub tick **S**, not loop 0. `stage6e1ConsumeHold` / `accumulatePendingNoteChangesForIncomingNote` still clip to `loopLength`.
-
-**Native only. Same TU. Do not implement until asked.**
-
-### Session phase
+`test_stage6e1b_session_start_is_wrap_origin`. S = 777.
 
 ```text
 sessionPhase(t) = (t - S + loopLength) % loopLength
-```
-
-When S = 0 this is the tick itself. Incoming crosses the session wrap iff `sessionPhase(end) < sessionPhase(start)` — the same test as today’s `end < start`.
-
-Consume then uses S, not loop 0:
-
-```text
 if sessionPhase(end) < sessionPhase(start):
-  consume = [start, next S)   // today: [start, loopLength)
+  consume = [start, S) when start < S, else [start, loopLength)
 else:
   consume = [start, end)
 ```
 
-Geometry still receives the real incoming `(start, end)`. Only candidate-find consume changes.
+S = 0 is the 6E.1 clip. Geometry still uses the consume window (production).
 
-### Cases to replay
+1. **Rotated.** Every 6E.1 row whose linear spans stay linear after `t' = (t + S) % loopLength`. Same candidate ids and Shorten/Hide kinds.
+2. **Absolute.** Source stays 60@0–5000. Incoming `(4000+S, 200+S)` crosses S. Consume clips to S. Shorten to incomingStart−1.
 
-Every 6E.1 row, including 60@0–5000 / 4000–4200 and 4000–200.
+Loop-filling 4000/4100 rows are not rotated: `3999+S` wraps and reconstruct does not pair that as a tail wrap. They stay S = 0 in 6E.1.
 
-1. **Rotated (relative geometry unchanged).** Fix `S ≠ 0` (not a fixture boundary). Map every source and incoming tick `t' = (t + S) % loopLength`. Candidate ids and Shorten/Hide kinds must match the S = 0 run.
-2. **Absolute source, wrap at S.** Source stays 60@0–5000. Incoming crosses S the way 4000–200 crosses 0. Consume must clip to S, not `loopLength`. Same transform as the S = 0 wrap row (Shorten 0–3999 unless the Hide pin changes).
-
-FAIL if consume still clips to `loopLength` when S ≠ 0, or if rotating ticks changes the transform kind.
-
-Not firmware. Not 6E.5 (open note at S). Not wrap-commit.
+Not firmware. Not 6E.5. Not wrap-commit.
 
 ---
 
@@ -213,7 +193,7 @@ Extend [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](..
 | Slice | Prove |
 |-------|--------|
 | **6E.1** | **PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten. Loop-filling source + incoming 4000–200: loop 4000 → **Hide**; loop 4100 → **Shorten 0–3999**. |
-| **6E.1b** | **Planned** — session start tick S replaces loop 0 as wrap origin on every 6E.1 case. See below. Not started. |
+| **6E.1b** | **PASS** — S = 777 is wrap origin. Rotated linear 6E.1 rows match. Absolute 0–5000 + incoming across S Shortens. Loop-filling 4000/4100 not rotated. |
 | **6E.2** | Consume tracks checkpoint-interval replay, not `history_events`. Full reconstruct / 16-bar `resolveWindow` = FAIL |
 | **6E.3** | Keep `spans` + `spanBoundaries` after drop-rebuild-buffers. Keep-all-`soundingAt` = FAIL |
 | **6E.4** | Wrap-1 publish is wrap-2 source; session-disable wrap 1 hides it; GUS stamp miss → 3b |

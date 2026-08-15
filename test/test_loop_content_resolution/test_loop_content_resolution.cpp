@@ -2832,6 +2832,7 @@ struct Stage6e1OverlapCase {
   uint32_t expectedEnd = 0;
   uint8_t expectedTransformCount = 0;
   uint32_t loopLength = kStage6e1LoopLen;
+  uint32_t sessionStart = 0;
 };
 
 bool stage6e1LinearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
@@ -2874,13 +2875,26 @@ bool stage6e1ExistingOverlapsHold(uint32_t existingStart, uint32_t existingEnd,
   return direct || existingShifted || incomingShifted;
 }
 
+uint32_t stage6e1SessionPhase(uint32_t tick, uint32_t sessionStart, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return 0;
+  }
+  return (tick + loopLength - (sessionStart % loopLength)) % loopLength;
+}
+
 void stage6e1ConsumeHold(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
-                         uint32_t& consumeStart, uint32_t& consumeEnd) {
+                         uint32_t sessionStart, uint32_t& consumeStart, uint32_t& consumeEnd) {
   consumeStart = startTick;
   consumeEnd = endTick;
-  if (endTick < startTick) {
+  const uint32_t startPhase = stage6e1SessionPhase(startTick, sessionStart, loopLength);
+  const uint32_t endPhase = stage6e1SessionPhase(endTick, sessionStart, loopLength);
+  if (endPhase < startPhase) {
     consumeStart = startTick;
-    consumeEnd = loopLength;
+    if (sessionStart != 0 && startTick < sessionStart) {
+      consumeEnd = sessionStart;
+    } else {
+      consumeEnd = loopLength;
+    }
   }
 }
 
@@ -3084,7 +3098,8 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
 
   uint32_t consumeStart = 0;
   uint32_t consumeEnd = 0;
-  stage6e1ConsumeHold(incomingStart, incomingEnd, loopLength, consumeStart, consumeEnd);
+  stage6e1ConsumeHold(incomingStart, incomingEnd, loopLength, overlapCase.sessionStart,
+                      consumeStart, consumeEnd);
   TEST_ASSERT_TRUE(consumeEnd > consumeStart);
 
   NoteUtils::DisplayNoteVec oracle;
@@ -3108,9 +3123,59 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   stage6e1AssertExpectedTransform(overlapCase, transforms);
 }
 
-}  // namespace
+uint32_t stage6e1RotateTick(uint32_t tick, uint32_t sessionStart, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return 0;
+  }
+  return (tick + sessionStart) % loopLength;
+}
 
-void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
+bool stage6e1RotationPreservesLinearSpans(const Stage6e1OverlapCase& overlapCase,
+                                          uint32_t sessionStart) {
+  const uint32_t loopLength =
+      overlapCase.loopLength != 0 ? overlapCase.loopLength : kStage6e1LoopLen;
+  auto staysLinear = [&](uint32_t onTick, uint32_t offTick) {
+    if (offTick < onTick) {
+      return true;
+    }
+    const uint32_t rotatedOn = stage6e1RotateTick(onTick, sessionStart, loopLength);
+    const uint32_t rotatedOff = stage6e1RotateTick(offTick, sessionStart, loopLength);
+    return rotatedOff > rotatedOn;
+  };
+  for (uint8_t i = 0; i < overlapCase.sourceCount; ++i) {
+    if (!staysLinear(overlapCase.sources[i].onTick, overlapCase.sources[i].offTick)) {
+      return false;
+    }
+  }
+  if (overlapCase.incomingEnd > overlapCase.incomingStart &&
+      !staysLinear(overlapCase.incomingStart, overlapCase.incomingEnd)) {
+    return false;
+  }
+  return true;
+}
+
+Stage6e1OverlapCase stage6e1RotateCase(const Stage6e1OverlapCase& overlapCase,
+                                       uint32_t sessionStart) {
+  Stage6e1OverlapCase rotated = overlapCase;
+  const uint32_t loopLength =
+      overlapCase.loopLength != 0 ? overlapCase.loopLength : kStage6e1LoopLen;
+  rotated.sessionStart = sessionStart;
+  for (uint8_t i = 0; i < rotated.sourceCount; ++i) {
+    rotated.sources[i].onTick =
+        stage6e1RotateTick(overlapCase.sources[i].onTick, sessionStart, loopLength);
+    rotated.sources[i].offTick =
+        stage6e1RotateTick(overlapCase.sources[i].offTick, sessionStart, loopLength);
+  }
+  rotated.incomingStart =
+      stage6e1RotateTick(overlapCase.incomingStart, sessionStart, loopLength);
+  rotated.incomingEnd = stage6e1RotateTick(overlapCase.incomingEnd, sessionStart, loopLength);
+  rotated.expectedStart =
+      stage6e1RotateTick(overlapCase.expectedStart, sessionStart, loopLength);
+  rotated.expectedEnd = stage6e1RotateTick(overlapCase.expectedEnd, sessionStart, loopLength);
+  return rotated;
+}
+
+uint32_t stage6e1LoadCases(Stage6e1OverlapCase* out, uint32_t cap) {
   const uint32_t loopLen = kStage6e1LoopLen;
   const Stage6e1OverlapCase cases[] = {
       {"user_example_note31_still_sounding",
@@ -3208,9 +3273,63 @@ void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
        1,
        4100},
   };
-  for (const Stage6e1OverlapCase& overlapCase : cases) {
-    stage6e1RunCase(overlapCase);
+  const uint32_t count = static_cast<uint32_t>(sizeof(cases) / sizeof(cases[0]));
+  TEST_ASSERT_TRUE(count <= cap);
+  for (uint32_t i = 0; i < count; ++i) {
+    out[i] = cases[i];
   }
+  return count;
+}
+
+}  // namespace
+
+void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
+  Stage6e1OverlapCase cases[16]{};
+  const uint32_t count = stage6e1LoadCases(cases, 16);
+  TEST_ASSERT_GREATER_THAN(0u, count);
+  for (uint32_t i = 0; i < count; ++i) {
+    stage6e1RunCase(cases[i]);
+  }
+}
+
+void test_stage6e1b_session_start_is_wrap_origin() {
+  constexpr uint32_t kSessionStart = 777;
+  Stage6e1OverlapCase cases[16]{};
+  const uint32_t count = stage6e1LoadCases(cases, 16);
+  TEST_ASSERT_GREATER_THAN(0u, count);
+  uint32_t rotatedCount = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t loopLength =
+        cases[i].loopLength != 0 ? cases[i].loopLength : kStage6e1LoopLen;
+    TEST_ASSERT_TRUE(kSessionStart < loopLength);
+    TEST_ASSERT_TRUE(kSessionStart != cases[i].incomingStart);
+    TEST_ASSERT_TRUE(kSessionStart != cases[i].incomingEnd);
+    if (!stage6e1RotationPreservesLinearSpans(cases[i], kSessionStart)) {
+      continue;
+    }
+    char name[96];
+    std::snprintf(name, sizeof(name), "%s_session_%u", cases[i].name, kSessionStart);
+    Stage6e1OverlapCase rotated = stage6e1RotateCase(cases[i], kSessionStart);
+    rotated.name = name;
+    stage6e1RunCase(rotated);
+    ++rotatedCount;
+  }
+  TEST_ASSERT_GREATER_THAN(0u, rotatedCount);
+
+  Stage6e1OverlapCase absolute{};
+  absolute.name = "absolute_source_wrap_at_session_start";
+  absolute.sources[0] = {1, 60, 0, 5000};
+  absolute.sourceCount = 1;
+  absolute.incomingPitch = 60;
+  absolute.incomingStart = stage6e1RotateTick(4000, kSessionStart, kStage6e1LoopLen);
+  absolute.incomingEnd = stage6e1RotateTick(200, kSessionStart, kStage6e1LoopLen);
+  absolute.expected = Stage6e1ExpectedTransform::Shorten;
+  absolute.expectedStart = 0;
+  absolute.expectedEnd = absolute.incomingStart - 1;
+  absolute.expectedTransformCount = 1;
+  absolute.loopLength = kStage6e1LoopLen;
+  absolute.sessionStart = kSessionStart;
+  stage6e1RunCase(absolute);
 }
 
 void test_stage6d4_publish_restamps_without_device_gate_complete() {
@@ -3345,5 +3464,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6d3_repeated_overdub_scales);
   RUN_TEST(test_stage6d4_publish_restamps_without_device_gate_complete);
   RUN_TEST(test_stage6e1_resolve_state_candidates_match_note_map_oracle);
+  RUN_TEST(test_stage6e1b_session_start_is_wrap_origin);
   return UNITY_END();
 }
