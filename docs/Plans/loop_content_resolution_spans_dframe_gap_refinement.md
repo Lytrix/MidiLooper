@@ -1,11 +1,11 @@
 # Loop content resolution — 5.7 DFRAME during sliced append (reserve)
 
-**Status:** **5.7c device PASS** [`170024`](../captures/session_20260815_170024.log) — `capp=12373` `csort=1779`. First `spans` slice is not a stall. Pair `DFRAME` 1.277 s remains a different owner.  
+**Status:** **5.7c FROZEN** 2026-08-15 — representation part of Stage 5.7 closed [`170024`](../captures/session_20260815_170024.log). Successor: [`loop_content_resolution_pair_index_refinement.md`](loop_content_resolution_pair_index_refinement.md) (`pair` `DFRAME` 1.277 s). Do not reopen 5.7c.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.17 complete — [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md)  
 **Evidence:** [`162630`](../captures/session_20260815_162630.log)
 
-**Does not start:** B, A2, `recon` / `pair` rewrites, 5.1 / 5.2, Stage 6, restoring the arm cap.
+**Does not start:** B, A2, `recon` / `pair` rewrites, 5.1 / 5.2, Stage 6, restoring the arm cap. **5.7c is frozen** — pair is a new investigation.
 
 **Boundary:** `StateCheckpoints::appendSpansFromNotes` owns span-boundary growth. `TickIndex::appendTickEventEntries` owns tick-event growth. Same sliced-append reserve contract. Query contracts unchanged.
 
@@ -22,9 +22,11 @@ No formal trigger. Lightweight preflight: owner = those appends; change = reserv
 
 ## Goal
 
-Close the 5.7 leftover: **no 1 s `DFRAME` gaps** on the >63-bar idle gate. Size and `idle_maint` remainder already PASS.
+**Representation (closed 5.7c):** no per-entry PSRAM map on `spanBoundaries` / `tickEvents` / channel lookup; `walk=0`.
 
-Not the goal: make `reb` smaller as the pass criterion. Not the goal: rewrite `channelForNoteId`.
+**Whole-gate `DFRAME` ≤ 1 s:** not this plan. Successor 5.18.
+
+Not the goal: make `reb` smaller as the pass criterion. Not the goal: rewrite `pair` / `recon`.
 
 ---
 
@@ -314,4 +316,4 @@ Sequence: `dedup` → `chan` (11.55 ms later) → `csort` → `spans` (22.63 ms 
 
 The first `spans` slice is no longer a multi-second prerequisite. `walk=0`. `hist=2394`.
 
-**5.7 leftover (different owner):** `pair` `DFRAME` **1.277 s** at 28.46 s (`frameIndex` 390→420, consecutive). Same class as 5.7a 1.275 s. Do not rewrite `pair` / `recon` in this closeout. Do not start 5.1. Arm cap stays off.
+**5.7 leftover (different owner):** `pair` `DFRAME` **1.277 s** at 28.46 s (`frameIndex` 390→420, consecutive). Same class as 5.7a 1.275 s. **5.7c is frozen.** Successor: [`loop_content_resolution_pair_index_refinement.md`](loop_content_resolution_pair_index_refinement.md). Do not rewrite `pair` / `recon` here. Do not start 5.1. Arm cap stays off.

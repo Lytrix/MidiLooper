@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 derived-index storage invariant)
+Last updated: 2026-08-15 (DEC-037 5.7c frozen; 5.18 pair design)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 derived-index storage invariant)
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** DEC-037 **derived-index storage invariant** recorded (not a new DEC). 5.7c [`170024`](../../captures/session_20260815_170024.log) PASS. **5.7 leftover:** `pair` `DFRAME` 1.277 s — separate measurement/design pass; pin `byNoteId` / `openOnByPitch` contracts before any swap. `byTick` is already `tickEvents` (5.17e); `iapp=201 ms` is bulk append, not a remaining map. Do not start 5.1. Do not add B. Do not rewrite `recon`. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](../Plans/loop_content_resolution_spans_dframe_gap_refinement.md).
+**Now:** **5.7c FROZEN** — representation closed [`170024`](../../captures/session_20260815_170024.log). **Next:** 5.18 pair contract investigation ([`loop_content_resolution_pair_index_refinement.md`](../Plans/loop_content_resolution_pair_index_refinement.md)) — design only; `byNoteId` is last-wins `NoteId → {pass, on, off}`; `openOnByPitch` is a per-pass LIFO stack keyed by **pitch only**. Do not flatten from container type. No 5.1. No Stage 6. No B. Do not rewrite `recon`. Arm cap stays off. Production stays on materialize / 3b copy.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

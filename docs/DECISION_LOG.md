@@ -149,6 +149,19 @@ This is **derived indexes + PSRAM + per-entry construction**. It is not “never
 
 **Still associative (not this invariant’s swap list):** `TickIndex::byNoteId` and pairing `openOnByPitch` (`pair` leftover, `DFRAME` 1.277 s); `TickIndex::passById` (pass-count, not note-count). Do not fold `pair` / `recon` into this rule. Do not start 5.1.
 
+### Amendment 2026-08-15 — 5.7c FROZEN; pair is 5.18
+
+Representation part of Stage 5.7 is **closed**. Do not reopen 5.7c.
+
+| Gate | Status |
+|------|--------|
+| correctness (`walk=0`) | PASS [`170024`](../captures/session_20260815_170024.log) |
+| complexity (no B) | PASS |
+| derived-index RAM / construction (flat/bulk) | PASS — `spanBoundaries`, `tickEvents`, channel lookup |
+| device latency on the whole idle gate | OPEN — `pair` `DFRAME` 1.277 s |
+
+Successor: [`loop_content_resolution_pair_index_refinement.md`](Plans/loop_content_resolution_pair_index_refinement.md). Flatten from the **query**, not the container type. `byNoteId` is last-wins `NoteId → {passId, on, off}`. `openOnByPitch` is a per-pass LIFO stack keyed by **pitch only**. Measure which produces the stall before picking a representation. No 5.1. No Stage 6. No B. Do not rewrite `recon`.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.
