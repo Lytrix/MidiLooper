@@ -104,7 +104,8 @@ struct LoopContentResolution {
     void prepareRebuildSpans(const TickIndex& index, const EditPassVec& editPasses,
                              uint32_t loopLength, uint32_t checkpointIntervalTicks,
                              ResolutionCostCounters* counters = nullptr);
-    void fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
+    /// Returns false when advisory pressure is Low or Critical (no further sounding copies).
+    bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, SoundingNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;

@@ -27,6 +27,8 @@
 #include "../../src/LoopContentResolution.cpp"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPressureLevel.h"
 
 namespace {
 
@@ -952,6 +954,42 @@ void test_stage7_sparse_checkpoints_agree_with_dense() {
   }
 }
 
+void test_stage7_fill_aborts_under_low_pressure() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::resetNativeTestPressureInputs();
+  MemoryMonitor::resetNativeTestFreeHeap();
+  MemoryMonitor::setNativeTestFreeHeap(70u * 1024u);
+  MemoryMonitor::setNativeTestChunksFree(40);
+  MemoryMonitor::updateAdvisoryPressureLevel(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(MemoryPressureLevel::Normal),
+                    static_cast<int>(MemoryMonitor::getAdvisoryPressureLevel()));
+
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.prepareRebuildSpans(index, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                  Config::TICKS_PER_BAR);
+  TEST_ASSERT_TRUE(checkpoints.soundingAt.size() > 0);
+  TEST_ASSERT_TRUE(checkpoints.soundingAt[0].empty());
+
+  MemoryMonitor::setNativeTestFreeHeap(50u * 1024u);
+  MemoryMonitor::updateAdvisoryPressureLevel(100);
+  TEST_ASSERT_EQUAL(static_cast<int>(MemoryPressureLevel::Low),
+                    static_cast<int>(MemoryMonitor::getAdvisoryPressureLevel()));
+  TEST_ASSERT_FALSE(checkpoints.fillCheckpointRange(0, 1));
+  TEST_ASSERT_TRUE(checkpoints.soundingAt[0].empty());
+
+  MemoryMonitor::resetNativeTestPressureInputs();
+  MemoryMonitor::resetNativeTestFreeHeap();
+  MemoryMonitor::setNativeTestFreeHeap(70u * 1024u);
+  MemoryMonitor::setNativeTestChunksFree(40);
+  MemoryMonitor::updateAdvisoryPressureLevel(200);
+  TEST_ASSERT_TRUE(checkpoints.fillCheckpointRange(0, 1));
+  TEST_ASSERT_FALSE(checkpoints.soundingAt[0].empty());
+}
+
 void test_stage9_native_worst_case_micros() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1004,6 +1042,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage7_resolve_state_from_checkpoint_not_tick_zero);
   RUN_TEST(test_stage7_resolve_state_matches_oracle_mid_and_wrap);
   RUN_TEST(test_stage7_sparse_checkpoints_agree_with_dense);
+  RUN_TEST(test_stage7_fill_aborts_under_low_pressure);
   RUN_TEST(test_stage8_loop_switch_high_tick_bounded_replay);
   RUN_TEST(test_stage9_native_worst_case_micros);
   return UNITY_END();
