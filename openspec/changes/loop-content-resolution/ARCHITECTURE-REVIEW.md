@@ -80,18 +80,18 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **Reuse** | YES — idle gate already owns LCR construction; 3b copy stays fallback |
 | **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. **6C native** (`tryResolvePreparedWindow` → `overdubSourceView`; 3b fallback). Consume-when-ready only |
 
-### Phase 6D — Incremental post-commit maintenance (investigation)
+### Phase 6D — Incremental overdub-query index (investigation; 6D.1 first)
 
 | Question | Answer |
 |----------|--------|
-| **Owner module** | `LoopContentResolution` (`TickIndex` Layer 1; `StateCheckpoints` Layer 2). Commit already publishes the pass via `Loop::commitPendingCapturePass`. 6B already walks affected bars in `Loop::markAffectedDisplayCacheRanges` |
-| **Primary invariant** | A committed overdub must update already-built LCR derived indexes and invalidate/rebuild only affected resolution state. Maintenance must scale `O(new events + affected checkpoints)`, not `O(all historical events)` |
-| **Ownership change?** | NO — same derivation owner. New call path from commit → LCR maintenance is not a new owner |
-| **State transition change?** | NO for record/overdub FSM. **YES for idle-maintenance admission** if LCR slices run during PLAYING. That needs a DEC-037 amendment before firmware |
+| **Owner module** | `LoopContentResolution::TickIndex`. Commit publishes the pass via `Loop::commitPendingCapturePass`. 6B already marks affected display bars. Consume stays `tryResolvePreparedWindow` |
+| **Primary invariant** | After a committed `OverdubPass`, the index required for a subsequent overdub query (`capturePasses` + `tickEvents` + stamp) is updated incrementally within a bounded budget. Not all of LCR |
+| **Ownership change?** | NO — same derivation owner |
+| **State transition change?** | NO for record/overdub FSM. Candidate placement is the 6B commit site, not `startOverdubbing`. PLAYING slices only if the measured slice misses the stop budget — later amendment |
 | **Behavior-preserving?** | YES for this investigation (docs + native counters only) |
-| **Reuse** | YES — `TickIndex::commitCapturePass` already appends one pass then full-sorts `tickEvents` / unique `byNoteId`. Do not incrementally maintain `openOnByPitch`. Do not repeat DEC-036 D1 full flatten |
-| **Phase scope** | Native measurement + plan [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md). **A rejected. B rejected.** No firmware. No 6C consume-path edits |
+| **Reuse** | YES — `beginCapturePass` + `indexCapturePassEventRange` already append. Do not use full `commitCapturePass` (it also pairs/`byNoteId`-uniques). Do not incrementally maintain `openOnByPitch`. Do not repeat DEC-036 D1 |
+| **Phase scope** | **6D.1 native:** one overdub pass, order `tickEvents`, restamp, oracle `resolveWindow`. No edits, undo, checkpoints, `byNoteId`. Plan [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md). **A rejected. B rejected.** No firmware |
 
 ---
 
-**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 consume-only invariant + explicit implement request (start with **6A**, not overdub). **6D firmware** requires native scaling pass **and** an amendment if PLAYING LCR slices are admitted.
+**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 consume-only invariant + explicit implement request (start with **6A**, not overdub). **6D.1 firmware** requires native pass. Do not treat 6D as “LCR is always live.”
