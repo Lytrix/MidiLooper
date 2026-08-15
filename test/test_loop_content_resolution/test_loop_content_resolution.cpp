@@ -40,6 +40,7 @@
 #include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/LoopStopFinalize.h"
 
 namespace {
 
@@ -3527,6 +3528,90 @@ void test_stage6e4_publish_is_next_wrap_source() {
   TEST_ASSERT_TRUE(missed.empty());
 }
 
+const NoteUtils::DisplayNote* findDisplayNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId id) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == id) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void test_stage6e5_held_note_across_session_start_does_not_seal_add() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const uint32_t loopLength = 8u * Config::TICKS_PER_BAR;
+  constexpr uint32_t kSessionStart = 777;
+  const NoteId recordNoteId = 1;
+  const NoteId completedNoteId = 10;
+  const NoteId heldNoteId = 11;
+  TEST_ASSERT_TRUE(kSessionStart < loopLength);
+
+  SessionMidiEventVec capture;
+  MidiEvent completedOn = MidiEvent::NoteOn(200, 1, 72, 100);
+  completedOn.noteId = completedNoteId;
+  MidiEvent completedOff = MidiEvent::NoteOff(400, 1, 72, 0);
+  completedOff.noteId = completedNoteId;
+  MidiEvent heldOn = MidiEvent::NoteOn(500, 1, 60, 100);
+  heldOn.noteId = heldNoteId;
+  capture.push_back(completedOn);
+  capture.push_back(completedOff);
+  capture.push_back(heldOn);
+
+  const NoteUtils::DisplayNoteVec invented =
+      NoteUtils::reconstructDisplayNotes(capture, loopLength, false);
+  const NoteUtils::DisplayNote* inventedHeld = findDisplayNoteId(invented, heldNoteId);
+  TEST_ASSERT_NOT_NULL(inventedHeld);
+  TEST_ASSERT_EQUAL_UINT32(500u, inventedHeld->startTick);
+  TEST_ASSERT_EQUAL_UINT32(loopLength - 1u, inventedHeld->endTick);
+
+  SessionMidiEventVec closedAtSessionStart = capture;
+  MidiEvent syntheticOff = MidiEvent::NoteOff(kSessionStart, 1, 60, 0);
+  syntheticOff.noteId = heldNoteId;
+  closedAtSessionStart.push_back(syntheticOff);
+  const NoteUtils::DisplayNoteVec sealed =
+      NoteUtils::reconstructDisplayNotes(closedAtSessionStart, loopLength, false);
+  const NoteUtils::DisplayNote* sealedHeld = findDisplayNoteId(sealed, heldNoteId);
+  TEST_ASSERT_NOT_NULL(sealedHeld);
+  TEST_ASSERT_EQUAL_UINT32(500u, sealedHeld->startTick);
+  TEST_ASSERT_EQUAL_UINT32(kSessionStart, sealedHeld->endTick);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteId(sealed, completedNoteId));
+
+  LoopEventStore wrapWindowStore;
+  TEST_ASSERT_TRUE(wrapWindowStore.append(completedOn));
+  TEST_ASSERT_TRUE(wrapWindowStore.append(completedOff));
+  TEST_ASSERT_TRUE(wrapWindowStore.append(heldOn));
+  const LoopStopFinalize::Result wrapWindow =
+      LoopStopFinalize::finalizeWrapWindowOnStore(wrapWindowStore, loopLength, kSessionStart);
+  TEST_ASSERT_EQUAL_UINT32(0u, wrapWindow.syntheticOffsInserted);
+
+  LoopPasses prepared;
+  prepared.recordPass.id = 1;
+  prepared.recordPass.state = CapturePassState::Active;
+  prepared.recordPass.committedChunkIds = makeNoteSpan(0, 24, 1, 48, recordNoteId);
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(prepared, loopLength, sample);
+  constexpr uint32_t kPreparedRevision = 1;
+  LoopContentResolution::deviceGateComplete(kPreparedRevision);
+
+  const OverdubPass completedWrap = makeOverdub(2, 1, 200, 400, 1, 72, completedNoteId);
+  LoopContentResolution::publishPreparedOverdubPass(completedWrap, kPreparedRevision + 1u);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
+
+  SoundingNoteVec atCompleted;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(
+      300, kPreparedRevision + 1u, atCompleted, nullptr));
+  TEST_ASSERT_TRUE(hasSoundingNoteId(atCompleted, completedNoteId));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(atCompleted, heldNoteId));
+
+  SoundingNoteVec duringHold;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(
+      600, kPreparedRevision + 1u, duringHold, nullptr));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(duringHold, heldNoteId));
+  TEST_ASSERT_FALSE(hasSoundingNoteId(duringHold, completedNoteId));
+}
+
 void test_stage6d4_publish_restamps_without_device_gate_complete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3663,5 +3748,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6e2_consume_tracks_checkpoint_replay_not_history);
   RUN_TEST(test_stage6e3_keep_spans_after_drop_rebuild_buffers);
   RUN_TEST(test_stage6e4_publish_is_next_wrap_source);
+  RUN_TEST(test_stage6e5_held_note_across_session_start_does_not_seal_add);
   return UNITY_END();
 }
