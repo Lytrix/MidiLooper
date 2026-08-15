@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6E.3 PASS; keep spans after drop-rebuild-buffers)
+Last updated: 2026-08-15 (DEC-037 6E.4 PASS; wrap-1 publish is wrap-2 source)
 
 ---
 
@@ -16,11 +16,11 @@ Last updated: 2026-08-15 (DEC-037 6E.3 PASS; keep spans after drop-rebuild-buffe
 
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **6D investigation:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md)  
-**6E overdub evaluation:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../Plans/loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E.1–6E.3 PASS**; 6E.4–6E.5 not started; no Track wiring  
+**6E overdub evaluation:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../Plans/loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E.1–6E.4 PASS**; 6E.5 not started; no Track wiring  
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6E.3 PASS** — `deviceGateComplete` keeps `spans` + `spanBoundaries` + sparse `soundingAt`. `tryResolvePreparedState` consumes them. Next when asked: **6E.4**. Do not start midi_gap / 6.3 or wrap-commit DEC.
+**Now:** **6E.4 PASS** — wrap-1 publish is wrap-2 `resolveState` source; session-disable hides it; stamp miss → 3b. Next when asked: **6E.5**. Do not start midi_gap / 6.3 or wrap-commit DEC.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

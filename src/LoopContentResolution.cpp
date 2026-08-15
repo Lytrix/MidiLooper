@@ -1177,6 +1177,32 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortSpanBoundaryEnt
                    });
 }
 
+TRACK_COLD_MEM void mergeSortedSpanBoundaryEntries(
+    const LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& left,
+    const LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& right,
+    LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& out) {
+  out.clear();
+  out.resize(left.size() + right.size());
+  std::merge(left.begin(), left.end(), right.begin(), right.end(), out.begin(),
+             [](const LoopContentResolution::StateCheckpoints::SpanBoundaryEntry& a,
+                const LoopContentResolution::StateCheckpoints::SpanBoundaryEntry& b) {
+               return a.tick < b.tick;
+             });
+}
+
+TRACK_COLD_MEM void eraseDisabledSounding(const LoopContentResolution::TickIndex& index,
+                                          SoundingNoteVec& out) {
+  auto isDisabled = [&](const SoundingNote& note) {
+    const LoopContentResolution::TickIndex::ByNoteIdEntry* found = index.findByNoteId(note.noteId);
+    if (found == nullptr) {
+      return false;
+    }
+    const LoopContentResolution::TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    return pass != nullptr && pass->state != CapturePassState::Active;
+  };
+  out.erase(std::remove_if(out.begin(), out.end(), isDisabled), out.end());
+}
+
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(
     const SessionMidiEventVec& resolved, uint32_t begin, uint32_t endExclusive,
     ChannelByNoteIdEntryVec& out) {
@@ -1979,12 +2005,54 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const Over
     index.appendCapturePassChunk(pass.id, chunkId);
   }
   const TickIndex::CapturePassEntry* entry = findPass(index, pass.id);
-  if (entry != nullptr) {
-    TickIndex::appendTickEventEntries(*entry, 0, static_cast<uint32_t>(entry->events.size()),
-                                      sDeviceGateSession.delta);
-    TickIndex::sortTickEventEntriesByTick(sDeviceGateSession.delta);
+  if (entry == nullptr) {
+    return;
+  }
+  TickIndex::appendTickEventEntries(*entry, 0, static_cast<uint32_t>(entry->events.size()),
+                                    sDeviceGateSession.delta);
+  TickIndex::sortTickEventEntriesByTick(sDeviceGateSession.delta);
+  index.pairCapturePassNotes(pass.id);
+  index.sortAndUniqueByNoteId(nullptr);
+
+  StateCheckpoints& checkpoints = sDeviceGateSession.checkpoints;
+  const uint32_t spanBegin = static_cast<uint32_t>(checkpoints.spans.size());
+  const size_t boundBegin = checkpoints.spanBoundaries.size();
+  checkpoints.appendChannelByNoteIdRange(entry->events, 0, static_cast<uint32_t>(entry->events.size()),
+                                         nullptr);
+  checkpoints.sortChannelByNoteId(nullptr);
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(entry->events, sDeviceGateSession.loopLengthTicks, false);
+  checkpoints.appendSpansFromNotes(entry->events, notes, 0, static_cast<uint32_t>(notes.size()),
+                                   nullptr);
+  StateCheckpoints::SpanBoundaryEntryVec added(checkpoints.spanBoundaries.begin() +
+                                                   static_cast<std::ptrdiff_t>(boundBegin),
+                                               checkpoints.spanBoundaries.end());
+  checkpoints.spanBoundaries.resize(boundBegin);
+  StateCheckpoints::sortSpanBoundaryEntriesByTick(added);
+  StateCheckpoints::SpanBoundaryEntryVec merged;
+  mergeSortedSpanBoundaryEntries(checkpoints.spanBoundaries, added, merged);
+  checkpoints.spanBoundaries.swap(merged);
+  for (uint32_t i = spanBegin; i < static_cast<uint32_t>(checkpoints.spans.size()); ++i) {
+    NoteUtils::DisplayNote probe{};
+    probe.noteId = checkpoints.spans[i].note.noteId;
+    probe.note = checkpoints.spans[i].note.pitch;
+    probe.startTick = checkpoints.spans[i].startTick;
+    probe.endTick = checkpoints.spans[i].endTick;
+    for (uint32_t c = 0; c < static_cast<uint32_t>(checkpoints.soundingAt.size()); ++c) {
+      if (noteSoundsAt(probe, c * checkpoints.intervalTicks, checkpoints.loopLengthTicks)) {
+        checkpoints.soundingAt[c].push_back(checkpoints.spans[i].note);
+      }
+    }
   }
   sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
+}
+
+TRACK_COLD_MEM void LoopContentResolution::setPreparedCapturePassState(PassId id,
+                                                                      CapturePassState state) {
+  if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept || id == kInvalidPassId) {
+    return;
+  }
+  sDeviceGateSession.index.setCapturePassState(id, state);
 }
 
 TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
@@ -2018,6 +2086,7 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedState(uint32_t tick
     return false;
   }
   resolveState(sDeviceGateSession.checkpoints, tick, out, counters);
+  eraseDisabledSounding(sDeviceGateSession.index, out);
   return true;
 }
 
