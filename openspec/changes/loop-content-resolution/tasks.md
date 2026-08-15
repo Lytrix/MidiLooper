@@ -53,7 +53,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [x] 5.14 Slice display project with `appendProjectedDisplayNotes` / `kDeviceGateEventsPerSlice`. Phase tokens `proj` / `dedup`. `projectDisplayNotes` still composes the same loop. Native `test_stage9_range_proj_matches_full` PASS. Dedup stays one slice. Cap stays off.
 - [x] 5.15a Design: `startsByTick` contract is start **and** exclusive-end; `rebuildNotes` is not `startTick`-ordered; `TickIndex::byTick` is a second PSRAM multimap. Plan: [`loop_content_resolution_span_boundary_index_refinement.md`](../../../docs/Plans/loop_content_resolution_span_boundary_index_refinement.md). Do not change batch size. Do not start 6.x.
 - [x] 5.15b Native microbench: flat A (`append` + `stable_sort` by tick) vs C map. Same `resolveState` / oracle, `walk=0`, equal-tick order proven. Host: C emplace 29 µs, A append 1 + sort 4 = 5 µs, A resolve 3 vs C 5. Pick **A**. No B. No A2. No `byTick`. Device swap is 5.15c.
-- [ ] 5.15c Swap device-gate `startsByTick` to flat A (C-order append, `stable_sort` by tick). Telemetry: append / sort / index total. Do not touch `TickIndex::byTick`. Do not start B or A2. Do not start 5.1/5.2/6.x.
+- [x] 5.15c Swap device-gate `startsByTick` to flat `spanBoundaries` (C-order append, one `sort` slice, `stable_sort` by tick). Complete line `app=` / `sort=`. `resolveState` reads the flat list. Do not touch `TickIndex::byTick`. Do not start B or A2. Do not start 5.1/5.2/6.x. Device 5.7 remasure next.
 
 ## 6. Production swap (only after all three gates + user approval)
 

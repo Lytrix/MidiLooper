@@ -591,7 +591,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::prepareRebuildResol
   loopLengthTicks = loopLength;
   soundingAt.clear();
   spans.clear();
-  startsByTick.clear();
+  spanBoundaries.clear();
   resolved.clear();
   if (loopLength == 0 || checkpointIntervalTicks == 0) {
     return true;
@@ -629,6 +629,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
   if (spans.capacity() < notes.size()) {
     spans.reserve(notes.size());
   }
+  const uint32_t spanBegin = static_cast<uint32_t>(spans.size());
   for (uint32_t i = begin; i < endExclusive; ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
     NoteSpan span{};
@@ -638,21 +639,30 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
     span.note.onTick = note.startTick;
     span.startTick = note.startTick;
     span.endTick = note.endTick;
-    const size_t spanIndex = spans.size();
     spans.push_back(span);
-    startsByTick.emplace(span.startTick, spanIndex);
-    startsByTick.emplace(span.endTick, spanIndex);
   }
+  ElapsedTimer appendTimer;
+  appendSpanBoundaryEntries(spans, spanBegin, static_cast<uint32_t>(spans.size()), spanBoundaries);
   if (counters != nullptr) {
+    counters->spanBoundaryAppendMicros += appendTimer.elapsed();
     counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
   }
   return true;
 }
 
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortSpanBoundaries(
+    ResolutionCostCounters* counters) {
+  ElapsedTimer sortTimer;
+  sortSpanBoundaryEntriesByTick(spanBoundaries);
+  if (counters != nullptr) {
+    counters->spanBoundarySortMicros += sortTimer.elapsed();
+  }
+}
+
 TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
     const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
   spans.clear();
-  startsByTick.clear();
+  spanBoundaries.clear();
   soundingAt.clear();
   if (loopLengthTicks == 0 || intervalTicks == 0) {
     return true;
@@ -662,6 +672,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
   if (!appendSpansFromNotes(resolved, notes, 0, static_cast<uint32_t>(notes.size()), counters)) {
     return false;
   }
+  sortSpanBoundaries(counters);
   uint32_t count = loopLengthTicks / intervalTicks;
   if (count == 0) {
     count = 1;
@@ -789,25 +800,7 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortSpanBoundaryEnt
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick,
                                                                          SoundingNoteVec& out,
                                                                          ResolutionCostCounters* counters) const {
-  uint32_t replayStart = 0;
-  if (!seedResolveStateFromCheckpoint(*this, tick, out, replayStart)) {
-    return;
-  }
-  const uint32_t queryTick = IntervalProjection::tickPhaseInLoop(tick, 0, loopLengthTicks);
-  uint32_t replayed = 0;
-  auto applyRange = [&](uint32_t beginTick, uint32_t endTickExclusive) {
-    auto it = startsByTick.lower_bound(beginTick);
-    const auto stop = startsByTick.lower_bound(endTickExclusive);
-    for (; it != stop; ++it) {
-      replayed += 1;
-      if (it->second >= spans.size()) {
-        continue;
-      }
-      applySpanBoundaryAtTick(out, spans[it->second], it->first);
-    }
-  };
-  applyRange(replayStart + 1, queryTick + 1);
-  writeResolveStateCounters(*this, replayStart, replayed, counters);
+  resolveStateFromSpanBoundaries(spanBoundaries, tick, out, counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveStateFromSpanBoundaries(
@@ -914,6 +907,7 @@ struct DeviceGateSession {
     checkpointCursor = 0;
     rebuildSpanCursor = 0;
     rebuildNotesReady = false;
+    spanBoundariesSorted = false;
     reconSpansFinished = false;
     reconEventCursor = 0;
     reconProjectCursor = 0;
@@ -975,6 +969,7 @@ struct DeviceGateSession {
         (name == kPairStep)    ? static_cast<unsigned>(pairEventCursor)
         : (name == kReconStep) ? static_cast<unsigned>(reconEventCursor)
         : (name == kProjStep)  ? static_cast<unsigned>(reconProjectCursor)
+        : (name == kSortStep)  ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
                                : static_cast<unsigned>(indexEventCursor);
     const unsigned notesLogged = (name == kProjStep)
                                      ? static_cast<unsigned>(reconProjected.size())
@@ -1151,13 +1146,14 @@ struct DeviceGateSession {
             return LoopContentResolution::DeviceGateSliceResult::Continue;
           }
           checkpoints.spans.clear();
-          checkpoints.startsByTick.clear();
+          checkpoints.spanBoundaries.clear();
           checkpoints.soundingAt.clear();
           rebuildNotes = NoteUtils::dedupeProjectedDisplayNotes(reconProjected);
           reconProjected = NoteUtils::DisplayNoteVec{};
           reconBuild.clear();
           rebuildSpanCursor = 0;
           rebuildNotesReady = true;
+          spanBoundariesSorted = false;
           lastStepName = kDedupStep;
           sample_.rebuild.elapsedMicros += timer.elapsed();
           return LoopContentResolution::DeviceGateSliceResult::Continue;
@@ -1173,20 +1169,27 @@ struct DeviceGateSession {
           }
           rebuildSpanCursor = end;
           lastStepName = "spans";
+          sample_.rebuild.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
-        if (rebuildSpanCursor >= noteCount) {
-          uint32_t count = checkpoints.loopLengthTicks / checkpoints.intervalTicks;
-          if (count == 0) {
-            count = 1;
-          }
-          checkpoints.soundingAt.resize(count);
-          sample_.rebuild.checkpointIntervalTicks = checkpoints.intervalTicks;
-          sample_.rebuild.checkpointCount = static_cast<uint32_t>(checkpoints.soundingAt.size());
-          rebuildEvents = SessionMidiEventVec{};
-          rebuildNotes = NoteUtils::DisplayNoteVec{};
-          checkpointCursor = 0;
-          phase = Phase::RebuildCheckpoints;
+        if (!spanBoundariesSorted) {
+          checkpoints.sortSpanBoundaries(&sample_.rebuild);
+          spanBoundariesSorted = true;
+          lastStepName = kSortStep;
+          sample_.rebuild.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
+        uint32_t count = checkpoints.loopLengthTicks / checkpoints.intervalTicks;
+        if (count == 0) {
+          count = 1;
+        }
+        checkpoints.soundingAt.resize(count);
+        sample_.rebuild.checkpointIntervalTicks = checkpoints.intervalTicks;
+        sample_.rebuild.checkpointCount = static_cast<uint32_t>(checkpoints.soundingAt.size());
+        rebuildEvents = SessionMidiEventVec{};
+        rebuildNotes = NoteUtils::DisplayNoteVec{};
+        checkpointCursor = 0;
+        phase = Phase::RebuildCheckpoints;
         sample_.rebuild.elapsedMicros += timer.elapsed();
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
@@ -1240,12 +1243,14 @@ struct DeviceGateSession {
   static constexpr const char* kReconStep = "recon";
   static constexpr const char* kProjStep = "proj";
   static constexpr const char* kDedupStep = "dedup";
+  static constexpr const char* kSortStep = "sort";
   bool pairPassOpen = false;
   uint32_t pairEventCursor = 0;
   std::map<uint8_t, std::vector<uint32_t>> pairOpenOnByPitch;
   uint32_t checkpointCursor = 0;
   uint32_t rebuildSpanCursor = 0;
   bool rebuildNotesReady = false;
+  bool spanBoundariesSorted = false;
   bool reconSpansFinished = false;
   uint32_t reconEventCursor = 0;
   uint32_t reconProjectCursor = 0;
@@ -1301,14 +1306,16 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
   const unsigned long stamp = 0UL;
 #endif
   snprintf(line, cap,
-           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u", stamp,
-           static_cast<unsigned long>(sample.materialize.elapsedMicros),
+           "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u,app=%lu,sort=%lu",
+           stamp, static_cast<unsigned long>(sample.materialize.elapsedMicros),
            static_cast<unsigned long>(sample.window.elapsedMicros),
            static_cast<unsigned long>(sample.rebuild.elapsedMicros),
            static_cast<unsigned long>(sample.state.elapsedMicros),
            static_cast<unsigned>(sample.state.eventsReplayed),
            static_cast<unsigned>(sample.state.eventsInHistory),
-           static_cast<unsigned>(sample.window.passChunkListsWalked));
+           static_cast<unsigned>(sample.window.passChunkListsWalked),
+           static_cast<unsigned long>(sample.rebuild.spanBoundaryAppendMicros),
+           static_cast<unsigned long>(sample.rebuild.spanBoundarySortMicros));
 }
 
 bool LoopContentResolution::deviceGateFormatPhaseLine(char* line, size_t cap) {
