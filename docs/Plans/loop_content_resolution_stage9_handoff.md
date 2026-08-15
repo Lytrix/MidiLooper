@@ -1,28 +1,29 @@
-# Handoff — LoopContentResolution Stage 6C (recapture owed; RING dropped entry CAP)
+# Handoff — LoopContentResolution Stage 6D (incremental post-commit maintenance)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** `fb477f9` — Consume prepared LCR into overdubSourceView when idle already completed.  
+**HEAD:** `8534989` — Record why prepared LCR is not ready before PLAYING overdub.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
-**Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)
+**Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
+**6D:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
 
 ---
 
 ## Paste this to start the next chat
 
-> Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
+> Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** 6C recapture owed. [`194643`](captures/session_20260815_194643.log) has `DIAG,lcr,mat=` and `6a` `match=1`, but `begin_capture` / `DIAG,lcr,6c` were lost to `RING,overflow`. Overdub and stop within ~1 s. Score against **2214 µs**. Do not start midi_gap / 6.3.
+> **Now:** 6D investigation (native measurement). A and B rejected. Do not implement incremental C. Do not start 6C firmware. Do not slice the 30–60 s cold build during PLAYING. 6C stays consume-when-ready.
 >
-> Read CURRENT_WORK + this handoff first.
+> Read CURRENT_WORK + the 6D plan first.
 
 ---
 
 ## One-line status
 
-**6C recapture owed** [`194643`](../../captures/session_20260815_194643.log) — `mat=` complete; entry CAP lost to `RING,overflow`. Short overdub so `6c` / `begin_capture` survive.
+**6D investigation** — incremental post-commit LCR index + checkpoint maintenance. Native first. No firmware. A/B rejected. 6C consume-when-ready only.
 
 ---
 
@@ -42,8 +43,9 @@ device latency
   5.2 overdub entry     PASS  180624  10050 µs
   6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
   6B commit invalidation PASS  192334  stale_range dcnt 15/5/5 notes kept
-  6C overdub source      recapture  194643 mat=+6a match=1; RING dropped 6c/begin_capture
-Stage 6                  6C consume not scored; short overdub recapture
+  6C overdub source      consume-when-ready native; device recapture optional
+  6D post-commit maint.  investigation (A/B rejected)
+Stage 6                  6C does not make LCR always-ready; 6D is the path
 ```
 
 ---
@@ -57,7 +59,9 @@ Stage 6                  6C consume not scored; short overdub recapture
 - Restore the 16-bar arm cap
 - Delete `materializeToEventVector`
 - Put resolution on `handleMidiInput` or `startOverdubbing` / `stopOverdubbing` (including `ensure*` LCR rebuild helpers)
-- Investigate MIDI Input Gap > 50 ms ([`192334`](../../captures/session_20260815_192334.log) 135 / 119 / 138 ms) before 6C device is scored
+- Implement A (re-arm STOPPED cold-build) or B (slice the 30–60 s full-history build during PLAYING)
+- Implement 6D firmware before native scaling pass + PLAYING-admission amendment
+- Investigate MIDI Input Gap > 50 ms ([`192334`](../../captures/session_20260815_192334.log) 135 / 119 / 138 ms) during 6D
 - Remove the 3b `visualCache.notes` copy
 - Rename `byNoteId` or “clean up” pairing
 - Put probes in `ExternalMemoryFirstAllocator` (ITCM / RAM1 overflow)
@@ -291,15 +295,15 @@ The 3b `visualCache.notes` copy is the path that is ready on a PLAYING overdub. 
 
 Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirty (`DIAG,lcr,reset,dirty` in [`194015`](../../captures/session_20260815_194015.log)). Boot/save defer: `skip,restore` / `skip,save`.
 
-**Always-ready before overdub is not 6C.** 6.0 forbids construct/sort/checkpoint/resolve on start/stop. Meeting “always ready” needs a design pick:
+**Always-ready before overdub is not 6C.** 6.0 forbids construct/sort/checkpoint/resolve on start/stop. Pick (2026-08-15): **C as 6D investigation**, not 6C firmware. **A rejected. B rejected.** Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md).
 
-| Option | What changes | Meets PLAYING overdub-over-overdub? |
-|--------|----------------|--------------------------------------|
-| A. Re-arm after stamp mismatch (STOPPED only) | Clear `deviceGateFinished` when `playbackRevision` disagrees | No — still tens of seconds STOPPED |
-| B. Slice LCR while PLAYING (same budget as visual cache) | 5.1 “gate does not run while PLAYING” | Only after another 30–60 s of PLAYING slices |
-| C. Incremental TickIndex update on commit | 6B explicitly did not do this on stop | Yes, if the update is bounded |
+| Option | Status |
+|--------|--------|
+| A. Re-arm after stamp mismatch (STOPPED only) | **Rejected** — still tens of seconds STOPPED |
+| B. Slice the existing full-history LCR build while PLAYING | **Rejected** — another continuously maintained O(history) cache on the perform path |
+| C / **6D**. Incremental index + affected checkpoint repair after commit | **Investigation** — native measurement; no firmware until scaling is `O(new events + affected checkpoints)` |
 
-Do not start A/B/C without an explicit pick. 6C recapture (short overdub after `mat=`) still scores consume-when-ready.
+6C recapture (short overdub after `mat=`) still scores consume-when-ready only. It does not address always-ready.
 
 ---
 
@@ -332,6 +336,7 @@ Do not start A/B/C without an explicit pick. 6C recapture (short overdub after `
 | `8e63439` | Record 6B device PASS |
 | `02bb187` | Park MIDI Input Gap as post-6C |
 | `fb477f9` | 6C firmware: consume prepared LCR into overdubSourceView |
+| `8534989` | Record why prepared LCR is not ready before PLAYING overdub |
 
 ---
 
@@ -341,5 +346,6 @@ Do not start A/B/C without an explicit pick. 6C recapture (short overdub after `
 - [x] 6.0 consume-only invariant — **pinned**
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
-- [ ] 6C overdub source — **native landed**; [`194643`](../../captures/session_20260815_194643.log) `mat=`+`6a` but RING dropped `6c`/`begin_capture`. Short overdub recapture.
-- [ ] After 6C: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47)
+- [ ] 6C overdub source — **native landed**; consume-when-ready only. Device recapture optional. Does not address always-ready.
+- [ ] **6D** incremental post-commit LCR maintenance — investigation only. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
+- [ ] After 6C device score: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47). Do not start during 6D.

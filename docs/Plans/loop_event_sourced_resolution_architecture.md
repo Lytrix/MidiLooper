@@ -1,11 +1,12 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); 6C not started; overdub stays 3b copy  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); 6C consume-when-ready native landed; **6D investigation** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) (A/B rejected)  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
 **OpenSpec:** `openspec/changes/loop-content-resolution/`  
 **Next-chat handoff:** [`loop_content_resolution_stage9_handoff.md`](loop_content_resolution_stage9_handoff.md)  
+**6D investigation:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)  
 **Does not authorize:** deleting `materializeToEventVector`; wiring resolution onto `handleMidiInput`; persisted checkpoint (D3) until Stage 7 shape is proven in RAM; overlay picker; Stage 3b GUS; interval reservation; RC-J
 
 ---
@@ -76,6 +77,8 @@ A, B, C, and D are not competing architectures. They are capabilities one owner 
 | **C** | Find relevant events without walking every pass |
 | **D** | Reach a useful state without replaying history from zero |
 | **G** | One owner (`LoopContentResolution`) that can provide all four |
+
+Stage **6D** is capability **B + D on commit** (incremental index + affected checkpoint repair), not Stage 6C and not capability letter C. Investigation: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md). Do not implement as a second cache.
 
 Shipping A then B then C as separate caches is how DEC-036 D1 died:
 

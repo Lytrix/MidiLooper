@@ -291,6 +291,25 @@ Not a new DEC. Strengthens the previous Stage 6 amendment. 5.18 is **FROZEN**; d
 
 Firmware 6A+ waits for an explicit implement request.
 
+### Amendment 2026-08-15 — 6D incremental post-commit LCR maintenance (investigation)
+
+Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDeferredIdleMaintenance` runs LCR only when STOPPED; visual-cache slices run while PLAYING; `deviceGateComplete` is one-shot; `commitPendingCapturePass` bumps `playbackRevision` so `preparedWindowReady` is false. Evidence: [`loop_content_resolution_stage9_handoff.md`](Plans/loop_content_resolution_stage9_handoff.md) § Why LCR is not ready.
+
+**Pick:** investigate incremental index + affected checkpoint repair after commit (**6D**). Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
+
+**Rejected:**
+
+- **A** — re-arm the STOPPED cold-build on stamp mismatch. Repeats 30–60 s preparation. Does not meet PLAYING overdub-over-overdub.
+- **B** — slice the existing full-history LCR build during PLAYING. That is another continuously maintained O(history) cache on the perform path.
+
+**6C** stays consume-when-ready (`tryResolvePreparedWindow` when the stamp already matches). It does not address always-ready.
+
+**6D is not capability letter C.** It is DEC-037 capabilities **B + D on commit**. `openOnByPitch` stays a pairing-time LIFO stack; do not maintain it as a query index.
+
+**Gate before firmware:** native measurement must show maintenance scales `O(new events + affected checkpoints)`, not `O(all historical events)`. PLAYING LCR slices are a scheduling/admission change — do not implement them without a further amendment.
+
+**6.0 unchanged:** overdub start/stop must not synchronously construct, sort, checkpoint, or resolve LCR.
+
 ### Constraints created
 
 - Overdub start/stop must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included).
@@ -299,6 +318,7 @@ Firmware 6A+ waits for an explicit implement request.
 - Derived indexes must not per-entry-allocate into PSRAM associative containers on realtime-adjacent construction paths (5.15 / 5.17 / 5.7c). Representation follows the query contract; B only if a measured flat query is too expensive.
 - `resolveNotes` must not become the playback primitive.
 - Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
+- Always-ready across overdub commits is **6D** (incremental index + affected checkpoint repair), not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready only.
 
 ### Related OpenSpec
 
