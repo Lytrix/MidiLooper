@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.16c prep device PASS [`153920`])
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** 5.16c `prep` device **PASS** [`153920`](../../captures/session_20260815_153920.log) — 182 ms one-shot gone; `idle_maint` 22–25 ms in prep. 5.7 still open on `idx` p1 121 ms / `recon` 116 ms / `DFRAME` gaps. Do not start `byTick` swap, A2/B, 5.1/5.2/6.x. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_device_phase_budget_refinement.md`](../Plans/loop_content_resolution_device_phase_budget_refinement.md).
+**Now:** 5.16 identified the next long-running phase from [`153920`](../../captures/session_20260815_153920.log): `idx` → `TickIndex::byTick.emplace` (120.6 ms; cost grows with map size; 4.38 s `DFRAME` gap). `recon` is a 116 ms startup spike on a different owner. Do not start a `byTick` swap until asked. Do not start A2/B, 5.1/5.2/6.x. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_device_phase_budget_refinement.md`](../Plans/loop_content_resolution_device_phase_budget_refinement.md).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 
