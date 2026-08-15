@@ -343,8 +343,9 @@ Keep 3b `visualCache.notes` copy as fallback. Do not remove it in 6A–6C. LCR c
 | eventual full consistency | asynchronous |
 
 3. **6C — overdub source.** Only after 6A/6B: prepared LCR range → `overdubSourceView`, 3b copy remains fallback. Score `begin_capture` against 3b **2214 µs**, not against 5.2 **10050 µs**.
-4. **Later:** long-loop playback gather; short-loop / NOTE_EDIT hydrate.
-5. **D3 persist checkpoint** — same checkpoint type as stage 7; `StorageManager` remains persist owner (DEC-008).
+4. **After 6C — MIDI Input Gap > 50 ms.** [`192334`](../../captures/session_20260815_192334.log) `DIAG,midi_gap` **135 / 119 / 138 ms** at 54.7 / 64.7 / 69.8 s; `clockrate` stayed **47**. Not in 6C scope. Not RC-J (post-STOPPED clock drop).
+5. **Later:** long-loop playback gather; short-loop / NOTE_EDIT hydrate.
+6. **D3 persist checkpoint** — same checkpoint type as stage 7; `StorageManager` remains persist owner (DEC-008).
 
 `< 3 ms` is a **regression target**, not an architectural promise. `< 50 ms` stays the hard gate. LCR’s job is to eliminate post-commit / full-rebuild machinery.
 

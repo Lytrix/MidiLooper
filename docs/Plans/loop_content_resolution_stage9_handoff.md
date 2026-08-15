@@ -58,6 +58,7 @@ Stage 6                  6C next; 3b copy stays
 - Put resolution on `handleMidiInput` or `startOverdubbing` / `stopOverdubbing` (including `ensure*` LCR rebuild helpers)
 - Start Stage 6 firmware without an explicit implement request (first slice is **6A**, not overdub)
 - Start **6C** without an explicit implement request
+- Investigate MIDI Input Gap > 50 ms ([`192334`](../../captures/session_20260815_192334.log) 135 / 119 / 138 ms) before 6C is done
 - Remove the 3b `visualCache.notes` copy
 - Rename `byNoteId` or “clean up” pairing
 - Put probes in `ExternalMemoryFirstAllocator` (ITCM / RAM1 overflow)
@@ -225,6 +226,8 @@ Three PLAYING 139-bar overdub stops:
 
 `RING,overflow` at each stop is USB CAP drop during flush (same class as [`180624`](../../captures/session_20260815_180624.log)).
 
+**After 6C (not now):** MIDI Input Gap > 50 ms in this capture — `DIAG,midi_gap` **135 / 119 / 138 ms** at 54.7 / 64.7 / 69.8 s while `clockrate` stayed **47**. 6B clock gate still holds (no half-tempo while PLAYING). Do not fold into 6C. Do not treat as RC-J.
+
 Do not start 6C until asked. Score 6C `begin_capture` against 3b **2214 µs**, not 5.2 **10050 µs** / this capture **10339 µs**.
 
 ---
@@ -264,3 +267,4 @@ Do not start 6C until asked. Score 6C `begin_capture` against 3b **2214 µs**, n
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
 - [ ] 6C overdub source (3b copy stays)
+- [ ] After 6C: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47)
