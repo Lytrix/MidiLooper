@@ -137,7 +137,7 @@ Largest LCR-period `DFRAME` gap is **4.38 s** during `idx` pass 1 (paint duratio
 
 ## Open after this identification
 
-1. 5.17d **PASS**. 5.7 leftover is `DFRAME` 1.3–1.58 s during `spans`.
+1. 5.17d **PASS**. 5.7 leftover attributed [`162630`](../captures/session_20260815_162630.log): sliced `spanBoundaries` / `tickEvents` reserved this slice only. `spans` 565→125 notes/s; `DFRAME` 1.003→1.591 s (paint 12 ms). Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md).
 2. Do not treat `reb` as the optimization target.
 3. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
 

@@ -121,6 +121,10 @@ Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and th
 
 `TickIndex::byTick` query contract is `tick ∈ [begin, end)` → Active `(passId, eventIndex)`. Native A (`TickEventEntry[]`, C-order append + `stable_sort` by tick only) matches C walk, wrap, disabled-pass skip, and `resolveWindow` vs the materialize oracle. Equal-tick insertion order preserved (NOTE_OFF then NOTE_ON at 192). `walk=0`. Host (94 entries): C emplace 23 µs, A 26 µs, A query 144 vs C 151. Pick **A**. Device [`161355`](../captures/session_20260815_161355.log): `iapp=4819607` `isort=27415` `win=13971` `st=3108` `walk=0` vs C [`155953`](../captures/session_20260815_155953.log) `idx` 50→120.6 ms. **5.17d PASS.** Do not build B or A2. Do not fold `recon` or `pair`. `TickIndex` and `StateCheckpoints` stay separate owners. 5.17e dropped `byTick`: `indexCapturePassEventRange` appends `tickEvents`; `findRawWindow` reads that list only.
 
+### Amendment 2026-08-15 — 5.7a sliced append reserve
+
+[`162630`](../captures/session_20260815_162630.log): `spans` notes/s 565→125 and `DFRAME` 1.003→1.591 s while paint stayed 12 ms. `appendSpanBoundaryEntries` reserved this slice only (`size+16`); `spans` already reserved `notes.size()`. Same growth on `idx` `tickEvents` (`size+8`). 5.7 leftover is that realloc, not `channelForNoteId` (constant per 8-note slice). `appendSpansFromNotes` reserves `2 * notes.size()`; `appendTickEventEntries` reserves remaining events in the pass. Do not start 5.1 until device remasure.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.

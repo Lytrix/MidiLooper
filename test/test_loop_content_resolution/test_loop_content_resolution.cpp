@@ -1272,6 +1272,48 @@ void test_stage9_range_spans_match_one_span() {
   TEST_ASSERT_EQUAL(oneSpan.spanBoundaries.size(), batched.spanBoundaries.size());
 }
 
+void test_stage57_span_boundaries_reserve_final_size() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t interval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
+  LoopContentResolution::StateCheckpoints checkpoints;
+  SessionMidiEventVec resolved;
+  TEST_ASSERT_TRUE(checkpoints.prepareRebuildResolvedEvents(
+      index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, resolved, nullptr));
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(resolved, fixture.loopLengthTicks, false);
+  TEST_ASSERT_TRUE(notes.size() > LoopContentResolution::kDeviceGateEventsPerSlice);
+  checkpoints.spans.clear();
+  checkpoints.spanBoundaries.clear();
+  checkpoints.soundingAt.clear();
+  TEST_ASSERT_TRUE(checkpoints.appendSpansFromNotes(
+      resolved, notes, 0, LoopContentResolution::kDeviceGateEventsPerSlice, nullptr));
+  TEST_ASSERT_EQUAL_UINT32(LoopContentResolution::kDeviceGateEventsPerSlice,
+                           static_cast<uint32_t>(checkpoints.spans.size()));
+  TEST_ASSERT_TRUE(checkpoints.spanBoundaries.capacity() >= notes.size() * 2u);
+}
+
+void test_stage57_tick_events_reserve_pass_remainder() {
+  LoopContentResolution::TickIndex::CapturePassEntry pass;
+  pass.id = 1;
+  pass.state = CapturePassState::Active;
+  pass.events.resize(32);
+  for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
+    pass.events[i].tick = i * 12u;
+  }
+  LoopContentResolution::TickIndex::TickEventEntryVec out;
+  LoopContentResolution::TickIndex::appendTickEventEntries(
+      pass, 0, LoopContentResolution::kDeviceGateEventsPerSlice, out);
+  TEST_ASSERT_EQUAL_UINT32(LoopContentResolution::kDeviceGateEventsPerSlice,
+                           static_cast<uint32_t>(out.size()));
+  TEST_ASSERT_TRUE(out.capacity() >= pass.events.size());
+}
+
 void test_stage9_range_prep_matches_full_prepare() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1704,6 +1746,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_range_recon_matches_full);
   RUN_TEST(test_stage9_range_proj_matches_full);
   RUN_TEST(test_stage9_range_spans_match_one_span);
+  RUN_TEST(test_stage57_span_boundaries_reserve_final_size);
+  RUN_TEST(test_stage57_tick_events_reserve_pass_remainder);
   RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);

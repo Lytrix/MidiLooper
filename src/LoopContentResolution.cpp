@@ -446,8 +446,9 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendTickEventEntries(
   if (endExclusive > limit) {
     endExclusive = limit;
   }
-  if (out.capacity() < out.size() + (endExclusive - begin)) {
-    out.reserve(out.size() + (endExclusive - begin));
+  const uint32_t remaining = limit - begin;
+  if (out.capacity() < out.size() + remaining) {
+    out.reserve(out.size() + remaining);
   }
   for (uint32_t i = begin; i < endExclusive; ++i) {
     TickEventEntry entry;
@@ -762,6 +763,10 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
   }
   if (spans.capacity() < notes.size()) {
     spans.reserve(notes.size());
+  }
+  const size_t boundaryNeed = notes.size() * 2u;
+  if (spanBoundaries.capacity() < boundaryNeed) {
+    spanBoundaries.reserve(boundaryNeed);
   }
   const uint32_t spanBegin = static_cast<uint32_t>(spans.size());
   for (uint32_t i = begin; i < endExclusive; ++i) {

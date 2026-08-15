@@ -37,7 +37,7 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 11. **Chunks are packing.** `LoopEventStore` chunks are not resolution units.
 12. **Layer semantics reuse DEC-031/032.** Do not invent a new overlap model.
 13. **Failure gate.** If the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement range-dirty cache + tick index on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint **does** disprove that checkpoint representation.
-14. **Device 5.1/5.2 order.** 5.15 complete ([`151450`](../../../captures/session_20260815_151450.log)). 5.16c `prep` PASS ([`153920`](../../../captures/session_20260815_153920.log)). 5.17a–c native pick A. Do not persist. Do not put resolution on overdub or MIDI. Do not start Stage 6 until 5.7’s remaining slice bar is decided.
+14. **Device 5.1/5.2 order.** 5.15 complete ([`151450`](../../../captures/session_20260815_151450.log)). 5.16c `prep` PASS ([`153920`](../../../captures/session_20260815_153920.log)). 5.17 complete. 5.7a sliced append reserve. Do not persist. Do not put resolution on overdub or MIDI. Do not start Stage 6 until 5.7’s remaining slice bar is decided.
 
 ## Risks / Trade-offs
 
