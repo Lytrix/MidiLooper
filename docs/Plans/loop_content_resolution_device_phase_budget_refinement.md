@@ -1,6 +1,6 @@
 # Loop content resolution — device phase-budget audit (5.16)
 
-**Status:** Open 2026-08-15 — paper audit from [`151450`](../captures/session_20260815_151450.log). No firmware change in this slice.  
+**Status:** Open 2026-08-15 — 5.16a paper audit recorded; 5.16c `prep` slice shipped native. Device remasure next.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.15 closed — [`loop_content_resolution_span_boundary_index_refinement.md`](loop_content_resolution_span_boundary_index_refinement.md)
 
@@ -83,9 +83,22 @@ Healthy after-complete in [`151450`](../captures/session_20260815_151450.log): `
 
 ---
 
-## Open after this paper audit
+## 5.16c shipped (native)
 
-1. Slice `prep` so `RebuildPrepare` is bounded work + yield (5.6 pattern). First implementation candidate — not started here.
+`RebuildPrepare` is no longer one 182 ms call.
+
+- `beginRebuildResolvedEvents` — clear working state (one slice).
+- Record / empty-base pass: `appendMaterializePassEvents` 8 events per slice.
+- Later passes: `mergeSortedMidiEventRange` — same `a.tick < b.tick` compare as `mergeSortedMidiVectors` / `std::merge`, 8 output events per slice.
+- `applyNoteEditPassSequence` — one slice after materialize. `EditApply` unchanged.
+- Native `materializeActive` / `prepareRebuildResolvedEvents` still compose the full operation.
+- Native `test_stage9_range_prep_matches_full_prepare` PASS.
+
+Device remasure decides whether `prep` `loop_rem` drops below 50 ms. Do not start `byTick` from this commit.
+
+## Open after 5.16c
+
+1. Device remasure of `prep` largest slice (`loop_rem` / `idle_maint`) on the 139-bar loop.
 2. Leave `byTick` until a named 5.17 (same A lens as 5.15). Do not infer it is next from wall time alone.
 3. Do not treat `reb=13.85 s` as the optimization target.
 4. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.

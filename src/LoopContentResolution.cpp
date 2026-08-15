@@ -70,9 +70,11 @@ TRACK_COLD_MEM void mergeSortedMidiVectors(SessionMidiEventVec& base, SessionMid
   }
   SessionMidiEventVec merged;
   merged.reserve(base.size() + addition.size());
-  std::merge(base.begin(), base.end(), addition.begin(), addition.end(),
-             std::back_inserter(merged),
-             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  uint32_t baseCursor = 0;
+  uint32_t addCursor = 0;
+  LoopContentResolution::TickIndex::mergeSortedMidiEventRange(
+      base, baseCursor, addition, addCursor, merged,
+      static_cast<uint32_t>(base.size() + addition.size()));
   base = std::move(merged);
 }
 
@@ -474,11 +476,12 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendNoteEvents(NoteId no
   }
 }
 
-TRACK_COLD_MEM void LoopContentResolution::TickIndex::materializeActive(SessionMidiEventVec& out) const {
-  out.clear();
-  std::vector<const CapturePassEntry*> ordered;
-  ordered.reserve(capturePasses.size());
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::collectActiveMaterializePasses(
+    std::vector<const CapturePassEntry*>& ordered) const {
+  ordered.clear();
   const CapturePassEntry* record = nullptr;
+  std::vector<const CapturePassEntry*> overdubs;
+  overdubs.reserve(capturePasses.size());
   for (const CapturePassEntry& pass : capturePasses) {
     if (pass.state != CapturePassState::Active || pass.events.empty()) {
       continue;
@@ -487,17 +490,66 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::materializeActive(SessionM
       record = &pass;
       continue;
     }
-    ordered.push_back(&pass);
+    overdubs.push_back(&pass);
   }
-  if (record != nullptr) {
-    out = record->events;
-  }
-  std::sort(ordered.begin(), ordered.end(),
+  std::sort(overdubs.begin(), overdubs.end(),
             [](const CapturePassEntry* a, const CapturePassEntry* b) {
               return a->mergeSequence < b->mergeSequence;
             });
-  for (const CapturePassEntry* pass : ordered) {
-    SessionMidiEventVec layer = pass->events;
+  if (record != nullptr) {
+    ordered.push_back(record);
+  }
+  ordered.insert(ordered.end(), overdubs.begin(), overdubs.end());
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendMaterializePassEvents(
+    const CapturePassEntry& pass, uint32_t begin, uint32_t endExclusive,
+    SessionMidiEventVec& out) const {
+  const uint32_t limit = static_cast<uint32_t>(pass.events.size());
+  if (begin >= limit) {
+    return;
+  }
+  if (endExclusive > limit) {
+    endExclusive = limit;
+  }
+  if (out.capacity() < pass.events.size()) {
+    out.reserve(pass.events.size());
+  }
+  for (uint32_t i = begin; i < endExclusive; ++i) {
+    out.push_back(pass.events[i]);
+  }
+}
+
+TRACK_COLD_MEM uint32_t LoopContentResolution::TickIndex::mergeSortedMidiEventRange(
+    const SessionMidiEventVec& base, uint32_t& baseCursor, const SessionMidiEventVec& addition,
+    uint32_t& addCursor, SessionMidiEventVec& merged, uint32_t maxEvents) {
+  uint32_t produced = 0;
+  const uint32_t baseSize = static_cast<uint32_t>(base.size());
+  const uint32_t addSize = static_cast<uint32_t>(addition.size());
+  while (produced < maxEvents && (baseCursor < baseSize || addCursor < addSize)) {
+    if (addCursor >= addSize ||
+        (baseCursor < baseSize && !(addition[addCursor].tick < base[baseCursor].tick))) {
+      merged.push_back(base[baseCursor]);
+      baseCursor += 1;
+    } else {
+      merged.push_back(addition[addCursor]);
+      addCursor += 1;
+    }
+    produced += 1;
+  }
+  return produced;
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::materializeActive(SessionMidiEventVec& out) const {
+  out.clear();
+  std::vector<const CapturePassEntry*> ordered;
+  collectActiveMaterializePasses(ordered);
+  if (ordered.empty()) {
+    return;
+  }
+  out = ordered[0]->events;
+  for (size_t i = 1; i < ordered.size(); ++i) {
+    SessionMidiEventVec layer = ordered[i]->events;
     mergeSortedMidiVectors(out, std::move(layer));
   }
 }
@@ -583,17 +635,22 @@ TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes
   }
 }
 
-TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::prepareRebuildResolvedEvents(
-    const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
-    uint32_t checkpointIntervalTicks, SessionMidiEventVec& resolved,
-    ResolutionCostCounters* counters) {
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::beginRebuildResolvedEvents(
+    uint32_t loopLength, uint32_t checkpointIntervalTicks, SessionMidiEventVec& resolved) {
   intervalTicks = checkpointIntervalTicks;
   loopLengthTicks = loopLength;
   soundingAt.clear();
   spans.clear();
   spanBoundaries.clear();
   resolved.clear();
-  if (loopLength == 0 || checkpointIntervalTicks == 0) {
+  return loopLength != 0 && checkpointIntervalTicks != 0;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::prepareRebuildResolvedEvents(
+    const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
+    uint32_t checkpointIntervalTicks, SessionMidiEventVec& resolved,
+    ResolutionCostCounters* counters) {
+  if (!beginRebuildResolvedEvents(loopLength, checkpointIntervalTicks, resolved)) {
     return true;
   }
   index.materializeActive(resolved);
@@ -913,6 +970,16 @@ struct DeviceGateSession {
     reconProjectCursor = 0;
     reconProjected = NoteUtils::DisplayNoteVec{};
     reconBuild.clear();
+    prepReady = false;
+    prepMaterializeDone = false;
+    prepMergeOpen = false;
+    prepPassCursor = 0;
+    prepEventCursor = 0;
+    prepBaseCursor = 0;
+    prepAddCursor = 0;
+    prepPasses.clear();
+    prepEditRows.clear();
+    prepMerged = SessionMidiEventVec{};
     lastStepName = "idle";
     lastLoggedStep = nullptr;
     lastPhaseLogUs = 0;
@@ -936,7 +1003,7 @@ struct DeviceGateSession {
   void advancePastIndexCommit() {
 #if defined(ARDUINO)
     phase = Phase::RebuildPrepare;
-    lastStepName = "prep";
+    lastStepName = kPrepStep;
 #else
     phase = Phase::Materialize;
     lastStepName = "mat";
@@ -970,13 +1037,17 @@ struct DeviceGateSession {
         : (name == kReconStep) ? static_cast<unsigned>(reconEventCursor)
         : (name == kProjStep)  ? static_cast<unsigned>(reconProjectCursor)
         : (name == kSortStep)  ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
+        : (name == kPrepStep)  ? (prepMergeOpen ? static_cast<unsigned>(prepMerged.size())
+                                                : static_cast<unsigned>(rebuildEvents.size()))
                                : static_cast<unsigned>(indexEventCursor);
     const unsigned notesLogged = (name == kProjStep)
                                      ? static_cast<unsigned>(reconProjected.size())
                                      : static_cast<unsigned>(rebuildNotes.size());
+    const unsigned passLogged =
+        (name == kPrepStep) ? static_cast<unsigned>(prepPassCursor)
+                            : static_cast<unsigned>(indexPassCursor);
     snprintf(line, cap, "#CAP,%lu,DIAG,lcr,phase,%s,pass,%u,ev,%u,span,%u,notes,%u", stamp, name,
-             static_cast<unsigned>(indexPassCursor), evLogged,
-             static_cast<unsigned>(rebuildSpanCursor), notesLogged);
+             passLogged, evLogged, static_cast<unsigned>(rebuildSpanCursor), notesLogged);
     return true;
   }
 
@@ -1102,14 +1173,88 @@ struct DeviceGateSession {
         const uint32_t checkpointInterval =
             Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
 #endif
-        if (!checkpoints.prepareRebuildResolvedEvents(index, passes.editPasses, loopLengthTicks,
-                                                      checkpointInterval, rebuildEvents,
-                                                      &sample_.rebuild)) {
-          reset();
-          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        lastStepName = kPrepStep;
+        if (!prepReady) {
+          if (!checkpoints.beginRebuildResolvedEvents(loopLengthTicks, checkpointInterval,
+                                                      rebuildEvents)) {
+            sample_.rebuild.elapsedMicros += timer.elapsed();
+            phase = Phase::RebuildSpans;
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
+          index.collectActiveMaterializePasses(prepPasses);
+          prepEditRows.clear();
+          for (const EditPass& editPass : passes.editPasses) {
+            if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+              prepEditRows.push_back(editPass);
+            }
+          }
+          prepReady = true;
+          prepMaterializeDone = prepPasses.empty();
+          prepMergeOpen = false;
+          prepPassCursor = 0;
+          prepEventCursor = 0;
+          sample_.rebuild.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
+        if (!prepMaterializeDone) {
+          if (prepPassCursor >= prepPasses.size()) {
+            prepMaterializeDone = true;
+          } else {
+            const LoopContentResolution::TickIndex::CapturePassEntry* pass =
+                prepPasses[prepPassCursor];
+            if (pass == nullptr) {
+              reset();
+              return LoopContentResolution::DeviceGateSliceResult::Inactive;
+            }
+            const uint32_t eventCount = static_cast<uint32_t>(pass->events.size());
+            const bool appendOnly = (prepPassCursor == 0) || rebuildEvents.empty();
+            if (appendOnly) {
+              if (prepEventCursor >= eventCount) {
+                prepPassCursor += 1;
+                prepEventCursor = 0;
+                sample_.rebuild.elapsedMicros += timer.elapsed();
+                return LoopContentResolution::DeviceGateSliceResult::Continue;
+              }
+              const uint32_t end = std::min(
+                  prepEventCursor + LoopContentResolution::kDeviceGateEventsPerSlice, eventCount);
+              index.appendMaterializePassEvents(*pass, prepEventCursor, end, rebuildEvents);
+              prepEventCursor = end;
+              sample_.rebuild.elapsedMicros += timer.elapsed();
+              return LoopContentResolution::DeviceGateSliceResult::Continue;
+            }
+            if (!prepMergeOpen) {
+              prepMerged.clear();
+              prepMerged.reserve(rebuildEvents.size() + pass->events.size());
+              prepBaseCursor = 0;
+              prepAddCursor = 0;
+              prepMergeOpen = true;
+            }
+            const uint32_t produced = LoopContentResolution::TickIndex::mergeSortedMidiEventRange(
+                rebuildEvents, prepBaseCursor, pass->events, prepAddCursor, prepMerged,
+                LoopContentResolution::kDeviceGateEventsPerSlice);
+            if (produced == 0) {
+              rebuildEvents = std::move(prepMerged);
+              prepMerged = SessionMidiEventVec{};
+              prepMergeOpen = false;
+              prepPassCursor += 1;
+              prepEventCursor = 0;
+            }
+            sample_.rebuild.elapsedMicros += timer.elapsed();
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
+        }
+        if (!prepEditRows.empty()) {
+          applyNoteEditPassSequence(rebuildEvents, prepEditRows, loopLengthTicks);
+          prepEditRows.clear();
+          sample_.rebuild.passChunkListsWalked = 0;
+          sample_.rebuild.eventsInHistory = static_cast<uint32_t>(rebuildEvents.size());
+          sample_.rebuild.elapsedMicros += timer.elapsed();
+          phase = Phase::RebuildSpans;
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
+        }
+        sample_.rebuild.passChunkListsWalked = 0;
+        sample_.rebuild.eventsInHistory = static_cast<uint32_t>(rebuildEvents.size());
         sample_.rebuild.elapsedMicros += timer.elapsed();
-        lastStepName = "prep";
         phase = Phase::RebuildSpans;
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
@@ -1244,6 +1389,17 @@ struct DeviceGateSession {
   static constexpr const char* kProjStep = "proj";
   static constexpr const char* kDedupStep = "dedup";
   static constexpr const char* kSortStep = "sort";
+  static constexpr const char* kPrepStep = "prep";
+  bool prepReady = false;
+  bool prepMaterializeDone = false;
+  bool prepMergeOpen = false;
+  uint32_t prepPassCursor = 0;
+  uint32_t prepEventCursor = 0;
+  uint32_t prepBaseCursor = 0;
+  uint32_t prepAddCursor = 0;
+  std::vector<const LoopContentResolution::TickIndex::CapturePassEntry*> prepPasses;
+  EditPassVec prepEditRows;
+  SessionMidiEventVec prepMerged;
   bool pairPassOpen = false;
   uint32_t pairEventCursor = 0;
   std::map<uint8_t, std::vector<uint32_t>> pairOpenOnByPitch;
