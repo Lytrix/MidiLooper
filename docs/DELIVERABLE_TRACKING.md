@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — native Stages 0–8 PASS; Stage 9 native µs recorded, device probe blocked by capture-serial RAM1. [`loop_event_sourced_resolution_architecture.md`](Plans/loop_event_sourced_resolution_architecture.md). DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
+**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — native Stages 0–8 PASS; Stage 9 device gate 5.11 batches 8 events/spans + phase telemetry. 5.7 >63-bar latency still open ([`122259`](../captures/session_20260815_122259.log) finalized `reb=100s`). [`loop_event_sourced_resolution_architecture.md`](Plans/loop_event_sourced_resolution_architecture.md). DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 

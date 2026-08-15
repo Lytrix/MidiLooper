@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -1070,8 +1071,113 @@ void test_stage9_sliced_spans_match_full_rebuild() {
   }
 }
 
+void commitPassEventsPerSlice(LoopContentResolution::TickIndex& index, PassId id,
+                              const CommittedChunkIdList& chunks, CapturePassState state,
+                              uint32_t mergeSequence) {
+  index.beginCapturePass(id, state, mergeSequence);
+  for (uint16_t chunkId : chunks) {
+    index.appendCapturePassChunk(id, chunkId);
+  }
+  TEST_ASSERT_FALSE(index.capturePasses.empty());
+  const uint32_t eventCount = static_cast<uint32_t>(index.capturePasses.back().events.size());
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  for (uint32_t i = 0; i < eventCount; i += step) {
+    const uint32_t end = std::min(i + step, eventCount);
+    index.indexCapturePassEventRange(id, i, end, nullptr);
+  }
+  index.pairCapturePassNotes(id);
+}
+
+void test_stage9_range_index_matches_one_event() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+
+  LoopContentResolution::TickIndex oneEvent;
+  commitPassOneEventPerSlice(oneEvent, fixture.passes.recordPass.id,
+                             fixture.passes.recordPass.committedChunkIds,
+                             fixture.passes.recordPass.state, 0);
+  for (const OverdubPass& pass : fixture.passes.overdubPasses) {
+    commitPassOneEventPerSlice(oneEvent, pass.id, pass.committedChunkIds, pass.state,
+                               pass.mergeSequence);
+  }
+
+  LoopContentResolution::TickIndex batched;
+  commitPassEventsPerSlice(batched, fixture.passes.recordPass.id,
+                           fixture.passes.recordPass.committedChunkIds,
+                           fixture.passes.recordPass.state, 0);
+  for (const OverdubPass& pass : fixture.passes.overdubPasses) {
+    commitPassEventsPerSlice(batched, pass.id, pass.committedChunkIds, pass.state,
+                             pass.mergeSequence);
+  }
+
+  TEST_ASSERT_EQUAL_UINT32(oneEvent.indexedEventCount(), batched.indexedEventCount());
+  TEST_ASSERT_EQUAL_UINT32(oneEvent.indexedPassCount(), batched.indexedPassCount());
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  SessionMidiEventVec fromOne;
+  SessionMidiEventVec fromBatched;
+  LoopContentResolution::resolveWindow(oneEvent, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                       0, windowLength, fromOne, nullptr);
+  LoopContentResolution::resolveWindow(batched, fixture.passes.editPasses, fixture.loopLengthTicks,
+                                       0, windowLength, fromBatched, nullptr);
+  assertResolvedEventsMatch(fromOne, fromBatched);
+}
+
+void test_stage9_range_spans_match_one_span() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t interval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
+  SessionMidiEventVec resolved;
+  LoopContentResolution::StateCheckpoints oneSpan;
+  TEST_ASSERT_TRUE(oneSpan.prepareRebuildResolvedEvents(
+      index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, resolved, nullptr));
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(resolved, fixture.loopLengthTicks, false);
+  oneSpan.spans.clear();
+  oneSpan.startsByTick.clear();
+  oneSpan.soundingAt.clear();
+  for (uint32_t i = 0; i < static_cast<uint32_t>(notes.size()); ++i) {
+    TEST_ASSERT_TRUE(oneSpan.appendSpansFromNotes(resolved, notes, i, i + 1, nullptr));
+  }
+
+  LoopContentResolution::StateCheckpoints batched;
+  TEST_ASSERT_TRUE(batched.prepareRebuildResolvedEvents(
+      index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, resolved, nullptr));
+  batched.spans.clear();
+  batched.startsByTick.clear();
+  batched.soundingAt.clear();
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  const uint32_t noteCount = static_cast<uint32_t>(notes.size());
+  for (uint32_t i = 0; i < noteCount; i += step) {
+    const uint32_t end = std::min(i + step, noteCount);
+    TEST_ASSERT_TRUE(batched.appendSpansFromNotes(resolved, notes, i, end, nullptr));
+  }
+  TEST_ASSERT_EQUAL(oneSpan.spans.size(), batched.spans.size());
+}
+
 void test_stage9_device_gate_slice_budget_matches_idle_maint_bar() {
   TEST_ASSERT_EQUAL_UINT32(50000u, LoopContentResolution::kDeviceGateSliceBudgetUs);
+  TEST_ASSERT_EQUAL_UINT32(8u, LoopContentResolution::kDeviceGateEventsPerSlice);
+  TEST_ASSERT_EQUAL_UINT32(1000000u, LoopContentResolution::kDeviceGatePhaseLogIntervalUs);
+}
+
+void test_stage9_phase_line_on_change_not_every_slice() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(fixture.loopLengthTicks);
+  char line[128];
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateFormatPhaseLine(line, sizeof(line)));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, "DIAG,lcr,phase,idx"));
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateFormatPhaseLine(line, sizeof(line)));
+  LoopContentResolution::deviceGateReset();
 }
 
 void test_stage9_native_worst_case_micros() {
@@ -1130,7 +1236,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage8_loop_switch_high_tick_bounded_replay);
   RUN_TEST(test_stage9_sliced_index_commit_matches_full_commit);
   RUN_TEST(test_stage9_sliced_spans_match_full_rebuild);
+  RUN_TEST(test_stage9_range_index_matches_one_event);
+  RUN_TEST(test_stage9_range_spans_match_one_span);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
+  RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);
   RUN_TEST(test_stage9_native_worst_case_micros);
   return UNITY_END();
 }
