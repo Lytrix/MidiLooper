@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 **5.18 FROZEN**, **5.1 idle-path PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 3b restore native** (device recapture next; prior FAIL [`175544`](../captures/session_20260815_175544.log) `begin_capture` 108979 µs); production MIDI/display stay on materialize; Stage 6 blocked  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 **5.18 FROZEN**, **5.1 idle-path PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 overdub-entry PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs; production MIDI/display stay on materialize; Stage 6 blocked until user approval  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -259,7 +259,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log). 5.2 overdub entry next. Do not start 6.x | keep 3b copy path until this wins |
+| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log). Do not start 6.x without user approval | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 
@@ -281,9 +281,9 @@ Prove `commit P(N)` does **not** traverse `P0…P(N-1)` except through **indexed
 
 - no multi-second MIDI stall — **5.1 PASS** [`173842`](../captures/session_20260815_173842.log) idle complete path: `midi_gap` 39.1 ms
 - no multi-second OLED stall — **5.1 PASS** same capture: consecutive `DFRAME` 1.034 s vs healthy 0.968 s
-- overdub entry remains cheap (`begin_capture` stays under the existing < 50 ms bar) — **5.2** (not 5.1)
-- no `VCACHE,full` on the normal path — **5.2**
-- no full materialization after commit — **5.2**
+- overdub entry remains cheap (`begin_capture` stays under the existing < 50 ms bar) — **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) **10050 µs**
+- no `VCACHE,full` on the normal path — **5.2 PASS** (none in [`180624`](../captures/session_20260815_180624.log))
+- no full materialization after commit — **5.2 PASS** (3b visual-cache copy)
 - bounded resolution slices — PASS (8-event slices; `nsort` 10.0 ms / `isort` 28.1 ms under 50 ms)
 - record worst-case µs, not only totals — [`173842`](../captures/session_20260815_173842.log) complete line
 
