@@ -196,7 +196,7 @@ Do not accumulate unnamed caches. Every derived structure has a query contract b
 |-------|-------|--------------|----------|----------|-----------|
 | `spanBoundaries` | tick range → start/end apply | many | tick + C-order at equal tick | build, then read | flat A **frozen** |
 | `tickEvents` | tick window → Active `(passId, eventIndex)` | many | tick + C-order at equal tick | build, then read | flat A **frozen** |
-| channel lookup | `NoteId` → first NOTE_ON channel | unique, first-wins | `noteId` after sort | build, then read | flat A **frozen** |
+| channel lookup | stored-byte copy onto `SoundingNote.channel`; not loop identity (DEC-033; output is `Track::midiChannel`) | unique, first-wins | `noteId` after sort | build, then read | flat A **frozen**; not a pairing key |
 | `byNoteId` | `NoteId` → `{passId, on, off}` for `appendNoteEvents` | unique key, last assignment wins | none | pair walk, then read | **measure** (5.18) |
 | `openOnByPitch` | pairing walk only: pitch → open ON indexes | many per pitch | LIFO | every on/off in the pass | **measure** (5.18) |
 
