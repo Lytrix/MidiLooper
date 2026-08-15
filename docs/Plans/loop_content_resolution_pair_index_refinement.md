@@ -1,9 +1,9 @@
 # Loop content resolution — pair index (5.18 design)
 
-**Status:** **5.18a instrument** — measure `byNoteId` vs `openOnByPitch`. Do not flatten.  
+**Status:** **5.18a device PASS** [`172927`](../captures/session_20260815_172927.log) — `byNoteId` owns pair. `openOnByPitch` retained. Do not flatten `openOnByPitch`. Next: 5.18b last-wins flat for `byNoteId` only.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.7c **frozen** — [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md)  
-**Evidence:** [`170024`](../captures/session_20260815_170024.log) `pair` `DFRAME` **1.277 s** (`frameIndex` 390→420, consecutive)
+**Evidence:** [`172927`](../captures/session_20260815_172927.log) `pair tot=5356927 bn=5345535 op=2433 lk=1424`. [`170024`](../captures/session_20260815_170024.log) leftover `DFRAME` 1.277 s.
 
 **Does not start:** flattening `byNoteId` or `openOnByPitch`, `recon`, B, A2, 5.1 / 5.2, Stage 6, restoring the arm cap, reopening 5.7c.
 
@@ -206,15 +206,50 @@ Do **not** add B. Do not start 5.1. Do not reopen 5.7c. Do not rewrite `recon`.
 
 ### Open before coding
 
-1. Which structure (or both) produces the 1.277 s `DFRAME` on [`170024`](../captures/session_20260815_170024.log)? — **5.18a device remasure**
-2. After that, what is the minimum representation for **that** contract? — not this slice
+1. Which structure produces the stall? **`byNoteId`** [`172927`](../captures/session_20260815_172927.log). `openOnByPitch` is not the owner (`op=2433` µs, `pk=1`).
+2. Minimum representation for `byNoteId`: last-wins unique flat list — **5.18b**, not this slice. Do not flatten `openOnByPitch`.
 
 ### Proceed?
 
-YES — 5.18a instrument only.
+5.18a measurement **closed**. Flatten only `byNoteId`, and only when asked.
 
 ---
 
 ## 5.18a native shipped
 
-`pairNotesInPassRange` fills `ResolutionCostCounters` pair fields. Device emits `DIAG,lcr,pair` on gate complete. Phase `pair` lines include cumulative `bn`/`op`/`lk`/`pk`. Pairing representation unchanged. Device remasure of [`170024`](../captures/session_20260815_170024.log) class is the next step.
+`pairNotesInPassRange` fills `ResolutionCostCounters` pair fields. Device emits `DIAG,lcr,pair` on gate complete. Phase `pair` lines include cumulative `bn`/`op`/`lk`/`pk`. Pairing representation unchanged.
+
+---
+
+## 5.18a device PASS — [`172927`](../captures/session_20260815_172927.log)
+
+```
+pair,tot=5356927,bn=5345535,op=2433,lk=1424,oth=7535,ent=2396,ins=2396,ow=0,pu=2396,po=2395,pk=1,oa=58,hb=116
+```
+
+```text
+1.277 s DFRAME
+   └── byNoteId   5.346 s / 5.357 s pair  (99.8%)
+       openOnByPitch  2.4 ms
+       lookup         1.4 ms
+       other          7.5 ms
+```
+
+| | |
+|--|--:|
+| `walk` / `hist` | 0 / 2394 |
+| `byNoteId` inserts / overwrites | 2396 / 0 |
+| `openOnByPitch` peak depth | **1** |
+| `openOnByPitch` heap | 116 bytes |
+| pass-0 `bn` µs/event | 207 → **2058** (grows with map size) |
+| pair `DFRAME` 390→420 | **1.273 s** consecutive `frameIndex` (paint 12.8 ms) |
+| LCR `idle_maint` during pair | 25.3 ms / 15.9 ms (no `loop_rem`) |
+
+Decision tree:
+
+```text
+byNoteId        expensive? YES  → 5.18b last-wins flat (same class as 5.7c, unique keep-last)
+openOnByPitch   expensive? NO   → retain LIFO stack
+```
+
+Do not flatten `openOnByPitch`. `pk=1` on this fixture; a compact stack is not required to close the stall. No 5.1. No B. No `recon`. Do not reopen 5.7c.
