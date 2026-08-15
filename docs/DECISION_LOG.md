@@ -127,7 +127,11 @@ Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and th
 
 ### Amendment 2026-08-15 — 5.7b device FAIL
 
-Device [`164922`](../captures/session_20260815_164922.log): first `spans` slice `loop_rem,idle_maint,14744010` filling `channelByNoteId` (PSRAM `unordered_map` `emplace`). `DFRAME` 15.702 s with consecutive `frameIndex`. After fill, `spans` ~1000 notes/s flat. Open-note contract held. Do not keep this map on device. Next representation is flat append+sort+unique, not sliced `emplace`.
+Device [`164922`](../captures/session_20260815_164922.log): first `spans` slice `loop_rem,idle_maint,14744010` filling `channelByNoteId` (PSRAM `unordered_map` `emplace`). `DFRAME` 15.702 s with consecutive `frameIndex`. After fill, `spans` ~1000 notes/s flat. Open-note contract held. Do not keep this map on device.
+
+### Amendment 2026-08-15 — 5.7c flat channel lookup
+
+Lookup contract from code: `NoteId` → first NOTE_ON channel in resolved C-order. Channel is the value, not a key or partition. First-wins unique on `NoteId` only. `channelByNoteId` is now `{noteId, channel}[]`: C-order append, `stable_sort` by `noteId`, unique keep-first, `lower_bound`. Device sequences `chan` / `csort` before `spans`. Complete line adds `capp=` / `csort=`. Working hypothesis (not a new DEC until device remasure): PSRAM associative-container insertion is a confirmed systemic latency hazard for LoopContentResolution derived indexes (`startsByTick`, `byTick`, `channelByNoteId`). `walk=0` stays. Do not rewrite `pair` / `recon`. Do not start 5.1.
 
 ### Constraints created
 

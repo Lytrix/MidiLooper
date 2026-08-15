@@ -37,6 +37,9 @@ struct ResolutionCostCounters {
   /// 5.17d TickIndex flat A: sequential append vs one `stable_sort` by tick.
   uint64_t tickEventAppendMicros = 0;
   uint64_t tickEventSortMicros = 0;
+  /// 5.7c channel lookup: sequential NOTE_ON append vs one `stable_sort` + unique.
+  uint64_t channelByNoteIdAppendMicros = 0;
+  uint64_t channelByNoteIdSortMicros = 0;
 };
 
 struct SoundingNote {
@@ -153,12 +156,16 @@ struct LoopContentResolution {
       uint32_t tick = 0;
       size_t spanIndex = 0;
     };
+    /// Private index entry — not a musical noun. Channel is the value, not part of the key.
+    struct ChannelByNoteIdEntry {
+      NoteId noteId = kInvalidNoteId;
+      uint8_t channel = 0;
+    };
     using NoteSpanVec = std::vector<NoteSpan, ExternalMemoryFirstAllocator<NoteSpan>>;
     using SpanBoundaryEntryVec =
         std::vector<SpanBoundaryEntry, ExternalMemoryFirstAllocator<SpanBoundaryEntry>>;
-    using ChannelByNoteIdMap =
-        std::unordered_map<NoteId, uint8_t, std::hash<NoteId>, std::equal_to<NoteId>,
-                           ExternalMemoryFirstAllocator<std::pair<const NoteId, uint8_t>>>;
+    using ChannelByNoteIdEntryVec =
+        std::vector<ChannelByNoteIdEntry, ExternalMemoryFirstAllocator<ChannelByNoteIdEntry>>;
 
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
@@ -166,8 +173,8 @@ struct LoopContentResolution {
     NoteSpanVec spans;
     /// Tick-ordered start and exclusive-end entries for tail replay (flat A).
     SpanBoundaryEntryVec spanBoundaries;
-    /// First NOTE_ON channel per noteId from the current `resolved` list (5.7b).
-    ChannelByNoteIdMap channelByNoteId;
+    /// First NOTE_ON channel per noteId from the current `resolved` list (5.7c flat A).
+    ChannelByNoteIdEntryVec channelByNoteId;
 
     void rebuild(const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
                  uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters = nullptr);
@@ -186,12 +193,16 @@ struct LoopContentResolution {
                                       ResolutionCostCounters* counters = nullptr);
     /// Sliced span + boundary append after reconstruct. `[begin, endExclusive)` notes.
     /// Reserves `spans` to `notes.size()` and `spanBoundaries` to `2 * notes.size()` (5.7a).
-    /// Channel comes from a first-wins map of every NOTE_ON in `resolved` (5.7b), not the
-    /// current note slice. Does not sort; call `sortSpanBoundaries` after the last range.
+    /// Channel comes from `channelByNoteId` (5.7c). Fill that index before this call.
+    /// Does not sort; call `sortSpanBoundaries` after the last range.
     bool appendSpansFromNotes(const SessionMidiEventVec& resolved,
                               const NoteUtils::DisplayNoteVec& notes, uint32_t begin,
                               uint32_t endExclusive, ResolutionCostCounters* counters = nullptr);
     void sortSpanBoundaries(ResolutionCostCounters* counters = nullptr);
+    /// C-order append of NOTE_ONs. A slice at `begin` reserves remaining events in `resolved`.
+    bool appendChannelByNoteIdRange(const SessionMidiEventVec& resolved, uint32_t begin,
+                                    uint32_t endExclusive, ResolutionCostCounters* counters = nullptr);
+    void sortChannelByNoteId(ResolutionCostCounters* counters = nullptr);
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, SoundingNoteVec& out,
@@ -200,6 +211,10 @@ struct LoopContentResolution {
     static void appendSpanBoundaryEntries(const NoteSpanVec& spans, uint32_t begin,
                                           uint32_t endExclusive, SpanBoundaryEntryVec& out);
     static void sortSpanBoundaryEntriesByTick(SpanBoundaryEntryVec& entries);
+    static void appendChannelByNoteIdEntries(const SessionMidiEventVec& resolved, uint32_t begin,
+                                             uint32_t endExclusive, ChannelByNoteIdEntryVec& out);
+    static void sortAndUniqueChannelByNoteIdEntries(ChannelByNoteIdEntryVec& entries);
+    static uint8_t findChannelByNoteId(const ChannelByNoteIdEntryVec& entries, NoteId noteId);
     void resolveStateFromSpanBoundaries(const SpanBoundaryEntryVec& entries, uint32_t tick,
                                         SoundingNoteVec& out,
                                         ResolutionCostCounters* counters = nullptr) const;

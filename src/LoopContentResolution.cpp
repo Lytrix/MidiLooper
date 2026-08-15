@@ -148,17 +148,6 @@ TRACK_COLD_MEM bool noteSoundsAt(const NoteUtils::DisplayNote& note, uint32_t ti
   return tick >= note.startTick && tick < note.endTick;
 }
 
-TRACK_COLD_MEM void fillChannelByNoteId(const SessionMidiEventVec& resolved,
-                                        LoopContentResolution::StateCheckpoints::ChannelByNoteIdMap& out) {
-  out.clear();
-  for (const MidiEvent& event : resolved) {
-    if (!event.isNoteOn() || event.noteId == kInvalidNoteId) {
-      continue;
-    }
-    out.emplace(event.noteId, event.channel);
-  }
-}
-
 TRACK_COLD_MEM uint8_t channelForNoteId(const SessionMidiEventVec& events, NoteId noteId) {
   for (const MidiEvent& event : events) {
     if (event.isNoteOn() && event.noteId == noteId) {
@@ -773,9 +762,6 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
   if (endExclusive > limit) {
     endExclusive = limit;
   }
-  if (begin == 0 || channelByNoteId.empty()) {
-    fillChannelByNoteId(resolved, channelByNoteId);
-  }
   if (spans.capacity() < notes.size()) {
     spans.reserve(notes.size());
   }
@@ -787,13 +773,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
   for (uint32_t i = begin; i < endExclusive; ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
     NoteSpan span{};
-    span.note.channel = 0;
-    if (note.noteId != kInvalidNoteId) {
-      const auto found = channelByNoteId.find(note.noteId);
-      if (found != channelByNoteId.end()) {
-        span.note.channel = found->second;
-      }
-    }
+    span.note.channel = findChannelByNoteId(channelByNoteId, note.noteId);
     span.note.pitch = note.note;
     span.note.noteId = note.noteId;
     span.note.onTick = note.startTick;
@@ -819,6 +799,27 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortSpanBoundaries(
   }
 }
 
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendChannelByNoteIdRange(
+    const SessionMidiEventVec& resolved, uint32_t begin, uint32_t endExclusive,
+    ResolutionCostCounters* counters) {
+  ElapsedTimer appendTimer;
+  appendChannelByNoteIdEntries(resolved, begin, endExclusive, channelByNoteId);
+  if (counters != nullptr) {
+    counters->channelByNoteIdAppendMicros += appendTimer.elapsed();
+    counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
+  }
+  return true;
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortChannelByNoteId(
+    ResolutionCostCounters* counters) {
+  ElapsedTimer sortTimer;
+  sortAndUniqueChannelByNoteIdEntries(channelByNoteId);
+  if (counters != nullptr) {
+    counters->channelByNoteIdSortMicros += sortTimer.elapsed();
+  }
+}
+
 TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
     const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
   spans.clear();
@@ -828,6 +829,10 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
   if (loopLengthTicks == 0 || intervalTicks == 0) {
     return true;
   }
+  if (!appendChannelByNoteIdRange(resolved, 0, static_cast<uint32_t>(resolved.size()), counters)) {
+    return false;
+  }
+  sortChannelByNoteId(counters);
   const NoteUtils::DisplayNoteVec notes =
       NoteUtils::reconstructDisplayNotes(resolved, loopLengthTicks, false);
   if (!appendSpansFromNotes(resolved, notes, 0, static_cast<uint32_t>(notes.size()), counters)) {
@@ -958,6 +963,60 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortSpanBoundaryEnt
                    });
 }
 
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(
+    const SessionMidiEventVec& resolved, uint32_t begin, uint32_t endExclusive,
+    ChannelByNoteIdEntryVec& out) {
+  const uint32_t limit = static_cast<uint32_t>(resolved.size());
+  if (begin >= limit) {
+    return;
+  }
+  if (endExclusive > limit) {
+    endExclusive = limit;
+  }
+  const uint32_t remaining = limit - begin;
+  if (out.capacity() < out.size() + remaining) {
+    out.reserve(out.size() + remaining);
+  }
+  for (uint32_t i = begin; i < endExclusive; ++i) {
+    const MidiEvent& event = resolved[i];
+    if (!event.isNoteOn() || event.noteId == kInvalidNoteId) {
+      continue;
+    }
+    ChannelByNoteIdEntry entry;
+    entry.noteId = event.noteId;
+    entry.channel = event.channel;
+    out.push_back(entry);
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortAndUniqueChannelByNoteIdEntries(
+    ChannelByNoteIdEntryVec& entries) {
+  std::stable_sort(entries.begin(), entries.end(),
+                   [](const ChannelByNoteIdEntry& a, const ChannelByNoteIdEntry& b) {
+                     return a.noteId < b.noteId;
+                   });
+  entries.erase(std::unique(entries.begin(), entries.end(),
+                            [](const ChannelByNoteIdEntry& a, const ChannelByNoteIdEntry& b) {
+                              return a.noteId == b.noteId;
+                            }),
+                entries.end());
+}
+
+TRACK_COLD_MEM uint8_t LoopContentResolution::StateCheckpoints::findChannelByNoteId(
+    const ChannelByNoteIdEntryVec& entries, NoteId noteId) {
+  if (noteId == kInvalidNoteId || entries.empty()) {
+    return 0;
+  }
+  auto it = std::lower_bound(entries.begin(), entries.end(), noteId,
+                             [](const ChannelByNoteIdEntry& entry, NoteId id) {
+                               return entry.noteId < id;
+                             });
+  if (it != entries.end() && it->noteId == noteId) {
+    return it->channel;
+  }
+  return 0;
+}
+
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick,
                                                                          SoundingNoteVec& out,
                                                                          ResolutionCostCounters* counters) const {
@@ -1069,6 +1128,8 @@ struct DeviceGateSession {
     rebuildSpanCursor = 0;
     rebuildNotesReady = false;
     spanBoundariesSorted = false;
+    channelByNoteIdCursor = 0;
+    channelByNoteIdReady = false;
     tickEventsSorted = false;
     reconSpansFinished = false;
     reconEventCursor = 0;
@@ -1141,11 +1202,13 @@ struct DeviceGateSession {
         (name == kPairStep)    ? static_cast<unsigned>(pairEventCursor)
         : (name == kReconStep) ? static_cast<unsigned>(reconEventCursor)
         : (name == kProjStep)  ? static_cast<unsigned>(reconProjectCursor)
-        : (name == kSortStep)       ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
-        : (name == kIndexSortStep)  ? static_cast<unsigned>(index.tickEvents.size())
-        : (name == kPrepStep)       ? (prepMergeOpen ? static_cast<unsigned>(prepMerged.size())
-                                                     : static_cast<unsigned>(rebuildEvents.size()))
-                                    : static_cast<unsigned>(indexEventCursor);
+        : (name == kChannelStep)     ? static_cast<unsigned>(channelByNoteIdCursor)
+        : (name == kChannelSortStep) ? static_cast<unsigned>(checkpoints.channelByNoteId.size())
+        : (name == kSortStep)        ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
+        : (name == kIndexSortStep)   ? static_cast<unsigned>(index.tickEvents.size())
+        : (name == kPrepStep)        ? (prepMergeOpen ? static_cast<unsigned>(prepMerged.size())
+                                                      : static_cast<unsigned>(rebuildEvents.size()))
+                                     : static_cast<unsigned>(indexEventCursor);
     const unsigned notesLogged = (name == kProjStep)
                                      ? static_cast<unsigned>(reconProjected.size())
                                      : static_cast<unsigned>(rebuildNotes.size());
@@ -1411,6 +1474,8 @@ struct DeviceGateSession {
           reconProjected = NoteUtils::DisplayNoteVec{};
           reconBuild.clear();
           rebuildSpanCursor = 0;
+          channelByNoteIdCursor = 0;
+          channelByNoteIdReady = false;
           rebuildNotesReady = true;
           spanBoundariesSorted = false;
           lastStepName = kDedupStep;
@@ -1418,6 +1483,27 @@ struct DeviceGateSession {
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
         const uint32_t noteCount = static_cast<uint32_t>(rebuildNotes.size());
+        if (!channelByNoteIdReady) {
+          const uint32_t eventCount = static_cast<uint32_t>(rebuildEvents.size());
+          if (channelByNoteIdCursor < eventCount) {
+            const uint32_t end = std::min(
+                channelByNoteIdCursor + LoopContentResolution::kDeviceGateEventsPerSlice, eventCount);
+            if (!checkpoints.appendChannelByNoteIdRange(rebuildEvents, channelByNoteIdCursor, end,
+                                                        &sample_.rebuild)) {
+              reset();
+              return LoopContentResolution::DeviceGateSliceResult::Inactive;
+            }
+            channelByNoteIdCursor = end;
+            lastStepName = kChannelStep;
+            sample_.rebuild.elapsedMicros += timer.elapsed();
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
+          checkpoints.sortChannelByNoteId(&sample_.rebuild);
+          channelByNoteIdReady = true;
+          lastStepName = kChannelSortStep;
+          sample_.rebuild.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
+        }
         if (rebuildSpanCursor < noteCount) {
           const uint32_t end = std::min(
               rebuildSpanCursor + LoopContentResolution::kDeviceGateEventsPerSlice, noteCount);
@@ -1502,6 +1588,8 @@ struct DeviceGateSession {
   static constexpr const char* kReconStep = "recon";
   static constexpr const char* kProjStep = "proj";
   static constexpr const char* kDedupStep = "dedup";
+  static constexpr const char* kChannelStep = "chan";
+  static constexpr const char* kChannelSortStep = "csort";
   static constexpr const char* kSortStep = "sort";
   static constexpr const char* kIndexSortStep = "isort";
   static constexpr const char* kPrepStep = "prep";
@@ -1522,6 +1610,8 @@ struct DeviceGateSession {
   uint32_t rebuildSpanCursor = 0;
   bool rebuildNotesReady = false;
   bool spanBoundariesSorted = false;
+  uint32_t channelByNoteIdCursor = 0;
+  bool channelByNoteIdReady = false;
   bool tickEventsSorted = false;
   bool reconSpansFinished = false;
   uint32_t reconEventCursor = 0;
@@ -1579,7 +1669,7 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
 #endif
   snprintf(line, cap,
            "#CAP,%lu,DIAG,lcr,mat=%lu,win=%lu,reb=%lu,st=%lu,rep=%u,hist=%u,walk=%u,app=%lu,sort=%lu,"
-           "iapp=%lu,isort=%lu",
+           "iapp=%lu,isort=%lu,capp=%lu,csort=%lu",
            stamp, static_cast<unsigned long>(sample.materialize.elapsedMicros),
            static_cast<unsigned long>(sample.window.elapsedMicros),
            static_cast<unsigned long>(sample.rebuild.elapsedMicros),
@@ -1590,7 +1680,9 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
            static_cast<unsigned long>(sample.rebuild.spanBoundaryAppendMicros),
            static_cast<unsigned long>(sample.rebuild.spanBoundarySortMicros),
            static_cast<unsigned long>(sample.indexCommit.tickEventAppendMicros),
-           static_cast<unsigned long>(sample.indexCommit.tickEventSortMicros));
+           static_cast<unsigned long>(sample.indexCommit.tickEventSortMicros),
+           static_cast<unsigned long>(sample.rebuild.channelByNoteIdAppendMicros),
+           static_cast<unsigned long>(sample.rebuild.channelByNoteIdSortMicros));
 }
 
 bool LoopContentResolution::deviceGateFormatPhaseLine(char* line, size_t cap) {

@@ -242,7 +242,7 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   if (result != LoopContentResolution::DeviceGateSliceResult::Complete) {
     return;
   }
-  char line[192];
+  char line[224];
   LoopContentResolution::deviceGateFormatCaptureLine(line, sizeof(line));
   DebugSessionCapture::appendCaptureTextLine(line);
   LoopContentResolution::deviceGateComplete();

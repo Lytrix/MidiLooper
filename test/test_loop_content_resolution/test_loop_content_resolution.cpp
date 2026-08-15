@@ -225,6 +225,19 @@ bool hasSoundingNoteId(const SoundingNoteVec& notes, NoteId id) {
 
 }  // namespace
 
+void fillChannelByNoteIdIndex(LoopContentResolution::StateCheckpoints& checkpoints,
+                              const SessionMidiEventVec& resolved) {
+  const uint32_t limit = static_cast<uint32_t>(resolved.size());
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  for (uint32_t i = 0; i < limit; i += step) {
+    const uint32_t end = std::min(i + step, limit);
+    LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(
+        resolved, i, end, checkpoints.channelByNoteId);
+  }
+  LoopContentResolution::StateCheckpoints::sortAndUniqueChannelByNoteIdEntries(
+      checkpoints.channelByNoteId);
+}
+
 CanonicalResolutionFixture buildCanonicalResolutionFixture() {
   resetNoteIdCounter(1);
   CanonicalResolutionFixture fixture;
@@ -1056,6 +1069,8 @@ void test_stage9_sliced_spans_match_full_rebuild() {
   sliced.spans.clear();
   sliced.spanBoundaries.clear();
   sliced.soundingAt.clear();
+  sliced.channelByNoteId.clear();
+  fillChannelByNoteIdIndex(sliced, resolved);
   for (uint32_t i = 0; i < static_cast<uint32_t>(notes.size()); ++i) {
     TEST_ASSERT_TRUE(sliced.appendSpansFromNotes(resolved, notes, i, i + 1, nullptr));
   }
@@ -1250,6 +1265,8 @@ void test_stage9_range_spans_match_one_span() {
   oneSpan.spans.clear();
   oneSpan.spanBoundaries.clear();
   oneSpan.soundingAt.clear();
+  oneSpan.channelByNoteId.clear();
+  fillChannelByNoteIdIndex(oneSpan, resolved);
   for (uint32_t i = 0; i < static_cast<uint32_t>(notes.size()); ++i) {
     TEST_ASSERT_TRUE(oneSpan.appendSpansFromNotes(resolved, notes, i, i + 1, nullptr));
   }
@@ -1261,6 +1278,8 @@ void test_stage9_range_spans_match_one_span() {
   batched.spans.clear();
   batched.spanBoundaries.clear();
   batched.soundingAt.clear();
+  batched.channelByNoteId.clear();
+  fillChannelByNoteIdIndex(batched, resolved);
   const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
   const uint32_t noteCount = static_cast<uint32_t>(notes.size());
   for (uint32_t i = 0; i < noteCount; i += step) {
@@ -1291,6 +1310,8 @@ void test_stage57_span_boundaries_reserve_final_size() {
   checkpoints.spans.clear();
   checkpoints.spanBoundaries.clear();
   checkpoints.soundingAt.clear();
+  checkpoints.channelByNoteId.clear();
+  fillChannelByNoteIdIndex(checkpoints, resolved);
   TEST_ASSERT_TRUE(checkpoints.appendSpansFromNotes(
       resolved, notes, 0, LoopContentResolution::kDeviceGateEventsPerSlice, nullptr));
   TEST_ASSERT_EQUAL_UINT32(LoopContentResolution::kDeviceGateEventsPerSlice,
@@ -1426,6 +1447,7 @@ void test_stage57_span_channel_uses_full_resolved_not_note_slice() {
   LoopContentResolution::StateCheckpoints checkpoints;
   checkpoints.intervalTicks = Config::TICKS_PER_BAR;
   checkpoints.loopLengthTicks = loopLength;
+  fillChannelByNoteIdIndex(checkpoints, events);
   const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
   const uint32_t noteCount = static_cast<uint32_t>(notes.size());
   for (uint32_t i = 0; i < noteCount; i += step) {
@@ -1448,6 +1470,69 @@ void test_stage57_span_channel_uses_full_resolved_not_note_slice() {
   }
   TEST_ASSERT_TRUE(sawCrossed);
   TEST_ASSERT_TRUE(sawOpen);
+}
+
+void test_stage57c_channel_index_first_wins_note_id() {
+  SessionMidiEventVec events;
+  events.push_back(makeResolvedNoteOn(0, 4, 60, 1));
+  events.push_back(makeResolvedNoteOn(12, 7, 60, 1));
+  events.push_back(makeResolvedNoteOff(24, 4, 60));
+  events.push_back(makeResolvedNoteOn(36, 5, 62, 2));
+  events.push_back(makeResolvedNoteOff(48, 5, 62));
+  LoopContentResolution::StateCheckpoints::ChannelByNoteIdEntryVec entries;
+  LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(events, 0, 8, entries);
+  LoopContentResolution::StateCheckpoints::sortAndUniqueChannelByNoteIdEntries(entries);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(entries.size()));
+  TEST_ASSERT_EQUAL_UINT8(
+      4u, LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 1));
+  TEST_ASSERT_EQUAL_UINT8(
+      5u, LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 2));
+  TEST_ASSERT_EQUAL_UINT8(
+      0u, LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 99));
+}
+
+void test_stage57c_channel_index_sliced_append_then_unique() {
+  const SessionMidiEventVec events = makeOpenNoteAcrossSliceEvents();
+  TEST_ASSERT_TRUE(events.size() > LoopContentResolution::kDeviceGateEventsPerSlice);
+  LoopContentResolution::StateCheckpoints::ChannelByNoteIdEntryVec entries;
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  const uint32_t limit = static_cast<uint32_t>(events.size());
+  LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(events, 0, step, entries);
+  bool sawOpenNote = false;
+  for (const auto& entry : entries) {
+    if (entry.noteId == 12) {
+      sawOpenNote = true;
+    }
+  }
+  TEST_ASSERT_FALSE(sawOpenNote);
+  for (uint32_t i = step; i < limit; i += step) {
+    const uint32_t end = std::min(i + step, limit);
+    LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(events, i, end, entries);
+  }
+  LoopContentResolution::StateCheckpoints::sortAndUniqueChannelByNoteIdEntries(entries);
+  TEST_ASSERT_EQUAL_UINT8(
+      5u, LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 10));
+  TEST_ASSERT_EQUAL_UINT8(
+      6u, LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 11));
+  TEST_ASSERT_EQUAL_UINT8(
+      9u, LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 12));
+  TEST_ASSERT_EQUAL_UINT8(
+      channelForNoteId(events, 10),
+      LoopContentResolution::StateCheckpoints::findChannelByNoteId(entries, 10));
+}
+
+void test_stage57c_channel_index_reserves_remaining_events() {
+  SessionMidiEventVec events;
+  events.resize(32);
+  for (uint32_t i = 0; i < 32; ++i) {
+    events[i] = makeResolvedNoteOn(i * 12u, 1, 60, static_cast<NoteId>(i + 1));
+  }
+  LoopContentResolution::StateCheckpoints::ChannelByNoteIdEntryVec out;
+  LoopContentResolution::StateCheckpoints::appendChannelByNoteIdEntries(
+      events, 0, LoopContentResolution::kDeviceGateEventsPerSlice, out);
+  TEST_ASSERT_EQUAL_UINT32(LoopContentResolution::kDeviceGateEventsPerSlice,
+                           static_cast<uint32_t>(out.size()));
+  TEST_ASSERT_TRUE(out.capacity() >= events.size());
 }
 
 void test_stage9_range_prep_matches_full_prepare() {
@@ -1560,6 +1645,9 @@ void test_stage9_native_worst_case_micros() {
               static_cast<unsigned long long>(sample.indexCommit.tickEventAppendMicros),
               static_cast<unsigned long long>(sample.indexCommit.tickEventSortMicros),
               static_cast<unsigned long long>(sample.window.elapsedMicros));
+  std::printf("stage57c capp=%llu csort=%llu\n",
+              static_cast<unsigned long long>(sample.rebuild.channelByNoteIdAppendMicros),
+              static_cast<unsigned long long>(sample.rebuild.channelByNoteIdSortMicros));
 }
 
 uint64_t elapsedMicrosSince(Clock::time_point start) {
@@ -1887,6 +1975,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage57_recon_keeps_open_note_across_event_slice);
   RUN_TEST(test_stage57_pair_keeps_open_note_across_event_slice);
   RUN_TEST(test_stage57_span_channel_uses_full_resolved_not_note_slice);
+  RUN_TEST(test_stage57c_channel_index_first_wins_note_id);
+  RUN_TEST(test_stage57c_channel_index_sliced_append_then_unique);
+  RUN_TEST(test_stage57c_channel_index_reserves_remaining_events);
   RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);

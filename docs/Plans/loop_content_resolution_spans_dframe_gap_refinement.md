@@ -1,6 +1,6 @@
 # Loop content resolution — 5.7 DFRAME during sliced append (reserve)
 
-**Status:** **5.7b device FAIL** [`164922`](../captures/session_20260815_164922.log) — `channelByNoteId` PSRAM `emplace` is a 14.7 s one-shot. Lookup after fill is flat. Do not keep this map on device.  
+**Status:** **5.7c native PASS** — device remasure owed. Flat `{noteId, channel}` replaces the PSRAM map. First `spans` slice must not contain a 14.7 s fill.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.17 complete — [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md)  
 **Evidence:** [`162630`](../captures/session_20260815_162630.log)
@@ -192,4 +192,98 @@ First `appendSpansFromNotes` (`begin==0`) calls `fillChannelByNoteId`: one PSRAM
 
 Open-note contract is not the fail. Do not shrink the map to the current 8 events.
 
-**Next (if asked):** same 5.15/5.17 move — C-order append of `{noteId, channel}` + one sort + first-wins unique. Not another PSRAM map. Not slicing `emplace`. Not 5.1.
+**Next:** 5.7c — C-order append of `{noteId, channel}` + one sort + first-wins unique. Not another PSRAM map. Not slicing `emplace`. Not 5.1.
+
+---
+
+## 5.7c — flat channel lookup
+
+**Ownership change?** NO. **Transition change?** NO.
+
+### Working hypothesis (evidence, not a new DEC)
+
+PSRAM associative-container insertion is a confirmed systemic latency hazard for LoopContentResolution derived indexes on the target device.
+
+| Structure | Insert | After flat A |
+|-----------|--------|----------------|
+| `startsByTick` `std::multimap` | 224–413 ms / 8 inserts | `app` ~1 ms, `sort` ~10 ms |
+| `TickIndex::byTick` `std::multimap` | 50–121 ms / small batches | `iapp` 203 ms after reserve, `isort` 27 ms |
+| `channelByNoteId` `unordered_map` | **14.7 s** for ~2394 `emplace` | this slice |
+
+Do not promote this to a formal LoopContentResolution invariant until 5.7c device remasure. `walk=0` stays. Do not rewrite `recon` / `pair`.
+
+### Contract (from code — pin before the swap)
+
+`fillChannelByNoteId` / `channelByNoteId.find(note.noteId)` is **not** “find the canonical entry for `(NoteId, channel)`.”
+
+```text
+Input:
+    resolved MIDI events; each NOTE_ON carries (noteId, channel)
+
+Required operation:
+    given NoteId, return the channel of the first NOTE_ON with that noteId
+    in resolved C-order
+
+Required multiplicity:
+    first-wins unique on NoteId only
+    (a later NOTE_ON with the same noteId is ignored, even if the channel differs)
+
+Required ordering:
+    none for query — point find, not a range scan
+    build: C-order append of NOTE_ONs, stable_sort by noteId, unique keep-first
+```
+
+Channel is the **value**, not part of the key and not a partition. Sorting or uniquing by `(noteId, channel)` would keep two channels for one noteId and violate first-wins.
+
+Open notes: every NOTE_ON in `resolved` is appended, including ons whose off is later or missing. The current 8-note span slice is not the input.
+
+`channelForNoteId` linear scan stays on the non-checkpoint `resolveState` path.
+
+### Representation
+
+| Id | Representation | Build | Query |
+|----|----------------|-------|-------|
+| **C** | 5.7b `unordered_map<NoteId,uint8_t>` | one PSRAM `emplace` per NOTE_ON | `find` |
+| **A** | `ChannelByNoteIdEntry[]` `{noteId, channel}` | C-order append + `stable_sort` by noteId + unique keep-first | `lower_bound` by noteId |
+
+No `(noteId, channel, index)` row. The consumer only needs channel. No B / A2.
+
+Device sequencing (first `spans` slice must not contain the index build):
+
+```text
+dedup → chan (8 events / slice) → csort → spans (8 notes / slice)
+```
+
+### Pre-implementation review
+
+#### Ready
+
+- Owner traced: `fillChannelByNoteId` / `appendSpansFromNotes` lookup / device RebuildSpans after `dedup`.
+- 5.15 / 5.17 pattern: `appendSpanBoundaryEntries` + `appendTickEventEntries` (reserve remaining in the pass).
+- Oracle: `channelForNoteId` (first NOTE_ON in C-order).
+
+#### Resolved (user / code)
+
+| Topic | Decision |
+|-------|----------|
+| Lookup key | `NoteId` only; channel is the value |
+| Unique | first-wins on `NoteId` after `stable_sort` by `noteId` |
+| Device shape | `chan` / `csort` before `spans`; not a one-shot inside the first span slice |
+| `recon` / `pair` | Do not rewrite |
+| Formal LCR invariant | After 5.7c device remasure, not this commit |
+
+#### Open before coding
+
+None — implementer pin-down: native first-wins + sliced append + reserve tests.
+
+#### Proceed?
+
+YES.
+
+---
+
+## 5.7c native shipped
+
+`channelByNoteId` is `ChannelByNoteIdEntry[]`. `appendChannelByNoteIdEntries` reserves remaining events in `resolved`. `sortAndUniqueChannelByNoteIdEntries` `stable_sort`s by `noteId` then unique keep-first. Device RebuildSpans runs `chan` then `csort` before `spans`. Complete line adds `capp=` / `csort=`. Native **1191/1191**. Device remasure owed.
+
+Do not start 5.1. Do not rewrite `pair` / `recon`.
