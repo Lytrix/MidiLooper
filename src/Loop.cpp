@@ -53,6 +53,7 @@ void Loop::resetPassTimeline() {
   passesMaterializedStoreStale_ = true;
   clearOverdubSourceView();
   clearPendingNoteChanges();
+  closeOverdubSession();
 }
 
 void Loop::invalidateCaches() {

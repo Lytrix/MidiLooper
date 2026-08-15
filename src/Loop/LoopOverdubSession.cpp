@@ -1,0 +1,198 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include "Loop.h"
+
+#include "LoopInternal.h"
+#include "Utils/IntervalProjection.h"
+#include "Utils/LoopMem.h"
+#include "Utils/NoteUtils.h"
+
+LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
+  if (hasOverdubSession()) {
+    return;
+  }
+  playheadPhaseTick = sessionPlayheadPhaseTick;
+  overdubWrapArmed_ = false;
+  overdubSessionPassIds_.clear();
+  overdubSessionCompanionIds_.clear();
+  overdubSessionCursor_ = 0;
+  overdubSessionLiveUndoEvents_.clear();
+}
+
+LOOP_COLD_MEM void Loop::closeOverdubSession() {
+  playheadPhaseTick = UINT32_MAX;
+  overdubWrapArmed_ = false;
+  overdubSessionPassIds_.clear();
+  overdubSessionCompanionIds_.clear();
+  overdubSessionCursor_ = 0;
+  overdubSessionLiveUndoEvents_.clear();
+}
+
+LOOP_COLD_MEM void Loop::armOverdubWrapAfterLeavingStart(uint32_t currentPhase) {
+  if (!hasOverdubSession() || overdubWrapArmed_) {
+    return;
+  }
+  if (currentPhase != playheadPhaseTick) {
+    overdubWrapArmed_ = true;
+  }
+}
+
+LOOP_COLD_MEM bool Loop::shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) const {
+  if (!hasOverdubSession() || !overdubWrapArmed_ || loopLengthTicks == 0) {
+    return false;
+  }
+  return IntervalProjection::didPlayheadCrossPhase(prevPhase, currentPhase, playheadPhaseTick,
+                                                   loopLengthTicks);
+}
+
+LOOP_COLD_MEM void Loop::noteOverdubWrapCommitted() {
+  overdubWrapArmed_ = false;
+}
+
+LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
+  out.clear();
+  if (!captureActive() || capture.store.empty() || loopLengthTicks == 0) {
+    return 0;
+  }
+  ensureCaptureEventsSorted();
+  SessionMidiEventVec flat;
+  capture.store.copyEventsTo(flat);
+  if (flat.empty()) {
+    return 0;
+  }
+  const std::vector<NoteUtils::OpenNoteOn> opens =
+      NoteUtils::findOpenNoteOns(flat, loopLengthTicks);
+  if (opens.empty()) {
+    return 0;
+  }
+  SessionMidiEventVec kept;
+  kept.reserve(flat.size());
+  for (const MidiEvent& evt : flat) {
+    bool extract = false;
+    if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
+      for (const NoteUtils::OpenNoteOn& open : opens) {
+        if (open.note == evt.data.noteData.note && open.tick == evt.tick) {
+          extract = true;
+          break;
+        }
+      }
+    }
+    if (extract) {
+      out.push_back(evt);
+    } else {
+      kept.push_back(evt);
+    }
+  }
+  if (out.empty()) {
+    return 0;
+  }
+  capture.store.clear();
+  if (!kept.empty()) {
+    capture.store.loadFromEvents(kept);
+  }
+  captureEventsSortDirty = false;
+  rebuildCapturePreviewFromStore(*this);
+  ++captureDisplayRevision;
+  return out.size();
+}
+
+LOOP_COLD_MEM void Loop::pushOverdubSessionPass(PassId passId, EditPassIdList companionIds) {
+  if (passId == kInvalidPassId) {
+    return;
+  }
+  dropOverdubSessionRedoTail();
+  overdubSessionPassIds_.push_back(passId);
+  overdubSessionCompanionIds_.push_back(std::move(companionIds));
+  overdubSessionCursor_ = overdubSessionPassIds_.size();
+}
+
+LOOP_COLD_MEM void Loop::dropOverdubSessionRedoTail() {
+  if (overdubSessionCursor_ < overdubSessionPassIds_.size()) {
+    overdubSessionPassIds_.resize(overdubSessionCursor_);
+    overdubSessionCompanionIds_.resize(overdubSessionCursor_);
+  }
+  overdubSessionLiveUndoEvents_.clear();
+}
+
+LOOP_COLD_MEM bool Loop::canUndoOverdubSession() const {
+  if (!hasOverdubSession()) {
+    return false;
+  }
+  if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
+    return true;
+  }
+  return overdubSessionCursor_ > 0;
+}
+
+LOOP_COLD_MEM bool Loop::canRedoOverdubSession() const {
+  if (!hasOverdubSession()) {
+    return false;
+  }
+  if (capture.store.empty() && !overdubSessionLiveUndoEvents_.empty()) {
+    return true;
+  }
+  return overdubSessionCursor_ < overdubSessionPassIds_.size();
+}
+
+LOOP_COLD_MEM size_t Loop::overdubSessionUndoDepth() const {
+  size_t depth = overdubSessionCursor_;
+  if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
+    ++depth;
+  }
+  return depth;
+}
+
+LOOP_COLD_MEM size_t Loop::overdubSessionRedoDepth() const {
+  size_t depth = overdubSessionPassIds_.size() - overdubSessionCursor_;
+  if (capture.store.empty() && !overdubSessionLiveUndoEvents_.empty()) {
+    ++depth;
+  }
+  return depth;
+}
+
+LOOP_COLD_MEM bool Loop::undoOverdubSession() {
+  if (!hasOverdubSession()) {
+    return false;
+  }
+  if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
+    overdubSessionLiveUndoEvents_.clear();
+    capture.store.copyEventsTo(overdubSessionLiveUndoEvents_);
+    capture.store.clear();
+    captureEventsSortDirty = false;
+    rebuildCapturePreviewFromStore(*this);
+    ++captureDisplayRevision;
+    return true;
+  }
+  if (overdubSessionCursor_ == 0) {
+    return false;
+  }
+  --overdubSessionCursor_;
+  const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
+  disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
+  return setCapturePassState(passId, CapturePassState::Disabled);
+}
+
+LOOP_COLD_MEM bool Loop::redoOverdubSession() {
+  if (!hasOverdubSession()) {
+    return false;
+  }
+  if (overdubSessionCursor_ < overdubSessionPassIds_.size()) {
+    const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
+    enableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
+    const bool ok = setCapturePassState(passId, CapturePassState::Active);
+    if (ok) {
+      ++overdubSessionCursor_;
+    }
+    return ok;
+  }
+  if (capture.store.empty() && !overdubSessionLiveUndoEvents_.empty()) {
+    capture.store.loadFromEvents(overdubSessionLiveUndoEvents_);
+    overdubSessionLiveUndoEvents_.clear();
+    captureEventsSortDirty = false;
+    rebuildCapturePreviewFromStore(*this);
+    ++captureDisplayRevision;
+    return true;
+  }
+  return false;
+}

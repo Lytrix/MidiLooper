@@ -545,12 +545,42 @@ TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
     (void)track;
 }
 
+TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
+    if (!loop.hasOverdubSession() || !loop.canUndoOverdubSession()) {
+        return false;
+    }
+    if (!loop.undoOverdubSession()) {
+        return false;
+    }
+    loop.invalidateCaches();
+    logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
+    (void)track;
+    return true;
+}
+
+TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
+    if (!loop.hasOverdubSession() || !loop.canRedoOverdubSession()) {
+        return false;
+    }
+    if (!loop.redoOverdubSession()) {
+        return false;
+    }
+    loop.invalidateCaches();
+    logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
+    (void)track;
+    return true;
+}
+
 TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
     if (loopEditManager.hasPendingGeometry()) {
         loopEditManager.flushAllPendingGeometry(track);
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return;
+    }
+    if (loop.hasOverdubSession()) {
+        (void)undoOverdubSession(track, loop);
         return;
     }
     if (loopHasLiveOverdubCapture(loop)) {
@@ -621,6 +651,10 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
 TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
     if (loopEditManager.hasPendingGeometry()) {
         loopEditManager.cancelPendingGeometryPreview(track);
+    }
+    if (loop.hasOverdubSession()) {
+        (void)redoOverdubSession(track, loop);
+        return;
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
@@ -697,6 +731,9 @@ TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
     }
+    if (loop.hasOverdubSession()) {
+        return loop.overdubSessionUndoDepth();
+    }
     if (loopHasLiveOverdubCapture(loop)) {
         return 1u + countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
     }
@@ -712,6 +749,9 @@ TRACK_COLD_MEM size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
     }
+    if (loop.hasOverdubSession()) {
+        return loop.overdubSessionRedoDepth();
+    }
     return countRedoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
 }
 
@@ -719,6 +759,9 @@ TRACK_COLD_MEM bool TrackUndo::canUndoForLoop(const Track& track, const Loop& lo
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
+    }
+    if (loop.hasOverdubSession()) {
+        return loop.canUndoOverdubSession();
     }
     if (loopHasLiveOverdubCapture(loop)) {
         return true;
@@ -731,6 +774,9 @@ TRACK_COLD_MEM bool TrackUndo::canRedoForLoop(const Track& track, const Loop& lo
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
+    }
+    if (loop.hasOverdubSession()) {
+        return loop.canRedoOverdubSession();
     }
     const GlobalUndoStack& stack = track.getGlobalUndoStack();
     return stack.canRedo() && stack.entries[stack.cursor].slotIndex == slotIndex;

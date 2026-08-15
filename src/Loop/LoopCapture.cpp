@@ -428,6 +428,7 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
   captureEventsSortDirty = true;
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR, loopLengthTicks);
   ++captureDisplayRevision;
+  overdubSessionLiveUndoEvents_.clear();
   result.accepted = true;
   result.reason = CaptureAppendDenyReason::Accepted;
   return result;

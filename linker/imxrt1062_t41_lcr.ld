@@ -30,6 +30,9 @@ SECTIONS
 		KEEP(*(.startup))
 		*(.flashmem*)
 		*LoopContentResolution*.o(.text .text.*)
+		*LoopOverdubSession*.o(.text .text.*)
+		*TrackOverdubWrap*.o(.text .text.*)
+		*TrackUndo*.o(.text .text.*)
 		. = ALIGN(4);
 		KEEP(*(.init))
 		__preinit_array_start = .;
@@ -49,7 +52,7 @@ SECTIONS
 	.text.itcm : {
 		. = . + 32; /* MPU to trap NULL pointer deref */
 		*(.fastrun)
-		EXCLUDE_FILE (*LoopContentResolution*) *(.text*)
+		EXCLUDE_FILE (*LoopContentResolution* *LoopOverdubSession* *TrackOverdubWrap* *TrackUndo*) *(.text*)
 		. = ALIGN(16);
 	} > ITCM  AT> FLASH
 

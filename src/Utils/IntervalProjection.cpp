@@ -225,6 +225,17 @@ bool isPlaybackCatchUpWindow(uint32_t prevTickInLoop, uint32_t tickInLoop) {
     return (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 }
 
+bool didPlayheadCrossPhase(uint32_t prevPhase, uint32_t currPhase, uint32_t phaseTick,
+                           uint32_t loopLength) {
+    if (loopLength == 0 || prevPhase == UINT32_MAX || currPhase == prevPhase) {
+        return false;
+    }
+    if (currPhase > prevPhase) {
+        return prevPhase < phaseTick && currPhase >= phaseTick;
+    }
+    return prevPhase < phaseTick || currPhase >= phaseTick;
+}
+
 bool didPlaybackEventCross(bool atLoopStart, uint32_t prevTickInLoop, uint32_t evTick,
                            uint32_t tickInLoop) {
     // Intentionally preserves playback semantics (<= at loop start). Not isPlaybackAtLoopStart().

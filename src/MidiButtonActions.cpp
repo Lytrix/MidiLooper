@@ -618,6 +618,17 @@ void MidiButtonActions::handleUndo() {
                     static_cast<unsigned>(editManager.getEditSession().undoStack.undoCount()));
         return;
     }
+    if (track.isOverdubbing()) {
+        const uint8_t overdubTrackIdx = trackManager.getSelectedTrackIndex();
+        const uint8_t overdubSlotIndex = trackManager.getSelectedSlotIndex(overdubTrackIdx);
+        Loop& overdubLoop = track.getLoop(overdubSlotIndex);
+        if (TrackUndo::undoOverdubSession(track, overdubLoop)) {
+            logger.info("MIDI: Overdub session undo");
+            return;
+        }
+        logger.info("MIDI: No overdub session undo available");
+        return;
+    }
     const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
     Loop& loop = track.getLoop(slotIndex);
@@ -646,6 +657,17 @@ void MidiButtonActions::handleRedo() {
         }
         logger.info("MIDI: No session redo available (entries=%u)",
                     static_cast<unsigned>(editManager.getEditSession().undoStack.redoCount()));
+        return;
+    }
+    if (track.isOverdubbing()) {
+        const uint8_t overdubTrackIdx = trackManager.getSelectedTrackIndex();
+        const uint8_t overdubSlotIndex = trackManager.getSelectedSlotIndex(overdubTrackIdx);
+        Loop& overdubLoop = track.getLoop(overdubSlotIndex);
+        if (TrackUndo::redoOverdubSession(track, overdubLoop)) {
+            logger.info("MIDI: Overdub session redo");
+            return;
+        }
+        logger.info("MIDI: No overdub session redo available");
         return;
     }
     const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
