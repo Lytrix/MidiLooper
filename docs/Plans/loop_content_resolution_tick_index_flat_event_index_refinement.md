@@ -1,6 +1,6 @@
 # Loop content resolution — TickIndex flat event index (5.17)
 
-**Status:** 5.17d firmware ready 2026-08-15 — device gate IndexCommit is flat A (`iapp` / `isort` / `win`). Awaiting 139-bar remasure vs [`155953`](../captures/session_20260815_155953.log). Native `commitCapturePass` still fills `byTick`.  
+**Status:** **5.17d PASS** 2026-08-15 — [`161355`](../captures/session_20260815_161355.log). Device IndexCommit is flat A. No B. No A2. Native `commitCapturePass` still fills `byTick` (5.17e).  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.16 closed `prep`; next owner from [`153920`](../captures/session_20260815_153920.log) — [`loop_content_resolution_device_phase_budget_refinement.md`](loop_content_resolution_device_phase_budget_refinement.md)
 
@@ -139,8 +139,8 @@ Then implement **only the winner** (5.17e). Production `byTick` stays C until th
 5.17a  contract (this doc) — done
 5.17b  native C vs flat A (append / sort / emplace / query) — done
 5.17c  native equivalence (window, order, wrap, oracle, walk) — done
-5.17d  device append / sort / query  — firmware ready; capture next
-5.17e  keep A / drop `byTick` from `commitCapturePass` — only if 5.17d PASS
+5.17d  device append / sort / query  — **PASS** [`161355`](../captures/session_20260815_161355.log)
+5.17e  drop `byTick` from `commitCapturePass` — only if asked; device gate already uses A
 ```
 
 ---
@@ -184,6 +184,38 @@ Complete line adds `iapp=` / `isort=` (tick-event append / sort). Span `app=` / 
 `indexCapturePassEventRange` still `emplace`s `byTick` for native C tests. Device gate does not call it.
 
 Compare the next capture to [`155953`](../captures/session_20260815_155953.log): `idx` p0/p1 `loop_rem` should collapse; `iapp` + `isort` replace map emplace; `win` should be set; `walk=0`; `st` not worse.
+
+### 5.17d device [`161355`](../captures/session_20260815_161355.log)
+
+```
+mat=0,win=13971,reb=6865156,st=3108,rep=350,hist=2394,walk=0,app=2457550,sort=9738,iapp=4819607,isort=27415
+```
+
+| | C [`155953`](../captures/session_20260815_155953.log) | A [`161355`](../captures/session_20260815_161355.log) |
+|--|--:|--:|
+| LCR wall | 165.47 s | **55.26 s** |
+| `reb` | 13.809 s | **6.865 s** |
+| `idx` p0 wall | 32.17 s | **9.09 s** |
+| `idx` p1 wall | 4.15 s | **1.02 s** |
+| `idx` `loop_rem` | 50→83 ms; 34 × 120.6 ms | **none** |
+| `iapp` | n/a (map emplace) | **4.820 s** |
+| `isort` | n/a | **27.4 ms** |
+| `win` | 0 (skipped) | **14.0 ms** |
+| `st` | 13046 µs | **3108 µs** |
+| `walk` | 0 | 0 |
+| span `app` / `sort` | 5.488 s / 10.2 ms | 2.458 s / 9.7 ms |
+| `pair` `loop_rem` | p1 91.5 ms | **none** |
+| `recon` `loop_rem` | 4 × ≤115.7 ms | **none** |
+| `prep` `loop_rem` | none | none |
+| largest `DFRAME` gap | 4.38 s (`idx` p1) | 1.58 s (`spans`) |
+| after complete `idle_maint` | 273–282 µs | 274–279 µs |
+| after complete `DFRAME` | 0.967–0.969 s | 0.965–0.966 s |
+
+`isort` 27.4 ms is one slice under the 50 ms bar. A2 is not justified. `win` 14.0 ms does not need B. `hist=2394` `rep=350` `walk=0` match C.
+
+No `idle_maint` remainder during LCR. Boot `load_frame` remainders (98.9 / 866.6 / 7573.6 ms) are visual-cache, not LCR. The 41.1 ms `idle_maint` 5 s window after complete overlaps the LCR tail (`state` at 79.76 s).
+
+**5.17d PASS.** No B. No A2. Do not fold `recon` or `pair` into this closeout. 5.7 still has `DFRAME` gaps of 1.3–1.58 s during `spans`.
 
 ---
 
