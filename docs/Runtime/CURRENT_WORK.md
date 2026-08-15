@@ -15,6 +15,7 @@ Last updated: 2026-08-15 (DEC-037 5.18 frozen; 5.1 idle-path PASS)
 **Active:** native `LoopContentResolution` prototype. Do **not** optimize `materializeToEventVector` again. Do not wire resolution onto MIDI/display until three gates pass.
 
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
+**Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
 **Now:** **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log) — complete idle LCR gate on 139-bar class: OLED `DFRAME` 1.034 s consecutive, `midi_gap` 39.1 ms, no `loop_rem`. **5.18 FROZEN** (`bn=225` µs, `nsort=10.0 ms`). Next: **5.2** overdub-entry verification (PLAYING / 3b copy). Do not reopen 5.18. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No Stage 6. No B. Arm cap stays off. Production stays on materialize / 3b copy.

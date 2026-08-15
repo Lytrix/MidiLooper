@@ -5,6 +5,7 @@
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
 **OpenSpec:** `openspec/changes/loop-content-resolution/`  
+**Next-chat handoff:** [`loop_content_resolution_stage9_handoff.md`](loop_content_resolution_stage9_handoff.md)  
 **Does not authorize:** deleting `materializeToEventVector`; wiring resolution onto `handleMidiInput`; persisted checkpoint (D3) until Stage 7 shape is proven in RAM; overlay picker; Stage 3b GUS; interval reservation; RC-J
 
 ---

@@ -1,0 +1,217 @@
+# Handoff — LoopContentResolution Stage 9 (5.2 next)
+
+**Date:** 2026-08-15  
+**Kind:** handoff  
+**Branch:** `feature/loop-content-resolution` (local; not pushed)  
+**HEAD:** `c8c47dd` — *Record 5.18 closed and 5.1 idle-path device latency PASS.*  
+**OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
+**Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
+**Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
+**Prior chat:** 5.18 pair freeze + 5.1 idle-path PASS (this session).
+
+---
+
+## Paste this to start the next chat
+
+> Continue DEC-037 Stage 9 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
+>
+> **Now:** 5.2 only — overdub-entry verification on the production 3b path. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, start Stage 6, or add representation B.
+>
+> Read CURRENT_WORK + this handoff first. Firmware is already on the board from 5.18b (`teensy41-capture-serial`). Need a PLAYING overdub on the same 139-bar loop. Score `ODUB,begin_capture` < 50 ms, no `VCACHE,full`, no full materialize after commit.
+
+---
+
+## One-line status
+
+Idle LoopContentResolution complete-path is realtime-clean. Pair is frozen. **Next is 5.2** (PLAYING overdub on production 3b copy). Production MIDI/display still use `materializeToEventVector` / Layer D 3b. Stage 6 is blocked until 5.2 PASS + explicit user approval.
+
+---
+
+## DEC-037 scoreboard
+
+```text
+correctness             PASS  (native vs materialize+reconstruct)
+complexity              PASS  (walk=0)
+derived-index RAM       PASS
+flat/bulk construction  PASS
+device latency
+  spanBoundaries        PASS  5.15
+  tickEvents            PASS  5.17
+  channel lookup        PASS  5.7c
+  pair                  PASS  5.18
+  5.1 idle complete     PASS  173842
+  5.2 overdub entry     NEXT
+Stage 6 production swap BLOCKED
+```
+
+---
+
+## Do not
+
+- Reopen 5.15 / 5.17 / 5.7c / 5.18
+- Flatten `openOnByPitch` (LIFO; `op=2.3 ms`, `pk=1`)
+- Rewrite `recon`
+- Build representation B or A2
+- Restore the 16-bar arm cap
+- Delete `materializeToEventVector`
+- Put resolution on overdub / MIDI / `handleMidiInput`
+- Start Stage 6 without user approval after 5.2
+- Rename `byNoteId` or “clean up” pairing
+- Put probes in `ExternalMemoryFirstAllocator` (ITCM / RAM1 overflow)
+- Commit `lib/SSD1322_OLED` submodule dirt
+- Push unless asked
+
+---
+
+## Frozen representations (do not reopen)
+
+| Structure | Contract | Representation | Evidence |
+|-----------|----------|----------------|----------|
+| `spanBoundaries` | tick range → start/end apply | flat append + `stable_sort` by tick | 5.15 [`151450`](../../captures/session_20260815_151450.log) |
+| `tickEvents` | tick window → Active `(passId, eventIndex)` | flat/bulk; `byTick` **removed** | 5.17 [`162630`](../../captures/session_20260815_162630.log) |
+| `channelByNoteId` | `NoteId` → first NOTE_ON channel (stored byte, not a key) | flat + unique **keep-first** | 5.7c [`170024`](../../captures/session_20260815_170024.log) `capp=12.4 ms` |
+| `byNoteId` | `NoteId` → last `{passId, on, off}` | flat + unique **keep-last** | 5.18 [`173842`](../../captures/session_20260815_173842.log) `bn=225` `nsort=10.0 ms` |
+| `openOnByPitch` | per-pass pitch → open ON indexes | **retain LIFO** `std::map<uint8_t, vector>` (not PSRAM) | 5.18a [`172927`](../../captures/session_20260815_172927.log) `op=2.4 ms` `pk=1` |
+| `passById` | `PassId` → slot | `unordered_map` (pass-count) | out of swap list |
+
+**Invariant (DEC-037 amendment, not a new DEC):** derived indexes + PSRAM + per-entry construction. Flatten from the **query**, not the container type. B only if a measured flat query is too expensive. LIFO pairing is why this is not “replace all maps with arrays.”
+
+Loop-internal channel is not a resolution key (DEC-033). Pairing stays pitch-only.
+
+---
+
+## 5.18 closed (do not continue optimizing pair)
+
+The 1.27 s pair `DFRAME` was PSRAM `unordered_map` assignment into `byNoteId`, not the pairing algorithm.
+
+| | [`172927`](../../captures/session_20260815_172927.log) map | [`173842`](../../captures/session_20260815_173842.log) flat |
+|--|--:|--:|
+| `bn` | **5.346 s** | **225 µs** |
+| pair `tot` | 5.357 s | 7.95 ms |
+| `nsort` | — | **10.0 ms** |
+| `op` / `pk` | 2.4 ms / 1 | 2.3 ms / 1 |
+| pair `DFRAME` | 1.273 s | 0.980–1.026 s |
+
+Device `nsort` is one slice after all pair ranges, before `isort`. Sliced pair does **not** unique every 8 events. Unique is keep-last (opposite of 5.7c keep-first).
+
+Plan: [`loop_content_resolution_pair_index_refinement.md`](loop_content_resolution_pair_index_refinement.md) — **FROZEN**.
+
+---
+
+## 5.1 PASS — idle complete path only
+
+Capture: [`173842`](../../captures/session_20260815_173842.log)
+
+LCR window 20.67–52.43 s (`phase,idx` → `DIAG,lcr,mat=`). `hist=2394` `walk=0`. 139 bars (larger than `035414`).
+
+| Check | Worst |
+|-------|-------|
+| OLED | consecutive `DFRAME` **1.034 s** (`frameIndex` +30, paint 9.9 ms) vs healthy **0.968 s** |
+| MIDI | `midi_gap` **39.1 ms**; `idle_maint` **34.9 ms**; no `loop_rem` |
+| `VCACHE,full` during LCR | none |
+
+`processDeferredContentResolutionDeviceGate` runs only when transport is **not** PLAYING / RECORDING / OVERDUBBING / STOPPED_RECORDING. 5.1 cannot stall PLAYING MIDI because the gate does not run then. `clockrate` was 0 during 173842 LCR (STOPPED). That is expected.
+
+Complete line:
+
+```
+mat=0,win=7129,reb=368240,st=531,rep=350,hist=2394,walk=0,app=1341,sort=9237,iapp=197743,isort=28116,capp=10682,csort=1897
+pair,tot=7950,bn=225,op=2256,lk=546,oth=4923,ent=2396,ins=2396,ow=0,pu=2396,po=2395,pk=1,oa=58,hb=116,nsort=10003
+```
+
+Healthy after-complete `DFRAME` cadence is **~0.968 s**. Consecutive `frameIndex` (+30) is a real stretch. Do not treat a 31 s wall-clock gate as a stall — it is cooperative idle slices.
+
+---
+
+## Now implementing: 5.2
+
+**Task:** [`openspec/changes/loop-content-resolution/tasks.md`](../../openspec/changes/loop-content-resolution/tasks.md) item 5.2
+
+> Overdub entry remains cheap (3b copy); no `VCACHE,full` on the normal path; no full materialize after commit.
+
+This is **verification of production overdub**, not an LCR swap. Keep 3b visual-cache copy. Do not call `resolveWindow` from overdub.
+
+### Pass criteria (from DEC-037 + DEC-036 3b)
+
+| Check | Bar | Baseline |
+|-------|-----|----------|
+| `ODUB,begin_capture` | **< 50 ms** at this class | 3b PASS [`045556`](../../captures/session_20260814_045556.log) **2214 µs** after `slice_clean` |
+| `VCACHE,full` on overdub entry | **none** | FAIL was [`042909`](../../captures/session_20260814_042909.log) 14.3 s undo / 7.1 s overdub |
+| Full materialize after commit | **none** on the normal overdub-entry path | 3b copy of `visualCache.notes` |
+| Overdub `clockrate` | hold ~47–48 if transport is running | S1 [`225803`](../../captures/session_20260812_225803.log) |
+
+### How to run (no firmware)
+
+1. Same 139-bar loop that produced `hist=2394` (already on device if capture [`173842`](../../captures/session_20260815_173842.log) is still the session).
+2. Wait until LCR gate has finished (`DIAG,lcr,mat=` present) **or** confirm `deviceGateFinished` — overdub during an active gate is not 5.2 (gate yields when PLAYING starts).
+3. PLAYING, then enter overdub.
+4. Capture `teensy41-capture-serial` (already the default). Score `ODUB,begin_capture`, `VCACHE,*`, `clockrate`, `midisvc`.
+5. Do **not** rebuild or re-flash unless the board is not on `f180cd5` / `c8c47dd` firmware (`f180cd5` is the 5.18b hex; later commits are docs-only).
+
+If the current capture is still STOPPED with `clockrate=0` after the gate, start PLAYING and overdub in a new or continued capture. 173842 after 52.4 s is idle-only — **not** 5.2 evidence.
+
+### Architecture checkpoint (5.2)
+
+1. Ownership change? **NO** — still `establishOverdubSourceView` / 3b copy.
+2. State transition change? **NO**.
+
+If 5.2 would require putting LCR on the overdub path → **stop**, design session.
+
+---
+
+## After 5.2
+
+```text
+5.2 PASS
+    ↓
+Stage 9 complete (three device-latency bullets all scored)
+    ↓
+only then Stage 6 production-swap review (user approval)
+    6.1 dirty overdub fallback → resolveWindow; keep 3b clean-cache copy
+    6.2 idle visual slices
+    6.3 long-loop playback gather
+    6.4 short-loop / NOTE_EDIT hydrate last
+    6.5 never delete materialize; never resolve from handleMidiInput
+```
+
+If 5.2 FAIL: report numbers vs 3b baseline. Do not “fix” by wiring LCR onto overdub in the same session.
+
+---
+
+## Hybrid runtime (still holds)
+
+| Path | Owner |
+|------|--------|
+| Production MIDI / display | `materializeToEventVector` / Layer D 3b visual-cache copy |
+| LCR | one-shot extra walk in idle maintenance; `deviceGateFinished` after one complete |
+| `DFRAME` | every 30th `DisplayManager::update` |
+
+Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6592**.
+
+---
+
+## Key files
+
+| Role | Path |
+|------|------|
+| Owner | `include/LoopContentResolution.h`, `src/LoopContentResolution.cpp` |
+| Idle gate hook | `Track::processDeferredContentResolutionDeviceGate` in `src/Track/TrackDeferredMaintenance.cpp` |
+| Tests | `test/test_loop_content_resolution/test_loop_content_resolution.cpp` (native **1195/1195** after 5.18b) |
+| Overdub 3b | `establishOverdubSourceView` / visual-cache copy (DEC-036) |
+
+---
+
+## Local commits this arc (not pushed)
+
+| Commit | What |
+|--------|------|
+| `f180cd5` | 5.18b firmware: last-wins flat `byNoteId` |
+| `6bf3297` | 5.18b device PASS docs |
+| `c8c47dd` | 5.18 closed + 5.1 PASS docs |
+
+---
+
+## OpenSpec remaining Stage 9
+
+- [ ] 5.2 overdub entry
+- [ ] 6.x production swap — **do not start**
