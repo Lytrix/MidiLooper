@@ -2831,6 +2831,7 @@ struct Stage6e1OverlapCase {
   uint32_t expectedStart = 0;
   uint32_t expectedEnd = 0;
   uint8_t expectedTransformCount = 0;
+  uint32_t loopLength = kStage6e1LoopLen;
 };
 
 bool stage6e1LinearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
@@ -3057,6 +3058,13 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
 
+  const uint32_t loopLength =
+      overlapCase.loopLength != 0 ? overlapCase.loopLength : kStage6e1LoopLen;
+  const uint32_t incomingStart =
+      IntervalProjection::tickPhaseInLoop(overlapCase.incomingStart, 0, loopLength);
+  const uint32_t incomingEnd =
+      IntervalProjection::tickPhaseInLoop(overlapCase.incomingEnd, 0, loopLength);
+
   LoopEventStore store;
   for (uint8_t i = 0; i < overlapCase.sourceCount; ++i) {
     const Stage6e1SourceSpan& span = overlapCase.sources[i];
@@ -3072,19 +3080,18 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   LoopContentResolution::TickIndex index;
   index.commitLoopPasses(passes);
   LoopContentResolution::StateCheckpoints checkpoints;
-  checkpoints.rebuild(index, passes.editPasses, kStage6e1LoopLen, Config::TICKS_PER_BAR);
+  checkpoints.rebuild(index, passes.editPasses, loopLength, Config::TICKS_PER_BAR);
 
   uint32_t consumeStart = 0;
   uint32_t consumeEnd = 0;
-  stage6e1ConsumeHold(overlapCase.incomingStart, overlapCase.incomingEnd, kStage6e1LoopLen,
-                      consumeStart, consumeEnd);
+  stage6e1ConsumeHold(incomingStart, incomingEnd, loopLength, consumeStart, consumeEnd);
   TEST_ASSERT_TRUE(consumeEnd > consumeStart);
 
   NoteUtils::DisplayNoteVec oracle;
-  stage6e1CollectOracleNotes(passes, kStage6e1LoopLen, overlapCase.incomingPitch, consumeStart,
+  stage6e1CollectOracleNotes(passes, loopLength, overlapCase.incomingPitch, consumeStart,
                              consumeEnd, oracle);
   NoteUtils::DisplayNoteVec treatment;
-  stage6e1CollectTreatmentNotes(index, checkpoints, passes.editPasses, kStage6e1LoopLen,
+  stage6e1CollectTreatmentNotes(index, checkpoints, passes.editPasses, loopLength,
                                 overlapCase.incomingPitch, consumeStart, consumeEnd, treatment);
   assertDisplayNotesMatch(oracle, treatment);
 
@@ -3096,8 +3103,8 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
     TEST_ASSERT_MESSAGE(!treatment.empty(), overlapCase.name);
   }
   PendingNoteChangeVec transforms;
-  stage6e1ApplyGeometry(treatment, overlapCase.incomingPitch, consumeStart, consumeEnd,
-                        kStage6e1LoopLen, transforms);
+  stage6e1ApplyGeometry(treatment, overlapCase.incomingPitch, consumeStart, consumeEnd, loopLength,
+                        transforms);
   stage6e1AssertExpectedTransform(overlapCase, transforms);
 }
 
@@ -3178,8 +3185,19 @@ void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
        0,
        3999,
        1},
-      {"user_long_source_wrap_incoming",
-       {{1, 60, 0, 5000}},
+      {"user_long_source_wrap_incoming_hide_loop_4000",
+       {{1, 60, 0, 3999}},
+       1,
+       60,
+       4000,
+       200,
+       Stage6e1ExpectedTransform::Hide,
+       0,
+       3999,
+       1,
+       4000},
+      {"user_long_source_wrap_incoming_loop_4100",
+       {{1, 60, 0, 4099}},
        1,
        60,
        4000,
@@ -3187,7 +3205,8 @@ void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
        Stage6e1ExpectedTransform::Shorten,
        0,
        3999,
-       1},
+       1,
+       4100},
   };
   for (const Stage6e1OverlapCase& overlapCase : cases) {
     stage6e1RunCase(overlapCase);

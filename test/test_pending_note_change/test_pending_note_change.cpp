@@ -27,6 +27,7 @@
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
 #include "OverlapNoteIdSet.h"
+#include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
 
 #include <initializer_list>
@@ -58,8 +59,9 @@ const PendingNoteChange* findTransform(const PendingNoteChangeVec& pending, Note
   return nullptr;
 }
 
-void seedLongSourceNote(Loop& loop, NoteId id, uint32_t onTick, uint32_t offTick, uint8_t pitch) {
-  loop.loopLengthTicks = kLoopLen;
+void seedLongSourceNote(Loop& loop, NoteId id, uint32_t onTick, uint32_t offTick, uint8_t pitch,
+                        uint32_t loopLength = kLoopLen) {
+  loop.loopLengthTicks = loopLength;
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, 1, pitch, 100, id));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
@@ -331,15 +333,36 @@ void test_pending_shorten_long_source_4000_4200() {
   TEST_ASSERT_EQUAL_UINT32(3999u, shorten->endTick);
 }
 
-void test_pending_wrap_long_source_4000_200() {
+void test_pending_hide_long_source_wrap_loop_4000() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedLongSourceNote(loop, 1, 0, 5000, 60);
+  seedLongSourceNote(loop, 1, 0, 3999, 60, 4000);
   loop.beginCapture(CapturePhase::Overdub);
 
-  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 4000, 200, 10,
-                                                                   overlapIds({1})));
+  const uint32_t incomingStart = IntervalProjection::tickPhaseInLoop(4000, 0, 4000);
+  const uint32_t incomingEnd = IntervalProjection::tickPhaseInLoop(200, 0, 4000);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(
+      1, 60, 90, incomingStart, incomingEnd, 10, overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Hide),
+                    static_cast<int>(findTransform(loop.pendingNoteChanges(), 1)->kind));
+}
+
+void test_pending_shorten_long_source_wrap_loop_4100() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 4099, 60, 4100);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  const uint32_t incomingStart = IntervalProjection::tickPhaseInLoop(4000, 0, 4100);
+  const uint32_t incomingEnd = IntervalProjection::tickPhaseInLoop(200, 0, 4100);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(
+      1, 60, 90, incomingStart, incomingEnd, 10, overlapIds({1})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
@@ -419,7 +442,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_discard_clears_pending_with_source_view);
   RUN_TEST(test_pending_shorten_wrap_crossing_incoming_tail);
   RUN_TEST(test_pending_shorten_long_source_4000_4200);
-  RUN_TEST(test_pending_wrap_long_source_4000_200);
+  RUN_TEST(test_pending_hide_long_source_wrap_loop_4000);
+  RUN_TEST(test_pending_shorten_long_source_wrap_loop_4100);
   RUN_TEST(test_pending_wrap_crossing_incoming_skips_head_hide);
   RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
   return UNITY_END();
