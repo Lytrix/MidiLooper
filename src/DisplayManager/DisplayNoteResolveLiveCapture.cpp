@@ -138,8 +138,7 @@ namespace DisplayManagerInternal {
 
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
-                               DisplayNoteVec& notes, bool allowWrapContinuation,
-                               bool allowWrapHeadContinuation) {
+                               DisplayNoteVec& notes, bool allowWrapContinuation) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
 
     for (const uint32_t previewNoteIndex : preview.openNoteIndices) {
@@ -165,12 +164,9 @@ void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLengt
                 tailEnd = std::min(clampedCloseTick, loopLength - 1);
             }
 
-            NoteUtils::WrapHeadSegment head{};
-            if (allowWrapHeadContinuation) {
-                head = resolveWrapOpenHeadSegment(loopLength, open, clampedCloseTick,
-                                                  state.hasPreferredHeadOff,
-                                                  state.preferredHeadOffTick);
-            }
+            const NoteUtils::WrapHeadSegment head = resolveWrapOpenHeadSegment(
+                loopLength, open, clampedCloseTick, state.hasPreferredHeadOff,
+                state.preferredHeadOffTick);
             appendWrapHeldOpenNoteDisplay(notes, captureRegionStart, open, tailEnd, head);
             continue;
         }
@@ -623,15 +619,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             }
         }
         if (!loop.capturePreview.openNoteIndices.empty()) {
-            // Growing RECORD has no sealed loop wrap. Overdub session wrap jumps playhead
-            // to S; a held tail ON then looks like wrap-head to tick 0 until NoteOff.
+            // Growing RECORD has no sealed loop length — never infer wrap-head to tick 0.
             const bool allowWrapContinuation =
                 !(track.isRecording() && !track.isPlaying());
-            const bool allowWrapHeadContinuation =
-                allowWrapContinuation && !track.isOverdubbing();
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayNotes,
-                                      allowWrapContinuation, allowWrapHeadContinuation);
+                                      allowWrapContinuation);
         }
         DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
     }

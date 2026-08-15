@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-16 (overdub live wrap-head gated)
+Last updated: 2026-08-16 (DEC-038 live +1 HITL PASS)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-16 (overdub live wrap-head gated)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **Overdub live wrap-head gated** ([`011413`](../captures/session_20260816_011413.log) note 30). **DEC-038 038.1 live +1 HITL PASS** in that capture. **038.2 landed.** **038.1 HITL PASS** [`004842`](../captures/session_20260816_004842.log). Slot switch PASS [`003818`](../captures/session_20260816_003818.log). Issue 3 parked. **6D.4 restamp holds** [`210508`](../captures/session_20260815_210508.log). Not all of LCR live.
+**Active work:** **DEC-038 038.1 live +1 HITL PASS** [`011413`](../captures/session_20260816_011413.log). **038.2 landed** (one `OverdubPassAdded` `passIds` + STK3). **038.1 HITL PASS** [`004842`](../captures/session_20260816_004842.log). Slot switch PASS [`003818`](../captures/session_20260816_003818.log). Issue 3 parked. **6D.4 restamp holds** [`210508`](../captures/session_20260815_210508.log). Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

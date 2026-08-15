@@ -34,13 +34,9 @@ void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopL
 uint8_t resolveTrackIndex(const Track& track);
 
 /// `allowWrapContinuation`: false during growing live record (no loop wrap yet).
-/// `allowWrapHeadContinuation`: false during overdub — session wrap jumps playhead to S;
-/// a held tail-region ON then matches `isLiveWrapHeadContinuationDisplay` and paints a
-/// tick-0 head until NoteOff. Tail-to-loop-end still applies when continuation is on.
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
-                               NoteUtils::DisplayNoteVec& notes, bool allowWrapContinuation = true,
-                               bool allowWrapHeadContinuation = true);
+                               NoteUtils::DisplayNoteVec& notes, bool allowWrapContinuation = true);
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                         uint32_t closeTick, NoteUtils::DisplayNoteVec& notes,
