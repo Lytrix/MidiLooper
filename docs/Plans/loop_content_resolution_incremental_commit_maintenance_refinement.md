@@ -7,7 +7,7 @@
 **Parent:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](loop_content_resolution_stage9_handoff.md)  
 **OpenSpec:** `openspec/changes/loop-content-resolution/`  
-**Does not authorize:** firmware; A; B; making all of LCR incrementally live; 6C consume-path edits; flattening `openOnByPitch`; representation B; deleting `materializeToEventVector`
+**Does not authorize:** firmware; production commit/idle/overdub paths; A; B; making all of LCR incrementally live; 6C consume-path edits; flattening `openOnByPitch`; representation B; deleting `materializeToEventVector`
 
 ---
 
@@ -99,7 +99,7 @@ consume already-prepared state
 begin_capture
 ```
 
-6B already does bounded work at commit (`Loop::markAffectedDisplayCacheRanges` from `Track::finalizeCommitSideEffects`). 6D.1’s candidate placement is that **commit site**, not `establishOverdubSourceView` / `startOverdubbing`. Native measures the slice first. If it exceeds the stop budget, moving it to a PLAYING maintenance slice is a later admission change — not 6D.1 firmware.
+6B already does bounded work at commit (`Loop::markAffectedDisplayCacheRanges` from `Track::finalizeCommitSideEffects`). That commit site is a **later firmware candidate**, not 6D.1. Production architecture stays untouched until native 6D.1 establishes the mutation contract.
 
 Do not make 6D a “LCR is now always live” change.
 
@@ -181,10 +181,10 @@ Prove only:
 1. Start with a fully prepared `TickIndex` (same as a completed device gate: `commitLoopPasses` of existing history, stamp matches).
 2. Commit one `OverdubPass` onto `LoopPasses` (native stand-in for `commitPendingCapturePass`).
 3. Update the affected derived index **incrementally**. Do **not** rebuild the complete index (`commitLoopPasses` of all history is the fail oracle, not the treatment).
-4. Restamp `preparedPlaybackRevision` to the new revision so `preparedWindowReady` is true.
+4. In the **native fixture**, restamp the prepared revision so a `tryResolvePreparedWindow`-shaped check succeeds. Do not restamp production `preparedWindowReady` / `sDeviceGateSession`.
 5. `resolveWindow` on the updated index + live `editPasses` matches the materialize+reconstruct oracle for the overdub source window (old content + new pass).
-6. Measure worst-case maintenance slice (append, merge-or-sort, total µs) vs `history_events` vs `commit_delta_events`.
-7. Repeat for several successive overdub commits on the same prepared index.
+6. Measure `index_append_us`, `index_order_us`, and `total_maintenance_us` against **both** `history_events` and `commit_delta_events` (see Native instrument).
+7. Repeat for several successive overdub commits on the same prepared index, and at **at least two history sizes** with the same `commit_delta_events`.
 8. Next `tryResolvePreparedWindow` / `resolveWindow` succeeds **without** a STOPPED cold rebuild.
 
 Simplest candidate for step 3 (measure, do not assume):
@@ -205,7 +205,7 @@ new pass events
 | Existing one-pass API | `commitCapturePass` (full `tickEvents` sort + pair + `byNoteId` unique) — **too much** for 6D.1 if it updates `byNoteId` |
 | 6D.1 treatment | `beginCapturePass` + chunk append + `indexCapturePassEventRange` + order `tickEvents` only (merge or sort of that vector) + restamp |
 
-Device full-index `isort`: [`173842`](../../captures/session_20260815_173842.log) **28116 µs**; [`194643`](../../captures/session_20260815_194643.log) **32280 µs** at `hist=2614`. Under 50 ms **at this size**, still `O(all tickEvents)`. 6D.1 pass: maintenance tracks `commit_delta_events`, or stays under the stop/slice budget with the residual documented. If merge and full-sort both track history, 6D.1 fails the scaling test — same DEC-037 failure gate (do not add another O(history) owner). Do not reopen 5.17 to a tree unless this measurement names the stall.
+Device full-index `isort`: [`173842`](../../captures/session_20260815_173842.log) **28116 µs**; [`194643`](../../captures/session_20260815_194643.log) **32280 µs** at `hist=2614`. Those samples are under 50 ms **and still O(all tickEvents)**. Under-50-ms does **not** pass 6D.1. Full sort of `tickEvents` **fails** if `index_order_us` grows with `history_events` at fixed `commit_delta_events`. Do not reopen 5.17 to a tree unless this measurement names the stall.
 
 `TickIndex::mergeSortedMidiEventRange` merges **MIDI events**, not `tickEvents`. Do not reuse it by accident.
 
@@ -223,7 +223,7 @@ Device full-index `isort`: [`173842`](../../captures/session_20260815_173842.log
 
 ## Native instrument (6D.1)
 
-Extend `test_loop_content_resolution`. Do not add a second owner.
+Extend `test_loop_content_resolution` only. Do not add a second owner. **Do not edit production** (`Loop::commitPendingCapturePass`, `Track::finalizeCommitSideEffects`, `preparedWindowReady`, device gate, `establishOverdubSourceView`) until this native experiment establishes the mutation contract.
 
 | Counter | Meaning |
 |---------|---------|
@@ -232,12 +232,26 @@ Extend `test_loop_content_resolution`. Do not add a second owner.
 | `index_append_us` | `beginCapturePass` + chunks + `indexCapturePassEventRange` |
 | `index_order_us` | merge or sort of `tickEvents` |
 | `total_maintenance_us` | sum |
-| `worst_slice_us` | if artificially sliced |
+| `order_per_history` | `index_order_us / history_events` |
+| `order_per_delta` | `index_order_us / commit_delta_events` |
 | oracle match | `resolveWindow` vs materialize+reconstruct on the overdub source window |
+
+Report every sample against **both** `history_events` and `commit_delta_events`. Use at least two history sizes with the same `commit_delta_events` so scaling is visible, not inferred from a single `hist=2614` point.
+
+### Pass / fail (scaling)
+
+| Result | When |
+|--------|------|
+| **PASS** | `index_order_us` (and `total_maintenance_us`) track `commit_delta_events`: they stay flat or grow with the delta when `history_events` changes and the delta does not |
+| **FAIL** | `index_order_us` grows with `history_events` at fixed `commit_delta_events` |
+
+A full `stable_sort` of `tickEvents` is a **legitimate FAIL** under that second row even when every sample is **< 50 ms**. The 50 ms gate is MIDI/idle latency, not the 6D.1 scaling contract. Device `isort` 28–32 ms at `hist=2614` is evidence that full sort can be “cheap enough” today and still scale with history.
+
+If append+merge also tracks `history_events`, 6D.1 fails the same way — DEC-037 failure gate (do not add another O(history) owner).
 
 Repeat N overdubs. After each: stamp matches, window matches oracle, no `commitLoopPasses` of history.
 
-No firmware until 6D.1 native passes.
+Production architecture stays as it is until this native result exists. No firmware from 6D.1 until then.
 
 ---
 
@@ -268,7 +282,8 @@ affected tick interval
 ## Out of scope
 
 - A and B
-- 6C consume-path edits
+- 6C consume-path edits (`establishOverdubSourceView`)
+- Production commit, idle gate, overdub start/stop, and `preparedWindowReady` until native 6D.1 closes the mutation contract
 - Flatten `openOnByPitch`; representation B; rewrite `recon`
 - `ensure*` rebuild helpers on `startOverdubbing` / `stopOverdubbing` / `handleMidiInput`
 - midi_gap ([`192334`](../../captures/session_20260815_192334.log)); 6.3; 6.4

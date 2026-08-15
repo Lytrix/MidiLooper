@@ -306,7 +306,7 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 
 **6D is not capability letter C** and is **not** “LCR is now always live.” It is DEC-037 capability **B** for the overdub query. `openOnByPitch` stays a pairing-time LIFO stack. Checkpoints, `byNoteId`, edits, and undo are later 6D slices, not 6D.1.
 
-**Gate before firmware:** native 6D.1 must show overdub-query index maintenance scales with the new pass, not a full-history rebuild. `< 3 ms` is consume of already-prepared state ([`045556`](../captures/session_20260814_045556.log) 2214 µs copy), not a promise that switching to LCR is 2.2 ms.
+**Gate before firmware:** native 6D.1 must report `index_order_us` against both `history_events` and `commit_delta_events`. A full `tickEvents` sort that grows with history **fails** even when every sample is < 50 ms. Production architecture (`commitPendingCapturePass`, idle gate, overdub start/stop, `preparedWindowReady`) stays untouched until that mutation contract exists. `< 3 ms` is consume of already-prepared state ([`045556`](../captures/session_20260814_045556.log) 2214 µs copy), not a promise that switching to LCR is 2.2 ms.
 
 **6.0 unchanged:** overdub start/stop must not construct, sort, checkpoint, or resolve LCR to open the source view. Bounded index update belongs at the commit site (with 6B) or a later admission slice — not on the button.
 
