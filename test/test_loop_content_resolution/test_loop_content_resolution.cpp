@@ -2792,6 +2792,74 @@ void test_stage6d3_repeated_overdub_scales() {
   TEST_ASSERT_FALSE(queryTracksAccumulatedDelta);
 }
 
+void test_stage6d4_publish_restamps_without_device_gate_complete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  TEST_ASSERT_GREATER_OR_EQUAL(3u, fixture.passes.overdubPasses.size());
+
+  const uint32_t publishCount = 3;
+  LoopPasses preparedPasses = fixture.passes;
+  const uint32_t preparedOverdubs =
+      static_cast<uint32_t>(preparedPasses.overdubPasses.size()) - publishCount;
+  preparedPasses.overdubPasses.resize(preparedOverdubs);
+
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(preparedPasses, fixture.loopLengthTicks, sample);
+  constexpr uint32_t kPreparedRevision = 1;
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(kPreparedRevision));
+  LoopContentResolution::deviceGateComplete(kPreparedRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision));
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  SessionMidiEventVec baseline;
+  ResolutionCostCounters baselineCounters;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+      preparedPasses.editPasses, fixture.loopLengthTicks, 0, windowLength, kPreparedRevision,
+      baseline, &baselineCounters));
+  const uint32_t historyEvents = baselineCounters.eventsInHistory;
+  TEST_ASSERT_GREATER_THAN(0u, historyEvents);
+
+  uint32_t revision = kPreparedRevision;
+  LoopPasses livePasses = preparedPasses;
+  for (uint32_t i = 0; i < publishCount; ++i) {
+    const OverdubPass& pass = fixture.passes.overdubPasses[preparedOverdubs + i];
+    revision += 1;
+    LoopContentResolution::publishPreparedOverdubPass(pass, revision);
+    TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(revision));
+    TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(revision - 1u));
+    livePasses.overdubPasses.push_back(pass);
+
+    SessionMidiEventVec fromPrepared;
+    ResolutionCostCounters counters;
+    TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+        livePasses.editPasses, fixture.loopLengthTicks, 0, windowLength, revision, fromPrepared,
+        &counters));
+    TEST_ASSERT_EQUAL_UINT32(historyEvents, counters.eventsInHistory);
+
+    SessionMidiEventVec fromOracle;
+    oracleWindowEvents(livePasses, fixture.loopLengthTicks, 0, windowLength, fromOracle);
+    assertResolvedEventsMatch(fromOracle, fromPrepared);
+  }
+
+  SessionMidiEventVec stale;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryResolvePreparedWindow(
+      livePasses.editPasses, fixture.loopLengthTicks, 0, windowLength, revision + 1u, stale,
+      nullptr));
+  TEST_ASSERT_TRUE(stale.empty());
+
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::publishPreparedOverdubPass(fixture.passes.overdubPasses.back(),
+                                                    revision + 2u);
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(revision + 2u));
+  SessionMidiEventVec unprepared;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryResolvePreparedWindow(
+      fixture.passes.editPasses, fixture.loopLengthTicks, 0, windowLength, revision + 2u,
+      unprepared, nullptr));
+  TEST_ASSERT_TRUE(unprepared.empty());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -2854,5 +2922,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6d2_split_history_delta_scales);
   RUN_TEST(test_stage6d3_repeated_overdub_matches_oracle);
   RUN_TEST(test_stage6d3_repeated_overdub_scales);
+  RUN_TEST(test_stage6d4_publish_restamps_without_device_gate_complete);
   return UNITY_END();
 }

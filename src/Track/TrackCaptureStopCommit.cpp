@@ -10,6 +10,7 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "LoopContentResolution.h"
 #include "LooperState.h"
 #include "StorageManager.h"
 #include "TrackManager.h"
@@ -93,6 +94,14 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         loop.markAffectedDisplayCacheRanges(undoPassId, EditPassIdList{});
       } else {
         loop.markDisplayCachesStale();
+      }
+      if (!isRecordPass) {
+        for (const OverdubPass& pass : loop.passes.overdubPasses) {
+          if (pass.id == undoPassId) {
+            LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision);
+            break;
+          }
+        }
       }
       if (overdubStop) {
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);

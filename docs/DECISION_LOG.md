@@ -308,7 +308,7 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 
 **Gate before firmware:** native 6D.1 **FAIL** (one-vector sort/merge tracks H). **6D.2/6D.3 native PASS** (split history+delta; repeated overdubs track accumulated Δ, not H). **Production architecture gate posted 2026-08-15 — not approved.** Formal trigger: restamping `preparedWindowReady` after a PLAYING overdub commit. 6.0 vs commit-site sort is the approval pin. Preflight: `openspec/changes/loop-content-resolution/PREFLIGHT.md`. Production architecture stays untouched until that approval. `< 3 ms` is consume of already-prepared state ([`045556`](../captures/session_20260814_045556.log) 2214 µs copy), not a promise that switching to LCR is 2.2 ms.
 
-**6.0 approved reading 2026-08-15:** overdub **button / source-view open** must not construct, sort, checkpoint, or resolve LCR. Bounded delta sort + restamp may run at `finalizeCommitSideEffects` after a committed `OverdubPass` when a prepared index already exists. A prepared index may become valid through that commit-site update, not exclusively through STOPPED `deviceGateComplete`. **6D.4 architecture approved; firmware not authorized.**
+**6.0 approved reading 2026-08-15:** overdub **button / source-view open** must not construct, sort, checkpoint, or resolve LCR. Bounded delta sort + restamp may run at `finalizeCommitSideEffects` after a committed `OverdubPass` when a prepared index already exists. A prepared index may become valid through that commit-site update, not exclusively through STOPPED `deviceGateComplete`. **6D.4 landed** (`publishPreparedOverdubPass`, session `delta`). Not all of LCR incrementally live.
 
 ### Constraints created
 
