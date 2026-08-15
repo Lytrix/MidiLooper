@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.17 complete — byTick removed)
+Last updated: 2026-08-15 (DEC-037 5.17 complete — remasure [`162630`])
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.17 complete — byTick removed)
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **5.17 complete** — device PASS [`161355`](../../captures/session_20260815_161355.log); `byTick` removed. Next is not started: 5.7 `DFRAME` during `spans`, or 5.1. Do not start B, A2, `recon`, `pair`, 5.2/6.x until asked. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](../Plans/loop_content_resolution_tick_index_flat_event_index_refinement.md).
+**Now:** **5.17 complete** — device PASS [`161355`](../../captures/session_20260815_161355.log); 5.17e remasure [`162630`](../../captures/session_20260815_162630.log) matches. Next is not started: 5.7 `DFRAME` during `spans`, or 5.1. Do not start B, A2, `recon`, `pair`, 5.2/6.x until asked. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](../Plans/loop_content_resolution_tick_index_flat_event_index_refinement.md).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

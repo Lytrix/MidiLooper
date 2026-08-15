@@ -1,6 +1,6 @@
 # Loop content resolution — TickIndex flat event index (5.17)
 
-**Status:** **5.17 complete** 2026-08-15 — 5.17d device PASS [`161355`](../captures/session_20260815_161355.log); 5.17e dropped `byTick`. No B. No A2.  
+**Status:** **5.17 complete** 2026-08-15 — 5.17d device PASS [`161355`](../captures/session_20260815_161355.log); 5.17e remasure [`162630`](../captures/session_20260815_162630.log) matches. No B. No A2.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.16 closed `prep`; next owner from [`153920`](../captures/session_20260815_153920.log) — [`loop_content_resolution_device_phase_budget_refinement.md`](loop_content_resolution_device_phase_budget_refinement.md)
 
@@ -220,6 +220,25 @@ No `idle_maint` remainder during LCR. Boot `load_frame` remainders (98.9 / 866.6
 ### 5.17e — drop `byTick`
 
 `indexCapturePassEventRange` appends to `tickEvents`. `commitCapturePass` sorts after each pass. `findRawWindow` always reads `tickEvents`. `ByTickMap` / `byTick` / `visitTickRange` removed. Device IndexCommit calls `indexCapturePassEventRange` (same append as 5.17d). Native C comparison in `test_stage517b_*` uses a local `std::multimap`.
+
+Device remasure [`162630`](../captures/session_20260815_162630.log):
+
+```
+mat=0,win=14016,reb=6874616,st=3105,rep=350,hist=2394,walk=0,app=2456271,sort=10220,iapp=4816490,isort=27113
+```
+
+| | 5.17d [`161355`](../captures/session_20260815_161355.log) | 5.17e [`162630`](../captures/session_20260815_162630.log) |
+|--|--:|--:|
+| LCR wall | 55.26 s | 55.32 s |
+| `iapp` | 4.820 s | 4.816 s |
+| `isort` | 27.4 ms | 27.1 ms |
+| `win` | 14.0 ms | 14.0 ms |
+| `st` | 3108 µs | 3105 µs |
+| `walk` | 0 | 0 |
+| `idx` `loop_rem` | none | none |
+| largest `DFRAME` gap | 1.58 s (`spans`) | 1.59 s (`spans`) |
+
+Same IndexCommit path. No regression.
 
 **5.17 complete.** No B. No A2. No `recon`. No `pair`.
 
