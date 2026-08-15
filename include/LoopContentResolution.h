@@ -149,6 +149,11 @@ struct LoopContentResolution {
   static constexpr uint32_t kDeviceCheckpointBarStride = 8;
   /// 5.7 `idle_maint` bar. Same value as `RuntimeTimingTelemetry::kLoopRemainderOneShotUs`.
   static constexpr uint32_t kDeviceGateSliceBudgetUs = 50000;
+  /// Index / span units per idle slice. One `byTick` emplace already exceeds 50 ms on the
+  /// 139-bar map ([`121702`]); a single emplace must not be a slice.
+  static constexpr uint32_t kDeviceGateEventsPerSlice = 8;
+  /// Phase progress line: on step change, and at most once per this interval on device.
+  static constexpr uint32_t kDeviceGatePhaseLogIntervalUs = 1000000;
 
   static void resolveWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
@@ -189,6 +194,8 @@ struct LoopContentResolution {
   static DeviceGateSliceResult deviceGateRunOneSlice(const LoopPasses& passes,
                                                      uint32_t loopLengthTicks);
   static void deviceGateFormatCaptureLine(char* line, size_t cap);
+  /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
+  static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
   static void deviceGateComplete();
 };

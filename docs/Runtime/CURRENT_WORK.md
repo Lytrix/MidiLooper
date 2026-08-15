@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.7 >63-bar probe; 5.10 slice budget; Layer D 3b shipped)
+Last updated: 2026-08-15 (DEC-037 5.11 batch-of-8 + phase telemetry; Layer D 3b shipped)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.7 >63-bar probe; 5.10 slice budget; Layer D 
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** 5.7 HITL on a selected loop **>63 bars**. Size probe accepted: [`115750`](../../captures/session_20260815_115750.log) (139 bars / 2393 notes) — latency **FAIL** (`idle_maint` 46.3 s / 100.7 s, `reb=101146131`). 5.10 budgeted IndexCommit / RebuildSpans at `kDeviceGateSliceBudgetUs` (50 ms). Arm cap stays off. Device gate does **not** consult `MemoryMonitor`. Tick-index / `startsByTick` use `ExternalMemoryFirstAllocator`. Arm still waits for any pending slot restore. Watch `DIAG,lcr` / `idle_maint` / `DFRAME` / reconnect. Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
+**Now:** 5.7 HITL on a selected loop **>63 bars**. Size probe accepted: [`115750`](../../captures/session_20260815_115750.log) (139 bars / 2393 notes) — latency **FAIL**. [`122259`](../../captures/session_20260815_122259.log) is the same 139-bar gate finishing (`reb=100533678`, `hist=2394`); later slot-1 96 notes is idle, not a second LCR probe. 5.11: IndexCommit / RebuildSpans batch `kDeviceGateEventsPerSlice` (8); `DIAG,lcr,phase,…` on step change / 1 Hz. Arm cap stays off. Device gate does **not** consult `MemoryMonitor`. Tick-index / `startsByTick` use `ExternalMemoryFirstAllocator`. Arm still waits for any pending slot restore. Watch `DIAG,lcr,phase` / complete `DIAG,lcr` / `idle_maint` / `DFRAME`. Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

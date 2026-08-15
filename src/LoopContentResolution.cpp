@@ -776,10 +776,6 @@ TRACK_COLD_MEM bool indexPassRefAtCursor(const LoopPasses& passes, size_t cursor
   return false;
 }
 
-TRACK_COLD_MEM bool deviceGateSliceBudgetExhausted(const ElapsedTimer& timer, bool didWork) {
-  return didWork && timer.elapsed() >= LoopContentResolution::kDeviceGateSliceBudgetUs;
-}
-
 struct DeviceGateSession {
   enum class Phase : uint8_t {
     Idle,
@@ -805,6 +801,9 @@ struct DeviceGateSession {
     checkpointCursor = 0;
     rebuildSpanCursor = 0;
     rebuildNotesReady = false;
+    lastStepName = "idle";
+    lastLoggedStep = nullptr;
+    lastPhaseLogUs = 0;
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
     rebuildEvents = SessionMidiEventVec{};
@@ -819,6 +818,46 @@ struct DeviceGateSession {
     }
     loopLengthTicks = ticks;
     phase = Phase::IndexCommit;
+    lastStepName = "idx";
+  }
+
+  void advancePastIndexCommit() {
+#if defined(ARDUINO)
+    phase = Phase::RebuildPrepare;
+    lastStepName = "prep";
+#else
+    phase = Phase::Materialize;
+    lastStepName = "mat";
+#endif
+  }
+
+  bool formatPhaseLine(char* line, size_t cap) {
+    if (line == nullptr || cap == 0) {
+      return false;
+    }
+    const char* name = lastStepName != nullptr ? lastStepName : "idle";
+#if defined(ARDUINO)
+    const unsigned long stamp = static_cast<unsigned long>(micros());
+    const bool intervalElapsed =
+        lastPhaseLogUs == 0 ||
+        (stamp - lastPhaseLogUs) >= LoopContentResolution::kDeviceGatePhaseLogIntervalUs;
+#else
+    const unsigned long stamp = 0UL;
+    const bool intervalElapsed = false;
+#endif
+    const bool stepChanged = lastLoggedStep == nullptr || lastLoggedStep != name;
+    if (!stepChanged && !intervalElapsed) {
+      return false;
+    }
+    lastLoggedStep = name;
+#if defined(ARDUINO)
+    lastPhaseLogUs = static_cast<uint32_t>(stamp);
+#endif
+    snprintf(line, cap, "#CAP,%lu,DIAG,lcr,phase,%s,pass,%u,ev,%u,span,%u,notes,%u", stamp, name,
+             static_cast<unsigned>(indexPassCursor), static_cast<unsigned>(indexEventCursor),
+             static_cast<unsigned>(rebuildSpanCursor),
+             static_cast<unsigned>(rebuildNotes.size()));
+    return true;
   }
 
   LoopContentResolution::DeviceGateSliceResult runOneSlice(const LoopPasses& passes,
@@ -834,64 +873,54 @@ struct DeviceGateSession {
     switch (phase) {
       case Phase::IndexCommit: {
         if (indexPassCursor == 0 && countIndexCommitPasses(passes) == 0) {
-#if defined(ARDUINO)
-          phase = Phase::RebuildPrepare;
-#else
-          phase = Phase::Materialize;
-#endif
+          advancePastIndexCommit();
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
-        ElapsedTimer timer;
-        bool didWork = false;
-        while (!deviceGateSliceBudgetExhausted(timer, didWork)) {
-          if (indexPassCursor >= countIndexCommitPasses(passes)) {
-#if defined(ARDUINO)
-            phase = Phase::RebuildPrepare;
-#else
-            phase = Phase::Materialize;
-#endif
-            break;
-          }
-          IndexPassRef passRef;
-          if (!indexPassRefAtCursor(passes, indexPassCursor, passRef) || passRef.chunks == nullptr) {
-            reset();
-            return LoopContentResolution::DeviceGateSliceResult::Inactive;
-          }
-          if (!indexPassOpen) {
-            index.beginCapturePass(passRef.id, passRef.state, passRef.mergeSequence);
-            sample_.indexCommit.passChunkListsWalked += 1;
-            indexPassOpen = true;
-            indexChunkCursor = 0;
-            indexEventCursor = 0;
-            didWork = true;
-            continue;
-          }
-          const LoopContentResolution::TickIndex::CapturePassEntry* pass =
-              findPass(index, passRef.id);
-          if (pass == nullptr) {
-            reset();
-            return LoopContentResolution::DeviceGateSliceResult::Inactive;
-          }
-          if (indexEventCursor >= static_cast<uint32_t>(pass->events.size())) {
-            if (indexChunkCursor < passRef.chunks->size()) {
-              index.appendCapturePassChunk(passRef.id, (*passRef.chunks)[indexChunkCursor]);
-              indexChunkCursor += 1;
-              didWork = true;
-              continue;
-            }
-            index.pairCapturePassNotes(passRef.id);
-            indexPassCursor += 1;
-            indexPassOpen = false;
-            indexChunkCursor = 0;
-            indexEventCursor = 0;
-            didWork = true;
-            continue;
-          }
-          index.indexCapturePassEventRange(passRef.id, indexEventCursor, indexEventCursor + 1,
-                                           &sample_.indexCommit);
-          indexEventCursor += 1;
-          didWork = true;
+        if (indexPassCursor >= countIndexCommitPasses(passes)) {
+          advancePastIndexCommit();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
+        IndexPassRef passRef;
+        if (!indexPassRefAtCursor(passes, indexPassCursor, passRef) || passRef.chunks == nullptr) {
+          reset();
+          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        }
+        ElapsedTimer timer;
+        lastStepName = "idx";
+        if (!indexPassOpen) {
+          index.beginCapturePass(passRef.id, passRef.state, passRef.mergeSequence);
+          sample_.indexCommit.passChunkListsWalked += 1;
+          indexPassOpen = true;
+          indexChunkCursor = 0;
+          indexEventCursor = 0;
+          sample_.indexCommit.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
+        }
+        const LoopContentResolution::TickIndex::CapturePassEntry* pass = findPass(index, passRef.id);
+        if (pass == nullptr) {
+          reset();
+          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        }
+        if (indexEventCursor >= static_cast<uint32_t>(pass->events.size())) {
+          if (indexChunkCursor < passRef.chunks->size()) {
+            index.appendCapturePassChunk(passRef.id, (*passRef.chunks)[indexChunkCursor]);
+            indexChunkCursor += 1;
+            sample_.indexCommit.elapsedMicros += timer.elapsed();
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
+          index.pairCapturePassNotes(passRef.id);
+          indexPassCursor += 1;
+          indexPassOpen = false;
+          indexChunkCursor = 0;
+          indexEventCursor = 0;
+          sample_.indexCommit.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
+        }
+        const uint32_t eventCount = static_cast<uint32_t>(pass->events.size());
+        const uint32_t end = std::min(
+            indexEventCursor + LoopContentResolution::kDeviceGateEventsPerSlice, eventCount);
+        index.indexCapturePassEventRange(passRef.id, indexEventCursor, end, &sample_.indexCommit);
+        indexEventCursor = end;
         sample_.indexCommit.elapsedMicros += timer.elapsed();
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
@@ -903,6 +932,7 @@ struct DeviceGateSession {
         sample_.materialize.elapsedMicros += timer.elapsed();
         sample_.materialize.eventsInHistory = static_cast<uint32_t>(materialized.size());
         sample_.materialize.passesInHistory = index.indexedPassCount();
+        lastStepName = "mat";
         phase = Phase::Window;
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
@@ -918,6 +948,7 @@ struct DeviceGateSession {
         SessionMidiEventVec window;
         LoopContentResolution::resolveWindow(index, passes.editPasses, loopLengthTicks, windowStart,
                                              windowLength, window, &sample_.window);
+        lastStepName = "win";
         phase = Phase::RebuildPrepare;
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
@@ -937,6 +968,7 @@ struct DeviceGateSession {
           return LoopContentResolution::DeviceGateSliceResult::Inactive;
         }
         sample_.rebuild.elapsedMicros += timer.elapsed();
+        lastStepName = "prep";
         phase = Phase::RebuildSpans;
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
@@ -950,20 +982,21 @@ struct DeviceGateSession {
               NoteUtils::reconstructDisplayNotes(rebuildEvents, loopLengthTicks, false);
           rebuildSpanCursor = 0;
           rebuildNotesReady = true;
+          lastStepName = "recon";
           sample_.rebuild.elapsedMicros += timer.elapsed();
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
-        bool didWork = false;
         const uint32_t noteCount = static_cast<uint32_t>(rebuildNotes.size());
-        while (rebuildSpanCursor < noteCount &&
-               !deviceGateSliceBudgetExhausted(timer, didWork)) {
-          if (!checkpoints.appendSpansFromNotes(rebuildEvents, rebuildNotes, rebuildSpanCursor,
-                                                rebuildSpanCursor + 1, &sample_.rebuild)) {
+        if (rebuildSpanCursor < noteCount) {
+          const uint32_t end = std::min(
+              rebuildSpanCursor + LoopContentResolution::kDeviceGateEventsPerSlice, noteCount);
+          if (!checkpoints.appendSpansFromNotes(rebuildEvents, rebuildNotes, rebuildSpanCursor, end,
+                                                &sample_.rebuild)) {
             reset();
             return LoopContentResolution::DeviceGateSliceResult::Inactive;
           }
-          rebuildSpanCursor += 1;
-          didWork = true;
+          rebuildSpanCursor = end;
+          lastStepName = "spans";
         }
         if (rebuildSpanCursor >= noteCount) {
           uint32_t count = checkpoints.loopLengthTicks / checkpoints.intervalTicks;
@@ -985,6 +1018,7 @@ struct DeviceGateSession {
         constexpr uint32_t kCheckpointsPerSlice = 1;
         const uint32_t total = static_cast<uint32_t>(checkpoints.soundingAt.size());
         if (checkpointCursor >= total) {
+          lastStepName = "state";
           phase = Phase::State;
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
@@ -996,6 +1030,7 @@ struct DeviceGateSession {
         }
         sample_.rebuild.elapsedMicros += timer.elapsed();
         checkpointCursor = end;
+        lastStepName = "ckpt";
         if (checkpointCursor >= total) {
           phase = Phase::State;
         }
@@ -1007,6 +1042,7 @@ struct DeviceGateSession {
         SoundingNoteVec sounding;
         LoopContentResolution::resolveState(checkpoints, highTick, sounding, &sample_.state);
         sample_.state.elapsedMicros += timer.elapsed();
+        lastStepName = "state";
         phase = Phase::Done;
         return LoopContentResolution::DeviceGateSliceResult::Complete;
       }
@@ -1027,6 +1063,9 @@ struct DeviceGateSession {
   uint32_t checkpointCursor = 0;
   uint32_t rebuildSpanCursor = 0;
   bool rebuildNotesReady = false;
+  const char* lastStepName = "idle";
+  const char* lastLoggedStep = nullptr;
+  uint32_t lastPhaseLogUs = 0;
   LoopContentResolution::TickIndex index;
   LoopContentResolution::StateCheckpoints checkpoints;
   SessionMidiEventVec rebuildEvents;
@@ -1082,6 +1121,10 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
            static_cast<unsigned>(sample.state.eventsReplayed),
            static_cast<unsigned>(sample.state.eventsInHistory),
            static_cast<unsigned>(sample.window.passChunkListsWalked));
+}
+
+bool LoopContentResolution::deviceGateFormatPhaseLine(char* line, size_t cap) {
+  return sDeviceGateSession.formatPhaseLine(line, cap);
 }
 
 LoopContentResolution::DeviceGateSliceResult LoopContentResolution::deviceGateRunOneSlice(
