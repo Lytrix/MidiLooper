@@ -216,10 +216,18 @@ struct EventRef {
   }
 };
 
-TRACK_COLD_MEM void pairNotesInPass(LoopContentResolution::TickIndex::CapturePassEntry& pass,
-                     LoopContentResolution::TickIndex::ByNoteIdMap& byNoteId) {
-  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
-  for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
+TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::CapturePassEntry& pass,
+                                         LoopContentResolution::TickIndex::ByNoteIdMap& byNoteId,
+                                         uint32_t beginEvent, uint32_t endEventExclusive,
+                                         std::map<uint8_t, std::vector<uint32_t>>& openOnByPitch) {
+  const uint32_t limit = static_cast<uint32_t>(pass.events.size());
+  if (beginEvent >= limit) {
+    return;
+  }
+  if (endEventExclusive > limit) {
+    endEventExclusive = limit;
+  }
+  for (uint32_t i = beginEvent; i < endEventExclusive; ++i) {
     const MidiEvent& event = pass.events[i];
     if (event.isNoteOn()) {
       openOnByPitch[event.data.noteData.note].push_back(i);
@@ -338,7 +346,30 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassNotes(PassI
   if (pass == nullptr) {
     return;
   }
-  pairNotesInPass(*pass, byNoteId);
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  pairNotesInPassRange(*pass, byNoteId, 0, static_cast<uint32_t>(pass->events.size()),
+                       openOnByPitch);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassEventRange(
+    PassId id, uint32_t beginEvent, uint32_t endEventExclusive,
+    std::map<uint8_t, std::vector<uint32_t>>& openOnByPitch, ResolutionCostCounters* counters) {
+  CapturePassEntry* pass = findPassMutable(*this, id);
+  if (pass == nullptr) {
+    return;
+  }
+  const uint32_t before = beginEvent;
+  pairNotesInPassRange(*pass, byNoteId, beginEvent, endEventExclusive, openOnByPitch);
+  if (counters != nullptr) {
+    const uint32_t limit = static_cast<uint32_t>(pass->events.size());
+    uint32_t end = endEventExclusive;
+    if (end > limit) {
+      end = limit;
+    }
+    if (end > before) {
+      counters->resolutionOperations += end - before;
+    }
+  }
 }
 
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitCapturePass(PassId id, const CommittedChunkIdList& chunks,
@@ -798,6 +829,9 @@ struct DeviceGateSession {
     indexChunkCursor = 0;
     indexEventCursor = 0;
     indexPassOpen = false;
+    pairPassOpen = false;
+    pairEventCursor = 0;
+    pairOpenOnByPitch.clear();
     checkpointCursor = 0;
     rebuildSpanCursor = 0;
     rebuildNotesReady = false;
@@ -853,8 +887,11 @@ struct DeviceGateSession {
 #if defined(ARDUINO)
     lastPhaseLogUs = static_cast<uint32_t>(stamp);
 #endif
+    const unsigned evLogged =
+        (name == kPairStep) ? static_cast<unsigned>(pairEventCursor)
+                            : static_cast<unsigned>(indexEventCursor);
     snprintf(line, cap, "#CAP,%lu,DIAG,lcr,phase,%s,pass,%u,ev,%u,span,%u,notes,%u", stamp, name,
-             static_cast<unsigned>(indexPassCursor), static_cast<unsigned>(indexEventCursor),
+             static_cast<unsigned>(indexPassCursor), evLogged,
              static_cast<unsigned>(rebuildSpanCursor),
              static_cast<unsigned>(rebuildNotes.size()));
     return true;
@@ -893,6 +930,9 @@ struct DeviceGateSession {
           indexPassOpen = true;
           indexChunkCursor = 0;
           indexEventCursor = 0;
+          pairPassOpen = false;
+          pairEventCursor = 0;
+          pairOpenOnByPitch.clear();
           sample_.indexCommit.elapsedMicros += timer.elapsed();
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
@@ -908,9 +948,27 @@ struct DeviceGateSession {
             sample_.indexCommit.elapsedMicros += timer.elapsed();
             return LoopContentResolution::DeviceGateSliceResult::Continue;
           }
-          index.pairCapturePassNotes(passRef.id);
+          const uint32_t eventCount = static_cast<uint32_t>(pass->events.size());
+          if (!pairPassOpen) {
+            pairPassOpen = true;
+            pairEventCursor = 0;
+            pairOpenOnByPitch.clear();
+          }
+          if (pairEventCursor < eventCount) {
+            const uint32_t end = std::min(
+                pairEventCursor + LoopContentResolution::kDeviceGateEventsPerSlice, eventCount);
+            index.pairCapturePassEventRange(passRef.id, pairEventCursor, end, pairOpenOnByPitch,
+                                            &sample_.indexCommit);
+            pairEventCursor = end;
+            lastStepName = kPairStep;
+            sample_.indexCommit.elapsedMicros += timer.elapsed();
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
           indexPassCursor += 1;
           indexPassOpen = false;
+          pairPassOpen = false;
+          pairEventCursor = 0;
+          pairOpenOnByPitch.clear();
           indexChunkCursor = 0;
           indexEventCursor = 0;
           sample_.indexCommit.elapsedMicros += timer.elapsed();
@@ -1060,6 +1118,10 @@ struct DeviceGateSession {
   uint32_t indexChunkCursor = 0;
   uint32_t indexEventCursor = 0;
   bool indexPassOpen = false;
+  static constexpr const char* kPairStep = "pair";
+  bool pairPassOpen = false;
+  uint32_t pairEventCursor = 0;
+  std::map<uint8_t, std::vector<uint32_t>> pairOpenOnByPitch;
   uint32_t checkpointCursor = 0;
   uint32_t rebuildSpanCursor = 0;
   bool rebuildNotesReady = false;

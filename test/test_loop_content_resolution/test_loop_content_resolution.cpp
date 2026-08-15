@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <map>
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -996,7 +997,10 @@ void commitPassOneEventPerSlice(LoopContentResolution::TickIndex& index, PassId 
   for (uint32_t i = 0; i < eventCount; ++i) {
     index.indexCapturePassEventRange(id, i, i + 1, nullptr);
   }
-  index.pairCapturePassNotes(id);
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  for (uint32_t i = 0; i < eventCount; ++i) {
+    index.pairCapturePassEventRange(id, i, i + 1, openOnByPitch, nullptr);
+  }
 }
 
 void test_stage9_sliced_index_commit_matches_full_commit() {
@@ -1085,7 +1089,43 @@ void commitPassEventsPerSlice(LoopContentResolution::TickIndex& index, PassId id
     const uint32_t end = std::min(i + step, eventCount);
     index.indexCapturePassEventRange(id, i, end, nullptr);
   }
-  index.pairCapturePassNotes(id);
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  for (uint32_t i = 0; i < eventCount; i += step) {
+    const uint32_t end = std::min(i + step, eventCount);
+    index.pairCapturePassEventRange(id, i, end, openOnByPitch, nullptr);
+  }
+}
+
+void assertNoteLocationsMatch(const LoopContentResolution::TickIndex& expected,
+                              const LoopContentResolution::TickIndex& actual) {
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.byNoteId.size()),
+                           static_cast<uint32_t>(actual.byNoteId.size()));
+  for (const auto& entry : expected.byNoteId) {
+    const auto found = actual.byNoteId.find(entry.first);
+    TEST_ASSERT_TRUE(found != actual.byNoteId.end());
+    TEST_ASSERT_EQUAL_UINT32(entry.second.passId, found->second.passId);
+    TEST_ASSERT_EQUAL_UINT32(entry.second.onIndex, found->second.onIndex);
+    TEST_ASSERT_EQUAL_INT32(entry.second.offIndex, found->second.offIndex);
+  }
+}
+
+void test_stage9_range_pair_matches_full_pair() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+
+  LoopContentResolution::TickIndex full;
+  commitFixtureIndex(fixture, full);
+
+  LoopContentResolution::TickIndex sliced;
+  commitPassEventsPerSlice(sliced, fixture.passes.recordPass.id,
+                           fixture.passes.recordPass.committedChunkIds,
+                           fixture.passes.recordPass.state, 0);
+  for (const OverdubPass& pass : fixture.passes.overdubPasses) {
+    commitPassEventsPerSlice(sliced, pass.id, pass.committedChunkIds, pass.state,
+                             pass.mergeSequence);
+  }
+  assertNoteLocationsMatch(full, sliced);
 }
 
 void test_stage9_range_index_matches_one_event() {
@@ -1237,6 +1277,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_sliced_index_commit_matches_full_commit);
   RUN_TEST(test_stage9_sliced_spans_match_full_rebuild);
   RUN_TEST(test_stage9_range_index_matches_one_event);
+  RUN_TEST(test_stage9_range_pair_matches_full_pair);
   RUN_TEST(test_stage9_range_spans_match_one_span);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);

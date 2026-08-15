@@ -62,6 +62,10 @@ struct LoopContentResolution {
     void indexCapturePassEventRange(PassId id, uint32_t beginEvent, uint32_t endEventExclusive,
                                     ResolutionCostCounters* counters = nullptr);
     void pairCapturePassNotes(PassId id);
+    /// Sliced form of `pairCapturePassNotes`. `openOnByPitch` must persist across ranges of one pass.
+    void pairCapturePassEventRange(PassId id, uint32_t beginEvent, uint32_t endEventExclusive,
+                                   std::map<uint8_t, std::vector<uint32_t>>& openOnByPitch,
+                                   ResolutionCostCounters* counters = nullptr);
     void commitLoopPasses(const LoopPasses& passes, ResolutionCostCounters* counters = nullptr);
     void setCapturePassState(PassId id, CapturePassState state);
 

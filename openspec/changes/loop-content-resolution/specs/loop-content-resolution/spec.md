@@ -83,8 +83,8 @@ Building a sounding-state snapshot at every bar of an `035414`-class loop (notes
 - **AND** it MUST NOT consult `MemoryMonitor` / advisory pressure to arm, slice, or abort
 - **AND** tick-index and checkpoint maps MUST allocate through `ExternalMemoryFirstAllocator`
 - **AND** `prepareRebuildSpans` materialize-plus-reconstruct MUST NOT run as a single idle slice
-- **AND** IndexCommit and RebuildSpans MUST process at most `kDeviceGateEventsPerSlice` events or spans per idle slice
-- **AND** those slices MUST NOT commit a whole long-loop pass or emplace every span in one idle call
+- **AND** IndexCommit, `pairCapturePassNotes`, and RebuildSpans MUST process at most `kDeviceGateEventsPerSlice` events or spans per idle slice
+- **AND** those slices MUST NOT commit a whole long-loop pass, pair every event of a long pass, or emplace every span in one idle call
 - **AND** the idle gate MUST emit `#CAP,DIAG,lcr,phase,...` on step change and at most once per `kDeviceGatePhaseLogIntervalUs` while Continue
 
 ### Requirement: Physical chunks are not resolution boundaries
