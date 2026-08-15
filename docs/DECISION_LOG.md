@@ -174,6 +174,10 @@ A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiCha
 
 `pair` reports `tot` / `bn` (`byNoteId`) / `op` (`openOnByPitch`) / `lk` (`find`) / `oth` plus entries, inserts, overwrites, pushes, pops, peak depth, openOn heap bytes. Device complete line `DIAG,lcr,pair`. 1 Hz `phase,pair` lines add `bn=` `op=` `lk=` `pk=`. Native last-wins and peak-depth tests. No header allocator probe (ITCM). Do not flatten until the 139-bar remasure names the expensive owner. No 5.1. No B. No `recon`.
 
+### Amendment 2026-08-15 — 5.18a device: byNoteId owns pair
+
+[`172927`](../captures/session_20260815_172927.log): `tot=5356927` `bn=5345535` `op=2433` `lk=1424` `oth=7535` `pk=1` `ins=2396` `ow=0`. Pair `DFRAME` 390→420 is **1.273 s** (consecutive `frameIndex`). `openOnByPitch` is not the stall. Next representation experiment is **last-wins flat `byNoteId` only**. Retain the LIFO stack. No 5.1. No B. No `recon`.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.
