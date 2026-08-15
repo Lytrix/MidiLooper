@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; 6B/6C not started; overdub stays 3b copy  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B** native shipped (device gate open); 6C not started; overdub stays 3b copy  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -259,7 +259,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`. 6B/6C not started | keep 3b copy path |
+| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`. **6B** native shipped (device gate open); 6C not started | keep 3b copy path |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 
@@ -330,7 +330,7 @@ Keep 3b `visualCache.notes` copy as fallback. Do not remove it in 6A–6C. LCR c
 **Experiment order:**
 
 1. **6A — prepared display range (idle).** **PASS** [`185931`](../../captures/session_20260815_185931.log) `DIAG,lcr,6a,win=784,proj=5539,oracle=9192,tot=6323,ev=78,notes=40,match=1`. `midi_gap` 43.6 ms during LCR / 14.3 ms after. DFRAME 0.977 s at the sample (idx peak 1.027 s). No `VCACHE,full`. Production idle consume waits for 6B dirty ranges (stamp still matches only until the next commit).
-2. **6B — commit invalidation.** Overdub stop: commit → mark only affected ranges → return. No materialize, no whole-loop reconstruct, no `VCACHE,full`. Score which work stays synchronous with the transport transition:
+2. **6B — commit invalidation.** Native shipped: `Loop::markAffectedDisplayCacheRanges` + skip `adopt_partial` when `visualCache.notes` is nonempty. Device gate open: overdub stop on the 139-bar class must emit `VCACHE,stale_range` (not `stale_all`), keep loop-wide notes (no shrinking `adopt_partial`), no `VCACHE,full`. Score which work stays synchronous with the transport transition:
 
 | Phase | Desired property |
 |-------|------------------|

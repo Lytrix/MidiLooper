@@ -75,16 +75,24 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         // Record stop already finalizes wrap-window at seal; defer full validate only.
         scheduleDeferredValidateOnly();
       }
-      loop.markDisplayCachesStale();
       const bool isRecordPass =
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        loop.markDisplayCachesStale();
       } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
         EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
-        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId,
-                                        std::move(companionIds));
+        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId, companionIds);
+        if (overdubStop) {
+          loop.markAffectedDisplayCacheRanges(undoPassId, companionIds);
+        } else {
+          loop.markDisplayCachesStale();
+        }
+      } else if (overdubStop) {
+        loop.markAffectedDisplayCacheRanges(undoPassId, EditPassIdList{});
+      } else {
+        loop.markDisplayCachesStale();
       }
       if (overdubStop) {
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);

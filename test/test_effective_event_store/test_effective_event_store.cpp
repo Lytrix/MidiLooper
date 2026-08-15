@@ -19,6 +19,8 @@
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
+#include "LoopPasses.h"
+#include "MidiEvent.h"
 
 namespace {
 
@@ -159,6 +161,84 @@ void test_overdub_entry_uses_windowed_source_on_long_loop() {
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
 }
 
+uint32_t visualCacheDirtyBarCount(const VisualBarVec& dirtyBars) {
+  uint32_t count = 0;
+  for (uint8_t flag : dirtyBars) {
+    if (flag != 0) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void test_mark_affected_display_cache_ranges_dirties_sparse_bars() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+
+  LoopEventStore recordStore;
+  for (uint32_t bar = 0; bar < 8; ++bar) {
+    const uint32_t onTick = bar * Config::TICKS_PER_BAR + 10;
+    TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(
+        recordStore, onTick, 1, static_cast<uint8_t>(60 + bar), 100,
+        static_cast<NoteId>(bar + 1)));
+    TEST_ASSERT_TRUE(recordStore.append(
+        MidiEvent::NoteOff(onTick + 40, 1, static_cast<uint8_t>(60 + bar), 0)));
+  }
+  loop.seedRecordPassFromStore(recordStore);
+  TEST_ASSERT_EQUAL(8u, loop.visualCache.notes.size());
+  // slice_clean leaves dirtyBars empty with the notes still in cache.
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+  const size_t notesBefore = loop.visualCache.notes.size();
+
+  OverdubPass overdub{};
+  overdub.id = 50;
+  overdub.state = CapturePassState::Active;
+  LoopEventStore overdubStore;
+  const uint32_t overdubOn = 3 * Config::TICKS_PER_BAR + 10;
+  TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(overdubStore, overdubOn, 1, 72, 90, 99));
+  MidiEvent overdubOff = MidiEvent::NoteOff(overdubOn + 40, 1, 72, 0);
+  overdubOff.noteId = 99;
+  TEST_ASSERT_TRUE(overdubStore.append(overdubOff));
+  TEST_ASSERT_TRUE(
+      transferCaptureStoreToCommittedChunkIds(overdubStore, overdub.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(overdub));
+
+  loop.markAffectedDisplayCacheRanges(50, EditPassIdList{});
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(8u, loop.visualCache.dirtyBars.size());
+  const uint32_t overdubDirty = visualCacheDirtyBarCount(loop.visualCache.dirtyBars);
+  TEST_ASSERT_GREATER_THAN(0u, overdubDirty);
+  TEST_ASSERT_LESS_THAN(8u, overdubDirty);
+  TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[3]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[0]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
+
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.propertyType = EditPropertyType::None;
+  hide.targetNoteId = 1;
+  hide.startTick = 10;
+  hide.endTick = 50;
+  const EditPassId hideId = loop.saveNoteEditPass(0, hide);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+
+  EditPassIdList companions;
+  companions.push_back(hideId);
+  loop.markAffectedDisplayCacheRanges(kInvalidPassId, companions);
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(8u, loop.visualCache.dirtyBars.size());
+  TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[0]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
+  TEST_ASSERT_LESS_THAN(8u, visualCacheDirtyBarCount(loop.visualCache.dirtyBars));
+}
+
 void test_undo_pass_toggle_rebuilds_effective_store() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -187,6 +267,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_entry_does_not_rebuild_effective_store);
   RUN_TEST(test_ensure_effective_store_does_not_rebuild_when_fresh);
   RUN_TEST(test_overdub_entry_uses_windowed_source_on_long_loop);
+  RUN_TEST(test_mark_affected_display_cache_ranges_dirties_sparse_bars);
   RUN_TEST(test_undo_pass_toggle_rebuilds_effective_store);
   return UNITY_END();
 }

@@ -121,6 +121,13 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
         liveWindowVisualCacheRevision_ = loop.visualCache.revision;
+    } else if (!loop.visualCache.notes.empty()) {
+        // 6B: keep the loop-wide cache. Affected bars are already marked at commit.
+        // adopt_partial would replace notes with the viewport and dirty the rest
+        // (session_20260815_185931: 2403 → 496 notes, 117 bars dirty).
+        livePlaybackDisplaySlot_ = displaySlot;
+        livePlaybackDisplayTrack_ = trackIndex;
+        liveWindowVisualCacheRevision_ = loop.visualCache.revision;
     } else if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
