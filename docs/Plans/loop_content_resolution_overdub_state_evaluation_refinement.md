@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1–6E.4 PASS**; 6E.5 not started; no Track wiring  
+**Status:** Active — native **6E.1–6E.5 PASS**; no Track wiring; wrap-commit DEC not started  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
@@ -83,7 +83,7 @@ Still an `OverdubPass`. No new domain noun.
 
 **6.0 at wrap:** bounded 6D.4 publish (delta sort + restamp + `O(Δ)` pair/span — **6E.4 PASS**). No 6C reconstruct, no full `resolveWindow`, no `VCACHE,full`, no SD.
 
-**Open note at S:** must not seal an incomplete Add into wrap N. Owner named by native 6E.5 from the existing capture close pipeline.
+**Open note at S:** must not seal an incomplete Add into wrap N. **6E.5:** owner is `Track::finalizePendingNotes` (STOP only). Wrap must not call it. `LoopStopFinalize::finalizeWrapWindowOnStore` does not close a mid-loop held ON. Add stays NoteOff-owned (`accumulatePendingNoteChangesForIncomingNote`).
 
 **Empty wrap:** no pass, no session-stack push, no revision bump, no LCR publish.
 
@@ -150,7 +150,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1–6E.4 PASS.** Wrap-1 publish is wrap-2 `resolveState` source.
+**6E.1–6E.5 PASS.** Native overdub-evaluation slices are complete.
 
 **Hide vs Shorten (loop length):** source fills the loop. Incoming ON@4000 OFF@200.
 
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** native **6E.5**. Do not start wrap-commit DEC or midi_gap / 6.3.
+**Next when asked:** wrap-commit DEC + production architecture gate, or midi_gap / 6.3. Do not start either until asked.
 
 ---
 
@@ -235,6 +235,21 @@ Not Track session-undo. Not wrap-commit DEC.
 
 ---
 
+## 6E.5 — held note across S does not seal an Add (PASS)
+
+`test_stage6e5_held_note_across_session_start_does_not_seal_add`. S = 777. Completed 72@200–400. Held 60 ON@500, no OFF.
+
+| Path | Result |
+|------|--------|
+| Reconstruct unpaired ON | Invents open tail `500–loopLength−1` (`finishCanonicalSpansOpenNotes`). Do not publish. |
+| Synthetic OFF at S (`finalizePendingNotes` shape) | Seals `500–777`. Incomplete Add. STOP only. |
+| `finalizeWrapWindowOnStore` at S | 0 synthetic offs — held ON is not in the tail window. |
+| Publish completed pair only | `resolveState(300)` has 72. `resolveState(600)` has no held id. |
+
+Owner: `Track::finalizePendingNotes` then `sealCapture` / `LoopStopFinalize::finalizeWrapWindowOnStore`. Wrap re-entry must not call that pipeline. Add is created on NoteOff only.
+
+---
+
 ## Native 6E (before firmware)
 
 Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](../../test/test_loop_content_resolution/test_loop_content_resolution.cpp). 6E.3 also keeps prepared checkpoints in `LoopContentResolution`. Do not wire Track.
@@ -246,7 +261,7 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 | **6E.2** | **PASS** — checkpoint replay < interval and < history spans. Hold window < 16-bar `resolveWindow` and < full rematerialize. Early-bar history growth does not grow replay. |
 | **6E.3** | **PASS** — after `deviceGateComplete`, `tryResolvePreparedState` matches the oracle. `checkpointCount` is the 8-bar stride. Keep-all per-bar `soundingAt` copies fail the size gate. |
 | **6E.4** | **PASS** — publish pairs + appends spans. `resolveState(300)` sees wrap-1. Disable hides it without restamp. Stamp+1 → miss. |
-| **6E.5** | Held note across start-tick S does not seal an incomplete Add |
+| **6E.5** | **PASS** — held ON@500 across S=777 is not published. Reconstruct-to-loop-end and OFF-at-S are the FAIL seals. Owner: `finalizePendingNotes` (STOP). |
 
 ---
 
