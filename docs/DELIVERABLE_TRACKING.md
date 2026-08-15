@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — **6C recapture owed** [`194015`](../captures/session_20260815_194015.log) (no `DIAG,lcr,6c`; 3b `begin_capture` 3612–8618 µs). **6B PASS** [`192334`](../captures/session_20260815_192334.log). **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`. No `openOnByPitch` flatten / B. Overlay track A parked.
+**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — **6C recapture owed** [`194643`](../captures/session_20260815_194643.log) (`mat=` complete; entry CAP lost to RING). **6B PASS** [`192334`](../captures/session_20260815_192334.log). **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`. No `openOnByPitch` flatten / B. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 
