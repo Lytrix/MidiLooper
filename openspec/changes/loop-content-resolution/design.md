@@ -62,5 +62,5 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 ## Open Questions
 
 - Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
-- `pair` `DFRAME` 1.277 s [`170024`](../../../captures/session_20260815_170024.log) — **5.18**. Contracts pinned from code: `byNoteId` last-wins `NoteId → {pass, on, off}`; `openOnByPitch` per-pass LIFO keyed by pitch only (recorded channel is not loop identity; DEC-033 / `Track::midiChannel`). Open: which structure produces the stall, then minimum representation for **that** query. Plan: [`loop_content_resolution_pair_index_refinement.md`](../../../docs/Plans/loop_content_resolution_pair_index_refinement.md). Not 5.7c.
+- `pair` `DFRAME` 1.277 s [`170024`](../../../captures/session_20260815_170024.log) — **5.18a** instrumented (`DIAG,lcr,pair`). Open: which of `byNoteId` / `openOnByPitch` / both produces the stall. Do not flatten until that remasure. Plan: [`loop_content_resolution_pair_index_refinement.md`](../../../docs/Plans/loop_content_resolution_pair_index_refinement.md). Not 5.7c.
 - Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.

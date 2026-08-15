@@ -234,7 +234,8 @@ struct EventRef {
 TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::CapturePassEntry& pass,
                                          LoopContentResolution::TickIndex::ByNoteIdMap& byNoteId,
                                          uint32_t beginEvent, uint32_t endEventExclusive,
-                                         std::map<uint8_t, std::vector<uint32_t>>& openOnByPitch) {
+                                         std::map<uint8_t, std::vector<uint32_t>>& openOnByPitch,
+                                         ResolutionCostCounters* counters) {
   const uint32_t limit = static_cast<uint32_t>(pass.events.size());
   if (beginEvent >= limit) {
     return;
@@ -242,37 +243,99 @@ TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::Captu
   if (endEventExclusive > limit) {
     endEventExclusive = limit;
   }
+  ElapsedTimer totalTimer;
+  uint64_t byNoteIdMicros = 0;
+  uint64_t openOnMicros = 0;
+  uint64_t lookupMicros = 0;
   for (uint32_t i = beginEvent; i < endEventExclusive; ++i) {
     const MidiEvent& event = pass.events[i];
     if (event.isNoteOn()) {
-      openOnByPitch[event.data.noteData.note].push_back(i);
+      ElapsedTimer openTimer;
+      const size_t keysBefore = openOnByPitch.size();
+      std::vector<uint32_t>& stack = openOnByPitch[event.data.noteData.note];
+      const size_t capBefore = stack.capacity();
+      stack.push_back(i);
+      openOnMicros += openTimer.elapsed();
+      if (counters != nullptr) {
+        counters->pairOpenOnPushes += 1;
+        if (openOnByPitch.size() > keysBefore) {
+          counters->pairOpenOnAllocations += 1;
+        }
+        if (stack.capacity() > capBefore) {
+          counters->pairOpenOnAllocations += 1;
+          counters->pairOpenOnHeapBytes +=
+              (stack.capacity() - capBefore) * sizeof(uint32_t);
+        }
+        if (stack.size() > counters->pairOpenOnPeakDepth) {
+          counters->pairOpenOnPeakDepth = static_cast<uint32_t>(stack.size());
+        }
+      }
       if (event.noteId != kInvalidNoteId) {
         LoopContentResolution::TickIndex::NoteLocation loc;
         loc.passId = pass.id;
         loc.onIndex = i;
         loc.offIndex = -1;
+        ElapsedTimer byNoteTimer;
+        const size_t entriesBefore = byNoteId.size();
         byNoteId[event.noteId] = loc;
+        byNoteIdMicros += byNoteTimer.elapsed();
+        if (counters != nullptr) {
+          if (byNoteId.size() > entriesBefore) {
+            counters->pairByNoteIdInserts += 1;
+          } else {
+            counters->pairByNoteIdOverwrites += 1;
+          }
+        }
       }
       continue;
     }
     if (!event.isNoteOff()) {
       continue;
     }
+    ElapsedTimer openTimer;
+    const size_t keysBefore = openOnByPitch.size();
     std::vector<uint32_t>& stack = openOnByPitch[event.data.noteData.note];
+    if (counters != nullptr && openOnByPitch.size() > keysBefore) {
+      counters->pairOpenOnAllocations += 1;
+    }
     if (stack.empty()) {
+      openOnMicros += openTimer.elapsed();
       continue;
     }
     const uint32_t onIndex = stack.back();
     stack.pop_back();
+    openOnMicros += openTimer.elapsed();
+    if (counters != nullptr) {
+      counters->pairOpenOnPops += 1;
+    }
     const NoteId noteId = pass.events[onIndex].noteId;
     if (noteId == kInvalidNoteId) {
       continue;
     }
+    ElapsedTimer lookupTimer;
     auto found = byNoteId.find(noteId);
+    lookupMicros += lookupTimer.elapsed();
+    if (counters != nullptr) {
+      counters->pairByNoteIdLookups += 1;
+    }
     if (found != byNoteId.end() && found->second.passId == pass.id) {
       found->second.offIndex = static_cast<int32_t>(i);
     }
   }
+  if (counters == nullptr) {
+    return;
+  }
+  const uint64_t total = totalTimer.elapsed();
+  const uint64_t accounted = byNoteIdMicros + openOnMicros + lookupMicros;
+  counters->pairTotalMicros += total;
+  counters->pairByNoteIdMicros += byNoteIdMicros;
+  counters->pairOpenOnByPitchMicros += openOnMicros;
+  counters->pairLookupMicros += lookupMicros;
+  if (total > accounted) {
+    counters->pairOtherMicros += total - accounted;
+  }
+  counters->pairByNoteIdEntries = static_cast<uint32_t>(byNoteId.size());
+  counters->pairOpenOnPitchKeys = static_cast<uint32_t>(openOnByPitch.size());
 }
 
 TRACK_COLD_MEM const LoopContentResolution::TickIndex::CapturePassEntry* findPass(
@@ -366,7 +429,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassNotes(PassI
   }
   std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
   pairNotesInPassRange(*pass, byNoteId, 0, static_cast<uint32_t>(pass->events.size()),
-                       openOnByPitch);
+                       openOnByPitch, nullptr);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassEventRange(
@@ -377,7 +440,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassEventRange(
     return;
   }
   const uint32_t before = beginEvent;
-  pairNotesInPassRange(*pass, byNoteId, beginEvent, endEventExclusive, openOnByPitch);
+  pairNotesInPassRange(*pass, byNoteId, beginEvent, endEventExclusive, openOnByPitch, counters);
   if (counters != nullptr) {
     const uint32_t limit = static_cast<uint32_t>(pass->events.size());
     uint32_t end = endEventExclusive;
@@ -1215,8 +1278,12 @@ struct DeviceGateSession {
     const unsigned passLogged =
         (name == kPrepStep) ? static_cast<unsigned>(prepPassCursor)
                             : static_cast<unsigned>(indexPassCursor);
-    snprintf(line, cap, "#CAP,%lu,DIAG,lcr,phase,%s,pass,%u,ev,%u,span,%u,notes,%u", stamp, name,
-             passLogged, evLogged, static_cast<unsigned>(rebuildSpanCursor), notesLogged);
+    snprintf(line, cap, "#CAP,%lu,DIAG,lcr,phase,%s,pass,%u,ev,%u,span,%u,notes,%u,bn=%lu,op=%lu,lk=%lu,pk=%u",
+             stamp, name, passLogged, evLogged, static_cast<unsigned>(rebuildSpanCursor),
+             notesLogged, static_cast<unsigned long>(sample_.indexCommit.pairByNoteIdMicros),
+             static_cast<unsigned long>(sample_.indexCommit.pairOpenOnByPitchMicros),
+             static_cast<unsigned long>(sample_.indexCommit.pairLookupMicros),
+             static_cast<unsigned>(sample_.indexCommit.pairOpenOnPeakDepth));
     return true;
   }
 
@@ -1683,6 +1750,34 @@ void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) 
            static_cast<unsigned long>(sample.indexCommit.tickEventSortMicros),
            static_cast<unsigned long>(sample.rebuild.channelByNoteIdAppendMicros),
            static_cast<unsigned long>(sample.rebuild.channelByNoteIdSortMicros));
+}
+
+void LoopContentResolution::deviceGateFormatPairLine(char* line, size_t cap) {
+  if (line == nullptr || cap == 0) {
+    return;
+  }
+  const ResolutionCostCounters& pair = sDeviceGateSession.sample_.indexCommit;
+#if defined(ARDUINO)
+  const unsigned long stamp = static_cast<unsigned long>(micros());
+#else
+  const unsigned long stamp = 0UL;
+#endif
+  snprintf(line, cap,
+           "#CAP,%lu,DIAG,lcr,pair,tot=%lu,bn=%lu,op=%lu,lk=%lu,oth=%lu,ent=%u,ins=%u,ow=%u,"
+           "pu=%u,po=%u,pk=%u,oa=%u,hb=%lu",
+           stamp, static_cast<unsigned long>(pair.pairTotalMicros),
+           static_cast<unsigned long>(pair.pairByNoteIdMicros),
+           static_cast<unsigned long>(pair.pairOpenOnByPitchMicros),
+           static_cast<unsigned long>(pair.pairLookupMicros),
+           static_cast<unsigned long>(pair.pairOtherMicros),
+           static_cast<unsigned>(pair.pairByNoteIdEntries),
+           static_cast<unsigned>(pair.pairByNoteIdInserts),
+           static_cast<unsigned>(pair.pairByNoteIdOverwrites),
+           static_cast<unsigned>(pair.pairOpenOnPushes),
+           static_cast<unsigned>(pair.pairOpenOnPops),
+           static_cast<unsigned>(pair.pairOpenOnPeakDepth),
+           static_cast<unsigned>(pair.pairOpenOnAllocations),
+           static_cast<unsigned long>(pair.pairOpenOnHeapBytes));
 }
 
 bool LoopContentResolution::deviceGateFormatPhaseLine(char* line, size_t cap) {

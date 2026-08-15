@@ -235,7 +235,7 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
 #endif
     return;
   }
-  char phaseLine[128];
+  char phaseLine[192];
   if (LoopContentResolution::deviceGateFormatPhaseLine(phaseLine, sizeof(phaseLine))) {
     DebugSessionCapture::appendCaptureTextLine(phaseLine);
   }
@@ -245,6 +245,9 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   char line[224];
   LoopContentResolution::deviceGateFormatCaptureLine(line, sizeof(line));
   DebugSessionCapture::appendCaptureTextLine(line);
+  char pairLine[320];
+  LoopContentResolution::deviceGateFormatPairLine(pairLine, sizeof(pairLine));
+  DebugSessionCapture::appendCaptureTextLine(pairLine);
   LoopContentResolution::deviceGateComplete();
 #endif
 }

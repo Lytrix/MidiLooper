@@ -170,6 +170,10 @@ A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiCha
 
 `openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `SoundingNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
 
+### Amendment 2026-08-15 — 5.18a pair instrument (no flatten)
+
+`pair` reports `tot` / `bn` (`byNoteId`) / `op` (`openOnByPitch`) / `lk` (`find`) / `oth` plus entries, inserts, overwrites, pushes, pops, peak depth, openOn heap bytes. Device complete line `DIAG,lcr,pair`. 1 Hz `phase,pair` lines add `bn=` `op=` `lk=` `pk=`. Native last-wins and peak-depth tests. No header allocator probe (ITCM). Do not flatten until the 139-bar remasure names the expensive owner. No 5.1. No B. No `recon`.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.

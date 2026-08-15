@@ -40,6 +40,22 @@ struct ResolutionCostCounters {
   /// 5.7c channel lookup: sequential NOTE_ON append vs one `stable_sort` + unique.
   uint64_t channelByNoteIdAppendMicros = 0;
   uint64_t channelByNoteIdSortMicros = 0;
+  /// 5.18a pair walk: `byNoteId` vs `openOnByPitch` vs `find` vs remainder.
+  uint64_t pairTotalMicros = 0;
+  uint64_t pairByNoteIdMicros = 0;
+  uint64_t pairOpenOnByPitchMicros = 0;
+  uint64_t pairLookupMicros = 0;
+  uint64_t pairOtherMicros = 0;
+  uint32_t pairByNoteIdEntries = 0;
+  uint32_t pairByNoteIdInserts = 0;
+  uint32_t pairByNoteIdOverwrites = 0;
+  uint32_t pairByNoteIdLookups = 0;
+  uint32_t pairOpenOnPushes = 0;
+  uint32_t pairOpenOnPops = 0;
+  uint32_t pairOpenOnPeakDepth = 0;
+  uint32_t pairOpenOnPitchKeys = 0;
+  uint32_t pairOpenOnAllocations = 0;
+  uint64_t pairOpenOnHeapBytes = 0;
 };
 
 struct SoundingNote {
@@ -275,6 +291,8 @@ struct LoopContentResolution {
   static DeviceGateSliceResult deviceGateRunOneSlice(const LoopPasses& passes,
                                                      uint32_t loopLengthTicks);
   static void deviceGateFormatCaptureLine(char* line, size_t cap);
+  /// 5.18a pair-owner line. Empty string when the gate has not paired.
+  static void deviceGateFormatPairLine(char* line, size_t cap);
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
