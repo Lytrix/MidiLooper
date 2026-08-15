@@ -3403,6 +3403,68 @@ void test_stage6e2_consume_tracks_checkpoint_replay_not_history() {
   TEST_ASSERT_TRUE(grownState.eventsReplayed <= baselineReplayed + 2u);
 }
 
+uint32_t countSoundingCopies(const LoopContentResolution::StateCheckpoints& checkpoints) {
+  uint32_t copies = 0;
+  for (const SoundingNoteVec& snap : checkpoints.soundingAt) {
+    copies += static_cast<uint32_t>(snap.size());
+  }
+  return copies;
+}
+
+void test_stage6e3_keep_spans_after_drop_rebuild_buffers() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t denseInterval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
+  const uint32_t sparseInterval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kDeviceCheckpointBarStride;
+  LoopContentResolution::StateCheckpoints dense;
+  LoopContentResolution::StateCheckpoints sparse;
+  dense.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, denseInterval);
+  sparse.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, sparseInterval);
+  const uint32_t denseCopies = countSoundingCopies(dense);
+  const uint32_t sparseCopies = countSoundingCopies(sparse);
+  TEST_ASSERT_EQUAL(dense.spans.size(), sparse.spans.size());
+  TEST_ASSERT_EQUAL(dense.spanBoundaries.size(), sparse.spanBoundaries.size());
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, static_cast<uint32_t>(dense.soundingAt.size()));
+  TEST_ASSERT_LESS_THAN(dense.soundingAt.size(), sparse.soundingAt.size());
+  TEST_ASSERT_LESS_THAN(denseCopies, sparseCopies);
+
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(fixture.passes, fixture.loopLengthTicks, sample);
+  constexpr uint32_t kRevision = 11;
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(kRevision));
+  LoopContentResolution::deviceGateComplete(kRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kRevision));
+
+  const uint32_t ticks[] = {10u, 100u, fixture.loopLengthTicks / 2u, fixture.loopLengthTicks - 240u};
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec expected;
+    SoundingNoteVec actual;
+    ResolutionCostCounters counters;
+    LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, expected);
+    TEST_ASSERT_TRUE(
+        LoopContentResolution::tryResolvePreparedState(tick, kRevision, actual, &counters));
+    assertSoundingMatch(expected, actual);
+    TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+    TEST_ASSERT_EQUAL_UINT32(kCanonicalBars / LoopContentResolution::kDeviceCheckpointBarStride,
+                             counters.checkpointCount);
+    TEST_ASSERT_LESS_THAN(kCanonicalBars, counters.checkpointCount);
+    TEST_ASSERT_LESS_THAN(counters.eventsInHistory, counters.eventsReplayed);
+    TEST_ASSERT_EQUAL(sparse.spans.size(), counters.eventsInHistory);
+  }
+
+  SoundingNoteVec missed;
+  TEST_ASSERT_FALSE(
+      LoopContentResolution::tryResolvePreparedState(10u, kRevision + 1u, missed, nullptr));
+  TEST_ASSERT_TRUE(missed.empty());
+}
+
 void test_stage6d4_publish_restamps_without_device_gate_complete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3537,5 +3599,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6e1_resolve_state_candidates_match_note_map_oracle);
   RUN_TEST(test_stage6e1b_session_start_is_wrap_origin);
   RUN_TEST(test_stage6e2_consume_tracks_checkpoint_replay_not_history);
+  RUN_TEST(test_stage6e3_keep_spans_after_drop_rebuild_buffers);
   return UNITY_END();
 }

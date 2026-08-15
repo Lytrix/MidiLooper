@@ -1373,6 +1373,27 @@ struct DeviceGateSession {
     sample_ = LoopContentResolution::DeviceGateSample{};
   }
 
+  void keepSparseSoundingAt() {
+    const uint32_t keepInterval =
+        Config::TICKS_PER_BAR * LoopContentResolution::kDeviceCheckpointBarStride;
+    if (checkpoints.intervalTicks == 0 || keepInterval <= checkpoints.intervalTicks) {
+      return;
+    }
+    if ((keepInterval % checkpoints.intervalTicks) != 0) {
+      return;
+    }
+    const uint32_t factor = keepInterval / checkpoints.intervalTicks;
+    std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> kept;
+    for (uint32_t i = 0; i < static_cast<uint32_t>(checkpoints.soundingAt.size()); i += factor) {
+      kept.push_back(std::move(checkpoints.soundingAt[i]));
+    }
+    if (kept.empty() && !checkpoints.soundingAt.empty()) {
+      kept.push_back(std::move(checkpoints.soundingAt.front()));
+    }
+    checkpoints.soundingAt.swap(kept);
+    checkpoints.intervalTicks = keepInterval;
+  }
+
   void dropWorkingBuffers() {
     indexPassCursor = 0;
     indexChunkCursor = 0;
@@ -1403,7 +1424,7 @@ struct DeviceGateSession {
     prepPasses.clear();
     prepEditRows.clear();
     prepMerged = SessionMidiEventVec{};
-    checkpoints = LoopContentResolution::StateCheckpoints{};
+    keepSparseSoundingAt();
     rebuildEvents = SessionMidiEventVec{};
     rebuildNotes = NoteUtils::DisplayNoteVec{};
     delta = LoopContentResolution::TickIndex::TickEventEntryVec{};
@@ -1982,6 +2003,21 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
   }
   resolveWindow(sDeviceGateSession.index, editPasses, loopLengthTicks, windowStart, windowLength,
                 out, counters);
+  return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedState(uint32_t tick,
+                                                                  uint32_t playbackRevision,
+                                                                  SoundingNoteVec& out,
+                                                                  ResolutionCostCounters* counters) {
+  out.clear();
+  if (!preparedWindowReady(playbackRevision) ||
+      sDeviceGateSession.checkpoints.spans.empty() ||
+      sDeviceGateSession.checkpoints.spanBoundaries.empty() ||
+      sDeviceGateSession.checkpoints.soundingAt.empty()) {
+    return false;
+  }
+  resolveState(sDeviceGateSession.checkpoints, tick, out, counters);
   return true;
 }
 

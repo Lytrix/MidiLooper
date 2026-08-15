@@ -331,8 +331,8 @@ struct LoopContentResolution {
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
-  /// Keep `TickIndex` for idle `resolveWindow`. Drop rebuild/checkpoint working buffers.
-  /// Does not construct or sort. Stamp is `playbackRevision` at complete.
+  /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `soundingAt`.
+  /// Drop rebuild working buffers. Does not construct or sort. Stamp is `playbackRevision`.
   static void deviceGateComplete(uint32_t playbackRevision);
   static bool preparedWindowReady(uint32_t playbackRevision);
   /// 6D.4: append one committed overdub into the session `delta` vector and restamp.
@@ -343,4 +343,7 @@ struct LoopContentResolution {
                                        uint32_t windowStart, uint32_t windowLength,
                                        uint32_t playbackRevision, SessionMidiEventVec& out,
                                        ResolutionCostCounters* counters = nullptr);
+  /// Consume kept `spans` + `spanBoundaries`. Returns false on miss or stamp mismatch.
+  static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, SoundingNoteVec& out,
+                                      ResolutionCostCounters* counters = nullptr);
 };
