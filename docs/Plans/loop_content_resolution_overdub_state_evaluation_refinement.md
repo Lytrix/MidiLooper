@@ -387,9 +387,13 @@ Pin that still holds: the next S crossing after session undo is skipped (`suppre
 
 Withdrawn: wrap-first undo that discarded live with the sealed wrap. That removed the live +1 after wrap 1 ([`010535`](../../captures/session_20260816_010535.log)). DEC-038 order is restored: live wrap first, then sealed wraps.
 
+## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
+
+Overdub 20.588 tick 3040. Wrap 1 at 28.588 tick 6112 (`S+3072`). Session undo 30.825 tick 6968: `Overdub session undone`. DISP committed 63→86 at wrap, then 88/86 → 86/86 after undo — live cleared, wrap 1 stayed. No second wrap before stop (S2 tick 9184 skipped; stop 43.267 tick 11736). Stop `undo_entries` 75→76. GUS undo 45.397 `kind=1` 108→63; redo 50.993 63→108.
+
 ## HITL [`010535`](../../captures/session_20260816_010535.log) — live +1 after first wrap
 
-GUS after stop PASS: `Undo (entries=2)` `Overdub undone` at 142.609 s. Session undo during OVERDUBBING ran (56.548 / 70.623 / 86.855 / 92.101 / 111.620). After wrap 1 (44.889) `overdubSessionUndoDepth` stayed at cursor only, so sidebar **U:** did not add the live wrap. DEC-038: depth = sealed wraps + live store; undo live first, then sealed wraps. Next S still skipped.
+GUS after stop PASS: `Undo (entries=2)` `Overdub undone` at 142.609 s. Session undo during OVERDUBBING ran (56.548 / 70.623 / 86.855 / 92.101 / 111.620). After wrap 1 (44.889) `overdubSessionUndoDepth` stayed at cursor only, so sidebar **U:** did not add the live wrap. Fixed in [`011413`](../../captures/session_20260816_011413.log).
 
 ## HITL [`004842`](../../captures/session_20260816_004842.log) — 038.1 PASS
 
