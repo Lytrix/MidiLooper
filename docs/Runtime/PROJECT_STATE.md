@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-15 (DEC-037 5.16c prep device PASS [`153920`])
+Last updated: 2026-08-15 (DEC-037 5.17a–c native pick A for `byTick`)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-037 5.16c prep device PASS [`153920`])
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-037** `LoopContentResolution` — Stages 1–8 PASS; 5.15 **complete**; 5.16c `prep` device **PASS**. Next long-running phase from [`153920`](../../captures/session_20260815_153920.log): `idx` → `byTick.emplace`. Plan: [`loop_content_resolution_device_phase_budget_refinement.md`](../Plans/loop_content_resolution_device_phase_budget_refinement.md). Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
+**Active work:** **DEC-037** `LoopContentResolution` — Stages 1–8 PASS; 5.15 **complete**; 5.16c `prep` device **PASS**; 5.17a–c native pick **A** for `TickIndex`. Production `byTick` stays C until 5.17d. Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](../Plans/loop_content_resolution_tick_index_flat_event_index_refinement.md). Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

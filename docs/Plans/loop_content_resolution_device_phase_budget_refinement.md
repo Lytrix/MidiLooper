@@ -133,11 +133,11 @@ Largest LCR-period `DFRAME` gap is **4.38 s** during `idx` pass 1 (paint duratio
 
 `prep` is closed (no `loop_rem`). `spans` has no `loop_rem`. `reb=13.80 s` is not the fail.
 
-**Next owner:** `TickIndex::byTick` (PSRAM `std::multimap`), same class 5.15 removed from span boundaries. Same experimental order as 5.15 if a 5.17 is opened: native C vs flat A, then device. Do not fold `recon` into that slice — different owner, startup-only.
+**Next owner:** `TickIndex::byTick` (PSRAM `std::multimap`), same class 5.15 removed from span boundaries. 5.17a–c native pick **A**. Plan: [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md). Do not fold `recon` into that slice — different owner, startup-only.
 
 ## Open after this identification
 
-1. Do not start 5.17 / `byTick` swap until explicitly requested.
+1. 5.17d device append / sort / query. Production `byTick` stays C until that PASS.
 2. Do not treat `reb` as the optimization target.
 3. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
 

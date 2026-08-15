@@ -104,6 +104,24 @@ struct LoopContentResolution {
         std::unordered_map<NoteId, NoteLocation, std::hash<NoteId>, std::equal_to<NoteId>,
                            ExternalMemoryFirstAllocator<std::pair<const NoteId, NoteLocation>>>;
 
+    /// Private event-index entry — not a span boundary. One row per MIDI event.
+    struct TickEventEntry {
+      uint32_t tick = 0;
+      PassId passId = kInvalidPassId;
+      uint32_t eventIndex = 0;
+    };
+    using TickEventEntryVec =
+        std::vector<TickEventEntry, ExternalMemoryFirstAllocator<TickEventEntry>>;
+
+    /// C-order append (pass event-index order), then `stable_sort` by tick. 5.17 A.
+    static void appendTickEventEntries(const CapturePassEntry& pass, uint32_t begin,
+                                       uint32_t endExclusive, TickEventEntryVec& out);
+    static void sortTickEventEntriesByTick(TickEventEntryVec& entries);
+    void findRawWindowFromTickEvents(const TickEventEntryVec& entries, uint32_t loopLengthTicks,
+                                     uint32_t windowStart, uint32_t windowLength,
+                                     SessionMidiEventVec& out,
+                                     ResolutionCostCounters* counters = nullptr) const;
+
     /// Record first (mergeSequence 0), then overdubs by mergeSequence. Same order as
     /// `materializeActive`.
     void collectActiveMaterializePasses(std::vector<const CapturePassEntry*>& ordered) const;
@@ -198,6 +216,10 @@ struct LoopContentResolution {
   static void resolveWindow(const TickIndex& index, const EditPassVec& editPasses,
                             uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
                             SessionMidiEventVec& out, ResolutionCostCounters* counters = nullptr);
+  static void resolveWindow(const TickIndex& index, const TickIndex::TickEventEntryVec& tickEvents,
+                            const EditPassVec& editPasses, uint32_t loopLengthTicks,
+                            uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
+                            ResolutionCostCounters* counters = nullptr);
 
   static void resolveState(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t tick,
                            SoundingNoteVec& out, ResolutionCostCounters* counters = nullptr);
