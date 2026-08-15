@@ -186,6 +186,7 @@ Do not recreate: raw events → build all Notes → cache Notes → play Notes.
 5. **Valid derived state is never discarded merely because unrelated content changed.**
 6. **No realtime MIDI or display-critical path may perform work proportional to total loop history.**
 7. **Physical PSRAM chunks are not resolution boundaries.**
+8. **Derived-index storage.** Derived indexes on the target device use contiguous/bulk PSRAM storage. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths. Where the query contract permits, indexes are flat PSRAM arrays built by append/bulk construction and ordered or uniqued in a bounded operation. Flat storage is not an automatic replacement for every associative structure. Representation B is not justified unless a measured flat query is too expensive. Measured: `spanBoundaries` (5.15), `tickEvents` (5.17; `byTick` removed), `channelByNoteId` (5.7c). `pair` / `byNoteId` / `recon` are a separate pass.
 
 ---
 

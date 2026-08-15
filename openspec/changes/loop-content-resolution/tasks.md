@@ -3,7 +3,7 @@
 - [x] 1.1 Architecture plan — [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plans/loop_event_sourced_resolution_architecture.md)
 - [x] 1.2 DEC-037 in DECISION_LOG; NAMING.md vocabulary
 - [x] 1.3 Close `loop-effective-event-source` tasks 4.1 / 4.2; update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING
-- [x] 1.4 This OpenSpec change (proposal, design, specs, ARCHITECTURE-REVIEW, tasks)
+- [x] 1.5 Derived-index storage invariant recorded on DEC-037 (not a new DEC): bulk PSRAM arrays; no per-entry associative insert on realtime-adjacent index construction. `pair` leftover stays open.
 
 ## 2. Stage 0 — Canonical fixture
 
