@@ -95,7 +95,6 @@ void Track::startOverdubbing(uint32_t currentTick) {
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   recordAddedNoteOnCount = 0;
   Loop& loop = getActiveLoop();
-  loop.markDisplayCachesStale();
   uint32_t playheadPhase = 0;
   if (loop.loopLengthTicks > 0) {
     playheadPhase =

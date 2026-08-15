@@ -126,9 +126,10 @@ struct Loop {
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
 
-  /// DEC-036 D1: incrementally maintained committed content (valid before overdub entry).
+  /// Lazy full flatten for edit/MIDI paths that still require the entire loop.
   void ensureEffectiveEventStoreCurrent() const;
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
+  /// Range query of committed content (chunk window + edit rows). Does not flatten the loop.
   void copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
                                            uint32_t windowLength) const;
   uint32_t effectiveEventStoreRevision() const { return effectiveEventStoreRevision_; }
@@ -165,7 +166,7 @@ struct Loop {
 
   void beginCapture(CapturePhase phase, uint32_t playheadPhaseTick = 0);
   void discardCapture();
-  /// Establish materialize-aware overdubSourceView for the active overdub session.
+  /// Establish overdubSourceView: copy clean visualCache.notes, else a windowed chunk walk.
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
   /// D2: merge hold-window display notes into the session source view for overlap lookup.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch);

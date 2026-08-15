@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 **5.18 FROZEN**, **5.1 idle-path PASS** [`173842`](../captures/session_20260815_173842.log); 5.2 overdub entry next; production MIDI/display stay on materialize until 5.2 + user-approved Stage 6  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 **5.18 FROZEN**, **5.1 idle-path PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 3b restore native** (device recapture next; prior FAIL [`175544`](../captures/session_20260815_175544.log) `begin_capture` 108979 µs); production MIDI/display stay on materialize; Stage 6 blocked  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
