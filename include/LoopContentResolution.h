@@ -27,6 +27,10 @@ struct ResolutionCostCounters {
   uint32_t passChunkListsWalked = 0;
   /// Tick-index nodes visited during find. Must not require walking pass lists.
   uint32_t indexEntriesVisited = 0;
+  /// 6D.2 two-source find: entries visited in the frozen historical `tickEvents` vector.
+  uint32_t indexHistoryEntriesVisited = 0;
+  /// 6D.2 two-source find: entries visited in the delta `TickEventEntryVec`.
+  uint32_t indexDeltaEntriesVisited = 0;
   uint32_t checkpointIntervalTicks = 0;
   uint32_t checkpointCount = 0;
   uint32_t replayStartTick = 0;
@@ -143,6 +147,14 @@ struct LoopContentResolution {
                                        uint32_t endExclusive, TickEventEntryVec& out);
     static void sortTickEventEntriesByTick(TickEventEntryVec& entries);
     void findRawWindowFromTickEvents(const TickEventEntryVec& entries, uint32_t loopLengthTicks,
+                                     uint32_t windowStart, uint32_t windowLength,
+                                     SessionMidiEventVec& out,
+                                     ResolutionCostCounters* counters = nullptr) const;
+    /// 6D.2: visit two ordered sources without compacting them into one vector.
+    /// `history` is the frozen 5.17 `tickEvents`. `delta` is a separate `TickEventEntryVec`.
+    /// Not a `TickIndex` member and not a new domain type.
+    void findRawWindowFromTickEvents(const TickEventEntryVec& history,
+                                     const TickEventEntryVec& delta, uint32_t loopLengthTicks,
                                      uint32_t windowStart, uint32_t windowLength,
                                      SessionMidiEventVec& out,
                                      ResolutionCostCounters* counters = nullptr) const;
@@ -276,6 +288,11 @@ struct LoopContentResolution {
                             const EditPassVec& editPasses, uint32_t loopLengthTicks,
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
                             ResolutionCostCounters* counters = nullptr);
+  /// 6D.2: `resolveWindow` over frozen historical `tickEvents` plus a delta vector.
+  static void resolveWindow(const TickIndex& index, const TickIndex::TickEventEntryVec& history,
+                            const TickIndex::TickEventEntryVec& delta, const EditPassVec& editPasses,
+                            uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
+                            SessionMidiEventVec& out, ResolutionCostCounters* counters = nullptr);
 
   static void resolveState(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t tick,
                            SoundingNoteVec& out, ResolutionCostCounters* counters = nullptr);

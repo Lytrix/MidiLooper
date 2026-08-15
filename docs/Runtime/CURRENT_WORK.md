@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6D.1 native: sort and merge FAIL history scaling)
+Last updated: 2026-08-15 (DEC-037 6D.2 native PASS: split history+delta query tracks window)
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-15 (DEC-037 6D.1 native: sort and merge FAIL history scali
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6D.1 native measured.** Append+merge matches the oracle. Full sort **and** ordered merge of flat `tickEvents` **FAIL** scaling: `index_order_us` grows with `history_events` at fixed delta (sort 602→2624 µs, merge 46→174 µs at 8192→32768, both < 50 ms). Mutation contract not established. Production still frozen. Do not start midi_gap / 6.3.
+**Now:** **6D.2 native PASS.** Frozen `tickEvents` + delta `TickEventEntryVec`; two-source `findRawWindow` without compacting. Commit tracks Δ (`commit_us=0` at Δ=8). `no_delta` query stays `query_us=4` / `candidate_history=8` from H=8192→65536. 6D.1 one-vector mutation remains FAIL. Not authorization to make LCR incrementally live. Next: repeated-overdub commit scaling, then a production architecture gate. Production still frozen. Do not start midi_gap / 6.3.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

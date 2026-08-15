@@ -383,6 +383,35 @@ TRACK_COLD_MEM void visitTickEventRange(const LoopContentResolution::TickIndex& 
   }
 }
 
+TRACK_COLD_MEM void visitTickEventWindow(const LoopContentResolution::TickIndex& index,
+                          const LoopContentResolution::TickIndex::TickEventEntryVec& entries,
+                          uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
+                          std::set<EventRef>& refs, ResolutionCostCounters* counters) {
+  if (windowLength >= loopLengthTicks) {
+    visitTickEventRange(index, entries, 0, loopLengthTicks, refs, counters);
+    return;
+  }
+  const uint32_t start = IntervalProjection::tickPhaseInLoop(windowStart, 0, loopLengthTicks);
+  if (start + windowLength <= loopLengthTicks) {
+    visitTickEventRange(index, entries, start, start + windowLength, refs, counters);
+    return;
+  }
+  visitTickEventRange(index, entries, start, loopLengthTicks, refs, counters);
+  visitTickEventRange(index, entries, 0, start + windowLength - loopLengthTicks, refs, counters);
+}
+
+TRACK_COLD_MEM void emitTickEventRefs(const LoopContentResolution::TickIndex& index,
+                       const std::set<EventRef>& refs, SessionMidiEventVec& out) {
+  out.reserve(refs.size());
+  for (const EventRef& ref : refs) {
+    const auto* pass = findPass(index, ref.passId);
+    if (pass == nullptr || ref.eventIndex >= pass->events.size()) {
+      continue;
+    }
+    out.push_back(pass->events[ref.eventIndex]);
+  }
+}
+
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::beginCapturePass(PassId id, CapturePassState state,
                                                                       uint32_t mergeSequence) {
   if (id == kInvalidPassId) {
@@ -611,25 +640,30 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindowFromTickEvent
     return;
   }
   std::set<EventRef> refs;
-  if (windowLength >= loopLengthTicks) {
-    visitTickEventRange(*this, entries, 0, loopLengthTicks, refs, counters);
-  } else {
-    const uint32_t start = IntervalProjection::tickPhaseInLoop(windowStart, 0, loopLengthTicks);
-    if (start + windowLength <= loopLengthTicks) {
-      visitTickEventRange(*this, entries, start, start + windowLength, refs, counters);
-    } else {
-      visitTickEventRange(*this, entries, start, loopLengthTicks, refs, counters);
-      visitTickEventRange(*this, entries, 0, start + windowLength - loopLengthTicks, refs, counters);
-    }
+  visitTickEventWindow(*this, entries, loopLengthTicks, windowStart, windowLength, refs, counters);
+  emitTickEventRefs(*this, refs, out);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindowFromTickEvents(
+    const TickEventEntryVec& history, const TickEventEntryVec& delta, uint32_t loopLengthTicks,
+    uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
+    ResolutionCostCounters* counters) const {
+  out.clear();
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    return;
   }
-  out.reserve(refs.size());
-  for (const EventRef& ref : refs) {
-    const auto* pass = findPass(*this, ref.passId);
-    if (pass == nullptr || ref.eventIndex >= pass->events.size()) {
-      continue;
-    }
-    out.push_back(pass->events[ref.eventIndex]);
+  std::set<EventRef> refs;
+  const uint32_t beforeHistory = (counters != nullptr) ? counters->indexEntriesVisited : 0;
+  visitTickEventWindow(*this, history, loopLengthTicks, windowStart, windowLength, refs, counters);
+  if (counters != nullptr) {
+    counters->indexHistoryEntriesVisited = counters->indexEntriesVisited - beforeHistory;
   }
+  const uint32_t beforeDelta = (counters != nullptr) ? counters->indexEntriesVisited : 0;
+  visitTickEventWindow(*this, delta, loopLengthTicks, windowStart, windowLength, refs, counters);
+  if (counters != nullptr) {
+    counters->indexDeltaEntriesVisited = counters->indexEntriesVisited - beforeDelta;
+  }
+  emitTickEventRefs(*this, refs, out);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendNoteEvents(NoteId noteId, SessionMidiEventVec& out) const {
@@ -811,6 +845,47 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
     counters->candidateEvents = static_cast<uint32_t>(working.size());
     counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
     counters->eventsInHistory = static_cast<uint32_t>(tickEvents.size());
+    counters->passesInHistory = index.indexedPassCount();
+    counters->elapsedMicros = timer.elapsed();
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
+                                          const TickIndex::TickEventEntryVec& history,
+                                          const TickIndex::TickEventEntryVec& delta,
+                                          const EditPassVec& editPasses, uint32_t loopLengthTicks,
+                                          uint32_t windowStart, uint32_t windowLength,
+                                          SessionMidiEventVec& out,
+                                          ResolutionCostCounters* counters) {
+  ElapsedTimer timer;
+  SessionMidiEventVec working;
+  index.findRawWindowFromTickEvents(history, delta, loopLengthTicks, windowStart, windowLength,
+                                    working, counters);
+  EditPassVec activeRows;
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+      index.appendNoteEvents(editPass.targetNoteId, working);
+    }
+  }
+  sortResolvedEvents(working);
+  working.erase(std::unique(working.begin(), working.end(),
+                            [](const MidiEvent& a, const MidiEvent& b) {
+                              return a.tick == b.tick && a.type == b.type && a.channel == b.channel &&
+                                     a.data.noteData.note == b.data.noteData.note &&
+                                     a.noteId == b.noteId;
+                            }),
+                working.end());
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
+  }
+  DisplayWindowUtils::filterMidiEventsToWindow(working, out, windowStart, windowLength,
+                                               loopLengthTicks);
+  sortResolvedEvents(out);
+  if (counters != nullptr) {
+    counters->candidateEvents = static_cast<uint32_t>(working.size());
+    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
+    counters->eventsInHistory = static_cast<uint32_t>(history.size());
     counters->passesInHistory = index.indexedPassCount();
     counters->elapsedMicros = timer.elapsed();
   }
