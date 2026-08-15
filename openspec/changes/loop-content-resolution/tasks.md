@@ -38,16 +38,15 @@
 - [ ] 5.1 `035414`-class worst-case latency: no multi-second MIDI stall, no multi-second OLED stall
 - [ ] 5.2 Overdub entry remains cheap (3b copy); no `VCACHE,full` on the normal path; no full materialize after commit
 
-Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_t41_lcr.ld`). Short-loop `lcr` PASS [`225744`](../../../captures/session_20260814_225744.log). Per-bar `soundingAt` FAIL [`225351`](../../../captures/session_20260814_225351.log) (heap Critical). Hardware still arms only ≤16 bars until 5.4–5.8 pass.
-
-Do **not** raise the 16-bar arm cap, persist checkpoints, or put resolution on overdub/MIDI until 5.8.
+Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_t41_lcr.ld`). Does **not** consult `MemoryMonitor`. Tick-index / `startsByTick` use `ExternalMemoryFirstAllocator`. Arm waits for any pending slot restore. CrashReport [`115242`](../../../captures/session_20260815_115242.log) `0x6003616C` `_M_emplace_equal` / `0x10`. 30-bar `hist=832` [`112843`](../../../captures/session_20260815_112843.log). >63-bar size [`115750`](../../../captures/session_20260815_115750.log) `hist=2394` `reb=101s` — IndexCommit / RebuildSpans now budgeted at 50 ms. Arm cap stays off. Do not persist or put resolution on overdub/MIDI.
 
 - [x] 5.4 Sparse `soundingAt`: keep `spans` + `startsByTick`; device stride **8 bars** (`kDeviceCheckpointBarStride`). Native Stage 7/8 stay at 1 bar. Same `resolveState` answers (`test_stage7_sparse_checkpoints_agree_with_dense`).
-- [x] 5.5 Abort `fillCheckpointRange` when advisory pressure is Low or Critical (`test_stage7_fill_aborts_under_low_pressure`). Device session resets (no `lcr`). 68-bar Critical-heap HITL remains 5.7 — do not raise the 16-bar arm cap here.
+- [x] 5.5 Withdrawn: LCR MUST NOT consult advisory pressure. Tick-index / `startsByTick` use `ExternalMemoryFirstAllocator` (CrashReport [`115242`](../../../captures/session_20260815_115242.log) `0x6003616C` `_M_emplace_equal` at `0x10`).
 - [x] 5.6 Split `prepareRebuildSpans` into `prepareRebuildResolvedEvents` then `finishRebuildSpansFromEvents` (one idle slice each). Device `RebuildPrepare` / `RebuildSpans`. Native `rebuild()` still composes both.
-- [ ] 5.7 Measure 68-bar selected-loop idle gate: `DIAG,lcr` or explicit skip; no `idle_maint` ~50 ms; no 1 s `DFRAME` gaps.
-- [ ] 5.8 Measure `resolveState` replay from the sparse checkpoint (`rep`, `st`, interval). Decide whether `spans` + `startsByTick` need more index.
-- [ ] 5.9 Only after 5.4–5.8: reconsider raising the 16-bar hardware arm cap.
+- [ ] 5.7 Measure selected-loop idle gate on a loop **>63 bars**: `DIAG,lcr` or explicit skip; no `idle_maint` ~50 ms; no 1 s `DFRAME` gaps. Size probe accepted: [`115750`](../../../captures/session_20260815_115750.log) (139 bars / 2393 notes). That capture **FAIL** latency (`idle_maint` 46.3 s / 100.7 s, `reb=101146131`). Re-measure after 5.10.
+- [x] 5.8 [`115750`](../../../captures/session_20260815_115750.log) `st=16249` `rep=350` `hist=2394` `walk=0`. Query path does not need a third index. Stall is cold IndexCommit / rebuild.
+- [x] 5.9 Arm cap stays off (2026-08-15). 5.7 probe is >63 bars; that is not a reason to restore the 16-bar cap.
+- [x] 5.10 Bound device-gate IndexCommit and RebuildSpans to `kDeviceGateSliceBudgetUs` (50 ms, same as 5.7 `idle_maint`). One event / one span per inner step; yield when the budget is exhausted. Reconstruct stays its own slice. Native `test_stage9_sliced_*` PASS. Cap stays off.
 
 ## 6. Production swap (only after all three gates + user approval)
 

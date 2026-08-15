@@ -27,8 +27,6 @@
 #include "../../src/LoopContentResolution.cpp"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
-#include "Utils/MemoryMonitor.h"
-#include "Utils/MemoryPressureLevel.h"
 
 namespace {
 
@@ -954,40 +952,126 @@ void test_stage7_sparse_checkpoints_agree_with_dense() {
   }
 }
 
-void test_stage7_fill_aborts_under_low_pressure() {
+void test_stage7_loop_shorter_than_device_stride_keeps_one_checkpoint() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
-  MemoryMonitor::resetNativeTestPressureInputs();
-  MemoryMonitor::resetNativeTestFreeHeap();
-  MemoryMonitor::setNativeTestFreeHeap(70u * 1024u);
-  MemoryMonitor::setNativeTestChunksFree(40);
-  MemoryMonitor::updateAdvisoryPressureLevel(0);
-  TEST_ASSERT_EQUAL(static_cast<int>(MemoryPressureLevel::Normal),
-                    static_cast<int>(MemoryMonitor::getAdvisoryPressureLevel()));
+  const uint32_t loopLength = 4u * Config::TICKS_PER_BAR;
+  const uint32_t interval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kDeviceCheckpointBarStride;
+  TEST_ASSERT_TRUE(loopLength < interval);
 
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = makeNoteSpan(96, 192, 0, 60, 1);
+
+  LoopContentResolution::TickIndex index;
+  index.commitCapturePass(passes.recordPass.id, passes.recordPass.committedChunkIds,
+                          passes.recordPass.state, 0, nullptr);
+
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.rebuild(index, passes.editPasses, loopLength, interval);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(checkpoints.soundingAt.size()));
+
+  const uint32_t ticks[] = {0u, 100u, 150u, loopLength - 1u};
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec expected;
+    SoundingNoteVec actual;
+    LoopContentResolution::resolveState(passes, loopLength, tick, expected);
+    LoopContentResolution::resolveState(checkpoints, tick, actual);
+    assertSoundingMatch(expected, actual);
+  }
+}
+
+void commitPassOneEventPerSlice(LoopContentResolution::TickIndex& index, PassId id,
+                                const CommittedChunkIdList& chunks, CapturePassState state,
+                                uint32_t mergeSequence) {
+  index.beginCapturePass(id, state, mergeSequence);
+  for (uint16_t chunkId : chunks) {
+    index.appendCapturePassChunk(id, chunkId);
+  }
+  TEST_ASSERT_FALSE(index.capturePasses.empty());
+  const uint32_t eventCount = static_cast<uint32_t>(index.capturePasses.back().events.size());
+  for (uint32_t i = 0; i < eventCount; ++i) {
+    index.indexCapturePassEventRange(id, i, i + 1, nullptr);
+  }
+  index.pairCapturePassNotes(id);
+}
+
+void test_stage9_sliced_index_commit_matches_full_commit() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+
+  LoopContentResolution::TickIndex full;
+  commitFixtureIndex(fixture, full);
+
+  LoopContentResolution::TickIndex sliced;
+  commitPassOneEventPerSlice(sliced, fixture.passes.recordPass.id,
+                             fixture.passes.recordPass.committedChunkIds,
+                             fixture.passes.recordPass.state, 0);
+  for (const OverdubPass& pass : fixture.passes.overdubPasses) {
+    commitPassOneEventPerSlice(sliced, pass.id, pass.committedChunkIds, pass.state,
+                               pass.mergeSequence);
+  }
+
+  TEST_ASSERT_EQUAL_UINT32(full.indexedEventCount(), sliced.indexedEventCount());
+  TEST_ASSERT_EQUAL_UINT32(full.indexedPassCount(), sliced.indexedPassCount());
+
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  SessionMidiEventVec fromFull;
+  SessionMidiEventVec fromSliced;
+  LoopContentResolution::resolveWindow(full, fixture.passes.editPasses, fixture.loopLengthTicks, 0,
+                                       windowLength, fromFull, nullptr);
+  LoopContentResolution::resolveWindow(sliced, fixture.passes.editPasses, fixture.loopLengthTicks, 0,
+                                       windowLength, fromSliced, nullptr);
+  assertResolvedEventsMatch(fromFull, fromSliced);
+}
+
+void test_stage9_sliced_spans_match_full_rebuild() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
   CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
   LoopContentResolution::TickIndex index;
   commitFixtureIndex(fixture, index);
-  LoopContentResolution::StateCheckpoints checkpoints;
-  checkpoints.prepareRebuildSpans(index, fixture.passes.editPasses, fixture.loopLengthTicks,
-                                  Config::TICKS_PER_BAR);
-  TEST_ASSERT_TRUE(checkpoints.soundingAt.size() > 0);
-  TEST_ASSERT_TRUE(checkpoints.soundingAt[0].empty());
 
-  MemoryMonitor::setNativeTestFreeHeap(50u * 1024u);
-  MemoryMonitor::updateAdvisoryPressureLevel(100);
-  TEST_ASSERT_EQUAL(static_cast<int>(MemoryPressureLevel::Low),
-                    static_cast<int>(MemoryMonitor::getAdvisoryPressureLevel()));
-  TEST_ASSERT_FALSE(checkpoints.fillCheckpointRange(0, 1));
-  TEST_ASSERT_TRUE(checkpoints.soundingAt[0].empty());
+  const uint32_t interval =
+      Config::TICKS_PER_BAR * LoopContentResolution::kNativeCheckpointBarStride;
+  LoopContentResolution::StateCheckpoints full;
+  full.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
 
-  MemoryMonitor::resetNativeTestPressureInputs();
-  MemoryMonitor::resetNativeTestFreeHeap();
-  MemoryMonitor::setNativeTestFreeHeap(70u * 1024u);
-  MemoryMonitor::setNativeTestChunksFree(40);
-  MemoryMonitor::updateAdvisoryPressureLevel(200);
-  TEST_ASSERT_TRUE(checkpoints.fillCheckpointRange(0, 1));
-  TEST_ASSERT_FALSE(checkpoints.soundingAt[0].empty());
+  LoopContentResolution::StateCheckpoints sliced;
+  SessionMidiEventVec resolved;
+  TEST_ASSERT_TRUE(sliced.prepareRebuildResolvedEvents(
+      index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, resolved, nullptr));
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(resolved, fixture.loopLengthTicks, false);
+  sliced.spans.clear();
+  sliced.startsByTick.clear();
+  sliced.soundingAt.clear();
+  for (uint32_t i = 0; i < static_cast<uint32_t>(notes.size()); ++i) {
+    TEST_ASSERT_TRUE(sliced.appendSpansFromNotes(resolved, notes, i, i + 1, nullptr));
+  }
+  uint32_t count = sliced.loopLengthTicks / sliced.intervalTicks;
+  if (count == 0) {
+    count = 1;
+  }
+  sliced.soundingAt.resize(count);
+  TEST_ASSERT_TRUE(sliced.fillCheckpointRange(0, count, nullptr));
+  TEST_ASSERT_EQUAL(full.spans.size(), sliced.spans.size());
+
+  const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks - 24u};
+  for (uint32_t tick : ticks) {
+    SoundingNoteVec fromFull;
+    SoundingNoteVec fromSliced;
+    LoopContentResolution::resolveState(full, tick, fromFull);
+    LoopContentResolution::resolveState(sliced, tick, fromSliced);
+    assertSoundingMatch(fromFull, fromSliced);
+  }
+}
+
+void test_stage9_device_gate_slice_budget_matches_idle_maint_bar() {
+  TEST_ASSERT_EQUAL_UINT32(50000u, LoopContentResolution::kDeviceGateSliceBudgetUs);
 }
 
 void test_stage9_native_worst_case_micros() {
@@ -1042,8 +1126,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage7_resolve_state_from_checkpoint_not_tick_zero);
   RUN_TEST(test_stage7_resolve_state_matches_oracle_mid_and_wrap);
   RUN_TEST(test_stage7_sparse_checkpoints_agree_with_dense);
-  RUN_TEST(test_stage7_fill_aborts_under_low_pressure);
+  RUN_TEST(test_stage7_loop_shorter_than_device_stride_keeps_one_checkpoint);
   RUN_TEST(test_stage8_loop_switch_high_tick_bounded_replay);
+  RUN_TEST(test_stage9_sliced_index_commit_matches_full_commit);
+  RUN_TEST(test_stage9_sliced_spans_match_full_rebuild);
+  RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_native_worst_case_micros);
   return UNITY_END();
 }

@@ -9,10 +9,9 @@
 #include "CommittedEventRange.h"
 #include "EditApply.h"
 #include "Globals.h"
+#include "LoopEventStore.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
-#include "Utils/MemoryMonitor.h"
-#include "Utils/MemoryPressureLevel.h"
 #include "Utils/TrackMem.h"
 
 #if defined(ARDUINO)
@@ -218,7 +217,7 @@ struct EventRef {
 };
 
 TRACK_COLD_MEM void pairNotesInPass(LoopContentResolution::TickIndex::CapturePassEntry& pass,
-                     std::unordered_map<NoteId, LoopContentResolution::TickIndex::NoteLocation>& byNoteId) {
+                     LoopContentResolution::TickIndex::ByNoteIdMap& byNoteId) {
   std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
   for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
     const MidiEvent& event = pass.events[i];
@@ -262,6 +261,15 @@ TRACK_COLD_MEM const LoopContentResolution::TickIndex::CapturePassEntry* findPas
   return &index.capturePasses[found->second];
 }
 
+TRACK_COLD_MEM LoopContentResolution::TickIndex::CapturePassEntry* findPassMutable(
+    LoopContentResolution::TickIndex& index, PassId id) {
+  const auto found = index.passById.find(id);
+  if (found == index.passById.end() || found->second >= index.capturePasses.size()) {
+    return nullptr;
+  }
+  return &index.capturePasses[found->second];
+}
+
 TRACK_COLD_MEM void visitTickRange(const LoopContentResolution::TickIndex& index, uint32_t beginTick,
                     uint32_t endTickExclusive, std::set<EventRef>& refs,
                     ResolutionCostCounters* counters) {
@@ -283,9 +291,8 @@ TRACK_COLD_MEM void visitTickRange(const LoopContentResolution::TickIndex& index
   }
 }
 
-TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitCapturePass(PassId id, const CommittedChunkIdList& chunks,
-                                                         CapturePassState state, uint32_t mergeSequence,
-                                                         ResolutionCostCounters* counters) {
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::beginCapturePass(PassId id, CapturePassState state,
+                                                                      uint32_t mergeSequence) {
   if (id == kInvalidPassId) {
     return;
   }
@@ -293,19 +300,65 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitCapturePass(PassId i
   pass.id = id;
   pass.mergeSequence = mergeSequence;
   pass.state = state;
-  LoopEventStore::appendChunkRefEvents(chunks, pass.events);
-  if (counters != nullptr) {
-    counters->passChunkListsWalked += 1;
-    counters->resolutionOperations += static_cast<uint32_t>(pass.events.size());
-  }
-
-  pairNotesInPass(pass, byNoteId);
-  for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
-    byTick.emplace(pass.events[i].tick, std::make_pair(id, i));
-  }
-
   passById[id] = capturePasses.size();
   capturePasses.push_back(std::move(pass));
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendCapturePassChunk(PassId id, uint16_t chunkId) {
+  CapturePassEntry* pass = findPassMutable(*this, id);
+  if (pass == nullptr) {
+    return;
+  }
+  LoopEventStore::appendChunkRefEvent(chunkId, pass->events);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::indexCapturePassEventRange(
+    PassId id, uint32_t beginEvent, uint32_t endEventExclusive, ResolutionCostCounters* counters) {
+  CapturePassEntry* pass = findPassMutable(*this, id);
+  if (pass == nullptr) {
+    return;
+  }
+  const uint32_t limit = static_cast<uint32_t>(pass->events.size());
+  if (beginEvent >= limit) {
+    return;
+  }
+  if (endEventExclusive > limit) {
+    endEventExclusive = limit;
+  }
+  for (uint32_t i = beginEvent; i < endEventExclusive; ++i) {
+    byTick.emplace(pass->events[i].tick, std::make_pair(id, i));
+  }
+  if (counters != nullptr && endEventExclusive > beginEvent) {
+    counters->resolutionOperations += endEventExclusive - beginEvent;
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassNotes(PassId id) {
+  CapturePassEntry* pass = findPassMutable(*this, id);
+  if (pass == nullptr) {
+    return;
+  }
+  pairNotesInPass(*pass, byNoteId);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitCapturePass(PassId id, const CommittedChunkIdList& chunks,
+                                                         CapturePassState state, uint32_t mergeSequence,
+                                                         ResolutionCostCounters* counters) {
+  if (id == kInvalidPassId) {
+    return;
+  }
+  beginCapturePass(id, state, mergeSequence);
+  for (uint16_t chunkId : chunks) {
+    appendCapturePassChunk(id, chunkId);
+  }
+  const CapturePassEntry* pass = findPass(*this, id);
+  const uint32_t eventCount = (pass != nullptr) ? static_cast<uint32_t>(pass->events.size()) : 0;
+  if (counters != nullptr) {
+    counters->passChunkListsWalked += 1;
+    counters->resolutionOperations += eventCount;
+  }
+  indexCapturePassEventRange(id, 0, eventCount, nullptr);
+  pairCapturePassNotes(id);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitLoopPasses(const LoopPasses& passes,
@@ -499,9 +552,6 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::prepareRebuildResol
   if (loopLength == 0 || checkpointIntervalTicks == 0) {
     return true;
   }
-  if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
-    return false;
-  }
   index.materializeActive(resolved);
   EditPassVec activeRows;
   for (const EditPass& editPass : editPasses) {
@@ -519,21 +569,24 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::prepareRebuildResol
   return true;
 }
 
-TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
-    const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
-  spans.clear();
-  startsByTick.clear();
-  soundingAt.clear();
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNotes(
+    const SessionMidiEventVec& resolved, const NoteUtils::DisplayNoteVec& notes, uint32_t begin,
+    uint32_t endExclusive, ResolutionCostCounters* counters) {
   if (loopLengthTicks == 0 || intervalTicks == 0) {
     return true;
   }
-  if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
-    return false;
+  const uint32_t limit = static_cast<uint32_t>(notes.size());
+  if (begin >= limit) {
+    return true;
   }
-  const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(resolved, loopLengthTicks, false);
-  spans.reserve(notes.size());
-  for (const NoteUtils::DisplayNote& note : notes) {
+  if (endExclusive > limit) {
+    endExclusive = limit;
+  }
+  if (spans.capacity() < notes.size()) {
+    spans.reserve(notes.size());
+  }
+  for (uint32_t i = begin; i < endExclusive; ++i) {
+    const NoteUtils::DisplayNote& note = notes[i];
     NoteSpan span{};
     span.note.channel = channelForNoteId(resolved, note.noteId);
     span.note.pitch = note.note;
@@ -546,7 +599,30 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
     startsByTick.emplace(span.startTick, spanIndex);
     startsByTick.emplace(span.endTick, spanIndex);
   }
-  soundingAt.resize(loopLengthTicks / intervalTicks);
+  if (counters != nullptr) {
+    counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
+  }
+  return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
+    const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
+  spans.clear();
+  startsByTick.clear();
+  soundingAt.clear();
+  if (loopLengthTicks == 0 || intervalTicks == 0) {
+    return true;
+  }
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(resolved, loopLengthTicks, false);
+  if (!appendSpansFromNotes(resolved, notes, 0, static_cast<uint32_t>(notes.size()), counters)) {
+    return false;
+  }
+  uint32_t count = loopLengthTicks / intervalTicks;
+  if (count == 0) {
+    count = 1;
+  }
+  soundingAt.resize(count);
   if (counters != nullptr) {
     counters->checkpointIntervalTicks = intervalTicks;
     counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
@@ -575,10 +651,6 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::fillCheckpointRange
     endIndexExclusive = static_cast<uint32_t>(soundingAt.size());
   }
   for (uint32_t i = beginIndex; i < endIndexExclusive; ++i) {
-    if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
-      soundingAt[i].clear();
-      return false;
-    }
     const uint32_t checkpointTick = i * intervalTicks;
     for (const NoteSpan& span : spans) {
       NoteUtils::DisplayNote probe{};
@@ -671,9 +743,42 @@ TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes
 namespace {
 
 TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes);
-TRACK_COLD_MEM bool commitIndexPassAtCursor(LoopContentResolution::TickIndex& index,
-                                            const LoopPasses& passes, size_t cursor,
-                                            ResolutionCostCounters* counters);
+
+struct IndexPassRef {
+  PassId id = kInvalidPassId;
+  CapturePassState state = CapturePassState::Active;
+  uint32_t mergeSequence = 0;
+  const CommittedChunkIdList* chunks = nullptr;
+};
+
+TRACK_COLD_MEM bool indexPassRefAtCursor(const LoopPasses& passes, size_t cursor, IndexPassRef& out) {
+  size_t seen = 0;
+  if (passes.hasRecordPass() && !passes.recordPass.committedChunkIds.empty()) {
+    if (cursor == seen) {
+      out.id = passes.recordPass.id;
+      out.state = passes.recordPass.state;
+      out.mergeSequence = 0;
+      out.chunks = &passes.recordPass.committedChunkIds;
+      return true;
+    }
+    seen += 1;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (cursor == seen) {
+      out.id = pass.id;
+      out.state = pass.state;
+      out.mergeSequence = pass.mergeSequence;
+      out.chunks = &pass.committedChunkIds;
+      return true;
+    }
+    seen += 1;
+  }
+  return false;
+}
+
+TRACK_COLD_MEM bool deviceGateSliceBudgetExhausted(const ElapsedTimer& timer, bool didWork) {
+  return didWork && timer.elapsed() >= LoopContentResolution::kDeviceGateSliceBudgetUs;
+}
 
 struct DeviceGateSession {
   enum class Phase : uint8_t {
@@ -694,10 +799,16 @@ struct DeviceGateSession {
     phase = Phase::Idle;
     loopLengthTicks = 0;
     indexPassCursor = 0;
+    indexChunkCursor = 0;
+    indexEventCursor = 0;
+    indexPassOpen = false;
     checkpointCursor = 0;
+    rebuildSpanCursor = 0;
+    rebuildNotesReady = false;
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
     rebuildEvents = SessionMidiEventVec{};
+    rebuildNotes = NoteUtils::DisplayNoteVec{};
     sample_ = LoopContentResolution::DeviceGateSample{};
   }
 
@@ -731,23 +842,59 @@ struct DeviceGateSession {
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
         ElapsedTimer timer;
-        if (!commitIndexPassAtCursor(index, passes, indexPassCursor, &sample_.indexCommit)) {
-          reset();
-          return LoopContentResolution::DeviceGateSliceResult::Inactive;
-        }
-      sample_.indexCommit.elapsedMicros += timer.elapsed();
-      indexPassCursor += 1;
-      if (indexPassCursor >= countIndexCommitPasses(passes)) {
+        bool didWork = false;
+        while (!deviceGateSliceBudgetExhausted(timer, didWork)) {
+          if (indexPassCursor >= countIndexCommitPasses(passes)) {
 #if defined(ARDUINO)
-        // Device idle gate: skip full materialize/window oracle phases — each blocks seconds on
-        // 64+ bar loops and stalls MIDI/OLED (OpenSpec device worst-case gate).
-        phase = Phase::RebuildPrepare;
+            phase = Phase::RebuildPrepare;
 #else
-        phase = Phase::Materialize;
+            phase = Phase::Materialize;
 #endif
+            break;
+          }
+          IndexPassRef passRef;
+          if (!indexPassRefAtCursor(passes, indexPassCursor, passRef) || passRef.chunks == nullptr) {
+            reset();
+            return LoopContentResolution::DeviceGateSliceResult::Inactive;
+          }
+          if (!indexPassOpen) {
+            index.beginCapturePass(passRef.id, passRef.state, passRef.mergeSequence);
+            sample_.indexCommit.passChunkListsWalked += 1;
+            indexPassOpen = true;
+            indexChunkCursor = 0;
+            indexEventCursor = 0;
+            didWork = true;
+            continue;
+          }
+          const LoopContentResolution::TickIndex::CapturePassEntry* pass =
+              findPass(index, passRef.id);
+          if (pass == nullptr) {
+            reset();
+            return LoopContentResolution::DeviceGateSliceResult::Inactive;
+          }
+          if (indexEventCursor >= static_cast<uint32_t>(pass->events.size())) {
+            if (indexChunkCursor < passRef.chunks->size()) {
+              index.appendCapturePassChunk(passRef.id, (*passRef.chunks)[indexChunkCursor]);
+              indexChunkCursor += 1;
+              didWork = true;
+              continue;
+            }
+            index.pairCapturePassNotes(passRef.id);
+            indexPassCursor += 1;
+            indexPassOpen = false;
+            indexChunkCursor = 0;
+            indexEventCursor = 0;
+            didWork = true;
+            continue;
+          }
+          index.indexCapturePassEventRange(passRef.id, indexEventCursor, indexEventCursor + 1,
+                                           &sample_.indexCommit);
+          indexEventCursor += 1;
+          didWork = true;
+        }
+        sample_.indexCommit.elapsedMicros += timer.elapsed();
+        return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
-      return LoopContentResolution::DeviceGateSliceResult::Continue;
-    }
     case Phase::Materialize: {
         ElapsedTimer timer;
         SessionMidiEventVec materialized;
@@ -795,14 +942,43 @@ struct DeviceGateSession {
       }
       case Phase::RebuildSpans: {
         ElapsedTimer timer;
-        if (!checkpoints.finishRebuildSpansFromEvents(rebuildEvents, &sample_.rebuild)) {
-          reset();
-          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        if (!rebuildNotesReady) {
+          checkpoints.spans.clear();
+          checkpoints.startsByTick.clear();
+          checkpoints.soundingAt.clear();
+          rebuildNotes =
+              NoteUtils::reconstructDisplayNotes(rebuildEvents, loopLengthTicks, false);
+          rebuildSpanCursor = 0;
+          rebuildNotesReady = true;
+          sample_.rebuild.elapsedMicros += timer.elapsed();
+          return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
-        rebuildEvents = SessionMidiEventVec{};
+        bool didWork = false;
+        const uint32_t noteCount = static_cast<uint32_t>(rebuildNotes.size());
+        while (rebuildSpanCursor < noteCount &&
+               !deviceGateSliceBudgetExhausted(timer, didWork)) {
+          if (!checkpoints.appendSpansFromNotes(rebuildEvents, rebuildNotes, rebuildSpanCursor,
+                                                rebuildSpanCursor + 1, &sample_.rebuild)) {
+            reset();
+            return LoopContentResolution::DeviceGateSliceResult::Inactive;
+          }
+          rebuildSpanCursor += 1;
+          didWork = true;
+        }
+        if (rebuildSpanCursor >= noteCount) {
+          uint32_t count = checkpoints.loopLengthTicks / checkpoints.intervalTicks;
+          if (count == 0) {
+            count = 1;
+          }
+          checkpoints.soundingAt.resize(count);
+          sample_.rebuild.checkpointIntervalTicks = checkpoints.intervalTicks;
+          sample_.rebuild.checkpointCount = static_cast<uint32_t>(checkpoints.soundingAt.size());
+          rebuildEvents = SessionMidiEventVec{};
+          rebuildNotes = NoteUtils::DisplayNoteVec{};
+          checkpointCursor = 0;
+          phase = Phase::RebuildCheckpoints;
+        }
         sample_.rebuild.elapsedMicros += timer.elapsed();
-        checkpointCursor = 0;
-        phase = Phase::RebuildCheckpoints;
         return LoopContentResolution::DeviceGateSliceResult::Continue;
       }
       case Phase::RebuildCheckpoints: {
@@ -845,10 +1021,16 @@ struct DeviceGateSession {
   Phase phase = Phase::Idle;
   uint32_t loopLengthTicks = 0;
   size_t indexPassCursor = 0;
+  uint32_t indexChunkCursor = 0;
+  uint32_t indexEventCursor = 0;
+  bool indexPassOpen = false;
   uint32_t checkpointCursor = 0;
+  uint32_t rebuildSpanCursor = 0;
+  bool rebuildNotesReady = false;
   LoopContentResolution::TickIndex index;
   LoopContentResolution::StateCheckpoints checkpoints;
   SessionMidiEventVec rebuildEvents;
+  NoteUtils::DisplayNoteVec rebuildNotes;
   LoopContentResolution::DeviceGateSample sample_;
 };
 
@@ -859,29 +1041,6 @@ TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes) {
   }
   count += passes.overdubPasses.size();
   return count;
-}
-
-TRACK_COLD_MEM bool commitIndexPassAtCursor(LoopContentResolution::TickIndex& index,
-                                            const LoopPasses& passes, size_t cursor,
-                                            ResolutionCostCounters* counters) {
-  size_t seen = 0;
-  if (passes.hasRecordPass() && !passes.recordPass.committedChunkIds.empty()) {
-    if (cursor == seen) {
-      index.commitCapturePass(passes.recordPass.id, passes.recordPass.committedChunkIds,
-                              passes.recordPass.state, 0, counters);
-      return true;
-    }
-    seen += 1;
-  }
-  for (const OverdubPass& pass : passes.overdubPasses) {
-    if (cursor == seen) {
-      index.commitCapturePass(pass.id, pass.committedChunkIds, pass.state, pass.mergeSequence,
-                              counters);
-      return true;
-    }
-    seen += 1;
-  }
-  return false;
 }
 
 bool sDeviceGateFinished = false;

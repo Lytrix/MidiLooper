@@ -11,6 +11,7 @@
 #include "Utils/NoteUtils.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -55,6 +56,12 @@ struct LoopContentResolution {
   struct TickIndex {
     void commitCapturePass(PassId id, const CommittedChunkIdList& chunks, CapturePassState state,
                            uint32_t mergeSequence, ResolutionCostCounters* counters = nullptr);
+    /// Sliced form of `commitCapturePass` — begin, append one chunk, index an event range, pair.
+    void beginCapturePass(PassId id, CapturePassState state, uint32_t mergeSequence);
+    void appendCapturePassChunk(PassId id, uint16_t chunkId);
+    void indexCapturePassEventRange(PassId id, uint32_t beginEvent, uint32_t endEventExclusive,
+                                    ResolutionCostCounters* counters = nullptr);
+    void pairCapturePassNotes(PassId id);
     void commitLoopPasses(const LoopPasses& passes, ResolutionCostCounters* counters = nullptr);
     void setCapturePassState(PassId id, CapturePassState state);
 
@@ -78,10 +85,22 @@ struct LoopContentResolution {
       int32_t offIndex = -1;
     };
 
-    std::vector<CapturePassEntry> capturePasses;
-    std::unordered_map<PassId, size_t> passById;
-    std::multimap<uint32_t, std::pair<PassId, uint32_t>> byTick;
-    std::unordered_map<NoteId, NoteLocation> byNoteId;
+    using CapturePassEntryVec =
+        std::vector<CapturePassEntry, ExternalMemoryFirstAllocator<CapturePassEntry>>;
+    using PassByIdMap =
+        std::unordered_map<PassId, size_t, std::hash<PassId>, std::equal_to<PassId>,
+                           ExternalMemoryFirstAllocator<std::pair<const PassId, size_t>>>;
+    using ByTickMap = std::multimap<
+        uint32_t, std::pair<PassId, uint32_t>, std::less<uint32_t>,
+        ExternalMemoryFirstAllocator<std::pair<const uint32_t, std::pair<PassId, uint32_t>>>>;
+    using ByNoteIdMap =
+        std::unordered_map<NoteId, NoteLocation, std::hash<NoteId>, std::equal_to<NoteId>,
+                           ExternalMemoryFirstAllocator<std::pair<const NoteId, NoteLocation>>>;
+
+    CapturePassEntryVec capturePasses;
+    PassByIdMap passById;
+    ByTickMap byTick;
+    ByNoteIdMap byNoteId;
   };
 
   /// Stage 7 in-RAM sounding snapshots. Not persisted (D3 is out of scope).
@@ -94,25 +113,30 @@ struct LoopContentResolution {
 
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
-    std::vector<SoundingNoteVec> soundingAt;
+    std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> soundingAt;
     std::vector<NoteSpan, ExternalMemoryFirstAllocator<NoteSpan>> spans;
     /// Start and exclusive-end ticks for tail replay (both keyed here).
-    std::multimap<uint32_t, size_t> startsByTick;
+    std::multimap<uint32_t, size_t, std::less<uint32_t>,
+                  ExternalMemoryFirstAllocator<std::pair<const uint32_t, size_t>>>
+        startsByTick;
 
     void rebuild(const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
                  uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters = nullptr);
     void prepareRebuildSpans(const TickIndex& index, const EditPassVec& editPasses,
                              uint32_t loopLength, uint32_t checkpointIntervalTicks,
                              ResolutionCostCounters* counters = nullptr);
-    /// Idle-slice 1: materialize + apply edits. False when pressure is Low or Critical.
+    /// Idle-slice 1: materialize + apply edits.
     bool prepareRebuildResolvedEvents(const TickIndex& index, const EditPassVec& editPasses,
                                       uint32_t loopLength, uint32_t checkpointIntervalTicks,
                                       SessionMidiEventVec& resolved,
                                       ResolutionCostCounters* counters = nullptr);
-    /// Idle-slice 2: reconstruct display notes into spans. False when pressure is Low or Critical.
+    /// Idle-slice 2: reconstruct display notes into spans.
     bool finishRebuildSpansFromEvents(const SessionMidiEventVec& resolved,
                                       ResolutionCostCounters* counters = nullptr);
-    /// Returns false when advisory pressure is Low or Critical (no further sounding copies).
+    /// Sliced span emplace after reconstruct. `[begin, endExclusive)` notes.
+    bool appendSpansFromNotes(const SessionMidiEventVec& resolved,
+                              const NoteUtils::DisplayNoteVec& notes, uint32_t begin,
+                              uint32_t endExclusive, ResolutionCostCounters* counters = nullptr);
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, SoundingNoteVec& out,
@@ -123,6 +147,8 @@ struct LoopContentResolution {
   /// `resolveState` answers. Native Stage 7/8 stay at 1 bar. Device idle gate uses 8 bars.
   static constexpr uint32_t kNativeCheckpointBarStride = 1;
   static constexpr uint32_t kDeviceCheckpointBarStride = 8;
+  /// 5.7 `idle_maint` bar. Same value as `RuntimeTimingTelemetry::kLoopRemainderOneShotUs`.
+  static constexpr uint32_t kDeviceGateSliceBudgetUs = 50000;
 
   static void resolveWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,

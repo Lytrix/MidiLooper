@@ -23,42 +23,46 @@
 
 extern TrackManager trackManager;
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE)
 namespace {
 
-constexpr uint32_t kContentResolutionDeviceGateMaxLoopBars = 16;
-
-bool contentResolutionDeviceGateLoopEligible(uint32_t loopLengthTicks) {
-  if (loopLengthTicks == 0) {
-    return false;
+#if defined(ARDUINO)
+void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
+  struct Seen {
+    const char* kind;
+    const char* reason;
+  };
+  static Seen seen[8]{};
+  static uint8_t seenCount = 0;
+  for (uint8_t i = 0; i < seenCount; ++i) {
+    if (seen[i].kind == kind && seen[i].reason == reason) {
+      return;
+    }
   }
-  const uint32_t bars =
-      (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
-  return bars <= kContentResolutionDeviceGateMaxLoopBars;
-}
-
-bool contentResolutionDeviceGateRuntimeAllowed() {
-  if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
-    return false;
-  }
-  if (editManager.isNoteEditActive()) {
-    return false;
-  }
-  return true;
-}
-
-void logContentResolutionDeviceGateSkipOnce(uint32_t loopLengthTicks) {
-  static bool logged = false;
-  if (logged) {
+  if (seenCount >= 8) {
     return;
   }
-  logged = true;
-  const uint32_t bars =
-      (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  seen[seenCount].kind = kind;
+  seen[seenCount].reason = reason;
+  ++seenCount;
   char line[96];
-  snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,skip,bars,%u,max,%u",
-           static_cast<unsigned long>(micros()), bars, kContentResolutionDeviceGateMaxLoopBars);
+  snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,%s,%s",
+           static_cast<unsigned long>(micros()), kind, reason);
   DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
+const char* contentResolutionDeviceGateDeferReason() {
+  if (StorageManager::hasPendingLoopSlotRestore()) {
+    return "restore";
+  }
+  if (StorageManager::hasPendingUndoSnapshotHydrate()) {
+    return "hydrate";
+  }
+  if (StorageManager::hasDeferredSaveWork()) {
+    return "save";
+  }
+  return nullptr;
 }
 
 }  // namespace
@@ -176,16 +180,15 @@ TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
   if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
     return;
   }
-  if (SlotLoadSession::isActive() || StorageManager::hasPendingLoopSlotRestore() ||
-      StorageManager::hasPendingUndoSnapshotHydrate() || StorageManager::hasDeferredSaveWork()) {
+  if (const char* deferReason = contentResolutionDeviceGateDeferReason()) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("skip", deferReason);
+#endif
     return;
   }
 #if defined(ARDUINO)
-  if (!contentResolutionDeviceGateRuntimeAllowed()) {
-    return;
-  }
-  if (!contentResolutionDeviceGateLoopEligible(loop.loopLengthTicks)) {
-    logContentResolutionDeviceGateSkipOnce(loop.loopLengthTicks);
+  if (editManager.isNoteEditActive()) {
+    logContentResolutionDeviceGateOnce("skip", "edit");
     return;
   }
 #endif
@@ -205,22 +208,33 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   }
   Loop& loop = getActiveLoop();
 #if defined(ARDUINO)
-  if (!contentResolutionDeviceGateRuntimeAllowed() ||
-      !contentResolutionDeviceGateLoopEligible(loop.loopLengthTicks)) {
+  if (editManager.isNoteEditActive()) {
+    logContentResolutionDeviceGateOnce("reset", "edit");
     LoopContentResolution::deviceGateReset();
     return;
   }
 #endif
   if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "dirty");
+#endif
     LoopContentResolution::deviceGateReset();
     return;
   }
-  if (SlotLoadSession::isActive() || StorageManager::hasPendingLoopSlotRestore() ||
-      StorageManager::hasPendingUndoSnapshotHydrate() || StorageManager::hasDeferredSaveWork()) {
+  if (const char* deferReason = contentResolutionDeviceGateDeferReason()) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("skip", deferReason);
+#endif
     return;
   }
   const LoopContentResolution::DeviceGateSliceResult result =
       LoopContentResolution::deviceGateRunOneSlice(loop.passes, loop.loopLengthTicks);
+  if (result == LoopContentResolution::DeviceGateSliceResult::Inactive) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "abort");
+#endif
+    return;
+  }
   if (result != LoopContentResolution::DeviceGateSliceResult::Complete) {
     return;
   }

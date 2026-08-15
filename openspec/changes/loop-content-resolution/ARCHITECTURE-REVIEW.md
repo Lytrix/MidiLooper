@@ -64,7 +64,7 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **State transition change?** | NO |
 | **Behavior-preserving?** | YES until swap. Native 1-bar vs device 8/16-bar stride MUST agree |
 | **Reuse** | YES — extend `StateCheckpoints` / `checkpointIntervalTicks`. Keep 3b visual-cache overdub copy |
-| **Phase scope** | Sparse `soundingAt`, pressure abort, split `prepareRebuildSpans`, 68-bar measure; **no** delete of materialize; **no** raise of 16-bar arm cap until 5.8 |
+| **Phase scope** | Sparse `soundingAt`, split `prepareRebuildSpans`, >63-bar measure ([`115750`](../../../captures/session_20260815_115750.log) 139 bars); IndexCommit / RebuildSpans budgeted at 50 ms; **no** delete of materialize; arm cap stays off |
 
 ---
 
