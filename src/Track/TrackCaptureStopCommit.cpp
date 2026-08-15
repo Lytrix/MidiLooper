@@ -29,8 +29,9 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   deferredValidateQueuedAtMs = scheduleDeferredFullValidate ? millis() : 0;
 }
 
-CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason,
-                                              uint32_t closeTick) {
+TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result,
+                                                             CommitReason reason,
+                                                             uint32_t closeTick) {
   Loop& loop = getActiveLoop();
   const bool recordStop = reason == CommitReason::RecordStop ||
                           reason == CommitReason::RecordStopToStopped;
@@ -57,6 +58,10 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       }
       if (overdubStop) {
         finalizeLoopAtStop(closeTick, false);
+        if (!editManager.isNoteEditActive()) {
+          TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), kInvalidPassId, {},
+                                              false);
+        }
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
         const uint8_t persistSlotIndex = getActiveLoopIndex();
         StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
@@ -84,7 +89,8 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
         EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
-        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId, companionIds);
+        TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
+                                            true);
         if (overdubStop) {
           loop.markAffectedDisplayCacheRanges(undoPassId, companionIds);
         } else {
@@ -142,8 +148,8 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
   return result;
 }
 
-CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
-                                         uint32_t closeTick) {
+TRACK_COLD_MEM CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
+                                                         uint32_t closeTick) {
   Loop& loop = getActiveLoop();
   const CommitResult commitResult = loop.commitCapturePass(reason, commitTick);
   return finalizeCommitSideEffects(commitResult, reason, closeTick);

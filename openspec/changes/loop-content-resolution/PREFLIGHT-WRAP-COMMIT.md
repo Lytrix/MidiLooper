@@ -3,7 +3,7 @@
 **Mode:** Full — formal triggers fired.  
 **Date:** 2026-08-15  
 **Change:** `loop-content-resolution`  
-**Status:** DEC-038 recorded. Firmware not started. Awaiting implement approval for 038.1.
+**Status:** DEC-038 recorded. **038.1 HITL PASS.** **038.2 landed.**
 
 Plan: [`docs/Plans/loop_content_resolution_overdub_state_evaluation_refinement.md`](../../../docs/Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)
 
@@ -82,7 +82,7 @@ Overdub lifecycle / capture commit / undo routing (DEC-037 6E, DEC-031/032).
 
 - Native: wrap at S publishes completed pair; held ON not sealed; session disable hides wrap-1; stamp miss → 3b (6E already).
 - 038.1: native wrap-reentry + session undo without GUS.
-- 038.2: native GUS `passIds` + legacy STK2 single `passId`.
+- 038.2: native GUS `passIds` + legacy STK2 single `passId` — landed.
 - HITL after firmware: wrap-over-wrap Shorten; undo while OVERDUBBING; one U: after stop.
 
 ## Does not start

@@ -218,12 +218,22 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
-        case UndoEntryKind::OverdubPassAdded:
-            if (!disableCapturePass(loop, entry.passId)) {
+        case UndoEntryKind::OverdubPassAdded: {
+            PassIdList overdubIds;
+            appendOverdubCapturePassIds(entry, overdubIds);
+            if (overdubIds.empty()) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
                            static_cast<unsigned long>(entry.passId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
+            }
+            for (const PassId id : overdubIds) {
+                if (!disableCapturePass(loop, id)) {
+                    logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
+                               static_cast<unsigned long>(id),
+                               static_cast<unsigned>(entry.slotIndex));
+                    return false;
+                }
             }
             if (!entry.editPassIds.empty() &&
                 !setEditPassState(loop, entry.editPassIds, EditPassState::Disabled,
@@ -242,6 +252,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             entry.hasRedoPayload = true;
             return true;
+        }
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
             if (entry.editPassIds.empty()) {
@@ -340,17 +351,27 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
-        case UndoEntryKind::OverdubPassAdded:
+        case UndoEntryKind::OverdubPassAdded: {
             if (!entry.hasRedoPayload) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for overdub pass entry %lu",
                            static_cast<unsigned long>(entry.id));
                 return false;
             }
-            if (!enableCapturePass(loop, entry.passId)) {
+            PassIdList overdubIds;
+            appendOverdubCapturePassIds(entry, overdubIds);
+            if (overdubIds.empty()) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
                            static_cast<unsigned long>(entry.passId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
+            }
+            for (const PassId id : overdubIds) {
+                if (!enableCapturePass(loop, id)) {
+                    logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
+                               static_cast<unsigned long>(id),
+                               static_cast<unsigned>(entry.slotIndex));
+                    return false;
+                }
             }
             if (!entry.editPassIds.empty() &&
                 !setEditPassState(loop, entry.editPassIds, EditPassState::Active,
@@ -368,6 +389,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
+        }
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
             if (!entry.hasRedoPayload || entry.editPassIds.empty()) {
@@ -507,9 +529,20 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     pushUndoEntry(track, std::move(entry));
 }
 
-TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId,
+TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex,
+                                                    PassIdList passIds,
                                                     EditPassIdList companionEditPassIds) {
-    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passIds.empty()) {
+        return;
+    }
+    PassIdList validIds;
+    validIds.reserve(passIds.size());
+    for (const PassId id : passIds) {
+        if (id != kInvalidPassId) {
+            validIds.push_back(id);
+        }
+    }
+    if (validIds.empty()) {
         return;
     }
     const Loop& loop = track.getLoop(slotIndex);
@@ -517,11 +550,35 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     entry.kind = UndoEntryKind::OverdubPassAdded;
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
-    entry.passId = passId;
+    entry.passId = validIds.back();
+    if (validIds.size() > 1) {
+        entry.passIds = std::move(validIds);
+    }
     entry.editPassType = EditPassType::Note;
     entry.editPassIndex = kOverdubCompanionEditPassIndex;
     entry.editPassIds = std::move(companionEditPassIds);
     pushUndoEntry(track, std::move(entry));
+}
+
+TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t slotIndex,
+                                                        PassId lastPassId,
+                                                        EditPassIdList lastCompanionIds,
+                                                        bool includeLastPass) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    Loop& loop = track.getLoop(slotIndex);
+    PassIdList passIds;
+    EditPassIdList companionIds;
+    loop.collectOverdubSessionUndoPasses(passIds, companionIds);
+    if (includeLastPass && lastPassId != kInvalidPassId &&
+        (passIds.empty() || passIds.back() != lastPassId)) {
+        passIds.push_back(lastPassId);
+    }
+    for (const EditPassId id : lastCompanionIds) {
+        companionIds.push_back(id);
+    }
+    pushOverdubPassAdded(track, slotIndex, std::move(passIds), std::move(companionIds));
 }
 
 TRACK_COLD_MEM void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,

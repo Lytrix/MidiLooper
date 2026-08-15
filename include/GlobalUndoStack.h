@@ -31,6 +31,9 @@ struct UndoEntry {
   uint8_t slotIndex = 0;
   LoopId loopId = kInvalidLoopId;
   PassId passId = kInvalidPassId;
+  /// Extra wrap ids for one OverdubPassAdded session (DEC-038 038.2). Empty = legacy
+  /// single `passId` (STK2). When non-empty, `passId` is the last wrap.
+  PassIdList passIds;
 
   LoopSnapshotRef beforeSnapshot;
   LoopSnapshotRef afterSnapshot;
@@ -64,6 +67,8 @@ constexpr uint32_t kGlobalUndoStackToken = 0x33535547UL;
 constexpr uint32_t kGlobalUndoStackScopedEditExtensionToken = 0x314B5453UL;
 /// STK2 = STK1 plus OverdubPassAdded companion editPassIds (wire bytes: "STK2").
 constexpr uint32_t kGlobalUndoStackOverdubCompanionExtensionToken = 0x324B5453UL;
+/// STK3 = STK2 plus OverdubPassAdded wrap passIds (wire bytes: "STK3").
+constexpr uint32_t kGlobalUndoStackOverdubPassIdsExtensionToken = 0x334B5453UL;
 /// Optional footer extension before `selectedSlotIndex[]` (wire bytes: "SLOT").
 constexpr uint32_t kFooterSelectedSlotExtensionToken = 0x534C4F54UL;
 
@@ -83,6 +88,21 @@ struct GlobalUndoStack {
   size_t undoCount() const { return cursor; }
   size_t redoCount() const { return entries.size() - cursor; }
 };
+
+/// Capture-pass ids for one OverdubPassAdded. Legacy STK2 rows use `passId` only.
+inline void appendOverdubCapturePassIds(const UndoEntry& entry, PassIdList& out) {
+  if (!entry.passIds.empty()) {
+    for (const PassId id : entry.passIds) {
+      if (id != kInvalidPassId) {
+        out.push_back(id);
+      }
+    }
+    return;
+  }
+  if (entry.passId != kInvalidPassId) {
+    out.push_back(entry.passId);
+  }
+}
 
 /// Pass/edit/loop-boundary undo — excludes ClearSlot (sidebar U: depth).
 inline bool isPassUndoEntryKind(UndoEntryKind kind) {

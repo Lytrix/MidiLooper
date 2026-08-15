@@ -129,6 +129,24 @@ LOOP_COLD_MEM void Loop::pushOverdubSessionPass(PassId passId, EditPassIdList co
   overdubSessionCursor_ = overdubSessionPassIds_.size();
 }
 
+LOOP_COLD_MEM void Loop::collectOverdubSessionUndoPasses(PassIdList& passIds,
+                                                        EditPassIdList& companionIds) const {
+  passIds.clear();
+  companionIds.clear();
+  for (size_t i = 0; i < overdubSessionCursor_ && i < overdubSessionPassIds_.size(); ++i) {
+    const PassId passId = overdubSessionPassIds_[i];
+    if (passId == kInvalidPassId) {
+      continue;
+    }
+    passIds.push_back(passId);
+    if (i < overdubSessionCompanionIds_.size()) {
+      for (const EditPassId id : overdubSessionCompanionIds_[i]) {
+        companionIds.push_back(id);
+      }
+    }
+  }
+}
+
 LOOP_COLD_MEM void Loop::dropOverdubSessionRedoTail() {
   if (overdubSessionCursor_ < overdubSessionPassIds_.size()) {
     overdubSessionPassIds_.resize(overdubSessionCursor_);

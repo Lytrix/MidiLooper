@@ -16,6 +16,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
+#include "GlobalUndoStack.h"
 #include "LoopContentResolution.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
@@ -466,6 +467,79 @@ void test_session_undo_skips_next_wrap_crossing() {
   TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(776, 777));
 }
 
+void test_stop_collects_session_wraps_then_close_clears_stack() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 777));
+  const PassId wrap1 = loop.lastCommittedPassId();
+  EditPassIdList companions1;
+  companions1.push_back(11);
+  loop.pushOverdubSessionPass(wrap1, companions1);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(600, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 777));
+  const PassId wrap2 = loop.lastCommittedPassId();
+  EditPassIdList companions2;
+  companions2.push_back(12);
+  loop.pushOverdubSessionPass(wrap2, companions2);
+
+  PassIdList passIds;
+  EditPassIdList companions;
+  loop.collectOverdubSessionUndoPasses(passIds, companions);
+  TEST_ASSERT_EQUAL(2u, passIds.size());
+  TEST_ASSERT_EQUAL(wrap1, passIds[0]);
+  TEST_ASSERT_EQUAL(wrap2, passIds[1]);
+  TEST_ASSERT_EQUAL(2u, companions.size());
+  TEST_ASSERT_EQUAL(11u, companions[0]);
+  TEST_ASSERT_EQUAL(12u, companions[1]);
+
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  PassIdList afterUndo;
+  EditPassIdList companionsAfterUndo;
+  loop.collectOverdubSessionUndoPasses(afterUndo, companionsAfterUndo);
+  TEST_ASSERT_EQUAL(1u, afterUndo.size());
+  TEST_ASSERT_EQUAL(wrap1, afterUndo[0]);
+  TEST_ASSERT_EQUAL(1u, companionsAfterUndo.size());
+  TEST_ASSERT_EQUAL(11u, companionsAfterUndo[0]);
+  TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  loop.collectOverdubSessionUndoPasses(passIds, companions);
+  TEST_ASSERT_EQUAL(2u, passIds.size());
+  TEST_ASSERT_EQUAL(wrap2, passIds[1]);
+
+  UndoEntry entry{};
+  entry.kind = UndoEntryKind::OverdubPassAdded;
+  entry.passId = passIds.back();
+  entry.passIds = passIds;
+  PassIdList visited;
+  appendOverdubCapturePassIds(entry, visited);
+  TEST_ASSERT_EQUAL(2u, visited.size());
+  for (const PassId id : visited) {
+    TEST_ASSERT_TRUE(loop.setCapturePassState(id, CapturePassState::Disabled));
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrap1 || pass.id == wrap2) {
+      TEST_ASSERT_EQUAL(CapturePassState::Disabled, pass.state);
+    }
+  }
+
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  PassIdList afterClose;
+  EditPassIdList companionsAfterClose;
+  loop.collectOverdubSessionUndoPasses(afterClose, companionsAfterClose);
+  TEST_ASSERT_TRUE(afterClose.empty());
+  TEST_ASSERT_TRUE(companionsAfterClose.empty());
+}
+
 void test_should_commit_overdub_wrap_after_leaving_start() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -497,6 +571,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);
+  RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
   return UNITY_END();
 }

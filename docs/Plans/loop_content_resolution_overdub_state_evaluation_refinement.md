@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — **038.1 landed**; issue 1 wrap-tail reconstruct **shipped** (`finishOpenNotes=false` on committed wrap/display). Not 038.2.  
+**Status:** Active — **038.1 HITL PASS**; **038.2 landed** (one `OverdubPassAdded` `passIds` + STK3). Issue 1 wrap-tail reconstruct **shipped** (`finishOpenNotes=false` on committed wrap/display).  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) wrap commit + session undo  
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** DEC-038 **038.2** GUS `passIds`. HITL wrap-over-wrap after upload. Not midi_gap / 6.3.
+**Next when asked:** After-stop one **U:** HITL for 038.2. Issue 3 parked. Not midi_gap / 6.3.
 
 ---
 
@@ -265,6 +265,10 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 
 ---
 
+## 038.2 landed (2026-08-16)
+
+Stop pushes one `OverdubPassAdded`. `passIds` = sealed session wraps still on the cursor, plus the last wrap if stop committed it. `editPassIds` = all companions. Empty last wrap (`Skipped`) still pushes the sealed wraps. Single wrap leaves `passIds` empty and keeps `passId` (STK2). Two or more wraps write STK3. `closeOverdubSession` still clears the stack after the GUS push. Loop-content derive is unchanged (no session-id). `pushOverdubSessionOnStop` / `finalizeCommitSideEffects` / `collectReferencedPasses` are FLASH (`TRACK_COLD_MEM`). `teensy41-capture-serial` RAM1 free 6528. Native: `test_overdub_pass_added_pass_ids_round_trip`, `test_stk2_overdub_pass_added_leaves_pass_ids_empty`, `test_stop_collects_session_wraps_then_close_clears_stack`, `test_collect_referenced_passes_pins_overdub_pass_ids`.
+
 ## 038.1 landed (2026-08-15)
 
 `Track::commitOverdubWrapAtSessionStart` seals completed pairs at S, publishes, `beginCapture`, stays OVERDUBBING. Held ONs stay on live capture. `handleUndo` / `handleRedo` session-gate while OVERDUBBING. No GUS `passIds`. After stop, existing single-`passId` `OverdubPassAdded` covers the last wrap only.
@@ -339,13 +343,13 @@ Session undo **fires** while OVERDUBBING. Sealed-wrap committed count does not f
 
 Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`, `test_source_view_prepared_window_omits_unpaired_open_tails`.
 
-Does not fix wrap-on-clock stall (issue 3). After-stop multi-wrap GUS is 038.2.
+Does not fix wrap-on-clock stall (issue 3). After-stop multi-wrap GUS is 038.2 (landed).
 
 ## Issue 2 shipped — session undo hides the wrap in prepared LCR
 
 `Loop::setCapturePassState` calls `setPreparedCapturePassState` then `restampPreparedPlaybackRevision` after the revision bump. Prepared stays ready; `findRawWindow` / `eraseDisabledSounding` skip the Disabled pass. Native: `test_overdub_session_undo_hides_wrap_from_prepared_lcr`.
 
-After-stop one `OverdubPassAdded` `passId` is still 038.2.
+After-stop one `OverdubPassAdded` `passIds` is 038.2 (landed).
 
 ## Issue 2 playback — silence + merge rebuild on overdub undo
 
@@ -380,6 +384,10 @@ Slot switch PASS. Overdub 132.050 tick 1016. Wrap 140.048. Undo 143.094 then wra
 `Loop::undoOverdubSession` cleared live first. `MI,U` and the next S crossing pushed a new session pass, so wrap disable never ran ([`235536`](../../captures/session_20260815_235536.log) same trap).
 
 Pin: while a session wrap exists, undo hides that wrap and discards live so S cannot re-push it. The next S crossing is skipped. Live-only undo remains only when no session wrap is on the cursor.
+
+## HITL [`004842`](../../captures/session_20260816_004842.log) — 038.1 PASS
+
+Overdub 21.861 tick 3296. First wrap 29.874 tick 6368 (`S+3072`). Stays OVERDUBBING. Five session undos; each skips the next S (no wrap at 9440 / 18656 / 24800 / 27872 / 40160). Mash 75.688 then 85.424 with no wrap between. Committed cache drops on undo: 45→39, 39→20, 99→85. Next wrap after an undo is one full period later, not the 003818 0.2–1 s re-push. Stop 126.594 seals the partial wrap. No GUS undo after stop in this capture (038.2 landed after). Slot switch not retested here ([`003818`](../../captures/session_20260816_003818.log) already PASS).
 
 ## Out of scope
 

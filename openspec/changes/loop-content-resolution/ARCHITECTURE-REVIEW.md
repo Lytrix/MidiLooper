@@ -106,6 +106,6 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **Reuse** | YES — extend `commitCapturePass` + 6D.4 publish + `handleUndo` session-gate. GUS kind stays `OverdubPassAdded` |
 | **Phase scope** | **038.1** after user approval (RAM wrap + session stack). **038.2** later (GUS `passIds`). No SD. No midi_gap / 6.3 |
 
-**Approval:** DEC-038 pins recorded. **038.1 landed.** **038.2** not started. Native 6E.1–6E.5 PASS. 6D.4 publish already exists.
+**Approval:** DEC-038 pins recorded. **038.1 HITL PASS.** **038.2 landed** (GUS `passIds` + STK3). Native 6E.1–6E.5 PASS. 6D.4 publish already exists.
 
 **Approval:** APPROVE design gate — native Phase 0–5 may proceed. **6D.4 landed** (`publishPreparedOverdubPass`, `DeviceGateSession::delta`, two-source consume). Prepared validity may come from commit-site restamp, not only `deviceGateComplete`. Do not treat 6D as “LCR is always live.” Device HITL open.
