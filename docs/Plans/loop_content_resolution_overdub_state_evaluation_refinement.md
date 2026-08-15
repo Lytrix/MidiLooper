@@ -1,6 +1,6 @@
 # LoopContentResolution — overdub state evaluation (no note map)
 
-**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b PASS**; 6E.2–6E.5 not started; no firmware  
+**Status:** Active — native **6E.1 PASS** (LCR→geometry); **6E.1b PASS**; **6E.2 PASS**; 6E.3–6E.5 not started; no firmware  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype); wrap-commit + session-undo DEC not yet numbered  
@@ -150,7 +150,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1 PASS.** **6E.1b PASS** — session start S = 777 is wrap origin.
+**6E.1 PASS.** **6E.1b PASS.** **6E.2 PASS** — consume tracks checkpoint-interval replay.
 
 **Hide vs Shorten (loop length):** source fills the loop. Incoming ON@4000 OFF@200.
 
@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** native **6E.2** or **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
+**Next when asked:** native **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
 
 ---
 
@@ -186,6 +186,29 @@ Not firmware. Not 6E.5. Not wrap-commit.
 
 ---
 
+## 6E.2 — consume tracks checkpoint replay, not history (PASS)
+
+`test_stage6e2_consume_tracks_checkpoint_replay_not_history`. Canonical 64-bar fixture. Hold 200 ticks at `loopLength - 240`.
+
+```text
+resolveState(checkpoints, consumeStart)
+  replayStart > 0
+  consumeStart - replayStart < TICKS_PER_BAR
+  eventsReplayed < eventsInHistory          (spans, not MIDI events)
+  passChunkListsWalked = 0
+
+resolveWindow(index, hold 200) visits and window events
+  < resolveWindow(index, 16 bars)           FAIL path (6C consume)
+  < resolveWindow(LoopPasses, whole loop)   FAIL path (full rematerialize)
+eventsReplayed < rematerialize window events
+```
+
+32 extra early-bar overdubs grow `eventsInHistory`. Same consume tick: `eventsReplayed` stays within +2 of the baseline. Replay does not track `history_events`.
+
+Not firmware. Not 6C consume-path edits.
+
+---
+
 ## Native 6E (before firmware)
 
 Extend [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](../../test/test_loop_content_resolution/test_loop_content_resolution.cpp) only.
@@ -194,7 +217,7 @@ Extend [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](..
 |-------|--------|
 | **6E.1** | **PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten. Loop-filling source + incoming 4000–200: loop 4000 → **Hide**; loop 4100 → **Shorten 0–3999**. |
 | **6E.1b** | **PASS** — S = 777 is wrap origin. Rotated linear 6E.1 rows match. Absolute 0–5000 + incoming across S Shortens. Loop-filling 4000/4100 not rotated. |
-| **6E.2** | Consume tracks checkpoint-interval replay, not `history_events`. Full reconstruct / 16-bar `resolveWindow` = FAIL |
+| **6E.2** | **PASS** — checkpoint replay < interval and < history spans. Hold window < 16-bar `resolveWindow` and < full rematerialize. Early-bar history growth does not grow replay. |
 | **6E.3** | Keep `spans` + `spanBoundaries` after drop-rebuild-buffers. Keep-all-`soundingAt` = FAIL |
 | **6E.4** | Wrap-1 publish is wrap-2 source; session-disable wrap 1 hides it; GUS stamp miss → 3b |
 | **6E.5** | Held note across start-tick S does not seal an incomplete Add |
