@@ -353,6 +353,14 @@ HITL [`234535`](../../captures/session_20260815_234535.log): after issue 1+2 fla
 
 Fix: `refreshPlaybackAfterCapturePassStateChange` — `silenceSlotMidiOutput` then `invalidatePlaybackMergedMidiEvents(false)`. Session undo/redo and GUS `OverdubPassAdded` undo/redo. Does not use `sendAllNotesOff` (CC 123). Native gather after session undo: `test_overdub_session_undo_disables_sealed_wrap`. Device HITL next.
 
+## HITL [`235536`](../../captures/session_20260815_235536.log) — live undo must not slot-silence
+
+Overdub 11.112 tick 544. Wraps 19.096 / 27.094 / 35.094. Eight `Overdub session undo` while OVERDUBBING. Committed DISP stayed **42** after wrap 1 and **43** after wrap 2 — session undo only cleared live (61→42, 46→43). MI,U notes between undos kept `capture.store` non-empty, so `Loop::undoOverdubSession` never reached wrap disable.
+
+`b24a8c4` still ran `silenceSlotMidiOutput` + merge reset on those live undos. That NoteOffs the whole slot ledger (record + earlier wraps). After transport stop 38.676, GUS `Undo (entries=2)` `kind=1` dropped STOPPED DISP 43→24 (older overdub, not the session wraps).
+
+Gate: session silence/merge rebuild only when `playbackRevision` changes (`setCapturePassState`). Live store clear does not bump revision. GUS `OverdubPassAdded` unchanged.
+
 ## Out of scope
 
 - midi_gap / 6.3 / 6.4

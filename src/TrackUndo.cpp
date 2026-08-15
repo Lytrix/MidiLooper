@@ -560,11 +560,14 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
     if (!loop.hasOverdubSession() || !loop.canUndoOverdubSession()) {
         return false;
     }
+    const uint32_t revisionBefore = loop.playbackRevision;
     if (!loop.undoOverdubSession()) {
         return false;
     }
     loop.invalidateCaches();
-    refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+    if (loop.playbackRevision != revisionBefore) {
+        refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+    }
     logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
     return true;
 }
@@ -573,11 +576,14 @@ TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
     if (!loop.hasOverdubSession() || !loop.canRedoOverdubSession()) {
         return false;
     }
+    const uint32_t revisionBefore = loop.playbackRevision;
     if (!loop.redoOverdubSession()) {
         return false;
     }
     loop.invalidateCaches();
-    refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+    if (loop.playbackRevision != revisionBefore) {
+        refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+    }
     logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
     return true;
 }
