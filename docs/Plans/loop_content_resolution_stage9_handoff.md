@@ -279,6 +279,30 @@ Recapture: overdub and stop within ~1 s so entry CAP is not evicted. Score `begi
 
 ---
 
+## Why LCR is not ready before overdub (2026-08-15)
+
+The 3b `visualCache.notes` copy is the path that is ready on a PLAYING overdub. Prepared LCR is not. Three independent firmware rules, all in `Track::processDeferredIdleMaintenance` / `maybeQueueContentResolutionDeviceGate` / `preparedWindowReady`:
+
+1. **STOPPED only.** LCR slices run only when `!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()`. Visual-cache idle slices **do** run while PLAYING. After overdub stop the display can `slice_clean` during PLAYING; LCR cannot.
+
+2. **Full rebuild is tens of seconds of STOPPED slices.** Uninterrupted: [`173842`](../../captures/session_20260815_173842.log) idx 20.7 s → `mat=` 52.4 s (**31.8 s**). [`185931`](../../captures/session_20260815_185931.log) 14.2 → 53.8 s (**39.6 s**). [`194015`](../../captures/session_20260815_194015.log) armed, then `reset,dirty` at undo 17.358 s, idx restarted, PLAYING at 26.8 s froze the gate; [`194643`](../../captures/session_20260815_194643.log) finished at 285.4 s.
+
+3. **One-shot stamp.** `deviceGateComplete` sets `sDeviceGateFinished`. `maybeQueueContentResolutionDeviceGate` returns immediately after that. Overdub commit increments `playbackRevision`, so `preparedWindowReady` is false, and the gate never rebuilds. [`194643`](../../captures/session_20260815_194643.log) second overdub (INFO **9 ms**) cannot consume LCR even though `mat=` already happened.
+
+Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirty (`DIAG,lcr,reset,dirty` in [`194015`](../../captures/session_20260815_194015.log)). Boot/save defer: `skip,restore` / `skip,save`.
+
+**Always-ready before overdub is not 6C.** 6.0 forbids construct/sort/checkpoint/resolve on start/stop. Meeting “always ready” needs a design pick:
+
+| Option | What changes | Meets PLAYING overdub-over-overdub? |
+|--------|----------------|--------------------------------------|
+| A. Re-arm after stamp mismatch (STOPPED only) | Clear `deviceGateFinished` when `playbackRevision` disagrees | No — still tens of seconds STOPPED |
+| B. Slice LCR while PLAYING (same budget as visual cache) | 5.1 “gate does not run while PLAYING” | Only after another 30–60 s of PLAYING slices |
+| C. Incremental TickIndex update on commit | 6B explicitly did not do this on stop | Yes, if the update is bounded |
+
+Do not start A/B/C without an explicit pick. 6C recapture (short overdub after `mat=`) still scores consume-when-ready.
+
+---
+
 ## Key files
 
 | Role | Path |
