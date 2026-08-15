@@ -699,6 +699,7 @@ Device HITL only after native PASS and an explicit upload request.
 - Folding delta into `tickEvents` on STOPPED idle (later, optional)
 - midi_gap, 6.3, 6.4
 - Deleting `materializeToEventVector` or the 3b copy
+- 6E overdub `resolveState` consume / wrap-commit / session undo — sibling [`loop_content_resolution_overdub_state_evaluation_refinement.md`](loop_content_resolution_overdub_state_evaluation_refinement.md)
 
 ### Native + firmware result (2026-08-15)
 
@@ -706,4 +707,39 @@ Device HITL only after native PASS and an explicit upload request.
 
 `test_stage6d4_publish_restamps_without_device_gate_complete`: three publishes after a partial prepare; `preparedWindowReady` matches the new revision without `deviceGateComplete`; `eventsInHistory` stays the frozen `tickEvents` size; window matches the materialize oracle; unprepared publish is a no-op; stamp+1 without publish misses.
 
-`pio test -e native` and `teensy41-capture-serial` build succeeded. Device HITL not run. Not all of LCR is incrementally live.
+`pio test -e native` and `teensy41-capture-serial` build succeeded. Not all of LCR is incrementally live.
+
+### Device [`205928`](../../captures/session_20260815_205928.log) — 6D.4 restamp PASS
+
+STOPPED idle completed on the 4-bar loop: `DIAG,lcr,mat=0,...,hist=91,walk=0` then `DIAG,lcr,6a,...,match=0`. No later `DIAG,lcr,phase` / `deviceGateComplete`.
+
+PLAYING overdub stop at 115.796 s: `VCACHE,stale_range` `dcnt=4`, `ODUB,stop,seal,...,published`, `ST,Track,OVERDUBBING,PLAYING`. Next overdub at 117.269 s (still PLAYING, no STOPPED gate):
+
+`DIAG,lcr,6c,win=23723,proj=13466,tot=37189,ev=363,notes=194` then `ODUB,stage,begin_capture,37747`.
+
+`6c` is emitted only from `tryResolvePreparedWindow` success. Overdub commit increments `playbackRevision`. Without publish restamp, `preparedWindowReady` is false and `6c` cannot appear. No idle gate ran between `mat=` and this `6c`. Therefore the PLAYING commit restamped the prepared index.
+
+| Check | Result |
+|-------|--------|
+| Prepared index existed | `mat=` `hist=91` before PLAYING |
+| No second `deviceGateComplete` | no `lcr,phase` after `mat=` |
+| Next overdub consumed LCR | `DIAG,lcr,6c` present |
+| 6D.4 restamp | **PASS** |
+
+`begin_capture` **37747 µs** is 6C consume cost (`win` + `reconstructDisplayNotes`), not the 6D.2 `findRawWindow` 4 µs. It is slower than 3b **2214 µs**. That is not a 6D.4 fail. Do not start midi_gap / 6.3 from this capture.
+
+First post-`mat=` overdub (87.628 s, `events=188`) has no `ODUB,stage` / `6c` `#CAP` lines; `RING,overflow` at that stop. Not scored as a miss.
+
+Track 0 overdubs before `mat=` (`begin_capture` 7111 / 8185 / 10228 µs) had no prepared index. Expected 3b. 6B `stale_range` still fired on those stops (`dcnt` 8 / 7).
+
+### Device [`210508`](../../captures/session_20260815_210508.log) — same boot; restamp holds; third consume 312 ms
+
+Continuation of [`205928`](../../captures/session_20260815_205928.log) (no `BOOT`; micros continue; no `lcr,phase` / `mat=`). Two STOPPED undos at 340.053 / 341.339 (`kind=1`, `Overdub undone`) before the first overdub.
+
+| Overdub | Evidence | Result |
+|---------|----------|--------|
+| 352.581 after undo | no `6c`; `begin_capture,120` | stamp miss → 3b. Expected (undo `++playbackRevision` without publish) |
+| 363.558 after PLAYING publish | `6c,win=14482,proj=16019,tot=30501,ev=427,notes=227` → `begin_capture,31128` | **6D.4 restamp PASS** |
+| 374.884 after next PLAYING publish | `6c,win=298215,proj=13546,tot=311761,ev=289,notes=144` → `begin_capture,312636` | restamp still hits; **6C consume 312 ms** |
+
+`win=` is the full two-source `resolveWindow` timer in `tryResolvePreparedWindow` (find + sort + unique + filter + sort), not the 6D.2 `findRawWindow` 4 µs. `proj=` is `reconstructDisplayNotes`. No second `deviceGateComplete`. 6B `stale_range` `dcnt=4` on both scored stops. Do not start midi_gap / 6.3 as a separate investigation; the 312 ms `6c` is the consume cost.

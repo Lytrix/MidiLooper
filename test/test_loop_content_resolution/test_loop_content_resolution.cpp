@@ -2792,6 +2792,230 @@ void test_stage6d3_repeated_overdub_scales() {
   TEST_ASSERT_FALSE(queryTracksAccumulatedDelta);
 }
 
+namespace {
+
+constexpr uint32_t kStage6e1LoopBars = 8;
+constexpr uint32_t kStage6e1LoopLen = kStage6e1LoopBars * Config::TICKS_PER_BAR;
+
+struct Stage6e1SourceSpan {
+  NoteId id = kInvalidNoteId;
+  uint8_t pitch = 0;
+  uint32_t onTick = 0;
+  uint32_t offTick = 0;
+};
+
+struct Stage6e1OverlapCase {
+  const char* name = "";
+  Stage6e1SourceSpan sources[4]{};
+  uint8_t sourceCount = 0;
+  uint8_t incomingPitch = 0;
+  uint32_t incomingStart = 0;
+  uint32_t incomingEnd = 0;
+};
+
+bool stage6e1LinearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
+                                uint32_t& linearStart, uint32_t& linearEnd) {
+  if (loopLength == 0) {
+    return false;
+  }
+  linearStart = IntervalProjection::tickPhaseInLoop(startTick, 0, loopLength);
+  linearEnd = IntervalProjection::tickPhaseInLoop(endTick, 0, loopLength);
+  if (linearEnd == linearStart) {
+    return false;
+  }
+  if (linearEnd < linearStart) {
+    linearEnd += loopLength;
+  }
+  return linearStart < linearEnd;
+}
+
+bool stage6e1ExistingOverlapsHold(uint32_t existingStart, uint32_t existingEnd,
+                                  uint32_t incomingStart, uint32_t incomingEnd,
+                                  uint32_t loopLength) {
+  uint32_t existingLinearStart = 0;
+  uint32_t existingLinearEnd = 0;
+  uint32_t incomingLinearStart = 0;
+  uint32_t incomingLinearEnd = 0;
+  if (!stage6e1LinearSoundingSpan(existingStart, existingEnd, loopLength, existingLinearStart,
+                                  existingLinearEnd)) {
+    return false;
+  }
+  if (!stage6e1LinearSoundingSpan(incomingStart, incomingEnd, loopLength, incomingLinearStart,
+                                  incomingLinearEnd)) {
+    return false;
+  }
+  const bool direct =
+      existingLinearStart < incomingLinearEnd && existingLinearEnd > incomingLinearStart;
+  const bool existingShifted = existingLinearStart + loopLength < incomingLinearEnd &&
+                               existingLinearEnd + loopLength > incomingLinearStart;
+  const bool incomingShifted = existingLinearStart < incomingLinearEnd + loopLength &&
+                               existingLinearEnd > incomingLinearStart + loopLength;
+  return direct || existingShifted || incomingShifted;
+}
+
+void stage6e1ConsumeHold(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
+                         uint32_t& consumeStart, uint32_t& consumeEnd) {
+  consumeStart = startTick;
+  consumeEnd = endTick;
+  if (endTick < startTick) {
+    consumeStart = startTick;
+    consumeEnd = loopLength;
+  }
+}
+
+void stage6e1AddUniqueNoteId(NoteId* ids, uint8_t& count, uint8_t cap, NoteId id) {
+  if (id == kInvalidNoteId) {
+    return;
+  }
+  for (uint8_t i = 0; i < count; ++i) {
+    if (ids[i] == id) {
+      return;
+    }
+  }
+  TEST_ASSERT_TRUE(count < cap);
+  ids[count++] = id;
+}
+
+NoteUtils::DisplayNote stage6e1NoteFromEvents(const SessionMidiEventVec& events,
+                                              uint32_t loopLength) {
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(events, loopLength, false);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  return notes[0];
+}
+
+void stage6e1CollectOracleNotes(const LoopPasses& passes, uint32_t loopLength, uint8_t pitch,
+                                uint32_t consumeStart, uint32_t consumeEnd,
+                                NoteUtils::DisplayNoteVec& out) {
+  out.clear();
+  SessionMidiEventVec events;
+  passes.materializeToEventVector(events, loopLength);
+  const NoteUtils::DisplayNoteVec all =
+      NoteUtils::reconstructDisplayNotes(events, loopLength, false);
+  for (const NoteUtils::DisplayNote& note : all) {
+    if (note.note != pitch || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (stage6e1ExistingOverlapsHold(note.startTick, note.endTick, consumeStart, consumeEnd,
+                                     loopLength)) {
+      out.push_back(note);
+    }
+  }
+}
+
+void stage6e1CollectTreatmentNotes(const LoopContentResolution::TickIndex& index,
+                                   const LoopContentResolution::StateCheckpoints& checkpoints,
+                                   const EditPassVec& editPasses, uint32_t loopLength,
+                                   uint8_t pitch, uint32_t consumeStart, uint32_t consumeEnd,
+                                   NoteUtils::DisplayNoteVec& out) {
+  out.clear();
+  SoundingNoteVec sounding;
+  LoopContentResolution::resolveState(checkpoints, consumeStart, sounding);
+  SessionMidiEventVec window;
+  TEST_ASSERT_TRUE(consumeEnd > consumeStart);
+  LoopContentResolution::resolveWindow(index, editPasses, loopLength, consumeStart,
+                                       consumeEnd - consumeStart, window);
+
+  NoteId ids[8]{};
+  uint8_t idCount = 0;
+  for (const SoundingNote& note : sounding) {
+    if (note.pitch == pitch) {
+      stage6e1AddUniqueNoteId(ids, idCount, 8, note.noteId);
+    }
+  }
+  for (const MidiEvent& event : window) {
+    if (event.isNoteOn() && event.data.noteData.note == pitch) {
+      stage6e1AddUniqueNoteId(ids, idCount, 8, event.noteId);
+    }
+  }
+
+  for (uint8_t i = 0; i < idCount; ++i) {
+    SessionMidiEventVec pair;
+    index.appendNoteEvents(ids[i], pair);
+    TEST_ASSERT_FALSE(pair.empty());
+    const NoteUtils::DisplayNote note = stage6e1NoteFromEvents(pair, loopLength);
+    if (stage6e1ExistingOverlapsHold(note.startTick, note.endTick, consumeStart, consumeEnd,
+                                     loopLength)) {
+      out.push_back(note);
+    }
+  }
+}
+
+void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
+  TEST_MESSAGE(overlapCase.name);
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  LoopEventStore store;
+  for (uint8_t i = 0; i < overlapCase.sourceCount; ++i) {
+    const Stage6e1SourceSpan& span = overlapCase.sources[i];
+    TEST_ASSERT_TRUE(storeAppendNoteOn(store, span.onTick, 1, span.pitch, 100, span.id));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(span.offTick, 1, span.pitch, 0)));
+  }
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  TEST_ASSERT_TRUE(
+      transferCaptureStoreToCommittedChunkIds(store, passes.recordPass.committedChunkIds));
+
+  LoopContentResolution::TickIndex index;
+  index.commitLoopPasses(passes);
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.rebuild(index, passes.editPasses, kStage6e1LoopLen, Config::TICKS_PER_BAR);
+
+  uint32_t consumeStart = 0;
+  uint32_t consumeEnd = 0;
+  stage6e1ConsumeHold(overlapCase.incomingStart, overlapCase.incomingEnd, kStage6e1LoopLen,
+                      consumeStart, consumeEnd);
+  TEST_ASSERT_TRUE(consumeEnd > consumeStart);
+
+  NoteUtils::DisplayNoteVec oracle;
+  stage6e1CollectOracleNotes(passes, kStage6e1LoopLen, overlapCase.incomingPitch, consumeStart,
+                             consumeEnd, oracle);
+  NoteUtils::DisplayNoteVec treatment;
+  stage6e1CollectTreatmentNotes(index, checkpoints, passes.editPasses, kStage6e1LoopLen,
+                                overlapCase.incomingPitch, consumeStart, consumeEnd, treatment);
+  assertDisplayNotesMatch(oracle, treatment);
+}
+
+}  // namespace
+
+void test_stage6e1_resolve_state_candidates_match_note_map_oracle() {
+  const uint32_t loopLen = kStage6e1LoopLen;
+  const Stage6e1OverlapCase cases[] = {
+      {"user_example_note31_still_sounding",
+       {{1, 31, 100, 200}, {2, 32, 50, 150}},
+       2,
+       31,
+       125,
+       175},
+      {"user_example_note32_off_at_150",
+       {{1, 31, 100, 200}, {2, 32, 50, 150}},
+       2,
+       32,
+       125,
+       175},
+      {"pending_shorten_long_source", {{1, 60, 50, 200}}, 1, 60, 120, 160},
+      {"pending_hide_when_covered",
+       {{1, 60, 10, 40}, {2, 60, 50, 80}, {3, 60, 90, 120}},
+       3,
+       60,
+       5,
+       130},
+      {"pending_add_only_other_pitch", {{1, 60, 10, 58}}, 1, 72, 200, 240},
+      {"pending_wrap_crossing_tail_shorten",
+       {{1, 60, loopLen - 80, loopLen - 10}},
+       1,
+       60,
+       loopLen - 40,
+       20},
+      {"pending_wrap_crossing_skips_head", {{1, 60, 8, 40}}, 1, 60, loopLen - 40, 50},
+  };
+  for (const Stage6e1OverlapCase& overlapCase : cases) {
+    stage6e1RunCase(overlapCase);
+  }
+}
+
 void test_stage6d4_publish_restamps_without_device_gate_complete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2923,5 +3147,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6d3_repeated_overdub_matches_oracle);
   RUN_TEST(test_stage6d3_repeated_overdub_scales);
   RUN_TEST(test_stage6d4_publish_restamps_without_device_gate_complete);
+  RUN_TEST(test_stage6e1_resolve_state_candidates_match_note_map_oracle);
   return UNITY_END();
 }
