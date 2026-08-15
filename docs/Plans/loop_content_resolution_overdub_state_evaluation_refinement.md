@@ -383,7 +383,13 @@ Slot switch PASS. Overdub 132.050 tick 1016. Wrap 140.048. Undo 143.094 then wra
 
 `Loop::undoOverdubSession` cleared live first. `MI,U` and the next S crossing pushed a new session pass, so wrap disable never ran ([`235536`](../../captures/session_20260815_235536.log) same trap).
 
-Pin: while a session wrap exists, undo hides that wrap and discards live so S cannot re-push it. The next S crossing is skipped. Live-only undo remains only when no session wrap is on the cursor.
+Pin that still holds: the next S crossing after session undo is skipped (`suppressNextOverdubWrap`). Without that skip, live undo plus `MI,U` re-pushes a wrap before disable can run.
+
+Withdrawn: wrap-first undo that discarded live with the sealed wrap. That removed the live +1 after wrap 1 ([`010535`](../../captures/session_20260816_010535.log)). DEC-038 order is restored: live wrap first, then sealed wraps.
+
+## HITL [`010535`](../../captures/session_20260816_010535.log) — live +1 after first wrap
+
+GUS after stop PASS: `Undo (entries=2)` `Overdub undone` at 142.609 s. Session undo during OVERDUBBING ran (56.548 / 70.623 / 86.855 / 92.101 / 111.620). After wrap 1 (44.889) `overdubSessionUndoDepth` stayed at cursor only, so sidebar **U:** did not add the live wrap. DEC-038: depth = sealed wraps + live store; undo live first, then sealed wraps. Next S still skipped.
 
 ## HITL [`004842`](../../captures/session_20260816_004842.log) — 038.1 PASS
 

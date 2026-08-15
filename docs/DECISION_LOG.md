@@ -58,7 +58,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-038 — Overdub wrap commit and session undo
 
 **Date:** 2026-08-15  
-**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.**  
+**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.** Live +1 after first wrap restored ([`010535`](../captures/session_20260816_010535.log)).  
 **Owner:** overdub lifecycle — `Track` trigger / `Loop` pass list + `capture.store`. LCR publish stays `publishPreparedOverdubPass`. GUS kind stays `OverdubPassAdded`.  
 **Plan:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)  
 **Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) (6E native PASS); [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) / [DEC-032](#dec-032-overdub-editpass-unification-reassessment) companions  

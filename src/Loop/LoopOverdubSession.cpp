@@ -176,13 +176,11 @@ LOOP_COLD_MEM bool Loop::canRedoOverdubSession() const {
 }
 
 LOOP_COLD_MEM size_t Loop::overdubSessionUndoDepth() const {
-  if (overdubSessionCursor_ > 0) {
-    return overdubSessionCursor_;
-  }
+  size_t depth = overdubSessionCursor_;
   if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
-    return 1;
+    ++depth;
   }
-  return 0;
+  return depth;
 }
 
 LOOP_COLD_MEM size_t Loop::overdubSessionRedoDepth() const {
@@ -197,21 +195,6 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
   if (!hasOverdubSession()) {
     return false;
   }
-  if (overdubSessionCursor_ > 0) {
-    --overdubSessionCursor_;
-    const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
-    disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
-    const bool ok = setCapturePassState(passId, CapturePassState::Disabled);
-    overdubSessionLiveUndoEvents_.clear();
-    if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
-      capture.store.clear();
-      captureEventsSortDirty = false;
-      rebuildCapturePreviewFromStore(*this);
-      ++captureDisplayRevision;
-    }
-    suppressNextOverdubWrap();
-    return ok;
-  }
   if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
     overdubSessionLiveUndoEvents_.clear();
     capture.store.copyEventsTo(overdubSessionLiveUndoEvents_);
@@ -221,6 +204,14 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
     ++captureDisplayRevision;
     suppressNextOverdubWrap();
     return true;
+  }
+  if (overdubSessionCursor_ > 0) {
+    --overdubSessionCursor_;
+    const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
+    disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
+    const bool ok = setCapturePassState(passId, CapturePassState::Disabled);
+    suppressNextOverdubWrap();
+    return ok;
   }
   return false;
 }

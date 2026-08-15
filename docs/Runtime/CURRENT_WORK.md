@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (038.2 GUS passIds)
+Last updated: 2026-08-16 (038.1 live +1 after first wrap)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (038.2 GUS passIds)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **038.2 landed** — stop pushes one `OverdubPassAdded` with session wrap `passIds` + all companions; GUS STK3; session stack cleared. Empty last wrap still pushes sealed wraps. Legacy STK2 keeps a single `passId`. **038.1 HITL PASS** [`004842`](../../captures/session_20260816_004842.log). Slot switch PASS [`003818`](../../captures/session_20260816_003818.log). Issue 3 parked. After-stop one **U:** HITL next. Do not start midi_gap / 6.3 until asked.
+**Now:** **038.1 live +1** — after the first sealed wrap, session undo depth is cursor + live store; undo is live first, then sealed wraps. Next S still skipped. Evidence [`010535`](../../captures/session_20260816_010535.log). **038.2 landed** (one `OverdubPassAdded` `passIds` + STK3); GUS after stop PASS in that capture. **038.1 HITL PASS** [`004842`](../../captures/session_20260816_004842.log). Slot switch PASS [`003818`](../../captures/session_20260816_003818.log). Issue 3 parked. Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

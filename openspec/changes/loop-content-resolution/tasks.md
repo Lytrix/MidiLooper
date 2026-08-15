@@ -83,6 +83,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [x] **DEC-038** recorded. Preflight: [`PREFLIGHT-WRAP-COMMIT.md`](PREFLIGHT-WRAP-COMMIT.md). Firmware not started.
 - [x] **038.1** Firmware: wrap at S + session stack. Completed-pair seal + publish + `beginCapture` + stay OVERDUBBING. Session undo/redo while OVERDUBBING. No GUS `passIds`. Native `test_overdub_source_view` + `test_interval_projection`. `teensy41-capture-serial` RAM1 free 6528.
 - [x] **038.2** Stop: one `OverdubPassAdded` with `passIds` + companions. GUS wire. Session stack cleared.
+- [x] **038.1 live +1** After first sealed wrap, `overdubSessionUndoDepth` = cursor + live store; undo live first. Next S still skipped. Fixture [`010535`](../../../captures/session_20260816_010535.log).
 - [ ] 6.5 Do **not** delete `materializeToEventVector`; do **not** call resolution from `handleMidiInput`; do **not** remove the 3b copy path
 
 ## Out of scope
