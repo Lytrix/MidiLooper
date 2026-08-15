@@ -100,7 +100,7 @@ Derived indexes used by `LoopContentResolution` on the target device MUST use co
 
 Where the query contract permits, indexes SHALL be represented as flat PSRAM arrays built by append or bulk construction and ordered or uniqued in a bounded operation. The representation MUST be selected from the query contract. Flat storage is not an automatic replacement for every associative structure. A bucket or offset table MUST NOT be added unless a measured flat query is too expensive.
 
-This requirement covers **derived indexes + PSRAM + per-entry construction**. It does not forbid maps on unrelated paths. `pair` / `TickIndex::byNoteId` / reconstruct are a separate measurement pass.
+This requirement covers **derived indexes + PSRAM + per-entry construction**. It does not forbid maps on unrelated paths. `pair` / `TickIndex::byNoteId` / `openOnByPitch` are 5.18 — representation follows the query contract.
 
 #### Scenario: Span-boundary, tick-event, and channel indexes are flat arrays
 
