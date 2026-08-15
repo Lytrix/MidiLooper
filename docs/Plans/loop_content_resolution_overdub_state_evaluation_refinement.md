@@ -367,6 +367,12 @@ Clear Loop 6 at 184.200. `restorePlaybackAfterSlotClear` started slot 0 at 184.4
 
 Pin: queues are playing-only and discarded on stop. Hold-while-playing still builds a multi-slot enabled set. Select / record / play from STOPPED replaces the enabled set with that slot only.
 
+## HITL [`002545`](../../captures/session_20260816_002545.log) — queued switch must stop the previous slot
+
+Boot `enabledMask=0x33`. Play Loop 6, short-press Loop 5 at 15.433 (`Queued playback switch`), LoopEnd commit `5->4` at 26.204. `queuePlayingSlotSwitch` left `pendingEnabledSetReplacement` false because `enabledCount > 1`, so additional enabled slots kept `playMidiEventsForSlot`. Same at 39.994 Loop 3 → commit `5->2` at 45.983.
+
+Pin: short-press queue is a replace. Previous slots stop when the queued slot starts. Hold-to-add at the same queue point is later.
+
 ## Out of scope
 
 - midi_gap / 6.3 / 6.4
