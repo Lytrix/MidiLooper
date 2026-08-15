@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -2160,6 +2161,203 @@ void test_stage517b_flat_tick_events_match_map() {
       static_cast<unsigned>(flat.size()), equalTickPairs);
 }
 
+using TickEventEntry = LoopContentResolution::TickIndex::TickEventEntry;
+using TickEventEntryVec = LoopContentResolution::TickIndex::TickEventEntryVec;
+
+bool tickEventTickLess(const TickEventEntry& a, const TickEventEntry& b) { return a.tick < b.tick; }
+
+void mergeSortedTickEvents(const TickEventEntryVec& left, const TickEventEntryVec& right,
+                           TickEventEntryVec& out) {
+  out.clear();
+  out.resize(left.size() + right.size());
+  std::merge(left.begin(), left.end(), right.begin(), right.end(), out.begin(), tickEventTickLess);
+}
+
+void appendOverdubPassAndMergeTickEvents(LoopContentResolution::TickIndex& index,
+                                         const OverdubPass& pass) {
+  index.beginCapturePass(pass.id, pass.state, pass.mergeSequence);
+  for (uint16_t chunkId : pass.committedChunkIds) {
+    index.appendCapturePassChunk(pass.id, chunkId);
+  }
+  const LoopContentResolution::TickIndex::CapturePassEntry& entry = index.capturePasses.back();
+  TickEventEntryVec delta;
+  LoopContentResolution::TickIndex::appendTickEventEntries(
+      entry, 0, static_cast<uint32_t>(entry.events.size()), delta);
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(delta);
+  TickEventEntryVec merged;
+  mergeSortedTickEvents(index.tickEvents, delta, merged);
+  index.tickEvents.swap(merged);
+}
+
+void fillSyntheticPassEvents(LoopContentResolution::TickIndex::CapturePassEntry& pass,
+                             uint32_t count, uint32_t tickBase, uint32_t tickStep, NoteId idBase) {
+  pass.events.clear();
+  pass.events.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    MidiEvent on = MidiEvent::NoteOn(tickBase + i * tickStep, 1, 60, 100);
+    on.noteId = idBase + i;
+    pass.events.push_back(on);
+  }
+}
+
+void buildSortedHistoryTickEvents(uint32_t historyEvents, TickEventEntryVec& out) {
+  LoopContentResolution::TickIndex index;
+  const PassId historyId = 1;
+  index.beginCapturePass(historyId, CapturePassState::Active, 0);
+  fillSyntheticPassEvents(index.capturePasses.back(), historyEvents, 0, 2, 1);
+  LoopContentResolution::TickIndex::appendTickEventEntries(
+      index.capturePasses.back(), 0, historyEvents, out);
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(out);
+}
+
+void buildSortedDeltaTickEvents(uint32_t deltaEvents, TickEventEntryVec& out) {
+  LoopContentResolution::TickIndex index;
+  const PassId deltaId = 2;
+  index.beginCapturePass(deltaId, CapturePassState::Active, 1);
+  fillSyntheticPassEvents(index.capturePasses.back(), deltaEvents, 1, 2, 100000);
+  LoopContentResolution::TickIndex::appendTickEventEntries(index.capturePasses.back(), 0,
+                                                           deltaEvents, out);
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(out);
+}
+
+uint64_t minMicrosOverRunsSort(uint32_t runs, const TickEventEntryVec& history,
+                               const TickEventEntryVec& delta) {
+  uint64_t best = UINT64_MAX;
+  for (uint32_t i = 0; i < runs; ++i) {
+    TickEventEntryVec working = history;
+    working.insert(working.end(), delta.begin(), delta.end());
+    const Clock::time_point start = Clock::now();
+    LoopContentResolution::TickIndex::sortTickEventEntriesByTick(working);
+    const uint64_t sample = elapsedMicrosSince(start);
+    if (sample < best) {
+      best = sample;
+    }
+  }
+  return best;
+}
+
+uint64_t minMicrosOverRunsMerge(uint32_t runs, const TickEventEntryVec& history,
+                                const TickEventEntryVec& delta) {
+  uint64_t best = UINT64_MAX;
+  for (uint32_t i = 0; i < runs; ++i) {
+    TickEventEntryVec merged;
+    const Clock::time_point start = Clock::now();
+    mergeSortedTickEvents(history, delta, merged);
+    const uint64_t sample = elapsedMicrosSince(start);
+    if (sample < best) {
+      best = sample;
+    }
+  }
+  return best;
+}
+
+void printStage6d1Sample(const char* treatment, uint32_t historyEvents, uint32_t deltaEvents,
+                         uint64_t appendUs, uint64_t orderUs) {
+  const uint64_t totalUs = appendUs + orderUs;
+  const uint64_t nsPerHistory = (historyEvents == 0) ? 0 : ((orderUs * 1000ull) / historyEvents);
+  const uint64_t nsPerDelta = (deltaEvents == 0) ? 0 : ((orderUs * 1000ull) / deltaEvents);
+  std::printf(
+      "stage6d1 %s history_events=%u commit_delta_events=%u index_append_us=%llu "
+      "index_order_us=%llu total_maintenance_us=%llu order_ns_per_history=%llu "
+      "order_ns_per_delta=%llu\n",
+      treatment, historyEvents, deltaEvents, static_cast<unsigned long long>(appendUs),
+      static_cast<unsigned long long>(orderUs), static_cast<unsigned long long>(totalUs),
+      static_cast<unsigned long long>(nsPerHistory), static_cast<unsigned long long>(nsPerDelta));
+}
+
+void test_stage6d1_overdub_pass_merge_matches_oracle() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  TEST_ASSERT_GREATER_OR_EQUAL(3u, fixture.passes.overdubPasses.size());
+
+  const uint32_t preparedOverdubs =
+      static_cast<uint32_t>(fixture.passes.overdubPasses.size()) - 3u;
+  LoopContentResolution::TickIndex incremental;
+  incremental.commitCapturePass(fixture.passes.recordPass.id,
+                                fixture.passes.recordPass.committedChunkIds,
+                                fixture.passes.recordPass.state, 0, nullptr);
+  for (uint32_t i = 0; i < preparedOverdubs; ++i) {
+    const OverdubPass& pass = fixture.passes.overdubPasses[i];
+    incremental.commitCapturePass(pass.id, pass.committedChunkIds, pass.state, pass.mergeSequence,
+                                  nullptr);
+  }
+
+  uint32_t preparedRevision = 1;
+  const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
+  for (uint32_t step = 0; step < 3u; ++step) {
+    const OverdubPass& pass = fixture.passes.overdubPasses[preparedOverdubs + step];
+    const uint32_t historyEvents = static_cast<uint32_t>(incremental.tickEvents.size());
+    const Clock::time_point appendStart = Clock::now();
+    appendOverdubPassAndMergeTickEvents(incremental, pass);
+    const uint64_t maintenanceUs = elapsedMicrosSince(appendStart);
+    const uint32_t deltaEvents =
+        static_cast<uint32_t>(incremental.capturePasses.back().events.size());
+    preparedRevision += 1;
+    printStage6d1Sample("merge_canonical", historyEvents, deltaEvents, 0, maintenanceUs);
+    TEST_ASSERT_EQUAL_UINT32(1u + step + 1u, preparedRevision);
+
+    LoopContentResolution::TickIndex cold;
+    cold.commitCapturePass(fixture.passes.recordPass.id, fixture.passes.recordPass.committedChunkIds,
+                           fixture.passes.recordPass.state, 0, nullptr);
+    for (uint32_t i = 0; i <= preparedOverdubs + step; ++i) {
+      const OverdubPass& committed = fixture.passes.overdubPasses[i];
+      cold.commitCapturePass(committed.id, committed.committedChunkIds, committed.state,
+                             committed.mergeSequence, nullptr);
+    }
+
+    SessionMidiEventVec fromIncremental;
+    SessionMidiEventVec fromCold;
+    SessionMidiEventVec fromOracle;
+    LoopContentResolution::resolveWindow(incremental, fixture.passes.editPasses,
+                                         fixture.loopLengthTicks, 0, windowLength, fromIncremental);
+    LoopContentResolution::resolveWindow(cold, fixture.passes.editPasses, fixture.loopLengthTicks, 0,
+                                         windowLength, fromCold);
+    oracleWindowEvents(fixture.passes, fixture.loopLengthTicks, 0, windowLength, fromOracle);
+    assertResolvedEventsMatch(fromCold, fromIncremental);
+    if (step == 2u) {
+      assertResolvedEventsMatch(fromOracle, fromIncremental);
+    }
+  }
+}
+
+void test_stage6d1_tick_events_order_scales_with_history() {
+  constexpr uint32_t kDeltaEvents = 128;
+  constexpr uint32_t kSmallHistory = 8192;
+  constexpr uint32_t kLargeHistory = 32768;
+  constexpr uint32_t kRuns = 5;
+
+  TickEventEntryVec smallHistory;
+  TickEventEntryVec largeHistory;
+  TickEventEntryVec delta;
+  buildSortedHistoryTickEvents(kSmallHistory, smallHistory);
+  buildSortedHistoryTickEvents(kLargeHistory, largeHistory);
+  buildSortedDeltaTickEvents(kDeltaEvents, delta);
+  TEST_ASSERT_EQUAL_UINT32(kSmallHistory, static_cast<uint32_t>(smallHistory.size()));
+  TEST_ASSERT_EQUAL_UINT32(kLargeHistory, static_cast<uint32_t>(largeHistory.size()));
+  TEST_ASSERT_EQUAL_UINT32(kDeltaEvents, static_cast<uint32_t>(delta.size()));
+
+  const uint64_t sortSmallUs = minMicrosOverRunsSort(kRuns, smallHistory, delta);
+  const uint64_t sortLargeUs = minMicrosOverRunsSort(kRuns, largeHistory, delta);
+  const uint64_t mergeSmallUs = minMicrosOverRunsMerge(kRuns, smallHistory, delta);
+  const uint64_t mergeLargeUs = minMicrosOverRunsMerge(kRuns, largeHistory, delta);
+
+  printStage6d1Sample("sort", kSmallHistory, kDeltaEvents, 0, sortSmallUs);
+  printStage6d1Sample("sort", kLargeHistory, kDeltaEvents, 0, sortLargeUs);
+  printStage6d1Sample("merge", kSmallHistory, kDeltaEvents, 0, mergeSmallUs);
+  printStage6d1Sample("merge", kLargeHistory, kDeltaEvents, 0, mergeLargeUs);
+
+  const bool sortGrowsWithHistory = sortLargeUs > sortSmallUs;
+  const bool mergeGrowsWithHistory = mergeLargeUs > mergeSmallUs;
+  std::printf(
+      "stage6d1 scaling sort_grows_with_history=%d merge_grows_with_history=%d "
+      "(full sort FAIL if grows even when < 50 ms; merge PASS only if it does not grow)\n",
+      sortGrowsWithHistory ? 1 : 0, mergeGrowsWithHistory ? 1 : 0);
+
+  TEST_ASSERT_GREATER_THAN(0u, sortLargeUs);
+  TEST_ASSERT_TRUE(sortGrowsWithHistory);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -2216,5 +2414,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage515b_flat_span_boundaries_match_map);
   RUN_TEST(test_stage517b_equal_tick_event_order);
   RUN_TEST(test_stage517b_flat_tick_events_match_map);
+  RUN_TEST(test_stage6d1_overdub_pass_merge_matches_oracle);
+  RUN_TEST(test_stage6d1_tick_events_order_scales_with_history);
   return UNITY_END();
 }

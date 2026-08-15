@@ -291,6 +291,23 @@ affected tick interval
 
 ---
 
-## Docs when 6D.1 closes
+## Native results (2026-08-15)
 
-Native results go in this file. Firmware needs an architecture gate. Do not check off 6D as “all of LCR incremental.”
+Instrument: `test_stage6d1_overdub_pass_merge_matches_oracle`, `test_stage6d1_tick_events_order_scales_with_history`. Production untouched.
+
+**Correctness:** append + ordered merge of one `OverdubPass` into an already-sorted `tickEvents` matches cold `commitCapturePass` of the same prefix and, after three successive overdubs, the materialize `resolveWindow` oracle. Canonical history ~88–92 events, delta 2.
+
+**Scaling** (host native, min of 5 runs, delta **128** events):
+
+| Treatment | `history_events` | `index_order_us` | vs 4× history |
+|-----------|------------------|------------------|---------------|
+| full `stable_sort` | 8192 | 602 | |
+| full `stable_sort` | 32768 | 2624 | **4.36×** |
+| ordered merge | 8192 | 46 | |
+| ordered merge | 32768 | 174 | **3.78×** |
+
+Both grow with `history_events` at fixed `commit_delta_events`. Both samples are **< 50 ms**. Full sort is a **6D.1 FAIL**. Ordered merge of the frozen 5.17 flat array is also a **6D.1 FAIL**: `std::merge` rewrites the whole `tickEvents` vector (`O(history + delta)`).
+
+**Mutation contract:** not established for flat `tickEvents`. An `O(commit_delta_events)` update would require a representation that does not rewrite historical entries. Do not reopen 5.17 / add a tree in this slice. Production stays frozen.
+
+Do not check off 6D as “all of LCR incremental.” Firmware needs an architecture gate after a treatment that passes the scaling contract.
