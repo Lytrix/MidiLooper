@@ -174,6 +174,8 @@ struct Loop {
   void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
   bool shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) const;
   void noteOverdubWrapCommitted();
+  void suppressNextOverdubWrap();
+  bool consumeSuppressedOverdubWrapCrossing(uint32_t prevPhase, uint32_t currentPhase);
   /// Move unpaired capture NoteOns out of `capture.store` (6E.5). Returns extracted count.
   size_t extractOpenCaptureNoteOns(SessionMidiEventVec& out);
   void pushOverdubSessionPass(PassId passId, EditPassIdList companionIds);
@@ -329,6 +331,7 @@ struct Loop {
   PendingNoteChangeVec pendingNoteChanges_;
   OverlapHoldTotals overlapHoldTotals_;
   bool overdubWrapArmed_ = false;
+  bool overdubWrapSuppressNext_ = false;
   std::vector<PassId> overdubSessionPassIds_;
   std::vector<EditPassIdList> overdubSessionCompanionIds_;
   size_t overdubSessionCursor_ = 0;

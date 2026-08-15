@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (queued slot switch replaces enabled set)
+Last updated: 2026-08-16 (overdub session undo hides wraps)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (queued slot switch replaces enabled set)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **038.1 HITL** — issue 1 + issue 2 LCR shipped. Playback silence gated to committed wrap undo only. Stopped slot select/record/play is single-slot ([`000149`](../../captures/session_20260816_000149.log)). Short-press queued switch replaces the enabled set at LoopEnd ([`002545`](../../captures/session_20260816_002545.log): leftover `0x33` kept slot 5 playing after `5->4`). Hold-to-add at the same queue point is later. Issue 3 parked. Not 038.2. Do not start midi_gap / 6.3 until asked.
+**Now:** **038.1 HITL** — issue 1 + issue 2 LCR shipped. Slot switch PASS [`003818`](../../captures/session_20260816_003818.log). Session undo now hides the last wrap even when live notes remain, and skips the next S commit so the wrap is not immediately pushed back. Issue 3 parked. Not 038.2. Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

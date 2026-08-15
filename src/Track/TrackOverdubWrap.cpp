@@ -13,6 +13,9 @@ void Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   if (!loop.hasOverdubSession() || loop.loopLengthTicks == 0) {
     return;
   }
+  if (loop.consumeSuppressedOverdubWrapCrossing(prevPhase, currentPhase)) {
+    return;
+  }
   loop.armOverdubWrapAfterLeavingStart(currentPhase);
   if (!loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
     return;
