@@ -1,9 +1,9 @@
-# Handoff — LoopContentResolution Stage 6C (native; device next)
+# Handoff — LoopContentResolution Stage 6C (recapture owed)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** 6C native — consume prepared LCR into `overdubSourceView` (device score next)  
+**HEAD:** `fb477f9` — Consume prepared LCR into overdubSourceView when idle already completed.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)
@@ -14,7 +14,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** 6C native landed. Flash and score PLAYING overdub `begin_capture` against **2214 µs** (look for `DIAG,lcr,6c`). Keep the 3b copy. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B. Do not start midi_gap / 6.3 until 6C device is scored.
+> **Now:** 6C recapture owed. [`194015`](captures/session_20260815_194015.log) did not exercise prepared consume (no `DIAG,lcr,6c`, no `DIAG,lcr,mat=`). Stay STOPPED until `DIAG,lcr,mat=`, then PLAYING overdub. Score `begin_capture` against **2214 µs**. Keep the 3b copy. Do not start midi_gap / 6.3.
 >
 > Read CURRENT_WORK + this handoff first.
 
@@ -22,7 +22,7 @@
 
 ## One-line status
 
-**6C native** — `establishOverdubSourceView` consumes prepared LCR; 3b copy fallback. Device score next vs **2214 µs**. **6B PASS** [`192334`](../../captures/session_20260815_192334.log).
+**6C recapture owed** [`194015`](../../captures/session_20260815_194015.log) — no `DIAG,lcr,6c`; 3b `begin_capture` 3612–8618 µs. Stay STOPPED until `DIAG,lcr,mat=`.
 
 ---
 
@@ -42,8 +42,8 @@ device latency
   5.2 overdub entry     PASS  180624  10050 µs
   6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
   6B commit invalidation PASS  192334  stale_range dcnt 15/5/5 notes kept
-  6C overdub source      native  tryResolvePreparedWindow → overdubSourceView
-Stage 6                  6C device next; 3b copy stays fallback
+  6C overdub source      recapture  194015 no 6c/mat=; 3b 3612–8618 µs
+Stage 6                  6C consume not scored; 3b fallback held < 50 ms
 ```
 
 ---
@@ -244,7 +244,20 @@ Order:
 
 Native (`test_overdub_source_view`): dirty cache + prepared stamp fills notes and events; stamp mismatch does not consume stale LCR (events from the windowed walk, notes empty). 3b path unchanged when LCR is not ready. `pio test -e native` **1200/1200**.
 
-Device still owed: same 139-bar PLAYING overdub class. `begin_capture` vs **2214 µs**. `DIAG,lcr,6c` on the scored entry when idle LCR completed before the press. No `VCACHE,full`. `clockrate` 47–48. No LCR construct on entry.
+### Device [`194015`](../../captures/session_20260815_194015.log) — consume not exercised
+
+Idle LCR never reached `deviceGateComplete`. No `DIAG,lcr,mat=`. No `DIAG,lcr,6c`. First PLAYING overdub at 28.719 s while `phase,idx` / `phase,pair` still running; visual cache already `slice_clean` notes **2375** `dirty=0`, so 3b copy ran.
+
+| Check | Bar | [`194015`](../../captures/session_20260815_194015.log) | Result |
+|-------|-----|----------|--------|
+| `DIAG,lcr,6c` on scored entry | present | none in the capture | **not scored** |
+| `ODUB,stage,begin_capture` | **< 50 ms** | **3612 / 6464 / 8076 / 8618 µs** | hard gate holds (3b copy) |
+| vs 3b **2214 µs** | 6C consume | not measured | recapture |
+| `VCACHE,full` | none | none | holds |
+| `PlaybackFullMaterialize` | 0 | **0** | holds |
+| `DisplayFullRebuild` | no bump on entry | stays **4** | holds |
+
+Recapture: stay **STOPPED** until `DIAG,lcr,mat=`, then PLAYING overdub. Look for `DIAG,lcr,6c`. Do not start midi_gap / 6.3.
 
 ---
 
@@ -274,6 +287,9 @@ Device still owed: same 139-bar PLAYING overdub class. `begin_capture` vs **2214
 | `c3570b5` | 6A firmware: keep TickIndex; idle consume resolveWindow |
 | `27d94bb` | Record 6A device PASS |
 | `b87dce1` | 6B firmware: mark affected display bars only |
+| `8e63439` | Record 6B device PASS |
+| `02bb187` | Park MIDI Input Gap as post-6C |
+| `fb477f9` | 6C firmware: consume prepared LCR into overdubSourceView |
 
 ---
 
@@ -283,5 +299,5 @@ Device still owed: same 139-bar PLAYING overdub class. `begin_capture` vs **2214
 - [x] 6.0 consume-only invariant — **pinned**
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
-- [ ] 6C overdub source — **native landed**; device score next vs 3b **2214 µs** (`DIAG,lcr,6c`)
+- [ ] 6C overdub source — **native landed**; [`194015`](../../captures/session_20260815_194015.log) consume not exercised. Recapture after `DIAG,lcr,mat=`.
 - [ ] After 6C: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47)
