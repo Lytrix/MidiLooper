@@ -1,6 +1,6 @@
 # Loop content resolution — 5.7 DFRAME during sliced append (reserve)
 
-**Status:** Native **5.7a PASS** 2026-08-15 — device remasure owed.  
+**Status:** **5.7a device reserve PASS** [`163942`](../captures/session_20260815_163942.log). 5.7 `DFRAME` bar **not closed** — remaining `spans` owner is `channelForNoteId`.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.17 complete — [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md)  
 **Evidence:** [`162630`](../captures/session_20260815_162630.log)
@@ -111,3 +111,37 @@ Same 139-bar / 2394-note loop. PASS when:
 - `walk=0`
 
 Do not start 5.1 until this remasure.
+
+---
+
+## 5.7a device remasure — [`163942`](../captures/session_20260815_163942.log)
+
+```
+mat=0,win=14552,reb=4419525,st=3113,rep=350,hist=2394,walk=0,app=2349,sort=9142,iapp=202981,isort=26846
+```
+
+| | [`162630`](../captures/session_20260815_162630.log) before reserve | [`163942`](../captures/session_20260815_163942.log) after |
+|--|--:|--:|
+| LCR wall | 55.32 s | 45.81 s |
+| `reb` | 6.875 s | 4.420 s |
+| `app` | 2.456 s | **2.3 ms** |
+| `iapp` | 4.816 s | **203 ms** |
+| `isort` | 27.1 ms | 26.8 ms |
+| `win` / `st` / `walk` | 14.0 ms / 3105 µs / 0 | 14.6 ms / 3113 µs / 0 |
+| `idx` p0 wall | 9.09 s | **3.64 s** |
+| `idx` p0 events/s | 952 → 328 | **1310 → 1212** (last 0.63 s bucket 977) |
+| `spans` wall | 9.68 s | 6.42 s |
+| `spans` notes/s | 565 → 125 | **930 → 169** (still drops) |
+| `spans` `DFRAME` | 1.003 → 1.591 s | **0.992 → 1.195 s** (consecutive `frameIndex`) |
+| `idx` p0 `DFRAME` | 0.981 → 1.337 s | **0.985 → 1.045 s** |
+| `idle_maint` `loop_rem` | none | none |
+| after complete `idle_maint` | 271–276 µs | 277 µs |
+| after complete `DFRAME` | 0.968 s | 0.968 s |
+
+**Reserve invariant PASS.** Boundary realloc is gone (`app=2349`). `idx` rate no longer falls with cursor.
+
+**5.7 `DFRAME` bar not closed.** `spans` notes/s still falls and `DFRAME` still stretches to 1.195 s with consecutive `frameIndex` (+30). That remaining growth is in `appendSpansFromNotes` after the boundary append: `channelForNoteId` scans `resolved` from the start for each note, so later notes take longer. It is not constant per slice.
+
+`pair` still has a 1.275 s `DFRAME` (different owner). The 2.890 s gap at 57.13 s skips `frameIndex` 1200 and 1230 — two missing log lines, not a measured 2.89 s slice. Paint duration stays 12–14 ms.
+
+Do not start 5.1. Next 5.7 slice is `channelForNoteId` in `appendSpansFromNotes` only if asked.
