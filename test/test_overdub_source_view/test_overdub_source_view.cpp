@@ -426,6 +426,11 @@ void test_overdub_session_undo_disables_sealed_wrap() {
     }
   }
   TEST_ASSERT_TRUE(disabled);
+  loop.invalidateCaches();
+  SessionMidiEventVec afterUndo;
+  loop.gatherCommittedEvents(afterUndo);
+  TEST_ASSERT_EQUAL(0, countNoteOns(afterUndo, 72));
+  TEST_ASSERT_EQUAL(1, countNoteOns(afterUndo, 60));
   TEST_ASSERT_TRUE(loop.canRedoOverdubSession());
   TEST_ASSERT_TRUE(loop.redoOverdubSession());
   for (const OverdubPass& pass : loop.passes.overdubPasses) {

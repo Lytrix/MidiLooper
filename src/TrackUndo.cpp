@@ -132,6 +132,15 @@ TRACK_COLD_MEM bool enableCapturePass(Loop& loop, PassId passId) {
     return loop.setCapturePassState(passId, CapturePassState::Active);
 }
 
+TRACK_COLD_MEM void refreshPlaybackAfterCapturePassStateChange(Track& track, uint8_t slotIndex) {
+    track.invalidateCaches();
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    track.silenceSlotMidiOutput(slotIndex);
+    track.invalidatePlaybackMergedMidiEvents(false);
+}
+
 TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
                       EditPassType passType) {
     if (ids.empty()) {
@@ -225,6 +234,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -351,6 +361,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -553,8 +564,8 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
         return false;
     }
     loop.invalidateCaches();
+    refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
-    (void)track;
     return true;
 }
 
@@ -566,8 +577,8 @@ TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
         return false;
     }
     loop.invalidateCaches();
+    refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
-    (void)track;
     return true;
 }
 

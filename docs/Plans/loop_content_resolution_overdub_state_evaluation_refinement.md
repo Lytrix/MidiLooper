@@ -347,6 +347,12 @@ Does not fix wrap-on-clock stall (issue 3). After-stop multi-wrap GUS is 038.2.
 
 After-stop one `OverdubPassAdded` `passId` is still 038.2.
 
+## Issue 2 playback — silence + merge rebuild on overdub undo
+
+HITL [`234535`](../../captures/session_20260815_234535.log): after issue 1+2 flash, wrap tails gone and committed DISP drops on GUS undo (123→107→90→89→71). Sounding notes from the disabled wrap stay on because `TrackUndo::undoOverdubSession` / `OverdubPassAdded` never called `silenceSlotMidiOutput`. `playCommittedLoopMidi` `reset(true)` keeps the slot ledger; OFFs left with the Disabled pass are never sent.
+
+Fix: `refreshPlaybackAfterCapturePassStateChange` — `silenceSlotMidiOutput` then `invalidatePlaybackMergedMidiEvents(false)`. Session undo/redo and GUS `OverdubPassAdded` undo/redo. Does not use `sendAllNotesOff` (CC 123). Native gather after session undo: `test_overdub_session_undo_disables_sealed_wrap`. Device HITL next.
+
 ## Out of scope
 
 - midi_gap / 6.3 / 6.4
