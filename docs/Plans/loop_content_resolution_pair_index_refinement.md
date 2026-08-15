@@ -1,6 +1,6 @@
 # Loop content resolution — pair index (5.18 design)
 
-**Status:** Design only — contract from code. Do not flatten yet.  
+**Status:** **5.18a instrument** — measure `byNoteId` vs `openOnByPitch`. Do not flatten.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.7c **frozen** — [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md)  
 **Evidence:** [`170024`](../captures/session_20260815_170024.log) `pair` `DFRAME` **1.277 s** (`frameIndex` 390→420, consecutive)
@@ -38,7 +38,7 @@ Do not flatten from the container type. Flatten from the query. `byNoteId` and `
 1. **Ownership change?** NO — still `TickIndex::pairCapturePassEventRange` / `pairNotesInPassRange`.
 2. **State transition change?** NO — investigation only.
 
-No firmware until the contract table is complete and a representation is picked from the query, same method as 5.15.
+5.18a firmware is counters + CAP lines only. Do not change pairing representation.
 
 ---
 
@@ -141,20 +141,47 @@ Do not flatten from the container type. Flatten from the query.
 
 ---
 
-## What 5.18 measures (after this design, if asked)
+## 5.18a — instrument (this slice)
 
-Same sequence as 5.15:
+Do not flatten. One complete `pair` phase reports:
 
 ```text
-current C
-    ↓
-contracts above (pinned)
-    ↓
-native: which structure’s insert time dominates pair
-    ↓
-only then a representation that matches that contract
-    ↓
-device DFRAME / idle_maint on the 139-bar fixture
+pair.total
+pair.byNoteId
+pair.openOnByPitch
+pair.lookup
+pair.other
+```
+
+Plus:
+
+```text
+byNoteId:        entries, inserts, overwrites, alloc calls, alloc bytes, extmem bytes, build µs
+openOnByPitch:   pushes, pops, peak depth (max stack size on one pitch), allocs, heap bytes, build µs
+```
+
+`openOnByPitch` is not PSRAM (`std::map` / `std::vector` default allocator). Heap bytes are vector capacity growth only (map node size is not guessed). `byNoteId` insert count is new keys; a header allocator probe was not used — it inlines into every ITCM TU.
+
+Device: second complete line `DIAG,lcr,pair,...`. 1 Hz `phase,pair` lines add `bn=` `op=` `lk=` `pk=` so a `DFRAME` gap can be attributed.
+
+Native: last-wins (`byNoteId` overwrite, not first-wins unique) and peak-depth ≥ 2 for two stacked same-pitch ons.
+
+Decision tree after device remasure — not before:
+
+```text
+                    pair
+                      │
+                measure owners
+                 /          \
+         byNoteId        openOnByPitch
+             │                  │
+       expensive?          expensive?
+          /   \              /   \
+        yes    no           yes    no
+         │      │            │      │
+      design   done       design   done
+      last-wins          compact stack
+      lookup             (peak depth first)
 ```
 
 Do **not** add B. Do not start 5.1. Do not reopen 5.7c. Do not rewrite `recon`.
@@ -179,9 +206,15 @@ Do **not** add B. Do not start 5.1. Do not reopen 5.7c. Do not rewrite `recon`.
 
 ### Open before coding
 
-1. Which structure (or both) produces the 1.277 s `DFRAME` on [`170024`](../captures/session_20260815_170024.log)?
-2. After that, what is the minimum representation for **that** contract?
+1. Which structure (or both) produces the 1.277 s `DFRAME` on [`170024`](../captures/session_20260815_170024.log)? — **5.18a device remasure**
+2. After that, what is the minimum representation for **that** contract? — not this slice
 
 ### Proceed?
 
-NO firmware in this session. Design artifact only.
+YES — 5.18a instrument only.
+
+---
+
+## 5.18a native shipped
+
+`pairNotesInPassRange` fills `ResolutionCostCounters` pair fields. Device emits `DIAG,lcr,pair` on gate complete. Phase `pair` lines include cumulative `bn`/`op`/`lk`/`pk`. Pairing representation unchanged. Device remasure of [`170024`](../captures/session_20260815_170024.log) class is the next step.

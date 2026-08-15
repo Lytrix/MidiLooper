@@ -1437,6 +1437,69 @@ void test_stage57_pair_keeps_open_note_across_event_slice() {
   TEST_ASSERT_EQUAL_INT32(-1, open->second.offIndex);
 }
 
+void test_stage518a_pair_by_note_id_last_wins() {
+  LoopContentResolution::TickIndex index;
+  const PassId id = 31;
+  index.beginCapturePass(id, CapturePassState::Active, 0);
+  SessionMidiEventVec events;
+  events.push_back(makeResolvedNoteOn(0, 1, 60, 7));
+  events.push_back(makeResolvedNoteOn(12, 1, 60, 7));
+  events.push_back(makeResolvedNoteOff(24, 1, 60));
+  index.capturePasses.back().events = events;
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  ResolutionCostCounters counters;
+  index.pairCapturePassEventRange(id, 0, static_cast<uint32_t>(events.size()), openOnByPitch,
+                                  &counters);
+  const auto found = index.byNoteId.find(7);
+  TEST_ASSERT_TRUE(found != index.byNoteId.end());
+  TEST_ASSERT_EQUAL_UINT32(1u, found->second.onIndex);
+  TEST_ASSERT_EQUAL_INT32(2, found->second.offIndex);
+  TEST_ASSERT_EQUAL_UINT32(1u, counters.pairByNoteIdInserts);
+  TEST_ASSERT_EQUAL_UINT32(1u, counters.pairByNoteIdOverwrites);
+  TEST_ASSERT_EQUAL_UINT32(1u, counters.pairByNoteIdEntries);
+}
+
+void test_stage518a_pair_open_on_peak_depth() {
+  LoopContentResolution::TickIndex index;
+  const PassId id = 32;
+  index.beginCapturePass(id, CapturePassState::Active, 0);
+  SessionMidiEventVec events;
+  events.push_back(makeResolvedNoteOn(0, 1, 60, 1));
+  events.push_back(makeResolvedNoteOn(12, 1, 60, 2));
+  events.push_back(makeResolvedNoteOff(24, 1, 60));
+  events.push_back(makeResolvedNoteOff(36, 1, 60));
+  index.capturePasses.back().events = events;
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  ResolutionCostCounters counters;
+  index.pairCapturePassEventRange(id, 0, static_cast<uint32_t>(events.size()), openOnByPitch,
+                                  &counters);
+  TEST_ASSERT_EQUAL_UINT32(2u, counters.pairOpenOnPeakDepth);
+  TEST_ASSERT_EQUAL_UINT32(2u, counters.pairOpenOnPushes);
+  TEST_ASSERT_EQUAL_UINT32(2u, counters.pairOpenOnPops);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(openOnByPitch[60].size()));
+}
+
+void test_stage518a_pair_counters_split_owners() {
+  LoopContentResolution::TickIndex index;
+  const PassId id = 33;
+  index.beginCapturePass(id, CapturePassState::Active, 0);
+  index.capturePasses.back().events = makeOpenNoteAcrossSliceEvents();
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  ResolutionCostCounters counters;
+  index.pairCapturePassEventRange(id, 0, static_cast<uint32_t>(index.capturePasses.back().events.size()),
+                                  openOnByPitch, &counters);
+  TEST_ASSERT_EQUAL_UINT32(6u, counters.pairOpenOnPushes);
+  TEST_ASSERT_EQUAL_UINT32(5u, counters.pairOpenOnPops);
+  TEST_ASSERT_EQUAL_UINT32(6u, counters.pairByNoteIdInserts);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.pairByNoteIdOverwrites);
+  TEST_ASSERT_EQUAL_UINT32(5u, counters.pairByNoteIdLookups);
+  TEST_ASSERT_EQUAL_UINT32(6u, counters.pairByNoteIdEntries);
+  TEST_ASSERT_TRUE(counters.pairByNoteIdMicros + counters.pairOpenOnByPitchMicros +
+                       counters.pairLookupMicros + counters.pairOtherMicros <=
+                   counters.pairTotalMicros ||
+                   counters.pairTotalMicros == 0);
+}
+
 void test_stage57_span_channel_uses_full_resolved_not_note_slice() {
   const uint32_t loopLength = 4u * Config::TICKS_PER_BAR;
   const SessionMidiEventVec events = makeOpenNoteAcrossSliceEvents();
@@ -1605,7 +1668,7 @@ void test_stage9_phase_line_on_change_not_every_slice() {
   CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
   LoopContentResolution::deviceGateReset();
   LoopContentResolution::deviceGateBegin(fixture.loopLengthTicks);
-  char line[128];
+  char line[192];
   TEST_ASSERT_TRUE(LoopContentResolution::deviceGateFormatPhaseLine(line, sizeof(line)));
   TEST_ASSERT_NOT_NULL(std::strstr(line, "DIAG,lcr,phase,idx"));
   TEST_ASSERT_FALSE(LoopContentResolution::deviceGateFormatPhaseLine(line, sizeof(line)));
@@ -1648,6 +1711,26 @@ void test_stage9_native_worst_case_micros() {
   std::printf("stage57c capp=%llu csort=%llu\n",
               static_cast<unsigned long long>(sample.rebuild.channelByNoteIdAppendMicros),
               static_cast<unsigned long long>(sample.rebuild.channelByNoteIdSortMicros));
+  std::printf(
+      "stage518a pair tot=%llu bn=%llu op=%llu lk=%llu oth=%llu ent=%u ins=%u ow=%u "
+      "pu=%u po=%u pk=%u oa=%u hb=%llu\n",
+      static_cast<unsigned long long>(sample.indexCommit.pairTotalMicros),
+      static_cast<unsigned long long>(sample.indexCommit.pairByNoteIdMicros),
+      static_cast<unsigned long long>(sample.indexCommit.pairOpenOnByPitchMicros),
+      static_cast<unsigned long long>(sample.indexCommit.pairLookupMicros),
+      static_cast<unsigned long long>(sample.indexCommit.pairOtherMicros),
+      sample.indexCommit.pairByNoteIdEntries, sample.indexCommit.pairByNoteIdInserts,
+      sample.indexCommit.pairByNoteIdOverwrites,
+      sample.indexCommit.pairOpenOnPushes, sample.indexCommit.pairOpenOnPops,
+      sample.indexCommit.pairOpenOnPeakDepth, sample.indexCommit.pairOpenOnAllocations,
+      static_cast<unsigned long long>(sample.indexCommit.pairOpenOnHeapBytes));
+  char pairLine[320];
+  LoopContentResolution::deviceGateFormatPairLine(pairLine, sizeof(pairLine));
+  TEST_ASSERT_NOT_NULL(std::strstr(pairLine, "DIAG,lcr,pair,tot="));
+  TEST_ASSERT_NOT_NULL(std::strstr(pairLine, ",bn="));
+  TEST_ASSERT_NOT_NULL(std::strstr(pairLine, ",op="));
+  TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.pairTotalMicros);
+  TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.pairByNoteIdInserts);
 }
 
 uint64_t elapsedMicrosSince(Clock::time_point start) {
@@ -1974,6 +2057,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage57_tick_events_reserve_pass_remainder);
   RUN_TEST(test_stage57_recon_keeps_open_note_across_event_slice);
   RUN_TEST(test_stage57_pair_keeps_open_note_across_event_slice);
+  RUN_TEST(test_stage518a_pair_by_note_id_last_wins);
+  RUN_TEST(test_stage518a_pair_open_on_peak_depth);
+  RUN_TEST(test_stage518a_pair_counters_split_owners);
   RUN_TEST(test_stage57_span_channel_uses_full_resolved_not_note_slice);
   RUN_TEST(test_stage57c_channel_index_first_wins_note_id);
   RUN_TEST(test_stage57c_channel_index_sliced_append_then_unique);
