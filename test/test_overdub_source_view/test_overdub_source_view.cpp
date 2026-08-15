@@ -293,6 +293,43 @@ void test_extract_open_note_ons_leaves_completed_pairs() {
   TEST_ASSERT_EQUAL(2u, remaining.size());
 }
 
+void test_extract_open_note_ons_keeps_same_tick_completed_pair() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.loopLengthTicks = 3072;
+  loop.openOverdubSession(2904);
+  loop.beginCapture(CapturePhase::Overdub, 2904);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2880, 4, 30, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2976, 4, 30, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2880, 4, 30, 100)));
+  SessionMidiEventVec held;
+  TEST_ASSERT_EQUAL(1u, loop.extractOpenCaptureNoteOns(held));
+  TEST_ASSERT_EQUAL(1u, held.size());
+  TEST_ASSERT_TRUE(held[0].isNoteOn());
+  TEST_ASSERT_EQUAL(30, held[0].data.noteData.note);
+  TEST_ASSERT_EQUAL(2880u, held[0].tick);
+  SessionMidiEventVec remaining;
+  loop.capture.store.copyEventsTo(remaining);
+  TEST_ASSERT_EQUAL(2u, remaining.size());
+  TEST_ASSERT_TRUE(remaining[0].isNoteOn());
+  TEST_ASSERT_TRUE(remaining[1].isNoteOff());
+  TEST_ASSERT_EQUAL(30, remaining[0].data.noteData.note);
+  TEST_ASSERT_EQUAL(30, remaining[1].data.noteData.note);
+  TEST_ASSERT_EQUAL(2880u, remaining[0].tick);
+  TEST_ASSERT_EQUAL(2976u, remaining[1].tick);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 2904));
+  loop.beginCapture(CapturePhase::Overdub, 2904);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(held[0]));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2976, 4, 30, 0)));
+  SessionMidiEventVec live;
+  loop.capture.store.copyEventsTo(live);
+  TEST_ASSERT_EQUAL(2u, live.size());
+  TEST_ASSERT_EQUAL(1, countNoteOns(live, 30));
+}
+
 void test_empty_wrap_does_not_commit_a_pass() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -612,6 +649,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
+  RUN_TEST(test_extract_open_note_ons_keeps_same_tick_completed_pair);
   RUN_TEST(test_empty_wrap_does_not_commit_a_pass);
   RUN_TEST(test_wrap_commit_publishes_completed_pair_and_keeps_held);
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);

@@ -90,11 +90,14 @@ LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
   }
   SessionMidiEventVec kept;
   kept.reserve(flat.size());
-  for (const MidiEvent& evt : flat) {
+  for (size_t eventIndex = 0; eventIndex < flat.size(); ++eventIndex) {
+    const MidiEvent& evt = flat[eventIndex];
     bool extract = false;
     if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
       for (const NoteUtils::OpenNoteOn& open : opens) {
-        if (open.note == evt.data.noteData.note && open.tick == evt.tick) {
+        // Index, not pitch+tick: the same grid can hold a completed pair and a
+        // later held ON (012925 note 30 @ 2880 every wrap).
+        if (open.eventIndex == eventIndex) {
           extract = true;
           break;
         }

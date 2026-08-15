@@ -183,6 +183,9 @@ struct OpenNoteOn {
     uint8_t note;
     uint8_t velocity;
     uint32_t tick;
+    /// Index in the event vector passed to findOpenNoteOns. Distinguishes two
+    /// NoteOns that share pitch and storage tick (same grid on a later wrap).
+    size_t eventIndex = 0;
 };
 
 /**
