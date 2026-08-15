@@ -11,6 +11,8 @@
 #include "Globals.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPressureLevel.h"
 #include "Utils/TrackMem.h"
 
 #if defined(ARDUINO)
@@ -534,15 +536,19 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans
   }
 }
 
-TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::fillCheckpointRange(
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::fillCheckpointRange(
     uint32_t beginIndex, uint32_t endIndexExclusive, ResolutionCostCounters* counters) {
   if (intervalTicks == 0 || loopLengthTicks == 0 || soundingAt.empty()) {
-    return;
+    return true;
   }
   if (endIndexExclusive > soundingAt.size()) {
     endIndexExclusive = static_cast<uint32_t>(soundingAt.size());
   }
   for (uint32_t i = beginIndex; i < endIndexExclusive; ++i) {
+    if (MemoryMonitor::getAdvisoryPressureLevel() >= MemoryPressureLevel::Low) {
+      soundingAt[i].clear();
+      return false;
+    }
     const uint32_t checkpointTick = i * intervalTicks;
     for (const NoteSpan& span : spans) {
       NoteUtils::DisplayNote probe{};
@@ -561,6 +567,7 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::fillCheckpointRange
     counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
     counters->eventsInHistory = static_cast<uint32_t>(spans.size());
   }
+  return true;
 }
 
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickIndex& index,
@@ -760,7 +767,10 @@ struct DeviceGateSession {
         }
         ElapsedTimer timer;
         const uint32_t end = std::min(checkpointCursor + kCheckpointsPerSlice, total);
-        checkpoints.fillCheckpointRange(checkpointCursor, end, &sample_.rebuild);
+        if (!checkpoints.fillCheckpointRange(checkpointCursor, end, &sample_.rebuild)) {
+          reset();
+          return LoopContentResolution::DeviceGateSliceResult::Inactive;
+        }
         sample_.rebuild.elapsedMicros += timer.elapsed();
         checkpointCursor = end;
         if (checkpointCursor >= total) {

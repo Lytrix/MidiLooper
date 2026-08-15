@@ -43,7 +43,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 Do **not** raise the 16-bar arm cap, persist checkpoints, or put resolution on overdub/MIDI until 5.8.
 
 - [x] 5.4 Sparse `soundingAt`: keep `spans` + `startsByTick`; device stride **8 bars** (`kDeviceCheckpointBarStride`). Native Stage 7/8 stay at 1 bar. Same `resolveState` answers (`test_stage7_sparse_checkpoints_agree_with_dense`).
-- [ ] 5.5 Abort checkpoint fill when advisory pressure is Low or Critical; prove no Critical heap on the 68-bar / 1847-note loop (contrast [`225351`](../../../captures/session_20260814_225351.log)).
+- [x] 5.5 Abort `fillCheckpointRange` when advisory pressure is Low or Critical (`test_stage7_fill_aborts_under_low_pressure`). Device session resets (no `lcr`). 68-bar Critical-heap HITL remains 5.7 — do not raise the 16-bar arm cap here.
 - [ ] 5.6 Split `prepareRebuildSpans` so `materializeActive` + `reconstructDisplayNotes` are not one idle slice.
 - [ ] 5.7 Measure 68-bar selected-loop idle gate: `DIAG,lcr` or explicit skip; no `idle_maint` ~50 ms; no 1 s `DFRAME` gaps.
 - [ ] 5.8 Measure `resolveState` replay from the sparse checkpoint (`rep`, `st`, interval). Decide whether `spans` + `startsByTick` need more index.
