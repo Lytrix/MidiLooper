@@ -619,8 +619,11 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             }
         }
         if (!loop.capturePreview.openNoteIndices.empty()) {
-            // Growing RECORD has no sealed loop length — never infer wrap-head to tick 0.
+            // Growing RECORD has no sealed loop wrap. Overdub session wrap jumps
+            // playhead to S; a held tail ON then extends to loop end until NoteOff
+            // (012925 note 30). Linear playhead close only — no wrap tail or head.
             const bool allowWrapContinuation =
+                !track.isOverdubbing() &&
                 !(track.isRecording() && !track.isPlaying());
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayNotes,
