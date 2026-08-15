@@ -1,9 +1,9 @@
 # Loop content resolution — pair index (5.18 design)
 
-**Status:** **5.18b native shipped** — last-wins flat `byNoteId`. Device remasure next. `openOnByPitch` retained. Do not flatten `openOnByPitch`.  
+**Status:** **5.18 FROZEN** 2026-08-15 — last-wins flat `byNoteId` device PASS [`173842`](../captures/session_20260815_173842.log). `openOnByPitch` retained. Do not flatten `openOnByPitch`. Do not reopen 5.18.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.7c **frozen** — [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md)  
-**Evidence:** [`172927`](../captures/session_20260815_172927.log) `pair tot=5356927 bn=5345535 op=2433 lk=1424`. [`170024`](../captures/session_20260815_170024.log) leftover `DFRAME` 1.277 s.
+**Evidence:** [`173842`](../captures/session_20260815_173842.log) `bn=225` `nsort=10003` `tot=7950`. Baseline [`172927`](../captures/session_20260815_172927.log) `bn=5345535`.
 
 **Does not start:** flattening `openOnByPitch`, `recon`, B, A2, 5.1 / 5.2, Stage 6, restoring the arm cap, reopening 5.7c.
 
@@ -263,3 +263,28 @@ Do not flatten `openOnByPitch`. `pk=1` on this fixture; a compact stack is not r
 Native **1195/1195** including `test_stage518a_pair_by_note_id_last_wins` (append then unique) and `test_stage518b_pair_by_note_id_unique_keep_last`. Firmware `teensy41-capture-serial` SUCCESS, RAM1 free **6592**.
 
 Device remasure next: same 139-bar fixture. Compare `bn` / pair `DFRAME` to [`172927`](../captures/session_20260815_172927.log). Expect `bn` to collapse like channel `14.7 s → 12.4 ms`. `pk=1` / `op` stay small. `walk=0`.
+
+---
+
+## 5.18b device PASS — [`173842`](../captures/session_20260815_173842.log)
+
+```
+pair,tot=7950,bn=225,op=2256,lk=546,oth=4923,ent=2396,ins=2396,ow=0,pu=2396,po=2395,pk=1,oa=58,hb=116,nsort=10003
+```
+
+```
+mat=0,win=7129,reb=368240,st=531,rep=350,hist=2394,walk=0,app=1341,sort=9237,iapp=197743,isort=28116,capp=10682,csort=1897
+```
+
+| | [`172927`](../captures/session_20260815_172927.log) | [`173842`](../captures/session_20260815_173842.log) |
+|--|--:|--:|
+| `bn` | **5.346 s** | **225 µs** |
+| `nsort` | n/a (map) | **10.0 ms** |
+| `tot` | 5.357 s | 7.95 ms |
+| `op` / `pk` | 2.4 ms / 1 | 2.3 ms / 1 |
+| pair `DFRAME` | **1.273 s** (390→420) | **0.980–1.026 s** consecutive `frameIndex` |
+| healthy after-complete `DFRAME` | ~0.968 s | **0.968 s** (1170→1200) |
+| `walk` / `hist` | 0 / 2394 | 0 / 2394 |
+| `idle_maint` during pair | no `loop_rem` | **25.2 ms**, no `loop_rem` |
+
+`nsort` (10.0 ms) and `isort` (28.1 ms) stay under the 50 ms idle bar. `openOnByPitch` unchanged. **5.18 complete.** Do not flatten `openOnByPitch`. Do not reopen 5.18. No 5.1. No B. No `recon`.

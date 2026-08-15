@@ -142,13 +142,13 @@ Not a new DEC. Device evidence from three LoopContentResolution derived indexes:
 | `startsByTick` | `multimap` 224–413 ms / 8 inserts | `spanBoundaries` append+sort | 5.15 [`151450`](../captures/session_20260815_151450.log); after reserve [`170024`](../captures/session_20260815_170024.log) `app=1420` `sort=9439` |
 | `TickIndex::byTick` | `multimap` 50–121 ms / small batches | `tickEvents` (5.17e **removed** `byTick`) | [`170024`](../captures/session_20260815_170024.log) `iapp=201044` is **bulk append total**, not map insert (was `iapp=4.82 s` before 5.7a reserve) |
 | `channelByNoteId` | `unordered_map` 14.7 s [`164922`](../captures/session_20260815_164922.log) | `{noteId, channel}[]` append+sort+unique | [`170024`](../captures/session_20260815_170024.log) `capp=12373` `csort=1779` |
-| `TickIndex::byNoteId` | `unordered_map` 5.346 s [`172927`](../captures/session_20260815_172927.log) | `{noteId, loc}[]` append+sort+unique keep-last | 5.18b native; device remasure next |
+| `TickIndex::byNoteId` | `unordered_map` 5.346 s [`172927`](../captures/session_20260815_172927.log) | `{noteId, loc}[]` append+sort+unique keep-last | [`173842`](../captures/session_20260815_173842.log) `bn=225` `nsort=10003` |
 
 **Invariant:** Derived indexes used by LoopContentResolution must use contiguous/bulk storage on the target device. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths. Where the query contract permits, indexes are flat PSRAM arrays built by append/bulk construction and ordered or uniqued in a bounded operation. The representation is selected from the query contract; flat storage is not an automatic replacement for every associative structure. Representation B (bucket/offset table) is not justified unless a measured flat query is too expensive.
 
 This is **derived indexes + PSRAM + per-entry construction**. It is not “never use maps anywhere.”
 
-**Still associative (not this invariant’s swap list):** pairing `openOnByPitch` (LIFO, retained after 5.18a); `TickIndex::passById` (pass-count, not note-count). `byNoteId` is 5.18b last-wins flat (native; device remasure next). Do not fold `recon` into this rule. Do not start 5.1.
+**Still associative (not this invariant’s swap list):** pairing `openOnByPitch` (LIFO, retained after 5.18a/b); `TickIndex::passById` (pass-count, not note-count). `byNoteId` is 5.18 last-wins flat. Do not fold `recon` into this rule. Do not start 5.1.
 
 ### Amendment 2026-08-15 — 5.7c FROZEN; pair is 5.18
 
@@ -159,7 +159,7 @@ Representation part of Stage 5.7 is **closed**. Do not reopen 5.7c.
 | correctness (`walk=0`) | PASS [`170024`](../captures/session_20260815_170024.log) |
 | complexity (no B) | PASS |
 | derived-index RAM / construction (flat/bulk) | PASS — `spanBoundaries`, `tickEvents`, channel lookup |
-| device latency on the whole idle gate | OPEN — `pair` `DFRAME` 1.277 s |
+| device latency on the whole idle gate | pair **CLOSED** 5.18b [`173842`](../captures/session_20260815_173842.log) — 5.1 still unchecked |
 
 Successor: [`loop_content_resolution_pair_index_refinement.md`](Plans/loop_content_resolution_pair_index_refinement.md). Flatten from the **query**, not the container type. `byNoteId` is last-wins `NoteId → {passId, on, off}`. `openOnByPitch` is a per-pass LIFO stack keyed by **pitch only**. Measure which produces the stall before picking a representation. No 5.1. No Stage 6. No B. Do not rewrite `recon`.
 
@@ -181,7 +181,11 @@ A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiCha
 
 ### Amendment 2026-08-15 — 5.18b last-wins flat byNoteId (native)
 
-`TickIndex::byNoteId` query is `NoteId` → last `{passId, on, off}`. Storage is now `{noteId, loc}[]`: C-order NOTE_ON append, reverse-scan OFF during the unsorted walk, one `stable_sort` by `noteId`, unique **keep-last** (opposite of 5.7c channel keep-first). `appendNoteEvents` uses `lower_bound` after unique. Device sequences one `nsort` slice after all pair ranges, before `isort`. Sliced pair ranges do not unique every 8 events. Native last-wins vs keep-first tests. `openOnByPitch` stays a per-pass LIFO stack. Device remasure next on the 139-bar class. No 5.1. No B. No `recon`. Do not flatten `openOnByPitch`.
+`TickIndex::byNoteId` query is `NoteId` → last `{passId, on, off}`. Storage is now `{noteId, loc}[]`: C-order NOTE_ON append, reverse-scan OFF during the unsorted walk, one `stable_sort` by `noteId`, unique **keep-last** (opposite of 5.7c channel keep-first). `appendNoteEvents` uses `lower_bound` after unique. Device sequences one `nsort` slice after all pair ranges, before `isort`. Sliced pair ranges do not unique every 8 events. Native last-wins vs keep-first tests. `openOnByPitch` stays a per-pass LIFO stack. No 5.1. No B. No `recon`. Do not flatten `openOnByPitch`.
+
+### Amendment 2026-08-15 — 5.18b device PASS; 5.18 FROZEN
+
+[`173842`](../captures/session_20260815_173842.log): `tot=7950` `bn=225` `nsort=10003` `op=2256` `pk=1` `ins=2396` `ow=0` `walk=0` `hist=2394`. Pair `DFRAME` consecutive `frameIndex` **0.980–1.026 s** (was 1.273 s [`172927`](../captures/session_20260815_172927.log)). `idle_maint` during pair 25.2 ms, no `loop_rem`. `nsort` 10.0 ms and `isort` 28.1 ms under 50 ms. Do not flatten `openOnByPitch`. Do not reopen 5.18.
 
 ### Constraints created
 
