@@ -148,6 +148,17 @@ TRACK_COLD_MEM bool noteSoundsAt(const NoteUtils::DisplayNote& note, uint32_t ti
   return tick >= note.startTick && tick < note.endTick;
 }
 
+TRACK_COLD_MEM void fillChannelByNoteId(const SessionMidiEventVec& resolved,
+                                        LoopContentResolution::StateCheckpoints::ChannelByNoteIdMap& out) {
+  out.clear();
+  for (const MidiEvent& event : resolved) {
+    if (!event.isNoteOn() || event.noteId == kInvalidNoteId) {
+      continue;
+    }
+    out.emplace(event.noteId, event.channel);
+  }
+}
+
 TRACK_COLD_MEM uint8_t channelForNoteId(const SessionMidiEventVec& events, NoteId noteId) {
   for (const MidiEvent& event : events) {
     if (event.isNoteOn() && event.noteId == noteId) {
@@ -720,6 +731,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::beginRebuildResolve
   soundingAt.clear();
   spans.clear();
   spanBoundaries.clear();
+  channelByNoteId.clear();
   resolved.clear();
   return loopLength != 0 && checkpointIntervalTicks != 0;
 }
@@ -761,6 +773,9 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
   if (endExclusive > limit) {
     endExclusive = limit;
   }
+  if (begin == 0 || channelByNoteId.empty()) {
+    fillChannelByNoteId(resolved, channelByNoteId);
+  }
   if (spans.capacity() < notes.size()) {
     spans.reserve(notes.size());
   }
@@ -772,7 +787,13 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::appendSpansFromNote
   for (uint32_t i = begin; i < endExclusive; ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
     NoteSpan span{};
-    span.note.channel = channelForNoteId(resolved, note.noteId);
+    span.note.channel = 0;
+    if (note.noteId != kInvalidNoteId) {
+      const auto found = channelByNoteId.find(note.noteId);
+      if (found != channelByNoteId.end()) {
+        span.note.channel = found->second;
+      }
+    }
     span.note.pitch = note.note;
     span.note.noteId = note.noteId;
     span.note.onTick = note.startTick;
@@ -803,6 +824,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
   spans.clear();
   spanBoundaries.clear();
   soundingAt.clear();
+  channelByNoteId.clear();
   if (loopLengthTicks == 0 || intervalTicks == 0) {
     return true;
   }
@@ -1384,6 +1406,7 @@ struct DeviceGateSession {
           checkpoints.spans.clear();
           checkpoints.spanBoundaries.clear();
           checkpoints.soundingAt.clear();
+          checkpoints.channelByNoteId.clear();
           rebuildNotes = NoteUtils::dedupeProjectedDisplayNotes(reconProjected);
           reconProjected = NoteUtils::DisplayNoteVec{};
           reconBuild.clear();

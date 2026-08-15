@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.7a reserve PASS [`163942`])
+Last updated: 2026-08-15 (DEC-037 5.7b — channelByNoteId)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.7a reserve PASS [`163942`])
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **5.7a reserve PASS** [`163942`](../../captures/session_20260815_163942.log) `app=2349` `iapp=202981`; `idx` rate flat. 5.7 `DFRAME` not closed: `spans` 930→169 notes/s, `DFRAME` 0.992→1.195 s. Remaining owner: `channelForNoteId` in `appendSpansFromNotes`. Do not start B, A2, `recon`, `pair`, 5.1/5.2/6.x until asked. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](../Plans/loop_content_resolution_spans_dframe_gap_refinement.md).
+**Now:** **5.7b** — `channelByNoteId` from every NOTE_ON in `resolved`. Open notes whose OFF is outside the current 8 events still pair (`activeNoteStacks` / `openOnByPitch`) and still get channel. Do not rewrite `pair`/`recon`, B, A2, 5.1/5.2/6.x. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](../Plans/loop_content_resolution_spans_dframe_gap_refinement.md).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 
