@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <cstdint>
+#include <memory>
 #include "MidiEvent.h"
 #include "MidiEvent.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
@@ -149,6 +150,26 @@ DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t 
 template <typename Alloc>
 DisplayNoteVec reconstructDisplayNotes(const std::vector<MidiEvent, Alloc>& midiEvents,
                                        uint32_t loopLength, bool verboseLog = true);
+
+/// Persistent stacks + spans for `buildCanonicalSpansFromMidi`. Not a new musical type.
+struct CanonicalSpanBuild {
+  CanonicalSpanBuild();
+  ~CanonicalSpanBuild();
+  CanonicalSpanBuild(CanonicalSpanBuild&&) noexcept;
+  CanonicalSpanBuild& operator=(CanonicalSpanBuild&&) noexcept;
+  CanonicalSpanBuild(const CanonicalSpanBuild&) = delete;
+  CanonicalSpanBuild& operator=(const CanonicalSpanBuild&) = delete;
+  void clear();
+
+  struct Impl;
+  std::unique_ptr<Impl> impl;
+};
+
+void appendCanonicalSpansFromMidi(const SessionMidiEventVec& midiEvents, uint32_t loopLength,
+                                  uint32_t beginEvent, uint32_t endEventExclusive,
+                                  CanonicalSpanBuild& build);
+void finishCanonicalSpansFromMidi(uint32_t loopLength, CanonicalSpanBuild& build);
+DisplayNoteVec displayNotesFromCanonicalSpans(const CanonicalSpanBuild& build, uint32_t loopLength);
 
 struct OpenNoteOn {
     uint8_t note;
