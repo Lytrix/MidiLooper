@@ -1,6 +1,6 @@
 # Loop content resolution — span-boundary index (5.15 design)
 
-**Status:** 5.15c shipped 2026-08-15 — `spanBoundaries` is production A. Device 5.7 remasure next. No B. No `byTick`.
+**Status:** **5.15 complete** 2026-08-15 — A settled on device [`151450`](../captures/session_20260815_151450.log). No A2. No B. Successor: [`loop_content_resolution_device_phase_budget_refinement.md`](loop_content_resolution_device_phase_budget_refinement.md) (5.16).
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Does not start:** 5.1 / 5.2 re-run, Stage 6 production swap, batch-size 1 or 4, deleting `materializeToEventVector`
 
@@ -199,10 +199,6 @@ Device 5.7 remasure [`151450`](../captures/session_20260815_151450.log): **appen
 
 **Do not build A2** (sort is 10 ms). **Do not build B** (`resolveState` is 13 ms). `byTick` `idx`/`pair` unchanged (50–83 ms). `prep` still 182 ms.
 
-## Open after 5.15c
+## 5.15 closed
 
-1. Decide 5.7’s remaining bar: `prep` 182 ms, `byTick` 50–83 ms, `spans` `DFRAME` gaps 1.4–2.2 s. Do not start 5.1/5.2 until that decision.
-2. A2: **no** — sort is 10.2 ms.
-3. B: **no** — `st=13 ms`.
-4. `byTick` later, same lens — not folded into 5.15.
-5. Device evidence for the Teensy constraint on this index: PSRAM map insert of 8 spans was 224–413 ms; sequential append of 8 is ~18 ms average (`app=5.49s` / 299 slices).
+A wins. A2/B unjustified. `walk=0` held. Resolver query model stays. Remaining 5.7 work is **phase budget**, not this index — [`loop_content_resolution_device_phase_budget_refinement.md`](loop_content_resolution_device_phase_budget_refinement.md).
