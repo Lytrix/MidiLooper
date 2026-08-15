@@ -3,7 +3,7 @@
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** `a886638` — Investigate incremental LCR index and checkpoint repair after commit (6D).  
+**HEAD:** `33b9691` — Narrow 6D to overdub-query index maintenance after one OverdubPass (6D.1).  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** **6D.1** native — after one committed OverdubPass, update `capturePasses` + `tickEvents` + stamp only. Do not rebuild all of LCR. Do not solve edits, undo, checkpoints, or `byNoteId`. A and B rejected. 6.0: consume on the button, no construct/sort/checkpoint/resolve to open overdub. 6C stays consume-when-ready.
+> **Now:** **6D.1 native only.** Measure `index_order_us` against `history_events` and `commit_delta_events` at ≥2 history sizes. Full sort that scales with history fails even if < 50 ms. Production architecture untouched until that contract exists. Do not rebuild all of LCR. A/B rejected. 6C consume-when-ready.
 >
 > Read CURRENT_WORK + the 6D plan first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**6D.1** — incremental overdub-query index after commit (`tickEvents` + stamp). Not all of LCR. Native first. A/B rejected.
+**6D.1 native only** — scale vs `history_events` and `commit_delta_events`. Full history-scaling sort fails even if < 50 ms. Production frozen. A/B rejected.
 
 ---
 

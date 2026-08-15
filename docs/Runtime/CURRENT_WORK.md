@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6D.1: overdub-pass index only, not all of LCR)
+Last updated: 2026-08-15 (DEC-037 6D.1 native: scale vs history vs delta; production frozen)
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-15 (DEC-037 6D.1: overdub-pass index only, not all of LCR)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6D.1** — after a committed `OverdubPass`, keep the **overdub-query index** (`capturePasses` + `tickEvents` + stamp) incrementally current. Not all of LCR. No edits/undo/checkpoints/`byNoteId` in this slice. Native first. **Rejected:** A, B. **6C** stays consume-when-ready. Do not start midi_gap / 6.3.
+**Now:** **6D.1 native only** — measure overdub-query index update vs `history_events` and `commit_delta_events`. Full sort that scales with history **fails** even if < 50 ms. Production architecture untouched until that contract is established. **Rejected:** A, B. **6C** stays consume-when-ready. Do not start midi_gap / 6.3.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
