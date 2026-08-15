@@ -200,17 +200,17 @@ Open-note contract is not the fail. Do not shrink the map to the current 8 event
 
 **Ownership change?** NO. **Transition change?** NO.
 
-### Working hypothesis (evidence, not a new DEC)
+### Derived-index storage invariant (DEC-037, not a new DEC)
 
-PSRAM associative-container insertion is a confirmed systemic latency hazard for LoopContentResolution derived indexes on the target device.
+Formalized after 5.7c [`170024`](../captures/session_20260815_170024.log). Authority: [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) amendment 2026-08-15, [`design.md`](../../openspec/changes/loop-content-resolution/design.md) decision 10, architecture hard invariant 8.
 
-| Structure | Insert | After flat A |
-|-----------|--------|----------------|
-| `startsByTick` `std::multimap` | 224–413 ms / 8 inserts | `app` ~1 ms, `sort` ~10 ms |
-| `TickIndex::byTick` `std::multimap` | 50–121 ms / small batches | `iapp` 203 ms after reserve, `isort` 27 ms |
-| `channelByNoteId` `unordered_map` | **14.7 s** for ~2394 `emplace` | **`capp=12.4 ms` `csort=1.8 ms`** [`170024`](../captures/session_20260815_170024.log) |
+| Derived structure | Associative PSRAM | Flat A | [`170024`](../captures/session_20260815_170024.log) |
+|-------------------|-------------------|--------|--------|
+| `startsByTick` | `multimap` 224–413 ms / 8 | `spanBoundaries` | `app=1.4 ms` `sort=9.4 ms` |
+| `TickIndex::byTick` | `multimap` 50–121 ms / batch | **removed 5.17e**; `tickEvents` | `iapp=201 ms` is **reserved bulk append total**, not a remaining map |
+| channel lookup | `unordered_map` 14.7 s | `{noteId, channel}[]` | `capp=12.4 ms` `csort=1.8 ms` |
 
-5.7c device remasure **PASS**. The representation rule is now measured on three derived indexes. Do not add a new DEC in this commit. `walk=0` stays. Do not rewrite `recon` / `pair`.
+**5.7 state:** channel index PASS · span boundaries PASS · tick events PASS · resolver `walk=0` PASS · **`pair` OPEN** (`DFRAME` 1.277 s). `pair` / `recon` / `byNoteId` are not this representation experiment. Do not start 5.1. Do not add B.
 
 ### Contract (from code — pin before the swap)
 

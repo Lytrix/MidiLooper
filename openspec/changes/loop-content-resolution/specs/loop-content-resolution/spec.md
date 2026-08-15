@@ -88,11 +88,31 @@ Building a sounding-state snapshot at every bar of an `035414`-class loop (notes
 - **WHEN** the idle device gate runs on a 64-bar or longer loop with thousands of notes
 - **THEN** it MUST NOT allocate a full sounding vector at every bar
 - **AND** it MUST NOT consult `MemoryMonitor` / advisory pressure to arm, slice, or abort
-- **AND** tick-index and checkpoint maps MUST allocate through `ExternalMemoryFirstAllocator`
+- **AND** derived indexes (`spanBoundaries`, `tickEvents`, `channelByNoteId`) MUST use `ExternalMemoryFirstAllocator` bulk arrays, not per-entry PSRAM associative insert
 - **AND** `prepareRebuildSpans` materialize-plus-reconstruct MUST NOT run as a single idle slice
 - **AND** IndexCommit, `pairCapturePassNotes`, reconstruct span build, display project, channel-index append, and RebuildSpans MUST process at most `kDeviceGateEventsPerSlice` events or spans per idle slice
 - **AND** those slices MUST NOT commit a whole long-loop pass, pair every event of a long pass, emplace every span in one idle call, or insert every channel-lookup entry into a PSRAM associative container
 - **AND** the idle gate MUST emit `#CAP,DIAG,lcr,phase,...` on step change and at most once per `kDeviceGatePhaseLogIntervalUs` while Continue
+
+### Requirement: Derived-index storage is bulk, not per-entry PSRAM associative insert
+
+Derived indexes used by `LoopContentResolution` on the target device MUST use contiguous/bulk storage. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths.
+
+Where the query contract permits, indexes SHALL be represented as flat PSRAM arrays built by append or bulk construction and ordered or uniqued in a bounded operation. The representation MUST be selected from the query contract. Flat storage is not an automatic replacement for every associative structure. A bucket or offset table MUST NOT be added unless a measured flat query is too expensive.
+
+This requirement covers **derived indexes + PSRAM + per-entry construction**. It does not forbid maps on unrelated paths. `pair` / `TickIndex::byNoteId` / reconstruct are a separate measurement pass.
+
+#### Scenario: Span-boundary, tick-event, and channel indexes are flat arrays
+
+- **WHEN** the idle device gate builds `spanBoundaries`, `tickEvents`, and `channelByNoteId` on a loop with thousands of notes
+- **THEN** those indexes are contiguous PSRAM arrays filled by sliced append and a bounded sort or unique
+- **AND** construction does not `emplace` per note or per event into a PSRAM `std::map`, `std::multimap`, or `std::unordered_map`
+
+#### Scenario: Channel lookup first-wins on NoteId
+
+- **WHEN** `appendSpansFromNotes` assigns `span.note.channel`
+- **THEN** the channel is the first NOTE_ON in resolved C-order for that `NoteId`
+- **AND** a later NOTE_ON with the same `NoteId` is ignored even if its channel differs
 
 ### Requirement: Physical chunks are not resolution boundaries
 
