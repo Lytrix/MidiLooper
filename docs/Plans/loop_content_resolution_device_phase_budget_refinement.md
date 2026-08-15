@@ -137,7 +137,7 @@ Largest LCR-period `DFRAME` gap is **4.38 s** during `idx` pass 1 (paint duratio
 
 ## Open after this identification
 
-1. 5.17d **PASS**. 5.7a reserve **PASS** [`163942`](../captures/session_20260815_163942.log) `app=2349` `iapp=202981`. 5.7 leftover is `channelForNoteId` in `appendSpansFromNotes` (`spans` 930→169 notes/s; `DFRAME` 0.992→1.195 s). Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md).
+1. 5.17d **PASS**. 5.7a reserve **PASS** [`163942`](../captures/session_20260815_163942.log). **5.7b device FAIL** [`164922`](../captures/session_20260815_164922.log) `channelByNoteId` emplace 14.7 s. After fill, `spans` ~1000 notes/s. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md).
 2. Do not treat `reb` as the optimization target.
 3. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
 

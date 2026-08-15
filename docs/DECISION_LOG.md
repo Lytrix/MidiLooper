@@ -125,6 +125,10 @@ Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and th
 
 [`162630`](../captures/session_20260815_162630.log): `spans` notes/s 565→125 and `DFRAME` 1.003→1.591 s while paint stayed 12 ms. `appendSpanBoundaryEntries` reserved this slice only (`size+16`); `spans` already reserved `notes.size()`. Same growth on `idx` `tickEvents` (`size+8`). 5.7 leftover is that realloc, not `channelForNoteId` (constant per 8-note slice). `appendSpansFromNotes` reserves `2 * notes.size()`; `appendTickEventEntries` reserves remaining events in the pass. Device [`163942`](../captures/session_20260815_163942.log): reserve **PASS** (`app=2349` `iapp=202981`; `idx` 1310→1212 events/s). 5.7 `DFRAME` not closed: `spans` 930→169 notes/s. 5.7b: `appendSpansFromNotes` fills `channelByNoteId` from every NOTE_ON in `resolved` (first wins). Open notes whose OFF is outside the current 8 events still pair (`activeNoteStacks` / `openOnByPitch`) and still get channel. Native `test_stage57_recon_*` / `test_stage57_pair_*` / `test_stage57_span_channel_*` PASS. Do not rewrite `pair` / `recon`. Do not start 5.1.
 
+### Amendment 2026-08-15 — 5.7b device FAIL
+
+Device [`164922`](../captures/session_20260815_164922.log): first `spans` slice `loop_rem,idle_maint,14744010` filling `channelByNoteId` (PSRAM `unordered_map` `emplace`). `DFRAME` 15.702 s with consecutive `frameIndex`. After fill, `spans` ~1000 notes/s flat. Open-note contract held. Do not keep this map on device. Next representation is flat append+sort+unique, not sliced `emplace`.
+
 ### Constraints created
 
 - No second O(history) derived owner that `invalidateCaches` will discard.
