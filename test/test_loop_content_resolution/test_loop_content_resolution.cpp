@@ -998,6 +998,7 @@ void commitPassOneEventPerSlice(LoopContentResolution::TickIndex& index, PassId 
   for (uint32_t i = 0; i < eventCount; ++i) {
     index.indexCapturePassEventRange(id, i, i + 1, nullptr);
   }
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(index.tickEvents);
   std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
   for (uint32_t i = 0; i < eventCount; ++i) {
     index.pairCapturePassEventRange(id, i, i + 1, openOnByPitch, nullptr);
@@ -1091,6 +1092,7 @@ void commitPassEventsPerSlice(LoopContentResolution::TickIndex& index, PassId id
     const uint32_t end = std::min(i + step, eventCount);
     index.indexCapturePassEventRange(id, i, end, nullptr);
   }
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(index.tickEvents);
   std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
   for (uint32_t i = 0; i < eventCount; i += step) {
     const uint32_t end = std::min(i + step, eventCount);
@@ -1372,7 +1374,7 @@ void test_stage9_native_worst_case_micros() {
   TEST_ASSERT_LESS_THAN(sample.state.eventsInHistory, sample.state.eventsReplayed);
   TEST_ASSERT_GREATER_THAN(0u, sample.materialize.elapsedMicros);
   TEST_ASSERT_GREATER_THAN(0u, sample.window.elapsedMicros);
-  TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.tickEventAppendMicros);
+  TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.resolutionOperations);
   std::printf("stage515c app=%llu sort=%llu\n",
               static_cast<unsigned long long>(sample.rebuild.spanBoundaryAppendMicros),
               static_cast<unsigned long long>(sample.rebuild.spanBoundarySortMicros));
@@ -1559,6 +1561,12 @@ void test_stage517b_equal_tick_event_order() {
   pass.events.push_back(off);
   pass.events.push_back(on);
   index.indexCapturePassEventRange(id, 0, 2, nullptr);
+  LoopContentResolution::TickIndex::sortTickEventEntriesByTick(index.tickEvents);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(index.tickEvents.size()));
+  TEST_ASSERT_EQUAL_UINT32(192u, index.tickEvents[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(0u, index.tickEvents[0].eventIndex);
+  TEST_ASSERT_EQUAL_UINT32(192u, index.tickEvents[1].tick);
+  TEST_ASSERT_EQUAL_UINT32(1u, index.tickEvents[1].eventIndex);
 
   LoopContentResolution::TickIndex::TickEventEntryVec flat;
   LoopContentResolution::TickIndex::appendTickEventEntries(pass, 0, 2, flat);
@@ -1568,13 +1576,6 @@ void test_stage517b_equal_tick_event_order() {
   LoopContentResolution::TickIndex::sortTickEventEntriesByTick(flat);
   TEST_ASSERT_EQUAL_UINT32(0u, flat[0].eventIndex);
   TEST_ASSERT_EQUAL_UINT32(1u, flat[1].eventIndex);
-
-  auto it = index.byTick.lower_bound(192u);
-  TEST_ASSERT_TRUE(it != index.byTick.end());
-  TEST_ASSERT_EQUAL_UINT32(0u, it->second.second);
-  ++it;
-  TEST_ASSERT_TRUE(it != index.byTick.end());
-  TEST_ASSERT_EQUAL_UINT32(1u, it->second.second);
 }
 
 void test_stage517b_flat_tick_events_match_map() {
@@ -1584,7 +1585,7 @@ void test_stage517b_flat_tick_events_match_map() {
   LoopContentResolution::TickIndex index;
   commitFixtureIndex(fixture, index);
 
-  LoopContentResolution::TickIndex::ByTickMap mapIndex;
+  std::multimap<uint32_t, std::pair<PassId, uint32_t>> mapIndex;
   const Clock::time_point cStart = Clock::now();
   for (const auto& pass : index.capturePasses) {
     for (uint32_t i = 0; i < static_cast<uint32_t>(pass.events.size()); ++i) {
@@ -1602,10 +1603,13 @@ void test_stage517b_flat_tick_events_match_map() {
   const uint64_t sortUs = elapsedMicrosSince(sortStart);
   const uint64_t indexTotalUs = appendUs + sortUs;
 
-  TEST_ASSERT_EQUAL(index.byTick.size(), flat.size());
+  TEST_ASSERT_EQUAL(index.tickEvents.size(), flat.size());
   TEST_ASSERT_EQUAL(mapIndex.size(), flat.size());
   size_t cursor = 0;
-  for (const auto& entry : index.byTick) {
+  for (const auto& entry : mapIndex) {
+    TEST_ASSERT_EQUAL_UINT32(entry.first, index.tickEvents[cursor].tick);
+    TEST_ASSERT_EQUAL(entry.second.first, index.tickEvents[cursor].passId);
+    TEST_ASSERT_EQUAL_UINT32(entry.second.second, index.tickEvents[cursor].eventIndex);
     TEST_ASSERT_EQUAL_UINT32(entry.first, flat[cursor].tick);
     TEST_ASSERT_EQUAL(entry.second.first, flat[cursor].passId);
     TEST_ASSERT_EQUAL_UINT32(entry.second.second, flat[cursor].eventIndex);

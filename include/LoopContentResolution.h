@@ -100,9 +100,6 @@ struct LoopContentResolution {
     using PassByIdMap =
         std::unordered_map<PassId, size_t, std::hash<PassId>, std::equal_to<PassId>,
                            ExternalMemoryFirstAllocator<std::pair<const PassId, size_t>>>;
-    using ByTickMap = std::multimap<
-        uint32_t, std::pair<PassId, uint32_t>, std::less<uint32_t>,
-        ExternalMemoryFirstAllocator<std::pair<const uint32_t, std::pair<PassId, uint32_t>>>>;
     using ByNoteIdMap =
         std::unordered_map<NoteId, NoteLocation, std::hash<NoteId>, std::equal_to<NoteId>,
                            ExternalMemoryFirstAllocator<std::pair<const NoteId, NoteLocation>>>;
@@ -139,8 +136,6 @@ struct LoopContentResolution {
 
     CapturePassEntryVec capturePasses;
     PassByIdMap passById;
-    ByTickMap byTick;
-    /// 5.17d device-gate A. Native `commitCapturePass` still fills `byTick`.
     TickEventEntryVec tickEvents;
     ByNoteIdMap byNoteId;
   };
@@ -209,7 +204,7 @@ struct LoopContentResolution {
   /// 5.7 `idle_maint` bar. Same value as `RuntimeTimingTelemetry::kLoopRemainderOneShotUs`.
   static constexpr uint32_t kDeviceGateSliceBudgetUs = 50000;
   /// Index / span units per idle slice. Device IndexCommit appends this many tick-event
-  /// rows; it does not `emplace` into `byTick` (5.17d).
+  /// rows into `tickEvents` (5.17e).
   static constexpr uint32_t kDeviceGateEventsPerSlice = 8;
   /// Phase progress line: on step change, and at most once per this interval on device.
   static constexpr uint32_t kDeviceGatePhaseLogIntervalUs = 1000000;
