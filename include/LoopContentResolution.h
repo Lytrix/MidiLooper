@@ -295,7 +295,8 @@ struct LoopContentResolution {
     ResolutionCostCounters state;
   };
 
-  /// One-shot host/device sample. Does not keep the index. Not a production consumer.
+  /// One-shot host/device sample. Leaves the session in Done; call `deviceGateComplete` to keep
+  /// `TickIndex` for idle consume (6A).
   static void measureDeviceGate(const LoopPasses& passes, uint32_t loopLengthTicks,
                                 DeviceGateSample& out);
 
@@ -313,5 +314,13 @@ struct LoopContentResolution {
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
-  static void deviceGateComplete();
+  /// Keep `TickIndex` for idle `resolveWindow`. Drop rebuild/checkpoint working buffers.
+  /// Does not construct or sort. Stamp is `playbackRevision` at complete.
+  static void deviceGateComplete(uint32_t playbackRevision);
+  static bool preparedWindowReady(uint32_t playbackRevision);
+  /// Consume the kept index. Returns false on miss or stamp mismatch — never rebuilds.
+  static bool tryResolvePreparedWindow(const EditPassVec& editPasses, uint32_t loopLengthTicks,
+                                       uint32_t windowStart, uint32_t windowLength,
+                                       uint32_t playbackRevision, SessionMidiEventVec& out,
+                                       ResolutionCostCounters* counters = nullptr);
 };

@@ -72,13 +72,13 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 | Question | Answer |
 |----------|--------|
-| **Owner module** | Idle `DeviceGateSession` produces prepared LCR state. `establishOverdubSourceView` consumes. Not a new overdub owner |
+| **Owner module** | Idle `DeviceGateSession` produces prepared LCR state. **6A:** `Loop::rebuildVisualCacheIdleSlice` consumes. `establishOverdubSourceView` is 6C only. Not a new overdub owner |
 | **Primary invariant** | Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. Consume already-prepared derived state only. LCR is not a replacement for `overdubSourceView` |
 | **Ownership change?** | NO for record/overdub FSM. 6A display gather and 6B invalidation stay on existing owners |
 | **State transition change?** | NO |
 | **Behavior-preserving?** | YES for overdub FSM. Keep 3b `visualCache.notes` copy. Dirty-cache `resolveWindow` / `ensure*` on `startOverdubbing` is **forbidden** |
 | **Reuse** | YES — idle gate already owns LCR construction; 3b copy stays fallback |
-| **Phase scope** | **6A** idle display range (oracle). **6B** commit affected-range invalidation. **6C** overdub source from prepared LCR. Score 6C vs 3b **2214 µs**. Firmware waits for an explicit implement request |
+| **Phase scope** | **6A** idle display range (oracle) — firmware in this session; device measure owed. **6B** commit affected-range invalidation. **6C** overdub source from prepared LCR. Score 6C vs 3b **2214 µs** |
 
 ---
 

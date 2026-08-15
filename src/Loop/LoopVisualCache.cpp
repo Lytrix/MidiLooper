@@ -4,6 +4,7 @@
 #include "Loop.h"
 
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
@@ -12,6 +13,11 @@
 #include "Utils/NoteUtils.h"
 
 #include <algorithm>
+#include <cstdio>
+
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 
 namespace {
 
@@ -207,9 +213,32 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 
   SessionMidiEventVec flat;
-  gatherCommittedEventsInWindow(flat, windowStart, windowLength);
+  ResolutionCostCounters windowCounters;
+  const bool usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
+      passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
+      &windowCounters);
+  if (!usedPrepared) {
+    gatherCommittedEventsInWindow(flat, windowStart, windowLength);
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructStartUs = micros();
+#endif
   const NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructUs = micros() - reconstructStartUs;
+  if (usedPrepared) {
+    const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
+    char line[192];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,6a,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
+             static_cast<unsigned long>(reconstructUs),
+             static_cast<unsigned long>(windowUs + reconstructUs),
+             static_cast<unsigned>(flat.size()), static_cast<unsigned>(sliceNotes.size()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
 
   removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar, loopLengthTicks);
   for (const NoteUtils::DisplayNote& note : sliceNotes) {

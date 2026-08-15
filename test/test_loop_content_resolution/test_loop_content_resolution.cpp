@@ -194,6 +194,38 @@ void oracleWindowEvents(const LoopPasses& passes, uint32_t loopLengthTicks, uint
   sortOracleEvents(out);
 }
 
+void sortDisplayNotes(NoteUtils::DisplayNoteVec& notes) {
+  std::sort(notes.begin(), notes.end(), [](const NoteUtils::DisplayNote& a,
+                                           const NoteUtils::DisplayNote& b) {
+    if (a.noteId != b.noteId) {
+      return a.noteId < b.noteId;
+    }
+    if (a.startTick != b.startTick) {
+      return a.startTick < b.startTick;
+    }
+    return a.endTick < b.endTick;
+  });
+}
+
+void assertDisplayNotesMatch(NoteUtils::DisplayNoteVec expected, NoteUtils::DisplayNoteVec actual) {
+  sortDisplayNotes(expected);
+  sortDisplayNotes(actual);
+  TEST_ASSERT_EQUAL(expected.size(), actual.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_EQUAL(expected[i].noteId, actual[i].noteId);
+    TEST_ASSERT_EQUAL(expected[i].note, actual[i].note);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].startTick, actual[i].startTick);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].endTick, actual[i].endTick);
+  }
+}
+
+void oracleWindowNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
+                       uint32_t windowLength, NoteUtils::DisplayNoteVec& out) {
+  SessionMidiEventVec events;
+  oracleWindowEvents(passes, loopLengthTicks, windowStart, windowLength, events);
+  out = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
+}
+
 void sortSounding(SoundingNoteVec& notes) {
   std::sort(notes.begin(), notes.end(), [](const SoundingNote& a, const SoundingNote& b) {
     if (a.noteId != b.noteId) {
@@ -714,6 +746,84 @@ void test_stage6_wrap_window_matches_oracle() {
   TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
   assertResolvedEventsMatch(expected, actual);
   TEST_ASSERT_TRUE(hasNoteIdOn(actual, fixture.wrapNoteId));
+}
+
+void resolveWindowNotes(const LoopContentResolution::TickIndex& index, const LoopPasses& passes,
+                        uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
+                        NoteUtils::DisplayNoteVec& out, ResolutionCostCounters* counters) {
+  SessionMidiEventVec events;
+  LoopContentResolution::resolveWindow(index, passes.editPasses, loopLengthTicks, windowStart,
+                                       windowLength, events, counters);
+  out = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
+}
+
+void test_stage6a_one_bar_notes_match_oracle() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::TickIndex index;
+  commitFixtureIndex(fixture, index);
+
+  const uint32_t barTicks = Config::TICKS_PER_BAR;
+  const uint32_t windowLength = 2u * barTicks;
+  NoteUtils::DisplayNoteVec expected;
+  oracleWindowNotes(fixture.passes, fixture.loopLengthTicks, 0, windowLength, expected);
+  ResolutionCostCounters counters;
+  NoteUtils::DisplayNoteVec actual;
+  resolveWindowNotes(index, fixture.passes, fixture.loopLengthTicks, 0, windowLength, actual,
+                     &counters);
+  printCounters("stage6a_one_bar", counters);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, expected.size());
+  assertDisplayNotesMatch(expected, actual);
+
+  const uint32_t wrapStart = (kCanonicalBars - 2u) * barTicks;
+  NoteUtils::DisplayNoteVec wrapExpected;
+  oracleWindowNotes(fixture.passes, fixture.loopLengthTicks, wrapStart, windowLength, wrapExpected);
+  ResolutionCostCounters wrapCounters;
+  NoteUtils::DisplayNoteVec wrapActual;
+  resolveWindowNotes(index, fixture.passes, fixture.loopLengthTicks, wrapStart, windowLength,
+                     wrapActual, &wrapCounters);
+  printCounters("stage6a_wrap_bar", wrapCounters);
+  TEST_ASSERT_EQUAL_UINT32(0u, wrapCounters.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, wrapExpected.size());
+  assertDisplayNotesMatch(wrapExpected, wrapActual);
+}
+
+void test_stage6a_prepared_window_after_complete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(fixture.passes, fixture.loopLengthTicks, sample);
+  constexpr uint32_t kRevision = 7;
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(kRevision));
+  LoopContentResolution::deviceGateComplete(kRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kRevision));
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(kRevision + 1u));
+
+  const uint32_t windowLength = 2u * Config::TICKS_PER_BAR;
+  SessionMidiEventVec prepared;
+  ResolutionCostCounters counters;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+      fixture.passes.editPasses, fixture.loopLengthTicks, 0, windowLength, kRevision, prepared,
+      &counters));
+  SessionMidiEventVec rejected;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryResolvePreparedWindow(
+      fixture.passes.editPasses, fixture.loopLengthTicks, 0, windowLength, kRevision + 1u, rejected,
+      nullptr));
+  TEST_ASSERT_TRUE(rejected.empty());
+
+  NoteUtils::DisplayNoteVec expected;
+  oracleWindowNotes(fixture.passes, fixture.loopLengthTicks, 0, windowLength, expected);
+  const NoteUtils::DisplayNoteVec actual =
+      NoteUtils::reconstructDisplayNotes(prepared, fixture.loopLengthTicks, false);
+  printCounters("stage6a_prepared", counters);
+  TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
+  TEST_ASSERT_GREATER_THAN(0u, expected.size());
+  assertDisplayNotesMatch(expected, actual);
+  LoopContentResolution::deviceGateReset();
 }
 
 void test_stage6_disable_without_walking_pass_lists() {
@@ -2069,6 +2179,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6_commit_does_not_scan_prior_passes);
   RUN_TEST(test_stage6_window_find_matches_materialize_filter);
   RUN_TEST(test_stage6_wrap_window_matches_oracle);
+  RUN_TEST(test_stage6a_one_bar_notes_match_oracle);
+  RUN_TEST(test_stage6a_prepared_window_after_complete);
   RUN_TEST(test_stage6_disable_without_walking_pass_lists);
   RUN_TEST(test_stage6_note_spanning_two_chunks);
   RUN_TEST(test_stage7_checkpoints_measured_interval);
