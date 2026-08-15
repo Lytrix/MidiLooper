@@ -232,7 +232,7 @@ struct EventRef {
 };
 
 TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::CapturePassEntry& pass,
-                                         LoopContentResolution::TickIndex::ByNoteIdMap& byNoteId,
+                                         LoopContentResolution::TickIndex& index,
                                          uint32_t beginEvent, uint32_t endEventExclusive,
                                          std::map<uint8_t, std::vector<uint32_t>>& openOnByPitch,
                                          ResolutionCostCounters* counters) {
@@ -242,6 +242,10 @@ TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::Captu
   }
   if (endEventExclusive > limit) {
     endEventExclusive = limit;
+  }
+  const uint32_t remaining = limit - beginEvent;
+  if (index.byNoteId.capacity() < index.byNoteId.size() + remaining) {
+    index.byNoteId.reserve(index.byNoteId.size() + remaining);
   }
   ElapsedTimer totalTimer;
   uint64_t byNoteIdMicros = 0;
@@ -271,20 +275,13 @@ TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::Captu
         }
       }
       if (event.noteId != kInvalidNoteId) {
-        LoopContentResolution::TickIndex::NoteLocation loc;
-        loc.passId = pass.id;
-        loc.onIndex = i;
-        loc.offIndex = -1;
         ElapsedTimer byNoteTimer;
-        const size_t entriesBefore = byNoteId.size();
-        byNoteId[event.noteId] = loc;
+        LoopContentResolution::TickIndex::appendByNoteIdEntry(index.byNoteId, event.noteId, pass.id,
+                                                              i);
+        index.byNoteIdSorted = false;
         byNoteIdMicros += byNoteTimer.elapsed();
         if (counters != nullptr) {
-          if (byNoteId.size() > entriesBefore) {
-            counters->pairByNoteIdInserts += 1;
-          } else {
-            counters->pairByNoteIdOverwrites += 1;
-          }
+          counters->pairByNoteIdInserts += 1;
         }
       }
       continue;
@@ -313,13 +310,14 @@ TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::Captu
       continue;
     }
     ElapsedTimer lookupTimer;
-    auto found = byNoteId.find(noteId);
+    LoopContentResolution::TickIndex::ByNoteIdEntry* found =
+        LoopContentResolution::TickIndex::findByNoteIdEntryMutable(index.byNoteId, noteId);
     lookupMicros += lookupTimer.elapsed();
     if (counters != nullptr) {
       counters->pairByNoteIdLookups += 1;
     }
-    if (found != byNoteId.end() && found->second.passId == pass.id) {
-      found->second.offIndex = static_cast<int32_t>(i);
+    if (found != nullptr && found->loc.passId == pass.id) {
+      found->loc.offIndex = static_cast<int32_t>(i);
     }
   }
   if (counters == nullptr) {
@@ -334,7 +332,7 @@ TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::Captu
   if (total > accounted) {
     counters->pairOtherMicros += total - accounted;
   }
-  counters->pairByNoteIdEntries = static_cast<uint32_t>(byNoteId.size());
+  counters->pairByNoteIdEntries = static_cast<uint32_t>(index.byNoteId.size());
   counters->pairOpenOnPitchKeys = static_cast<uint32_t>(openOnByPitch.size());
 }
 
@@ -428,7 +426,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassNotes(PassI
     return;
   }
   std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
-  pairNotesInPassRange(*pass, byNoteId, 0, static_cast<uint32_t>(pass->events.size()),
+  pairNotesInPassRange(*pass, *this, 0, static_cast<uint32_t>(pass->events.size()),
                        openOnByPitch, nullptr);
 }
 
@@ -440,7 +438,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::pairCapturePassEventRange(
     return;
   }
   const uint32_t before = beginEvent;
-  pairNotesInPassRange(*pass, byNoteId, beginEvent, endEventExclusive, openOnByPitch, counters);
+  pairNotesInPassRange(*pass, *this, beginEvent, endEventExclusive, openOnByPitch, counters);
   if (counters != nullptr) {
     const uint32_t limit = static_cast<uint32_t>(pass->events.size());
     uint32_t end = endEventExclusive;
@@ -472,6 +470,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitCapturePass(PassId i
   indexCapturePassEventRange(id, 0, eventCount, nullptr);
   sortTickEventEntriesByTick(tickEvents);
   pairCapturePassNotes(id);
+  sortAndUniqueByNoteId(counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitLoopPasses(const LoopPasses& passes,
@@ -527,6 +526,83 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::sortTickEventEntriesByTick
                    [](const TickEventEntry& a, const TickEventEntry& b) { return a.tick < b.tick; });
 }
 
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendByNoteIdEntry(ByNoteIdEntryVec& entries,
+                                                                         NoteId noteId, PassId passId,
+                                                                         uint32_t onIndex) {
+  ByNoteIdEntry entry;
+  entry.noteId = noteId;
+  entry.loc.passId = passId;
+  entry.loc.onIndex = onIndex;
+  entry.loc.offIndex = -1;
+  entries.push_back(entry);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::sortAndUniqueByNoteIdEntries(
+    ByNoteIdEntryVec& entries) {
+  std::stable_sort(entries.begin(), entries.end(),
+                   [](const ByNoteIdEntry& a, const ByNoteIdEntry& b) {
+                     return a.noteId < b.noteId;
+                   });
+  size_t out = 0;
+  size_t i = 0;
+  const size_t n = entries.size();
+  while (i < n) {
+    size_t j = i + 1;
+    while (j < n && entries[j].noteId == entries[i].noteId) {
+      j += 1;
+    }
+    entries[out] = entries[j - 1];
+    out += 1;
+    i = j;
+  }
+  entries.resize(out);
+}
+
+TRACK_COLD_MEM const LoopContentResolution::TickIndex::ByNoteIdEntry*
+LoopContentResolution::TickIndex::findByNoteIdEntry(const ByNoteIdEntryVec& entries, NoteId noteId,
+                                                    bool sorted) {
+  if (noteId == kInvalidNoteId || entries.empty()) {
+    return nullptr;
+  }
+  if (sorted) {
+    auto it = std::lower_bound(entries.begin(), entries.end(), noteId,
+                               [](const ByNoteIdEntry& entry, NoteId id) {
+                                 return entry.noteId < id;
+                               });
+    if (it != entries.end() && it->noteId == noteId) {
+      return &*it;
+    }
+    return nullptr;
+  }
+  for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+    if (it->noteId == noteId) {
+      return &*it;
+    }
+  }
+  return nullptr;
+}
+
+TRACK_COLD_MEM LoopContentResolution::TickIndex::ByNoteIdEntry*
+LoopContentResolution::TickIndex::findByNoteIdEntryMutable(ByNoteIdEntryVec& entries, NoteId noteId) {
+  return const_cast<ByNoteIdEntry*>(findByNoteIdEntry(entries, noteId, false));
+}
+
+TRACK_COLD_MEM void LoopContentResolution::TickIndex::sortAndUniqueByNoteId(
+    ResolutionCostCounters* counters) {
+  ElapsedTimer sortTimer;
+  const size_t before = byNoteId.size();
+  sortAndUniqueByNoteIdEntries(byNoteId);
+  byNoteIdSorted = true;
+  if (counters != nullptr) {
+    counters->pairByNoteIdSortMicros += sortTimer.elapsed();
+    const size_t after = byNoteId.size();
+    if (before > after) {
+      counters->pairByNoteIdOverwrites += static_cast<uint32_t>(before - after);
+    }
+    counters->pairByNoteIdEntries = static_cast<uint32_t>(after);
+  }
+}
+
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindowFromTickEvents(
     const TickEventEntryVec& entries, uint32_t loopLengthTicks, uint32_t windowStart,
     uint32_t windowLength, SessionMidiEventVec& out, ResolutionCostCounters* counters) const {
@@ -560,20 +636,20 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendNoteEvents(NoteId no
   if (noteId == kInvalidNoteId) {
     return;
   }
-  const auto found = byNoteId.find(noteId);
-  if (found == byNoteId.end()) {
+  const ByNoteIdEntry* found = findByNoteId(noteId);
+  if (found == nullptr) {
     return;
   }
-  const auto* pass = findPass(*this, found->second.passId);
+  const auto* pass = findPass(*this, found->loc.passId);
   if (pass == nullptr || pass->state != CapturePassState::Active) {
     return;
   }
-  if (found->second.onIndex < pass->events.size()) {
-    out.push_back(pass->events[found->second.onIndex]);
+  if (found->loc.onIndex < pass->events.size()) {
+    out.push_back(pass->events[found->loc.onIndex]);
   }
-  if (found->second.offIndex >= 0 &&
-      static_cast<uint32_t>(found->second.offIndex) < pass->events.size()) {
-    out.push_back(pass->events[static_cast<uint32_t>(found->second.offIndex)]);
+  if (found->loc.offIndex >= 0 &&
+      static_cast<uint32_t>(found->loc.offIndex) < pass->events.size()) {
+    out.push_back(pass->events[static_cast<uint32_t>(found->loc.offIndex)]);
   }
 }
 
@@ -1269,6 +1345,7 @@ struct DeviceGateSession {
         : (name == kChannelSortStep) ? static_cast<unsigned>(checkpoints.channelByNoteId.size())
         : (name == kSortStep)        ? static_cast<unsigned>(checkpoints.spanBoundaries.size())
         : (name == kIndexSortStep)   ? static_cast<unsigned>(index.tickEvents.size())
+        : (name == kByNoteIdSortStep) ? static_cast<unsigned>(index.byNoteId.size())
         : (name == kPrepStep)        ? (prepMergeOpen ? static_cast<unsigned>(prepMerged.size())
                                                       : static_cast<unsigned>(rebuildEvents.size()))
                                      : static_cast<unsigned>(indexEventCursor);
@@ -1300,6 +1377,13 @@ struct DeviceGateSession {
     switch (phase) {
       case Phase::IndexCommit: {
         if (indexPassCursor >= countIndexCommitPasses(passes)) {
+          if (!index.byNoteIdSorted) {
+            ElapsedTimer sortTimer;
+            lastStepName = kByNoteIdSortStep;
+            index.sortAndUniqueByNoteId(&sample_.indexCommit);
+            sample_.indexCommit.elapsedMicros += sortTimer.elapsed();
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
           if (!tickEventsSorted) {
             ElapsedTimer sortTimer;
             lastStepName = kIndexSortStep;
@@ -1659,6 +1743,7 @@ struct DeviceGateSession {
   static constexpr const char* kChannelSortStep = "csort";
   static constexpr const char* kSortStep = "sort";
   static constexpr const char* kIndexSortStep = "isort";
+  static constexpr const char* kByNoteIdSortStep = "nsort";
   static constexpr const char* kPrepStep = "prep";
   bool prepReady = false;
   bool prepMaterializeDone = false;
@@ -1764,7 +1849,7 @@ void LoopContentResolution::deviceGateFormatPairLine(char* line, size_t cap) {
 #endif
   snprintf(line, cap,
            "#CAP,%lu,DIAG,lcr,pair,tot=%lu,bn=%lu,op=%lu,lk=%lu,oth=%lu,ent=%u,ins=%u,ow=%u,"
-           "pu=%u,po=%u,pk=%u,oa=%u,hb=%lu",
+           "pu=%u,po=%u,pk=%u,oa=%u,hb=%lu,nsort=%lu",
            stamp, static_cast<unsigned long>(pair.pairTotalMicros),
            static_cast<unsigned long>(pair.pairByNoteIdMicros),
            static_cast<unsigned long>(pair.pairOpenOnByPitchMicros),
@@ -1777,7 +1862,8 @@ void LoopContentResolution::deviceGateFormatPairLine(char* line, size_t cap) {
            static_cast<unsigned>(pair.pairOpenOnPops),
            static_cast<unsigned>(pair.pairOpenOnPeakDepth),
            static_cast<unsigned>(pair.pairOpenOnAllocations),
-           static_cast<unsigned long>(pair.pairOpenOnHeapBytes));
+           static_cast<unsigned long>(pair.pairOpenOnHeapBytes),
+           static_cast<unsigned long>(pair.pairByNoteIdSortMicros));
 }
 
 bool LoopContentResolution::deviceGateFormatPhaseLine(char* line, size_t cap) {
