@@ -316,4 +316,4 @@ Sequence: `dedup` → `chan` (11.55 ms later) → `csort` → `spans` (22.63 ms 
 
 The first `spans` slice is no longer a multi-second prerequisite. `walk=0`. `hist=2394`.
 
-**5.7 leftover (different owner):** `pair` `DFRAME` **1.277 s** at 28.46 s (`frameIndex` 390→420, consecutive). Closed by **5.18b** [`173842`](../captures/session_20260815_173842.log) (`bn=225`, pair `DFRAME` 0.980–1.026 s). **5.7c stays frozen.** Do not rewrite `recon` here. Do not start 5.1. Arm cap stays off.
+**5.7 leftover (different owner):** `pair` `DFRAME` **1.277 s** at 28.46 s (`frameIndex` 390→420, consecutive). Closed by **5.18b** [`173842`](../captures/session_20260815_173842.log) (`bn=225`, pair `DFRAME` 0.980–1.026 s). **5.7c stays frozen.** 5.1 scored on the same capture. Do not rewrite `recon` here. Arm cap stays off.

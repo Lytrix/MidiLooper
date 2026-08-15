@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.18b device PASS: byNoteId 225 µs)
+Last updated: 2026-08-15 (DEC-037 5.18 frozen; 5.1 idle-path PASS)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.18b device PASS: byNoteId 225 µs)
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **5.18 FROZEN** [`173842`](../../captures/session_20260815_173842.log) — last-wins flat `byNoteId` `bn=225` µs `nsort=10.0 ms` (was `bn=5.346 s`). Pair `DFRAME` 0.980–1.026 s. `openOnByPitch` retained (`op=2.3 ms`, `pk=1`). `walk=0`. Do not flatten `openOnByPitch`. Do not reopen 5.18. 5.7c frozen. No 5.1. No Stage 6. No B. Do not rewrite `recon`. Arm cap stays off. Production stays on materialize / 3b copy.
+**Now:** **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log) — complete idle LCR gate on 139-bar class: OLED `DFRAME` 1.034 s consecutive, `midi_gap` 39.1 ms, no `loop_rem`. **5.18 FROZEN** (`bn=225` µs, `nsort=10.0 ms`). Next: **5.2** overdub-entry verification (PLAYING / 3b copy). Do not reopen 5.18. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No Stage 6. No B. Arm cap stays off. Production stays on materialize / 3b copy.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

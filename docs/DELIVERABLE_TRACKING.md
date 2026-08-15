@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — 5.7c **FROZEN**; **5.18 FROZEN** [`173842`](../captures/session_20260815_173842.log) last-wins flat `byNoteId` `bn=225` `nsort=10003` (was `bn=5.346 s`). No `openOnByPitch` flatten / 5.1 / Stage 6 / B. DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
+**Next (persistence/runtime):** DEC-037 **LoopContentResolution prototype** — 5.7c / **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log) idle complete-path (`DFRAME` 1.034 s, `midi_gap` 39 ms). Next **5.2** overdub entry. No `openOnByPitch` flatten / Stage 6 / B. DEC-036 D1 eager flatten withdrawn; **3b device PASS** overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../captures/session_20260814_112909.log) 3 ms. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 

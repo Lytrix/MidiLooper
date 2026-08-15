@@ -1,6 +1,6 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 native µs recorded, device probe blocked by capture-serial RAM1; production MIDI/display stay on materialize until three gates pass  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 **5.18 FROZEN**, **5.1 idle-path PASS** [`173842`](../captures/session_20260815_173842.log); 5.2 overdub entry next; production MIDI/display stay on materialize until 5.2 + user-approved Stage 6  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
@@ -258,7 +258,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate — **5.17 complete** [`161355`](../captures/session_20260815_161355.log) / [`162630`](../captures/session_20260815_162630.log). **5.7a** sliced append reserve. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md). Do not start 6.x | keep 3b copy path until this wins |
+| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log). 5.2 overdub entry next. Do not start 6.x | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 
@@ -278,13 +278,15 @@ Prove `commit P(N)` does **not** traverse `P0…P(N-1)` except through **indexed
 
 ### Device latency (`035414` class)
 
-- no multi-second MIDI stall
-- no multi-second OLED stall
-- overdub entry remains cheap (`begin_capture` stays under the existing < 50 ms bar)
-- no `VCACHE,full` on the normal path
-- no full materialization after commit
-- bounded resolution slices
-- record worst-case µs, not only totals
+- no multi-second MIDI stall — **5.1 PASS** [`173842`](../captures/session_20260815_173842.log) idle complete path: `midi_gap` 39.1 ms
+- no multi-second OLED stall — **5.1 PASS** same capture: consecutive `DFRAME` 1.034 s vs healthy 0.968 s
+- overdub entry remains cheap (`begin_capture` stays under the existing < 50 ms bar) — **5.2** (not 5.1)
+- no `VCACHE,full` on the normal path — **5.2**
+- no full materialization after commit — **5.2**
+- bounded resolution slices — PASS (8-event slices; `nsort` 10.0 ms / `isort` 28.1 ms under 50 ms)
+- record worst-case µs, not only totals — [`173842`](../captures/session_20260815_173842.log) complete line
+
+The LCR device gate runs only while transport is idle. It does not run during PLAYING. 5.1 is that idle complete path. 5.2 is overdub entry on the production 3b path.
 
 ### Failure meaning
 
