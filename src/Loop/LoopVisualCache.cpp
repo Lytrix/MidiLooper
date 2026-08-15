@@ -305,6 +305,154 @@ void Loop::markDisplayCachesStale() {
   emitVisualCacheState("stale_all", -1);
 }
 
+namespace {
+
+LOOP_COLD_MEM void ensureVisualCacheDirtyBarCapacity(VisualCache& cache, uint32_t loopLengthTicks) {
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    return;
+  }
+  if (cache.dirtyBars.size() < totalBars) {
+    cache.dirtyBars.resize(totalBars, 0);
+  }
+}
+
+LOOP_COLD_MEM void markBarNeighborhoodDirty(VisualCache& cache, uint32_t bar, uint32_t totalBars) {
+  if (totalBars == 0 || bar >= totalBars) {
+    return;
+  }
+  const uint32_t lo = bar > 0 ? bar - 1 : 0;
+  const uint32_t hi = std::min(bar + 1, totalBars - 1);
+  for (uint32_t b = lo; b <= hi; ++b) {
+    cache.markBarDirty(b);
+  }
+}
+
+LOOP_COLD_MEM void markTickSpanDirty(VisualCache& cache, uint32_t startTick, uint32_t endTick,
+                       uint32_t loopLengthTicks) {
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    return;
+  }
+  ensureVisualCacheDirtyBarCapacity(cache, loopLengthTicks);
+  const uint32_t startBar = visualBarForTick(startTick, Config::TICKS_PER_BAR);
+  const uint32_t endBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
+  auto markInclusive = [&](uint32_t loBar, uint32_t hiBar) {
+    const uint32_t lo = loBar > 0 ? loBar - 1 : 0;
+    const uint32_t hi = std::min(hiBar + 1, totalBars - 1);
+    if (lo > hi) {
+      return;
+    }
+    for (uint32_t bar = lo; bar <= hi; ++bar) {
+      cache.markBarDirty(bar);
+    }
+  };
+  if (endTick < startTick) {
+    markInclusive(startBar, totalBars - 1);
+    markInclusive(0, endBar);
+    return;
+  }
+  markInclusive(startBar, endBar);
+}
+
+LOOP_COLD_MEM const CommittedChunkIdList* chunksForPassId(const LoopPasses& passes, PassId passId) {
+  if (passes.hasRecordPass() && passes.recordPass.id == passId) {
+    return &passes.recordPass.committedChunkIds;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.id == passId) {
+      return &pass.committedChunkIds;
+    }
+  }
+  return nullptr;
+}
+
+LOOP_COLD_MEM const EditPass* editPassById(const EditPassVec& editPasses, EditPassId id) {
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.id == id) {
+      return &editPass;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+LOOP_COLD_MEM void Loop::markAffectedDisplayCacheRanges(PassId committedPassId,
+                                                        const EditPassIdList& companionIds) {
+  invalidatePlaybackCaches();
+  visualCacheDirty = true;
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (loopLengthTicks == 0 || totalBars == 0) {
+    markDisplayCachesStale();
+    return;
+  }
+
+  const CommittedChunkIdList* chunks = chunksForPassId(passes, committedPassId);
+  if (chunks == nullptr && companionIds.empty()) {
+    markDisplayCachesStale();
+    return;
+  }
+
+  ensureVisualCacheDirtyBarCapacity(visualCache, loopLengthTicks);
+
+  struct OpenOn {
+    NoteId noteId = kInvalidNoteId;
+    uint32_t tick = 0;
+  };
+  OpenOn openOns[128];
+  uint8_t openCount = 0;
+  SessionMidiEventVec chunkEvents;
+  if (chunks != nullptr) {
+    for (uint16_t chunkId : *chunks) {
+      chunkEvents.clear();
+      LoopEventStore::appendChunkRefEvent(chunkId, chunkEvents);
+      for (const MidiEvent& event : chunkEvents) {
+        markBarNeighborhoodDirty(visualCache, visualBarForTick(event.tick, Config::TICKS_PER_BAR),
+                                 totalBars);
+        if (event.isNoteOn()) {
+          if (openCount < 128) {
+            openOns[openCount].noteId = event.noteId;
+            openOns[openCount].tick = event.tick;
+            ++openCount;
+          }
+          continue;
+        }
+        if (!event.isNoteOff()) {
+          continue;
+        }
+        for (uint8_t i = openCount; i > 0; --i) {
+          const uint8_t idx = static_cast<uint8_t>(i - 1);
+          if (openOns[idx].noteId != event.noteId) {
+            continue;
+          }
+          markTickSpanDirty(visualCache, openOns[idx].tick, event.tick, loopLengthTicks);
+          openOns[idx] = openOns[openCount - 1];
+          --openCount;
+          break;
+        }
+      }
+    }
+  }
+
+  for (EditPassId companionId : companionIds) {
+    const EditPass* row = editPassById(passes.editPasses, companionId);
+    if (row == nullptr) {
+      continue;
+    }
+    markTickSpanDirty(visualCache, row->startTick, row->endTick, loopLengthTicks);
+    for (const NoteUtils::DisplayNote& note : visualCache.notes) {
+      if (note.noteId != row->targetNoteId) {
+        continue;
+      }
+      markTickSpanDirty(visualCache, note.startTick, note.endTick, loopLengthTicks);
+      break;
+    }
+  }
+
+  emitVisualCacheState("stale_range", -1);
+}
+
 void Loop::invalidateDisplayCaches() {
   if (noteCache_) {
     noteCache_->invalidate();

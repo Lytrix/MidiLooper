@@ -72,13 +72,13 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 | Question | Answer |
 |----------|--------|
-| **Owner module** | Idle `DeviceGateSession` produces prepared LCR state. **6A:** `Loop::rebuildVisualCacheIdleSlice` consumes. `establishOverdubSourceView` is 6C only. Not a new overdub owner |
+| **Owner module** | Idle `DeviceGateSession` produces prepared LCR state. **6A:** `Loop::rebuildVisualCacheIdleSlice` consumes. **6B:** `Track::finalizeCommitSideEffects` + `Loop::markAffectedDisplayCacheRanges`; `refreshViewportAfterOverdubStop` must not discard a nonempty loop-wide cache. `establishOverdubSourceView` is 6C only. Not a new overdub owner |
 | **Primary invariant** | Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. Consume already-prepared derived state only. LCR is not a replacement for `overdubSourceView` |
 | **Ownership change?** | NO for record/overdub FSM. 6A display gather and 6B invalidation stay on existing owners |
 | **State transition change?** | NO |
 | **Behavior-preserving?** | YES for overdub FSM. Keep 3b `visualCache.notes` copy. Dirty-cache `resolveWindow` / `ensure*` on `startOverdubbing` is **forbidden** |
 | **Reuse** | YES — idle gate already owns LCR construction; 3b copy stays fallback |
-| **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B** commit affected-range invalidation. **6C** overdub source from prepared LCR. Score 6C vs 3b **2214 µs** |
+| **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B** native shipped (`markAffectedDisplayCacheRanges` / skip `adopt_partial` when cache nonempty); device gate open. **6C** overdub source from prepared LCR. Score 6C vs 3b **2214 µs** |
 
 ---
 

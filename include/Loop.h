@@ -223,6 +223,8 @@ struct Loop {
                                    uint32_t maxBarDistanceFromPriority = UINT32_MAX);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
+  /// 6B: dirty only bars touched by `committedPassId` and companion edit rows. No whole-loop reconstruct.
+  void markAffectedDisplayCacheRanges(PassId committedPassId, const EditPassIdList& companionIds);
   /// RC-E: adopt overdub-stop composed frame as a partial visual cache (window fresh, rest dirty).
   void adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes);
   /// Note + visual caches only — does not disturb playback order or materialized pass view.
