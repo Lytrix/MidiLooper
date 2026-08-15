@@ -343,6 +343,66 @@ void test_wrap_commit_publishes_completed_pair_and_keeps_held() {
   TEST_ASSERT_EQUAL(2u, loop.overdubSessionUndoDepth());
 }
 
+void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 777));
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrap = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrap = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrap);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  SoundingNoteVec sounding;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, sounding, nullptr));
+  bool sawWrap = false;
+  for (const SoundingNote& note : sounding) {
+    if (note.pitch == 72) {
+      sawWrap = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sawWrap);
+
+  loop.pushOverdubSessionPass(wrapId, {});
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  sounding.clear();
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, sounding, nullptr));
+  for (const SoundingNote& note : sounding) {
+    TEST_ASSERT_FALSE(note.pitch == 72);
+  }
+  SessionMidiEventVec window;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+      loop.passes.editPasses, loop.loopLengthTicks, 0, loop.loopLengthTicks, loop.playbackRevision,
+      window, nullptr));
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(window, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_FALSE(hasDisplayNote(notes, 72, 200));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_overdub_session_undo_disables_sealed_wrap() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -403,6 +463,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
   RUN_TEST(test_empty_wrap_does_not_commit_a_pass);
   RUN_TEST(test_wrap_commit_publishes_completed_pair_and_keeps_held);
+  RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
   return UNITY_END();

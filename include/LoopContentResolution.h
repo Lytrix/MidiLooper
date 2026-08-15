@@ -340,6 +340,8 @@ struct LoopContentResolution {
   static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision);
   /// Session-disable / re-enable a prepared capture pass. Does not restamp.
   static void setPreparedCapturePassState(PassId id, CapturePassState state);
+  /// Keep prepared ready after `Loop` bumps `playbackRevision` (undo/redo). No-op on miss.
+  static void restampPreparedPlaybackRevision(uint32_t playbackRevision);
   /// Consume the kept index. Returns false on miss or stamp mismatch — never rebuilds.
   static bool tryResolvePreparedWindow(const EditPassVec& editPasses, uint32_t loopLengthTicks,
                                        uint32_t windowStart, uint32_t windowLength,

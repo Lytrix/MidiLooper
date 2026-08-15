@@ -2056,6 +2056,13 @@ TRACK_COLD_MEM void LoopContentResolution::setPreparedCapturePassState(PassId id
   sDeviceGateSession.index.setCapturePassState(id, state);
 }
 
+TRACK_COLD_MEM void LoopContentResolution::restampPreparedPlaybackRevision(uint32_t playbackRevision) {
+  if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept) {
+    return;
+  }
+  sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
+}
+
 TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
     const EditPassVec& editPasses, uint32_t loopLengthTicks, uint32_t windowStart,
     uint32_t windowLength, uint32_t playbackRevision, SessionMidiEventVec& out,
