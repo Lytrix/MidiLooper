@@ -1365,6 +1365,7 @@ struct DeviceGateSession {
     lastPhaseLogUs = 0;
     preparedIndexKept = false;
     preparedPlaybackRevision = 0;
+    delta = LoopContentResolution::TickIndex::TickEventEntryVec{};
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
     rebuildEvents = SessionMidiEventVec{};
@@ -1405,6 +1406,7 @@ struct DeviceGateSession {
     checkpoints = LoopContentResolution::StateCheckpoints{};
     rebuildEvents = SessionMidiEventVec{};
     rebuildNotes = NoteUtils::DisplayNoteVec{};
+    delta = LoopContentResolution::TickIndex::TickEventEntryVec{};
   }
 
   void keepPreparedIndex(uint32_t playbackRevision) {
@@ -1896,6 +1898,8 @@ struct DeviceGateSession {
   bool preparedIndexKept = false;
   uint32_t preparedPlaybackRevision = 0;
   LoopContentResolution::TickIndex index;
+  /// 6D.4: committed overdub rows since the last full prepare. Not a TickIndex member.
+  LoopContentResolution::TickIndex::TickEventEntryVec delta;
   LoopContentResolution::StateCheckpoints checkpoints;
   SessionMidiEventVec rebuildEvents;
   NoteUtils::DisplayNoteVec rebuildNotes;
@@ -1939,6 +1943,29 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
          sDeviceGateSession.preparedPlaybackRevision == playbackRevision;
 }
 
+TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const OverdubPass& pass,
+                                                                     uint32_t playbackRevision) {
+  if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
+      pass.id == kInvalidPassId) {
+    return;
+  }
+  TickIndex& index = sDeviceGateSession.index;
+  if (findPass(index, pass.id) != nullptr) {
+    return;
+  }
+  index.beginCapturePass(pass.id, pass.state, pass.mergeSequence);
+  for (uint16_t chunkId : pass.committedChunkIds) {
+    index.appendCapturePassChunk(pass.id, chunkId);
+  }
+  const TickIndex::CapturePassEntry* entry = findPass(index, pass.id);
+  if (entry != nullptr) {
+    TickIndex::appendTickEventEntries(*entry, 0, static_cast<uint32_t>(entry->events.size()),
+                                      sDeviceGateSession.delta);
+    TickIndex::sortTickEventEntriesByTick(sDeviceGateSession.delta);
+  }
+  sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
+}
+
 TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
     const EditPassVec& editPasses, uint32_t loopLengthTicks, uint32_t windowStart,
     uint32_t windowLength, uint32_t playbackRevision, SessionMidiEventVec& out,
@@ -1946,6 +1973,12 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
   if (!preparedWindowReady(playbackRevision) ||
       loopLengthTicks == 0 || loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
     return false;
+  }
+  if (!sDeviceGateSession.delta.empty()) {
+    resolveWindow(sDeviceGateSession.index, sDeviceGateSession.index.tickEvents,
+                  sDeviceGateSession.delta, editPasses, loopLengthTicks, windowStart, windowLength,
+                  out, counters);
+    return true;
   }
   resolveWindow(sDeviceGateSession.index, editPasses, loopLengthTicks, windowStart, windowLength,
                 out, counters);

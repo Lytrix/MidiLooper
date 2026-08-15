@@ -3,7 +3,7 @@
 **Mode:** Full — formal trigger fired.  
 **Date:** 2026-08-15  
 **Change:** `loop-content-resolution`  
-**Status:** 6.0 reading + 6D.4 architecture **approved 2026-08-15**. Firmware **not** authorized.
+**Status:** 6D.4 **landed** 2026-08-15. Firmware call is at `finalizeCommitSideEffects`. Device HITL open. Not all of LCR live.
 
 Plan: [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md) § Production architecture gate.
 
@@ -118,7 +118,7 @@ Firmware-only after approval. Host tests first. No SD format bump.
 
 **If any YES:** **STOP** — no implementation until reassessment approved and docs updated.
 
-This preflight **stops before firmware**. The 6.0 reading and 6D.4 architecture are approved. Implementation waits for an explicit 6D.4 implement request and a pinned name for the session `TickEventEntryVec`.
+6D.4 implemented: session field is `delta`. Device HITL remains open.
 
 ## Context summary
 

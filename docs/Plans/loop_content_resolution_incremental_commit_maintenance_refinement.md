@@ -622,10 +622,11 @@ After 6D.4, a PLAYING overdub commit may establish that condition **without `dev
 
 ---
 
-## 6D.4 — incremental overdub publish (implementation plan; no firmware yet)
+## 6D.4 — incremental overdub publish
 
-**Status:** Architecture approved. Implementation **not** started.  
-**Does not authorize:** firmware; making all of LCR incrementally live; A; B; undo/disable incrementalization; compacting `tickEvents` at commit
+**Status:** Native + commit-site call landed 2026-08-15. Not “LCR is incrementally live.”  
+**Session field:** `DeviceGateSession::delta` — existing 6D.2/6D.3 word; `TickEventEntryVec`; not a `TickIndex` member and not a new type.  
+**Does not authorize:** making all of LCR incrementally live; A; B; undo/disable incrementalization; compacting `tickEvents` at commit
 
 ### Architecture gate (6D.4)
 
@@ -637,7 +638,7 @@ After 6D.4, a PLAYING overdub commit may establish that condition **without `dev
 | **State transition change?** | YES — approved: prepared validity may come from commit-site restamp, not only `deviceGateComplete` |
 | **Behavior-preserving?** | NO for the prepared-window stamp after overdub commit. YES for overdub FSM, 6.0 consume-on-button, and 3b fallback |
 | **Reuse** | YES — existing 6B commit site + two-source `findRawWindowFromTickEvents` |
-| **Phase scope** | Plan only until an explicit implement request. Then: LCR publish + two-source consume + native tests. One call from `finalizeCommitSideEffects`. No `startOverdubbing` edits |
+| **Phase scope** | `publishPreparedOverdubPass` + two-source `tryResolvePreparedWindow` + one call from `finalizeCommitSideEffects`. Native `test_stage6d4_publish_restamps_without_device_gate_complete`. No `startOverdubbing` edits |
 
 ### Approved 6.0 reading
 
@@ -673,7 +674,7 @@ next overdub button
 - No `byNoteId` / checkpoints / undo / disable incrementalization
 - No changes to `startOverdubbing`
 - No new manager or domain type
-- Session field is a `TickEventEntryVec` — **name is an open pin**; ask before adding the member
+- Session field is `DeviceGateSession::delta` (`TickEventEntryVec`)
 
 ### Files (when implementation is requested)
 
@@ -699,6 +700,10 @@ Device HITL only after native PASS and an explicit upload request.
 - midi_gap, 6.3, 6.4
 - Deleting `materializeToEventVector` or the 3b copy
 
-### Proceed?
+### Native + firmware result (2026-08-15)
 
-**NO firmware** until the user explicitly asks to implement 6D.4. Naming of the session `TickEventEntryVec` member must be pinned in that session before the field is added.
+`publishPreparedOverdubPass` appends into `DeviceGateSession::delta`, sorts that vector only, restamps `preparedPlaybackRevision`. `tryResolvePreparedWindow` uses two-source find when `delta` is non-empty. `Track::finalizeCommitSideEffects` calls publish after a committed `OverdubPass`.
+
+`test_stage6d4_publish_restamps_without_device_gate_complete`: three publishes after a partial prepare; `preparedWindowReady` matches the new revision without `deviceGateComplete`; `eventsInHistory` stays the frozen `tickEvents` size; window matches the materialize oracle; unprepared publish is a no-op; stamp+1 without publish misses.
+
+`pio test -e native` and `teensy41-capture-serial` build succeeded. Device HITL not run. Not all of LCR is incrementally live.
