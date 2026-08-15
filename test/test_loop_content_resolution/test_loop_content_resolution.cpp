@@ -1128,6 +1128,35 @@ void test_stage9_range_pair_matches_full_pair() {
   assertNoteLocationsMatch(full, sliced);
 }
 
+void test_stage9_range_recon_matches_full() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  SessionMidiEventVec events;
+  fixture.passes.materializeToEventVector(events, fixture.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec full =
+      NoteUtils::reconstructDisplayNotes(events, fixture.loopLengthTicks, false);
+
+  NoteUtils::CanonicalSpanBuild build;
+  const uint32_t eventCount = static_cast<uint32_t>(events.size());
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  for (uint32_t i = 0; i < eventCount; i += step) {
+    const uint32_t end = std::min(i + step, eventCount);
+    NoteUtils::appendCanonicalSpansFromMidi(events, fixture.loopLengthTicks, i, end, build);
+  }
+  NoteUtils::finishCanonicalSpansFromMidi(fixture.loopLengthTicks, build);
+  const NoteUtils::DisplayNoteVec sliced =
+      NoteUtils::displayNotesFromCanonicalSpans(build, fixture.loopLengthTicks);
+
+  TEST_ASSERT_EQUAL(full.size(), sliced.size());
+  for (size_t i = 0; i < full.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT8(full[i].note, sliced[i].note);
+    TEST_ASSERT_EQUAL_UINT32(full[i].startTick, sliced[i].startTick);
+    TEST_ASSERT_EQUAL_UINT32(full[i].endTick, sliced[i].endTick);
+    TEST_ASSERT_EQUAL_UINT32(full[i].noteId, sliced[i].noteId);
+  }
+}
+
 void test_stage9_range_index_matches_one_event() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1278,6 +1307,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_sliced_spans_match_full_rebuild);
   RUN_TEST(test_stage9_range_index_matches_one_event);
   RUN_TEST(test_stage9_range_pair_matches_full_pair);
+  RUN_TEST(test_stage9_range_recon_matches_full);
   RUN_TEST(test_stage9_range_spans_match_one_span);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);

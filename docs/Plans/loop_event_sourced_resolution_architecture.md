@@ -243,7 +243,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate on `035414` class — native µs recorded; short-loop sliced `lcr` PASS [`225744`](../captures/session_20260814_225744.log); per-bar `soundingAt` FAIL [`225351`](../captures/session_20260814_225351.log). Size probe **>63 bars** accepted. [`132945`](../captures/session_20260815_132945.log) complete `hist=2394` `reb=100.5s`; 5.7 latency FAIL on unsliced `pairCapturePassNotes` (27.45 s). 5.12 slices pairing. Re-measure 5.7; arm cap stays off | keep 3b copy path until this wins |
+| 9 | Device three-part gate on `035414` class — native µs recorded; short-loop sliced `lcr` PASS [`225744`](../captures/session_20260814_225744.log); per-bar `soundingAt` FAIL [`225351`](../captures/session_20260814_225351.log). Size probe **>63 bars** accepted. [`134954`](../captures/session_20260815_134954.log) complete `hist=2394` `reb=100.5s`; pairing PASS; reconstruct was 1.04 s. 5.13 slices reconstruct span build. Re-measure 5.7; arm cap stays off | keep 3b copy path until this wins |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 

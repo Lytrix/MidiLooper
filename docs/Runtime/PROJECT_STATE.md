@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-15 (DEC-037 5.12 sliced pairing)
+Last updated: 2026-08-15 (DEC-037 5.13 sliced reconstruct span build)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-037 5.12 sliced pairing)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-037** `LoopContentResolution` — Stages 1–8 PASS; 5.4–5.6 / 5.8–5.12 shipped. 5.7 probe is **>63 bars**; [`132945`](../../captures/session_20260815_132945.log) complete `hist=2394`, latency FAIL on unsliced pairing (27.45 s). Pairing now batches 8 events per slice; arm cap stays off. Re-measure 5.7. Plan: [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md). Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
+**Active work:** **DEC-037** `LoopContentResolution` — Stages 1–8 PASS; 5.4–5.6 / 5.8–5.13 shipped. 5.7 probe is **>63 bars**; [`134954`](../../captures/session_20260815_134954.log) complete `hist=2394`. Reconstruct span build now batches 8 events; arm cap stays off. Re-measure 5.7. Plan: [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md). Layer D 3b overdub entry **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs; undo [`112909`](../../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
