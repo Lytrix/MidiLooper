@@ -179,6 +179,8 @@ struct Loop {
   /// Move unpaired capture NoteOns out of `capture.store` (6E.5). Returns extracted count.
   size_t extractOpenCaptureNoteOns(SessionMidiEventVec& out);
   void pushOverdubSessionPass(PassId passId, EditPassIdList companionIds);
+  /// Sealed wraps still on the session cursor (not the undone redo tail).
+  void collectOverdubSessionUndoPasses(PassIdList& passIds, EditPassIdList& companionIds) const;
   void dropOverdubSessionRedoTail();
   bool undoOverdubSession();
   bool redoOverdubSession();

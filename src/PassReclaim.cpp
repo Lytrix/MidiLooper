@@ -5,8 +5,9 @@
 
 #include "LoopEventStore.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/TrackMem.h"
 
-void pinPassesFromLoopPasses(const LoopPasses& passes, SlotPassReferences& refs) {
+TRACK_COLD_MEM void pinPassesFromLoopPasses(const LoopPasses& passes, SlotPassReferences& refs) {
   if (passes.hasRecordPass() && passes.recordPass.id != kInvalidPassId) {
     refs.pinCapturePass(passes.recordPass.id);
   }
@@ -22,7 +23,7 @@ void pinPassesFromLoopPasses(const LoopPasses& passes, SlotPassReferences& refs)
   }
 }
 
-void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out) {
+TRACK_COLD_MEM void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out) {
   for (const UndoEntry& entry : stack.entries) {
     if (entry.slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
       continue;
@@ -32,12 +33,17 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
       case UndoEntryKind::RecordPassAdded:
         slotRefs.pinCapturePass(entry.passId);
         break;
-      case UndoEntryKind::OverdubPassAdded:
-        slotRefs.pinCapturePass(entry.passId);
+      case UndoEntryKind::OverdubPassAdded: {
+        PassIdList overdubIds;
+        appendOverdubCapturePassIds(entry, overdubIds);
+        for (const PassId id : overdubIds) {
+          slotRefs.pinCapturePass(id);
+        }
         for (EditPassId id : entry.editPassIds) {
           slotRefs.pinEditPass(id);
         }
         break;
+      }
       case UndoEntryKind::NoteEditPassClosed:
       case UndoEntryKind::ControlChangeEditPassClosed:
         for (EditPassId id : entry.editPassIds) {

@@ -40,6 +40,7 @@ struct ControlChangeRef {
 };
 
 using EditPassIdList = std::vector<EditPassId, InternalHeapFirstAllocator<EditPassId>>;
+using PassIdList = std::vector<PassId, InternalHeapFirstAllocator<PassId>>;
 
 struct EditPass {
   EditPassId id = kInvalidEditPassId;

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (overdub session undo hides wraps)
+Last updated: 2026-08-16 (038.2 GUS passIds)
 
 ---
 
@@ -16,11 +16,11 @@ Last updated: 2026-08-16 (overdub session undo hides wraps)
 
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **6D investigation:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md)  
-**6E overdub evaluation:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../Plans/loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E.1–6E.5 PASS**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) **038.1 landed** (wrap at S + session stack). Not 038.2.  
+**6E overdub evaluation:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../Plans/loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E.1–6E.5 PASS**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) **038.1 HITL PASS**; **038.2 landed** (one `OverdubPassAdded` `passIds` + STK3).  
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **038.1 HITL** — issue 1 + issue 2 LCR shipped. Slot switch PASS [`003818`](../../captures/session_20260816_003818.log). Session undo now hides the last wrap even when live notes remain, and skips the next S commit so the wrap is not immediately pushed back. Issue 3 parked. Not 038.2. Do not start midi_gap / 6.3 until asked.
+**Now:** **038.2 landed** — stop pushes one `OverdubPassAdded` with session wrap `passIds` + all companions; GUS STK3; session stack cleared. Empty last wrap still pushes sealed wraps. Legacy STK2 keeps a single `passId`. **038.1 HITL PASS** [`004842`](../../captures/session_20260816_004842.log). Slot switch PASS [`003818`](../../captures/session_20260816_003818.log). Issue 3 parked. After-stop one **U:** HITL next. Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
