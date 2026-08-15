@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
 | [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; materialize stays until three gates | Accepted |
 | [DEC-036](#dec-036-runtime-effective-event-source-for-overdub) | 2026-08-14 | Runtime effective event source; overdub entry without display reconstruction | Accepted |
 | [DEC-035](#dec-035-loop-persists-content-only) | 2026-08-14 | Loop persists content only; undo/redo is derived and not persisted | Accepted |
@@ -52,7 +53,76 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-038 -->
+<!-- Append new entries below (newest first). Next ID: DEC-039 -->
+
+## DEC-038 — Overdub wrap commit and session undo
+
+**Date:** 2026-08-15  
+**Status:** Accepted (pins). Firmware not started.  
+**Owner:** overdub lifecycle — `Track` trigger / `Loop` pass list + `capture.store`. LCR publish stays `publishPreparedOverdubPass`. GUS kind stays `OverdubPassAdded`.  
+**Plan:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)  
+**Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) (6E native PASS); [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) / [DEC-032](#dec-032-overdub-editpass-unification-reassessment) companions  
+**Does not supersede:** DEC-037 6.0 (no LCR construct on the button); DEC-036 3b fallback; DEC-031 companion encode
+
+### Problem
+
+Overdub source view is frozen at session start. A wrap that returns to the start-overdub tick cannot overlap its own prior-wrap notes. Native 6E proved `resolveState` + publish can make wrap-1 the wrap-2 source. Production still treats one overdub session as one `OverdubPass` sealed only at stop, and undo while OVERDUBBING discards live capture without a session gate (`loopHasLiveOverdubCapture`).
+
+### Decision
+
+1. **Wrap persist.** **S** is the `playheadPhaseTick` already computed in `startOverdubbing` and passed to `beginCapture`. Store that first-session value on the overdub lifecycle owner (`Loop` / `Track`). Session-scoped: wrap `beginCapture` and `discardCapture` must not clear it. Clear S when the overdub session ends. When the playhead returns to S, seal the **current wrap** as an `OverdubPass` + DEC-031 companions, `publishPreparedOverdubPass`, push a session-stack entry, `beginCapture(Overdub)` again, stay OVERDUBBING. Stop seals the partial wrap the same way. Do not add a new domain noun for S.
+2. **Still an `OverdubPass`.** No new domain noun. No session-id on the pass in this DEC.
+3. **Held note at S.** Do not call `Track::finalizePendingNotes`. That closer is STOP only (6E.5). Publish completed ON/OFF pairs only. Add stays NoteOff-owned (`accumulatePendingNoteChangesForIncomingNote`).
+4. **Empty wrap.** No pass, no session-stack push, no revision bump, no LCR publish.
+5. **6.0 at wrap.** Bounded 6D.4 publish only (delta + pair + spans). No 6C reconstruct, no full `resolveWindow`, no `VCACHE,full`, no SD.
+6. **Undo while OVERDUBBING.** Session-gate in `MidiButtonActions::handleUndo` / `handleRedo` (same routing as NOTE_EDIT **E:** — no **U:** fallthrough). Stack is a Loop-owned `PassId` list of this session’s sealed wraps plus live `capture.store`. Not `NoteEditSessionUndoStack`. Not `EditManager`. Undo: live wrap first (`discardCapture`), then `setPreparedCapturePassState(Disabled)` on the last sealed wrap. No GUS pop.
+7. **Undo after stop.** One **U:** `OverdubPassAdded` for the whole session. `passIds` = wrap 1..N. `editPassIds` = all companions. Extend that kind; do not add a new `UndoEntryKind`. GUS wire bump (STK2 → next token) for the `passIds` list.
+8. **Crash mid-session.** Out of this DEC. Reboot during OVERDUBBING is the same loss as today’s uncommitted overdub.
+
+### Implementation stages (firmware after approval)
+
+| Stage | Prove |
+|-------|--------|
+| **038.1** | Re-entry at S: completed-pair seal + publish + session-stack push + `beginCapture` + stay OVERDUBBING. Session undo/redo while OVERDUBBING. No GUS `passIds` yet. |
+| **038.2** | Stop: one `OverdubPassAdded` with `passIds` + companions. GUS wire. Session stack cleared. |
+
+### Rationale
+
+Persist grain is one wrap so wrap-2 can overlap wrap-1 via prepared `resolveState`. Undo grain is one session so GUS depth and sidebar **U:** do not grow with wrap count. NOTE_EDIT already session-gates `handleUndo`; overdub reuses that routing, not that payload.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| Path B (live capture in LCR) | LCR invents note-offs; forbidden by DEC-037 / OpenSpec 6.5 |
+| N **U:** entries (one per wrap) | N gestures after stop; GUS grows with wraps |
+| Reuse `NoteEditSessionUndoStack` | Wrong payload and owner |
+| Commit at loop tick 0 when S ≠ 0 | Wrong wrap origin (6E.1b) |
+| `finalizePendingNotes` at S | Seals an incomplete Add (6E.5) |
+| SD persist on wrap | Out of this DEC |
+
+### Affected modules
+
+`Track` overdub lifecycle / playhead wrap detect; `Loop::commitCapturePass` / `beginCapture`; `TrackUndo` session gate + `pushOverdubPassAdded`; `MidiButtonActions::handleUndo`; `LoopContentResolution::publishPreparedOverdubPass` (already 6E.4). `EditManager` unchanged.
+
+### Constraints created
+
+- Wrap commit must not call `finalizePendingNotes` or `LoopStopFinalize::finalizeWrapWindowOnStore` to invent an OFF at S.
+- `handleUndo` while OVERDUBBING must not fall through to GUS.
+- Do not add a new undo kind. Do not put wraps on `NoteEditSessionUndoStack`.
+- Keep 3b on `tryResolvePreparedState` miss.
+- No SD on wrap. No session-id on `OverdubPass` in this DEC.
+- S is session-scoped. Do not store it only on `Capture` if `discardCapture` would drop it mid-session.
+
+### Related OpenSpec
+
+`openspec/changes/loop-content-resolution/`. Preflight: `openspec/changes/loop-content-resolution/PREFLIGHT-WRAP-COMMIT.md`.
+
+### Migration notes
+
+038.2 GUS wire: persist `passIds` on `OverdubPassAdded`. Legacy STK2 rows keep a single `passId`. No loop-file format change.
+
+---
 
 ## DEC-037 — LoopContentResolution parallel prototype
 

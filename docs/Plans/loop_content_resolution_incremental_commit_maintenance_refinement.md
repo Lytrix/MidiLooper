@@ -699,7 +699,7 @@ Device HITL only after native PASS and an explicit upload request.
 - Folding delta into `tickEvents` on STOPPED idle (later, optional)
 - midi_gap, 6.3, 6.4
 - Deleting `materializeToEventVector` or the 3b copy
-- 6E overdub `resolveState` consume / wrap-commit / session undo — sibling [`loop_content_resolution_overdub_state_evaluation_refinement.md`](loop_content_resolution_overdub_state_evaluation_refinement.md)
+- 6E overdub `resolveState` consume / wrap-commit / session undo — sibling [`loop_content_resolution_overdub_state_evaluation_refinement.md`](loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E PASS**; [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) recorded; firmware not started
 
 ### Native + firmware result (2026-08-15)
 
