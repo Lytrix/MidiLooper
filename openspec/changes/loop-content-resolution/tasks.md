@@ -3,7 +3,7 @@
 - [x] 1.1 Architecture plan — [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plans/loop_event_sourced_resolution_architecture.md)
 - [x] 1.2 DEC-037 in DECISION_LOG; NAMING.md vocabulary
 - [x] 1.3 Close `loop-effective-event-source` tasks 4.1 / 4.2; update CURRENT_WORK, PROJECT_STATE, DELIVERABLE_TRACKING
-- [x] 1.5 Derived-index storage invariant recorded on DEC-037 (not a new DEC): bulk PSRAM arrays; no per-entry associative insert on realtime-adjacent index construction. `pair` leftover stays open.
+- [x] 1.5 Derived-index storage invariant recorded on DEC-037 (not a new DEC): bulk PSRAM arrays; no per-entry associative insert on realtime-adjacent index construction. 5.15–5.18 prove it empirically. `openOnByPitch` LIFO retained.
 
 ## 2. Stage 0 — Canonical fixture
 
@@ -34,8 +34,8 @@
 
 ## 5. Stage 9 — Device gate (after native 2–4)
 
-- [x] 5.3 Record worst-case µs, not only totals (native 64-bar fixture: materialize 145 µs, window 28 µs, rebuild 214 µs, `resolveState` 1 µs). Device `035414`-class numbers are **not** recorded yet.
-- [ ] 5.1 `035414`-class worst-case latency: no multi-second MIDI stall, no multi-second OLED stall
+- [x] 5.3 Record worst-case µs, not only totals (native 64-bar fixture: materialize 145 µs, window 28 µs, rebuild 214 µs, `resolveState` 1 µs). Device 139-bar [`173842`](../../../captures/session_20260815_173842.log): `win=7129` `reb=368240` `st=531` `iapp=197743` `isort=28116` `capp=10682` `csort=1897` `bn=225` `nsort=10003`.
+- [x] 5.1 **PASS** [`173842`](../../../captures/session_20260815_173842.log): 139-bar idle complete path. OLED consecutive `DFRAME` 1.034 s vs healthy 0.968 s. `midi_gap` 39.1 ms. `idle_maint` 34.9 ms. No `loop_rem`. No `VCACHE,full` during LCR. Production unchanged. Gate does not run while PLAYING.
 - [ ] 5.2 Overdub entry remains cheap (3b copy); no `VCACHE,full` on the normal path; no full materialize after commit
 
 Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_t41_lcr.ld`). Does **not** consult `MemoryMonitor`. Tick-index / `startsByTick` use `ExternalMemoryFirstAllocator`. Arm waits for any pending slot restore. CrashReport [`115242`](../../../captures/session_20260815_115242.log) `0x6003616C` `_M_emplace_equal` / `0x10`. 30-bar `hist=832` [`112843`](../../../captures/session_20260815_112843.log). >63-bar size [`115750`](../../../captures/session_20260815_115750.log) `hist=2394` `reb=101s`. [`134954`](../../../captures/session_20260815_134954.log) complete `hist=2394`. IndexCommit / pairing / reconstruct span build / display project / RebuildSpans batch `kDeviceGateEventsPerSlice`. Arm cap stays off. Do not persist or put resolution on overdub/MIDI.
@@ -49,7 +49,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [x] 5.7c **FROZEN** [`170024`](../../../captures/session_20260815_170024.log): flat `{noteId, channel}` append + `stable_sort` + first-wins unique. `capp=12373` `csort=1779`. Do not reopen. Pair is 5.18.
 - [x] 5.18 Pair contracts pinned. Plan: [`loop_content_resolution_pair_index_refinement.md`](../../../docs/Plans/loop_content_resolution_pair_index_refinement.md). Do not flatten from container type. No 5.1. No B. No `recon`.
 - [x] 5.18a Native: pair walk reports `tot`/`bn`/`op`/`lk`/`oth`, last-wins, peak depth. Device [`172927`](../../../captures/session_20260815_172927.log) **PASS**: `bn=5345535` `op=2433` `lk=1424` `pk=1`. `byNoteId` owns pair. Do not flatten `openOnByPitch`.
-- [x] 5.18b **FROZEN** [`173842`](../../../captures/session_20260815_173842.log): last-wins flat `byNoteId` `bn=225` `nsort=10003` (was `bn=5345535`). Pair `DFRAME` 0.980–1.026 s. Do not flatten `openOnByPitch`. No 5.1. No B. No `recon`.
+- [x] 5.18b **FROZEN** [`173842`](../../../captures/session_20260815_173842.log): last-wins flat `byNoteId` `bn=225` `nsort=10003` (was `bn=5345535`). Pair `DFRAME` 0.980–1.026 s. Do not flatten `openOnByPitch`. No B. No `recon`.
 - [x] 5.8 [`115750`](../../../captures/session_20260815_115750.log) `st=16249` `rep=350` `hist=2394` `walk=0`. Query path does not need a third index. Stall is cold IndexCommit / rebuild.
 - [x] 5.9 Arm cap stays off (2026-08-15). 5.7 probe is >63 bars; that is not a reason to restore the 16-bar cap.
 - [x] 5.10 Bound device-gate IndexCommit and RebuildSpans to `kDeviceGateSliceBudgetUs` (50 ms, same as 5.7 `idle_maint`). One event / one span per inner step; yield when the budget is exhausted. Reconstruct stays its own slice. Native `test_stage9_sliced_*` PASS. Cap stays off. Superseded as the slice unit by 5.11 — a single PSRAM emplace already exceeds 50 ms ([`121702`](../../../captures/session_20260815_121702.log)).

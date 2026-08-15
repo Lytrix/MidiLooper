@@ -5,7 +5,7 @@
 **Parent:** 5.7c **frozen** — [`loop_content_resolution_spans_dframe_gap_refinement.md`](loop_content_resolution_spans_dframe_gap_refinement.md)  
 **Evidence:** [`173842`](../captures/session_20260815_173842.log) `bn=225` `nsort=10003` `tot=7950`. Baseline [`172927`](../captures/session_20260815_172927.log) `bn=5345535`.
 
-**Does not start:** flattening `openOnByPitch`, `recon`, B, A2, 5.1 / 5.2, Stage 6, restoring the arm cap, reopening 5.7c.
+**Does not start:** flattening `openOnByPitch`, `recon`, B, A2, Stage 6, restoring the arm cap, reopening 5.7c.
 
 **Boundary:** trust `resolveState` / `resolveWindow` answers and `walk=0`. Investigate **what pair writes and what later queries read**, not whether pairing notes is the right algorithm.
 
@@ -287,4 +287,10 @@ mat=0,win=7129,reb=368240,st=531,rep=350,hist=2394,walk=0,app=1341,sort=9237,iap
 | `walk` / `hist` | 0 / 2394 | 0 / 2394 |
 | `idle_maint` during pair | no `loop_rem` | **25.2 ms**, no `loop_rem` |
 
-`nsort` (10.0 ms) and `isort` (28.1 ms) stay under the 50 ms idle bar. `openOnByPitch` unchanged. **5.18 complete.** Do not flatten `openOnByPitch`. Do not reopen 5.18. No 5.1. No B. No `recon`.
+`nsort` (10.0 ms) and `isort` (28.1 ms) stay under the 50 ms idle bar. `openOnByPitch` unchanged.
+
+### 5.18 closed
+
+The remaining Stage 5.7 device-latency violation was traced to `byNoteId` PSRAM associative construction. Replacing that construction with the minimum representation matching its last-assignment-wins query contract reduced `bn` from 5.346 s to 225 µs and total pairing from 5.357 s to 7.95 ms. `openOnByPitch` remains a LIFO stack because its mutation contract is not equivalent to a sorted/unique index. No new >50 ms construction slice was observed. Pair is frozen.
+
+Do not flatten `openOnByPitch`. Do not reopen 5.18. Do not rewrite `recon`. Next is 5.1 whole-gate measurement, not another index.

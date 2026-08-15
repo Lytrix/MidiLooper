@@ -148,7 +148,18 @@ Not a new DEC. Device evidence from three LoopContentResolution derived indexes:
 
 This is **derived indexes + PSRAM + per-entry construction**. It is not “never use maps anywhere.”
 
-**Still associative (not this invariant’s swap list):** pairing `openOnByPitch` (LIFO, retained after 5.18a/b); `TickIndex::passById` (pass-count, not note-count). `byNoteId` is 5.18 last-wins flat. Do not fold `recon` into this rule. Do not start 5.1.
+**Still associative (not this invariant’s swap list):** pairing `openOnByPitch` (LIFO, retained after 5.18); `TickIndex::passById` (pass-count, not note-count). Do not fold `recon` into this rule. Do not flatten a LIFO stack.
+
+5.15–5.18 establish this invariant **empirically**, not as a style preference:
+
+| Contract | Representation |
+|----------|----------------|
+| ordered many-to-many range boundaries | flat + sort (`spanBoundaries`) |
+| ordered event window | flat/bulk (`tickEvents`) |
+| unique first/last-wins lookup | flat + sort/selection (`channelByNoteId` first-wins; `byNoteId` last-wins) |
+| LIFO pairing state | associative/container semantics retained (`openOnByPitch`) |
+
+The last row stops the rule from becoming “replace all maps with arrays.”
 
 ### Amendment 2026-08-15 — 5.7c FROZEN; pair is 5.18
 
@@ -158,8 +169,8 @@ Representation part of Stage 5.7 is **closed**. Do not reopen 5.7c.
 |------|--------|
 | correctness (`walk=0`) | PASS [`170024`](../captures/session_20260815_170024.log) |
 | complexity (no B) | PASS |
-| derived-index RAM / construction (flat/bulk) | PASS — `spanBoundaries`, `tickEvents`, channel lookup |
-| device latency on the whole idle gate | pair **CLOSED** 5.18b [`173842`](../captures/session_20260815_173842.log) — 5.1 still unchecked |
+| derived-index RAM / construction (flat/bulk) | PASS — `spanBoundaries`, `tickEvents`, channel lookup, `byNoteId` |
+| device latency on the whole idle gate | **5.1 PASS** [`173842`](../captures/session_20260815_173842.log) |
 
 Successor: [`loop_content_resolution_pair_index_refinement.md`](Plans/loop_content_resolution_pair_index_refinement.md). Flatten from the **query**, not the container type. `byNoteId` is last-wins `NoteId → {passId, on, off}`. `openOnByPitch` is a per-pass LIFO stack keyed by **pitch only**. Measure which produces the stall before picking a representation. No 5.1. No Stage 6. No B. Do not rewrite `recon`.
 
@@ -186,6 +197,38 @@ A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiCha
 ### Amendment 2026-08-15 — 5.18b device PASS; 5.18 FROZEN
 
 [`173842`](../captures/session_20260815_173842.log): `tot=7950` `bn=225` `nsort=10003` `op=2256` `pk=1` `ins=2396` `ow=0` `walk=0` `hist=2394`. Pair `DFRAME` consecutive `frameIndex` **0.980–1.026 s** (was 1.273 s [`172927`](../captures/session_20260815_172927.log)). `idle_maint` during pair 25.2 ms, no `loop_rem`. `nsort` 10.0 ms and `isort` 28.1 ms under 50 ms. Do not flatten `openOnByPitch`. Do not reopen 5.18.
+
+### Amendment 2026-08-15 — 5.18 closed
+
+The remaining Stage 5.7 device-latency violation was traced to `byNoteId` PSRAM associative construction. Replacing that construction with the minimum representation matching its last-assignment-wins query contract reduced `bn` from 5.346 s to 225 µs and total pairing from 5.357 s to 7.95 ms. `openOnByPitch` remains a LIFO stack because its mutation contract is not equivalent to a sorted/unique index. No new >50 ms construction slice was observed. Pair is frozen. Do not clean up `recon`, `byNoteId` naming, or `openOnByPitch` before the device realtime gate.
+
+DEC-037 Stage 9 index work:
+
+```text
+correctness             PASS
+complexity              PASS
+derived-index RAM       PASS
+flat/bulk construction  PASS
+device latency
+  spanBoundaries        PASS
+  tickEvents            PASS
+  channel lookup        PASS
+  pair                  PASS
+```
+
+Next is the **whole-gate** 5.1 measurement, not another index. Production stays on materialize / 3b copy.
+
+### Amendment 2026-08-15 — 5.1 idle-path device latency PASS
+
+[`173842`](../captures/session_20260815_173842.log) complete LoopContentResolution idle gate on the 139-bar class (`hist=2394`, larger than `035414`). Production MIDI/display unchanged. The gate runs only from `processDeferredIdleMaintenance` when transport is not PLAYING / RECORDING / OVERDUBBING / STOPPED_RECORDING.
+
+| Check | Worst in LCR window (20.67–52.43 s) |
+|-------|--------------------------------------|
+| OLED | consecutive `DFRAME` **1.034 s** (`frameIndex` +30, paint 9.9 ms) vs healthy after-complete **0.968 s** |
+| MIDI | `midi_gap` **39.1 ms**; `idle_maint` **34.9 ms**; no `loop_rem`; `clockrate` 0 (transport idle) |
+| `VCACHE,full` during LCR | none |
+
+Not multi-second MIDI or OLED stall. **5.1 PASS.** 5.2 (overdub entry / `VCACHE,full` on the PLAYING path) is not this measurement. No Stage 6.
 
 ### Constraints created
 
