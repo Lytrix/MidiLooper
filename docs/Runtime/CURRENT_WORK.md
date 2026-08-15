@@ -20,7 +20,7 @@ Last updated: 2026-08-15 (DEC-037 6E.1 LCR→geometry; 6E.1b planned)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6E.1** LCR candidates + existing geometry: 60@0–5000 / 4000–4200 Shorten 0–3999; wrap 4000–200 is the same Shorten (not Hide). **6E.1b planned** — session start S replaces loop 0 as wrap origin. Next when asked: **6E.1b**, **6E.2**, or **6E.3**. Do not start midi_gap / 6.3 or wrap-commit DEC.
+**Now:** **6E.1** LCR→geometry: 4000–4200 Shortens; loop-filling + 4000–200 **Hides** at loop 4000 and **Shortens** at loop 4100. **6E.1b planned**. Next when asked: **6E.1b**, **6E.2**, or **6E.3**. Do not start midi_gap / 6.3 or wrap-commit DEC.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

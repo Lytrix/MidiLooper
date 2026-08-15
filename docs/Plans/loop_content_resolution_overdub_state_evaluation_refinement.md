@@ -150,9 +150,14 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## Next
 
-**6E.1 PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten 0–3999. Wrap 4000–200 is the same Shorten, not Hide.
+**6E.1 PASS** — LCR candidates + existing geometry. Contained 4000–4200 Shortens. Loop-filling source + 4000–200: Hide when loop is 4000; Shorten when loop is 4100.
 
-**Open pin:** user expected wrap 4000–200 to Hide. Production passes the consume window `[4000, loopLength)` into `analyzeEditSessionInteractions` (not the wrap tail `[0, 200)`). That is OverlapNoteOff → Shorten to 3999. Same on the Loop note-map path and on LCR candidates. Hide would need the wrap tail as a second causing span, or a geometry change. Do not change geometry until this pin is chosen.
+**Hide vs Shorten (loop length):** source fills the loop. Incoming ON@4000 OFF@200.
+
+- **loop = 4000** (same as note): ON@4000 phases to 0. Consume `[0, 200)` → OverlapNoteOn → **Hide**. Native PASS.
+- **loop = 4100** (a bit more): ON@4000 stays 4000. Consume `[4000, 4100)` → OverlapNoteOff → **Shorten 0–3999**. Native PASS.
+
+Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
 **Next when asked:** native **6E.1b** (session start S as wrap origin) or **6E.2** / **6E.3**. Do not start wrap-commit DEC or midi_gap / 6.3.
 
@@ -207,7 +212,7 @@ Extend [`test/test_loop_content_resolution/test_loop_content_resolution.cpp`](..
 
 | Slice | Prove |
 |-------|--------|
-| **6E.1** | **PASS** — LCR candidates + existing geometry (consume window, same as `accumulatePendingNoteChangesForIncomingNote`). 60@0–5000 / 4000–4200 → Shorten 0–3999. Wrap 4000–200 is **Shorten 0–3999**, not Hide. |
+| **6E.1** | **PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten. Loop-filling source + incoming 4000–200: loop 4000 → **Hide**; loop 4100 → **Shorten 0–3999**. |
 | **6E.1b** | **Planned** — session start tick S replaces loop 0 as wrap origin on every 6E.1 case. See below. Not started. |
 | **6E.2** | Consume tracks checkpoint-interval replay, not `history_events`. Full reconstruct / 16-bar `resolveWindow` = FAIL |
 | **6E.3** | Keep `spans` + `spanBoundaries` after drop-rebuild-buffers. Keep-all-`soundingAt` = FAIL |

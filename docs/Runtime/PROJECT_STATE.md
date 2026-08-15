@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-037 6E.1 LCR→geometry; 6E.1b planned)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-037** `LoopContentResolution` — **6E.1 PASS** (LCR candidates + existing geometry; 60@0–5000 / 4000–4200 Shorten; wrap 4000–200 is Shorten not Hide). **6E.1b planned** (session start S as wrap). **6D.4 restamp holds** [`210508`](../../captures/session_20260815_210508.log). Not all of LCR live. 6D.3/6D.2 PASS; 6D.1 FAIL. **6B PASS** [`192334`](../../captures/session_20260815_192334.log). Layer D 3b **PASS** [`045556`](../../captures/session_20260814_045556.log).
+**Active work:** **DEC-037** `LoopContentResolution` — **6E.1 PASS** (LCR→geometry: loop-filling + 4000–200 Hides at loop 4000, Shortens at 4100). **6E.1b planned**. **6D.4 restamp holds** [`210508`](../../captures/session_20260815_210508.log). Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
