@@ -387,6 +387,10 @@ Pin that still holds: the next S crossing after session undo is skipped (`suppre
 
 Withdrawn: wrap-first undo that discarded live with the sealed wrap. That removed the live +1 after wrap 1 ([`010535`](../../captures/session_20260816_010535.log)). DEC-038 order is restored: live wrap first, then sealed wraps.
 
+## HITL [`011413`](../../captures/session_20260816_011413.log) — wrap-head tick-0 NoteOn
+
+Note 30 ON 28.425 storage **2976**, wrap 28.586, NoteOff 30 + NoteOn 12 at 28.678. `extractOpenCaptureNoteOns` re-appends the held ON. When S is inside the 768-tick wrap window, `applyCapturePlayheadTails` + `isLiveWrapHeadContinuationDisplay` paints a head from tick 0 until the next note. Overdub now keeps the tail and skips that live head (`allowWrapHeadContinuation=false`). This capture’s S is 3040 (head already hidden by `resolveWrapHeadSegment`).
+
 ## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
 
 Overdub 20.588 tick 3040. Wrap 1 at 28.588 tick 6112 (`S+3072`). Session undo 30.825 tick 6968: `Overdub session undone`. DISP committed 63→86 at wrap, then 88/86 → 86/86 after undo — live cleared, wrap 1 stayed. No second wrap before stop (S2 tick 9184 skipped; stop 43.267 tick 11736). Stop `undo_entries` 75→76. GUS undo 45.397 `kind=1` 108→63; redo 50.993 63→108.
