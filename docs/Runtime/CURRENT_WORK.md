@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-038 038.1 wrap + session undo landed)
+Last updated: 2026-08-15 (DEC-038 038.1 HITL issue 2 playback silence)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-15 (DEC-038 038.1 wrap + session undo landed)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **038.1 HITL** — issue 1 wrap tails + issue 2 LCR session-undo sync shipped. Next: device HITL on those two. Issue 3 (wrap-on-clock stall) needs a design pin. Not 038.2. Do not start midi_gap / 6.3 until asked.
+**Now:** **038.1 HITL** — issue 1 wrap tails + issue 2 LCR sync + issue 2 playback silence shipped (native). Device HITL: undo a wrap and confirm MIDI out drops with the display. Issue 3 (wrap-on-clock stall) needs a design pin. Not 038.2. Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
