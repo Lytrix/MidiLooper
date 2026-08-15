@@ -1,6 +1,6 @@
 # Loop content resolution — TickIndex flat event index (5.17)
 
-**Status:** **5.17d PASS** 2026-08-15 — [`161355`](../captures/session_20260815_161355.log). Device IndexCommit is flat A. No B. No A2. Native `commitCapturePass` still fills `byTick` (5.17e).  
+**Status:** **5.17 complete** 2026-08-15 — 5.17d device PASS [`161355`](../captures/session_20260815_161355.log); 5.17e dropped `byTick`. No B. No A2.  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.16 closed `prep`; next owner from [`153920`](../captures/session_20260815_153920.log) — [`loop_content_resolution_device_phase_budget_refinement.md`](loop_content_resolution_device_phase_budget_refinement.md)
 
@@ -140,7 +140,7 @@ Then implement **only the winner** (5.17e). Production `byTick` stays C until th
 5.17b  native C vs flat A (append / sort / emplace / query) — done
 5.17c  native equivalence (window, order, wrap, oracle, walk) — done
 5.17d  device append / sort / query  — **PASS** [`161355`](../captures/session_20260815_161355.log)
-5.17e  drop `byTick` from `commitCapturePass` — only if asked; device gate already uses A
+5.17e  drop `byTick` from `commitCapturePass` / `indexCapturePassEventRange` — **done**
 ```
 
 ---
@@ -217,13 +217,19 @@ No `idle_maint` remainder during LCR. Boot `load_frame` remainders (98.9 / 866.6
 
 **5.17d PASS.** No B. No A2. Do not fold `recon` or `pair` into this closeout. 5.7 still has `DFRAME` gaps of 1.3–1.58 s during `spans`.
 
+### 5.17e — drop `byTick`
+
+`indexCapturePassEventRange` appends to `tickEvents`. `commitCapturePass` sorts after each pass. `findRawWindow` always reads `tickEvents`. `ByTickMap` / `byTick` / `visitTickRange` removed. Device IndexCommit calls `indexCapturePassEventRange` (same append as 5.17d). Native C comparison in `test_stage517b_*` uses a local `std::multimap`.
+
+**5.17 complete.** No B. No A2. No `recon`. No `pair`.
+
 ---
 
 ## Pre-implementation review
 
 ### Ready
 - Owner is `TickIndex`. Helpers parallel 5.15 (`append` / `stable_sort` / `findRawWindowFromTickEvents`).
-- Production `indexCapturePassEventRange` still `byTick.emplace`.
+- Production `indexCapturePassEventRange` appends `tickEvents` (5.17e). `byTick` is gone.
 - `recon` and `pair` untouched.
 
 ### Resolved

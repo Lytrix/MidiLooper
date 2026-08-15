@@ -309,16 +309,6 @@ TRACK_COLD_MEM void collectTickRangeRefs(const LoopContentResolution::TickIndex&
   refs.insert(ref);
 }
 
-TRACK_COLD_MEM void visitTickRange(const LoopContentResolution::TickIndex& index, uint32_t beginTick,
-                    uint32_t endTickExclusive, std::set<EventRef>& refs,
-                    ResolutionCostCounters* counters) {
-  auto it = index.byTick.lower_bound(beginTick);
-  const auto stop = index.byTick.lower_bound(endTickExclusive);
-  for (; it != stop; ++it) {
-    collectTickRangeRefs(index, it->second.first, it->second.second, refs, counters);
-  }
-}
-
 TRACK_COLD_MEM void visitTickEventRange(const LoopContentResolution::TickIndex& index,
                          const LoopContentResolution::TickIndex::TickEventEntryVec& entries,
                          uint32_t beginTick, uint32_t endTickExclusive, std::set<EventRef>& refs,
@@ -359,18 +349,13 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::indexCapturePassEventRange
   if (pass == nullptr) {
     return;
   }
-  const uint32_t limit = static_cast<uint32_t>(pass->events.size());
-  if (beginEvent >= limit) {
-    return;
-  }
-  if (endEventExclusive > limit) {
-    endEventExclusive = limit;
-  }
-  for (uint32_t i = beginEvent; i < endEventExclusive; ++i) {
-    byTick.emplace(pass->events[i].tick, std::make_pair(id, i));
-  }
-  if (counters != nullptr && endEventExclusive > beginEvent) {
-    counters->resolutionOperations += endEventExclusive - beginEvent;
+  const uint32_t before = static_cast<uint32_t>(tickEvents.size());
+  appendTickEventEntries(*pass, beginEvent, endEventExclusive, tickEvents);
+  if (counters != nullptr) {
+    const uint32_t added = static_cast<uint32_t>(tickEvents.size()) - before;
+    if (added > 0) {
+      counters->resolutionOperations += added;
+    }
   }
 }
 
@@ -422,6 +407,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::commitCapturePass(PassId i
     counters->resolutionOperations += eventCount;
   }
   indexCapturePassEventRange(id, 0, eventCount, nullptr);
+  sortTickEventEntriesByTick(tickEvents);
   pairCapturePassNotes(id);
 }
 
@@ -447,35 +433,8 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::setCapturePassState(PassId
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::findRawWindow(uint32_t loopLengthTicks, uint32_t windowStart,
                                                      uint32_t windowLength, SessionMidiEventVec& out,
                                                      ResolutionCostCounters* counters) const {
-  if (!tickEvents.empty()) {
-    findRawWindowFromTickEvents(tickEvents, loopLengthTicks, windowStart, windowLength, out,
-                                counters);
-    return;
-  }
-  out.clear();
-  if (loopLengthTicks == 0 || windowLength == 0) {
-    return;
-  }
-  std::set<EventRef> refs;
-  if (windowLength >= loopLengthTicks) {
-    visitTickRange(*this, 0, loopLengthTicks, refs, counters);
-  } else {
-    const uint32_t start = IntervalProjection::tickPhaseInLoop(windowStart, 0, loopLengthTicks);
-    if (start + windowLength <= loopLengthTicks) {
-      visitTickRange(*this, start, start + windowLength, refs, counters);
-    } else {
-      visitTickRange(*this, start, loopLengthTicks, refs, counters);
-      visitTickRange(*this, 0, start + windowLength - loopLengthTicks, refs, counters);
-    }
-  }
-  out.reserve(refs.size());
-  for (const EventRef& ref : refs) {
-    const auto* pass = findPass(*this, ref.passId);
-    if (pass == nullptr || ref.eventIndex >= pass->events.size()) {
-      continue;
-    }
-    out.push_back(pass->events[ref.eventIndex]);
-  }
+  findRawWindowFromTickEvents(tickEvents, loopLengthTicks, windowStart, windowLength, out,
+                              counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::TickIndex::appendTickEventEntries(
@@ -633,10 +592,7 @@ TRACK_COLD_MEM void LoopContentResolution::TickIndex::materializeActive(SessionM
 }
 
 TRACK_COLD_MEM uint32_t LoopContentResolution::TickIndex::indexedEventCount() const {
-  if (!tickEvents.empty()) {
-    return static_cast<uint32_t>(tickEvents.size());
-  }
-  return static_cast<uint32_t>(byTick.size());
+  return static_cast<uint32_t>(tickEvents.size());
 }
 
 TRACK_COLD_MEM uint32_t LoopContentResolution::TickIndex::indexedPassCount() const {
@@ -1260,11 +1216,8 @@ struct DeviceGateSession {
         const uint32_t end = std::min(
             indexEventCursor + LoopContentResolution::kDeviceGateEventsPerSlice, eventCount);
         ElapsedTimer appendTimer;
-        index.appendTickEventEntries(*pass, indexEventCursor, end, index.tickEvents);
+        index.indexCapturePassEventRange(passRef.id, indexEventCursor, end, &sample_.indexCommit);
         sample_.indexCommit.tickEventAppendMicros += appendTimer.elapsed();
-        if (end > indexEventCursor) {
-          sample_.indexCommit.resolutionOperations += end - indexEventCursor;
-        }
         indexEventCursor = end;
         sample_.indexCommit.elapsedMicros += timer.elapsed();
         return LoopContentResolution::DeviceGateSliceResult::Continue;
