@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-15 (DEC-037 6E.1 PASS; 6D.4 restamp holds [`210508`])
+Last updated: 2026-08-15 (DEC-037 6E.1 LCR→geometry; 6E.1b planned)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-15 (DEC-037 6E.1 PASS; 6D.4 restamp holds [`210508`])
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **DEC-037** `LoopContentResolution` — **6E.1 PASS** (`resolveState` + hold-window NOTE_ONs match note-map oracle). **6D.4 restamp holds** [`210508`](../../captures/session_20260815_210508.log): undo → 3b **120 µs**; then `6c` **31128 µs** / **312636 µs**. Not all of LCR live. 6D.3/6D.2 PASS; 6D.1 FAIL. A/B rejected. **6B PASS** [`192334`](../../captures/session_20260815_192334.log). **6A PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`. Layer D 3b **PASS** [`045556`](../../captures/session_20260814_045556.log) `begin_capture` 2214 µs.
+**Active work:** **DEC-037** `LoopContentResolution` — **6E.1 PASS** (LCR candidates + existing geometry; 60@0–5000 / 4000–4200 Shorten; wrap 4000–200 is Shorten not Hide). **6E.1b planned** (session start S as wrap). **6D.4 restamp holds** [`210508`](../../captures/session_20260815_210508.log). Not all of LCR live. 6D.3/6D.2 PASS; 6D.1 FAIL. **6B PASS** [`192334`](../../captures/session_20260815_192334.log). Layer D 3b **PASS** [`045556`](../../captures/session_20260814_045556.log).
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

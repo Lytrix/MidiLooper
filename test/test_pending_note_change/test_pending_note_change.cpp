@@ -312,6 +312,44 @@ void test_pending_shorten_wrap_crossing_incoming_tail() {
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().shorten);
 }
 
+void test_pending_shorten_long_source_4000_4200() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 5000, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 4000, 4200, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+
+  const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(shorten);
+  TEST_ASSERT_EQUAL_UINT32(0u, shorten->startTick);
+  TEST_ASSERT_EQUAL_UINT32(3999u, shorten->endTick);
+}
+
+void test_pending_wrap_long_source_4000_200() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 5000, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 4000, 200, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+
+  const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(shorten);
+  TEST_ASSERT_EQUAL_UINT32(0u, shorten->startTick);
+  TEST_ASSERT_EQUAL_UINT32(3999u, shorten->endTick);
+}
+
 void test_pending_wrap_crossing_incoming_skips_head_hide() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -380,6 +418,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_establish_resets_overlap_hold_totals);
   RUN_TEST(test_discard_clears_pending_with_source_view);
   RUN_TEST(test_pending_shorten_wrap_crossing_incoming_tail);
+  RUN_TEST(test_pending_shorten_long_source_4000_4200);
+  RUN_TEST(test_pending_wrap_long_source_4000_200);
   RUN_TEST(test_pending_wrap_crossing_incoming_skips_head_hide);
   RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
   return UNITY_END();

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 6E.1 PASS; 6D.4 restamp holds [`210508`])
+Last updated: 2026-08-15 (DEC-037 6E.1 LCR→geometry; 6E.1b planned)
 
 ---
 
@@ -16,11 +16,11 @@ Last updated: 2026-08-15 (DEC-037 6E.1 PASS; 6D.4 restamp holds [`210508`])
 
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **6D investigation:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md)  
-**6E overdub evaluation:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../Plans/loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E.1 PASS**; 6E.2–6E.5 not started; no firmware  
+**6E overdub evaluation:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../Plans/loop_content_resolution_overdub_state_evaluation_refinement.md) — **6E.1 PASS** including LCR→geometry on 60@0–5000; **6E.1b planned** (session start S as wrap); 6E.2–6E.5 not started; no firmware  
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6D.4 restamp holds** on [`210508`](../../captures/session_20260815_210508.log). **6E.1 PASS** — `resolveState` + hold-window NOTE_ONs match the note-map oracle (user example + pending shorten/hide/wrap cases). No firmware. Next when asked: **6E.2** or **6E.3**. Do not start midi_gap / 6.3 or wrap-commit DEC.
+**Now:** **6E.1** LCR candidates + existing geometry: 60@0–5000 / 4000–4200 Shorten 0–3999; wrap 4000–200 is the same Shorten (not Hide). **6E.1b planned** — session start S replaces loop 0 as wrap origin. Next when asked: **6E.1b**, **6E.2**, or **6E.3**. Do not start midi_gap / 6.3 or wrap-commit DEC.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
