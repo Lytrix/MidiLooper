@@ -387,6 +387,10 @@ Pin that still holds: the next S crossing after session undo is skipped (`suppre
 
 Withdrawn: wrap-first undo that discarded live with the sealed wrap. That removed the live +1 after wrap 1 ([`010535`](../../captures/session_20260816_010535.log)). DEC-038 order is restored: live wrap first, then sealed wraps.
 
+## HITL [`012925`](../../captures/session_20260816_012925.log) — lengthened live note after wrap
+
+Second overdub 58.598 tick 9048 (S=2904). Wrap 66.604 tick 12120: note 30 ON at 66.524 storage **2880**, wrap, NoteOff 30 + NoteOn 12 at 66.775 storage 2976. Same pattern at wrap 74.597 (ON 30 @ 2880, OFF @ 2976). Tick-0 head gate (`86bdc21`, reverted) left the wrap **tail** to `loopLength - 1`. That is the lengthened bar; it clears on the next NoteOff. Overdub now uses linear playhead close only (`allowWrapContinuation=false`).
+
 ## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
 
 Overdub 20.588 tick 3040. Wrap 1 at 28.588 tick 6112 (`S+3072`). Session undo 30.825 tick 6968: `Overdub session undone`. DISP committed 63→86 at wrap, then 88/86 → 86/86 after undo — live cleared, wrap 1 stayed. No second wrap before stop (S2 tick 9184 skipped; stop 43.267 tick 11736). Stop `undo_entries` 75→76. GUS undo 45.397 `kind=1` 108→63; redo 50.993 63→108.

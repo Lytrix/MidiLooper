@@ -386,6 +386,17 @@ void test_is_live_wrap_head_continuation_display_tail_open_playhead_zero() {
         NoteUtils::isLiveWrapHeadContinuationDisplay(100, 0, loopLength, true));
 }
 
+void test_held_tail_on_after_session_wrap_matches_loop_end_continuation() {
+    // 012925 wrap 66.604: note 30 ON storage 2880, then playhead returns to S.
+    // closeTick behind that ON paints a tail to loop end until NoteOff.
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint32_t tailOnTick = 2880;
+    TEST_ASSERT_TRUE(
+        NoteUtils::isLiveWrapHeadContinuationDisplay(tailOnTick, 0, loopLength, true));
+    TEST_ASSERT_FALSE(
+        NoteUtils::isLiveWrapHeadContinuationDisplay(tailOnTick, 2904, loopLength, true));
+}
+
 void test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window() {
     // Growing live-record lengths under the wrap window must not treat playhead-behind-note
     // as wrap continuation (false head from tick 0).
@@ -445,6 +456,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_resolve_wrap_head_segment_live_playhead_at_zero);
     RUN_TEST(test_resolve_wrap_head_segment_live_playhead_hidden_before_tail_on);
     RUN_TEST(test_is_live_wrap_head_continuation_display_tail_open_playhead_zero);
+    RUN_TEST(test_held_tail_on_after_session_wrap_matches_loop_end_continuation);
     RUN_TEST(test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_at_zero);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_mid_loop);
