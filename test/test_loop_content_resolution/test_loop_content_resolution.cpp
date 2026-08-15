@@ -1314,6 +1314,142 @@ void test_stage57_tick_events_reserve_pass_remainder() {
   TEST_ASSERT_TRUE(out.capacity() >= pass.events.size());
 }
 
+MidiEvent makeResolvedNoteOn(uint32_t tick, uint8_t channel, uint8_t pitch, NoteId id) {
+  MidiEvent event = MidiEvent::NoteOn(tick, channel, pitch, 100);
+  event.noteId = id;
+  return event;
+}
+
+MidiEvent makeResolvedNoteOff(uint32_t tick, uint8_t channel, uint8_t pitch) {
+  return MidiEvent::NoteOff(tick, channel, pitch, 0);
+}
+
+SessionMidiEventVec makeOpenNoteAcrossSliceEvents() {
+  SessionMidiEventVec events;
+  events.push_back(makeResolvedNoteOn(0, 1, 60, 1));
+  events.push_back(makeResolvedNoteOff(12, 1, 60));
+  events.push_back(makeResolvedNoteOn(12, 2, 61, 2));
+  events.push_back(makeResolvedNoteOff(24, 2, 61));
+  events.push_back(makeResolvedNoteOn(24, 3, 62, 3));
+  events.push_back(makeResolvedNoteOff(36, 3, 62));
+  events.push_back(makeResolvedNoteOn(48, 5, 70, 10));
+  events.push_back(makeResolvedNoteOn(60, 6, 71, 11));
+  events.push_back(makeResolvedNoteOff(72, 5, 70));
+  events.push_back(makeResolvedNoteOff(84, 6, 71));
+  events.push_back(makeResolvedNoteOn(96, 9, 80, 12));
+  return events;
+}
+
+void test_stage57_recon_keeps_open_note_across_event_slice() {
+  const uint32_t loopLength = 4u * Config::TICKS_PER_BAR;
+  const SessionMidiEventVec events = makeOpenNoteAcrossSliceEvents();
+  TEST_ASSERT_EQUAL_UINT32(11u, static_cast<uint32_t>(events.size()));
+  TEST_ASSERT_EQUAL_UINT32(8u, LoopContentResolution::kDeviceGateEventsPerSlice);
+
+  const NoteUtils::DisplayNoteVec full =
+      NoteUtils::reconstructDisplayNotes(events, loopLength, false);
+
+  NoteUtils::CanonicalSpanBuild build;
+  NoteUtils::appendCanonicalSpansFromMidi(events, loopLength, 0,
+                                          LoopContentResolution::kDeviceGateEventsPerSlice, build);
+  const uint32_t spansAfterFirstSlice = build.spanCount();
+  NoteUtils::appendCanonicalSpansFromMidi(events, loopLength,
+                                          LoopContentResolution::kDeviceGateEventsPerSlice,
+                                          static_cast<uint32_t>(events.size()), build);
+  NoteUtils::finishCanonicalSpansFromMidi(loopLength, build);
+  const NoteUtils::DisplayNoteVec sliced =
+      NoteUtils::displayNotesFromCanonicalSpans(build, loopLength);
+
+  TEST_ASSERT_TRUE(spansAfterFirstSlice < static_cast<uint32_t>(full.size()));
+  TEST_ASSERT_EQUAL(full.size(), sliced.size());
+  bool sawCrossed = false;
+  bool sawOpen = false;
+  for (size_t i = 0; i < full.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(full[i].noteId, sliced[i].noteId);
+    TEST_ASSERT_EQUAL_UINT8(full[i].note, sliced[i].note);
+    TEST_ASSERT_EQUAL_UINT32(full[i].startTick, sliced[i].startTick);
+    TEST_ASSERT_EQUAL_UINT32(full[i].endTick, sliced[i].endTick);
+    if (full[i].noteId == 10) {
+      sawCrossed = true;
+      TEST_ASSERT_EQUAL_UINT32(48u, full[i].startTick);
+    }
+    if (full[i].noteId == 12) {
+      sawOpen = true;
+      TEST_ASSERT_EQUAL_UINT32(96u, full[i].startTick);
+      TEST_ASSERT_TRUE(full[i].endTick > full[i].startTick);
+    }
+  }
+  TEST_ASSERT_TRUE(sawCrossed);
+  TEST_ASSERT_TRUE(sawOpen);
+}
+
+void test_stage57_pair_keeps_open_note_across_event_slice() {
+  LoopContentResolution::TickIndex index;
+  const PassId id = 21;
+  index.beginCapturePass(id, CapturePassState::Active, 0);
+  TEST_ASSERT_EQUAL(1u, index.capturePasses.size());
+  index.capturePasses.back().events = makeOpenNoteAcrossSliceEvents();
+  std::map<uint8_t, std::vector<uint32_t>> openOnByPitch;
+  index.pairCapturePassEventRange(id, 0, LoopContentResolution::kDeviceGateEventsPerSlice,
+                                  openOnByPitch, nullptr);
+  const auto crossedAfterFirst = index.byNoteId.find(10);
+  TEST_ASSERT_TRUE(crossedAfterFirst != index.byNoteId.end());
+  TEST_ASSERT_EQUAL_UINT32(6u, crossedAfterFirst->second.onIndex);
+  TEST_ASSERT_EQUAL_INT32(-1, crossedAfterFirst->second.offIndex);
+  const auto neighborAfterFirst = index.byNoteId.find(11);
+  TEST_ASSERT_TRUE(neighborAfterFirst != index.byNoteId.end());
+  TEST_ASSERT_EQUAL_INT32(-1, neighborAfterFirst->second.offIndex);
+  TEST_ASSERT_TRUE(index.byNoteId.find(12) == index.byNoteId.end());
+
+  index.pairCapturePassEventRange(id, LoopContentResolution::kDeviceGateEventsPerSlice,
+                                  static_cast<uint32_t>(index.capturePasses.back().events.size()),
+                                  openOnByPitch, nullptr);
+  const auto crossed = index.byNoteId.find(10);
+  TEST_ASSERT_TRUE(crossed != index.byNoteId.end());
+  TEST_ASSERT_EQUAL_INT32(8, crossed->second.offIndex);
+  const auto neighbor = index.byNoteId.find(11);
+  TEST_ASSERT_TRUE(neighbor != index.byNoteId.end());
+  TEST_ASSERT_EQUAL_INT32(9, neighbor->second.offIndex);
+  const auto open = index.byNoteId.find(12);
+  TEST_ASSERT_TRUE(open != index.byNoteId.end());
+  TEST_ASSERT_EQUAL_UINT32(10u, open->second.onIndex);
+  TEST_ASSERT_EQUAL_INT32(-1, open->second.offIndex);
+}
+
+void test_stage57_span_channel_uses_full_resolved_not_note_slice() {
+  const uint32_t loopLength = 4u * Config::TICKS_PER_BAR;
+  const SessionMidiEventVec events = makeOpenNoteAcrossSliceEvents();
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(events, loopLength, false);
+  TEST_ASSERT_TRUE(notes.size() >= 5u);
+
+  LoopContentResolution::StateCheckpoints checkpoints;
+  checkpoints.intervalTicks = Config::TICKS_PER_BAR;
+  checkpoints.loopLengthTicks = loopLength;
+  const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
+  const uint32_t noteCount = static_cast<uint32_t>(notes.size());
+  for (uint32_t i = 0; i < noteCount; i += step) {
+    const uint32_t end = std::min(i + step, noteCount);
+    TEST_ASSERT_TRUE(checkpoints.appendSpansFromNotes(events, notes, i, end, nullptr));
+  }
+  TEST_ASSERT_EQUAL(notes.size(), checkpoints.spans.size());
+  bool sawCrossed = false;
+  bool sawOpen = false;
+  for (const auto& span : checkpoints.spans) {
+    TEST_ASSERT_EQUAL_UINT8(channelForNoteId(events, span.note.noteId), span.note.channel);
+    if (span.note.noteId == 10) {
+      sawCrossed = true;
+      TEST_ASSERT_EQUAL_UINT8(5u, span.note.channel);
+    }
+    if (span.note.noteId == 12) {
+      sawOpen = true;
+      TEST_ASSERT_EQUAL_UINT8(9u, span.note.channel);
+    }
+  }
+  TEST_ASSERT_TRUE(sawCrossed);
+  TEST_ASSERT_TRUE(sawOpen);
+}
+
 void test_stage9_range_prep_matches_full_prepare() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1748,6 +1884,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_range_spans_match_one_span);
   RUN_TEST(test_stage57_span_boundaries_reserve_final_size);
   RUN_TEST(test_stage57_tick_events_reserve_pass_remainder);
+  RUN_TEST(test_stage57_recon_keeps_open_note_across_event_slice);
+  RUN_TEST(test_stage57_pair_keeps_open_note_across_event_slice);
+  RUN_TEST(test_stage57_span_channel_uses_full_resolved_not_note_slice);
   RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);

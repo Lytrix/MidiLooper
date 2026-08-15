@@ -156,6 +156,9 @@ struct LoopContentResolution {
     using NoteSpanVec = std::vector<NoteSpan, ExternalMemoryFirstAllocator<NoteSpan>>;
     using SpanBoundaryEntryVec =
         std::vector<SpanBoundaryEntry, ExternalMemoryFirstAllocator<SpanBoundaryEntry>>;
+    using ChannelByNoteIdMap =
+        std::unordered_map<NoteId, uint8_t, std::hash<NoteId>, std::equal_to<NoteId>,
+                           ExternalMemoryFirstAllocator<std::pair<const NoteId, uint8_t>>>;
 
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
@@ -163,6 +166,8 @@ struct LoopContentResolution {
     NoteSpanVec spans;
     /// Tick-ordered start and exclusive-end entries for tail replay (flat A).
     SpanBoundaryEntryVec spanBoundaries;
+    /// First NOTE_ON channel per noteId from the current `resolved` list (5.7b).
+    ChannelByNoteIdMap channelByNoteId;
 
     void rebuild(const TickIndex& index, const EditPassVec& editPasses, uint32_t loopLength,
                  uint32_t checkpointIntervalTicks, ResolutionCostCounters* counters = nullptr);
@@ -181,7 +186,8 @@ struct LoopContentResolution {
                                       ResolutionCostCounters* counters = nullptr);
     /// Sliced span + boundary append after reconstruct. `[begin, endExclusive)` notes.
     /// Reserves `spans` to `notes.size()` and `spanBoundaries` to `2 * notes.size()` (5.7a).
-    /// Does not sort; call `sortSpanBoundaries` after the last range.
+    /// Channel comes from a first-wins map of every NOTE_ON in `resolved` (5.7b), not the
+    /// current note slice. Does not sort; call `sortSpanBoundaries` after the last range.
     bool appendSpansFromNotes(const SessionMidiEventVec& resolved,
                               const NoteUtils::DisplayNoteVec& notes, uint32_t begin,
                               uint32_t endExclusive, ResolutionCostCounters* counters = nullptr);

@@ -1,11 +1,11 @@
 # Loop content resolution — 5.7 DFRAME during sliced append (reserve)
 
-**Status:** **5.7a device reserve PASS** [`163942`](../captures/session_20260815_163942.log). 5.7 `DFRAME` bar **not closed** — remaining `spans` owner is `channelForNoteId`.  
+**Status:** **5.7b native PASS** 2026-08-15 — device remasure owed. 5.7a reserve PASS [`163942`](../captures/session_20260815_163942.log).  
 **Change:** `openspec/changes/loop-content-resolution/` (DEC-037 Stage 9)  
 **Parent:** 5.17 complete — [`loop_content_resolution_tick_index_flat_event_index_refinement.md`](loop_content_resolution_tick_index_flat_event_index_refinement.md)  
 **Evidence:** [`162630`](../captures/session_20260815_162630.log)
 
-**Does not start:** B, A2, `recon`, `pair` / `byNoteId`, `channelForNoteId` rewrite, 5.1 / 5.2, Stage 6, restoring the arm cap.
+**Does not start:** B, A2, `recon` / `pair` rewrites, 5.1 / 5.2, Stage 6, restoring the arm cap.
 
 **Boundary:** `StateCheckpoints::appendSpansFromNotes` owns span-boundary growth. `TickIndex::appendTickEventEntries` owns tick-event growth. Same sliced-append reserve contract. Query contracts unchanged.
 
@@ -145,3 +145,21 @@ mat=0,win=14552,reb=4419525,st=3113,rep=350,hist=2394,walk=0,app=2349,sort=9142,
 `pair` still has a 1.275 s `DFRAME` (different owner). The 2.890 s gap at 57.13 s skips `frameIndex` 1200 and 1230 — two missing log lines, not a measured 2.89 s slice. Paint duration stays 12–14 ms.
 
 Do not start 5.1. Next 5.7 slice is `channelForNoteId` in `appendSpansFromNotes` only if asked.
+
+---
+
+## 5.7b — channel map from full `resolved`
+
+**Ownership change?** NO. **Transition change?** NO.
+
+`appendSpansFromNotes` fills `channelByNoteId` from **every** NOTE_ON in `resolved` (first wins), then each sliced note is an O(1) lookup. It does **not** scan only the current 8 notes or the current 8 events.
+
+Open notes still evaluate:
+
+| Path | Already in code | 5.7b test |
+|------|-----------------|-----------|
+| Reconstruct | `CanonicalSpanBuild::activeNoteStacks` persists across `appendCanonicalSpansFromMidi` slices; `finishCanonicalSpansFromMidi` closes leftover ons to `loopLength` | `test_stage57_recon_keeps_open_note_across_event_slice` — ON at index 7, OFF at 8; unpaired ON at 10 |
+| Pair | `openOnByPitch` persists; `byNoteId.offIndex = -1` until the off slice | `test_stage57_pair_keeps_open_note_across_event_slice` |
+| Span channel | Map built from all resolved NOTE_ONs, including ons whose off is later or missing | `test_stage57_span_channel_uses_full_resolved_not_note_slice` — crossed note channel 5, open note channel 9 |
+
+Do not rewrite `pair` / `recon`. Device remasure owed.
