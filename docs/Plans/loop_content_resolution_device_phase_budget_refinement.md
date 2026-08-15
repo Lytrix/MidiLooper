@@ -115,13 +115,31 @@ mat=0,win=0,reb=13803604,st=13046,rep=350,hist=2394,walk=0,app=5485380,sort=1012
 
 `prep` phase lines: pass 0 `ev` 0→4440, pass 1 456→4416, pass 2 152→4616, pass 3 328→4792. First 5 s `idle_maint` that overlaps prep start is 102.4 ms — same value as `idx` pass 3 `loop_rem`, not a prep slice.
 
-## Open after 5.16c remasure
+## Next long-running phase — [`153920`](../captures/session_20260815_153920.log)
 
-1. `prep` slice bar is closed. Do not spend another cycle on `RebuildPrepare`.
-2. Remaining written-bar leftovers: `idx` pass 1 **121 ms**, `recon` **116 ms**, `idx`/`pair` pass 0 63–83 ms, `DFRAME` gaps >1 s in sliced phases.
-3. Leave `byTick` until a named 5.17 (same A lens as 5.15). Do not infer it is next from wall time alone.
-4. Do not treat `reb=13.80 s` as the optimization target.
-5. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
+`loop_rem,idle_maint` is one main-loop call of all 8 tracks’ `processDeferredIdleMaintenance` (one LCR slice on the selected track). Phase lines are 1 Hz, so each remainder is bracketed by the `idx`/`recon` cursor around it.
+
+| Rank | Phase | Largest `loop_rem` | Shape | Owner |
+|------|-------|--------------------|-------|-------|
+| 1 | `idx` pass 1 | **120.6 ms** (34 remainders 116–121 ms) | 275 events into an already-filled `byTick` | `TickIndex::indexCapturePassEventRange` → `byTick.emplace` |
+| 2 | `recon` first ~200 events | **115.7 ms** (4 remainders, then none) | startup only; rest of 10.7 s is quiet | `NoteUtils::appendCanonicalSpansFromMidi` |
+| 3 | `idx` pass 2/3 | 101–102 ms | `ev` 0→0 then `pair` ev=8 — one 8-event index into the large map | same `byTick.emplace` |
+| 4 | `idx` pass 0 | 50→**83 ms** | grows with cursor | same `byTick.emplace` |
+| 5 | `pair` pass 1 / 0 | 91 / 63 ms | `byNoteId` pairing | `pairCapturePassEventRange` |
+
+`idx` pass 0 remainders start only at `ev=2792` (50.1 ms) and rise to 83.4 ms at `ev=4392`. That is map-size cost, not a fixed 8-track floor.
+
+Largest LCR-period `DFRAME` gap is **4.38 s** during `idx` pass 1 (paint duration still 25 ms).
+
+`prep` is closed (no `loop_rem`). `spans` has no `loop_rem`. `reb=13.80 s` is not the fail.
+
+**Next owner:** `TickIndex::byTick` (PSRAM `std::multimap`), same class 5.15 removed from span boundaries. Same experimental order as 5.15 if a 5.17 is opened: native C vs flat A, then device. Do not fold `recon` into that slice — different owner, startup-only.
+
+## Open after this identification
+
+1. Do not start 5.17 / `byTick` swap until explicitly requested.
+2. Do not treat `reb` as the optimization target.
+3. Do not start 5.1 / 5.2 / 6.x until 5.7’s remaining slice bar is decided.
 
 ---
 
