@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** **6D.1 native only.** Measure `index_order_us` against `history_events` and `commit_delta_events` at ≥2 history sizes. Full sort that scales with history fails even if < 50 ms. Production architecture untouched until that contract exists. Do not rebuild all of LCR. A/B rejected. 6C consume-when-ready.
+> **Now:** **6D.1 native measured.** Append+merge oracle PASS. Full sort and ordered merge both FAIL history scaling (sort 602→2624 µs, merge 46→174 µs at 8192→32768, same delta, both < 50 ms). Mutation contract not established. Production frozen. Do not reopen 5.17. A/B rejected. 6C consume-when-ready.
 >
 > Read CURRENT_WORK + the 6D plan first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**6D.1 native only** — scale vs `history_events` and `commit_delta_events`. Full history-scaling sort fails even if < 50 ms. Production frozen. A/B rejected.
+**6D.1 native measured** — oracle PASS; sort and merge FAIL history scaling. Production frozen. A/B rejected.
 
 ---
 
