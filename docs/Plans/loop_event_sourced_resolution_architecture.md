@@ -342,7 +342,7 @@ Keep 3b `visualCache.notes` copy as fallback. Do not remove it in 6A–6C. LCR c
 | display repaint | sliced |
 | eventual full consistency | asynchronous |
 
-3. **6C — overdub source.** Native landed. Device [`194015`](../../captures/session_20260815_194015.log): consume not exercised (no `DIAG,lcr,6c`, no `DIAG,lcr,mat=`). 3b fallback `begin_capture` 3612–8618 µs. Recapture: STOPPED until `DIAG,lcr,mat=`, then PLAYING overdub. Score against 3b **2214 µs**.
+3. **6C — overdub source.** Native landed. [`194643`](../../captures/session_20260815_194643.log): `mat=` complete, `6a` `match=1`; `6c`/`begin_capture` lost to `RING,overflow`. INFO open 42 ms then 9 ms. Recapture: overdub+stop within ~1 s. Score against 3b **2214 µs**.
 4. **After 6C — MIDI Input Gap > 50 ms.** [`192334`](../../captures/session_20260815_192334.log) `DIAG,midi_gap` **135 / 119 / 138 ms** at 54.7 / 64.7 / 69.8 s; `clockrate` stayed **47**. Not in 6C scope. Not RC-J (post-STOPPED clock drop).
 5. **Later:** long-loop playback gather; short-loop / NOTE_EDIT hydrate.
 6. **D3 persist checkpoint** — same checkpoint type as stage 7; `StorageManager` remains persist owner (DEC-008).

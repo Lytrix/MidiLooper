@@ -1,4 +1,4 @@
-# Handoff — LoopContentResolution Stage 6C (recapture owed)
+# Handoff — LoopContentResolution Stage 6C (recapture owed; RING dropped entry CAP)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
@@ -14,7 +14,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** 6C recapture owed. [`194015`](captures/session_20260815_194015.log) did not exercise prepared consume (no `DIAG,lcr,6c`, no `DIAG,lcr,mat=`). Stay STOPPED until `DIAG,lcr,mat=`, then PLAYING overdub. Score `begin_capture` against **2214 µs**. Keep the 3b copy. Do not start midi_gap / 6.3.
+> **Now:** 6C recapture owed. [`194643`](captures/session_20260815_194643.log) has `DIAG,lcr,mat=` and `6a` `match=1`, but `begin_capture` / `DIAG,lcr,6c` were lost to `RING,overflow`. Overdub and stop within ~1 s. Score against **2214 µs**. Do not start midi_gap / 6.3.
 >
 > Read CURRENT_WORK + this handoff first.
 
@@ -22,7 +22,7 @@
 
 ## One-line status
 
-**6C recapture owed** [`194015`](../../captures/session_20260815_194015.log) — no `DIAG,lcr,6c`; 3b `begin_capture` 3612–8618 µs. Stay STOPPED until `DIAG,lcr,mat=`.
+**6C recapture owed** [`194643`](../../captures/session_20260815_194643.log) — `mat=` complete; entry CAP lost to `RING,overflow`. Short overdub so `6c` / `begin_capture` survive.
 
 ---
 
@@ -42,8 +42,8 @@ device latency
   5.2 overdub entry     PASS  180624  10050 µs
   6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
   6B commit invalidation PASS  192334  stale_range dcnt 15/5/5 notes kept
-  6C overdub source      recapture  194015 no 6c/mat=; 3b 3612–8618 µs
-Stage 6                  6C consume not scored; 3b fallback held < 50 ms
+  6C overdub source      recapture  194643 mat=+6a match=1; RING dropped 6c/begin_capture
+Stage 6                  6C consume not scored; short overdub recapture
 ```
 
 ---
@@ -257,7 +257,25 @@ Idle LCR never reached `deviceGateComplete`. No `DIAG,lcr,mat=`. No `DIAG,lcr,6c
 | `PlaybackFullMaterialize` | 0 | **0** | holds |
 | `DisplayFullRebuild` | no bump on entry | stays **4** | holds |
 
-Recapture: stay **STOPPED** until `DIAG,lcr,mat=`, then PLAYING overdub. Look for `DIAG,lcr,6c`. Do not start midi_gap / 6.3.
+Recapture after [`194015`](../../captures/session_20260815_194015.log): stay **STOPPED** until `DIAG,lcr,mat=`, then PLAYING overdub. Look for `DIAG,lcr,6c`. Do not start midi_gap / 6.3.
+
+### Device [`194643`](../../captures/session_20260815_194643.log) — same boot; CAP stages lost
+
+Continuation of the [`194015`](../../captures/session_20260815_194015.log) boot. Idle LCR completed: `DIAG,lcr,mat=0,win=13656,reb=600907,st=385,rep=350,hist=2614,walk=0` then `DIAG,lcr,6a,win=2249,proj=8513,oracle=13264,tot=10762,ev=78,notes=40,match=1`.
+
+PLAYING at 397.8 s. First overdub INFO 402.132 s (button 402.090 → opened **42 ms**) — prepared-ready consume scenario. `ODUB,stage,begin_capture` and `DIAG,lcr,6c` are absent; `RING,overflow` at 417.334 s (stop). Second overdub INFO 420.288 s (button 420.279 → opened **9 ms**) after 6B `stale_range` `dcnt` 10 and `slice_clean` notes **2648**.
+
+| Check | Bar | [`194643`](../../captures/session_20260815_194643.log) | Result |
+|-------|-----|----------|--------|
+| `DIAG,lcr,mat=` | complete before overdub | `hist=2614` `walk=0` | holds |
+| `DIAG,lcr,6a` | `match=1` | `match=1` | holds |
+| `DIAG,lcr,6c` | present on scored entry | none (RING) | **not scored** |
+| `ODUB,stage,begin_capture` | **< 50 ms** | none (RING) | INFO 42 ms / 9 ms |
+| `VCACHE,full` | none | none | holds |
+| `PlaybackFullMaterialize` | 0 | **0** | holds |
+| Overdub `clockrate` | ~47–48 | 47–49 | holds |
+
+Recapture: overdub and stop within ~1 s so entry CAP is not evicted. Score `begin_capture` against **2214 µs**. Do not start midi_gap / 6.3.
 
 ---
 
@@ -299,5 +317,5 @@ Recapture: stay **STOPPED** until `DIAG,lcr,mat=`, then PLAYING overdub. Look fo
 - [x] 6.0 consume-only invariant — **pinned**
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
-- [ ] 6C overdub source — **native landed**; [`194015`](../../captures/session_20260815_194015.log) consume not exercised. Recapture after `DIAG,lcr,mat=`.
+- [ ] 6C overdub source — **native landed**; [`194643`](../../captures/session_20260815_194643.log) `mat=`+`6a` but RING dropped `6c`/`begin_capture`. Short overdub recapture.
 - [ ] After 6C: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47)
