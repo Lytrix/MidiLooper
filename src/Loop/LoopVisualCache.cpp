@@ -224,7 +224,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const uint32_t reconstructStartUs = micros();
 #endif
   const NoteUtils::DisplayNoteVec sliceNotes =
-      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
+      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   if (usedPrepared) {
@@ -275,7 +275,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   gatherCommittedEvents(flat);
   materializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
-      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
+      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {

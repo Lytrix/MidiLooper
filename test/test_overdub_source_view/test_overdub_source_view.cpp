@@ -176,6 +176,33 @@ void test_source_view_wrap_safe_high_then_low_capture_order() {
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 71, 12));
 }
 
+void test_source_view_prepared_window_omits_unpaired_open_tails() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 80, 1, 72, 90, 2));
+  loop.loopLengthTicks = kLoopLen;
+  loop.seedRecordPassFromStore(store);
+  loop.markDisplayCachesStale();
+
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    TEST_ASSERT_FALSE(note.note == 72 && note.endTick == kLoopLen - 1);
+  }
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_source_view_consumes_prepared_lcr_when_cache_dirty() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -369,6 +396,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);
   RUN_TEST(test_source_view_immutable_when_live_materialize_mutates);
   RUN_TEST(test_source_view_wrap_safe_high_then_low_capture_order);
+  RUN_TEST(test_source_view_prepared_window_omits_unpaired_open_tails);
   RUN_TEST(test_source_view_consumes_prepared_lcr_when_cache_dirty);
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_discard_and_commit_clear_source_view);

@@ -2021,7 +2021,8 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const Over
                                          nullptr);
   checkpoints.sortChannelByNoteId(nullptr);
   const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(entry->events, sDeviceGateSession.loopLengthTicks, false);
+      NoteUtils::reconstructDisplayNotes(entry->events, sDeviceGateSession.loopLengthTicks, false,
+                                        false);
   checkpoints.appendSpansFromNotes(entry->events, notes, 0, static_cast<uint32_t>(notes.size()),
                                    nullptr);
   StateCheckpoints::SpanBoundaryEntryVec added(checkpoints.spanBoundaries.begin() +

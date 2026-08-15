@@ -144,12 +144,15 @@ std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32
 std::vector<DisplayNote> reconstructNotes(const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                                           bool verboseLog = true);
 
+/// `finishOpenNotes` (default true) runs `finishCanonicalSpansOpenNotes` so unpaired
+/// NoteOns become loop-end tails. Committed wrap/display passes false (6E.5).
 DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
-                                       bool verboseLog = true);
+                                       bool verboseLog = true, bool finishOpenNotes = true);
 
 template <typename Alloc>
 DisplayNoteVec reconstructDisplayNotes(const std::vector<MidiEvent, Alloc>& midiEvents,
-                                       uint32_t loopLength, bool verboseLog = true);
+                                       uint32_t loopLength, bool verboseLog = true,
+                                       bool finishOpenNotes = true);
 
 /// Persistent stacks + spans for `buildCanonicalSpansFromMidi`. Not a new musical type.
 struct CanonicalSpanBuild {

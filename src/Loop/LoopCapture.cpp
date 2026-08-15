@@ -329,7 +329,7 @@ LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) 
     const uint32_t reconstructStartUs = micros();
 #endif
     overdubSourceViewNotes_ =
-        NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false);
+        NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     const uint32_t reconstructUs = micros() - reconstructStartUs;
     const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
