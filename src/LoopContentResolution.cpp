@@ -1288,11 +1288,56 @@ struct DeviceGateSession {
     lastStepName = "idle";
     lastLoggedStep = nullptr;
     lastPhaseLogUs = 0;
+    preparedIndexKept = false;
+    preparedPlaybackRevision = 0;
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
     rebuildEvents = SessionMidiEventVec{};
     rebuildNotes = NoteUtils::DisplayNoteVec{};
     sample_ = LoopContentResolution::DeviceGateSample{};
+  }
+
+  void dropWorkingBuffers() {
+    indexPassCursor = 0;
+    indexChunkCursor = 0;
+    indexEventCursor = 0;
+    indexPassOpen = false;
+    pairPassOpen = false;
+    pairEventCursor = 0;
+    pairOpenOnByPitch.clear();
+    checkpointCursor = 0;
+    rebuildSpanCursor = 0;
+    rebuildNotesReady = false;
+    spanBoundariesSorted = false;
+    channelByNoteIdCursor = 0;
+    channelByNoteIdReady = false;
+    tickEventsSorted = false;
+    reconSpansFinished = false;
+    reconEventCursor = 0;
+    reconProjectCursor = 0;
+    reconProjected = NoteUtils::DisplayNoteVec{};
+    reconBuild.clear();
+    prepReady = false;
+    prepMaterializeDone = false;
+    prepMergeOpen = false;
+    prepPassCursor = 0;
+    prepEventCursor = 0;
+    prepBaseCursor = 0;
+    prepAddCursor = 0;
+    prepPasses.clear();
+    prepEditRows.clear();
+    prepMerged = SessionMidiEventVec{};
+    checkpoints = LoopContentResolution::StateCheckpoints{};
+    rebuildEvents = SessionMidiEventVec{};
+    rebuildNotes = NoteUtils::DisplayNoteVec{};
+  }
+
+  void keepPreparedIndex(uint32_t playbackRevision) {
+    preparedPlaybackRevision = playbackRevision;
+    preparedIndexKept = index.indexedEventCount() > 0;
+    dropWorkingBuffers();
+    phase = Phase::Done;
+    lastStepName = "done";
   }
 
   void begin(uint32_t ticks) {
@@ -1773,6 +1818,8 @@ struct DeviceGateSession {
   const char* lastStepName = "idle";
   const char* lastLoggedStep = nullptr;
   uint32_t lastPhaseLogUs = 0;
+  bool preparedIndexKept = false;
+  uint32_t preparedPlaybackRevision = 0;
   LoopContentResolution::TickIndex index;
   LoopContentResolution::StateCheckpoints checkpoints;
   SessionMidiEventVec rebuildEvents;
@@ -1802,11 +1849,32 @@ void LoopContentResolution::deviceGateBegin(uint32_t loopLengthTicks) {
   sDeviceGateSession.begin(loopLengthTicks);
 }
 
-void LoopContentResolution::deviceGateReset() { sDeviceGateSession.reset(); }
-
-void LoopContentResolution::deviceGateComplete() {
+TRACK_COLD_MEM void LoopContentResolution::deviceGateReset() {
   sDeviceGateSession.reset();
+  sDeviceGateFinished = false;
+}
+
+TRACK_COLD_MEM void LoopContentResolution::deviceGateComplete(uint32_t playbackRevision) {
+  sDeviceGateSession.keepPreparedIndex(playbackRevision);
   sDeviceGateFinished = true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playbackRevision) {
+  return sDeviceGateFinished && sDeviceGateSession.preparedIndexKept &&
+         sDeviceGateSession.preparedPlaybackRevision == playbackRevision;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
+    const EditPassVec& editPasses, uint32_t loopLengthTicks, uint32_t windowStart,
+    uint32_t windowLength, uint32_t playbackRevision, SessionMidiEventVec& out,
+    ResolutionCostCounters* counters) {
+  if (!preparedWindowReady(playbackRevision) ||
+      loopLengthTicks == 0 || loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
+    return false;
+  }
+  resolveWindow(sDeviceGateSession.index, editPasses, loopLengthTicks, windowStart, windowLength,
+                out, counters);
+  return true;
 }
 
 void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) {

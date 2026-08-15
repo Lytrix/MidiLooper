@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 Stage 6A/6B/6C pinned; firmware not started)
+Last updated: 2026-08-15 (DEC-037 Stage 6A firmware; device measure owed)
 
 ---
 
@@ -18,7 +18,7 @@ Last updated: 2026-08-15 (DEC-037 Stage 6A/6B/6C pinned; firmware not started)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **Stage 9 complete.** **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **Stage 6 consume-only:** overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. LCR produces prepared derived state; `overdubSourceView` consumes it. Keep 3b copy. Experiment: **6A** idle display range (oracle) → **6B** affected-range commit invalidation → **6C** overdub source. Score 6C vs 3b [`045556`](../../captures/session_20260814_045556.log) **2214 µs**, not vs 10050 µs. `< 3 ms` is a regression target; `< 50 ms` hard gate. Do **not** start firmware until an explicit implement request (start with **6A**, not overdub). **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not reopen 5.18. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Arm cap stays off. Production stays on materialize / 3b copy.
+**Now:** **6A firmware.** Idle display: `deviceGateComplete` keeps `TickIndex` (drops rebuild/checkpoint buffers). `rebuildVisualCacheIdleSlice` consumes `tryResolvePreparedWindow` when `playbackRevision` still matches; else `gatherCommittedEventsInWindow` (oracle). After gate complete, capture logs `DIAG,lcr,6a,…,match=`. Do **not** start 6B/6C. Overdub still 3b copy. Device measure owed (`match=1`, `midi_gap`, `DFRAME`). **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Do not call resolution from `handleMidiInput`.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

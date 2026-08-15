@@ -19,7 +19,10 @@
 #include "Utils/LoopEventValidation.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/TrackMem.h"
 #include "VisualCache.h"
+
+#include <cstdio>
 
 extern TrackManager trackManager;
 
@@ -48,6 +51,64 @@ void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
   char line[96];
   snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,%s,%s",
            static_cast<unsigned long>(micros()), kind, reason);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+
+TRACK_COLD_MEM bool displayNotesMatch(const NoteUtils::DisplayNoteVec& expected,
+                                      const NoteUtils::DisplayNoteVec& actual) {
+  if (expected.size() != actual.size()) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& note : expected) {
+    bool found = false;
+    for (const NoteUtils::DisplayNote& other : actual) {
+      if (note.noteId == other.noteId && note.note == other.note &&
+          note.startTick == other.startTick && note.endTick == other.endTick) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
+  const uint32_t padTicks = Config::TICKS_PER_BAR;
+  const uint32_t windowLength =
+      loop.loopLengthTicks > padTicks * 2u ? padTicks * 2u : loop.loopLengthTicks;
+  if (windowLength == 0) {
+    return;
+  }
+  SessionMidiEventVec prepared;
+  ResolutionCostCounters windowCounters;
+  const uint32_t windowStart = 0;
+  if (!LoopContentResolution::tryResolvePreparedWindow(
+          loop.passes.editPasses, loop.loopLengthTicks, windowStart, windowLength,
+          loop.playbackRevision, prepared, &windowCounters)) {
+    return;
+  }
+  const uint32_t reconstructStartUs = micros();
+  const NoteUtils::DisplayNoteVec preparedNotes =
+      NoteUtils::reconstructDisplayNotes(prepared, loop.loopLengthTicks, false);
+  const uint32_t reconstructUs = micros() - reconstructStartUs;
+  const uint32_t oracleStartUs = micros();
+  SessionMidiEventVec oracle;
+  loop.gatherCommittedEventsInWindow(oracle, windowStart, windowLength);
+  const NoteUtils::DisplayNoteVec oracleNotes =
+      NoteUtils::reconstructDisplayNotes(oracle, loop.loopLengthTicks, false);
+  const uint32_t oracleUs = micros() - oracleStartUs;
+  const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
+  char line[224];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,6a,win=%lu,proj=%lu,oracle=%lu,tot=%lu,ev=%u,notes=%u,match=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
+           static_cast<unsigned long>(reconstructUs), static_cast<unsigned long>(oracleUs),
+           static_cast<unsigned long>(windowUs + reconstructUs),
+           static_cast<unsigned>(prepared.size()), static_cast<unsigned>(preparedNotes.size()),
+           displayNotesMatch(oracleNotes, preparedNotes) ? 1u : 0u);
   DebugSessionCapture::appendCaptureTextLine(line);
 }
 #endif
@@ -248,7 +309,10 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   char pairLine[320];
   LoopContentResolution::deviceGateFormatPairLine(pairLine, sizeof(pairLine));
   DebugSessionCapture::appendCaptureTextLine(pairLine);
-  LoopContentResolution::deviceGateComplete();
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+#if defined(ARDUINO)
+  logPreparedDisplayRangeSample(loop);
+#endif
 #endif
 }
 

@@ -1,4 +1,11 @@
-# Handoff — LoopContentResolution Stage 6 (6A / 6B / 6C; consume-only)
+# Handoff — LoopContentResolution Stage 6A
+
+**Date:** 2026-08-15  
+**Kind:** handoff  
+**Branch:** `feature/loop-content-resolution` (local; not pushed)  
+**OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
+**Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
+**Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
@@ -15,7 +22,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** Stage 9 complete. Stage 6 is 6A → 6B → 6C. Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR. Do not start firmware until asked; first slice is **6A** (idle display range), not overdub. Keep the 3b copy. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
+> **Now:** 6A firmware landed. Native oracle tests added. Device measure owed (`DIAG,lcr,6a,…,match=`, `midi_gap`, `DFRAME`). Do not start 6B/6C. Keep the 3b copy. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
 >
 > Read CURRENT_WORK + this handoff first.
 
@@ -23,7 +30,7 @@
 
 ## One-line status
 
-**Stage 9 complete.** **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. LCR representation is viable (5.18 frozen). Stage 6 question: can prepared LCR replace materialized views without synchronous work at the transport transition? Consume-only invariant. Experiment **6A → 6B → 6C**. Firmware not started. Production stays on materialize / 3b copy.
+**6A firmware landed.** Idle visual slice consumes prepared `resolveWindow` when `playbackRevision` matches; gather stays oracle. Device `DIAG,lcr,6a` measure owed. Do not start 6B/6C. Overdub stays 3b copy.
 
 ---
 
@@ -198,7 +205,7 @@ RIGHT:  IDLE → LCR construction → READY
 | LCR | one-shot extra walk in idle maintenance; `deviceGateFinished` after one complete |
 | `DFRAME` | every 30th `DisplayManager::update` |
 
-Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6592**.
+Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6560**.
 
 ---
 
@@ -230,6 +237,6 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6592**.
 
 - [x] 5.2 overdub entry — **PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` 10050 µs
 - [x] 6.0 consume-only invariant — **pinned**
-- [ ] 6A idle display range — **wait for explicit implement request**
+- [ ] 6A idle display range — firmware landed; native oracle tests added; **device measure owed**
 - [ ] 6B commit invalidation
 - [ ] 6C overdub source (3b copy stays)

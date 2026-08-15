@@ -57,11 +57,11 @@ Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plan
 
 1. Native stages 0–8 against the canonical fixture.
 2. Device stage 9 (`035414` class) — worst-case µs.
-3. If all three gates pass: **6A** idle display range via `resolveWindow` (old path oracle) → **6B** commit marks affected ranges only → **6C** overdub source from prepared LCR with 3b copy fallback. Long-loop playback / NOTE_EDIT last. Never construct/sort/checkpoint/resolve LCR on overdub start/stop.
+3. If all three gates pass: **6A** idle display range via `resolveWindow` (old path oracle) → **6B** commit marks affected ranges only → **6C** overdub source from prepared LCR with 3b copy fallback. Long-loop playback / NOTE_EDIT last. Never construct/sort/checkpoint/resolve LCR on overdub start/stop. **6A firmware in progress** (device measure owed).
 4. Rollback: leave production on materialize; delete or isolate the prototype module.
 
 ## Open Questions
 
 - Device sparse stride: first probe uses **8 bars** (`kDeviceCheckpointBarStride`). Measure replay µs (5.8) before trying 16.
-- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Stage 6: consume-only invariant + 6A/6B/6C. Firmware not started.
+- Pair leftover **closed** [`173842`](../../../captures/session_20260815_173842.log). **5.1 PASS** same capture. **5.2 PASS** [`180624`](../../../captures/session_20260815_180624.log) `begin_capture` 10050 µs. Stage 6: consume-only invariant. **6A firmware** (device measure owed). 6B/6C not started.
 - Whether `ResolvedEvent` stays a `MidiEvent` alias or a distinct type — pinned at Stage 1 as an alias; no fourth synonym.
