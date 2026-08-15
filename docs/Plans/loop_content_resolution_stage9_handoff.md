@@ -1,9 +1,9 @@
-# Handoff — LoopContentResolution Stage 6D (incremental post-commit maintenance)
+# Handoff — LoopContentResolution 6D.1 (overdub-query index only)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** `8534989` — Record why prepared LCR is not ready before PLAYING overdub.  
+**HEAD:** `a886638` — Investigate incremental LCR index and checkpoint repair after commit (6D).  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** 6D investigation (native measurement). A and B rejected. Do not implement incremental C. Do not start 6C firmware. Do not slice the 30–60 s cold build during PLAYING. 6C stays consume-when-ready.
+> **Now:** **6D.1** native — after one committed OverdubPass, update `capturePasses` + `tickEvents` + stamp only. Do not rebuild all of LCR. Do not solve edits, undo, checkpoints, or `byNoteId`. A and B rejected. 6.0: consume on the button, no construct/sort/checkpoint/resolve to open overdub. 6C stays consume-when-ready.
 >
 > Read CURRENT_WORK + the 6D plan first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**6D investigation** — incremental post-commit LCR index + checkpoint maintenance. Native first. No firmware. A/B rejected. 6C consume-when-ready only.
+**6D.1** — incremental overdub-query index after commit (`tickEvents` + stamp). Not all of LCR. Native first. A/B rejected.
 
 ---
 
@@ -44,8 +44,8 @@ device latency
   6A idle display       PASS  185931  match=1 win=784 proj=5539 oracle=9192
   6B commit invalidation PASS  192334  stale_range dcnt 15/5/5 notes kept
   6C overdub source      consume-when-ready native; device recapture optional
-  6D post-commit maint.  investigation (A/B rejected)
-Stage 6                  6C does not make LCR always-ready; 6D is the path
+  6D post-commit maint.  6D.1 overdub-query index only (not all of LCR)
+Stage 6                  6C consume-when-ready; 6D.1 is the always-ready slice
 ```
 
 ---
@@ -347,5 +347,5 @@ Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirt
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
 - [ ] 6C overdub source — **native landed**; consume-when-ready only. Device recapture optional. Does not address always-ready.
-- [ ] **6D** incremental post-commit LCR maintenance — investigation only. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
+- [ ] **6D.1** incremental overdub-query index — investigation. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
 - [ ] After 6C device score: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47). Do not start during 6D.

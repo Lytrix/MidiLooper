@@ -295,7 +295,7 @@ Firmware 6A+ waits for an explicit implement request.
 
 Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDeferredIdleMaintenance` runs LCR only when STOPPED; visual-cache slices run while PLAYING; `deviceGateComplete` is one-shot; `commitPendingCapturePass` bumps `playbackRevision` so `preparedWindowReady` is false. Evidence: [`loop_content_resolution_stage9_handoff.md`](Plans/loop_content_resolution_stage9_handoff.md) § Why LCR is not ready.
 
-**Pick:** investigate incremental index + affected checkpoint repair after commit (**6D**). Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
+**Pick:** investigate incremental maintenance of the **overdub-query index** after commit (**6D**). First experiment **6D.1**: one `OverdubPass` → `capturePasses` + `tickEvents` + stamp. Not all of LCR. Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 
 **Rejected:**
 
@@ -304,11 +304,11 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 
 **6C** stays consume-when-ready (`tryResolvePreparedWindow` when the stamp already matches). It does not address always-ready.
 
-**6D is not capability letter C.** It is DEC-037 capabilities **B + D on commit**. `openOnByPitch` stays a pairing-time LIFO stack; do not maintain it as a query index.
+**6D is not capability letter C** and is **not** “LCR is now always live.” It is DEC-037 capability **B** for the overdub query. `openOnByPitch` stays a pairing-time LIFO stack. Checkpoints, `byNoteId`, edits, and undo are later 6D slices, not 6D.1.
 
-**Gate before firmware:** native measurement must show maintenance scales `O(new events + affected checkpoints)`, not `O(all historical events)`. PLAYING LCR slices are a scheduling/admission change — do not implement them without a further amendment.
+**Gate before firmware:** native 6D.1 must show overdub-query index maintenance scales with the new pass, not a full-history rebuild. `< 3 ms` is consume of already-prepared state ([`045556`](../captures/session_20260814_045556.log) 2214 µs copy), not a promise that switching to LCR is 2.2 ms.
 
-**6.0 unchanged:** overdub start/stop must not synchronously construct, sort, checkpoint, or resolve LCR.
+**6.0 unchanged:** overdub start/stop must not construct, sort, checkpoint, or resolve LCR to open the source view. Bounded index update belongs at the commit site (with 6B) or a later admission slice — not on the button.
 
 ### Constraints created
 
@@ -318,7 +318,7 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 - Derived indexes must not per-entry-allocate into PSRAM associative containers on realtime-adjacent construction paths (5.15 / 5.17 / 5.7c). Representation follows the query contract; B only if a measured flat query is too expensive.
 - `resolveNotes` must not become the playback primitive.
 - Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
-- Always-ready across overdub commits is **6D** (incremental index + affected checkpoint repair), not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready only.
+- Always-ready for the **next overdub query** is **6D** (6D.1: `tickEvents` + stamp after an `OverdubPass`). Not all of LCR. Not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready only.
 
 ### Related OpenSpec
 
