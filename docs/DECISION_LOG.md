@@ -111,7 +111,7 @@ Device per-bar `soundingAt` on the 68-bar / 1847-note loop is another O(history)
 - A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop.
 - Checkpoint density is a performance parameter, not a semantic property of the loop (native 1 bar, device 8/16 bars, later adaptive — identical answers).
 - `spans` + `startsByTick` are currently sufficient as the base index for `resolveState`; the device probe measures whether more index is required.
-- Split `prepareRebuildSpans` before treating RAM as the only stall. 5.7 probe is a selected loop **>63 bars** ([`115750`](../captures/session_20260815_115750.log) 139 bars accepted). Arm cap stays off. IndexCommit, `pairCapturePassNotes`, reconstruct span build, and RebuildSpans process `kDeviceGateEventsPerSlice` (8) per idle slice. [`134954`](../captures/session_20260815_134954.log) complete `hist=2394`; pairing PASS; reconstruct was 1.04 s before 5.13.
+- Split `prepareRebuildSpans` before treating RAM as the only stall. 5.7 probe is a selected loop **>63 bars** ([`115750`](../captures/session_20260815_115750.log) 139 bars accepted). Arm cap stays off. IndexCommit, `pairCapturePassNotes`, reconstruct span build, display project, and RebuildSpans process `kDeviceGateEventsPerSlice` (8) per idle slice. [`141630`](../captures/session_20260815_141630.log) complete `hist=2394`; leftover project+dedup was 280 ms before 5.14.
 
 ### Constraints created
 

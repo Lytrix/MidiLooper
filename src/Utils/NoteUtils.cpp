@@ -630,19 +630,10 @@ NOTE_EDIT_MEM CanonicalNoteSpanVec buildCanonicalSpansFromMidi(
 }
 
 template <typename NoteVector>
-NOTE_EDIT_MEM NoteVector displayNotesFromCanonicalSpanVec(const CanonicalNoteSpanVec& spans,
-                                                          uint32_t loopLength, bool verboseLog) {
+NOTE_EDIT_MEM NoteVector dedupeProjectedDisplayNoteVec(const NoteUtils::DisplayNoteVec& projected,
+                                                       size_t spanCountForLog, bool verboseLog) {
     using DisplayNote = NoteUtils::DisplayNote;
     NoteVector finalNotes;
-    if (loopLength == 0) {
-        return finalNotes;
-    }
-    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
-    const ProjectionContext context =
-        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
-    NoteUtils::DisplayNoteVec projected =
-        IntervalProjection::projectDisplayNotes(spans, context);
-
     const size_t originalCount = projected.size();
     using RankedNoteVec = std::vector<RankedNote, ExternalMemoryFirstAllocator<RankedNote>>;
     RankedNoteVec ranked;
@@ -670,12 +661,28 @@ NOTE_EDIT_MEM NoteVector displayNotesFromCanonicalSpanVec(const CanonicalNoteSpa
     for (const RankedNote& row : ranked) {
         finalNotes.push_back(projected[row.index]);
     }
-    if (shouldLogReconstructDetails(verboseLog, spans.size())) {
+    if (shouldLogReconstructDetails(verboseLog, spanCountForLog)) {
         logger.log(CAT_TRACK, LOG_DEBUG,
                    "Reconstruction complete: %zu notes total (%zu duplicates removed)",
                    finalNotes.size(), originalCount - finalNotes.size());
     }
     return finalNotes;
+}
+
+template <typename NoteVector>
+NOTE_EDIT_MEM NoteVector displayNotesFromCanonicalSpanVec(const CanonicalNoteSpanVec& spans,
+                                                          uint32_t loopLength, bool verboseLog) {
+    NoteVector finalNotes;
+    if (loopLength == 0) {
+        return finalNotes;
+    }
+    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
+    const ProjectionContext context =
+        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
+    NoteUtils::DisplayNoteVec projected;
+    IntervalProjection::projectDisplayNotes(spans, 0, static_cast<uint32_t>(spans.size()), context,
+                                            projected);
+    return dedupeProjectedDisplayNoteVec<NoteVector>(projected, spans.size(), verboseLog);
 }
 
 template <typename NoteVector, typename EventAlloc>
@@ -702,6 +709,10 @@ NoteUtils::CanonicalSpanBuild& NoteUtils::CanonicalSpanBuild::operator=(
 
 void NoteUtils::CanonicalSpanBuild::clear() { impl.reset(new Impl()); }
 
+uint32_t NoteUtils::CanonicalSpanBuild::spanCount() const {
+    return impl != nullptr ? static_cast<uint32_t>(impl->spans.size()) : 0;
+}
+
 NOTE_EDIT_MEM void NoteUtils::appendCanonicalSpansFromMidi(const SessionMidiEventVec& midiEvents,
                                                            uint32_t loopLength,
                                                            uint32_t beginEvent,
@@ -721,6 +732,25 @@ NOTE_EDIT_MEM void NoteUtils::finishCanonicalSpansFromMidi(uint32_t loopLength,
         return;
     }
     finishCanonicalSpansOpenNotes(loopLength, build.impl->spans, build.impl->activeNoteStacks);
+}
+
+NOTE_EDIT_MEM void NoteUtils::appendProjectedDisplayNotes(const CanonicalSpanBuild& build,
+                                                          uint32_t loopLength, uint32_t beginSpan,
+                                                          uint32_t endSpanExclusive,
+                                                          DisplayNoteVec& out) {
+    if (build.impl == nullptr || loopLength == 0) {
+        return;
+    }
+    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
+    const ProjectionContext context =
+        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
+    IntervalProjection::projectDisplayNotes(build.impl->spans, beginSpan, endSpanExclusive, context,
+                                            out);
+}
+
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::dedupeProjectedDisplayNotes(
+    const DisplayNoteVec& projected) {
+    return dedupeProjectedDisplayNoteVec<DisplayNoteVec>(projected, projected.size(), false);
 }
 
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::displayNotesFromCanonicalSpans(

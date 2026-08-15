@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.13 sliced reconstruct span build; Layer D 3b shipped)
+Last updated: 2026-08-15 (DEC-037 5.14 sliced display project; Layer D 3b shipped)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.13 sliced reconstruct span build; Layer D 3b
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** 5.7 HITL on a selected loop **>63 bars**. [`134505`](../../captures/session_20260815_134505.log)+[`134954`](../../captures/session_20260815_134954.log) complete `hist=2394` `reb=100560282`; pairing PASS; reconstruct was 1.04 s. 5.13 slices reconstruct span build (`recon` climbing `ev=`). Project+dedup stays one slice. Arm cap stays off. Watch `DIAG,lcr,phase,recon`, complete `DIAG,lcr`, `idle_maint`, `DFRAME`. Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
+**Now:** 5.7 HITL remasure after 5.14. [`141630`](../../captures/session_20260815_141630.log) leftover project+dedup was 280 ms. Watch `DIAG,lcr,phase,proj` climbing `ev=` / `notes=`, then one `dedup`, complete `DIAG,lcr`, `idle_maint`, `DFRAME`. Span emplace of 8 and `RebuildPrepare` stay as measured. Arm cap stays off. Production stays on materialize / 3b copy. Do not persist checkpoints (D3). Do not put resolution on overdub/MIDI.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

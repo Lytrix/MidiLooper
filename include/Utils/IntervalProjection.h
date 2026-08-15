@@ -154,6 +154,11 @@ NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
                                               const ProjectionContext& context,
                                               uint32_t playheadTick = UINT32_MAX);
 
+/// Same loop as `projectDisplayNotes`, one span range into a caller-owned buffer.
+void projectDisplayNotes(const CanonicalNoteSpanVec& spans, uint32_t beginSpan,
+                         uint32_t endSpanExclusive, const ProjectionContext& context,
+                         NoteUtils::DisplayNoteVec& out, uint32_t playheadTick = UINT32_MAX);
+
 /// v1 playback analysis frame — full loop `[0, loopLength)`.
 TickInterval makeFullLoopPlaybackProjectionInterval(uint32_t loopLength);
 

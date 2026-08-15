@@ -160,6 +160,7 @@ struct CanonicalSpanBuild {
   CanonicalSpanBuild(const CanonicalSpanBuild&) = delete;
   CanonicalSpanBuild& operator=(const CanonicalSpanBuild&) = delete;
   void clear();
+  uint32_t spanCount() const;
 
   struct Impl;
   std::unique_ptr<Impl> impl;
@@ -169,6 +170,10 @@ void appendCanonicalSpansFromMidi(const SessionMidiEventVec& midiEvents, uint32_
                                   uint32_t beginEvent, uint32_t endEventExclusive,
                                   CanonicalSpanBuild& build);
 void finishCanonicalSpansFromMidi(uint32_t loopLength, CanonicalSpanBuild& build);
+void appendProjectedDisplayNotes(const CanonicalSpanBuild& build, uint32_t loopLength,
+                                 uint32_t beginSpan, uint32_t endSpanExclusive,
+                                 DisplayNoteVec& out);
+DisplayNoteVec dedupeProjectedDisplayNotes(const DisplayNoteVec& projected);
 DisplayNoteVec displayNotesFromCanonicalSpans(const CanonicalSpanBuild& build, uint32_t loopLength);
 
 struct OpenNoteOn {
