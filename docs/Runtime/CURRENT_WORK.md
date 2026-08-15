@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.7b device FAIL [`164922`])
+Last updated: 2026-08-15 (DEC-037 5.7c flat channel lookup)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-15 (DEC-037 5.7b device FAIL [`164922`])
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](../Plans/loop_event_sourced_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **5.7b device FAIL** [`164922`](../../captures/session_20260815_164922.log) — first `spans` slice `idle_maint` **14.7 s** filling `channelByNoteId` (PSRAM `emplace`). After fill, `spans` ~1000 notes/s flat. Open-note contract held. Next if asked: flat append+sort+unique, not another map, not 8-event `emplace`. Do not rewrite `pair`/`recon`. Do not start 5.1. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](../Plans/loop_content_resolution_spans_dframe_gap_refinement.md).
+**Now:** **5.7c native** — replace `channelByNoteId` PSRAM map with C-order `{noteId, channel}` append + `stable_sort` by `noteId` + first-wins unique. Device sequences `chan`/`csort` before `spans`. Device remasure owed on the same 139-bar loop. First `spans` slice must not contain a multi-second prerequisite build. Do not rewrite `pair`/`recon`. Do not start 5.1. Arm cap stays off. Production stays on materialize / 3b copy. Plan: [`loop_content_resolution_spans_dframe_gap_refinement.md`](../Plans/loop_content_resolution_spans_dframe_gap_refinement.md).
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 
