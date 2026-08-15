@@ -77,37 +77,52 @@ LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
   if (!captureActive() || capture.store.empty() || loopLengthTicks == 0) {
     return 0;
   }
-  // Append order, not tick order: wrap-held On@tail + Off@0 must pair before a
-  // later same-pitch On in the same wrap (012925 note 30 @ 2976 / 0 / 672).
   SessionMidiEventVec flat;
   capture.store.copyEventsTo(flat);
   if (flat.empty()) {
     return 0;
   }
-  const std::vector<NoteUtils::OpenNoteOn> opens =
-      NoteUtils::findOpenNoteOns(flat, loopLengthTicks);
-  if (opens.empty()) {
-    return 0;
+  // Preview pairs in append order (wrap-held On@2976 + Off@96). Display
+  // materialize / playback sort the store, so findOpenNoteOns on ticks treats
+  // that On as open when a later same-pitch On is still held (014937).
+  std::vector<char> extractAt(flat.size(), 0);
+  bool usedPreview = false;
+  for (const uint32_t previewIndex : capturePreview.openNoteIndices) {
+    if (previewIndex >= capturePreview.notes.size() ||
+        previewIndex >= capturePreview.noteStates.size() ||
+        !capturePreview.noteStates[previewIndex].open) {
+      continue;
+    }
+    usedPreview = true;
+    const NoteUtils::DisplayNote& note = capturePreview.notes[previewIndex];
+    for (size_t i = flat.size(); i > 0; --i) {
+      const size_t eventIndex = i - 1;
+      if (extractAt[eventIndex] != 0) {
+        continue;
+      }
+      const MidiEvent& evt = flat[eventIndex];
+      if (evt.isNoteOn() && evt.data.noteData.note == note.note && evt.tick == note.startTick) {
+        extractAt[eventIndex] = 1;
+        break;
+      }
+    }
+  }
+  if (!usedPreview) {
+    const std::vector<NoteUtils::OpenNoteOn> opens =
+        NoteUtils::findOpenNoteOns(flat, loopLengthTicks);
+    for (const NoteUtils::OpenNoteOn& open : opens) {
+      if (open.eventIndex < flat.size()) {
+        extractAt[open.eventIndex] = 1;
+      }
+    }
   }
   SessionMidiEventVec kept;
   kept.reserve(flat.size());
   for (size_t eventIndex = 0; eventIndex < flat.size(); ++eventIndex) {
-    const MidiEvent& evt = flat[eventIndex];
-    bool extract = false;
-    if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
-      for (const NoteUtils::OpenNoteOn& open : opens) {
-        // Index, not pitch+tick: the same grid can hold a completed pair and a
-        // later held ON (012925 note 30 @ 2880 every wrap).
-        if (open.eventIndex == eventIndex) {
-          extract = true;
-          break;
-        }
-      }
-    }
-    if (extract) {
-      out.push_back(evt);
+    if (extractAt[eventIndex] != 0) {
+      out.push_back(flat[eventIndex]);
     } else {
-      kept.push_back(evt);
+      kept.push_back(flat[eventIndex]);
     }
   }
   if (out.empty()) {

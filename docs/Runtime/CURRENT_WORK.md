@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (overdub wrap keeps tick-0 wrap-held pair)
+Last updated: 2026-08-16 (overdub wrap keeps head-off wrap-held pair)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (overdub wrap keeps tick-0 wrap-held pair)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **Overdub wrap keeps tick-0 wrap-held pair** — `ON@2976` + `OFF@0` must stay in the sealed wrap when the same pitch is replayed later. Evidence [`012925`](../../captures/session_20260816_012925.log): wrap resolution at loop wrap (abs 9216), note gone after overdub wrap (`wrap_synth` at 12120). Extract uses append order; `tryPairWrappedTailOn` does not treat a later body On as blocking a tick-0 Off. Same-tick extract-by-index stays. Linear playhead close stays (`186d2f0`). **038.1 live +1 HITL PASS** [`011413`](../../captures/session_20260816_011413.log). **038.2 landed.** Issue 3 parked. Do not start midi_gap / 6.3 until asked.
+**Now:** **Overdub wrap keeps head-off wrap-held pair** — extract from `capturePreview.openNoteIndices`, not `findOpenNoteOns` on a tick-sorted store. Evidence [`014937`](../../captures/session_20260816_014937.log) note 12 ON@2976 / OFF@96. **038.1 live +1 HITL PASS** [`011413`](../../captures/session_20260816_011413.log). **038.2 landed.** Issue 3 parked. Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

@@ -251,6 +251,21 @@ void test_reconstruct_tick0_wrap_pair_survives_later_same_pitch() {
     assert_has_note(notes, 30, 672, 768, 100);
 }
 
+void test_reconstruct_head_off_wrap_pair_survives_later_same_pitch() {
+    constexpr uint32_t loopLength = 3072;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(2976, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(96, 4, 12, 0));
+    ev.push_back(MidiEvent::NoteOn(288, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(384, 4, 12, 0));
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    assert_has_note(notes, 12, 2976, loopLength - 1, 100);
+    assert_has_note(notes, 12, 0, 96, 100);
+    assert_has_note(notes, 12, 288, 384, 100);
+}
+
 void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -463,6 +478,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_is_wrap_held_open_note_accepts_head_off_at_zero);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
     RUN_TEST(test_reconstruct_tick0_wrap_pair_survives_later_same_pitch);
+    RUN_TEST(test_reconstruct_head_off_wrap_pair_survives_later_same_pitch);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
