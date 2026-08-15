@@ -94,4 +94,4 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 ---
 
-**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 consume-only invariant + explicit implement request (start with **6A**, not overdub). **6D.3** is native measurement only; it is not authorization to make LCR incrementally live. A production architecture gate may now be considered. Do not treat 6D as “LCR is always live.”
+**Approval:** APPROVE design gate — native Phase 0–5 may proceed. Firmware consumer wiring requires Phase 9 gate + Stage 6 consume-only invariant + explicit implement request. **6D.4 architecture approved 2026-08-15; firmware not authorized.** Prepared validity may come from commit-site restamp, not only `deviceGateComplete`. Do not treat 6D as “LCR is always live.”

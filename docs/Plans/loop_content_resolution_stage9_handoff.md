@@ -3,7 +3,7 @@
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** local `feature/loop-content-resolution` — 6D.3 native PASS (repeated overdub commits). Not pushed.  
+**HEAD:** local `feature/loop-content-resolution` — 6D.4 architecture approved; firmware not authorized. Not pushed.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** **6D.3 native PASS.** Repeated overdubs append into the 6D.2 delta only. History stays H. `no_delta` stays `query_us=4` / 8+0 candidates at H=8192 and 32768 through N=16. 6D.2 split PASS. 6D.1 one-vector FAIL. Not live incremental LCR. Next: consider a production architecture gate. Do not start firmware until that gate. Production frozen. Do not reopen 5.17. A/B rejected. 6C consume-when-ready.
+> **Now:** **6D.4 architecture approved; firmware not authorized.** 6.0 = do not construct/sort/resolve LCR on the overdub button / source-view path. Commit-site restamp may make a prepared index valid without `deviceGateComplete`. Implement only on an explicit 6D.4 request. Session vector name still open. 6D.3/6D.2 PASS; 6D.1 FAIL. A/B rejected. 6C consume-when-ready.
 >
 > Read CURRENT_WORK + the 6D plan first.
 
@@ -23,7 +23,7 @@
 
 ## One-line status
 
-**6D.3 native PASS** — repeated overdubs track accumulated Δ, not H. 6D.2 split PASS. 6D.1 one-vector FAIL. Production frozen until architecture gate. A/B rejected.
+**6D.4 architecture approved; firmware not authorized.** 6D.3/6D.2 native PASS. 6D.1 FAIL. A/B rejected.
 
 ---
 
@@ -347,5 +347,5 @@ Also: arm/run requires `!visualCacheDirty`. In-progress LCR is discarded on dirt
 - [x] 6A idle display range — **PASS** [`185931`](../../captures/session_20260815_185931.log) `match=1`
 - [x] 6B commit invalidation — **PASS** [`192334`](../../captures/session_20260815_192334.log)
 - [ ] 6C overdub source — **native landed**; consume-when-ready only. Device recapture optional. Does not address always-ready.
-- [ ] **6D.3** repeated overdub commits — native PASS. Production architecture gate may be considered. Not production incremental LCR. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)
+- [ ] **6D.4** incremental overdub publish — architecture approved; firmware not authorized. [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) § 6D.4. Preflight: `openspec/changes/loop-content-resolution/PREFLIGHT.md`.
 - [ ] After 6C device score: MIDI Input Gap > 50 ms [`192334`](../../captures/session_20260815_192334.log) (135 / 119 / 138 ms, `clockrate` 47). Do not start during 6D.
