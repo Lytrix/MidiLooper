@@ -59,11 +59,11 @@ const PendingNoteChange* findTransform(const PendingNoteChangeVec& pending, Note
 }
 
 void seedLongSourceNote(Loop& loop, NoteId id, uint32_t onTick, uint32_t offTick, uint8_t pitch) {
+  loop.loopLengthTicks = kLoopLen;
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, 1, pitch, 100, id));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
   loop.seedRecordPassFromStore(store);
-  loop.loopLengthTicks = kLoopLen;
   loop.nextNoteId_ = id + 1;
 }
 
@@ -103,7 +103,7 @@ void test_pending_add_only_when_no_overlap() {
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
@@ -171,7 +171,7 @@ void test_pending_shorten_long_source_on_overlap() {
   TEST_ASSERT_EQUAL_UINT32(119u, shorten->endTick);
 
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().noteOffs);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
@@ -214,8 +214,8 @@ void test_pending_hide_when_covered() {
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(80, 1, 60, 0)));
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, 90, 1, 60, 100, 3));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(120, 1, 60, 0)));
-  loop.seedRecordPassFromStore(store);
   loop.loopLengthTicks = kLoopLen;
+  loop.seedRecordPassFromStore(store);
   loop.nextNoteId_ = 4;
   loop.beginCapture(CapturePhase::Overdub);
 
@@ -250,7 +250,7 @@ void test_pending_survives_wraps_and_accumulates() {
   TEST_ASSERT_EQUAL(2, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_EQUAL_UINT32(2, loop.overlapHoldTotals().noteOffs);
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().emptySets);
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);

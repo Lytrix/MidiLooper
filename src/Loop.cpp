@@ -10,7 +10,6 @@ void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
 
 void Loop::notifyCommittedContentChanged() {
   markPassDerivedStale();
-  rebuildEffectiveEventStore();
 }
 
 void Loop::markPassDerivedStale() {

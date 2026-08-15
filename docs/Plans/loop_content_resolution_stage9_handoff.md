@@ -1,13 +1,13 @@
-# Handoff — LoopContentResolution Stage 9 (5.2 next)
+# Handoff — LoopContentResolution Stage 9 (5.2 3b restore native; device recapture)
 
 **Date:** 2026-08-15  
 **Kind:** handoff  
 **Branch:** `feature/loop-content-resolution` (local; not pushed)  
-**HEAD:** `c8c47dd` — *Record 5.18 closed and 5.1 idle-path device latency PASS.*  
+**HEAD:** (this commit) — DEC-036 3b overdub-entry restore for 5.2 recapture.  
 **OpenSpec:** [`openspec/changes/loop-content-resolution/`](../../openspec/changes/loop-content-resolution/)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Plan:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
-**Prior chat:** 5.18 pair freeze + 5.1 idle-path PASS (this session).
+**Prior chat:** 3b restore native after 5.2 FAIL [`175544`](../../captures/session_20260815_175544.log).
 
 ---
 
@@ -15,15 +15,15 @@
 
 > Continue DEC-037 Stage 9 from [`docs/Plans/loop_content_resolution_stage9_handoff.md`](docs/Plans/loop_content_resolution_stage9_handoff.md).
 >
-> **Now:** 5.2 only — overdub-entry verification on the production 3b path. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, start Stage 6, or add representation B.
+> **Now:** 5.2 3b restore is native-shipped. Flash `teensy41-capture-serial` and re-score PLAYING overdub on the same 139-bar loop. Do not wire LCR onto overdub. Do not start Stage 6. Do not reopen 5.18, flatten `openOnByPitch`, rewrite `recon`, or add representation B.
 >
-> Read CURRENT_WORK + this handoff first. Firmware is already on the board from 5.18b (`teensy41-capture-serial`). Need a PLAYING overdub on the same 139-bar loop. Score `ODUB,begin_capture` < 50 ms, no `VCACHE,full`, no full materialize after commit.
+> Read CURRENT_WORK + this handoff first. Score `ODUB,begin_capture` < 50 ms, no `VCACHE,stale_all` immediately before it, no `VCACHE,full` on entry. Compare to 3b [`045556`](captures/session_20260814_045556.log) **2214 µs**. Prior FAIL [`175544`](captures/session_20260815_175544.log) **108979 µs**.
 
 ---
 
 ## One-line status
 
-Idle LoopContentResolution complete-path is realtime-clean. Pair is frozen. **Next is 5.2** (PLAYING overdub on production 3b copy). Production MIDI/display still use `materializeToEventVector` / Layer D 3b. Stage 6 is blocked until 5.2 PASS + explicit user approval.
+Idle LoopContentResolution complete-path is realtime-clean. Pair is frozen. **5.2 3b restore native** (host 1195/1195). **Device recapture next** after flash. Prior FAIL [`175544`](../../captures/session_20260815_175544.log) `begin_capture` **108979 µs**. Production MIDI/display still use `materializeToEventVector` / 3b copy. Stage 6 stays blocked. Do not wire LCR onto overdub.
 
 ---
 
@@ -40,7 +40,7 @@ device latency
   channel lookup        PASS  5.7c
   pair                  PASS  5.18
   5.1 idle complete     PASS  173842
-  5.2 overdub entry     NEXT
+  5.2 overdub entry     native restore; device recapture (FAIL 175544 108979 µs)
 Stage 6 production swap BLOCKED
 ```
 
@@ -123,43 +123,69 @@ Healthy after-complete `DFRAME` cadence is **~0.968 s**. Consecutive `frameIndex
 
 ---
 
-## Now implementing: 5.2
+## 5.2 FAIL — [`175544`](../../captures/session_20260815_175544.log)
 
-**Task:** [`openspec/changes/loop-content-resolution/tasks.md`](../../openspec/changes/loop-content-resolution/tasks.md) item 5.2
+**Task:** [`openspec/changes/loop-content-resolution/tasks.md`](../../openspec/changes/loop-content-resolution/tasks.md) item 5.2 stays open until device recapture.
 
-> Overdub entry remains cheap (3b copy); no `VCACHE,full` on the normal path; no full materialize after commit.
+Same 139-bar class: `DISP,0,PLAYING,106752` notes **2393**. First PLAYING→OVERDUB at 14.680 s (`GS,15,36,0`).
 
-This is **verification of production overdub**, not an LCR swap. Keep 3b visual-cache copy. Do not call `resolveWindow` from overdub.
+| Check | Bar | [`175544`](../../captures/session_20260815_175544.log) | Result |
+|-------|-----|----------|--------|
+| `ODUB,stage,begin_capture` | **< 50 ms** | first **108979 µs**; later 92070 / 123219 / 164929 µs | **FAIL** (3b [`045556`](../../captures/session_20260814_045556.log) **2214 µs**) |
+| `VCACHE,full` on overdub entry | **none** | none between `manager_enter` and `manager_done` | pass on this bar |
+| Overdub `clockrate` | ~47–48 | 47–48 after settle | pass on this bar |
 
-### Pass criteria (from DEC-037 + DEC-036 3b)
+Entry window (first overdub):
 
-| Check | Bar | Baseline |
-|-------|-----|----------|
-| `ODUB,begin_capture` | **< 50 ms** at this class | 3b PASS [`045556`](../../captures/session_20260814_045556.log) **2214 µs** after `slice_clean` |
-| `VCACHE,full` on overdub entry | **none** | FAIL was [`042909`](../../captures/session_20260814_042909.log) 14.3 s undo / 7.1 s overdub |
-| Full materialize after commit | **none** on the normal overdub-entry path | 3b copy of `visualCache.notes` |
-| Overdub `clockrate` | hold ~47–48 if transport is running | S1 [`225803`](../../captures/session_20260812_225803.log) |
+```
+ST,Track,PLAYING,OVERDUBBING
+VCACHE,stale_all,...,notes,2393,...,total,139,...,dirty,1
+ODUB,stage,begin_capture,108979
+ODUB,stage,complete,114104
+ODUB,stage,manager_done,132389
+```
 
-### How to run (no firmware)
+Cause: `startOverdubbing` called `markDisplayCachesStale()` before `beginCapture`. `establishOverdubSourceView` ran `copyEffectiveCommittedEventsInRange` + `reconstructDisplayNotes` instead of copying `visualCache.notes`.
 
-1. Same 139-bar loop that produced `hist=2394` (already on device if capture [`173842`](../../captures/session_20260815_173842.log) is still the session).
-2. Wait until LCR gate has finished (`DIAG,lcr,mat=` present) **or** confirm `deviceGateFinished` — overdub during an active gate is not 5.2 (gate yields when PLAYING starts).
-3. PLAYING, then enter overdub.
-4. Capture `teensy41-capture-serial` (already the default). Score `ODUB,begin_capture`, `VCACHE,*`, `clockrate`, `midisvc`.
-5. Do **not** rebuild or re-flash unless the board is not on `f180cd5` / `c8c47dd` firmware (`f180cd5` is the 5.18b hex; later commits are docs-only).
+`VCACHE,full` at 55.1 / 56.9 / 59.0 s is after STOPPED, not on the entry path.
 
-If the current capture is still STOPPED with `clockrate=0` after the gate, start PLAYING and overdub in a new or continued capture. 173842 after 52.4 s is idle-only — **not** 5.2 evidence.
+Do **not** wire `resolveWindow` onto overdub. No Stage 6.
+
+### 3b restore (native shipped this session)
+
+Restored from stash `cbfe0fe` (Layer D 3b WIP) onto this branch. Did **not** add unused `rebuildVisualCacheAfterPassToggle`.
+
+| Site | Restored contract |
+|------|-------------------|
+| `Track::startOverdubbing` | Do **not** `markDisplayCachesStale` |
+| `Loop::establishOverdubSourceView` | If `committedDisplayVisualCacheAuthoritative`: copy `visualCache.notes`; no reconstruct at entry |
+| `Loop::copyEffectiveCommittedEventsInRange` | Fallback: `CommittedEventRange::inWindow` + `applyNoteEditPassSequence` (no full materialize) |
+| `Loop::notifyCommittedContentChanged` | `markPassDerivedStale` only |
+| `TrackUndo` Record/Overdub/NoteEditPassClosed | No `rebuildVisualCacheFromPasses` |
+
+Host: `pio test -e native` **1195/1195**. Firmware `teensy41-capture-serial` SUCCESS, RAM1 free **6592**.
+
+### Device recapture (next)
+
+Flash this firmware. Same 139-bar PLAYING overdub as [`175544`](../../captures/session_20260815_175544.log). Score:
+
+| Check | Bar |
+|-------|-----|
+| `ODUB,stage,begin_capture` | **< 50 ms** (3b [`045556`](../../captures/session_20260814_045556.log) **2214 µs**) |
+| `VCACHE,stale_all` immediately before `begin_capture` | **none** |
+| `VCACHE,full` between `manager_enter` and `manager_done` | **none** |
+| Overdub `clockrate` | ~47–48 |
 
 ### Architecture checkpoint (5.2)
 
 1. Ownership change? **NO** — still `establishOverdubSourceView` / 3b copy.
 2. State transition change? **NO**.
 
-If 5.2 would require putting LCR on the overdub path → **stop**, design session.
+If a fix would put LCR on the overdub path → **stop**, design session.
 
 ---
 
-## After 5.2
+## After 5.2 PASS (not this capture)
 
 ```text
 5.2 PASS
@@ -174,7 +200,7 @@ only then Stage 6 production-swap review (user approval)
     6.5 never delete materialize; never resolve from handleMidiInput
 ```
 
-If 5.2 FAIL: report numbers vs 3b baseline. Do not “fix” by wiring LCR onto overdub in the same session.
+5.2 FAIL is recorded. 3b restore is native. Do not “fix” by wiring LCR onto overdub.
 
 ---
 
@@ -196,7 +222,7 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6592**.
 |------|------|
 | Owner | `include/LoopContentResolution.h`, `src/LoopContentResolution.cpp` |
 | Idle gate hook | `Track::processDeferredContentResolutionDeviceGate` in `src/Track/TrackDeferredMaintenance.cpp` |
-| Tests | `test/test_loop_content_resolution/test_loop_content_resolution.cpp` (native **1195/1195** after 5.18b) |
+| Tests | `test/test_loop_content_resolution/test_loop_content_resolution.cpp` (native **1195/1195** after 3b restore) |
 | Overdub 3b | `establishOverdubSourceView` / visual-cache copy (DEC-036) |
 
 ---
@@ -208,10 +234,11 @@ Linker: `linker/imxrt1062_t41_lcr.ld`. Last firmware RAM1 free **6592**.
 | `f180cd5` | 5.18b firmware: last-wins flat `byNoteId` |
 | `6bf3297` | 5.18b device PASS docs |
 | `c8c47dd` | 5.18 closed + 5.1 PASS docs |
+| (this commit) | Restore DEC-036 3b overdub entry for 5.2 recapture |
 
 ---
 
 ## OpenSpec remaining Stage 9
 
-- [ ] 5.2 overdub entry
+- [ ] 5.2 overdub entry — **FAIL** [`175544`](../../captures/session_20260815_175544.log); **3b restore native**; device recapture next
 - [ ] 6.x production swap — **do not start**

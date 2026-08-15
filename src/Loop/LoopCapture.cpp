@@ -316,12 +316,20 @@ LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) 
     clearPendingNoteChanges();
     return;
   }
+  // Idle slice_clean already holds committed DisplayNotes (043822: 1799 notes, bars 0–67).
+  // Copy that list; do not flatten or reconstruct. Dirty/empty cache falls through to a
+  // windowed chunk walk (overlap can fill notes later via ensureOverdubSourceNotesForHold).
+  if (DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(visualCacheDirty,
+                                                                   !visualCache.notes.empty())) {
+    overdubSourceViewNotes_ = visualCache.notes;
+    overdubSourceViewEstablished_ = true;
+    clearPendingNoteChanges();
+    return;
+  }
   uint32_t windowStart = 0;
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
   copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
-  overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
-      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
   overdubSourceViewEstablished_ = true;
   clearPendingNoteChanges();
 }
@@ -585,7 +593,9 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   lastCommittedPassId_ = passes.recordPass.id;
   ++playbackRevision;
   notifyCommittedContentChanged();
-  rebuildVisualCacheFromPasses();
+  if (loopLengthTicks > 0) {
+    rebuildVisualCacheFromPasses();
+  }
 }
 
 CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {

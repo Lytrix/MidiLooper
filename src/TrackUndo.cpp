@@ -201,7 +201,6 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             applyGeometry(loop, entry.beforeGeometry);
             // Keep disabled capture passes on the timeline so redo can re-enable them.
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -225,7 +224,6 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
@@ -252,7 +250,6 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
@@ -325,7 +322,6 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             applyGeometry(loop, entry.afterGeometry);
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -354,7 +350,6 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());

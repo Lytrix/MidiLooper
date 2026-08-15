@@ -83,34 +83,11 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
 
 }  // namespace
 
-namespace {
-
-bool displayNoteSoundsAtHold(const NoteUtils::DisplayNote& note, uint32_t holdStart,
-                             uint32_t loopLength) {
-  if (note.noteId == kInvalidNoteId || loopLength == 0) {
-    return false;
-  }
-  uint32_t linearStart = IntervalProjection::tickPhaseInLoop(note.startTick, 0, loopLength);
-  uint32_t linearEnd = IntervalProjection::tickPhaseInLoop(note.endTick, 0, loopLength);
-  if (linearEnd == linearStart) {
-    return false;
-  }
-  if (linearEnd < linearStart) {
-    linearEnd += loopLength;
-  }
-  if (linearStart >= linearEnd) {
-    return false;
-  }
-  const bool direct = linearStart < holdStart && holdStart < linearEnd;
-  const bool shifted =
-      linearStart < holdStart + loopLength && holdStart + loopLength < linearEnd;
-  return direct || shifted;
-}
-
-}  // namespace
-
 LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch) {
   if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
+    return;
+  }
+  if (!overdubSourceViewNotes_.empty()) {
     return;
   }
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
@@ -127,10 +104,7 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
       NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
   NoteUtils::DisplayNoteVec toMerge;
   for (const NoteUtils::DisplayNote& note : windowNotes) {
-    if (note.note != pitch) {
-      continue;
-    }
-    if (displayNoteSoundsAtHold(note, holdPhaseTick, loopLen)) {
+    if (note.note == pitch) {
       toMerge.push_back(note);
     }
   }
@@ -240,6 +214,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   }
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
+    ensureOverdubSourceNotesForHold(consumeStart, pitch);
     size_t notesExamined = 0;
     const uint32_t lookupStartUs = micros();
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
