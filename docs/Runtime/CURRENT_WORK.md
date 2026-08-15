@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-15 (DEC-037 5.2 PASS [`180624`]; Stage 9 complete; Stage 6 blocked)
+Last updated: 2026-08-15 (DEC-037 Stage 6 overdub invariant pinned; firmware swap not started)
 
 ---
 
@@ -18,7 +18,7 @@ Last updated: 2026-08-15 (DEC-037 5.2 PASS [`180624`]; Stage 9 complete; Stage 6
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) — PLAYING overdub on the 139-bar / 2388-note loop: `ODUB,stage,begin_capture` **10050 µs** (bar < 50 ms; prior FAIL [`175544`](../../captures/session_20260815_175544.log) **108979 µs**; 3b [`045556`](../../captures/session_20260814_045556.log) **2214 µs**). No `VCACHE,stale_all` on the scored entry window; no `VCACHE,full` in the capture. Overdub `clockrate` **47–48**. **Stage 9 complete.** Do **not** start Stage 6 without user approval. Do not wire LCR onto overdub. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not reopen 5.18. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Arm cap stays off. Production stays on materialize / 3b copy.
+**Now:** **Stage 9 complete.** **5.2 PASS** [`180624`](../../captures/session_20260815_180624.log) `begin_capture` **10050 µs**. **Stage 6 invariant pinned:** overdub start/stop MUST NOT cold-build `LoopContentResolution`. Idle/background prepares; overdub consumes already-prepared state. `begin_capture` **< 3 ms** target, **< 50 ms** hard gate. Do not use 3b [`045556`](../../captures/session_20260814_045556.log) 2214 µs as proof LCR is faster. Do **not** start firmware `6.1` until an explicit implement request. Do not call `resolveWindow` from `startOverdubbing`. **5.1 PASS** [`173842`](../../captures/session_20260815_173842.log). **5.18 FROZEN**. Do not reopen 5.18. Do not flatten `openOnByPitch`. Do not rewrite `recon`. No B. Arm cap stays off. Production stays on materialize / 3b copy.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`.
 

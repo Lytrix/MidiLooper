@@ -25,6 +25,6 @@ Layer D 3b made overdub **entry** cheap when the visual cache is clean ([`045556
 ## Impact
 
 - Native-first: new `LoopContentResolution` module + `test/test_loop_content_resolution/`. No MIDI hot-path call sites until gates.
-- Production later (gated): dirty overdub fallback, idle visual slices, long-loop playback gather. 3b clean-cache overdub copy stays.
+- Production later (gated): overdub consumes already-prepared state (never cold-build LCR on start/stop); idle visual slices; long-loop playback gather. 3b clean-cache overdub copy stays.
 - Brownfield: [`loop_event_sourced_resolution_architecture.md`](../../../docs/Plans/loop_event_sourced_resolution_architecture.md), [DEC-037](../../../docs/DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype), DEC-016 / DEC-035 / DEC-036, `openspec/specs/overdub-pass-overlap-resolution/`.
 - Formal trigger: **new owner** — see `ARCHITECTURE-REVIEW.md`.
