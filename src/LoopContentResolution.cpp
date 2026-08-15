@@ -837,6 +837,8 @@ struct DeviceGateSession {
     rebuildNotesReady = false;
     reconSpansFinished = false;
     reconEventCursor = 0;
+    reconProjectCursor = 0;
+    reconProjected = NoteUtils::DisplayNoteVec{};
     reconBuild.clear();
     lastStepName = "idle";
     lastLoggedStep = nullptr;
@@ -891,13 +893,16 @@ struct DeviceGateSession {
     lastPhaseLogUs = static_cast<uint32_t>(stamp);
 #endif
     const unsigned evLogged =
-        (name == kPairStep)   ? static_cast<unsigned>(pairEventCursor)
+        (name == kPairStep)    ? static_cast<unsigned>(pairEventCursor)
         : (name == kReconStep) ? static_cast<unsigned>(reconEventCursor)
+        : (name == kProjStep)  ? static_cast<unsigned>(reconProjectCursor)
                                : static_cast<unsigned>(indexEventCursor);
+    const unsigned notesLogged = (name == kProjStep)
+                                     ? static_cast<unsigned>(reconProjected.size())
+                                     : static_cast<unsigned>(rebuildNotes.size());
     snprintf(line, cap, "#CAP,%lu,DIAG,lcr,phase,%s,pass,%u,ev,%u,span,%u,notes,%u", stamp, name,
              static_cast<unsigned>(indexPassCursor), evLogged,
-             static_cast<unsigned>(rebuildSpanCursor),
-             static_cast<unsigned>(rebuildNotes.size()));
+             static_cast<unsigned>(rebuildSpanCursor), notesLogged);
     return true;
   }
 
@@ -1055,14 +1060,26 @@ struct DeviceGateSession {
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
         if (!rebuildNotesReady) {
+          const uint32_t spanCount = reconBuild.spanCount();
+          if (reconProjectCursor < spanCount) {
+            const uint32_t end = std::min(
+                reconProjectCursor + LoopContentResolution::kDeviceGateEventsPerSlice, spanCount);
+            NoteUtils::appendProjectedDisplayNotes(reconBuild, loopLengthTicks, reconProjectCursor,
+                                                   end, reconProjected);
+            reconProjectCursor = end;
+            lastStepName = kProjStep;
+            sample_.rebuild.elapsedMicros += timer.elapsed();
+            return LoopContentResolution::DeviceGateSliceResult::Continue;
+          }
           checkpoints.spans.clear();
           checkpoints.startsByTick.clear();
           checkpoints.soundingAt.clear();
-          rebuildNotes = NoteUtils::displayNotesFromCanonicalSpans(reconBuild, loopLengthTicks);
+          rebuildNotes = NoteUtils::dedupeProjectedDisplayNotes(reconProjected);
+          reconProjected = NoteUtils::DisplayNoteVec{};
           reconBuild.clear();
           rebuildSpanCursor = 0;
           rebuildNotesReady = true;
-          lastStepName = kReconStep;
+          lastStepName = kDedupStep;
           sample_.rebuild.elapsedMicros += timer.elapsed();
           return LoopContentResolution::DeviceGateSliceResult::Continue;
         }
@@ -1142,6 +1159,8 @@ struct DeviceGateSession {
   bool indexPassOpen = false;
   static constexpr const char* kPairStep = "pair";
   static constexpr const char* kReconStep = "recon";
+  static constexpr const char* kProjStep = "proj";
+  static constexpr const char* kDedupStep = "dedup";
   bool pairPassOpen = false;
   uint32_t pairEventCursor = 0;
   std::map<uint8_t, std::vector<uint32_t>> pairOpenOnByPitch;
@@ -1150,6 +1169,8 @@ struct DeviceGateSession {
   bool rebuildNotesReady = false;
   bool reconSpansFinished = false;
   uint32_t reconEventCursor = 0;
+  uint32_t reconProjectCursor = 0;
+  NoteUtils::DisplayNoteVec reconProjected;
   NoteUtils::CanonicalSpanBuild reconBuild;
   const char* lastStepName = "idle";
   const char* lastLoggedStep = nullptr;
