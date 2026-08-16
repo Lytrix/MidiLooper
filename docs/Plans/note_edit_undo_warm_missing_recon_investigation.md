@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1–C3 device PASS** ([`172608`](../../captures/session_20260816_172608.log) / [`172909`](../../captures/session_20260816_172909.log) / [`173243`](../../captures/session_20260816_173243.log)). Empty-pair overlay skip holds. Remaining Layer C is overlay on **non-empty** pairs. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1–C3 device PASS** ([`172608`](../../captures/session_20260816_172608.log) / [`172909`](../../captures/session_20260816_172909.log) / [`173243`](../../captures/session_20260816_173243.log)). **C4** overlay pair-target restrict (device gate open). E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -311,7 +311,9 @@ Pitch `pairs=0` on 32/35 ticks: overlay still **74.8 ms**. Those ticks never `fi
 
 Empty-pair instrumented sum (setup+analyze+apply+reconstruct) med **4.5 ms**; outer `resolve` med **10.6 ms** — **5.5 ms** still inside `applyNoteEditChange` but outside those four timers. Two `VCACHE,full` (open + later), not per tick.
 
-**Next (C4):** overlay still copies/walks the 108-entry map when pairs are non-empty. C2a already limits `find()` to pair targets. Do not skip overlay on non-empty pairs. Do not start Layer D from the two `VCACHE,full` lines.
+**C4 (this slice):** `overlayAnalysisBaselineForSessionMovedOverlaps` takes optional `pairTargetNoteIds`. Resolve passes unique `pair.targetNoteId`s. Null list keeps the full-map path for existing fixtures. Do not skip overlay when pairs are non-empty.
+
+Device gate: overlap move `GEOM_APPLY,phase,overlay` extra1 `1`, extra0 ≈ pair-target count (12 on 173243 crowded lane), not 108. Empty-pair skip unchanged (extra1 `0`).
 
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
@@ -577,9 +579,9 @@ Open `@ 528.009` `visual_notes=114` `session_events=235`. Pitch 526 `688–864` 
 
 This file has **no** `DNTE` lines and no session-store flatten around undo/redo. Routing and selection restore are in the log. Geometry identity is not. Do not close A on store-flat from this capture.
 
-### 6. Layer C — C3 PASS; C4 overlay on non-empty pairs
+### 6. Layer C — C4 pair-target overlay (device gate next)
 
-C3 [`173243`](../../captures/session_20260816_173243.log) skip contract holds. Next: restrict `overlayAnalysisBaselineForSessionMovedOverlaps` to pair targets (C2a). Do not skip overlay when pairs are non-empty. Do not start Layer D.
+C3 [`173243`](../../captures/session_20260816_173243.log) skip contract holds. C4 restricts overlay to unique pair targets. Capture must show overlay extra0 ≈ pair count on crowded-lane Move, extra1 `1`. Empty-pair extra1 stays `0`. Do not start Layer D.
 
 ### 7. Layer D — after B2
 
@@ -632,7 +634,14 @@ Reuse: **YES** — `logGeomApplyPhase`. C2 pinned `overlay`. **NO** — skip `pa
 1. Ownership change? **NO** — same `NoteGeometryResolver::resolve`. Empty-pair path passes storage `baselineMap` instead of building an unread copy.
 2. State transition change? **NO** — same pitch/move/length apply contract.
 
-Reuse: **YES** — skip `overlayAnalysisBaselineForSessionMovedOverlaps` when C2a proved no consumer reads it. **NO** — change overlay for non-empty pairs this slice.
+Reuse: **YES** — skip `overlayAnalysisBaselineForSessionMovedOverlaps` when C2a proved no consumer reads it. **NO** — skip overlay when pairs are non-empty.
+
+### Layer C firmware checkpoint (C4 — pair-target overlay)
+
+1. Ownership change? **NO** — same `overlayAnalysisBaselineForSessionMovedOverlaps` / `NoteGeometryResolver::resolve`.
+2. State transition change? **NO** — same pitch/move/length apply contract.
+
+Reuse: **YES** — optional `pairTargetNoteIds` on the existing overlay function. **NO** — new overlay owner. **NO** — skip overlay when pairs are non-empty.
 
 ## Pre-implementation review (B2a)
 
