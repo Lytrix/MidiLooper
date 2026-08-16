@@ -10,7 +10,6 @@
 #include "TrackManager.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
-#include "Utils/Diagnostics.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
@@ -117,9 +116,6 @@ TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStart
                      stats.chunkRefCount, outcome);
   if (stage != nullptr && std::strcmp(stage, "seal") == 0) {
     loop.emitOverlapHoldTotals();
-  }
-  if (stage != nullptr && std::strcmp(stage, "display") == 0) {
-    Diagnostics::emitArchitectureMetricsSnapshot();
   }
 }
 

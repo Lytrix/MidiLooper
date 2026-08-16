@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (post-overdub PLAYING MIDI drain)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Post-overdub PLAYING MIDI drain — [`post_overdub_playing_midi_drain_bugfix.md`](../Plans/post_overdub_playing_midi_drain_bugfix.md). Attribution **CLOSED**. Do not grain visual cache or LoopPersist CRC in this slice. Do **not** start 6.3. Not all PLAYING.
+**Now:** Post-overdub PLAYING MIDI drain **device PASS** [`034702`](../../captures/session_20260816_034702.log). Follow-up: drop stop-path architecture snapshot (RING flood) and use track-channel silence instead of all-channel CC123 on overdub→PLAYING. Do not grain visual cache or LoopPersist CRC unless starting that slice. Do **not** start 6.3.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 
