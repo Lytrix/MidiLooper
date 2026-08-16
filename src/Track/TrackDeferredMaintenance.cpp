@@ -649,13 +649,10 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
         loop.materializeEditViewFromPasses();
       }
       if (loop.visualCacheDirty) {
-        // Budget-driven: one idle slice per call (bars), never full ensure when avoidFullVisual.
-        uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
-        if (avoidFullVisual) {
-          loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
-        } else {
-          loop.ensureVisualCacheBuilt();
-        }
+        // One idle slice per call. Do not ensureVisualCacheBuilt here — short
+        // loops use the same resumable owner as long loops (Slice 4c).
+        const uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
+        loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
       }
       maybeLogStoredNoteCount();
       maybeQueueContentResolutionDeviceGate();
