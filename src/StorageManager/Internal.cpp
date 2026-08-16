@@ -64,20 +64,12 @@ STORAGE_PERSIST_MEM void emitDeferredSaveSliceTelemetry(const char* phase) {
     CurrentWorkspaceSaveJob& job = storageSession.currentWorkspaceSave;
     char outcome[96];
     if (job.stage == DeferredSaveStage::CurrentSetLoopSlot) {
-        if (job.loopFinalizeStage != DeferredLoopFinalizeStage::Idle) {
-            snprintf(outcome, sizeof(outcome), "%s:%s:t%u:p%u:%s", phase,
-                     deferredSaveStageName(job.stage),
-                     static_cast<unsigned>(job.trackCursor),
-                     static_cast<unsigned>(job.poolCursor),
-                     deferredLoopFinalizeStageName(job.loopFinalizeStage));
-        } else {
-            snprintf(outcome, sizeof(outcome), "%s:%s:t%u:p%u:c%u:k%u", phase,
-                     deferredLoopWriteStageName(job.loopWriteStage),
-                     static_cast<unsigned>(job.trackCursor),
-                     static_cast<unsigned>(job.poolCursor),
-                     static_cast<unsigned>(job.capturePassCursor),
-                     static_cast<unsigned>(job.chunkCursor));
-        }
+        snprintf(outcome, sizeof(outcome), "%s:%s:t%u:p%u:c%u:k%u", phase,
+                 deferredLoopWriteStageName(job.loopWriteStage),
+                 static_cast<unsigned>(job.trackCursor),
+                 static_cast<unsigned>(job.poolCursor),
+                 static_cast<unsigned>(job.capturePassCursor),
+                 static_cast<unsigned>(job.chunkCursor));
     } else if (job.stage == DeferredSaveStage::UndoStacks) {
         snprintf(outcome, sizeof(outcome), "%s:%s:t%u:e%lu:%s", phase,
                  deferredSaveStageName(job.stage),

@@ -144,22 +144,6 @@ STORAGE_PERSIST_MEM const char* deferredCompletionWriteStageName(DeferredComplet
     return "unknown";
 }
 
-STORAGE_PERSIST_MEM const char* deferredLoopFinalizeStageName(DeferredLoopFinalizeStage stage) {
-    switch (stage) {
-        case DeferredLoopFinalizeStage::Idle:
-            return "idle";
-        case DeferredLoopFinalizeStage::WriteToken:
-            return "write_token";
-        case DeferredLoopFinalizeStage::EpochCrcBody:
-            return "epoch_crc_body";
-        case DeferredLoopFinalizeStage::EpochCrcHeader:
-            return "epoch_crc_header";
-        case DeferredLoopFinalizeStage::VerifyAndRename:
-            return "verify_and_rename";
-    }
-    return "unknown";
-}
-
 STORAGE_PERSIST_MEM const char* deferredLoopWriteStageName(DeferredLoopWriteStage stage) {
     switch (stage) {
         case DeferredLoopWriteStage::Header:
