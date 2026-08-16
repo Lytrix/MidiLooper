@@ -90,6 +90,8 @@ struct LoopPasses {
   }
 
   void materialize(LoopEventStore& out, uint32_t loopLengthTicks = 0) const;
+  /// Apply note edits on each capture pass, then merge. Hide of a this-session
+  /// overdub Add must not LIFO-pair across later same-pitch offs (001517).
   void materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks = 0) const;
   void materializeToEventVector(SessionMidiEventVec& out, uint32_t loopLengthTicks = 0) const;
 };

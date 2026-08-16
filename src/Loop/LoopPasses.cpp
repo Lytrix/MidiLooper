@@ -6,6 +6,7 @@
 #include "EditApply.h"
 #include "MidiEvent.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
+#include "Utils/LoopMem.h"
 
 #include <algorithm>
 #include <vector>
@@ -13,7 +14,7 @@
 namespace {
 
 template <typename MidiEventVector>
-void mergeSortedMidiVectors(MidiEventVector& base, MidiEventVector&& addition) {
+LOOP_COLD_MEM void mergeSortedMidiVectors(MidiEventVector& base, MidiEventVector&& addition) {
   if (addition.empty()) {
     return;
   }
@@ -29,8 +30,8 @@ void mergeSortedMidiVectors(MidiEventVector& base, MidiEventVector&& addition) {
   base = std::move(merged);
 }
 
-void collectActiveOverdubPassesSorted(const CommittedOverdubPassVec& overdubPasses,
-                                      std::vector<const OverdubPass*>& out) {
+LOOP_COLD_MEM void collectActiveOverdubPassesSorted(const CommittedOverdubPassVec& overdubPasses,
+                                                    std::vector<const OverdubPass*>& out) {
   out.clear();
   out.reserve(overdubPasses.size());
   for (const OverdubPass& pass : overdubPasses) {
@@ -44,36 +45,9 @@ void collectActiveOverdubPassesSorted(const CommittedOverdubPassVec& overdubPass
             });
 }
 
-void mergeOverdubPassLayer(SessionMidiEventVec& out, const OverdubPass& pass) {
-  SessionMidiEventVec layer;
-  LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, layer);
-  mergeSortedMidiVectors(out, std::move(layer));
-}
-
-void mergeOverdubPassLayer(MidiEventVec& out, const OverdubPass& pass) {
-  SessionMidiEventVec extmemLayer;
-  LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, extmemLayer);
-  MidiEventVec layer(extmemLayer.begin(), extmemLayer.end());
-  mergeSortedMidiVectors(out, std::move(layer));
-}
-
 template <typename MidiEventVector>
-void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVector& out) {
-  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.committedChunkIds.empty()) {
-    LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, out);
-  }
-
-  std::vector<const OverdubPass*> activeOverdubs;
-  collectActiveOverdubPassesSorted(passes.overdubPasses, activeOverdubs);
-  for (const OverdubPass* pass : activeOverdubs) {
-    mergeOverdubPassLayer(out, *pass);
-  }
-}
-
-template <typename MidiEventVector>
-void applyActiveEditPassesMidi(MidiEventVector& events, const EditPassVec& editPasses,
-                               uint32_t loopLengthTicks) {
+LOOP_COLD_MEM void applyActiveEditPassesMidi(MidiEventVector& events, const EditPassVec& editPasses,
+                                             uint32_t loopLengthTicks) {
   // Rows locate their note by targetNoteId; startTick / endTick are payload only. See
   // applyNoteEditPassSequence for why no span rewrite happens between rows.
   for (const EditPass& editPass : editPasses) {
@@ -91,8 +65,8 @@ void applyActiveEditPassesMidi(MidiEventVector& events, const EditPassVec& editP
   }
 }
 
-void applyActiveEditPasses(SessionMidiEventVec& events, const EditPassVec& editPasses,
-                           uint32_t loopLengthTicks) {
+LOOP_COLD_MEM void applyActiveEditPasses(SessionMidiEventVec& events, const EditPassVec& editPasses,
+                                         uint32_t loopLengthTicks) {
   EditPassVec activeRows;
   activeRows.reserve(editPasses.size());
   for (const EditPass& editPass : editPasses) {
@@ -107,19 +81,50 @@ void applyActiveEditPasses(SessionMidiEventVec& events, const EditPassVec& editP
 
 }  // namespace
 
-void LoopPasses::materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks) const {
+LOOP_COLD_MEM __attribute__((noinline)) void LoopPasses::materializeToEventVector(
+    MidiEventVec& out, uint32_t loopLengthTicks) const {
   out.clear();
-  appendActiveCapturePassesToFlat(*this, out);
-  applyActiveEditPassesMidi(out, editPasses, loopLengthTicks);
+  if (hasRecordPass() && recordPass.state == CapturePassState::Active &&
+      !recordPass.committedChunkIds.empty()) {
+    SessionMidiEventVec extmemLayer;
+    LoopEventStore::appendChunkRefEvents(recordPass.committedChunkIds, extmemLayer);
+    MidiEventVec layer(extmemLayer.begin(), extmemLayer.end());
+    applyActiveEditPassesMidi(layer, editPasses, loopLengthTicks);
+    mergeSortedMidiVectors(out, std::move(layer));
+  }
+  std::vector<const OverdubPass*> activeOverdubs;
+  collectActiveOverdubPassesSorted(overdubPasses, activeOverdubs);
+  for (const OverdubPass* pass : activeOverdubs) {
+    SessionMidiEventVec extmemLayer;
+    LoopEventStore::appendChunkRefEvents(pass->committedChunkIds, extmemLayer);
+    MidiEventVec layer(extmemLayer.begin(), extmemLayer.end());
+    applyActiveEditPassesMidi(layer, editPasses, loopLengthTicks);
+    mergeSortedMidiVectors(out, std::move(layer));
+  }
 }
 
-void LoopPasses::materializeToEventVector(SessionMidiEventVec& out, uint32_t loopLengthTicks) const {
+LOOP_COLD_MEM __attribute__((noinline)) void LoopPasses::materializeToEventVector(
+    SessionMidiEventVec& out, uint32_t loopLengthTicks) const {
   out.clear();
-  appendActiveCapturePassesToFlat(*this, out);
-  applyActiveEditPasses(out, editPasses, loopLengthTicks);
+  if (hasRecordPass() && recordPass.state == CapturePassState::Active &&
+      !recordPass.committedChunkIds.empty()) {
+    SessionMidiEventVec layer;
+    LoopEventStore::appendChunkRefEvents(recordPass.committedChunkIds, layer);
+    applyActiveEditPasses(layer, editPasses, loopLengthTicks);
+    mergeSortedMidiVectors(out, std::move(layer));
+  }
+  std::vector<const OverdubPass*> activeOverdubs;
+  collectActiveOverdubPassesSorted(overdubPasses, activeOverdubs);
+  for (const OverdubPass* pass : activeOverdubs) {
+    SessionMidiEventVec layer;
+    LoopEventStore::appendChunkRefEvents(pass->committedChunkIds, layer);
+    applyActiveEditPasses(layer, editPasses, loopLengthTicks);
+    mergeSortedMidiVectors(out, std::move(layer));
+  }
 }
 
-void LoopPasses::materialize(LoopEventStore& out, uint32_t loopLengthTicks) const {
+LOOP_COLD_MEM __attribute__((noinline)) void LoopPasses::materialize(
+    LoopEventStore& out, uint32_t loopLengthTicks) const {
   SessionMidiEventVec flat;
   materializeToEventVector(flat, loopLengthTicks);
   out.clear();

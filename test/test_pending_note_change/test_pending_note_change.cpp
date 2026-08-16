@@ -286,6 +286,62 @@ void test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add() {
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 10));
 }
 
+void test_wrap_commit_hide_drops_shorter_same_start_from_display() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({})));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(240, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  loop.applyPendingNoteChangesToOverdubSourceView();
+  (void)loop.sealPendingNoteChangesToEditPasses();
+  loop.invalidateCaches();
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 288, 11,
+                                                                   overlapIds({10})));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, 60, 90, 11)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(288, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  loop.applyPendingNoteChangesToOverdubSourceView();
+  const EditPassIdList companions = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, companions.size());
+  loop.invalidateCaches();
+
+  SessionMidiEventVec flat;
+  loop.gatherCommittedEvents(flat);
+  NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(flat, kLoopLen, false, false);
+  loop.appendOverdubPassDisplayNotes(notes);
+
+  int sixtyAt64 = 0;
+  bool has176 = false;
+  bool has224 = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note != 60 || note.startTick != 64) {
+      continue;
+    }
+    ++sixtyAt64;
+    if (note.endTick == 240) {
+      has176 = true;
+    }
+    if (note.endTick == 288) {
+      has224 = true;
+    }
+  }
+  TEST_ASSERT_EQUAL(1, sixtyAt64);
+  TEST_ASSERT_FALSE(has176);
+  TEST_ASSERT_TRUE(has224);
+}
+
 void test_wrap_keeps_source_view_same_start_longer_hides_prior_add() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -542,6 +598,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_keeps_source_view_inner_shortens_prior_add);
   RUN_TEST(test_wrap_keeps_source_view_same_start_longer_hides_prior_add);
   RUN_TEST(test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add);
+  RUN_TEST(test_wrap_commit_hide_drops_shorter_same_start_from_display);
   RUN_TEST(test_pending_survives_wraps_and_accumulates);
   RUN_TEST(test_establish_resets_overlap_hold_totals);
   RUN_TEST(test_discard_clears_pending_with_source_view);
