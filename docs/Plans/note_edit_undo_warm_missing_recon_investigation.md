@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a** chosen; **A0 filled**; **A intermediates firmware landed** (native next; device gate open) — current-state clone unchanged
+**Status:** Active — B1 closed; **B2a** chosen; **A0 filled**; **A intermediates firmware landed** (device gate open). RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
