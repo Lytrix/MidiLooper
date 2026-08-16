@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Device PASS — gather owner is `gatherCommittedEventsWithCapture`.  
+**Status:** Device PASS — gather owner is `gatherCommittedEventsWithCapture`. Successor: [`post_undo_led_lookup_resumable_source_refinement.md`](post_undo_led_lookup_resumable_source_refinement.md).  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
