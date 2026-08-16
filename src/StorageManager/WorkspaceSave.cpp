@@ -72,6 +72,7 @@ STORAGE_PERSIST_MEM void resetDeferredSaveJobState() {
     storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
     storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
     storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+    resetDeferredCompletionWriteState();
     storageSession.currentWorkspaceSave.numTracks = 0;
     storageSession.currentWorkspaceSave.trackCursor = 0;
     storageSession.currentWorkspaceSave.slotCursor = 0;
@@ -286,6 +287,7 @@ STORAGE_PERSIST_MEM bool beginDeferredRuntimeBundleWrite(const LooperState& stat
     storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
     storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
     storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+    resetDeferredCompletionWriteState();
     resetDeferredLoopWriteState();
     resetDeferredUndoWriteState();
     storageSession.currentWorkspaceSave.inProgress = true;
@@ -341,6 +343,7 @@ STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
     storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
     storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
     storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+    resetDeferredCompletionWriteState();
     resetDeferredLoopWriteState();
     resetDeferredUndoWriteState();
     storageSession.currentWorkspaceSave.inProgress = true;
@@ -816,10 +819,23 @@ STORAGE_PERSIST_MEM bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut) {
     return true;
 }
 
+STORAGE_PERSIST_MEM void resetDeferredCompletionWriteState() {
+    storageSession.currentWorkspaceSave.completionWriteStage =
+        DeferredCompletionWriteStage::PatchLastActiveUnix;
+    storageSession.currentWorkspaceSave.epochCrc = 0;
+    storageSession.currentWorkspaceSave.epochCrcBodyOffset = 0;
+    storageSession.currentWorkspaceSave.epochCrcBodySize = 0;
+}
+
+STORAGE_PERSIST_MEM void beginCurrentSetCompletion() {
+    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
+    resetDeferredCompletionWriteState();
+}
+
 STORAGE_PERSIST_MEM bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut) {
     finalizeDoneOut = false;
     if (storageSession.currentWorkspaceSave.stage != DeferredSaveStage::CurrentSetCompletion) {
-        storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
+        beginCurrentSetCompletion();
     }
     const bool stepOk = stepDeferredSaveJob();
     if (!stepOk) {

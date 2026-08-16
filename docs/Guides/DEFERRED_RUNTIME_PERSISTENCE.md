@@ -182,7 +182,7 @@ Top-level stages (`DeferredSaveStage` in `StorageManager.cpp`):
 | `CurrentSetLoopSlot` | Per-slot `loop_TT_SS.bin` via `stepDeferredLoopPersist` / `StorageLoopIo`; clean slots are skipped via CurrentSet dirty tracking |
 | `Footer` | Selected track, active loop indices, undo magic, then empty GUS headers (DEC-035 Stage 3 — no live-stack walk) |
 | `UndoStacks` | Leftover in-flight stage only: writes empty GUS headers per track. New saves finish in Footer. |
-| `CurrentSetCompletion` | Patch `lastActiveUnix`; write `workspace.bin`; `PERS,result,...,ok` |
+| `CurrentSetCompletion` | One persist step per sub-stage: patch `lastActiveUnix`; `runtime.bundle.bin` body CRC at `kEpochFileCrcSliceBytes`; write epoch CRC; write `workspace.bin`; optional legacy quarantine. `PERS,result,...,ok` when Idle. |
 
 Nested cursors (`deferredSaveTrackCursor`, `deferredSavePoolCursor`, `deferredSaveChunkCursor`, `deferredSaveUndoEntryCursor`, …) resume mid-stage on the next main-loop call.
 

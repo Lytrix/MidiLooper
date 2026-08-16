@@ -204,6 +204,28 @@ uint32_t computeEpochFileBodyChecksum(const uint8_t* body, size_t bodySize) {
   return PersistenceSchema::crc32(body, bodySize);
 }
 
+bool continueEpochFileBodyCrc(const uint8_t* body, size_t bodySize, uint32_t& crc, size_t& offset,
+                              size_t maxBytes, bool& done) {
+  done = false;
+  if (bodySize == 0) {
+    done = true;
+    return true;
+  }
+  if (body == nullptr || offset > bodySize) {
+    return false;
+  }
+  if (offset == bodySize) {
+    done = true;
+    return true;
+  }
+  const size_t remaining = bodySize - offset;
+  const size_t n = remaining < maxBytes ? remaining : maxBytes;
+  crc = PersistenceSchema::crc32Continue(crc, body + offset, n);
+  offset += n;
+  done = offset >= bodySize;
+  return true;
+}
+
 bool validateEpochFileBytes(const uint8_t* fileBytes, size_t fileSize, uint32_t expectedEpoch,
                             bool expectEpochHeader) {
   if (fileBytes == nullptr || fileSize == 0) {
@@ -271,8 +293,14 @@ bool finalizeEpochFileHeaderCrc(const char* path) {
                                                static_cast<size_t>(bytesRead));
   }
   file.close();
+  return writeEpochFileHeaderCrc(path, bodyCrc);
+}
 
-  file = SD.open(path, FILE_WRITE);
+bool writeEpochFileHeaderCrc(const char* path, uint32_t bodyCrc) {
+  if (path == nullptr) {
+    return false;
+  }
+  File file = SD.open(path, FILE_WRITE);
   if (!file) {
     return false;
   }
