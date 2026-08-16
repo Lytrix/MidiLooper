@@ -525,7 +525,7 @@ Sluggish select/pitch is not 4d:
 - Select: `UNDO_WARM,warm,complete` 128–451 ms on each note change (`focus_snap` 68–272 ms).
 - Pitch/move: `GEOM_APPLY,resolve` n=209, median 84 ms, max 162 ms.
 
-Exit did save rows (`saved=3` @ 88.786 s, `saved=1` @ 110.985 s). Display after first exit is stale 111 then `slice_clean` 112. Commits already report the painted note missing: `M24@120 missing in recon` / `M24@1656 missing in recon` on replay_flat, session_store, and loop_materialized. That is NOTE_EDIT commit/recon, not session-idle paint.
+Exit did save rows (`saved=3` @ 88.786 s, `saved=1` @ 110.985 s). Display after first exit is stale 111 then `slice_clean` 112. `M24@120 missing in recon` looks up pre-edit `commitBaseline`; take_only still has that home. Investigation: [`note_edit_undo_warm_missing_recon_investigation.md`](note_edit_undo_warm_missing_recon_investigation.md).
 
 ## Pre-implementation review (Slice 4d)
 

@@ -2,11 +2,18 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (Slice 4d device 143144 — NOTE_EDIT session FAIL, not 4d)
+Last updated: 2026-08-16 (NOTE_EDIT UNDO_WARM + commit-recon investigation open)
 
 ---
 
 ## Now implementing
+
+### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
+
+**Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
+**Evidence:** [`143144`](../../captures/session_20260816_143144.log)
+
+**Now:** Layer A pin — `buildSessionUndoEntry` / `focus_snap` on the 110-note / 229-event session. Do not patch firmware until the layer is pinned. Layer B: `missing in recon` looks up pre-edit `commitBaseline`; do not treat it as proof the edit was dropped. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
@@ -22,7 +29,7 @@ Last updated: 2026-08-16 (Slice 4d device 143144 — NOTE_EDIT session FAIL, not
 
 **Now:** LED lookup Stage 1 **PASS** [`114736`](../../captures/session_20260816_114736.log) — [`post_undo_led_lookup_resumable_source_refinement.md`](../Plans/post_undo_led_lookup_resumable_source_refinement.md). No LED gather rem; BAR→LED 3.7 ms; PLAYING `clockrate` 47–48. Remaining PLAYING `midi_gap` 110–127 ms is idle/load, not lookup. Stage 2 **rejected**. Do **not** re-arm drain. Do **not** start 6.3.
 
-**Scheduler prep:** [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](../Plans/runtime_scheduler_lcr_consumer_grooming_refinement.md). **Slice 1–4c device PASS.** **Slice 4d firmware landed; device [`143144`](../../captures/session_20260816_143144.log) is not a 4d PASS.** NOTE_EDIT select `UNDO_WARM` 128–451 ms; pitch `GEOM_APPLY,resolve` median 84 ms; exit commits `M24@120 missing in recon`. Leave `getVisualNotesForSlot`. Do not start 4e. Do not fold NOTE_EDIT hydrate into grooming. Do not optimize `LoadLoopJob` from PLAYING paint.
+**Scheduler prep:** [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](../Plans/runtime_scheduler_lcr_consumer_grooming_refinement.md). **Slice 1–4c device PASS.** Slice 4d firmware landed; [`143144`](../../captures/session_20260816_143144.log) moved NOTE_EDIT session work to the investigation above. Do not start 4e. Do not fold NOTE_EDIT hydrate into grooming. Do not optimize `LoadLoopJob` from PLAYING paint.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 

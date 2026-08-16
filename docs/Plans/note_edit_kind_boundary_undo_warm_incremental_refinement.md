@@ -1,6 +1,6 @@
 # NOTE_EDIT playing geometry apply latency — refinement plan
 
-**Status:** Active (revised 2026-08-05 after Phase 1 profile)
+**Status:** Active (revised 2026-08-05 after Phase 1 profile). **143144 successor:** [`note_edit_undo_warm_missing_recon_investigation.md`](note_edit_undo_warm_missing_recon_investigation.md) — 229-event `UNDO_WARM` is 128–451 ms; the 6–8 ms bound below does not apply at that scale.
 
 **Supersedes:** Incremental `UndoWarmJob` / baseline-diff slicing plan (scrapped — profile disproved the hypothesis).
 
