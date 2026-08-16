@@ -118,18 +118,36 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         break;
       }
     }
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("pairs", micros() - analyzeStartUs,
+                      static_cast<uint32_t>(eligiblePairs.size()),
+                      static_cast<uint32_t>(evaluationScope.size()));
+    const uint32_t overlayStartUs = micros();
+#endif
 
     const BaselineMap analysisBaseline =
         overlayAnalysisBaselineForSessionMovedOverlaps(transactionBaselineAfterEnsure,
                                                        focus.movingNoteId, liveStore, channel,
                                                        loopLength, currentStateReader,
                                                        causingSpan, &committedDisplayNotes);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("overlay", micros() - overlayStartUs,
+                      static_cast<uint32_t>(analysisBaseline.size()),
+                      static_cast<uint32_t>(transactionBaselineAfterEnsure.size()));
+    const uint32_t interactStartUs = micros();
+#endif
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
         interactions =
             analyzeEditSessionInteractions(overlapPairs, editedGeometry, analysisBaseline);
 
     const EditSessionInteractionsByTarget grouped =
         groupEditSessionInteractionsByTarget(interactions);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("interact", micros() - interactStartUs,
+                      static_cast<uint32_t>(interactions.size()),
+                      static_cast<uint32_t>(overlapPairs.size()));
+    const uint32_t constrainStartUs = micros();
+#endif
 
     NoteIdList leaveRestoreTargetNoteIds;
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
@@ -138,12 +156,20 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
             channel, loopLength, noteMinLengthTicks, noteMinLengthRemoveEnabled, selection,
             editedGeometry, focus, leaveRestoreTargetNoteIds, currentStateReader,
             &committedDisplayNotes);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("constrain", micros() - constrainStartUs,
+                      static_cast<uint32_t>(constrained.size()),
+                      static_cast<uint32_t>(leaveRestoreTargetNoteIds.size()));
+    const uint32_t buildStartUs = micros();
+#endif
 
     const EditSessionActions actions =
         buildEditSessionActions(constrained, editedGeometry, analysisBaseline,
                                 transactionBaselineAfterEnsure, leaveRestoreTargetNoteIds, liveStore,
                                 channel, focus, loopLength, currentStateReader);
 #if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("build", micros() - buildStartUs,
+                      static_cast<uint32_t>(actions.size()), 0);
     logGeomApplyPhase("analyze", micros() - analyzeStartUs,
                       static_cast<uint32_t>(actions.size()),
                       static_cast<uint32_t>(interactions.size()));

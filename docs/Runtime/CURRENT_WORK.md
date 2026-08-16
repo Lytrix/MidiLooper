@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer C phase split)
+Last updated: 2026-08-16 (NOTE_EDIT Layer C2 analyze split)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer C phase split)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **Layer C1 firmware landed** — `GEOM_APPLY,phase,setup|analyze|apply|reconstruct`. Device gate: pitch on empty lane + one overlap move; pin which phase owns the 57–137 ms `resolve` total. Do not skip resolve work until that pin. Do not skip `currentState->clone()`. Do not start B2b / Layer D. B2a device PASS [`171228`](../../captures/session_20260816_171228.log).
+**Now:** **C1 device PASS** [`172608`](../../captures/session_20260816_172608.log) — `analyze` owns resolve (Pitch empty-overlap med 49 ms; Move med 30 ms). **C2** splits `analyze` into `pairs|overlay|interact|constrain|build`. Do not skip `analyze`. Do not skip `currentState->clone()`. Do not start B2b / Layer D. B2a device PASS [`171228`](../../captures/session_20260816_171228.log).
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
