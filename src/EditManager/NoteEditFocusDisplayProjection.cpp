@@ -13,8 +13,18 @@
 
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/IntervalProjection.h"
 
 namespace {
+
+void applyDisplayWrapPhaseToPaintNote(NoteUtils::DisplayNote& dn, uint32_t loopLength) {
+  // Session storage is linear (start+len, DEC-013 / 200952). Piano roll wrap paint is
+  // end < start only; end past loopLength is clamped to loop end (no head).
+  if (loopLength == 0 || dn.endTick < loopLength) {
+    return;
+  }
+  dn.endTick = IntervalProjection::tickPhaseInLoop(dn.endTick, 0, loopLength);
+}
 
 template <typename Alloc>
 bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
@@ -398,6 +408,7 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
                                        currentState)) {
       continue;
     }
+    applyDisplayWrapPhaseToPaintNote(participantDn, loopLength);
 
     NoteBaseline current{};
     if (currentState != nullptr && currentState->readCurrentSpan(noteId, current) &&

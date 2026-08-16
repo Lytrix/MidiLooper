@@ -464,6 +464,55 @@ void test_display_projection_keeps_wrap_tail_when_visual_cache_is_split() {
   TEST_ASSERT_TRUE(hasLinear);
 }
 
+void test_display_projection_linear_beyond_loop_paints_wrap() {
+  // 200952: EditSessionAction 2688–3264 is linear storage. Piano roll wrap is end < start.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kWrapId = 269;
+  constexpr uint8_t kPitch = 12;
+  constexpr uint32_t kNewStart = 2688;
+  constexpr uint32_t kLinearEnd = 3264;
+  constexpr uint32_t kDisplayWrapEnd = 192;
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitch, 100, 2592, kLoopLength - 1});
+  committedBase.push_back({kWrapId, kPitch, 100, 0, 96});
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapId, {kPitch, 100, 2592, 96}, {kPitch, 100, kNewStart, kLinearEnd},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kWrapId;
+  focus.last = {kPitch, 100, kNewStart, kLinearEnd};
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+
+  bool foundWrap = false;
+  bool foundLinearBeyondLoop = false;
+  bool foundClampedTail = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId != kWrapId) {
+      continue;
+    }
+    if (dn.endTick >= kLoopLength) {
+      foundLinearBeyondLoop = true;
+    }
+    if (dn.startTick == kNewStart && dn.endTick == kLoopLength - 1) {
+      foundClampedTail = true;
+    }
+    if (dn.startTick == kNewStart && dn.endTick == kDisplayWrapEnd) {
+      foundWrap = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundWrap);
+  TEST_ASSERT_FALSE(foundLinearBeyondLoop);
+  TEST_ASSERT_FALSE(foundClampedTail);
+}
+
 void test_display_projection_keeps_split_tail_when_current_span_is_head() {
   // 193525: currentSpan last-write-wins to 0–96 must not drop cache tail 2592–3071.
   constexpr uint32_t kLoopLength = 3072;
@@ -2711,6 +2760,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_ensure_session_head_does_not_lead_over_split_wrap_cache);
   RUN_TEST(test_ensure_reconstruct_wrap_midi_is_not_display_head);
   RUN_TEST(test_display_projection_keeps_wrap_tail_when_visual_cache_is_split);
+  RUN_TEST(test_display_projection_linear_beyond_loop_paints_wrap);
   RUN_TEST(test_display_projection_keeps_split_tail_when_current_span_is_head);
   RUN_TEST(test_display_projection_omits_rematerialize_only_visible_row);
   RUN_TEST(test_display_projection_binds_visible_row_to_invalid_id_committed_note);

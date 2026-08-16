@@ -141,14 +141,15 @@ Device gate: 173806 gesture. `replay_flat` home **missing**. LOOP_EDIT shows the
 
 **Device [`195941`](../../captures/session_20260816_195941.log):** wrap select still PASS. Live `Movement: start 2736->2784, end actual 3360 (display 288), length=576`. Wrap-modulo helper then wrote `EditSessionAction` / `NoteRange 2784–288`. `replay_flat: M12@2592 missing`; `take_only` still `M12 start=2592`. Reselect `DNTE` 12@2784 length **384** (`2784` wrap-to-`96`). Second deselect `2928–240` → length **240**. Root cause: `findNoteOffForOnIndex` LIFO skips tick-sorted wrap Off@96 (empty stack), so `applyMoveNoteById` moves the On and leaves the wrap Off. Session/edit workflow stays linear (`linearStorageOffTickForSpanEnd`); wrap pairing is the apply resolve only. Do not add more wrap-skip helpers on deselect/sync/commit. Stage 2 stays parked.
 
-**195941 files (this RC, not persist-identity):**
+**Device [`200952`](../../captures/session_20260816_200952.log):** live storage is linear (`EditSessionAction` 2688–3264, `DNTE` length **576**). Piano roll wrap paint is `end < start` only (`clampNonWrapDisplayNoteBarTicks` clamps 3264 to loop end — tail, no head). `projectNoteEditDisplayNotes` now writes display phase (`2688–192`) so wrap paint runs. Session `currentSpan` stays linear. After deselect, reselect `DNTE` 12@2784 length **384** remains a persist-apply gate. Stage 2 stays parked.
 
-| File | Change |
+**195941 files (this RC, not persist-identity):**
 |------|--------|
 | [`EditApply.cpp`](../../src/EditManager/EditApply.cpp) | `findNoteOffForOnIndex` wrap-off fallback after LIFO — not identity lookup |
 | [`NoteEditGeometryApplyMutate.cpp`](../../src/EditManager/NoteEditGeometryApplyMutate.cpp) | mover `editedSpan` end is `start+len`; display phase only for bracket |
 | [`NoteEditWrapHeadAdjust.cpp`](../../src/EditManager/NoteEditWrapHeadAdjust.cpp) | removed wrap-modulo `displayFocusEndTickForMove` and unused wrap helpers |
 | [`test_edit_apply.cpp`](../../test/test_edit_apply/test_edit_apply.cpp) | wrap home Off@96 / On@2592 → linear 2784–3360 and wrap 2784–288 |
+| [`NoteEditFocusDisplayProjection.cpp`](../../src/EditManager/NoteEditFocusDisplayProjection.cpp) | linear-beyond-loop `currentSpan` paints wrap display phase (200952) |
 
 ---
 
