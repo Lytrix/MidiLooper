@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-16 (6A same-end delete unique — native fixture from 024806)
+Last updated: 2026-08-16 (6A.1 HITL PASS 025651 match=1 vs native)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-16 (6A same-end delete unique — native fixture from 0248
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **6A same-end Delete** — `resolveWindow` unique keeps same-tick NoteOffs (`noteId` is ON-only); skip `appendNoteEvents` when the target ON is already in the window. Native fixture from [`024806`](../captures/session_20260816_024806.log). Device `6a` `match=` is LCR vs native. **Overdub-pass wrap pairing HITL PASS** [`021218`](../captures/session_20260816_021218.log). **038.2 landed.** Not all of LCR live.
+**Active work:** **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log) `match=1` `pmatch=1` (57/57). Gather `gmatch=0` unchanged. **Overdub-pass wrap pairing HITL PASS** [`021218`](../captures/session_20260816_021218.log). **038.2 landed.** Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

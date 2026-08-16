@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (6A same-end delete unique — native fixture from 024806)
+Last updated: 2026-08-16 (6A.1 HITL PASS 025651 match=1 vs native)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (6A same-end delete unique — native fixture from 0248
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6A same-end Delete** — `resolveWindow` must not collapse same-tick NoteOffs (`noteId` is ON-only) and must not re-append a target already in the window. Native `test_resolve_window_delete_keeps_same_pitch_same_end_note` from [`024806`](../../captures/session_20260816_024806.log) (Delete 1034 must keep 1422 @ 12 1240–1344). Device gate: reboot STOPPED until `6a` `match=1` vs native. Gather remaps stay on `6a,nat` `gmatch`. **Overdub-pass wrap pairing HITL PASS** [`021218`](../../captures/session_20260816_021218.log). Do not start midi_gap / 6.3 until asked.
+**Now:** **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) — `6a` `ev=126 notes=57` `miss=0 extra=0` `match=1` `pmatch=1`. Delete 1034 still present; 1422 kept. `gmatch=0` is gather remaps, not LCR. Native fixture from [`024806`](../../captures/session_20260816_024806.log). **Overdub-pass wrap pairing HITL PASS** [`021218`](../../captures/session_20260816_021218.log). Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
