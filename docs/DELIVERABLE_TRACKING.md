@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** **FinalizeWorkspace CRC slice** shipped (`48bd36f`). **LoopPersist finalize** relanded (no extra RAM1 logging; boot gate open). **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Overlay track A parked.
+**Next (persistence/runtime):** **FinalizeWorkspace CRC slice** shipped (`48bd36f`). **LoopPersist finalize** relanded. **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** **Slice 2b native** — unprepared interior idle skips `appendOverdubPassDisplayNotes`; device gate open. Overlay track A parked. **NOTE_EDIT hydrate** queued: [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md) (not remaining LCR 6.4 firmware).
 
 **Not in firmware** (docs may suggest otherwise):
 

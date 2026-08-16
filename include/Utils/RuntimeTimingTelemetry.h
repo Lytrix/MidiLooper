@@ -179,6 +179,13 @@ void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_t startUs);
 void recordLoadFrameChildRem(uint8_t child, uint32_t startUs);
 
 /**
+ * SESSION_CAPTURE: time one idle visual-cache slice child.
+ * child 0=idle_gather, 1=idle_reconstruct, 2=idle_append.
+ * FLASHMEM + PSTR so span strings stay out of DTCM.
+ */
+void recordIdleMaintChildRem(uint8_t child, uint32_t startUs);
+
+/**
  * Emit Tier-A DIAG lines if the emit interval has elapsed.
  * Returns true when a window was emitted and counters reset.
  * Safe to call from main loop only (not from ISR).

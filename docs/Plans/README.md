@@ -49,7 +49,8 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 | [loop_layer_history_persistence_architecture.md](loop_layer_history_persistence_architecture.md) | DEC-035 — Loop persists content only; Layer A next |
 | [runtime_scheduling_admission_model_architecture.md](runtime_scheduling_admission_model_architecture.md) | Runtime timing-telemetry contract (interval reservation deferred) |
 | [runtime_scheduling_owner_boundary_admission_refinement.md](runtime_scheduling_owner_boundary_admission_refinement.md) | Owner-Boundary Gate roadmap (O–T–R–C–A–P) |
-| [runtime_scheduler_lcr_consumer_grooming_refinement.md](runtime_scheduler_lcr_consumer_grooming_refinement.md) | Consumer rule + A/B/C stalkers; Slice 1 rem split, Slice 2 idle one-source (wrap-held edge append) |
+| [runtime_scheduler_lcr_consumer_grooming_refinement.md](runtime_scheduler_lcr_consumer_grooming_refinement.md) | Consumer rule + A/B/C stalkers; Slice 1 rem split, Slice 2/2b idle one-source (wrap-held edge append). NOTE_EDIT hydrate is not this file. |
+| [note_edit_hydrate_enhancement.md](note_edit_hydrate_enhancement.md) | NOTE_EDIT consume prepared LCR around `selectedTick` (queued; proposal is the architecture) |
 | [refactor_priority_backlog.md](refactor_priority_backlog.md) | Cross-cutting refactor priority (P1/P2/P3) |
 | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) | Hygiene backlog + item 18 archive remainder |
 | [docs_folder_hygiene_refinement.md](docs_folder_hygiene_refinement.md) | Docs folder cleanup plan |

@@ -206,6 +206,12 @@ void test_loop_remainder_spans_accumulate_independently() {
   TEST_ASSERT_EQUAL_UINT32(0, snap.persistSaveOverCount);
 }
 
+void test_idle_maint_child_rem_is_callable() {
+  RuntimeTimingTelemetry::recordIdleMaintChildRem(0, 0);
+  RuntimeTimingTelemetry::recordIdleMaintChildRem(1, 0);
+  RuntimeTimingTelemetry::recordIdleMaintChildRem(2, 0);
+}
+
 void test_emit_interval_constant() {
   TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingTelemetry::kEmitIntervalUs);
   TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingTelemetry::kObservationalSoftCeilingUs);
@@ -225,6 +231,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_note_off_nested_sums_commit_and_gate_inactive_window);
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
   RUN_TEST(test_loop_remainder_spans_accumulate_independently);
+  RUN_TEST(test_idle_maint_child_rem_is_callable);
   RUN_TEST(test_emit_interval_constant);
   return UNITY_END();
 }

@@ -1,9 +1,9 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 4d NOTE_EDIT idle paint consumes stale
+**Status:** Active — Slice 2b unprepared interior append skip native landed; device gate open
 **Date:** 2026-08-16  
 **Kind:** refinement  
-**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
+**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution); [`223548`](../../captures/session_20260816_223548.log) (Slice 1b pin)  
 **Parent:** [`post_undo_led_lookup_resumable_source_refinement.md`](post_undo_led_lookup_resumable_source_refinement.md)  
 **Scheduling contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md)  
 **Owner-boundary roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (R1C remaining-owner inventory)  
@@ -176,7 +176,7 @@ Desired path:
 rebuildVisualCacheIdleSlice
     ├── prepared LCR window? → resolve notes → visualCache
     │     └── wrap-edge slice (bar 0 or last bar) may still append
-    └── no → existing window gather + append
+    └── no → existing window gather; wrap-edge may still append
 ```
 
 **Native delta (must document before skip):**
@@ -186,7 +186,7 @@ rebuildVisualCacheIdleSlice
 | Linear overdub (record 60 + overdub 72) | Match |
 | Wrap-held + later same-pitch body ([`021218`](../../captures/session_20260816_021218.log) / `test_visual_cache_keeps_overdub_wrap_held_without_stretching_record`) | LCR-only omits `12@2976` and `12@0`. Append keeps them. Record spans stay 672–768 and 2400–2500 |
 
-Merged reconstruct cannot take `overdubPassWrapPairing` — that flag is one overdub pass only ([`015618`](../../captures/session_20260816_015618.log) stretched record). So a prepared interior slice uses LCR only. A prepared slice that keeps bar 0 or the last bar still calls `appendOverdubPassDisplayNotes` for that pairing gap. Unprepared gather still appends every slice.
+Merged reconstruct cannot take `overdubPassWrapPairing` — that flag is one overdub pass only ([`015618`](../../captures/session_20260816_015618.log) stretched record). A slice that keeps bar 0 or the last bar still calls `appendOverdubPassDisplayNotes` for that pairing gap. Interior slices — prepared or unprepared — use the window only (Slice 2 / 2b).
 
 **Invariant (first behavioral slice):** for a prepared interior window, `rebuildVisualCacheIdleSlice` has exactly one content-resolution source. It must not walk overdub passes again for bars that cannot hold the wrap-held pairing gap.
 
@@ -217,7 +217,7 @@ Direction is mark-stale → existing resumable owner → slices. Audit each call
 
 Same consumer rule as LED: if notes are empty, paint stale/empty and let idle fill. Not the first slice.
 
-### NOTE_EDIT hydrate — separate session design
+### NOTE_EDIT hydrate — separate work path
 
 `EditManager::openNoteEditSession` builds three representations:
 
@@ -232,23 +232,7 @@ openNoteEditSession
 
 Later, `EditManager::materializedLoopEventsForNoteEditFocus` materializes again on revision change. Session undo rematerializes on each undo.
 
-Do **not** fold this into the idle-slice or `ensureVisualCacheBuilt` audit. NOTE_EDIT needs authoritative session content, not display stale-while-revalidate.
-
-Later design (not this file’s next slice):
-
-```text
-NOTE_EDIT open
-    ↓
-create edit-hydrate session
-    ↓
-consume prepared content where possible
-    ↓
-resume across loop()
-    ↓
-editable session becomes ready
-```
-
-Not `resolveWindow` on the button path. Not in [`114736`](../../captures/session_20260816_114736.log).
+Do **not** fold this into the idle-slice or `ensureVisualCacheBuilt` audit. Work identity: [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md). Consume prepared LCR around `selectedTick` (overdub 6E analog). Not a resumable open-until-ready session. Not `lazy-slot-hydration`. Not this grooming file’s next slice.
 
 ### `shouldRestoreCommittedOverlapOnOverdubStop` — Slice 3 closed
 
@@ -315,6 +299,43 @@ None.
 ### Proceed?
 YES
 
+### Slice 1b — split `idle_maint` telemetry (device PASS [`225626`](../../captures/session_20260816_225626.log))
+
+**Measurement only. Zero behavior change.** Authorized by [`223548`](../../captures/session_20260816_223548.log): PLAYING dirty `midi_gap` equals `idle_maint` 83–96 ms on the unprepared gather path (no `lcr,6a`). Grain is already 2–4 bars. Do not change grain until a child rem names gather vs reconstruct vs append.
+
+Child `loop_rem` from `Loop::rebuildVisualCacheIdleSlice` via `RuntimeTimingTelemetry::recordIdleMaintChildRem` (`FLASHMEM` + `PSTR`). Parent `idle_maint` rem + 5 s window kept. No 5 s child windows.
+
+| Span | Owner |
+|------|--------|
+| `idle_gather` | `gatherCommittedEventsInWindow` (unprepared only) |
+| `idle_reconstruct` | `reconstructDisplayNotes` |
+| `idle_append` | `appendOverdubPassDisplayNotes` when that call runs |
+
+Prepared interior slices do not emit `idle_gather`. `lcr,6a` is unchanged. Splice into `visualCache.notes` stays unattributed inside parent.
+
+**Device PASS [`225626`](../../captures/session_20260816_225626.log).** Boot past `scan,done`. PLAYING `clockrate` 47. Dirty post-stop `midi_gap` equals parent `idle_maint` (79–96 ms). Child rem counts: `idle_append` 36, `idle_gather` 0, `idle_reconstruct` 0 (neither child reached the 50 ms one-shot). 24 paired slices: `idle_append` is **72–82%** of parent (mean **78%**). Clean PLAYING `idle_maint` **35 µs**. Do not start grain or 4e. Next owner is `appendOverdubPassDisplayNotes`, not gather/reconstruct.
+
+**RAM1:** first 1b link crossed the 32 KB ITCM line (`code` 427228, padding 31524, locals **−28256**). Recovery: `FLASHMEM` on `emitWindow` / `maybeEmit` / `recordLoopRemainderIfMeasuring` / `noteIdleMaint` / `noteLoadFrame` / `notePersistSave`; `LOOP_COLD_MEM` on `ensureVisualCacheBuilt` / `markDisplayCachesStale` / `invalidateDisplayCaches` / `adoptComposedDisplayNotesFromViewport`. Build: variables **93792**, code **425916**, padding **68**, locals **4512**.
+
+## Pre-implementation review (Slice 1b)
+
+### Ready
+- Owner is `Loop::rebuildVisualCacheIdleSlice`. Helper clones `recordLoadFrameChildRem`.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Behavior | Zero change — timers only |
+| Parent rem | Keep `idle_maint` |
+| 5 s child windows | No — Slice 1 RAM1 crash |
+| Prepared path | No `idle_gather`; keep `lcr,6a` |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
 ### Slice 2 — one resolution source on idle visual-cache rebuild (first behavioral)
 
 **After Slice 1.** [`114736`](../../captures/session_20260816_114736.log) still holds in [`133314`](../../captures/session_20260816_133314.log).
@@ -355,6 +376,18 @@ No undo between dirty and clean. Prepared consume added the overdub; it did not 
 
 STOPPED 64-bar count 1639 → 1456 in [`134329`](../../captures/session_20260816_134329.log) (8.765–30.994 s) is on the gather+append path (before LCR idx). Not a Slice 2 result. [`133314`](../../captures/session_20260816_133314.log) same loop started at 1643 and stayed ~1630+ until overdub.
 
+### Slice 2b — unprepared interior skip (native landed; device gate open)
+
+**After Slice 1b.** [`225626`](../../captures/session_20260816_225626.log) named `idle_append` as 72–82% of dirty `idle_maint` on the unprepared path. Slice 2 already skipped append on prepared interior slices. Unprepared still reconstructed every active overdub pass on every slice.
+
+`rebuildVisualCacheIdleSlice` now uses the same wrap-edge predicate for both sources: call `appendOverdubPassDisplayNotes` only when the slice keeps bar 0 or the last bar. Interior gather already has linear overdub events (`copyEffectiveCommittedEventsInRange`). Wrap-held heads/tails stay on the edge slices (`overdubPassWrapPairing`; [`015618`](../../captures/session_20260816_015618.log)).
+
+Owner: `Loop::rebuildVisualCacheIdleSlice`. No new name. No LCR on stop or paint. Job 1 (leave untouched `visualCache` rows) is the next splice slice, not this one.
+
+**Native:** `test_idle_slice_unprepared_interior_keeps_mid_loop_overdub` — 16-bar loop, mid-loop overdub, no prepared window, idle rebuild keeps record + overdub. `test_idle_slice_unprepared_keeps_wrap_held` — wrap-edge append still restores ON@2976 / OFF@96.
+
+**Device:** dirty PLAYING after overdub stop must not emit `idle_append` rem on interior slices. Wrap-edge may still rem. `slice_clean` coverage stays `0–63`. No `VCACHE,full`. `clockrate` 47.
+
 ### Slice 3 — retire restore flatten on overdub stop
 
 **After Slice 2.** Investigate `shouldRestoreCommittedOverlapOnOverdubStop`, then remove the flatten if a note list already owns the question.
@@ -389,7 +422,26 @@ This does not cut PLAYING `clockrate` or OLED paint. It removes the last whole-l
 | Linear prepared window | Skip append |
 | Wrap-held delta | Documented — LCR-only drops tail/head; append stays on bar 0 / last bar |
 | Merged wrap pairing | Forbidden (`015618`) |
-| Unprepared gather | Still appends |
+| Unprepared gather | Slice 2b — interior skip; wrap-edge append stays |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
+## Pre-implementation review (Slice 2b)
+
+### Ready
+- Owner is `Loop::rebuildVisualCacheIdleSlice`. Same wrap-edge predicate as Slice 2.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Unprepared interior | Skip append |
+| Wrap-edge | Append stays (bar 0 / last bar) |
+| `appendOverdubPassDisplayNotes` signature | Unchanged — call or not |
+| Job 1 splice | Not this slice |
 
 ### Open before coding
 None.
@@ -548,8 +600,8 @@ YES
 ### Later (not authorized)
 
 4e. Display fallback gather in `resolveDisplayNotesCommitted` / `rebuildDisplayNotesInWindow`.
-4f. `getVisualNotesForSlot` / NOTE_EDIT projection — Slice 5 hydrate, not this audit.
-5. NOTE_EDIT hydrate — own session design.
+4f. `getVisualNotesForSlot` / NOTE_EDIT projection — NOTE_EDIT hydrate work path, not this audit.
+5. NOTE_EDIT hydrate — [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Not this file.
 6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
 
 Each firmware slice: one owner, one invariant, one stalker class, native test, `pio test -e native`. Do not bundle.
@@ -570,7 +622,8 @@ Reuse: extend the existing owner. Do not add `tryResolvePreparedWindow` on MIDI-
 - Deleting `materializeToEventVector`
 - Global deletion of `ensureVisualCacheBuilt`
 - Folding NOTE_EDIT open into Slice 2 or the visual-cache audit
-- Visual-cache idle grain change (2–4 bars) until the idle notes source is single
+- NOTE_EDIT hydrate firmware ([`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md))
+- Visual-cache idle grain change (2–4 bars) — [`225626`](../../captures/session_20260816_225626.log) named `idle_append`, not grain
 - LoopPersist CRC
 - Optimizing `LoadLoopJob` from an unsplit PLAYING `load_frame` line
 
