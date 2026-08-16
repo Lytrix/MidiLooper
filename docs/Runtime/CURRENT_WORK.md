@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT deselect keeps wrap length)
+Last updated: 2026-08-16 (NOTE_EDIT wrap-move apply keeps linear length)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT deselect keeps wrap length)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** [`195050`](../../captures/session_20260816_195050.log) wrap select PASS (`DNTE` 12@2592 length **576**). Move+deselect committed `NoteRange 2736–3071` (display tail); reselect length **432** then **240**. Linear store pairing / `closeOpenTails` must not lead wrap MIDI. Commit from current-state wrap; mover wrap rows are plausible. Device gate: move a wrap, deselect, length stays **576** (not minus the wrap head). Do not patch `applyNoteEditPass`. Stage 2 / C5 / B2b / Layer D parked.
+**Now:** [`195941`](../../captures/session_20260816_195941.log) deselect after wrap move still shortened. Live `Movement` was linear `2784→3360` length **576**; wrap-modulo helper committed `NoteRange 2784–288`; `applyMoveNoteById` left wrap Off@96 → `DNTE` length **384**. Session/edit storage stays linear (`start+len`); wrap pairing only in `findNoteOffForOnIndex`. Device gate: move wrap pitch-12, deselect, `DNTE` length stays **576**; `EditSessionAction` end is **3360** not **288**. Do not patch `applyNoteEditPass` identity. Stage 2 / C5 / B2b / Layer D parked.
 
 **Next Layer C (parked C5):** `OverlapCandidateLookup::appendNotesForIds` in overlay only — not overdub source-view / hold ids. Not reconstruct. Not empty-pair resolve.
 

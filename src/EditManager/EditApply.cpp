@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <vector>
 
 namespace {
 
@@ -32,7 +33,11 @@ int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
   // Same-pitch pairing is LIFO everywhere else (findLinearOffForNoteOnLifo,
   // findCorrespondingNoteOff, pairedNoteOnTickForOffAtIndex). Walk from the start of the
   // vector: an earlier unclosed same-pitch note-on changes which off closes this on.
+  // Tick-sorted wrap capture (195941: Off@96 then On@2592) hits the off while the stack is
+  // empty, so LIFO never pairs it. After the linear walk, pair a still-open on to its wrap
+  // off (tick < on.tick) — tagged NoteId first, else the unique unpaired wrap off.
   std::vector<size_t> openNoteOnIndices;
+  std::vector<uint8_t> offPaired(events.size(), 0);
   for (size_t i = 0; i < events.size(); ++i) {
     const MidiEvent& evt = events[i];
     if (evt.channel != channel || evt.data.noteData.note != note) {
@@ -47,9 +52,51 @@ int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
     }
     const size_t pairedOnIndex = openNoteOnIndices.back();
     openNoteOnIndices.pop_back();
+    offPaired[i] = 1;
     if (pairedOnIndex == static_cast<size_t>(onIndex)) {
       return static_cast<int>(i);
     }
+  }
+
+  bool targetStillOpen = false;
+  for (const size_t openIndex : openNoteOnIndices) {
+    if (openIndex == static_cast<size_t>(onIndex)) {
+      targetStillOpen = true;
+      break;
+    }
+  }
+  if (!targetStillOpen) {
+    return -1;
+  }
+
+  int taggedWrapOff = -1;
+  int untaggedWrapOff = -1;
+  uint32_t untaggedWrapOffCount = 0;
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (offPaired[i] != 0) {
+      continue;
+    }
+    const MidiEvent& evt = events[i];
+    if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != note) {
+      continue;
+    }
+    if (evt.tick >= onEvt.tick) {
+      continue;
+    }
+    if (onEvt.noteId != kInvalidNoteId && evt.noteId == onEvt.noteId) {
+      taggedWrapOff = static_cast<int>(i);
+      break;
+    }
+    if (evt.noteId == kInvalidNoteId) {
+      untaggedWrapOff = static_cast<int>(i);
+      ++untaggedWrapOffCount;
+    }
+  }
+  if (taggedWrapOff >= 0) {
+    return taggedWrapOff;
+  }
+  if (untaggedWrapOffCount == 1) {
+    return untaggedWrapOff;
   }
   return -1;
 }

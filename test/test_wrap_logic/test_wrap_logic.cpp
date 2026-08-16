@@ -17,6 +17,12 @@ void test_calculate_note_length_plain_and_wrapped() {
     const uint32_t loop = 3840;
     TEST_ASSERT_EQUAL_UINT32(100u, NoteEditGeometryApply::calculateNoteLength(100, 200, loop));
     TEST_ASSERT_EQUAL_UINT32(7u, NoteEditGeometryApply::calculateNoteLength(3838, 5, loop));
+    // 192259: wrap 2592–96 on a 3072 loop is length 576, not head 96.
+    TEST_ASSERT_EQUAL_UINT32(576u, NoteEditGeometryApply::calculateNoteLength(2592, 96, 3072));
+    // Edit storage is linear (DEC-013 / 195941). Display phase 144 is reconstruct only.
+    TEST_ASSERT_EQUAL_UINT32(3216u, NoteEditGeometryApply::linearStorageOffTickForSpanEnd(2640, 576));
+    TEST_ASSERT_EQUAL_UINT32(144u, (2640u + 576u) % 3072u);
+    TEST_ASSERT_EQUAL_UINT32(576u, NoteEditGeometryApply::calculateNoteLength(2640, 144, 3072));
 }
 
 void test_moving_note_range_wrap_does_not_contain_unrelated_loop_start_note() {

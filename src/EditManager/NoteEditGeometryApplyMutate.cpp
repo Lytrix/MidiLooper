@@ -461,13 +461,11 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     // Prefer focus.last length during an active edit driver. Live-store pairing can briefly
     // mis-resolve same-pitch neighbor offs (noteId lives on note-on only) before Shorten
     // applies; session_20260804_210819 collapsed 190 → 4 at neighbor end 815.
+    // Wrap spans are end < start (192259: 2592–96). `currentEnd > currentStart` skipped
+    // those and resolve returned the head length 96 instead of calculateNoteLength 576.
     uint32_t noteLen = 0;
-    if (focus.active && currentEnd > currentStart) {
-        if (currentEnd <= currentStart + loopLength) {
-            noteLen = currentEnd - currentStart;
-        } else {
-            noteLen = calculateNoteLength(currentStart, currentEnd, loopLength);
-        }
+    if (focus.active && currentEnd != currentStart) {
+        noteLen = calculateNoteLength(currentStart, currentEnd, loopLength);
     } else {
         noteLen = noteEditGeometryApplyResolveMovingNoteLengthTicks(midiEvents, channel, movingNotePitch, currentStart,
                                                currentEnd, loopLength, movingNoteId);
@@ -482,7 +480,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     const uint32_t linearNewEnd =
         NoteEditGeometryApply::linearStorageOffTickForSpanEnd(newStart, noteLen);
     const uint32_t displayEndForBracket =
-        noteEditGeometryApplyDisplayFocusEndTickForMove(newStart, noteLen, loopLength);
+        noteEditGeometryApplyStorageTickToDisplayPhase(linearNewEnd, loopLength);
 
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
     // Overlap scope is the mover's own lane — a move never changes pitch (Q14).
