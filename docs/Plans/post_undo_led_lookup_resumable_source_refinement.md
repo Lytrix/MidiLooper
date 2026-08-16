@@ -1,6 +1,6 @@
 # Post-undo LED lookup — resumable source
 
-**Status:** Stage 1 landed, not scored. Stage 2 **rejected**.  
+**Status:** Stage 1 device PASS [`114736`](../../captures/session_20260816_114736.log). Stage 2 **rejected**.  
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Parent measurement:** [`post_undo_playing_loop_prefix_measurement.md`](post_undo_playing_loop_prefix_measurement.md) — device PASS [`113804`](../../captures/session_20260816_113804.log)  
@@ -102,7 +102,7 @@ Not: dirty or empty cache → `gatherCommittedEventsWithCapture`. Empty notes �
 
 `hasNoteOnInRangeForLed` uses the order above. `prepareLedNoteLookup` does not gather. Consumer-path cleanup only — not LCR, not overdub architecture.
 
-Device gate: same undo → PLAYING → bar wrap cluster as [`113804`](../../captures/session_20260816_113804.log).
+Device gate: same undo → PLAYING → bar wrap cluster as [`113804`](../../captures/session_20260816_113804.log). Scored: [`114736`](../../captures/session_20260816_114736.log).
 
 Pass:
 
@@ -111,6 +111,18 @@ Pass:
 - 5 s `midi_gap` in that window is not a 225–400 ms lookup
 - `clockrate` holds 47–48 while PLAYING
 - idle still emits `slice_clean`; bar/16th LEDs eventually match the undone content
+
+## Stage 1 — device [`114736`](../../captures/session_20260816_114736.log) PASS
+
+Seventeen `Overdub undone` while PLAYING. No `midi_led_gather`, `midi_led_lookup`, `midi_led_phase`, `midi_leds`, or `loop_prefix` rem (all < 50 ms). Rem spans in this capture are only `idle_maint` and `load_frame`.
+
+First undo 13.285 s: `VCACHE,stale` keeps **1643** notes, `dirty=1`. `slice_clean` at 15.305 s. Next BAR `2320,3` at 14.195 s → LED 3.7 ms later (14.199 s). [`113804`](../../captures/session_20260816_113804.log) was 225 ms of gather on that hole.
+
+PLAYING `clockrate` **47–48** from 15.565 s through 75.719 s.
+
+PLAYING 5 s `midi_gap` is **110–127 ms**, not 225–400 ms. Those windows contain `load_frame` 60–74 ms and `idle_maint` 46–55 ms (5 s max). Boot `midi_gap` 835 ms at 10.554 s is `load_frame` 802 ms + `idle_maint` 122 ms before the first undo.
+
+Idle `slice_clean` continues after later undos (notes stay 1643–1677). Stage 2 stays rejected.
 
 ### Stage 2 — refresh on `slice_clean` (**rejected**)
 
