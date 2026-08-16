@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Device PASS — child owner is `midi_leds`. Grandchild rem **landed**.  
+**Status:** Device PASS — grandchild owner is `midi_led_phase`. Helper rem **landed, not scored**.  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
@@ -246,7 +246,36 @@ First pair CAP bounds: `BAR,6912,9` @ 59.569 s → 174 ms silence → `LED` @ 59
 
 `updateMidiLedsDeferred()` calls `ledManager->updateLeds`, `ledManager->updateCurrentTick`, and `refreshTrackAndLoopSelectMidiLeds()`.
 
-## Grandchild rem (landed, not scored)
+## Grandchild rem — device [`112117`](../../captures/session_20260816_112117.log) PASS
+
+Four triples. `midi_led_tick` and `midi_led_select` never remitted (≥50 ms).
+
+| CAP | `midi_led_phase` | `midi_leds` | `loop_prefix` | phase / prefix |
+|-----|-----------------:|------------:|--------------:|---------------:|
+| 28.181 s | **204185** | 207316 | 208045 | 98.1% |
+| 54.374 s | **323877** | 325021 | 325280 | 99.6% |
+| 64.371 s | **327393** | 330521 | 330761 | 99.0% |
+| 76.294 s | **309325** | 311462 | 311754 | 99.2% |
+
+`updateCurrentTick` and `refreshTrackAndLoopSelectMidiLeds` are not the hole. The 2–3 ms from phase rem to `midi_leds` is those two plus outbound.
+
+`MidiLedManager::updateLeds` only refreshes when the bar index changes (or first init). That matches the BAR-boundary remissions.
+
+## Helper rem (landed, not scored)
+
+Same undo window (`loopPrefixMeasureAfterUndoActive` on the displayed track). Same 50 ms one-shot.
+
+| Span | Function |
+|------|----------|
+| `midi_led_lookup` | `prepareLedNoteLookup` |
+| `midi_led_analyze` | `analyzeAndUpdateBar` |
+| `midi_led_bars` | `updateBarLeds` |
+
+`updateLeds` stays ITCM. Rem emit is `RuntimeTimingTelemetry::recordMidiLedHelperRem` (`FLASHMEM` + `noinline`). Span names are `PROGMEM` (`.progmem` → flash). Ordinary `.rodata` string literals in this path land in DTCM and slide `_VectorsRam` / `periodictable` across 1 KB / 4 KB aligns (locals 6496 → 2400). This build: RAM1 variables **91808**, code **425756**, padding **228**, locals **6496**.
+
+Device gate: same cluster as [`112117`](../../captures/session_20260816_112117.log). Score against `midi_led_phase` 204–327 ms. If one helper is ~that, that is the owner. If none is, stop and re-read. Do not re-arm drain. Do not time `hasNoteInSixteenthStep` / gather until a helper rem names a parent.
+
+## Grandchild rem (landed, scored)
 
 Same undo window. Same `recordLoopRemainderSpan` / 50 ms one-shot, now shared on `DebugSessionCapture`.
 
