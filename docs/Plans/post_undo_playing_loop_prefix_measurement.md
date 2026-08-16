@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Device PASS — helper owner is `midi_led_lookup` (`prepareLedNoteLookup`).  
+**Status:** Device PASS — helper owner is `midi_led_lookup`. Gather rem **landed, not scored**.  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
@@ -280,6 +280,12 @@ First cluster: `BAR,6920,9` @ 28.103 s → 301 ms silence → `midi_led_lookup` 
 `analyzeAndUpdateBar` and `updateBarLeds` are not the hole. The 3–15 ms from lookup rem to `midi_led_phase` is those two (below the 50 ms one-shot).
 
 `prepareLedNoteLookup` is the named owner. When `visualCacheDirty` and committed passes exist it calls `loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_)`. Do not time `hasNoteInSixteenthStep`. Do not re-arm drain.
+
+## Gather rem (landed, not scored)
+
+Same undo window. Same 50 ms one-shot. Span `midi_led_gather` wraps only the dirty-path `gatherCommittedEventsWithCapture` inside `prepareLedNoteLookup`. Helper id 3 on `recordMidiLedHelperRem` (`PROGMEM`).
+
+Device gate: same cluster as [`113310`](../../captures/session_20260816_113310.log). Score against `midi_led_lookup` 255–403 ms. If gather is ~that, that is the owner. If it is not, stop and re-read. Do not split `gatherCommittedEvents` / merge. Do not re-arm drain.
 
 ## Helper rem (landed, scored)
 

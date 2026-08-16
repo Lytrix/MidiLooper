@@ -94,7 +94,11 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
             childStartUs = micros();
         }
 #endif
+#if defined(SESSION_CAPTURE)
+        prepareLedNoteLookup(mutableLoop, measure);
+#else
         prepareLedNoteLookup(mutableLoop);
+#endif
 #if defined(SESSION_CAPTURE)
         RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 0, childStartUs);
         if (measure) {
@@ -290,12 +294,24 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
 
 }  // namespace
 
-void MidiLedManager::prepareLedNoteLookup(Loop& loop) {
+void MidiLedManager::prepareLedNoteLookup(Loop& loop, bool measure) {
     ledNoteLookupEvents_.clear();
     ledNoteLookupUsesMerge_ = loop.hasCommittedPasses() && loop.visualCacheDirty;
     if (ledNoteLookupUsesMerge_) {
+#if defined(SESSION_CAPTURE)
+        uint32_t gatherStartUs = 0;
+        if (measure) {
+            gatherStartUs = micros();
+        }
+#endif
         loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_);
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 3, gatherStartUs);
+#endif
     }
+#if !defined(SESSION_CAPTURE)
+    (void)measure;
+#endif
 }
 
 bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStart,
