@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 3 restore flatten removed (native)
+**Status:** Active — Slice 3 device PASS [`140841`](../../captures/session_20260816_140841.log)  
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -374,6 +374,8 @@ STOPPED 64-bar count 1639 → 1456 in [`134329`](../../captures/session_20260816
 **Native:** `test_overdub_begin_makes_restore_flatten_unreachable` — `beginCapture(Overdub)` establishes the view with `committedEventsFullMaterializeCount() == 0`.
 
 This does not cut PLAYING `clockrate` or OLED paint. It removes the last whole-loop flatten from the restore function so a missing-view stop cannot stall.
+
+**Device PASS [`140841`](../../captures/session_20260816_140841.log).** Boot `scan,start` → `done`. Four overdub stops; every `Stop finalize pending` has `overlap_restore=0`. Enter→display 7.0–8.8 ms; seal stage 1.9–3.3 ms. PLAYING `clockrate` 47. No `VCACHE,full`. Cache after stops: 1469→1479→1530→1543→1608, coverage `0–63`. One undo at 65.973 s after the last stop (`Overdub undone`).
 
 ## Pre-implementation review (Slice 2)
 
