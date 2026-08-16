@@ -73,6 +73,14 @@ enum class DeferredLoopWriteStage : uint8_t {
   EditTail,
 };
 
+enum class DeferredLoopFinalizeStage : uint8_t {
+  Idle = 0,
+  WriteToken,
+  EpochCrcBody,
+  EpochCrcHeader,
+  VerifyAndRename,
+};
+
 enum class LoopPersistPayloadCrc : uint8_t {
   None = 0,
   RevisionCommit,
@@ -150,6 +158,7 @@ struct CurrentWorkspaceSaveJob {
   uint32_t epochCrcBodyOffset = 0;
   uint32_t epochCrcBodySize = 0;
   DeferredLoopWriteStage loopWriteStage = DeferredLoopWriteStage::Header;
+  DeferredLoopFinalizeStage loopFinalizeStage = DeferredLoopFinalizeStage::Idle;
   DeferredUndoWriteStage undoWriteStage = DeferredUndoWriteStage::Header;
   LooperState stateSnapshot = LOOPER_IDLE;
   File file;

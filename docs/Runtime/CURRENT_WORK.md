@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
+Last updated: 2026-08-16 (LoopPersist finalize CRC slice)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **FinalizeWorkspace slice** — native shipped. `CurrentSetCompletion` grains CRC of `runtime.bundle.bin` at 256 bytes (`continueEpochFileBodyCrc`). Plan: [`persist_finalize_workspace_slice_bugfix.md`](../Plans/persist_finalize_workspace_slice_bugfix.md). Device gate: PLAYING `persist_save` must not stay at 70–118 ms. Do **not** start 6.3.
+**Now:** **LoopPersist finalize slice** — `stepFinalizeDeferredLoopSlotTemp` grains loop-temp CRC at 256 bytes. Plan: [`persist_loop_slot_finalize_slice_bugfix.md`](../Plans/persist_loop_slot_finalize_slice_bugfix.md). Workspace CRC already sliced (`48bd36f`). Device gate: post-overdub-stop `persist_save` must not stay at 72–83 ms from LoopPersist last-slice→`done`. `idle_maint` visual-cache is separate. Do **not** start 6.3.
 
 **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) `match=1` `pmatch=1`. STOPPED `midi_gap` **72 ms** at LCR complete is a different sample (`6a,nat` 30 ms + `loop_rem,idle_maint` 58 ms); after that, max **13.5 ms**.
 
