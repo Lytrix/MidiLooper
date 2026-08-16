@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Device PASS — helper owner is `midi_led_lookup`. Gather rem **landed, not scored**.  
+**Status:** Device PASS — gather owner is `gatherCommittedEventsWithCapture`.  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
@@ -281,11 +281,29 @@ First cluster: `BAR,6920,9` @ 28.103 s → 301 ms silence → `midi_led_lookup` 
 
 `prepareLedNoteLookup` is the named owner. When `visualCacheDirty` and committed passes exist it calls `loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_)`. Do not time `hasNoteInSixteenthStep`. Do not re-arm drain.
 
-## Gather rem (landed, not scored)
+## Gather rem — device [`113804`](../../captures/session_20260816_113804.log) PASS
+
+Seven pairs. `midi_led_analyze` and `midi_led_bars` never remitted.
+
+| CAP | `midi_led_gather` | `midi_led_lookup` | lookup − gather |
+|-----|------------------:|------------------:|----------------:|
+| 16.763 s | **229492** | 229514 | 22 µs |
+| 20.702 s | **228567** | 228590 | 23 µs |
+| 24.664 s | **232506** | 232531 | 25 µs |
+| 28.656 s | **227466** | 227490 | 24 µs |
+| 34.623 s | **237343** | 237365 | 22 µs |
+| 38.668 s | **224519** | 224542 | 23 µs |
+| 42.653 s | **224672** | 224695 | 23 µs |
+
+`midi_led_gather` is **99.99%** of `midi_led_lookup`. The 22–25 µs leftover is `ledNoteLookupEvents_.clear()` and the dirty-flag set. `gatherCommittedEventsWithCapture` is the named owner.
+
+Do not split `gatherCommittedEvents` / `mergeCaptureStoreIntoMaterializedEvents` until asked. Do not re-arm drain.
+
+## Gather rem (landed, scored)
 
 Same undo window. Same 50 ms one-shot. Span `midi_led_gather` wraps only the dirty-path `gatherCommittedEventsWithCapture` inside `prepareLedNoteLookup`. Helper id 3 on `recordMidiLedHelperRem` (`PROGMEM`).
 
-Device gate: same cluster as [`113310`](../../captures/session_20260816_113310.log). Score against `midi_led_lookup` 255–403 ms. If gather is ~that, that is the owner. If it is not, stop and re-read. Do not split `gatherCommittedEvents` / merge. Do not re-arm drain.
+Device gate: same cluster as [`113310`](../../captures/session_20260816_113310.log). Scored: [`113804`](../../captures/session_20260816_113804.log).
 
 ## Helper rem (landed, scored)
 

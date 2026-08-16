@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (gather rem landed, not scored)
+Last updated: 2026-08-16 (gather rem PASS: gatherCommittedEventsWithCapture)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (gather rem landed, not scored)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Post-undo PLAYING prefix **measurement** — [`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md). Device PASS [`113310`](../../captures/session_20260816_113310.log): `midi_led_lookup` is **96–99.5%** of `midi_led_phase`. Gather rem **landed** (`midi_led_gather` on dirty-path `gatherCommittedEventsWithCapture`). Do **not** re-arm drain. Do **not** start 6.3. Do **not** time `hasNoteInSixteenthStep`.
+**Now:** Post-undo PLAYING prefix **measurement** — [`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md). Device PASS [`113804`](../../captures/session_20260816_113804.log): `midi_led_gather` (`gatherCommittedEventsWithCapture`) is **99.99%** of `midi_led_lookup`. Do **not** re-arm drain. Do **not** start 6.3. Do **not** split gather/merge until asked.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 
