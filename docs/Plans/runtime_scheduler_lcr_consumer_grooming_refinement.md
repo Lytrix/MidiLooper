@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 4c STOPPED idle always slices
+**Status:** Active — Slice 4c device PASS [`142548`](../../captures/session_20260816_142548.log)
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -486,7 +486,7 @@ YES
 
 **Native:** `test_short_loop_idle_slice_cleans_without_full_rebuild` — 4-bar stale → one 4-bar slice → clean, note kept.
 
-**Device:** STOPPED short-loop after undo/stop must not emit `VCACHE,full` (boot seed/load may still).
+**Device PASS [`142548`](../../captures/session_20260816_142548.log)** — 4-bar loop. Zero `VCACHE,full` (boot load used `slice_clean`, not `full`). Seven STOPPED undos: stale then `slice_clean` 152→151→133→133→129→122→119→89. After empty overdub stop @ 29.268 s: stale 89 → `slice_clean` 90. Later stops: 90→109, 109→111. PLAYING/OVERDUB `clockrate` 47–48.
 
 ## Pre-implementation review (Slice 4c)
 
