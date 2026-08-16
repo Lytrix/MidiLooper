@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-16 (prefix child rem landed)
+Last updated: 2026-08-16 (midi_led grandchild rem landed)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-16 (prefix child rem landed)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** Post-undo PLAYING prefix measurement ([`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md)) — child rem landed; score against [`110747`](../captures/session_20260816_110747.log) 279–313 ms hole. Overdub-stop drain shipped ([`post_overdub_playing_midi_drain_bugfix.md`](../Plans/post_overdub_playing_midi_drain_bugfix.md)). **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize **reverted** (`baa03e1`). **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Not all of LCR live.
+**Active work:** Post-undo PLAYING prefix measurement ([`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md)) — grandchild rem landed; score `midi_led_phase` / `midi_led_tick` / `midi_led_select` against [`111436`](../captures/session_20260816_111436.log). Overdub-stop drain shipped ([`post_overdub_playing_midi_drain_bugfix.md`](../Plans/post_overdub_playing_midi_drain_bugfix.md)). **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize **reverted** (`baa03e1`). **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 

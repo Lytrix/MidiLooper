@@ -96,6 +96,8 @@ SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);
+/** Emit loopRemainder when duration is at least kLoopRemainderOneShotUs. */
+SC_MEM_ATTR void recordLoopRemainderSpan(const char* span, uint32_t durationUs);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,

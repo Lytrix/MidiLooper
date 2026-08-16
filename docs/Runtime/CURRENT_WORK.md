@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (prefix child rem landed)
+Last updated: 2026-08-16 (midi_led grandchild rem landed)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (prefix child rem landed)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Post-undo PLAYING prefix **measurement** — [`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md). Device PASS [`110747`](../../captures/session_20260816_110747.log): `loop_prefix` **279–313 ms**. Child rem **landed** (BAR→LED spans). Do **not** re-arm drain. Do **not** start 6.3. Score child rem against the 279–313 ms hole.
+**Now:** Post-undo PLAYING prefix **measurement** — [`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md). Device PASS [`111436`](../../captures/session_20260816_111436.log): `midi_leds` is **99.8%** of `loop_prefix`. Grandchild rem **landed** (`midi_led_phase` / `midi_led_tick` / `midi_led_select`). Do **not** re-arm drain. Do **not** start 6.3.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 
