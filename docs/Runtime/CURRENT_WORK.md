@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer B pinned: deselect drops move)
+Last updated: 2026-08-16 (NOTE_EDIT Layer B: replay ID mismatch pinned)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer B pinned: deselect drops move)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** Layer B **pinned** — deselect after move+pitch emits `NoteRange`+`Pitch`, then `commitEditAction` reloads from replay that still has the old tick; exit bake `saved=1`. Next: native replay of the 23.402 rows. Remaining A (unused copies / clone) stays parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
+**Now:** Layer B native replay **pinned** — `applyNoteEditPassSequence` moves when store `NoteId` is 280 and leaves `M24@888` when it is not. Device is the mismatch case. Next: why commit targets 280 when capture has no NoteOn 280 at that home. Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 

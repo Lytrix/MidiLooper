@@ -91,6 +91,20 @@ static void appendFixtureNotePair(LoopEventStore& store, uint32_t onTick, uint32
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(offTick, channel, pitch, 0)));
 }
 
+RecordPass makeRecordPassWithIdentifiedNote(PassId id, uint32_t start, uint32_t end, uint8_t pitch,
+                                           NoteId noteId, uint8_t channel = 5) {
+  resetNoteIdCounter();
+  LoopEventStore store;
+  appendFixtureNotePair(store, start, end, channel, pitch, noteId);
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = CapturePassState::Active;
+  pass.committedChunkIds = std::move(committedChunkIds);
+  return pass;
+}
+
 RecordPass makeEditRecordFixtureRecordPass(PassId id) {
   resetNoteIdCounter();
   LoopEventStore store;
@@ -454,6 +468,71 @@ void test_second_move_row_on_same_note_wins_over_earlier_span_210945() {
     }
   }
   TEST_ASSERT_TRUE(foundMover);
+}
+
+// session_20260816_145518 @23.402: deselect saved NoteRange 312-504 + Pitch 45 targeting
+// noteId 280. Replay still had M24 888-1032. Pin apply when the store NoteId matches.
+void test_145518_note_range_pitch_replay_moves_when_store_id_matches() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kMoverId = 280;
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 888, 1032, 24, kMoverId);
+
+  pushEditPassRows(passes, 1,
+                   {makeNoteRangeRow(kMoverId, 888, 1032, 312, 504),
+                    makePitchRow(kMoverId, 312, 504, 45)});
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+
+  bool foundMoved = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == 24 && note.startTick == 888);
+    if (note.noteId == kMoverId) {
+      foundMoved = true;
+      TEST_ASSERT_EQUAL_UINT8(45, note.note);
+      TEST_ASSERT_EQUAL_UINT32(312u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(504u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMoved);
+}
+
+// Same rows targeting 280 when the capture note at 888 is a different NoteId. Replay must
+// leave M24 888-1032 — the 145518 take_only / replay_flat match.
+void test_145518_note_range_pitch_replay_leaves_home_when_store_id_differs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kStoreId = 24;
+  constexpr NoteId kRowTargetId = 280;
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 888, 1032, 24, kStoreId);
+
+  pushEditPassRows(passes, 1,
+                   {makeNoteRangeRow(kRowTargetId, 888, 1032, 312, 504),
+                    makePitchRow(kRowTargetId, 312, 504, 45)});
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+
+  bool foundHome = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == 45 && note.startTick == 312);
+    if (note.noteId == kStoreId) {
+      foundHome = true;
+      TEST_ASSERT_EQUAL_UINT8(24, note.note);
+      TEST_ASSERT_EQUAL_UINT32(888u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1032u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundHome);
 }
 
 MidiEvent noteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
@@ -1125,6 +1204,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_203140);
   RUN_TEST(test_length_row_after_earlier_move_row_on_same_note_seals_210821);
   RUN_TEST(test_second_move_row_on_same_note_wins_over_earlier_span_210945);
+  RUN_TEST(test_145518_note_range_pitch_replay_moves_when_store_id_matches);
+  RUN_TEST(test_145518_note_range_pitch_replay_leaves_home_when_store_id_differs);
   RUN_TEST(test_nested_same_pitch_outer_apply_helpers_use_lifo_off);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
