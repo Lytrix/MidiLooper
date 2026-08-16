@@ -194,6 +194,7 @@ struct Loop {
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
   /// D2: merge hold-window display notes into the session source view for overlap lookup.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch);
+  /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }

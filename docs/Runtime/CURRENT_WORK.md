@@ -2,23 +2,26 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (overdub overlap hold RC2 — wrap source view)
+Last updated: 2026-08-17 (overdub overlap hold RC3 — wrap commit keeps source view)
 
 ---
 
 ## Now implementing
 
-### Overdub overlap hold — same-start collection (RC1) + wrap source view (RC2)
+### Overdub overlap hold — same-start collection (RC1) + wrap source view (RC2/RC3)
 
 **Plan:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
 **RC1 evidence:** [`233323`](../../captures/session_20260816_233323.log) — empty hold sets; stacked 60@528.  
-**RC2 evidence:** [`235407`](../../captures/session_20260816_235407.log) — `looked_up=2` `empty_sets=0`; same-start exact works; DNTE still has 60@64 length **176 and 224** plus 60@224 length **16**.
+**RC2 evidence:** [`235407`](../../captures/session_20260816_235407.log) — `looked_up=2` `empty_sets=0`; same-start exact works; DNTE still has 60@64 length **176 and 224** plus 60@224 length **16**.  
+**RC3 evidence:** [`000417`](../../captures/session_20260817_000417.log) — RC2 was a no-op on device: `lcr,6c` every wrap; stop `overlap_hold` all zeros; DNTE still 60@64 **176 and 224** plus 60@296 **96 and 120**.
 
 **RC1:** snapshot occupancy at S is `[start, end)` (`linearStart <= S < linearEnd`). Device: same-start exact Hides.
 
 **RC2:** wrap `beginCapture` keeps the session source view. `applyPendingNoteChangesToOverdubSourceView` merges this wrap's Add/Shorten/Hide before seal so wrap-2 can inner-Shorten or same-start-longer-Hide wrap-1 notes. Do not re-establish after `invalidateCaches`. Gate 3 empty-set skip unchanged. No LCR on MIDI.
 
-**Native PASS** `test_pending_note_change` (19/19) including wrap-keep inner + same-start-longer. Device gate open.
+**RC3:** `commitPendingCapturePass` must not clear the source view while `hasOverdubSession()` is true. `closeOverdubSession` / `discardCapture` clear it. Otherwise apply is a no-op and wrap `beginCapture` re-establishes from a dirty cache (LCR reconstruct pairs the shorter Add with a later off — looks lengthened, still duplicated).
+
+**Native PASS** `test_pending_note_change` including wrap-commit same-start-longer Hide. Device gate open.
 
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 
