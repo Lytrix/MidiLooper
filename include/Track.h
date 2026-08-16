@@ -111,6 +111,10 @@ public:
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
+  /// Arm gated PLAYING MIDI polls after overdub→PLAYING. Not all PLAYING.
+  void armPlayingMidiDrainAfterOverdubStop();
+  bool playingMidiDrainAfterOverdubStopActive() const;
+  void notePlayingMidiDrainAfterOverdubStopIdle();
   /// DEC-038 038.1: seal completed pairs at S, publish, beginCapture, stay OVERDUBBING.
   void commitOverdubWrapAtSessionStart();
   void maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
@@ -362,6 +366,8 @@ private:
   volatile uint32_t jamTick;  // Position within jam region (0 to jamLength-1)
   bool jamPlaybackActive;     // True = track uses jamTick for playback
   bool alignLoopOriginOnNextStop;
+  bool playingMidiDrainAfterOverdubStop_ = false;
+  bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredRecordRevtsPending = false;
   bool deferredRecordRevtChunkScan = false;
