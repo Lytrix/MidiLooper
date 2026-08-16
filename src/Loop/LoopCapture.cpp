@@ -857,7 +857,13 @@ bool Loop::commitPendingCapturePass() {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   capturePreview.clear();
-  clearOverdubSourceView();
+  // Wrap and stop commit keep the session source view. Clearing here makes
+  // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
+  // re-establishes from a dirty cache (000417 lcr,6c every wrap).
+  // closeOverdubSession / discardCapture clear the view.
+  if (!hasOverdubSession()) {
+    clearOverdubSourceView();
+  }
 
   return true;
 }

@@ -339,6 +339,19 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
   TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 }
 
 void test_extract_open_note_ons_leaves_completed_pairs() {

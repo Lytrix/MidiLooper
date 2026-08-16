@@ -1,9 +1,9 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1 native+device (same-start exact); RC2 native PASS; device gate open  
-**Date:** 2026-08-16  
+**Status:** Active — RC1 native+device (same-start exact); RC2 native PASS; RC3 native (wrap commit keeps view); device gate open  
+**Date:** 2026-08-17  
 **Kind:** bugfix  
-**Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2)  
+**Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3)  
 **Parent:** [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md)  
 **Does not start:** LCR `resolveState` on MIDI; Gate 3 empty-set fallback scan
 
@@ -112,6 +112,46 @@ Before overdub, undo left `slice_clean notes=1`. Five wrap commits (1152 / 1920 
 - `test_wrap_keeps_source_view_same_start_longer_hides_prior_add` — wrap-2 64–288 Hides wrap-1 Add 64–240.
 
 Device: 1-bar inner (start after existing start, end before existing end) Shortens the outer. Same-start longer Hides the shorter. NOTE_EDIT does not show stacked 60@64 rows.
+
+---
+
+## RC3 — wrap commit must not clear the session source view
+
+**Evidence:** [`000417`](../../captures/session_20260817_000417.log)
+
+RC2 `beginCapture` skip and `applyPendingNoteChangesToOverdubSourceView` never ran on device.
+
+`commitOverdubWrapAtSessionStart` order:
+
+1. `commitCapturePass` → `commitPendingCapturePass` → `clearOverdubSourceView()`
+2. `applyPendingNoteChangesToOverdubSourceView` — no-op (`!overdubSourceViewEstablished_`)
+3. `beginCapture(Overdub)` — view is gone, so it re-establishes after `invalidateCaches` and resets `overlapHoldTotals_`
+
+[`000417`](../../captures/session_20260817_000417.log): `lcr,6c` at begin_capture **and** at every wrap (notes 1 → 5 → 7). Stop `overlap_hold` all zeros. Stop DNTE still stacked **60@64 length 176 and 224** plus **60@296 length 96 and 120**. Flatten has five 60 Ons at 64 and offs at 240 / 288 — reconstruct pairs the shorter Add with a later off, so the earlier note looks lengthened and still duplicated.
+
+Native RC2 tests called apply + `beginCapture` without `commitPendingCapturePass` in between, so they passed.
+
+### Architecture checkpoint (RC3)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `Loop` still owns the source view. |
+| **State transition change?** | NO. Overdub session already spans wraps. View leave-point is session close / discard, which is the RC2 contract. |
+
+### Fix
+
+- `commitPendingCapturePass` clears the source view only when `hasOverdubSession()` is false (record commit / no session).
+- `closeOverdubSession` calls `clearOverdubSourceView`.
+- `discardCapture` still clears.
+
+### Tests
+
+- `test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add` — production wrap order: accumulate → seal → `commitPendingCapturePass` → apply → `beginCapture` → same-start-longer Hide.
+- `test_discard_and_commit_clear_source_view` — commit without session still clears; commit with session keeps the view; `closeOverdubSession` clears.
+
+Device: same 1-bar inner / same-start-longer as RC2. Stop `overlap_hold` `note_offs > 0` and no stacked 60@64 176+224.
+
+Not this RC: `finalizePendingNotes` still does not accumulate. Last-held 60@296–392 vs 296–416 (96 and 120) stays a later slice if it remains after wrap commit keeps the view.
 
 ---
 
