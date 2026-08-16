@@ -967,6 +967,26 @@ void LoopEventStore::rebuildBarIndex() const {
   barIndexDirty_ = false;
 }
 
+LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+    const uint16_t* chunkIds, size_t count, NoteIdSupplier supplier, void* ctx) {
+  if (!pool_ || chunkIds == nullptr || count == 0 || supplier == nullptr) {
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    const uint16_t id = chunkIds[i];
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id]) {
+      continue;
+    }
+    EventChunk& ec = pool_[id];
+    for (uint16_t j = 0; j < ec.used; ++j) {
+      MidiEvent& evt = ec.events[j];
+      if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+        evt.noteId = supplier(ctx);
+      }
+    }
+  }
+}
+
 #if defined(PIO_UNIT_TEST_NATIVE) && !defined(PERSISTENCE_QUEUE_CPP_INCLUDED)
 #define PERSISTENCE_QUEUE_CPP_INCLUDED
 #include "PersistenceQueue.cpp"

@@ -1,6 +1,6 @@
 # Boot title LoadLoopJob idle-slice crash
 
-**Status:** Active — sub-step pinned to LCR/gather; quiet capture env for next gate  
+**Status:** FROZEN — RAM1 margin fix shipped; boot PASS [`161855`](../../captures/session_20260816_161855.log)  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_152405.log`](../../captures/session_20260816_152405.log) — title boot reset after first focus `LoadLoopJob`  
@@ -112,3 +112,11 @@ Device gate: one title boot on the vcache-slice env. Last breadcrumb before `#CA
 - Patching `applyNoteEditPass` / apply-owned erase
 - GitHub Bug until a sub-step is pinned
 - `LoadLoopJob` paint / PLAYING drain work
+
+---
+
+## Root cause (closed)
+
+`cccbeaa` (Layer B chunk assign) dropped RAM1 locals **6496 → 2400** (~4 KB DTCM). Symptom was stack overflow (`CrashReport` `0x200176A0`) during boot scan or idle `rebuildVisualCacheIdleSlice` — not missing slice breadcrumbs or capture noise. Layer B assign does **not** run on title boot.
+
+**Fix:** move cold globals to `DMAMEM` (`loadLoopJob_`, `sDeviceGateSession`, control-surface managers, …) and implement `assignMissingNoteIdsToNoteOnsInChunkIds` in `LoopEventStore.cpp` (no header template on chunk lists). Build reports **8608** locals free; device [`161855`](../../captures/session_20260816_161855.log): `scan,done` → `LoadLoopJob done 0/5` → `VCACHE,slice_clean` notes 114 → `BOOT,usb_host,begin`.

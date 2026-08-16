@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (boot title idle-slice crash after LoadLoopJob 0/5)
+Last updated: 2026-08-16 (boot title RAM1 fix shipped — Layer B device gate)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (boot title idle-slice crash after LoadLoopJob 0/5)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** Boot title crash after `LoadLoopJob done 0/5` — [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md). [`153545`](../../captures/session_20260816_153545.log) last breadcrumb: `slice_enter` (LCR/gather). Next capture: `teensy41-capture-serial-vcache-slice` (slice breadcrumbs on; LED/MO/DIAG off). Layer B device gate **blocked**. Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
+**Now:** Boot title crash **closed** — RAM1 DMAMEM reclaim [`161855`](../../captures/session_20260816_161855.log); see [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md). **Layer B device gate** — run 145518 gesture (NoteRange+Pitch deselect replay + exit bake). Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 

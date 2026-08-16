@@ -16,7 +16,11 @@
 
 Encoder gpioEncoder(Buttons::ENCODER_PIN_A, Buttons::ENCODER_PIN_B);
 
+#if defined(__IMXRT1062__)
+DMAMEM GpioButtonManager gpioButtonManager;
+#else
 GpioButtonManager gpioButtonManager;
+#endif
 
 GpioButtonManager::GpioButtonManager() {
     buttons.clear();
