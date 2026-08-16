@@ -63,9 +63,11 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
     if (linearStart >= linearEnd) {
       continue;
     }
-    const bool direct = linearStart < holdStart && holdStart < linearEnd;
+    // Half-open [start, end) at S. Same-start grid overdubs must be included;
+    // playback collect cannot recover them (pendingNotes still empty at that tick).
+    const bool direct = linearStart <= holdStart && holdStart < linearEnd;
     const bool shifted =
-        linearStart < holdStart + loopLength && holdStart + loopLength < linearEnd;
+        linearStart <= holdStart + loopLength && holdStart + loopLength < linearEnd;
     if (direct || shifted) {
       (void)pending.overlapNoteIds.insert(note.noteId);
     }

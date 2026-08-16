@@ -136,7 +136,7 @@ Do **not** flatten the loop and call `findLinearNoteSpanForNoteId` per id (that 
 
 ## Hold-candidate collection (wired)
 
-`Track::noteOn` snapshots same-pitch notes already sounding at S from `overdubSourceViewNotes_` into `PendingNote.overlapNoteIds`. `Track::sendMidiEvent` inserts committed playback note-on `NoteId`s of the same pitch while the hold is open. Playback offs do not erase. Native: `test_overlap_hold_candidates`.
+`Track::noteOn` snapshots same-pitch notes occupying S (`[start, end)`, including start==S) from `overdubSourceViewNotes_` into `PendingNote.overlapNoteIds`. `Track::sendMidiEvent` inserts committed playback note-on `NoteId`s of the same pitch while the hold is open. Playback offs do not erase. Native: `test_overlap_hold_candidates`. Same-start collection: [`overdub_overlap_hold_same_start_bugfix.md`](overdub_overlap_hold_same_start_bugfix.md).
 
 Collection bodies stay in `TRACK_COLD_MEM` (`TrackCaptureInput.cpp`). Do not include `OverlapHoldCandidates.h` / `OverlapNoteIdObservation.h` from firmware TUs — those header inlines land in ITCM and cross a 32 KB RAM1 block. `silenceTrackMidiOutput`, `silenceSlotMidiOutput`, and `sendAllNotesOff` are also `TRACK_COLD_MEM` so the overdubbing call site in `sendMidiEvent` fits the last ITCM block. After withdrawn-path cleanup, `teensy41-capture-serial` RAM1 is `code:424444` padding:1540 free:7968 — same 32 KB ITCM block.
 
