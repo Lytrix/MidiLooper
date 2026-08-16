@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer B: assign on committed capture chunks; device gate)
+Last updated: 2026-08-16 (boot title idle-slice crash after LoadLoopJob 0/5)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer B: assign on committed capture chunks;
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** Layer B firmware landed — `openNoteEditSession` assigns missing ids on committed capture chunks before rematerialize (`assignMissingNoteIdsInCommittedCapturePasses`). Session-store assign stays as a no-op safety net. Native `test_145518_assign_on_committed_passes_makes_rematerialize_find_id`. **Device gate:** same 145518 gesture — after deselect, replay must move the home; exit bake must keep the move. Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
+**Now:** Boot title crash after `LoadLoopJob done 0/5` — [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md); evidence [`152405`](../../captures/session_20260816_152405.log). Owner: first STOPPED `rebuildVisualCacheIdleSlice` after focus commit. Breadcrumbs landed (`slice_enter` / `slice_gathered` / `slice_recon`). Device gate: last breadcrumb before reconnect. Layer B device gate **blocked** until title boot reaches `usb_host,begin`. Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 

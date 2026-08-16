@@ -99,7 +99,7 @@ Not bake (replay already wrong). Not the reload call itself (same `materializeTo
 
 Native: `test_145518_assign_on_committed_passes_makes_rematerialize_find_id` — after assign-on-chunks, rematerialize finds 280 and NoteRange+Pitch **moves** the home. The session-only test stays as the hazard pin.
 
-**Device gate:** same 145518 gesture. After first deselect, replay must not still show M24@888 when canonical saved NoteRange+Pitch. Exit bake must keep the move, not pitch-only `saved=1`. Look for `assignMissingNoteIdsInCommittedCapturePasses: assigned`.
+**Device gate:** blocked — title boot resets after `LoadLoopJob done 0/5` before `usb_host,begin` ([`152405`](../../captures/session_20260816_152405.log)). Owner is idle `rebuildVisualCacheIdleSlice`, not Layer B assign. See [`boot_title_loadloopjob_idle_slice_investigation.md`](boot_title_loadloopjob_idle_slice_investigation.md). After first deselect, replay must not still show M24@888 when canonical saved NoteRange+Pitch. Exit bake must keep the move, not pitch-only `saved=1`. Look for `assignMissingNoteIdsInCommittedCapturePasses: assigned`.
 
 Sibling index (open, different fixture): RC8 in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) (`M65@369` / `M65@1050` in [`212810`](../../captures/session_20260806_212810.log)). Do not merge fixtures. Do not start RC8 pairing until 143144 shows the committed **new** span absent from post-exit `visualCache.notes`.
 

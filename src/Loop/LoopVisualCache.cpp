@@ -225,6 +225,11 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     return;
   }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  // Immediate Serial — ring SC_VCACHE is not flushed if this turn faults (152405).
+  Serial.print(F("VCACHE,slice_enter,bars,"));
+  Serial.println(totalBars);
+#endif
   SessionMidiEventVec flat;
   ResolutionCostCounters windowCounters;
   const bool usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
@@ -234,10 +239,16 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     gatherCommittedEventsInWindow(flat, windowStart, windowLength);
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  Serial.print(F("VCACHE,slice_gathered,ev,"));
+  Serial.println(static_cast<unsigned>(flat.size()));
   const uint32_t reconstructStartUs = micros();
 #endif
   NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  Serial.print(F("VCACHE,slice_recon,notes,"));
+  Serial.println(static_cast<unsigned>(sliceNotes.size()));
+#endif
   // Prepared LCR already resolved this window (linear overdub matches append).
   // Wrap-held overdub heads/tails are omitted by merged reconstruct when a later
   // same-pitch body exists (021218). Do not use wrap pairing on the LCR flat
