@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (post-overdub PLAYING MIDI drain)
+Last updated: 2026-08-16 (post-undo loop_prefix rem landed)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (post-overdub PLAYING MIDI drain)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Post-overdub PLAYING MIDI drain **device PASS** [`034702`](../../captures/session_20260816_034702.log). Follow-up: drop stop-path architecture snapshot (RING flood) and use track-channel silence instead of all-channel CC123 on overdub→PLAYING. Do not grain visual cache or LoopPersist CRC unless starting that slice. Do **not** start 6.3.
+**Now:** Post-undo PLAYING prefix **measurement** — [`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md). `DIAG,loop_rem,loop_prefix` **landed**. Attribution **OPEN** until device scores that rem against the CAP hole. [`105516`](../../captures/session_20260816_105516.log) is the recapture without the rem. Do **not** re-arm drain. Do **not** start 6.3. Do **not** time prefix children until `loop_prefix` is ~330 ms.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 

@@ -703,6 +703,7 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
             StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
+            track.armLoopPrefixMeasureAfterUndo();
             break;
         }
         logger.log(CAT_TRACK, LOG_WARNING,

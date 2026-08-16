@@ -115,6 +115,10 @@ public:
   void armPlayingMidiDrainAfterOverdubStop();
   bool playingMidiDrainAfterOverdubStopActive() const;
   void notePlayingMidiDrainAfterOverdubStopIdle();
+  /// Measurement only: time loop() prefix after undo→PLAYING. Does not arm MIDI drain.
+  void armLoopPrefixMeasureAfterUndo();
+  bool loopPrefixMeasureAfterUndoActive() const;
+  void noteLoopPrefixMeasureAfterUndo();
   /// DEC-038 038.1: seal completed pairs at S, publish, beginCapture, stay OVERDUBBING.
   void commitOverdubWrapAtSessionStart();
   void maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
@@ -368,6 +372,8 @@ private:
   bool alignLoopOriginOnNextStop;
   bool playingMidiDrainAfterOverdubStop_ = false;
   bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+  bool loopPrefixMeasureAfterUndo_ = false;
+  bool loopPrefixMeasureAfterUndoNoted_ = false;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredRecordRevtsPending = false;
   bool deferredRecordRevtChunkScan = false;

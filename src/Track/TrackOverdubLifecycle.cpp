@@ -83,6 +83,8 @@ void Track::startOverdubbing(uint32_t currentTick) {
   }
   playingMidiDrainAfterOverdubStop_ = false;
   playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+  loopPrefixMeasureAfterUndo_ = false;
+  loopPrefixMeasureAfterUndoNoted_ = false;
   const uint32_t telemetryStartUs = micros();
   const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
   SC_ODUB_STAGE("enter", 0, heapAtEnter, heapAtEnter, "ok");
@@ -212,6 +214,28 @@ void Track::notePlayingMidiDrainAfterOverdubStopIdle() {
   playingMidiDrainAfterOverdubStopIdleNoted_ = true;
   if (!isPlaying() || !loopsAllocated() || !getActiveLoop().visualCacheDirty) {
     playingMidiDrainAfterOverdubStop_ = false;
+  }
+}
+
+TRACK_COLD_MEM void Track::armLoopPrefixMeasureAfterUndo() {
+  loopPrefixMeasureAfterUndo_ = true;
+  loopPrefixMeasureAfterUndoNoted_ = false;
+}
+
+TRACK_COLD_MEM bool Track::loopPrefixMeasureAfterUndoActive() const {
+  if (!loopPrefixMeasureAfterUndo_ || !isPlaying() || !loopsAllocated()) {
+    return false;
+  }
+  return getActiveLoop().visualCacheDirty || !loopPrefixMeasureAfterUndoNoted_;
+}
+
+TRACK_COLD_MEM void Track::noteLoopPrefixMeasureAfterUndo() {
+  if (!loopPrefixMeasureAfterUndo_) {
+    return;
+  }
+  loopPrefixMeasureAfterUndoNoted_ = true;
+  if (!isPlaying() || !loopsAllocated() || !getActiveLoop().visualCacheDirty) {
+    loopPrefixMeasureAfterUndo_ = false;
   }
 }
 
