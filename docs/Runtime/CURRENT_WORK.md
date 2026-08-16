@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (Slice 4 overdub-stop viewport no full rebuild)
+Last updated: 2026-08-16 (Slice 4 device PASS 141425)
 
 ---
 
