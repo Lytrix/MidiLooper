@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <map>
 #include <set>
+#include <vector>
 #include "Utils/NoteEditMem.h"
 
 namespace {
@@ -65,8 +66,30 @@ NOTE_EDIT_MEM NoteId noteIdAtOnTick(const std::vector<MidiEvent, Alloc>& events,
 template <typename Alloc>
 NOTE_EDIT_MEM bool allLaterOnsInTailOrNone(const std::vector<MidiEvent, Alloc>& midiEvents,
                              uint32_t headOffTick, uint8_t pitch, uint8_t channel,
-                             uint32_t loopLength) {
+                             uint32_t loopLength, bool overdubPassWrapPairing) {
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+    if (overdubPassWrapPairing) {
+        std::vector<uint32_t> openOnTicks;
+        for (const MidiEvent& evt : midiEvents) {
+            if (evt.channel != channel || evt.data.noteData.note != pitch) {
+                continue;
+            }
+            if (evt.tick >= loopLength) {
+                continue;
+            }
+            if (evt.isNoteOn()) {
+                openOnTicks.push_back(evt.tick);
+            } else if (evt.isNoteOff() && !openOnTicks.empty()) {
+                openOnTicks.pop_back();
+            }
+        }
+        for (const uint32_t onTick : openOnTicks) {
+            if (onTick > headOffTick && onTick < tailStart) {
+                return false;
+            }
+        }
+        return true;
+    }
     for (const MidiEvent& evt : midiEvents) {
         if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
             continue;
@@ -106,8 +129,10 @@ NOTE_EDIT_MEM bool isPreferredWrapTailForHeadOffInSpanBuild(uint32_t tailOnTick,
 template <typename Alloc>
 NOTE_EDIT_MEM bool tryPairWrappedTailOn(const std::vector<MidiEvent, Alloc>& midiEvents,
                           uint32_t noteOffTick, uint8_t pitch, uint8_t channel, uint32_t loopLength,
-                          uint32_t& outOnTick, uint8_t& outVelocity) {
-    if (!allLaterOnsInTailOrNone(midiEvents, noteOffTick, pitch, channel, loopLength)) {
+                          uint32_t& outOnTick, uint8_t& outVelocity,
+                          bool overdubPassWrapPairing = false) {
+    if (!allLaterOnsInTailOrNone(midiEvents, noteOffTick, pitch, channel, loopLength,
+                                overdubPassWrapPairing)) {
         return false;
     }
     uint32_t bestOnTick = 0;
@@ -463,7 +488,8 @@ template <typename EventAlloc>
 NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
     const std::vector<MidiEvent, EventAlloc>& midiEvents, uint32_t loopLength, bool verboseLog,
     uint32_t beginEvent, uint32_t endEventExclusive, CanonicalNoteSpanVec& spans,
-    ActiveNoteStackMap& activeNoteStacks, WrappedTailOnTickSet& wrappedTailOnTicks) {
+    ActiveNoteStackMap& activeNoteStacks, WrappedTailOnTickSet& wrappedTailOnTicks,
+    bool overdubPassWrapPairing = false) {
     if (loopLength == 0) {
         return;
     }
@@ -516,7 +542,7 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                 uint32_t wrappedOnTick = 0;
                 uint8_t wrappedVelocity = 0;
                 if (tryPairWrappedTailOn(midiEvents, noteOffTick, pitch, evt.channel, loopLength,
-                                         wrappedOnTick, wrappedVelocity)) {
+                                         wrappedOnTick, wrappedVelocity, overdubPassWrapPairing)) {
                     const NoteId wrapId =
                         noteIdAtOnTick(midiEvents, evt.channel, pitch, wrappedOnTick);
                     pushCanonicalSpan(spans, wrapId, pitch, wrappedVelocity,
@@ -611,7 +637,7 @@ NOTE_EDIT_MEM void finishCanonicalSpansOpenNotes(uint32_t loopLength, CanonicalN
 template <typename EventAlloc>
 NOTE_EDIT_MEM CanonicalNoteSpanVec buildCanonicalSpansFromMidi(
     const std::vector<MidiEvent, EventAlloc>& midiEvents, uint32_t loopLength, bool verboseLog,
-    bool finishOpenNotes) {
+    bool finishOpenNotes, bool overdubPassWrapPairing = false) {
     CanonicalNoteSpanVec spans;
     ActiveNoteStackMap activeNoteStacks;
     WrappedTailOnTickSet wrappedTailOnTicks;
@@ -625,7 +651,8 @@ NOTE_EDIT_MEM CanonicalNoteSpanVec buildCanonicalSpansFromMidi(
     }
     appendCanonicalSpansFromMidiRange(midiEvents, loopLength, verboseLog, 0,
                                       static_cast<uint32_t>(midiEvents.size()), spans,
-                                      activeNoteStacks, wrappedTailOnTicks);
+                                      activeNoteStacks, wrappedTailOnTicks,
+                                      overdubPassWrapPairing);
     if (finishOpenNotes) {
         finishCanonicalSpansOpenNotes(loopLength, spans, activeNoteStacks);
     }
@@ -690,12 +717,13 @@ NOTE_EDIT_MEM NoteVector displayNotesFromCanonicalSpanVec(const CanonicalNoteSpa
 
 template <typename NoteVector, typename EventAlloc>
 NoteVector reconstructNotesImpl(const std::vector<MidiEvent, EventAlloc>& midiEvents,
-                                uint32_t loopLength, bool verboseLog, bool finishOpenNotes = true) {
+                                uint32_t loopLength, bool verboseLog, bool finishOpenNotes = true,
+                                bool overdubPassWrapPairing = false) {
     if (loopLength == 0) {
         return NoteVector{};
     }
-    const CanonicalNoteSpanVec spans =
-        buildCanonicalSpansFromMidi(midiEvents, loopLength, verboseLog, finishOpenNotes);
+    const CanonicalNoteSpanVec spans = buildCanonicalSpansFromMidi(
+        midiEvents, loopLength, verboseLog, finishOpenNotes, overdubPassWrapPairing);
     return displayNotesFromCanonicalSpanVec<NoteVector>(spans, loopLength, verboseLog);
 }
 
@@ -775,22 +803,26 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
 }
 
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
-    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog, bool finishOpenNotes) {
-    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog, finishOpenNotes);
+    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog, bool finishOpenNotes,
+    bool overdubPassWrapPairing) {
+    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog, finishOpenNotes,
+                                                overdubPassWrapPairing);
 }
 
 template <typename Alloc>
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
     const std::vector<MidiEvent, Alloc>& midiEvents, uint32_t loopLength, bool verboseLog,
-    bool finishOpenNotes) {
-    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog, finishOpenNotes);
+    bool finishOpenNotes, bool overdubPassWrapPairing) {
+    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog, finishOpenNotes,
+                                                overdubPassWrapPairing);
 }
 
 template NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
-    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog, bool finishOpenNotes);
+    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog, bool finishOpenNotes,
+    bool overdubPassWrapPairing);
 template NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(
     const SessionMidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog,
-    bool finishOpenNotes);
+    bool finishOpenNotes, bool overdubPassWrapPairing);
 
 NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec& midiEvents,
                                                                uint32_t loopLength) {

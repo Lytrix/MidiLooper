@@ -146,13 +146,18 @@ std::vector<DisplayNote> reconstructNotes(const SessionMidiEventVec& midiEvents,
 
 /// `finishOpenNotes` (default true) runs `finishCanonicalSpansOpenNotes` so unpaired
 /// NoteOns become loop-end tails. Committed wrap/display passes false (6E.5).
+/// `overdubPassWrapPairing` (default false) keeps a wrap-held pair when later
+/// same-pitch body notes are already completed. Use only on one overdub pass's
+/// events — never on record or merged record+overdub (015618).
 DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
-                                       bool verboseLog = true, bool finishOpenNotes = true);
+                                       bool verboseLog = true, bool finishOpenNotes = true,
+                                       bool overdubPassWrapPairing = false);
 
 template <typename Alloc>
 DisplayNoteVec reconstructDisplayNotes(const std::vector<MidiEvent, Alloc>& midiEvents,
                                        uint32_t loopLength, bool verboseLog = true,
-                                       bool finishOpenNotes = true);
+                                       bool finishOpenNotes = true,
+                                       bool overdubPassWrapPairing = false);
 
 /// Persistent stacks + spans for `buildCanonicalSpansFromMidi`. Not a new musical type.
 struct CanonicalSpanBuild {

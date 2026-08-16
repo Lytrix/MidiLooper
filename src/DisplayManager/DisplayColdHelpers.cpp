@@ -9,6 +9,7 @@
 #include "StorageManager.h"
 #include "Track.h"
 #include "TrackManager.h"
+#include <algorithm>
 #include <Arduino.h>
 
 #if defined(__IMXRT1062__)
@@ -55,6 +56,14 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
     } else {
         outNotes.clear();
     }
+    mutLoop.appendOverdubPassDisplayNotes(outNotes);
+    const uint32_t windowEnd = windowStart + windowLength;
+    outNotes.erase(std::remove_if(outNotes.begin(), outNotes.end(),
+                                  [windowStart, windowEnd](const NoteUtils::DisplayNote& note) {
+                                    return note.endTick < windowStart ||
+                                           note.startTick >= windowEnd;
+                                  }),
+                   outNotes.end());
 }
 
 uint8_t resolveTrackIndex(const Track& track) {

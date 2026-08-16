@@ -237,6 +237,43 @@ void test_reconstruct_wrap_with_synthetic_loop_end_before_head_off() {
     assert_has_note(notes, 48, 0, 55, 90);
 }
 
+void test_reconstruct_merged_pairing_blocks_completed_body_on() {
+    constexpr uint32_t loopLength = 3072;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(2976, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(96, 4, 12, 0));
+    ev.push_back(MidiEvent::NoteOn(288, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(384, 4, 12, 0));
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false);
+    for (const auto& n : notes) {
+        TEST_ASSERT_FALSE(n.note == 12 && n.startTick == 2976u && n.endTick == loopLength - 1);
+        TEST_ASSERT_FALSE(n.note == 12 && n.startTick == 0u && n.endTick == 96u);
+    }
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 288, 384,
+                    100);
+}
+
+void test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body() {
+    constexpr uint32_t loopLength = 3072;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(2976, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(96, 4, 12, 0));
+    ev.push_back(MidiEvent::NoteOn(288, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(384, 4, 12, 0));
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, true);
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 2976,
+                    loopLength - 1, 100);
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 0, 96, 100);
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 288, 384,
+                    100);
+}
+
 void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -448,6 +485,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_note_off_at_wrap_zero_is_boundary_end);
     RUN_TEST(test_is_wrap_held_open_note_accepts_head_off_at_zero);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
+    RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
+    RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);

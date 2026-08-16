@@ -189,6 +189,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         const NoteUtils::DisplayNoteVec reconstructed =
             NoteUtils::reconstructDisplayNotes(liveDisplayEventBuffer, loopLength, false);
         liveDisplayNotes.assign(reconstructed.begin(), reconstructed.end());
+        mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
     } else {
         liveDisplayNotes.clear();
     }

@@ -3,8 +3,10 @@
 
 #include "Loop.h"
 
+#include "EditApply.h"
 #include "Globals.h"
 #include "LoopContentResolution.h"
+#include "LoopEventStore.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
@@ -64,6 +66,17 @@ void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
     return;
   }
   cache.dirtyBars.assign(totalBars, 1);
+}
+
+bool displayNoteGeometryPresent(const NoteUtils::DisplayNoteVec& notes,
+                                const NoteUtils::DisplayNote& candidate) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == candidate.note && note.startTick == candidate.startTick &&
+        note.endTick == candidate.endTick) {
+      return true;
+    }
+  }
+  return false;
 }
 
 uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
@@ -223,8 +236,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructStartUs = micros();
 #endif
-  const NoteUtils::DisplayNoteVec sliceNotes =
+  NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  appendOverdubPassDisplayNotes(sliceNotes);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   if (usedPrepared) {
@@ -269,13 +283,43 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 }
 
+LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  EditPassVec activeEdits;
+  for (const EditPass& editPass : passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeEdits.push_back(editPass);
+    }
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+      continue;
+    }
+    SessionMidiEventVec overdubEvents;
+    LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, overdubEvents);
+    if (!activeEdits.empty()) {
+      applyNoteEditPassSequence(overdubEvents, activeEdits, loopLengthTicks);
+    }
+    const NoteUtils::DisplayNoteVec overdubNotes = NoteUtils::reconstructDisplayNotes(
+        overdubEvents, loopLengthTicks, false, false, true);
+    for (const NoteUtils::DisplayNote& note : overdubNotes) {
+      if (!displayNoteGeometryPresent(notes, note)) {
+        notes.push_back(note);
+      }
+    }
+  }
+}
+
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
   gatherCommittedEvents(flat);
   materializedEventCount_ = flat.size();
-  const NoteUtils::DisplayNoteVec rebuiltNotes =
+  NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  appendOverdubPassDisplayNotes(rebuiltNotes);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
