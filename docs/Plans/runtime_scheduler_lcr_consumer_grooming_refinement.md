@@ -343,7 +343,7 @@ Slice 2 skip **exercised** in [`134955`](../../captures/session_20260816_134955.
 
 Interior slices: `ev=176` `notes=86` `tot≈9.6 ms`. One wrap-edge slice: `notes=500` `tot=39.6 ms`. PLAYING `clockrate` 47–48.
 
-**Not PASS.** First prepared rebuild is 17 notes below the append-path 1493 on the same 64-bar loop with no capture between [`134701`](../../captures/session_20260816_134701.log) and that rebuild. Overdub stops then add notes (1469 → 1556). Do not start the `ensureVisualCacheBuilt` audit from this count.
+1493 → 1476 is **not** Slice 2 note-loss. [`134955`](../../captures/session_20260816_134955.log) `MIDI: Undo` kind=1 `Overdub undone @ tick 1344` at 396.299 s, then the 6a burst and `slice_clean` 1476 at 397.221 s. Second undo at 397.747 s (`@ tick 1904`) then `stale` 1476 → `slice_clean` 1469. Overdub stops later add notes (1469 → 1556). Need a prepared rebuild with no undo between the append-path baseline and `slice_clean` before calling PASS or FAIL.
 
 STOPPED 64-bar count 1639 → 1456 in [`134329`](../../captures/session_20260816_134329.log) (8.765–30.994 s) is on the gather+append path (before LCR idx). Not a Slice 2 result. [`133314`](../../captures/session_20260816_133314.log) same loop started at 1643 and stayed ~1630+ until overdub.
 
