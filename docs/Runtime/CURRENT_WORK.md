@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (midi_gap owner: FinalizeWorkspace persist step)
+Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (midi_gap owner: FinalizeWorkspace persist step)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **MIDI Input Gap** — PLAYING/OVERDUBBING `midi_gap` > 50 ms is **not LCR**. [`192334`](../../captures/session_20260815_192334.log) windows at 54.7 / 64.7 / 69.8 s: `midi_gap` **135 / 119 / 138 ms**, `persist_save` **77 / 118 / 109 ms**, `clockrate` **47**. Same windows: `FinalizeWorkspace` `PERS,result` **72 / 70 / 72 ms**. Slice budget while transport is active is **300 µs** (`maxPersistenceMicrosActive`); one finalize/SD step overruns it. [`022147`](../../captures/session_20260816_022147.log) repeats: `midi_gap` 87 ms with `persist_save` 75 ms; 96 ms with 96 ms. Do **not** start 6.3. Do **not** patch persist in this LCR change without a separate persist slice.
+**Now:** **FinalizeWorkspace slice** — native shipped. `CurrentSetCompletion` grains CRC of `runtime.bundle.bin` at 256 bytes (`continueEpochFileBodyCrc`). Plan: [`persist_finalize_workspace_slice_bugfix.md`](../Plans/persist_finalize_workspace_slice_bugfix.md). Device gate: PLAYING `persist_save` must not stay at 70–118 ms. Do **not** start 6.3.
 
 **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) `match=1` `pmatch=1`. STOPPED `midi_gap` **72 ms** at LCR complete is a different sample (`6a,nat` 30 ms + `loop_rem,idle_maint` 58 ms); after that, max **13.5 ms**.
 

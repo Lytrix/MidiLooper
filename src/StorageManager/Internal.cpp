@@ -89,6 +89,9 @@ STORAGE_PERSIST_MEM void emitDeferredSaveSliceTelemetry(const char* phase) {
         snprintf(outcome, sizeof(outcome), "%s:%s:t%u:%s", phase, deferredSaveStageName(job.stage),
                  static_cast<unsigned>(job.footerTrackCursor),
                  deferredFooterWriteStageName(job.footerWriteStage));
+    } else if (job.stage == DeferredSaveStage::CurrentSetCompletion) {
+        snprintf(outcome, sizeof(outcome), "%s:%s:%s", phase, deferredSaveStageName(job.stage),
+                 deferredCompletionWriteStageName(job.completionWriteStage));
     } else {
         snprintf(outcome, sizeof(outcome), "%s:%s:t%u:s%u:p%u", phase,
                  deferredSaveStageName(job.stage), static_cast<unsigned>(job.trackCursor),

@@ -29,6 +29,8 @@ inline constexpr const char* kCurrentTempDir = PersistenceLayout::kCurrentTempDi
 constexpr size_t kSlotSummaryCount = Config::MAX_LOOPS_PER_TRACK;
 constexpr size_t kWorkspaceMetaByteSize = 77;
 constexpr size_t kEpochFileHeaderByteSize = 10;
+/// One SD read grain for deferred `runtime.bundle.bin` body CRC (FinalizeWorkspace).
+constexpr size_t kEpochFileCrcSliceBytes = 256;
 
 constexpr size_t kSlotSummaryByteSize = 6;
 
@@ -90,12 +92,17 @@ uint32_t syncLastCommittedEpochAfterRevisionCommitComplete(uint32_t currentWorks
 bool isEpochHeaderChecksumValid(const EpochFileHeader& header);
 bool epochHeaderMatchesEpoch(const EpochFileHeader& header, uint32_t expectedEpoch);
 uint32_t computeEpochFileBodyChecksum(const uint8_t* body, size_t bodySize);
+
+/// Resume body CRC with the same `crc32Continue` as `finalizeEpochFileHeaderCrc`.
+bool continueEpochFileBodyCrc(const uint8_t* body, size_t bodySize, uint32_t& crc, size_t& offset,
+                              size_t maxBytes, bool& done);
 bool validateEpochFileBytes(const uint8_t* fileBytes, size_t fileSize, uint32_t expectedEpoch,
                             bool expectEpochHeader);
 
 #if defined(ARDUINO)
 bool writeEpochHeaderPlaceholder(File& file, uint32_t epoch);
 bool finalizeEpochFileHeaderCrc(const char* path);
+bool writeEpochFileHeaderCrc(const char* path, uint32_t bodyCrc);
 bool fileStartsWithEpochHeader(File& file);
 bool writeWorkspaceMetaFile(const WorkspaceMetaRecord& record);
 bool readWorkspaceMetaFile(WorkspaceMetaRecord& record);
