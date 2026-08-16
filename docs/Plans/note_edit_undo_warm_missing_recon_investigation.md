@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2 native fixture + B2a firmware landed** (device gate open). **A0 filled**; **A intermediates device PASS** ([`165506`](../../captures/session_20260816_165506.log), [`165853`](../../captures/session_20260816_165853.log)). E: undo/redo fired in 165853; store-flat identity **not** proven. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **Layer C1 phase firmware** (device gate open). E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -256,11 +256,28 @@ committedBase == reconstructDisplayNotes(materialize(active edit passes))
 
 **Hard don'ts (unchanged):** do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase for B2; do not reuse overdub session pass-id stack for NOTE_EDIT E:; do not start grooming 4e / Slice 5 hydrate in this slice.
 
-### Layer C — pitch/move `GEOM_APPLY,resolve` (not first)
+### Layer C — pitch/move `GEOM_APPLY,resolve` (C0 filled; phase firmware next)
 
-[`143144`](../../captures/session_20260816_143144.log): **209** samples, min 44 ms, median **84 ms**, max 162 ms, 199 over 50 ms.
+A no longer hides this. Outer `GEOM_APPLY,resolve` wraps **all** of `applyNoteEditChange`, including `finalReconstructAndSelect` (`selectableDisplayNotesAtEditSelect` → projection). `GEOM_APPLY,focus` is microseconds; `GEOM_APPLY,undo` is microseconds except first-kind warm.
 
-Unification device [`192007`](../../captures/session_20260813_192007.log) was 16.8–52.3 ms on a 60-note loop. Owner is `NoteGeometryResolver::resolve` / `applyNoteEditChange`. Do not start Layer C while Layer A still runs 128–451 ms on the same fader session.
+| Capture | resolve n | min / med / max | notes | empty-overlap pitch |
+|---------|-----------|-----------------|-------|---------------------|
+| [`192007`](../../captures/session_20260813_192007.log) | 161 | 17 / **31** / 52 ms | ~56 baseline | mixed |
+| [`143144`](../../captures/session_20260816_143144.log) | 209 | 44 / **84** / 162 ms | 110 | `candidates=0` still applies |
+| [`170942`](../../captures/session_20260816_170942.log) | 59 | 49 / **99** / 131 ms | 110 | `candidates=0` still applies |
+| [`171228`](../../captures/session_20260816_171228.log) | 53 | 55 / **137** / 258 ms | 109 | move `candidates=13`; pitch `candidates=0` |
+| [`171822`](../../captures/session_20260816_171822.log) | 12 | 49 / **57** / 60 ms | 110 | all `candidates=0` |
+
+`VCACHE,full` count is far below resolve count (3 vs 59 on 170942). Empty-overlap pitch still pays tens of ms on the 110-note loop.
+
+**C1 (this slice):** `GEOM_APPLY,phase,setup|analyze|apply|reconstruct` — same pattern as A `UNDO_WARM,phase`. Do **not** skip setup/analyze/reconstruct until a capture names the unused phase. Do not change `NoteGeometryResolver` algorithm.
+
+```text
+#CAP,<us>,GEOM_APPLY,phase,setup,<elapsedUs>,<scopeSize>,<baselineMapSize>
+#CAP,<us>,GEOM_APPLY,phase,analyze,<elapsedUs>,<actionCount>,<interactionCount>
+#CAP,<us>,GEOM_APPLY,phase,apply,<elapsedUs>,<actionCount>,0
+#CAP,<us>,GEOM_APPLY,phase,reconstruct,<elapsedUs>,0,0
+```
 
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
@@ -478,9 +495,57 @@ Extend `ensureNoteEditDisplayProjectionCachesBuilt` only. Gate is `loop.visualCa
 
 145518 / 161855 gesture; compare B2a latency vs B2b only if materialization cost fails.
 
-### 6. Layer C — after A
+**Device [`170942`](../../captures/session_20260816_170942.log) — B1 move commit PASS; B2 mover deselect not proven:**
 
-`NoteGeometryResolver::resolve` — not while undo-warm dominates fader session.
+Open `@ 16.725` `visual_notes=111` `session_events=229`. NOTE_EDIT `DISP` `110,111,110,110`.
+
+| Time | What the log shows |
+|------|--------------------|
+| 26.434 | Pitch-only commit `targetNoteId=256`. `replay_flat` **M24 888–1032** (home stays — no NoteRange) |
+| 26.656 | `DNTE,24,888` after that pitch commit |
+| 31.721–32.694 | Live move `24@840` → `744` → **`792`** |
+| 34.7–39.3 | Pitch at 792; last live `DNTE,42,792` `@ 39.331` |
+| 40.866 | Canonical **Delete 256 + NoteRange 280 792–936 + Pitch 42**. `replay_flat` / `session_store` / `loop_materialized` **M24@888 missing**. `take_only` still 888 |
+| 41.118 | `VCACHE,full` notes **110** (was 111) |
+| 41.532 / 42.091 | Select-away `DNTE` **12@480** / **86@480** — no mover `DNTE` after this commit |
+| 44.081 | Exit bake `saved=3`. LOOP_EDIT `DISP` `110,110,110,110` |
+
+No `DNTE,24,888` after the NoteRange commit. Also no post-commit `DNTE` of the mover at 792. Do **not** call B2 PASS from this file — the gate needs a deselect/reselect that paints the mover. Do not start B2b from the post-commit `VCACHE,full` (STOPPED 4-bar `getVisualNotesForSlot` on reselect / `ensureCurrentStateVisibleRowsFromVisualCache`).
+
+**Device [`171228`](../../captures/session_20260816_171228.log) — B2 mover reselect PASS:**
+
+Open `@ 161.805` `visual_notes=110` `session_events=231`. Live `60@832` → move/pitch to **`43@736`**.
+
+| Time | What the log shows |
+|------|--------------------|
+| 175.022 | NoteRange **550** `736–912` + Pitch 43. `replay_flat` still **M60 832–1008** (home leftover / lookup — not the B2 paint question) |
+| 176.859–177.865 | Select-away `82@672` / `71@704` / `81@720` |
+| 178.279 / 179.090 / 180.329 | Reselect mover **`DNTE,43,736`** — committed span, not `60@832` |
+| 183.851 | Uncommitted `43@256`; `@ 184.801` canonical=0 (no new pass) |
+| 188.077 | Paint back **`43@736`** |
+| 194.246 | Second NoteRange 550 `256–432`. `M43@736 missing` |
+| 222.696 | Third NoteRange 526 `688–864`. `replay_flat` **M60@832 missing**; `take_only` still 832 |
+| 231.402 | **E:** undo. `DNTE,60,832` |
+| 232.969 | **E:** redo. `DNTE,86,480` |
+| 235.807 | Exit bake `saved=2`. LOOP_EDIT `DISP` `114,114,114,114` |
+
+B2 gate (reselect mover after first deselect): **PASS**. Do not reopen B1 from the first-commit `M60@832` leftover. Do not start B2b / Layer C/D from this file. E: undo/redo ran; no store-flat before/after — A identity still open.
+
+**Device [`171822`](../../captures/session_20260816_171822.log) — E: routing works; no DNTE/store-flat:**
+
+Open `@ 528.009` `visual_notes=114` `session_events=235`. Pitch 526 `688–864` `58→47`. Commit `@ 537.354` Pitch 47; `replay_flat` `M60@688 missing`.
+
+| Time | What the log shows |
+|------|--------------------|
+| 542.587 | **`MIDI: EditSession undo`**. Selection `19 -> 26` |
+| 544.371 | Second double-press: **`No session undo available (entries=0)`** |
+| 545.998 | **`MIDI: EditSession redo`**. Selection `26 -> 19` |
+
+This file has **no** `DNTE` lines and no session-store flatten around undo/redo. Routing and selection restore are in the log. Geometry identity is not. Do not close A on store-flat from this capture.
+
+### 6. Layer C — C1 phase firmware (device gate next)
+
+Pitch/move on the 110-note loop after A intermediates. Capture must show `GEOM_APPLY,phase,setup|analyze|apply|reconstruct` under the existing `resolve` total. Then pin which phase to cut.
 
 ### 7. Layer D — after B2
 
@@ -513,6 +578,13 @@ Reuse: **YES** — extend `LoopEventStore::assignMissingNoteIdsToNoteOns` + `Loo
 2. State transition change? **NO** — same select / deselect / commit / exit. Paint reads `materialize(active)` when `visualCacheDirty`.
 
 Reuse: **YES** — `LoopPasses::materializeToEventVector` + `NoteUtils::reconstructDisplayNotes`. **NO** — overdub session undo stack; **NO** — `reloadNoteEditSessionStoreFromPasses` extraction; **NO** — `getVisualNotesForSlot` while dirty.
+
+### Layer C firmware checkpoint (C1 — instrumentation)
+
+1. Ownership change? **NO** — same `NoteGeometryResolver::resolve` / `finalReconstructAndSelect`. CAP phases only.
+2. State transition change? **NO** — same pitch/move/length apply contract.
+
+Reuse: **YES** — existing `GEOM_APPLY` CAP helpers. **NO** — skip setup/analyze/reconstruct without a phase pin.
 
 ## Pre-implementation review (B2a)
 

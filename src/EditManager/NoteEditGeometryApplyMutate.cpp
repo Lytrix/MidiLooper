@@ -13,6 +13,9 @@
 #include "NoteEditGeometryApply.h"
 #include "NoteEditGeometryApplyInternal.h"
 #include "NoteGeometryResolver.h"
+#if defined(SESSION_CAPTURE)
+#include "EditManagerInternal.h"
+#endif
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
 #include <algorithm>
@@ -260,9 +263,15 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         const uint32_t bracketDisplay =
             noteEditGeometryApplyBracketDisplayTickFromStorage(noteStart, loopStartTick, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
+#if defined(SESSION_CAPTURE)
+        const uint32_t reconstructStartUs = micros();
+#endif
         finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                                   focus.last.endTick, loopLength, bracketDisplay,
                                   refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+        logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed via NoteGeometryResolver: %d -> %d",
                    currentNoteValue, newNoteValue);
         return true;
@@ -374,14 +383,26 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
             displayManager.requestNoteInfoRefresh(track);
 #endif
         } else {
+#if defined(SESSION_CAPTURE)
+            const uint32_t reconstructStartUs = micros();
+#endif
             finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                                       focus.last.endTick, loopLength, bracketDisplay,
                                       refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+            logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
         }
         return true;
     }
+#if defined(SESSION_CAPTURE)
+    const uint32_t reconstructStartUs = micros();
+#endif
     finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                               focus.last.endTick, loopLength, noteStart, refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
     return true;
 }
 
@@ -492,9 +513,15 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
     }
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t reconstructStartUs = micros();
+#endif
     finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart,
                               displayEndForBracket, loopLength, bracketDisplay,
                               refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
     return movedNoteEvents;
 }
 
@@ -587,8 +614,14 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
   }
   manager.setSelectedTick(lengthBracketDisplay);
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t reconstructStartUs = micros();
+#endif
     finalReconstructAndSelect(track, midiEvents, manager, notePitch, newStart, newEnd, loopLength,
                               lengthBracketDisplay, refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
 
     NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
 }
