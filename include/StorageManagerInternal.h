@@ -119,6 +119,7 @@ const char* deferredSlotWriteStageName(DeferredSlotWriteStage stage);
 const char* deferredFooterWriteStageName(DeferredFooterWriteStage stage);
 const char* deferredCompletionWriteStageName(DeferredCompletionWriteStage stage);
 const char* deferredLoopWriteStageName(DeferredLoopWriteStage stage);
+const char* deferredLoopFinalizeStageName(DeferredLoopFinalizeStage stage);
 const char* deferredUndoWriteStageName(DeferredUndoWriteStage stage);
 void emitDeferredSaveSliceTelemetry(const char* phase);
 
@@ -134,11 +135,14 @@ void maybeAdmitDeferredWorkspaceFooter();
 uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state);
 
 void resetDeferredLoopWriteState();
+void resetDeferredLoopFinalizeState();
+void beginDeferredLoopSlotFinalize();
+bool deferredLoopSlotFinalizeInProgress();
 void resetDeferredUndoWriteState();
 bool writeCurrentSetMetaHeaderToOpenFile(File& file);
 bool finalizeDeferredMetaTempFile();
 bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex);
-bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex);
+bool stepFinalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex, bool& finalizeDoneOut);
 bool stepDeferredLoopPersist(File& file, const Loop& loop, bool& loopDone,
                              LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None);
 bool stepDeferredEmptyLoopPersist(File& file, LoopId loopId, bool& loopDone);
