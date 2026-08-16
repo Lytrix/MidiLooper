@@ -171,6 +171,11 @@ class LoopEventStore {
   template <typename AssignNoteIdFn>
   void assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId);
 
+  /// Same in-place fill on a committed (or capture) chunk-id list. Chunk ids unchanged.
+  template <typename ChunkIdList, typename AssignNoteIdFn>
+  static void assignMissingNoteIdsToNoteOns(const ChunkIdList& chunkIds,
+                                            AssignNoteIdFn assignNoteId);
+
  private:
   static bool hasHeadroomForCommittedChunkIdList(size_t count);
   static bool tryAssignCommittedChunkIds(CommittedChunkIdList& dest, const uint16_t* ids,
@@ -206,10 +211,11 @@ class LoopEventStore {
   void markBarIndexDirty();
 };
 
-template <typename AssignNoteIdFn>
-void LoopEventStore::assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId) {
-  for (uint16_t id : chunkIds_) {
-    EventChunk& ec = chunk(id);
+template <typename ChunkIdList, typename AssignNoteIdFn>
+void LoopEventStore::assignMissingNoteIdsToNoteOns(const ChunkIdList& chunkIds,
+                                                   AssignNoteIdFn assignNoteId) {
+  for (uint16_t id : chunkIds) {
+    EventChunk& ec = pool_[id];
     for (uint16_t i = 0; i < ec.used; ++i) {
       MidiEvent& evt = ec.events[i];
       if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
@@ -217,4 +223,9 @@ void LoopEventStore::assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId) 
       }
     }
   }
+}
+
+template <typename AssignNoteIdFn>
+void LoopEventStore::assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId) {
+  assignMissingNoteIdsToNoteOns(chunkIds_, assignNoteId);
 }

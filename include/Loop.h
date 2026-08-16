@@ -309,6 +309,9 @@ struct Loop {
   void assignMissingNoteIds(SessionMidiEventVec& events);
   void assignMissingNoteIds(MidiEventVec& events);
   void assignMissingNoteIdsInStore(LoopEventStore& store);
+  /// Fill kInvalidNoteId on active record/overdub committed chunks. Same allocateNoteId
+  /// as InStore. In-place; chunk ids unchanged so playback refs stay valid.
+  void assignMissingNoteIdsInCommittedCapturePasses();
 
   void clearCaptureOnNewPass();
 
