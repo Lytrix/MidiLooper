@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 4 device PASS [`141425`](../../captures/session_20260816_141425.log)  
+**Status:** Active — Slice 4b committed paint no longer calls `ensureVisualCacheBuilt`
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -202,7 +202,7 @@ LCR stays an idle consumer. Do not pull it onto MIDI or display input. Grain (2�
 | STOPPED idle | not MIDI-sensitive | may stay synchronous if a capture proves it harmless |
 | `EditManager::openNoteEditSession` | user action | own hydrate contract — see NOTE_EDIT below |
 | `DisplayManager::refreshViewportAfterOverdubStop` | MIDI-sensitive | Slice 4: keep/adopt only; idle fills |
-| Display committed resolve | paint path | stale/empty rather than gather |
+| Display committed resolve | paint path | Slice 4b: no `ensureVisualCacheBuilt`; last-resort gather remains |
 | `TrackManager::prewarmSelectedDisplayVisualCache` | not PLAYING, short loop | audit; do not assume idle-slice is enough |
 | `Loop::seedRecordPassFromStore` | capture setup | separate contract |
 
@@ -426,7 +426,7 @@ YES
 
 **Native:** `test_short_loop_stale_keeps_notes_for_overdub_stop_handoff` — 4-bar `markDisplayCachesStale` keeps notes.
 
-**Device:** short-loop overdub stop must not emit `VCACHE,full` between `ODUB,stop,enter` and `ODUB,stop,display`. [`140841`](../../captures/session_20260816_140841.log) was 64-bar (already skipped).
+**Device PASS [`141425`](../../captures/session_20260816_141425.log)** — 4-bar loop (`first,0,last,3,total,4`). The only `VCACHE,full` is boot @ 6.967 s (89 notes). Three overdub stops: `overlap_restore=0`; cache stays dirty with the prior count then idle `slice_clean` rises (89→119, 119→120, 139→141). No `VCACHE,full` on stop. Where `ODUB,stop,display` is present, enter→display is 8.8 ms. PLAYING `clockrate` 47. `RING,overflow` dropped some stop CAP lines; INFO still has `Overdub stopped` at 28.028 / 36.413 / 49.825 s. [`140841`](../../captures/session_20260816_140841.log) was 64-bar (already skipped).
 
 ## Pre-implementation review (Slice 4)
 
@@ -446,9 +446,40 @@ None.
 ### Proceed?
 YES
 
+### Slice 4b — committed display resolve must not call `ensureVisualCacheBuilt`
+
+**After Slice 4.** One caller only.
+
+`DisplayManager::resolveDisplayNotesCommitted` called `ensureVisualCacheBuilt` on short loops when `deferVisualRebuild` was false (STOPPED, other-slot overdub) and again on empty dirty cache under undo/save pressure ([`234050`](../../captures/session_20260717_234050.log)). Overdub focus paint is `resolveDisplayNotesLiveCapture` — not this function. PLAYING already deferred.
+
+**Firmware:** remove both `ensureVisualCacheBuilt` calls. Paint uses authoritative cache, incremental/handoff, or the existing last-resort gather (later slice). Idle owns rebuild.
+
+**Native:** `test_committed_display_visual_cache_authoritative` — dirty + notes is not authoritative.
+
+**Device:** short-loop PLAYING/OVERDUB paint must not emit `VCACHE,full` from this path. STOPPED idle may still `ensure` (later caller).
+
+## Pre-implementation review (Slice 4b)
+
+### Ready
+- Owner is `DisplayManager::resolveDisplayNotesCommitted`.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Both ensure sites | Remove |
+| Last-resort gather | Leave |
+| NOTE_EDIT | Out of scope |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
 ### Later (not authorized)
 
-4b. Remaining `ensureVisualCacheBuilt` callers one at a time (`resolveDisplayNotesCommitted`, `getVisualNotesForSlot`, STOPPED idle, `prewarmSelectedDisplayVisualCache`). Do not globally delete.
+4c. Remaining `ensureVisualCacheBuilt` callers (`getVisualNotesForSlot`, STOPPED idle, `prewarmSelectedDisplayVisualCache`). Do not globally delete.
+4d. Display fallback gather in `resolveDisplayNotesCommitted` / `rebuildDisplayNotesInWindow`.
 5. NOTE_EDIT hydrate — own session design.
 6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
 
