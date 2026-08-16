@@ -2,6 +2,7 @@
 #include "Loop.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "TickPhase.h"
 
 MidiLedManager::MidiLedManager(MidiHandler& midiHandler) 
@@ -86,9 +87,31 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
 
     if (!hasInitialized || currentBar != lastUpdateBar || singleBarWrapped) {
         Loop& mutableLoop = const_cast<Loop&>(displayLoop);
+#if defined(SESSION_CAPTURE)
+        const bool measure = track.loopPrefixMeasureAfterUndoActive();
+        uint32_t childStartUs = 0;
+        if (measure) {
+            childStartUs = micros();
+        }
+#endif
         prepareLedNoteLookup(mutableLoop);
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 0, childStartUs);
+        if (measure) {
+            childStartUs = micros();
+        }
+#endif
         analyzeAndUpdateBar(mutableLoop, barStartTickDisplay);
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 1, childStartUs);
+        if (measure) {
+            childStartUs = micros();
+        }
+#endif
         updateBarLeds(mutableLoop, currentBar);
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 2, childStartUs);
+#endif
         
         lastUpdateBar = currentBar;
         hasInitialized = true;

@@ -306,6 +306,52 @@ void notePersistSave(uint32_t durationUs) {
   recordSample(state().persistSave, durationUs);
 }
 
+void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs) {
+#if defined(SESSION_CAPTURE)
+  if (!measure) {
+    return;
+  }
+  DebugSessionCapture::recordLoopRemainderSpan(span, micros() - startUs);
+#else
+  (void)measure;
+  (void)span;
+  (void)startUs;
+#endif
+}
+
+#if defined(__IMXRT1062__)
+#define RT_FLASHMEM_FN __attribute__((noinline, section(".flashmem")))
+#else
+#define RT_FLASHMEM_FN
+#endif
+
+RT_FLASHMEM_FN void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_t startUs) {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  // PROGMEM (.progmem) stays in flash. Ordinary string literals become .rodata
+  // and the Teensy 4 linker places all .rodata* in DTCM, which sits on the
+  // _VectorsRam 1 KB align edge (+4 KB RAM1).
+  const char* span = PSTR("midi_led_lookup");
+  if (helper == 1) {
+    span = PSTR("midi_led_analyze");
+  } else if (helper == 2) {
+    span = PSTR("midi_led_bars");
+  }
+  recordLoopRemainderIfMeasuring(measure, span, startUs);
+#elif defined(SESSION_CAPTURE)
+  const char* span = "midi_led_lookup";
+  if (helper == 1) {
+    span = "midi_led_analyze";
+  } else if (helper == 2) {
+    span = "midi_led_bars";
+  }
+  recordLoopRemainderIfMeasuring(measure, span, startUs);
+#else
+  (void)measure;
+  (void)helper;
+  (void)startUs;
+#endif
+}
+
 bool maybeEmit(uint32_t nowUs) {
   State& s = state();
   if (s.windowStartUs == 0) {
