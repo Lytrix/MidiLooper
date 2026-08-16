@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** **FinalizeWorkspace CRC slice** — native shipped; device `persist_save` during PLAYING open. **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Overlay track A parked.
+**Next (persistence/runtime):** **FinalizeWorkspace CRC slice** shipped (`48bd36f`). LoopPersist finalize **reverted** — boot FAIL [`032326`](../captures/session_20260816_032326.log). **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
+Last updated: 2026-08-16 (LoopPersist finalize reverted — boot loop)
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **FinalizeWorkspace slice** — native shipped; device `persist_save` gate open. [`192334`](../captures/session_20260815_192334.log) MIG was persist, not LCR. **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Not all of LCR live.
+**Active work:** **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize **reverted** (`baa03e1`) after boot hang [`032326`](../captures/session_20260816_032326.log). [`192334`](../captures/session_20260815_192334.log) MIG was persist, not LCR. **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log). **038.2 landed.** Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
