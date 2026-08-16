@@ -731,6 +731,195 @@ void test_stop_collects_session_wraps_then_close_clears_stack() {
   TEST_ASSERT_TRUE(companionsAfterClose.empty());
 }
 
+void prepareLcrFromLoop(Loop& loop) {
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+}
+
+void preparedWindowNotes(Loop& loop, NoteUtils::DisplayNoteVec& lcrOnly,
+                         NoteUtils::DisplayNoteVec& lcrPlusAppend) {
+  SessionMidiEventVec flat;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+      loop.passes.editPasses, loop.loopLengthTicks, 0, loop.loopLengthTicks, loop.playbackRevision,
+      flat, nullptr));
+  lcrOnly = NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+  lcrPlusAppend = lcrOnly;
+  loop.appendOverdubPassDisplayNotes(lcrPlusAppend);
+}
+
+bool sameDisplayGeometry(const NoteUtils::DisplayNoteVec& a, const NoteUtils::DisplayNoteVec& b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& note : a) {
+    bool found = false;
+    for (const NoteUtils::DisplayNote& other : b) {
+      if (other.note == note.note && other.startTick == note.startTick &&
+          other.endTick == note.endTick) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void seedLinearOverdubLoop(Loop& loop) {
+  seedRecordNote(loop, 10, 58, 60);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 400));
+}
+
+void seedWrapHeldOverdubLoop(Loop& loop) {
+  loop.loopLengthTicks = 3072;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 672, 4, 12, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(768, 4, 12, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2400, 4, 12, 100, 2));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2500, 4, 12, 0)));
+  loop.seedRecordPassFromStore(record);
+  loop.openOverdubSession(1152);
+  loop.beginCapture(CapturePhase::Overdub, 1152);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2976, 4, 12, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 4, 12, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(288, 4, 12, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(384, 4, 12, 0)));
+  SessionMidiEventVec held;
+  TEST_ASSERT_EQUAL(0u, loop.extractOpenCaptureNoteOns(held));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 1152));
+}
+
+void rebuildIdleVisualCache(Loop& loop) {
+  loop.markDisplayCachesStale();
+  uint8_t slices = 0;
+  while (loop.visualCacheDirty && slices < 16) {
+    loop.rebuildVisualCacheIdleSlice(4, 0);
+    ++slices;
+  }
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+}
+
+void test_prepared_linear_overdub_matches_lcr_plus_append() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLinearOverdubLoop(loop);
+  prepareLcrFromLoop(loop);
+  NoteUtils::DisplayNoteVec lcrOnly;
+  NoteUtils::DisplayNoteVec lcrPlusAppend;
+  preparedWindowNotes(loop, lcrOnly, lcrPlusAppend);
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrOnly, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrOnly, 72, 200));
+  TEST_ASSERT_TRUE(sameDisplayGeometry(lcrOnly, lcrPlusAppend));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_prepared_wrap_held_overdub_lcr_append_delta() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedWrapHeldOverdubLoop(loop);
+  prepareLcrFromLoop(loop);
+  NoteUtils::DisplayNoteVec lcrOnly;
+  NoteUtils::DisplayNoteVec lcrPlusAppend;
+  preparedWindowNotes(loop, lcrOnly, lcrPlusAppend);
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrPlusAppend, 12, 2976));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrPlusAppend, 12, 0));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrPlusAppend, 12, 288));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrPlusAppend, 12, 672));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrPlusAppend, 12, 2400));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrOnly, 12, 288));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrOnly, 12, 672));
+  TEST_ASSERT_TRUE(hasDisplayNote(lcrOnly, 12, 2400));
+  TEST_ASSERT_FALSE(sameDisplayGeometry(lcrOnly, lcrPlusAppend));
+  TEST_ASSERT_FALSE(hasDisplayNote(lcrOnly, 12, 2976));
+  TEST_ASSERT_FALSE(hasDisplayNote(lcrOnly, 12, 0));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_prepared_linear_matches_lcr_only() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLinearOverdubLoop(loop);
+  prepareLcrFromLoop(loop);
+  NoteUtils::DisplayNoteVec lcrOnly;
+  NoteUtils::DisplayNoteVec lcrPlusAppend;
+  preparedWindowNotes(loop, lcrOnly, lcrPlusAppend);
+  rebuildIdleVisualCache(loop);
+  TEST_ASSERT_TRUE(sameDisplayGeometry(loop.visualCache.notes, lcrOnly));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, 200));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_prepared_interior_keeps_mid_loop_overdub() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 16;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  loop.seedRecordPassFromStore(record);
+  const uint32_t midOn = Config::TICKS_PER_BAR * 8 + 20;
+  const uint32_t midOff = midOn + 80;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(midOn, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(midOff, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, midOff));
+  prepareLcrFromLoop(loop);
+  NoteUtils::DisplayNoteVec lcrOnly;
+  NoteUtils::DisplayNoteVec lcrPlusAppend;
+  preparedWindowNotes(loop, lcrOnly, lcrPlusAppend);
+  TEST_ASSERT_TRUE(sameDisplayGeometry(lcrOnly, lcrPlusAppend));
+  rebuildIdleVisualCache(loop);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, midOn));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_prepared_keeps_wrap_held() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedWrapHeldOverdubLoop(loop);
+  prepareLcrFromLoop(loop);
+  rebuildIdleVisualCache(loop);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 288));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 672));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2400));
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note == 12 && note.startTick == 672u) {
+      TEST_ASSERT_EQUAL(768u, note.endTick);
+    }
+    if (note.note == 12 && note.startTick == 2400u) {
+      TEST_ASSERT_EQUAL(2500u, note.endTick);
+    }
+    if (note.note == 12 && note.startTick == 2976u) {
+      TEST_ASSERT_EQUAL(3071u, note.endTick);
+    }
+    if (note.note == 12 && note.startTick == 0u) {
+      TEST_ASSERT_EQUAL(96u, note.endTick);
+    }
+  }
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_should_commit_overdub_wrap_after_leaving_start() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -769,5 +958,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);
   RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
+  RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
+  RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
+  RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);
+  RUN_TEST(test_idle_slice_prepared_interior_keeps_mid_loop_overdub);
+  RUN_TEST(test_idle_slice_prepared_keeps_wrap_held);
   return UNITY_END();
 }

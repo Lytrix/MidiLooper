@@ -238,7 +238,14 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #endif
   NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
-  appendOverdubPassDisplayNotes(sliceNotes);
+  // Prepared LCR already resolved this window (linear overdub matches append).
+  // Wrap-held overdub heads/tails are omitted by merged reconstruct when a later
+  // same-pitch body exists (021218). Do not use wrap pairing on the LCR flat
+  // (015618 stretches record). Fill that gap only on slices that keep bar 0 or
+  // the last bar. Unprepared gather still appends every slice.
+  if (!usedPrepared || startBar == 0 || endBar + 1 >= totalBars) {
+    appendOverdubPassDisplayNotes(sliceNotes);
+  }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   if (usedPrepared) {

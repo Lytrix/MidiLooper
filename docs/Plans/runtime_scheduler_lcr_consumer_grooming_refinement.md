@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 1 device PASS [`133314`](../../captures/session_20260816_133314.log); Slice 2 next  
+**Status:** Active — Slice 2 idle one-source (wrap-held edge append documented)  
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -175,13 +175,20 @@ Desired path:
 ```text
 rebuildVisualCacheIdleSlice
     ├── prepared LCR window? → resolve notes → visualCache
-    └── no → existing window gather
-
-appendOverdubPassDisplayNotes
-    └── not a second reconstruction of the same window
+    │     └── wrap-edge slice (bar 0 or last bar) may still append
+    └── no → existing window gather + append
 ```
 
-**Invariant (first behavioral slice):** for a prepared window, `rebuildVisualCacheIdleSlice` has exactly one content-resolution source. It must not resolve the window through LCR and then reconstruct it again by walking overdub passes.
+**Native delta (must document before skip):**
+
+| Fixture | LCR-only vs LCR+append |
+|---------|------------------------|
+| Linear overdub (record 60 + overdub 72) | Match |
+| Wrap-held + later same-pitch body ([`021218`](../../captures/session_20260816_021218.log) / `test_visual_cache_keeps_overdub_wrap_held_without_stretching_record`) | LCR-only omits `12@2976` and `12@0`. Append keeps them. Record spans stay 672–768 and 2400–2500 |
+
+Merged reconstruct cannot take `overdubPassWrapPairing` — that flag is one overdub pass only ([`015618`](../../captures/session_20260816_015618.log) stretched record). So a prepared interior slice uses LCR only. A prepared slice that keeps bar 0 or the last bar still calls `appendOverdubPassDisplayNotes` for that pairing gap. Unprepared gather still appends every slice.
+
+**Invariant (first behavioral slice):** for a prepared interior window, `rebuildVisualCacheIdleSlice` has exactly one content-resolution source. It must not walk overdub passes again for bars that cannot hold the wrap-held pairing gap.
 
 LCR stays an idle consumer. Do not pull it onto MIDI or display input. Grain (2–4 bars) is a later **B** bound, not this slice.
 
@@ -313,9 +320,32 @@ YES
 
 **After Slice 1.** [`114736`](../../captures/session_20260816_114736.log) still holds in [`133314`](../../captures/session_20260816_133314.log).
 
-When `tryResolvePreparedWindow` succeeds, `rebuildVisualCacheIdleSlice` must not call `appendOverdubPassDisplayNotes` as a second reconstruction of that window.
+When `tryResolvePreparedWindow` succeeds, `rebuildVisualCacheIdleSlice` must not call `appendOverdubPassDisplayNotes` as a second reconstruction of an **interior** window.
 
-Owner: `Loop::rebuildVisualCacheIdleSlice`. LCR remains idle-only. Native fixture: prepared window notes match today’s LCR+append result (or document the semantic delta before coding). Device: no `VCACHE` note-loss vs a same-loop capture that used the append path.
+Owner: `Loop::rebuildVisualCacheIdleSlice`. LCR remains idle-only.
+
+**Native (landed):** `test_prepared_linear_overdub_matches_lcr_plus_append` match. `test_prepared_wrap_held_overdub_lcr_append_delta` documents the wrap-held gap. Idle rebuild keeps wrap-held notes (`test_idle_slice_prepared_keeps_wrap_held`) and linear notes (`test_idle_slice_prepared_linear_matches_lcr_only`).
+
+Device: no `VCACHE` note-loss vs a same-loop capture that used the append path. Wrap-edge append stays until LCR pairing owns wrap-held overdub heads.
+
+## Pre-implementation review (Slice 2)
+
+### Ready
+- Owner is `Loop::rebuildVisualCacheIdleSlice`. Display `appendOverdubPassDisplayNotes` is out of scope.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Linear prepared window | Skip append |
+| Wrap-held delta | Documented — LCR-only drops tail/head; append stays on bar 0 / last bar |
+| Merged wrap pairing | Forbidden (`015618`) |
+| Unprepared gather | Still appends |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
 
 ### Later (not authorized)
 
