@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 2b unprepared interior append skip native landed; device gate open
+**Status:** Active — Slice 2c native (job 1: mark only occupied bars); 2b device PASS [`232423`](../../captures/session_20260816_232423.log)
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution); [`223548`](../../captures/session_20260816_223548.log) (Slice 1b pin)  
@@ -386,7 +386,19 @@ Owner: `Loop::rebuildVisualCacheIdleSlice`. No new name. No LCR on stop or paint
 
 **Native:** `test_idle_slice_unprepared_interior_keeps_mid_loop_overdub` — 16-bar loop, mid-loop overdub, no prepared window, idle rebuild keeps record + overdub. `test_idle_slice_unprepared_keeps_wrap_held` — wrap-edge append still restores ON@2976 / OFF@96.
 
-**Device:** dirty PLAYING after overdub stop must not emit `idle_append` rem on interior slices. Wrap-edge may still rem. `slice_clean` coverage stays `0–63`. No `VCACHE,full`. `clockrate` 47.
+**Device PASS [`232423`](../../captures/session_20260816_232423.log).** Boot past `scan,done`. No `VCACHE,full`. No `lcr,6a` (unprepared). `idle_append` rem **10** (was **36** in [`225626`](../../captures/session_20260816_225626.log)): 2 boot wrap-edge, 7 during the first stop + undo cluster, 1 wrap-edge on stop 2 (`dcnt=5`). Stops 3–7 are `stale_range` `dcnt` 4–7 → `slice_clean` 68–145 ms, notes rise, coverage `0–63`, **no** `idle_append` / `idle_maint` rem. PLAYING `clockrate` 47–48; `midi_gap` 24–32 ms. Stop 2 wrap-edge still rem (`idle_append` 65 ms / `idle_maint` 86 ms / `midi_gap` 86 ms). First cluster `clockrate` 0 and undo `VCACHE,stale` full rebuilds are not the 6B gate.
+
+### Slice 2c — mark only occupied bars (job 1)
+
+**After Slice 2b.** Next-bar notes on the same lane were dirty because `markBarNeighborhoodDirty` and `markTickSpanDirty` padded ±1 bar. Idle then `removeDisplayNotesOverlappingBars` for those bars and reconstructed them.
+
+`markAffectedDisplayCacheRanges` now marks only the event bar and the paired on–off span bars. `rebuildVisualCacheIdleSlice` then extends only through consecutive dirty bars (still capped at `maxBarsPerSlice`). Gather still uses `kPadBars = 1` so a note that actually spans the dirty bar is reconstructed. Untouched next-bar rows stay in `visualCache.notes`.
+
+Owner: `Loop::markAffectedDisplayCacheRanges` + `Loop::rebuildVisualCacheIdleSlice`. No new name. Grain stays 2–4 dirty bars.
+
+**Native:** `test_mark_affected_display_cache_ranges_dirties_sparse_bars` — overdub in bar 3 dirties bar 3 only. `test_idle_slice_keeps_untouched_next_bar_note` — bar 9 sentinel end survives idle after a bar 8 overdub.
+
+**Device:** after overdub stop, `stale_range` `dcnt` is the occupied bars only (not ±1). `slice_clean` keeps coverage `0–63`. Same-lane next-bar notes stay in `visualCache.notes`.
 
 ### Slice 3 — retire restore flatten on overdub stop
 
@@ -442,6 +454,25 @@ YES
 | Wrap-edge | Append stays (bar 0 / last bar) |
 | `appendOverdubPassDisplayNotes` signature | Unchanged — call or not |
 | Job 1 splice | Not this slice |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
+## Pre-implementation review (Slice 2c)
+
+### Ready
+- Owner is `Loop::markAffectedDisplayCacheRanges`. Splice remove unchanged.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| ±1 pad on mark | Drop — gather `kPadBars` covers spanning notes |
+| Slice range | Consecutive dirty bars only, still capped at `maxBarsPerSlice` |
+| New function | No — `markBarDirty` + span bars only |
+| Untouched next-bar row | Stays in `visualCache.notes` |
 
 ### Open before coding
 None.
