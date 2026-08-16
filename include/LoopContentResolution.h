@@ -281,6 +281,9 @@ struct LoopContentResolution {
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
                             ResolutionCostCounters* counters = nullptr);
 
+  /// Apply note edits on each capture pass, then merge (same order as
+  /// `LoopPasses::materializeToEventVector`). Hide of a shorter same-start Add
+  /// must not LIFO-pair a later pass's Off (003204).
   static void resolveWindow(const TickIndex& index, const EditPassVec& editPasses,
                             uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
                             SessionMidiEventVec& out, ResolutionCostCounters* counters = nullptr);

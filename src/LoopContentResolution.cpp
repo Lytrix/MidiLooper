@@ -46,20 +46,6 @@ struct ElapsedTimer {
 #endif
 };
 
-TRACK_COLD_MEM void collectActiveChunkLists(const LoopPasses& passes,
-                             std::vector<const CommittedChunkIdList*>& lists) {
-  lists.clear();
-  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.committedChunkIds.empty()) {
-    lists.push_back(&passes.recordPass.committedChunkIds);
-  }
-  for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
-      lists.push_back(&pass.committedChunkIds);
-    }
-  }
-}
-
 TRACK_COLD_MEM void mergeSortedMidiVectors(SessionMidiEventVec& base, SessionMidiEventVec&& addition) {
   if (addition.empty()) {
     return;
@@ -78,28 +64,20 @@ TRACK_COLD_MEM void mergeSortedMidiVectors(SessionMidiEventVec& base, SessionMid
   base = std::move(merged);
 }
 
-TRACK_COLD_MEM void appendActiveCapturePassesMerged(const LoopPasses& passes, SessionMidiEventVec& out) {
-  out.clear();
-  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.committedChunkIds.empty()) {
-    LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, out);
+TRACK_COLD_MEM void appendCapturePassLayer(const CommittedChunkIdList& chunks, bool wholeLoop,
+                                           uint32_t loopLengthTicks, uint32_t windowStart,
+                                           uint32_t windowLength, SessionMidiEventVec& layer) {
+  layer.clear();
+  if (chunks.empty()) {
+    return;
   }
-
-  std::vector<const OverdubPass*> activeOverdubs;
-  for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
-      activeOverdubs.push_back(&pass);
-    }
+  if (wholeLoop) {
+    LoopEventStore::appendChunkRefEvents(chunks, layer);
+    return;
   }
-  std::sort(activeOverdubs.begin(), activeOverdubs.end(),
-            [](const OverdubPass* a, const OverdubPass* b) {
-              return a->mergeSequence < b->mergeSequence;
-            });
-  for (const OverdubPass* pass : activeOverdubs) {
-    SessionMidiEventVec layer;
-    LoopEventStore::appendChunkRefEvents(pass->committedChunkIds, layer);
-    mergeSortedMidiVectors(out, std::move(layer));
-  }
+  const CommittedChunkIdList* list = &chunks;
+  CommittedEventRange::inWindow(&list, 1, loopLengthTicks, windowStart, windowLength)
+      .appendTo(layer);
 }
 
 TRACK_COLD_MEM void applyActiveEdits(SessionMidiEventVec& events, const LoopPasses& passes,
@@ -217,8 +195,9 @@ TRACK_COLD_MEM void applySpanBoundaryAtTick(
   }
 }
 
-// Gather + edit in the same order as LoopPasses::materializeToEventVector. Tick-sort is only
-// applied for resolveWindow's deterministic ResolvedEvent sequence (reconstruct is order-sensitive).
+// Apply note edits on each capture pass, then merge — same order as
+// LoopPasses::materializeToEventVector. Tick-sort is only applied for resolveWindow's
+// deterministic ResolvedEvent sequence (reconstruct is order-sensitive).
 TRACK_COLD_MEM void gatherActiveResolvedEvents(const LoopPasses& passes, uint32_t loopLengthTicks,
                                 uint32_t windowStart, uint32_t windowLength,
                                 SessionMidiEventVec& out, ResolutionCostCounters* counters) {
@@ -227,23 +206,37 @@ TRACK_COLD_MEM void gatherActiveResolvedEvents(const LoopPasses& passes, uint32_
     return;
   }
 
-  std::vector<const CommittedChunkIdList*> lists;
-  collectActiveChunkLists(passes, lists);
-  if (lists.empty()) {
-    return;
+  const bool wholeLoop = windowLength >= loopLengthTicks;
+  uint32_t layerCount = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    SessionMidiEventVec layer;
+    appendCapturePassLayer(passes.recordPass.committedChunkIds, wholeLoop, loopLengthTicks,
+                           windowStart, windowLength, layer);
+    applyActiveEdits(layer, passes, loopLengthTicks);
+    mergeSortedMidiVectors(out, std::move(layer));
+    layerCount += 1;
   }
 
-  const bool wholeLoop = windowLength >= loopLengthTicks;
-  if (wholeLoop) {
-    appendActiveCapturePassesMerged(passes, out);
-  } else {
-    // Stages 1–5 fallback. Indexed find is LoopContentResolution::resolveWindow(TickIndex, …).
-    CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,
-                                  windowLength)
-        .appendTo(out);
+  std::vector<const OverdubPass*> activeOverdubs;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      activeOverdubs.push_back(&pass);
+    }
   }
-  bumpOps(counters, static_cast<uint32_t>(out.size() + lists.size()));
-  applyActiveEdits(out, passes, loopLengthTicks);
+  std::sort(activeOverdubs.begin(), activeOverdubs.end(),
+            [](const OverdubPass* a, const OverdubPass* b) {
+              return a->mergeSequence < b->mergeSequence;
+            });
+  for (const OverdubPass* pass : activeOverdubs) {
+    SessionMidiEventVec layer;
+    appendCapturePassLayer(pass->committedChunkIds, wholeLoop, loopLengthTicks, windowStart,
+                           windowLength, layer);
+    applyActiveEdits(layer, passes, loopLengthTicks);
+    mergeSortedMidiVectors(out, std::move(layer));
+    layerCount += 1;
+  }
+  bumpOps(counters, static_cast<uint32_t>(out.size() + layerCount));
 }
 
 }  // namespace
@@ -434,6 +427,54 @@ TRACK_COLD_MEM void emitTickEventRefs(const LoopContentResolution::TickIndex& in
       continue;
     }
     out.push_back(pass->events[ref.eventIndex]);
+  }
+}
+
+TRACK_COLD_MEM void collectActiveEditRows(const EditPassVec& editPasses, EditPassVec& activeRows) {
+  activeRows.clear();
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+    }
+  }
+}
+
+// Apply edits on each capture pass, then merge. Delete of a shorter same-start Add must
+// not LIFO-pair a later pass's Off (003204).
+TRACK_COLD_MEM void emitApplyEditsPerCapturePass(const LoopContentResolution::TickIndex& index,
+                                                 const std::set<EventRef>& refs,
+                                                 const EditPassVec& editPasses,
+                                                 uint32_t loopLengthTicks,
+                                                 SessionMidiEventVec& out) {
+  out.clear();
+  EditPassVec activeRows;
+  collectActiveEditRows(editPasses, activeRows);
+
+  std::vector<const LoopContentResolution::TickIndex::CapturePassEntry*> ordered;
+  index.collectActiveMaterializePasses(ordered);
+  for (const LoopContentResolution::TickIndex::CapturePassEntry* pass : ordered) {
+    SessionMidiEventVec layer;
+    for (const EventRef& ref : refs) {
+      if (ref.passId != pass->id || ref.eventIndex >= pass->events.size()) {
+        continue;
+      }
+      layer.push_back(pass->events[ref.eventIndex]);
+    }
+    for (const EditPass& editPass : activeRows) {
+      if (workingHasNoteOnId(layer, editPass.targetNoteId)) {
+        continue;
+      }
+      const auto* found = index.findByNoteId(editPass.targetNoteId);
+      if (found != nullptr && found->loc.passId == pass->id) {
+        index.appendNoteEvents(editPass.targetNoteId, layer);
+      }
+    }
+    sortResolvedEvents(layer);
+    uniqueIdentifiedResolvedEvents(layer);
+    if (!activeRows.empty()) {
+      applyNoteEditPassSequence(layer, activeRows, loopLengthTicks);
+    }
+    mergeSortedMidiVectors(out, std::move(layer));
   }
 }
 
@@ -798,37 +839,36 @@ TRACK_COLD_MEM uint32_t LoopContentResolution::TickIndex::indexedPassCount() con
   return static_cast<uint32_t>(capturePasses.size());
 }
 
-TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index, const EditPassVec& editPasses,
-                                          uint32_t loopLengthTicks, uint32_t windowStart,
-                                          uint32_t windowLength, SessionMidiEventVec& out,
-                                          ResolutionCostCounters* counters) {
-  ElapsedTimer timer;
+TRACK_COLD_MEM void finishResolveWindow(const LoopContentResolution::TickIndex& index,
+                                        const std::set<EventRef>& refs,
+                                        const EditPassVec& editPasses, uint32_t loopLengthTicks,
+                                        uint32_t windowStart, uint32_t windowLength,
+                                        SessionMidiEventVec& out, ResolutionCostCounters* counters,
+                                        const ElapsedTimer& timer, uint32_t eventsInHistory) {
   SessionMidiEventVec working;
-  index.findRawWindow(loopLengthTicks, windowStart, windowLength, working, counters);
-  EditPassVec activeRows;
-  for (const EditPass& editPass : editPasses) {
-    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
-      activeRows.push_back(editPass);
-      if (!workingHasNoteOnId(working, editPass.targetNoteId)) {
-        index.appendNoteEvents(editPass.targetNoteId, working);
-      }
-    }
-  }
-  sortResolvedEvents(working);
-  uniqueIdentifiedResolvedEvents(working);
-  if (!activeRows.empty()) {
-    applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
-  }
+  emitApplyEditsPerCapturePass(index, refs, editPasses, loopLengthTicks, working);
   DisplayWindowUtils::filterMidiEventsToWindow(working, out, windowStart, windowLength,
                                                loopLengthTicks);
   sortResolvedEvents(out);
   if (counters != nullptr) {
     counters->candidateEvents = static_cast<uint32_t>(working.size());
     counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
-    counters->eventsInHistory = index.indexedEventCount();
+    counters->eventsInHistory = eventsInHistory;
     counters->passesInHistory = index.indexedPassCount();
     counters->elapsedMicros = timer.elapsed();
   }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index, const EditPassVec& editPasses,
+                                          uint32_t loopLengthTicks, uint32_t windowStart,
+                                          uint32_t windowLength, SessionMidiEventVec& out,
+                                          ResolutionCostCounters* counters) {
+  ElapsedTimer timer;
+  std::set<EventRef> refs;
+  visitTickEventWindow(index, index.tickEvents, loopLengthTicks, windowStart, windowLength, refs,
+                       counters);
+  finishResolveWindow(index, refs, editPasses, loopLengthTicks, windowStart, windowLength, out,
+                      counters, timer, index.indexedEventCount());
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
@@ -838,33 +878,11 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
                                           SessionMidiEventVec& out,
                                           ResolutionCostCounters* counters) {
   ElapsedTimer timer;
-  SessionMidiEventVec working;
-  index.findRawWindowFromTickEvents(tickEvents, loopLengthTicks, windowStart, windowLength, working,
-                                    counters);
-  EditPassVec activeRows;
-  for (const EditPass& editPass : editPasses) {
-    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
-      activeRows.push_back(editPass);
-      if (!workingHasNoteOnId(working, editPass.targetNoteId)) {
-        index.appendNoteEvents(editPass.targetNoteId, working);
-      }
-    }
-  }
-  sortResolvedEvents(working);
-  uniqueIdentifiedResolvedEvents(working);
-  if (!activeRows.empty()) {
-    applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
-  }
-  DisplayWindowUtils::filterMidiEventsToWindow(working, out, windowStart, windowLength,
-                                               loopLengthTicks);
-  sortResolvedEvents(out);
-  if (counters != nullptr) {
-    counters->candidateEvents = static_cast<uint32_t>(working.size());
-    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
-    counters->eventsInHistory = static_cast<uint32_t>(tickEvents.size());
-    counters->passesInHistory = index.indexedPassCount();
-    counters->elapsedMicros = timer.elapsed();
-  }
+  std::set<EventRef> refs;
+  visitTickEventWindow(index, tickEvents, loopLengthTicks, windowStart, windowLength, refs,
+                       counters);
+  finishResolveWindow(index, refs, editPasses, loopLengthTicks, windowStart, windowLength, out,
+                      counters, timer, static_cast<uint32_t>(tickEvents.size()));
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
@@ -875,33 +893,19 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
                                           SessionMidiEventVec& out,
                                           ResolutionCostCounters* counters) {
   ElapsedTimer timer;
-  SessionMidiEventVec working;
-  index.findRawWindowFromTickEvents(history, delta, loopLengthTicks, windowStart, windowLength,
-                                    working, counters);
-  EditPassVec activeRows;
-  for (const EditPass& editPass : editPasses) {
-    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
-      activeRows.push_back(editPass);
-      if (!workingHasNoteOnId(working, editPass.targetNoteId)) {
-        index.appendNoteEvents(editPass.targetNoteId, working);
-      }
-    }
-  }
-  sortResolvedEvents(working);
-  uniqueIdentifiedResolvedEvents(working);
-  if (!activeRows.empty()) {
-    applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
-  }
-  DisplayWindowUtils::filterMidiEventsToWindow(working, out, windowStart, windowLength,
-                                               loopLengthTicks);
-  sortResolvedEvents(out);
+  std::set<EventRef> refs;
+  const uint32_t beforeHistory = (counters != nullptr) ? counters->indexEntriesVisited : 0;
+  visitTickEventWindow(index, history, loopLengthTicks, windowStart, windowLength, refs, counters);
   if (counters != nullptr) {
-    counters->candidateEvents = static_cast<uint32_t>(working.size());
-    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
-    counters->eventsInHistory = static_cast<uint32_t>(history.size());
-    counters->passesInHistory = index.indexedPassCount();
-    counters->elapsedMicros = timer.elapsed();
+    counters->indexHistoryEntriesVisited = counters->indexEntriesVisited - beforeHistory;
   }
+  const uint32_t beforeDelta = (counters != nullptr) ? counters->indexEntriesVisited : 0;
+  visitTickEventWindow(index, delta, loopLengthTicks, windowStart, windowLength, refs, counters);
+  if (counters != nullptr) {
+    counters->indexDeltaEntriesVisited = counters->indexEntriesVisited - beforeDelta;
+  }
+  finishResolveWindow(index, refs, editPasses, loopLengthTicks, windowStart, windowLength, out,
+                      counters, timer, static_cast<uint32_t>(history.size()));
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const LoopPasses& passes, uint32_t loopLengthTicks,

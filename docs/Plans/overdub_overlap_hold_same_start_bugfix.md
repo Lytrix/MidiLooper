@@ -1,9 +1,9 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1 native+device (same-start exact); RC2 native PASS; RC3 native (wrap commit keeps view); device gate open  
+**Status:** Active — RC1–RC3 device/native as below; RC4 native (per-pass materialize Hide); RC4 device FAIL [`003204`](../../captures/session_20260817_003204.log) (idle LCR apply-after-merge); RC5 native (LCR per-pass apply)  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
-**Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3)  
+**Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3); [`001517`](../../captures/session_20260817_001517.log) (RC4); [`003204`](../../captures/session_20260817_003204.log) (RC5)  
 **Parent:** [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md)  
 **Does not start:** LCR `resolveState` on MIDI; Gate 3 empty-set fallback scan
 
@@ -152,6 +152,61 @@ Native RC2 tests called apply + `beginCapture` without `commitPendingCapturePass
 Device: same 1-bar inner / same-start-longer as RC2. Stop `overlap_hold` `note_offs > 0` and no stacked 60@64 176+224.
 
 Not this RC: `finalizePendingNotes` still does not accumulate. Last-held 60@296–392 vs 296–416 (96 and 120) stays a later slice if it remains after wrap commit keeps the view.
+
+---
+
+## RC4 — apply Hide on each capture pass before merge
+
+**Evidence:** [`001517`](../../captures/session_20260817_001517.log)
+
+RC3 ran: one `begin_capture`, `overlap_hold` `note_offs=19` `looked_up=12` `max_examined=8`. The source view already holds this-session Adds. Stop DNTE still stacked **60@64 length 176 and 224**.
+
+Not a missing materialize of “temporary passes.” Overlap already sees wrap notes via `applyPendingNoteChangesToOverdubSourceView`. Hide of wrap-1 id 10 seals. `LoopPasses::materializeToEventVector` then applied that Delete on the **merged** flatten. `applyDeleteNoteById` LIFO-pairs the earlier On with the later Off@288, leaves On@64 + Off@240 (length 176), and `appendOverdubPassDisplayNotes` adds the surviving pass’s true 64–288. Native `test_wrap_commit_hide_drops_shorter_same_start_from_display` was **Expected 1 Was 2** before this fix.
+
+### Architecture checkpoint (RC4)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `LoopPasses::materializeToEventVector` still owns flatten + edit apply. |
+| **State transition change?** | NO. Same seal, same display rebuild. |
+
+Reuse: apply note edits on each record/overdub layer, then merge — same per-pass apply `appendOverdubPassDisplayNotes` already uses. No new pass type.
+
+### Tests
+
+- `test_wrap_commit_hide_drops_shorter_same_start_from_display` — wrap-1 64–240 Hide + wrap-2 64–288; gather + reconstruct + append is one 60@64 ending 288.
+- `makeOverdubPassWithNote` uses `NoteId` 2 so a Delete of record `NoteId` 1 cannot hit the overdub layer (production allocates unique ids).
+
+Device: stop DNTE one 60@64 (the longest). No stacked 176+224.
+
+---
+
+## RC5 — LCR resolveWindow apply Hide per capture pass before merge
+
+**Evidence:** [`003204`](../../captures/session_20260817_003204.log)
+
+RC4 is on the device (`materializeToEventVector` per-pass + `LOOP_COLD_MEM`). Overlap ran: `note_offs=24` `looked_up=13` `max_examined=7` `hide=2`. Stop idle cache used prepared LCR (`lcr,6a ev=31 notes=10` then `VCACHE,slice_clean notes=10`), not `gatherCommittedEvents`. Select: `1/3` then `2/3` notes at tick 64 — `DNTE` 60@64 length **224** (`noteId=105`) and **176** (`noteId=124`).
+
+Idle SEVT / first DNTE dump is `mergeActiveCapturePasses` (raw chunks, no edits). Not the display gate.
+
+`LoopContentResolution::resolveWindow` merged all passes, then `applyNoteEditPassSequence`. Delete LIFO-paired the shorter On with Off@288. Native `test_resolve_window_hide_drops_shorter_same_start` is wrap-1 64–240 Hide + wrap-2 64–288 through `resolveWindow`.
+
+Not a new pass type. No LCR on MIDI. DEC-037: this is the already-wired 6A idle consumer, not a new display wire.
+
+### Architecture checkpoint (RC5)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `LoopContentResolution::resolveWindow` already owns prepared-window flatten for idle display. |
+| **State transition change?** | NO. Same seal, same idle slice. |
+
+Reuse: apply note edits on each capture pass, then merge — same as `LoopPasses::materializeToEventVector`.
+
+### Tests
+
+- `test_resolve_window_hide_drops_shorter_same_start` — index `resolveWindow` matches per-pass materialize; one 60@64 ending 288.
+
+Device: stop select DNTE one 60@64 (the longest). No stacked 176+224.
 
 ---
 
