@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1 device PASS** [`172608`](../../captures/session_20260816_172608.log); **C2 device PASS** [`172909`](../../captures/session_20260816_172909.log) (`overlay` owns analyze). **C3** skip unused overlay when `eligiblePairs` empty (device gate open). E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1–C3 device PASS** ([`172608`](../../captures/session_20260816_172608.log) / [`172909`](../../captures/session_20260816_172909.log) / [`173243`](../../captures/session_20260816_173243.log)). Empty-pair overlay skip holds. Remaining Layer C is overlay on **non-empty** pairs. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -256,7 +256,7 @@ committedBase == reconstructDisplayNotes(materialize(active edit passes))
 
 **Hard don'ts (unchanged):** do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase for B2; do not reuse overdub session pass-id stack for NOTE_EDIT E:; do not start grooming 4e / Slice 5 hydrate in this slice.
 
-### Layer C — pitch/move `GEOM_APPLY,resolve` (C1/C2 device PASS; C3 skip unused overlay)
+### Layer C — pitch/move `GEOM_APPLY,resolve` (C1–C3 device PASS)
 
 A no longer hides this. Outer `GEOM_APPLY,resolve` wraps **all** of `applyNoteEditChange`, including `finalReconstructAndSelect` (`selectableDisplayNotesAtEditSelect` → projection). `GEOM_APPLY,focus` is microseconds; `GEOM_APPLY,undo` is microseconds except first-kind warm.
 
@@ -300,7 +300,18 @@ Pitch `pairs=0` on 32/35 ticks: overlay still **74.8 ms**. Those ticks never `fi
 
 **Best skip:** `overlayAnalysisBaselineForSessionMovedOverlaps` when `eligiblePairs.empty()`; pass storage `baselineMap`. **Required:** overlay when pairs are non-empty (Move in this file always had 4–12 pairs). Do not change the overlay algorithm this slice.
 
-**C3 (this slice):** skip unused overlay on empty pairs. `GEOM_APPLY,phase,overlay` extra1 is `0` skipped / `1` ran. Do not restrict the 108-entry copy on non-empty pairs until a later pin.
+**C3 device PASS [`173243`](../../captures/session_20260816_173243.log):** 60 resolves. Contract holds: `pairs=0` overlay extra1 `0` (38 ticks, overlay 0–2 µs); `pairs>0` extra1 `1` (22 ticks). Zero violations.
+
+| Path | n | overlay | analyze | reconstruct | resolve |
+|------|---|---------|---------|-------------|---------|
+| Pitch skip (`pairs=0`) | 32 | **0–1 µs** | 138 µs | 2.8 ms | **10.1 ms** (was 84.0) |
+| Pitch ran (`pairs>0`) | 5 | 41.3 ms | 41+ ms | — | 51.6 ms |
+| Move skip (`pairs=0`) | 6 | **0–2 µs** | 141 µs | 6.1 ms | **13.0 ms** |
+| Move ran (`pairs=12`) | 17 | **123.0 ms** | 123.0 ms | 8.2 ms | **142.4 ms** |
+
+Empty-pair instrumented sum (setup+analyze+apply+reconstruct) med **4.5 ms**; outer `resolve` med **10.6 ms** — **5.5 ms** still inside `applyNoteEditChange` but outside those four timers. Two `VCACHE,full` (open + later), not per tick.
+
+**Next (C4):** overlay still copies/walks the 108-entry map when pairs are non-empty. C2a already limits `find()` to pair targets. Do not skip overlay on non-empty pairs. Do not start Layer D from the two `VCACHE,full` lines.
 
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
@@ -566,9 +577,9 @@ Open `@ 528.009` `visual_notes=114` `session_events=235`. Pitch 526 `688–864` 
 
 This file has **no** `DNTE` lines and no session-store flatten around undo/redo. Routing and selection restore are in the log. Geometry identity is not. Do not close A on store-flat from this capture.
 
-### 6. Layer C — C3 skip unused overlay (device gate next)
+### 6. Layer C — C3 PASS; C4 overlay on non-empty pairs
 
-C2 [`172909`](../../captures/session_20260816_172909.log) pinned `overlay`. Empty-pair pitch must show `overlay` extra1 `0` and overlay elapsed microseconds. Move with pairs must still run overlay (extra1 `1`). Do not skip overlay on non-empty pairs.
+C3 [`173243`](../../captures/session_20260816_173243.log) skip contract holds. Next: restrict `overlayAnalysisBaselineForSessionMovedOverlaps` to pair targets (C2a). Do not skip overlay when pairs are non-empty. Do not start Layer D.
 
 ### 7. Layer D — after B2
 

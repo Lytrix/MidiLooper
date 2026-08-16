@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer C3 skip unused overlay)
+Last updated: 2026-08-16 (NOTE_EDIT Layer C3 device PASS)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer C3 skip unused overlay)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **C2 device PASS** [`172909`](../../captures/session_20260816_172909.log) — `overlay` owns analyze (Pitch empty-pair med 75 ms; Move med 65 ms). **C3** skips `overlayAnalysisBaselineForSessionMovedOverlaps` when `eligiblePairs` is empty. Do not skip overlay when pairs are non-empty. Do not skip `currentState->clone()`. Do not start B2b / Layer D.
+**Now:** **C3 device PASS** [`173243`](../../captures/session_20260816_173243.log) — empty-pair overlay skip holds (Pitch resolve 84→**10 ms**). Remaining Layer C: overlay on non-empty pairs (Move `pairs=12` overlay **123 ms**). Do not skip overlay when pairs are non-empty. Do not skip `currentState->clone()`. Do not start B2b / Layer D.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
