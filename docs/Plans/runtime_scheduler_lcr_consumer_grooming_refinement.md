@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 4b committed paint no longer calls `ensureVisualCacheBuilt`
+**Status:** Active — Slice 4b device PASS [`142100`](../../captures/session_20260816_142100.log)  
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -456,7 +456,7 @@ YES
 
 **Native:** `test_committed_display_visual_cache_authoritative` — dirty + notes is not authoritative.
 
-**Device:** short-loop PLAYING/OVERDUB paint must not emit `VCACHE,full` from this path. STOPPED idle may still `ensure` (later caller).
+**Device PASS [`142100`](../../captures/session_20260816_142100.log)** — 4-bar loop. The only `VCACHE,full` is boot @ 6.271 s (141 notes). None after PLAYING starts @ 26.342 s. Two overdub stops: enter→display 10.0 ms and 8.6 ms; `overlap_restore=0`; idle `slice_clean` 129→133 and 151→152. PLAYING/OVERDUB `clockrate` 47. STOPPED undos before play used `slice_clean` (139/120/119), not `VCACHE,full`.
 
 ## Pre-implementation review (Slice 4b)
 
