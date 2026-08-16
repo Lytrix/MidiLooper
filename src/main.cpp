@@ -68,32 +68,6 @@ FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
     trackManager.getTrack(i).noteLoopPrefixMeasureAfterUndo();
   }
 }
-
-enum : uint8_t {
-  kLoadFrameDisplay = 0,
-  kLoadFrameLoadJob = 1,
-  kLoadFrameFirstCommit = 2,
-  kLoadFrameBootCommit = 3
-};
-
-FLASHMEM __attribute__((noinline)) static void recordLoadFrameChild(uint8_t child,
-                                                                    uint32_t startUs) {
-  const uint32_t durationUs = micros() - startUs;
-  const char* span = "display_frame";
-  if (child == kLoadFrameLoadJob) {
-    span = "load_job";
-    RuntimeTimingTelemetry::noteLoadJob(durationUs);
-  } else if (child == kLoadFrameFirstCommit) {
-    span = "first_commit";
-    RuntimeTimingTelemetry::noteFirstCommit(durationUs);
-  } else if (child == kLoadFrameBootCommit) {
-    span = "boot_commit";
-    RuntimeTimingTelemetry::noteBootCommit(durationUs);
-  } else {
-    RuntimeTimingTelemetry::noteDisplayFrame(durationUs);
-  }
-  DebugSessionCapture::recordLoopRemainderSpan(span, durationUs);
-}
 #endif
 
 // BAR→LED prefix children. FLASHMEM so child rem does not cross the RAM1 32KB ITCM page.
@@ -234,7 +208,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
       displayManager.update();
 #if defined(SESSION_CAPTURE)
-      recordLoadFrameChild(kLoadFrameDisplay, displayStartUs);
+      RuntimeTimingTelemetry::recordLoadFrameChildRem(0, displayStartUs);
 #endif
     }
   }
@@ -252,7 +226,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
     DeferredJobScheduler::runFrame(budgetUs);
 #if defined(SESSION_CAPTURE)
-    recordLoadFrameChild(kLoadFrameLoadJob, loadJobStartUs);
+    RuntimeTimingTelemetry::recordLoadFrameChildRem(1, loadJobStartUs);
 #endif
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
@@ -265,7 +239,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
       prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
 #if defined(SESSION_CAPTURE)
-      recordLoadFrameChild(kLoadFrameFirstCommit, firstCommitStartUs);
+      RuntimeTimingTelemetry::recordLoadFrameChildRem(2, firstCommitStartUs);
 #endif
       displayManager.invalidateLiveDisplayCache();
     }
@@ -288,7 +262,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
       displayManager.update();
 #if defined(SESSION_CAPTURE)
-      recordLoadFrameChild(kLoadFrameDisplay, displayStartUs);
+      RuntimeTimingTelemetry::recordLoadFrameChildRem(0, displayStartUs);
 #endif
     }
   }
@@ -315,7 +289,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     displayManager.update();
     lastDisplayUpdate = now;
 #if defined(SESSION_CAPTURE)
-    recordLoadFrameChild(kLoadFrameBootCommit, bootCommitStartUs);
+    RuntimeTimingTelemetry::recordLoadFrameChildRem(3, bootCommitStartUs);
 #endif
   }
 }
