@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1–C3 device PASS** ([`172608`](../../captures/session_20260816_172608.log) / [`172909`](../../captures/session_20260816_172909.log) / [`173243`](../../captures/session_20260816_173243.log)). **C4** overlay pair-target restrict (device gate open). E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS** ([`173806`](../../captures/session_20260816_173806.log) pair-target overlay). Empty-pair skip holds. Crowded-lane overlay extra0 is 12, not 108. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -311,9 +311,16 @@ Pitch `pairs=0` on 32/35 ticks: overlay still **74.8 ms**. Those ticks never `fi
 
 Empty-pair instrumented sum (setup+analyze+apply+reconstruct) med **4.5 ms**; outer `resolve` med **10.6 ms** — **5.5 ms** still inside `applyNoteEditChange` but outside those four timers. Two `VCACHE,full` (open + later), not per tick.
 
-**C4 (this slice):** `overlayAnalysisBaselineForSessionMovedOverlaps` takes optional `pairTargetNoteIds`. Resolve passes unique `pair.targetNoteId`s. Null list keeps the full-map path for existing fixtures. Do not skip overlay when pairs are non-empty.
+**C4 device PASS [`173806`](../../captures/session_20260816_173806.log):** 57 resolves. C3 skip contract holds (0 violations). All 17 ran overlays have extra0 == `pairs_e0` (4 or 12). Zero extra0 ≥ 100.
 
-Device gate: overlap move `GEOM_APPLY,phase,overlay` extra1 `1`, extra0 ≈ pair-target count (12 on 173243 crowded lane), not 108. Empty-pair skip unchanged (extra1 `0`).
+| Path | n | extra0 | overlay | analyze | resolve |
+|------|---|--------|---------|---------|---------|
+| Pitch skip | 33 | 108 (storage alias) | **0–7 µs** | 152 µs | **11.0 ms** |
+| Pitch ran | 2 | 4 / 12 | 2.2 / 5.7 ms | — | 10.6 / 16.6 ms |
+| Move skip | 7 | 108 (storage alias) | **0–6 µs** | 152 µs | **13.0 ms** |
+| Move ran (`pairs=12`) | 15 | **12** | **16.1 ms** (was 123.0) | 16.5 ms | **34.2 ms** (was 142.4) |
+
+Skip extra0 108 is the storage `baselineMap` size when overlay is not built — not a full-map walk. One `VCACHE,full` (open). Do not start Layer D. Remaining instrumented Move cost after C4: overlay 16 ms + reconstruct 8.9 ms.
 
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
@@ -579,9 +586,9 @@ Open `@ 528.009` `visual_notes=114` `session_events=235`. Pitch 526 `688–864` 
 
 This file has **no** `DNTE` lines and no session-store flatten around undo/redo. Routing and selection restore are in the log. Geometry identity is not. Do not close A on store-flat from this capture.
 
-### 6. Layer C — C4 pair-target overlay (device gate next)
+### 6. Layer C — C4 PASS
 
-C3 [`173243`](../../captures/session_20260816_173243.log) skip contract holds. C4 restricts overlay to unique pair targets. Capture must show overlay extra0 ≈ pair count on crowded-lane Move, extra1 `1`. Empty-pair extra1 stays `0`. Do not start Layer D.
+C4 [`173806`](../../captures/session_20260816_173806.log) pair-target overlay holds. Crowded-lane Move overlay 123→**16 ms**. Empty-pair skip unchanged. Do not start Layer D. Further overlay/reconstruct cuts need a new pin.
 
 ### 7. Layer D — after B2
 
