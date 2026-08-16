@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT A intermediates firmware — device gate nex
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **A intermediates firmware landed** — `buildSessionUndoEntry` skips `resolvedFlat` / `focusCopy` when both probe flags are false; `currentState->clone()` kept. Native: `test_note_edit_session_undo` + `test_edit_apply`. Device gate: simple select warm shows `UNDO_WARM,phase,intermediates,…,0`; post-probe 63–188 ms should drop; undo/redo store geometry unchanged. Then B2 native fixture, then B2a. Do not start Layer C/D, grooming 4e, Slice 5 hydrate, or a current-state delta restore.
+**Now:** **A intermediates firmware landed** — skip dead `resolvedFlat`/`focusCopy`; keep `currentState->clone()`. Teensy RAM1 overflow (`-24160`) was one ITCM bank (12 bytes over); `snapshotFocusForSessionUndo` is `NOTE_EDIT_MEM`. Build locals **8608**. Device gate: `UNDO_WARM,phase,intermediates,…,0`; post-probe 63–188 ms should drop. Then B2 native fixture / B2a. Do not start Layer C/D or a current-state delta restore.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 

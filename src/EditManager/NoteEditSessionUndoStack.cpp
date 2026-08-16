@@ -9,6 +9,7 @@
 #include "Globals.h"
 #include "Loop.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
 
 #if defined(SESSION_CAPTURE)
@@ -66,7 +67,7 @@ EditPass makeSessionStoreRow(EditActionType actionType, EditPropertyType propert
 
 }  // namespace
 
-NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
+NOTE_EDIT_MEM NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
   NoteEditFocus snap;
   snap.active = focus.active;
   snap.movingNoteId = focus.movingNoteId;
@@ -157,7 +158,8 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
 }
 
 template <typename Alloc>
-SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
+NOTE_EDIT_MEM SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus,
+                                                     EditorSelection selection,
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,
                                        uint8_t channel, uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush,
