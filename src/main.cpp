@@ -67,6 +67,15 @@ FLASHMEM __attribute__((noinline)) static void maybeRecordLoopPrefixRemainder(ui
   recordLoopRemainderSpan("loop_prefix", micros() - startUs);
 }
 
+FLASHMEM __attribute__((noinline)) static void maybeRecordPrefixChild(bool measure,
+                                                                     const char* span,
+                                                                     uint32_t startUs) {
+  if (!measure) {
+    return;
+  }
+  recordLoopRemainderSpan(span, micros() - startUs);
+}
+
 FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
@@ -74,6 +83,92 @@ FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
   }
 }
 #endif
+
+// BAR→LED prefix children. FLASHMEM so child rem does not cross the RAM1 32KB ITCM page.
+FLASHMEM __attribute__((noinline)) static void runLoopPrefixAfterBar(uint32_t now,
+                                                                     uint32_t& lastDisplayUpdate) {
+#if defined(SESSION_CAPTURE)
+  const bool measure = trackManager.anyLoopPrefixMeasureAfterUndo();
+  uint32_t childStartUs = 0;
+#endif
+
+#if defined(SESSION_CAPTURE)
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  looperState.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "looper_state", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  midiButtonManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "midi_buttons", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  midiFaderManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "midi_faders", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  barStepButtonHandler.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "bar_step", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  controlSurfaceManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "control_surface", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  maybeUpdateDisplayForNoteEditSelection(now, lastDisplayUpdate);
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "note_edit_disp", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+#if defined(ENABLE_GPIO_BUTTONS)
+  gpioButtonManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "gpio_buttons", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+#endif
+  looper.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "looper_update", childStartUs);
+#endif
+
+  static uint32_t lastLedUpdate = 0;
+  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
+  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
+    lastLedUpdate = now;
+#if defined(SESSION_CAPTURE)
+    if (measure) {
+      childStartUs = micros();
+    }
+#endif
+    trackManager.updateMidiLedsDeferred();
+    midiHandler.processDroidUsbHostOutbound();
+#if defined(SESSION_CAPTURE)
+    maybeRecordPrefixChild(measure, "midi_leds", childStartUs);
+#endif
+  }
+}
 
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -312,32 +407,7 @@ void loop() {
   // Session capture: bar boundary marker for tick<->micros alignment (no-op without SESSION_CAPTURE)
   SC_UPDATE(clockManager.getCurrentTick(), Config::TICKS_PER_BAR);
 
-  // Update looper state to set button logic
-  looperState.update();
-
-  // Update new V2 MIDI button manager for button handling
-  midiButtonManager.update();
-  
-  // Update new V2 MIDI fader manager for fader handling
-  midiFaderManager.update();
-  
-  barStepButtonHandler.update();
-  
-  controlSurfaceManager.update();
-  maybeUpdateDisplayForNoteEditSelection(now, lastDisplayUpdate);
-#if defined(ENABLE_GPIO_BUTTONS)
-  gpioButtonManager.update();
-#endif
-  looper.update();
-
-  // LED updates after transport tick / pending slot commit (same frame as loop boundary).
-  static uint32_t lastLedUpdate = 0;
-  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
-  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
-    lastLedUpdate = now;
-    trackManager.updateMidiLedsDeferred();
-    midiHandler.processDroidUsbHostOutbound();
-  }
+  runLoopPrefixAfterBar(now, lastDisplayUpdate);
 
   bool timingCriticalTrackActive = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {

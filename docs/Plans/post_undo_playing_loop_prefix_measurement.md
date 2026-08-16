@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Attribution OPEN — prefix rem **landed**, device gate open  
+**Status:** Device PASS — `loop_prefix` is the CAP hole. Child rem **landed**, owner unknown.  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
@@ -183,6 +183,68 @@ None.
 ### Proceed?
 YES
 
+## Device [`110747`](../../captures/session_20260816_110747.log) — PASS
+
+Three `DIAG,loop_rem,loop_prefix` lines. Each is a bar-boundary PLAYING prefix while the undo measure window is active:
+
+| CAP µs | `loop_prefix` | CAP hole before rem | Next rem | 5 s `midi_gap` |
+|--------|--------------:|---------------------|----------|---------------:|
+| 24.299 s | **278573** | `BAR,5392,7` @ 24.020 → LED @ 24.295 (275 ms) | `idle_maint` 53230, then `load_frame` 72697 | **404629** @ 27.304 s |
+| 56.317 s | **312984** | `BAR,17672,23` @ 56.004 → LED @ 56.315 (311 ms) | BPM 73 after rem (clock starved) | **368290** @ 57.647 s |
+| 70.324 s | **305651** | `BAR,23056,30` @ 70.018 → LED @ 70.321 (302 ms) | transport stop @ 70.402 s | **363022** @ 72.673 s (stop window; `clockrate` 23) |
+
+First window identity:
+
+```text
+loop_prefix 278573 + idle_maint 53230 + load_frame 72697 = 404500
+5 s midi_gap 404629
+5 s idle_maint 54830 / load_frame 72697 / persist_save 1
+```
+
+That 404 ms `midi_gap` is one `loop()` with drain off: top poll → prefix → idle → load → end poll.
+
+The remitted prefix is **not** every post-undo iteration. Undos at 14.426 s and 36.462 s have no `loop_prefix` rem (PLAYING window 1.4–1.5 s, no bar wrap in that window). The ≥50 ms rem fires when a `BAR` occurs while the undo window is still armed.
+
+Hole bounds inside the prefix (CAP, not a child timer): after `SC_UPDATE` (`BAR`) and before `updateMidiLedsDeferred` (`LED`). Children in that span are still untimed: `looperState.update`, button/fader/`barStep`/`controlSurfaceManager.update`, `maybeUpdateDisplayForNoteEditSelection`, `looper.update`. Visual-cache idle is **after** the rem (`idle_maint` 53 ms). Persist is 1 µs in that window.
+
+Re-arming PLAYING drain after undo would poll around idle and after load. It would not split the 278–313 ms prefix. Do not re-arm drain as the fix for this hole.
+
+## Pre-implementation review (child rem)
+
+### Ready
+- Hole is after `SC_UPDATE` (`BAR`) and before/at `updateMidiLedsDeferred` (`LED`).
+- `Looper::update()` is empty — rem it so a miss is visible.
+- Rem owner stays `recordLoopRemainderSpan`. Same undo window.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Drain | Do not re-arm |
+| Placement | `runLoopPrefixAfterBar()` `FLASHMEM` |
+| LED | Timed (`midi_leds`) |
+
+### Proceed?
+YES
+
+## Child rem (landed, not scored)
+
+Same undo window. Same `recordLoopRemainderSpan` / 50 ms one-shot. `runLoopPrefixAfterBar()` (`FLASHMEM`) times each BAR→LED call:
+
+| Span | Function |
+|------|----------|
+| `looper_state` | `looperState.update` |
+| `midi_buttons` | `midiButtonManager.update` |
+| `midi_faders` | `midiFaderManager.update` |
+| `bar_step` | `barStepButtonHandler.update` |
+| `control_surface` | `controlSurfaceManager.update` |
+| `note_edit_disp` | `maybeUpdateDisplayForNoteEditSelection` |
+| `looper_update` | `looper.update` (empty body) |
+| `midi_leds` | `updateMidiLedsDeferred` + outbound |
+
+`Looper::update()` is empty — include the rem so a miss is visible. `midi_leds` is timed because CAP cannot tell work-then-emit from a prior child.
+
+Device gate: same cluster as [`110747`](../../captures/session_20260816_110747.log). Score child rem against `loop_prefix` 279–313 ms. If one child is ~280 ms, that is the owner. If none is, stop and re-read. Do not re-arm drain. Do not time `controlSurfaceManager.update` grandchildren until a child rem names it.
+
 ## Device gate
 
-Same cluster as [`035822`](../../captures/session_20260816_035822.log): short overdub → stop → double-press undo → stay PLAYING until the next overdub. Score `DIAG,loop_rem,loop_prefix` against the CAP hole before `idle_maint`. Recapture without the rem: [`105516`](../../captures/session_20260816_105516.log).
+Same cluster as [`035822`](../../captures/session_20260816_035822.log): short overdub → stop → double-press undo → stay PLAYING until the next overdub. Score `DIAG,loop_rem,loop_prefix` against the CAP hole before `idle_maint`. Recapture without the rem: [`105516`](../../captures/session_20260816_105516.log). Scored: [`110747`](../../captures/session_20260816_110747.log).
