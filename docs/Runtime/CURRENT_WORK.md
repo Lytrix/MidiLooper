@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT A intermediates firmware — device gate next)
+Last updated: 2026-08-16 (NOTE_EDIT B2a firmware; device gate next)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT A intermediates firmware — device gate nex
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **A intermediates firmware landed** — skip dead `resolvedFlat`/`focusCopy`; keep `currentState->clone()`. Teensy RAM1 overflow (`-24160`) was one ITCM bank (12 bytes over); `snapshotFocusForSessionUndo` is `NOTE_EDIT_MEM`. Build locals **8608**. Device gate: `UNDO_WARM,phase,intermediates,…,0`; post-probe 63–188 ms should drop. Then B2 native fixture / B2a. Do not start Layer C/D or a current-state delta restore.
+**Now:** B2 native fixture + **B2a firmware** landed. `ensureNoteEditDisplayProjectionCachesBuilt` uses `reconstruct(materialize(active))` while `visualCacheDirty` (not raw `editPassIds` — empty after E: undo). Device gate: first deselect must show committed moved span (1656), not home (888). Do not start B2b / Layer C/D. Do not skip `currentState->clone()`. A intermediates PASS [`165506`](../../captures/session_20260816_165506.log) / [`165853`](../../captures/session_20260816_165853.log).
 
 ### DEC-037 — LoopContentResolution parallel prototype
 

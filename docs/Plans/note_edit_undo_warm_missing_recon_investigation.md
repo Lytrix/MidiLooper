@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a** chosen; **A0 filled**; **A intermediates firmware landed** (device gate open). RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 closed; **B2 native fixture + B2a firmware landed** (device gate open). **A0 filled**; **A intermediates device PASS** ([`165506`](../../captures/session_20260816_165506.log), [`165853`](../../captures/session_20260816_165853.log)). E: undo/redo fired in 165853; store-flat identity **not** proven. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -421,17 +421,58 @@ Consumers: `EditManager::restoreSessionUndoEntry` / `sessionUndo` ([`NoteEditSes
 
 Expected measurement: post-probe 63–188 ms should collapse. Remaining floor is the legitimate `focus_snap` clone (46–124 ms), not more guesswork.
 
+**Device [`165506`](../../captures/session_20260816_165506.log) — A intermediates PASS (clone floor remains):**
+
+STOPPED 4-bar, open `visual_notes=115` `session_events=241`. 49 simple-select warms. `baseline_probe` flag **0** on all 49. `overlap_resolve` **0**. `flat_copy` **0**. `intermediates` **0–1 µs** (flag 0).
+
+| Marker | [`145518`](../../captures/session_20260816_145518.log) (before) | [`165506`](../../captures/session_20260816_165506.log) (A intermediates) |
+|--------|--------|--------|
+| `focus_snap` | 46–124 ms (med 91) | **37–203 ms (med 78)** |
+| post-probe copies | **63–188 ms (med 150)** | **gone** (`intermediates` 0 µs) |
+| `warm,complete` | 110–312 ms (med 241) | **37–204 ms (med 78)** |
+| `build,total` vs `focus_snap` | build ≫ snap | **build ≈ snap** |
+
+Warm is now the `undoCurrentState` clone. That matches A0 Worst for current-state. Do **not** skip `clone()` from this capture. Undo/redo store geometry was **not** exercised here (`EditSession undo`/`redo` count 0) — still required before calling A closed.
+
+B2 deselect paint is a different gate; this capture’s NOTE_EDIT `DISP` `110,115,110,110` at 21.5 s is the same in-session shape as [`161855`](../../captures/session_20260816_161855.log).
+
+**Device [`165853`](../../captures/session_20260816_165853.log) — A undo/redo exercised; store-flat identity not logged:**
+
+Open `@ 235.359` `visual_notes=117` `session_events=245`. 24 warms. Simple path still `intermediates` 0 µs. **One complex warm** `@ 248.920`: `overlap_resolve` **123.8 ms**, `flat_copy` **7 µs** — copies run only when the probe requires them.
+
+`GEOM_APPLY,undo` here is `beginGeometryMutation` snapshot (kind 3 = Pitch), not E: restore.
+
+| Time | What the log shows |
+|------|--------------------|
+| 240.70 | Live `DNTE,24,744` then `24,648` (move/pitch of M24) |
+| 243.670 | Macro commit `editId=81`. `replay_flat` / `session_store` / `loop_materialized` all **M24 888–1032** (home still present) |
+| 246.77 | `DNTE,24,888` — in-session paint back at home (B2) |
+| 250.152 | Second commit `editId=82` M94 864–912 |
+| 258.429 | **`MIDI: EditSession undo`**. `DISP` `110,117,110,110`. `DNTE,24,888` |
+| 259.684 | **`MIDI: EditSession redo`**. `DISP` `109,117,109,109`. `DNTE,93,912` |
+| 261.991 | Exit bake `saved=2`. LOOP_EDIT `DISP` 116 |
+
+E: undo/redo **ran**. This log has no session-store flatten before/after those two lines, so it does **not** prove “identical session-store geometry.” Paint after undo is the pre-edit home; redo highlights a different `DNTE`. Do not close A on store identity from this file.
+
+B2 still open: live 24@648 then commit rematerialize still 888.
+
 ### 2. Layer B1 — closed
 
 Commit replay + chunk NoteId assign: [`161855`](../../captures/session_20260816_161855.log) replay PASS. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
 
-### 3. Layer B2 — native fixture (before B2a firmware)
+### 3. Layer B2 — native fixture (landed)
 
-Pin `editPassIds` semantics + seven-scenario matrix (table in § B2a). Assert `committedBase == materialize(active edit passes)`.
+`test_edit_apply`: `test_b2_edit_pass_ids_mean_active_committed_not_ever_created`, `test_b2_committed_base_matches_materialize_active_edit_passes` (161855 home 888 → 1656; seven scenarios), `test_b2_stale_visual_cache_overwrites_synced_current_state_spans`.
 
-### 4. Layer B2a — firmware
+**`editPassIds` pin:** `commitEditAction` / `saveNoteEditPass` append Active ids. `replaceNoteEditPass` disables stale and returns new Active ids. `sessionUndo` assigns `editPassIds = editPassIdsAtPush` after disable — the session list does **not** retain Disabled ids. `loop.passes.editPasses` still holds Disabled rows. Gate must not mean “ever created.”
 
-Extend `ensureNoteEditDisplayProjectionCachesBuilt` only. Committed base from materialized active passes when gate true; overlay uncommitted session state; reuse until committed revision changes.
+**Projection pin:** stale visualCache **with** mover NoteId still overlays `currentState` (1656). Stale visualCache **without** NoteId (`kInvalidNoteId`, 161117) keeps home 888 on deselect. Materialized base carries id + move.
+
+**Reselect hazard (not B2a firmware):** `ensureVisibleRowsForDisplayNotes(stale home)` overwrites sealed equal spans back to 888. Owner stays `ensureCurrentStateVisibleRowsFromVisualCache` — do not fold into this slice.
+
+### 4. Layer B2a — firmware (landed)
+
+Extend `ensureNoteEditDisplayProjectionCachesBuilt` only. Gate is `loop.visualCacheDirty` (set by `saveNoteEditPass` / `disableEditPasses` / `enableEditPasses`), **not** raw `editPassIds` non-empty — after E: undo the list is empty and dirty is still set. While dirty: `materializeToEventVector` + `reconstructDisplayNotes` (do not call `getVisualNotesForSlot` — that is B2b `VCACHE,full`). While clean: existing visualCache path. Overlay unchanged. Reuse existing projection fingerprint + `playbackRevision`.
 
 ### 5. Layer B2 — device gate
 
@@ -466,12 +507,34 @@ Reuse: **YES** — after `baseline_probe`, skip unused `resolvedFlat` / `focusCo
 
 Reuse: **YES** — extend `LoopEventStore::assignMissingNoteIdsToNoteOns` + `Loop::assignMissingNoteIdsInStore` pattern. Call from `openNoteEditSession` before rematerialize.
 
-### Layer B2 firmware checkpoint (before B2a)
+### Layer B2 firmware checkpoint (B2a — landed)
 
-1. Ownership change? **NO** if extending `ensureNoteEditDisplayProjectionCachesBuilt` / committed-base source only. **YES** if moving commit authority off `NoteEditCurrentState` or adding a **second persistent display store** — stop.
-2. State transition change? **NO** if paint reads the same materialized view `commitEditAction` already writes to session store. **YES** if deselect defers macro commit or exit bake timing changes — design session.
+1. Ownership change? **NO** — `ensureNoteEditDisplayProjectionCachesBuilt` committed-base source only. No second display store. `NoteEditCurrentState` still owns uncommitted overlay.
+2. State transition change? **NO** — same select / deselect / commit / exit. Paint reads `materialize(active)` when `visualCacheDirty`.
 
-Reuse: **YES** — `LoopPasses::materializeToEventVector` + `NoteUtils::reconstructDisplayNotes` (overdub / `rebuildVisualCacheFromPasses` path). **NO** — overdub session undo stack; **NO** — `reloadNoteEditSessionStoreFromPasses` extraction in this slice.
+Reuse: **YES** — `LoopPasses::materializeToEventVector` + `NoteUtils::reconstructDisplayNotes`. **NO** — overdub session undo stack; **NO** — `reloadNoteEditSessionStoreFromPasses` extraction; **NO** — `getVisualNotesForSlot` while dirty.
+
+## Pre-implementation review (B2a)
+
+### Ready
+- Owner: `EditManager::ensureNoteEditDisplayProjectionCachesBuilt`
+- Oracle: `committedBase == reconstructDisplayNotes(materialize(active edit passes))` — native pin in `test_edit_apply`
+- `editPassIds` are Active-only after session owners; Disabled rows remain on `loop.passes`
+
+### Resolved (user / code)
+| Topic | Decision |
+|-------|----------|
+| Gate | `visualCacheDirty`, not `editPassIds` non-empty (empty after E: undo of first commit) |
+| Reuse | Existing projection fingerprint + `playbackRevision`; no second display store |
+| B2b | Do not call `getVisualNotesForSlot` while dirty |
+| `visualCacheNotesForSelectedSlot` | Unchanged — used by commit-row baseline and reselect; changing it would alter `buildCommitRowsFromCurrentState` |
+| `rebuildNoteEditFocusAtSelect` | Unchanged |
+
+### Open before coding
+1. Device gate after flash: first deselect shows 1656, not 888. Reselect may still snap via `ensureVisibleRowsForDisplayNotes` — separate if it fails.
+
+### Proceed?
+- YES — checkpoint both NO; fixture landed first
 
 **Layer boundaries:** B1 = committed state/replay. B2 = committed display projection. Do not merge because code shares materialization.
 
