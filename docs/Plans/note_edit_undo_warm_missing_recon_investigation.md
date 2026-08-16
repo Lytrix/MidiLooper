@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — Layer A snapshot recorded [`145518`](../../captures/session_20260816_145518.log); remaining A open  
+**Status:** Active — Layer B pinned (deselect drops move, keeps pitch); remaining A open  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -55,27 +55,28 @@ The 2026-08-05 conclusion in [`note_edit_kind_boundary_undo_warm_incremental_ref
 
 Mid-session `VCACHE,full` `@ 48.744 s` and `@ 83.710 s` follow select `VCACHE,stale`. That is `getVisualNotesForSlot` → `ensureVisualCacheBuilt` after `invalidateCaches` (Layer D). Not Layer A’s owner, but it adds a hitch on the same select.
 
-### Layer B — exit does not keep edits
+### Layer B — deselect keeps pitch, drops the move
 
-First exit `@ 88.786 s`: `NoteEditPass replaced … rows=3 saved=3`. Then `VCACHE,stale` notes=**111**, idle `slice_clean` **112**, `DISP` **112**.
+Pinned from [`145518`](../../captures/session_20260816_145518.log). Same shape in [`143144`](../../captures/session_20260816_143144.log) `@ 48.603 s`.
 
-In-session commits already logged:
+Note 280: pitch at `888–1080`, move to `312–504`, empty-step deselect, reselect, move to `216–408`, pitch `50→43`, select-away, exit.
 
-```
-48.603  NoteRange 274 1057–1249 + Pitch 43
-48.628  replay_flat: M24@120 missing in recon
-48.643  take_only: M24 start=120 end=312
-48.660  session_store: M24@120 missing in recon
-48.683  loop_materialized: M24@120 missing in recon
-```
+| Time | What the log shows |
+|------|--------------------|
+| 23.402 | Canonical **NoteRange 312–504 + Pitch 45**. `apply_owned=1 first=1` (NoteRange only — last kind was move). |
+| 23.445–23.550 | `replay_flat` / `take_only` / `session_store` / `loop_materialized` all still **M24 888–1032**. Take-only is capture-only. Replay matching take-only means those two saved rows did not move or re-pitch that home. |
+| 23.636 | Empty-step deselect. `VCACHE,full` 114. |
+| 41.275 | In-session `DNTE` **43@216** (live session store still has the second move). |
+| 42.905 | Select-away. Canonical **NoteRange 216–408 + Pitch 43**. `apply_owned=1 first=0` (Pitch only). |
+| 53.328 | Exit bake **`rows=1 saved=1`**. `NoteEditPassClosed edits=1`. |
 
-`logChangeLengthCommitTrace` looks up `focus.commitBaseline.pitch` + `startTick` (here **M24@120**, the pre-edit home). `take_only` is capture passes without the new edit pass. Replay / session_store / loop_materialized are after `saveNoteEditPass`.
+`commitEditAction` then discards the live session flat and reloads from capture + saved `EditPass` replay. Display and the exit undo step therefore see that replay, not the in-session `DNTE` at 216.
 
-**Do not treat `missing in recon` as proof the edit was dropped.** The same split is what a successful pitch/range overlay looks like: take-only still has the old home; replay no longer does.
+`recordApplyOwnedEditPassRow(ChangePitch)` erases the mover’s existing `NoteRange` row. That is why the second deselect’s apply-owned set is pitch-only. Apply-owned is **not** persistence authority (`note_edit_singular_commit_pipeline_refinement.md`). Canonical still emitted both rows both times. Do not treat the erase as the Layer B owner.
 
-What is **not** in [`143144`](../../captures/session_20260816_143144.log): a post-exit `DNTE` / visual-cache dump of the **new** span (pitch 43 at 1057, or the last painted mover). Layer B’s first job is that fixture — not a pairing patch.
+**Do not treat `M50@888 missing in recon` as proof the move landed.** That lookup is pre-edit `commitBaseline`. The first deselect is the pin: home **still present** on replay after NoteRange+Pitch were saved.
 
-[`145518`](../../captures/session_20260816_145518.log) exit `@ 53.328 s`: `rows=1 saved=1` after in-session `NoteRange 216–408` + `Pitch 43` (note 280; recon looks up `M50@888`). In-session `DNTE` `43,216,216,192,8`. Post-exit `slice_clean` / `DISP` **114**. Still no post-exit `DNTE` of `43@216`. Same Layer B gap.
+**Next (native, not started):** replay the two canonical rows from 23.402 onto a capture-shaped flat that contains the mover’s store `NoteId`. State whether `applyNoteEditPassSequence` moves that note. Only then decide ID mismatch vs bake vs reload. Do not start RC8 pairing on `212810`.
 
 Sibling index (open, different fixture): RC8 in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) (`M65@369` / `M65@1050` in [`212810`](../../captures/session_20260806_212810.log)). Do not merge fixtures. Do not start RC8 pairing until 143144 shows the committed **new** span absent from post-exit `visualCache.notes`.
 
@@ -137,7 +138,7 @@ Remaining Layer A, same owner `buildSessionUndoEntry`:
 2. After `baseline_probe` (flag 0 on every sample), the function always does `resolvedFlat = sessionFlat` and `NoteEditFocus focusCopy = focus`. Those copies are unlogged. [`145518`](../../captures/session_20260816_145518.log) gap after named phases: **63–188 ms** (med 150). No `overlap_resolve` or `flat_copy` line in this capture.
 
 **Next firmware (not started):** skip the session-flat and full-focus copies when `!needsOverlapResolve && !needsBaselineMapDiff`. Do not clone current state in this slice. Same select → warm → push contract.
-2. **Layer B pin** — from [`143144`](../../captures/session_20260816_143144.log) saved rows (`NoteRange 1057–1249`, `Pitch 43`, later `Length 1057–1127` / `NoteRange 1128–1320`), state whether post-exit `slice_clean` / `DISP` can show that geometry. If the log cannot, add one commit-trace field for the **new** span (behavior-preserving) or a native replay of the three saved rows. Only then decide RC8 pairing vs stale-cache paint vs idle-slice omit.
+2. **Layer B pin** — done from [`145518`](../../captures/session_20260816_145518.log) deselect. Next: native replay of the 23.402 `NoteRange`+`Pitch` rows onto a capture-shaped flat. Do not patch `ChangePitch` apply-owned erase as the persistence fix.
 3. **Layer C** — only after A no longer dominates select/pitch.
 4. **Layer D** — only after A/B; do not globally delete `ensureVisualCacheBuilt`.
 
