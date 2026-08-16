@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer C4 pair-target overlay)
+Last updated: 2026-08-16 (NOTE_EDIT Layer C4 device PASS)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer C4 pair-target overlay)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **C4** — overlay only unique pair targets when `eligiblePairs` is non-empty. C3 empty-pair skip unchanged. Device gate: crowded-lane Move overlay extra0 ≈ 12, not 108. Do not skip overlay when pairs are non-empty. Do not skip `currentState->clone()`. Do not start B2b / Layer D.
+**Now:** **C4 device PASS** [`173806`](../../captures/session_20260816_173806.log) — crowded-lane overlay extra0 **12** (not 108); overlay 123→**16 ms**; resolve 142→**34 ms**. Empty-pair skip holds. Do not skip `currentState->clone()`. Do not start B2b / Layer D. Further overlay/reconstruct cuts need a new pin.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
