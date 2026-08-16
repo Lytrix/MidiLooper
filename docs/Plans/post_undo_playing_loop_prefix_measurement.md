@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Device PASS — grandchild owner is `midi_led_phase`. Helper rem **landed, not scored**.  
+**Status:** Device PASS — helper owner is `midi_led_lookup` (`prepareLedNoteLookup`).  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
@@ -261,7 +261,27 @@ Four triples. `midi_led_tick` and `midi_led_select` never remitted (≥50 ms).
 
 `MidiLedManager::updateLeds` only refreshes when the bar index changes (or first init). That matches the BAR-boundary remissions.
 
-## Helper rem (landed, not scored)
+## Helper rem — device [`113310`](../../captures/session_20260816_113310.log) PASS
+
+Seven quadruples. `midi_led_analyze` and `midi_led_bars` never remitted (≥50 ms).
+
+| CAP | `midi_led_lookup` | `midi_led_phase` | `loop_prefix` | lookup / phase |
+|-----|------------------:|-----------------:|--------------:|---------------:|
+| 28.404 s | **301201** | 304501 | 306885 | 98.9% |
+| 34.437 s | **254769** | 256143 | 257561 | 99.5% |
+| 50.383 s | **275556** | 280746 | 283139 | 98.2% |
+| 54.372 s | **278533** | 283308 | 286689 | 98.3% |
+| 68.431 s | **314471** | 320956 | 322349 | 98.0% |
+| 80.474 s | **344960** | 356820 | 358210 | 96.7% |
+| 88.488 s | **402692** | 417867 | 419260 | 96.4% |
+
+First cluster: `BAR,6920,9` @ 28.103 s → 301 ms silence → `midi_led_lookup` @ 28.404 s → LED. Same BAR-boundary hole as [`112117`](../../captures/session_20260816_112117.log).
+
+`analyzeAndUpdateBar` and `updateBarLeds` are not the hole. The 3–15 ms from lookup rem to `midi_led_phase` is those two (below the 50 ms one-shot).
+
+`prepareLedNoteLookup` is the named owner. When `visualCacheDirty` and committed passes exist it calls `loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_)`. Do not time `hasNoteInSixteenthStep`. Do not re-arm drain.
+
+## Helper rem (landed, scored)
 
 Same undo window (`loopPrefixMeasureAfterUndoActive` on the displayed track). Same 50 ms one-shot.
 
@@ -273,7 +293,7 @@ Same undo window (`loopPrefixMeasureAfterUndoActive` on the displayed track). Sa
 
 `updateLeds` stays ITCM. Rem emit is `RuntimeTimingTelemetry::recordMidiLedHelperRem` (`FLASHMEM` + `noinline`). Span names are `PROGMEM` (`.progmem` → flash). Ordinary `.rodata` string literals in this path land in DTCM and slide `_VectorsRam` / `periodictable` across 1 KB / 4 KB aligns (locals 6496 → 2400). This build: RAM1 variables **91808**, code **425756**, padding **228**, locals **6496**.
 
-Device gate: same cluster as [`112117`](../../captures/session_20260816_112117.log). Score against `midi_led_phase` 204–327 ms. If one helper is ~that, that is the owner. If none is, stop and re-read. Do not re-arm drain. Do not time `hasNoteInSixteenthStep` / gather until a helper rem names a parent.
+Device gate: same cluster as [`112117`](../../captures/session_20260816_112117.log). Scored: [`113310`](../../captures/session_20260816_113310.log).
 
 ## Grandchild rem (landed, scored)
 
