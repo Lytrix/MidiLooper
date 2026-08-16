@@ -216,6 +216,32 @@ void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
   store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
 }
 
+LOOP_COLD_MEM void Loop::assignMissingNoteIdsInCommittedCapturePasses() {
+  if (!hasCommittedPasses()) {
+    return;
+  }
+  uint32_t assigned = 0;
+  auto assignFn = [this, &assigned]() {
+    ++assigned;
+    return allocateNoteId();
+  };
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    LoopEventStore::assignMissingNoteIdsToNoteOns(passes.recordPass.committedChunkIds, assignFn);
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+      continue;
+    }
+    LoopEventStore::assignMissingNoteIdsToNoteOns(pass.committedChunkIds, assignFn);
+  }
+  if (assigned > 0) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "assignMissingNoteIdsInCommittedCapturePasses: assigned %lu",
+               static_cast<unsigned long>(assigned));
+  }
+}
+
 void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   if (delta == 0 || !hasCommittedPasses()) {
     return;

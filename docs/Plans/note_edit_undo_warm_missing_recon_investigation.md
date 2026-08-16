@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — Layer B pinned (deselect drops move, keeps pitch); remaining A open  
+**Status:** Active — Layer B firmware landed (assign on committed capture chunks); device gate open; remaining A parked  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -95,7 +95,11 @@ Not bake (replay already wrong). Not the reload call itself (same `materializeTo
 
 `noteEditFocusApplyDisplayNote` copies `liveSelected.noteId`. That id is 280 because current state was built from the assigned session store. Not a focus-rebuild bug.
 
-**Next firmware:** not started. Writing assigned ids back into capture chunks, or applying commit rows onto the session store instead of pass rematerialize, changes who owns NoteId identity — answer the architecture checkpoint before coding. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
+**Firmware (this session):** architecture checkpoint both **NO**. `openNoteEditSession` now calls `Loop::assignMissingNoteIdsInCommittedCapturePasses` **before** `rebuildVisualCacheFromPasses` / `rematerializeEditView`. That fills `kInvalidNoteId` in-place on active record/overdub committed chunks via the existing `LoopEventStore::assignMissingNoteIdsToNoteOns` + `Loop::allocateNoteId`. Chunk ids unchanged (not COW). `LOOP_COLD_MEM` so the new open-path walk stays out of ITCM. Session-store assign stays as a no-op safety net. `commitEditAction` still rematerializes from takes + edits. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
+
+Native: `test_145518_assign_on_committed_passes_makes_rematerialize_find_id` — after assign-on-chunks, rematerialize finds 280 and NoteRange+Pitch **moves** the home. The session-only test stays as the hazard pin.
+
+**Device gate:** same 145518 gesture. After first deselect, replay must not still show M24@888 when canonical saved NoteRange+Pitch. Exit bake must keep the move, not pitch-only `saved=1`. Look for `assignMissingNoteIdsInCommittedCapturePasses: assigned`.
 
 Sibling index (open, different fixture): RC8 in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) (`M65@369` / `M65@1050` in [`212810`](../../captures/session_20260806_212810.log)). Do not merge fixtures. Do not start RC8 pairing until 143144 shows the committed **new** span absent from post-exit `visualCache.notes`.
 
@@ -157,7 +161,7 @@ Remaining Layer A, same owner `buildSessionUndoEntry`:
 2. After `baseline_probe` (flag 0 on every sample), the function always does `resolvedFlat = sessionFlat` and `NoteEditFocus focusCopy = focus`. Those copies are unlogged. [`145518`](../../captures/session_20260816_145518.log) gap after named phases: **63–188 ms** (med 150). No `overlap_resolve` or `flat_copy` line in this capture.
 
 **Next firmware (not started):** skip the session-flat and full-focus copies when `!needsOverlapResolve && !needsBaselineMapDiff`. Do not clone current state in this slice. Same select → warm → push contract.
-2. **Layer B pin** — deselect + replay + ID source done. Next firmware needs an architecture checkpoint: session-only `assignMissingNoteIds` vs capture-chunk identity. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
+2. **Layer B pin** — deselect + replay + ID source done. Firmware landed: assign missing ids on committed capture chunks at NOTE_EDIT open. Device gate next. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
 3. **Layer C** — only after A no longer dominates select/pitch.
 4. **Layer D** — only after A/B; do not globally delete `ensureVisualCacheBuilt`.
 
@@ -167,6 +171,13 @@ Remaining Layer A, same owner `buildSessionUndoEntry`:
 
 1. Ownership change? Extending `buildSessionUndoEntry` / `commitEditAction` / existing trace: **NO**. New undo Session or moving commit authority off `NoteEditCurrentState`: **YES** — stop.
 2. State transition change? Faster warm with the same select → warm → push contract: **NO**. Deferring NOTE_EDIT open, exit, or macro commit until warm/recon finishes: **YES** — design session.
+
+### Layer B firmware checkpoint (this session)
+
+1. Ownership change? **NO** — `Loop` already owns `allocateNoteId` and `assignMissingNoteIds*`. Extending assign onto the committed capture chunks `commitEditAction` already rematerializes. Not applying commit onto the session store. Not a new NoteId owner.
+2. State transition change? **NO** — still assign at NOTE_EDIT open; same open → edit → commit → rematerialize sequence. In-place identity fill; chunk ids unchanged.
+
+Reuse: **YES** — extend `LoopEventStore::assignMissingNoteIdsToNoteOns` + `Loop::assignMissingNoteIdsInStore` pattern. Call from `openNoteEditSession` before rematerialize.
 
 ---
 

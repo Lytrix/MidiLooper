@@ -611,6 +611,54 @@ void test_145518_open_assigned_note_id_missing_from_pass_rematerialize() {
   TEST_ASSERT_TRUE(foundHome);
 }
 
+// Same unidentified capture note, but assign on committed chunks before rematerialize.
+// Session and pass flats share 280; NoteRange+Pitch then moves the home (145518 Layer B fix).
+void test_145518_assign_on_committed_passes_makes_rematerialize_find_id() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t kPitch = 24;
+  constexpr uint32_t kHomeStart = 888;
+  constexpr uint32_t kHomeEnd = 1032;
+  constexpr NoteId kAssignedId = 280;
+
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  loop.nextNoteId_ = kAssignedId;
+  loop.passes.recordPass = makeRecordPassWithUnidentifiedNote(1, kHomeStart, kHomeEnd, kPitch);
+
+  loop.assignMissingNoteIdsInCommittedCapturePasses();
+
+  MidiEventVec passFlat;
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  TEST_ASSERT_EQUAL(kAssignedId, noteIdAtPitchAndStart(passFlat, kPitch, kHomeStart));
+
+  LoopEventStore sessionStore;
+  loop.rematerializeEditView(sessionStore);
+  MidiEventVec sessionFlat;
+  sessionStore.copyEventsTo(sessionFlat);
+  TEST_ASSERT_EQUAL(kAssignedId, noteIdAtPitchAndStart(sessionFlat, kPitch, kHomeStart));
+
+  pushEditPassRows(loop.passes, 1,
+                   {makeNoteRangeRow(kAssignedId, kHomeStart, kHomeEnd, 312, 504),
+                    makePitchRow(kAssignedId, 312, 504, 45)});
+  passFlat.clear();
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(passFlat, kLoopLength, false);
+  bool foundMoved = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == kPitch && note.startTick == kHomeStart);
+    if (note.noteId == kAssignedId) {
+      foundMoved = true;
+      TEST_ASSERT_EQUAL_UINT8(45, note.note);
+      TEST_ASSERT_EQUAL_UINT32(312u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(504u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMoved);
+}
+
 MidiEvent noteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
                        NoteId noteId) {
   MidiEvent evt = MidiEvent::NoteOn(tick, channel, pitch, velocity);
@@ -1283,6 +1331,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_145518_note_range_pitch_replay_moves_when_store_id_matches);
   RUN_TEST(test_145518_note_range_pitch_replay_leaves_home_when_store_id_differs);
   RUN_TEST(test_145518_open_assigned_note_id_missing_from_pass_rematerialize);
+  RUN_TEST(test_145518_assign_on_committed_passes_makes_rematerialize_find_id);
   RUN_TEST(test_nested_same_pitch_outer_apply_helpers_use_lifo_off);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
