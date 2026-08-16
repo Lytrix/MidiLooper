@@ -68,6 +68,32 @@ FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
     trackManager.getTrack(i).noteLoopPrefixMeasureAfterUndo();
   }
 }
+
+enum : uint8_t {
+  kLoadFrameDisplay = 0,
+  kLoadFrameLoadJob = 1,
+  kLoadFrameFirstCommit = 2,
+  kLoadFrameBootCommit = 3
+};
+
+FLASHMEM __attribute__((noinline)) static void recordLoadFrameChild(uint8_t child,
+                                                                    uint32_t startUs) {
+  const uint32_t durationUs = micros() - startUs;
+  const char* span = "display_frame";
+  if (child == kLoadFrameLoadJob) {
+    span = "load_job";
+    RuntimeTimingTelemetry::noteLoadJob(durationUs);
+  } else if (child == kLoadFrameFirstCommit) {
+    span = "first_commit";
+    RuntimeTimingTelemetry::noteFirstCommit(durationUs);
+  } else if (child == kLoadFrameBootCommit) {
+    span = "boot_commit";
+    RuntimeTimingTelemetry::noteBootCommit(durationUs);
+  } else {
+    RuntimeTimingTelemetry::noteDisplayFrame(durationUs);
+  }
+  DebugSessionCapture::recordLoopRemainderSpan(span, durationUs);
+}
 #endif
 
 // BAR→LED prefix children. FLASHMEM so child rem does not cross the RAM1 32KB ITCM page.
@@ -203,7 +229,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
                            now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
+#if defined(SESSION_CAPTURE)
+      const uint32_t displayStartUs = micros();
+#endif
       displayManager.update();
+#if defined(SESSION_CAPTURE)
+      recordLoadFrameChild(kLoadFrameDisplay, displayStartUs);
+#endif
     }
   }
 
@@ -215,14 +247,26 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
             ? LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
                   bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive)
             : LoadLoopBudget::FocusRestoreUs;
+#if defined(SESSION_CAPTURE)
+    const uint32_t loadJobStartUs = micros();
+#endif
     DeferredJobScheduler::runFrame(budgetUs);
+#if defined(SESSION_CAPTURE)
+    recordLoadFrameChild(kLoadFrameLoadJob, loadJobStartUs);
+#endif
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       skipDisplayAfterFocusCommit = true;
       // Same-frame windowed prewarm — buffer already freed at commit_armed; trySlot is
       // fail-soft. Deferring to next frame raced save/reclaim (000659).
       Track& prewarmTrackRef = trackManager.getTrack(focusTrack);
+#if defined(SESSION_CAPTURE)
+      const uint32_t firstCommitStartUs = micros();
+#endif
       prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
+#if defined(SESSION_CAPTURE)
+      recordLoadFrameChild(kLoadFrameFirstCommit, firstCommitStartUs);
+#endif
       displayManager.invalidateLiveDisplayCache();
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
@@ -239,11 +283,20 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
                            now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
+#if defined(SESSION_CAPTURE)
+      const uint32_t displayStartUs = micros();
+#endif
       displayManager.update();
+#if defined(SESSION_CAPTURE)
+      recordLoadFrameChild(kLoadFrameDisplay, displayStartUs);
+#endif
     }
   }
 
   if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t bootCommitStartUs = micros();
+#endif
     bootSlotLoadRefreshPending = false;
     StorageManager::setBootTitleLoadDrain(false);
     StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
@@ -261,6 +314,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     midiHandler.processDroidUsbHostOutbound();
     displayManager.update();
     lastDisplayUpdate = now;
+#if defined(SESSION_CAPTURE)
+    recordLoadFrameChild(kLoadFrameBootCommit, bootCommitStartUs);
+#endif
   }
 }
 
