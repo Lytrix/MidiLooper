@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT wrap-move persist drops false linear off)
+Last updated: 2026-08-16 (Editor consume architecture PASS / stages amended; wrap-move persist still Now)
 
 ---
 
@@ -33,13 +33,15 @@ Last updated: 2026-08-16 (NOTE_EDIT wrap-move persist drops false linear off)
 
 **Scheduler prep:** [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](../Plans/runtime_scheduler_lcr_consumer_grooming_refinement.md). **Slice 1–4c device PASS.** Slice 4d firmware landed; [`143144`](../../captures/session_20260816_143144.log) moved NOTE_EDIT session work to the investigation above. Do not start 4e. Do not fold NOTE_EDIT hydrate into grooming. Do not optimize `LoadLoopJob` from PLAYING paint.
 
-**FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
+**FinalizeWorkspace slice** shipped (`48bd36f`). **LoopPersist finalize** relanded — boot **PASS** [`213246`](../../captures/session_20260816_213246.log); one PLAYING `persist_save` rem **206 ms** @ 25.683 s (later jobs no rem ≥ 50 ms).
 
 **Parked:** 915 ms boot `load_frame` [`032803`](../../captures/session_20260816_032803.log) — `commitLoadLoopJobPublish` / `runDeferredLoadAndDisplayFrame`; not a freeze; not the revert.
 
 **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) `match=1` `pmatch=1`. STOPPED `midi_gap` **72 ms** at LCR complete is a different sample (`6a,nat` 30 ms + `loop_rem,idle_maint` 58 ms); after that, max **13.5 ms**.
 
-**Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. PLAYING `midi_gap` in [`192334`](../../captures/session_20260815_192334.log) was FinalizeWorkspace (sliced). Post-stop gap owner is idle visual cache, not LCR.
+**Pinned, not now — Editor consume:** Architecture **PASS**; stages **PASS WITH AMENDMENTS**. DEC-037 amendment 2026-08-16. [`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md). Select is neighborhood navigation (`tickEvents` / `spanBoundaries`), not `resolveState`. Overlap is identity-bounded lookup. Stages 4a/4b/4c split. Do **not** start until wrap-move persist gate. Do not full-replace `sessionMidiEvents()` for audition.
+
+**Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. PLAYING `midi_gap` in [`192334`](../../captures/session_20260815_192334.log) was FinalizeWorkspace (sliced). Post-stop gap owner is idle visual cache, not LCR. Editor consume (6.4).
 
 ### DEC-036 Layer D 3b — overdub entry without display reconstruct (shipped)
 

@@ -43,11 +43,27 @@ STORAGE_PERSIST_MEM void clearCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_
     currentSetLoopSlotDirty[trackIndex][slotIndex] = false;
 }
 
+STORAGE_PERSIST_MEM void resetDeferredLoopFinalizeState() {
+    storageSession.currentWorkspaceSave.loopFinalizeStage = DeferredLoopFinalizeStage::Idle;
+}
+
+STORAGE_PERSIST_MEM void beginDeferredLoopSlotFinalize() {
+    storageSession.currentWorkspaceSave.loopFinalizeStage = DeferredLoopFinalizeStage::WriteToken;
+    storageSession.currentWorkspaceSave.epochCrc = 0;
+    storageSession.currentWorkspaceSave.epochCrcBodyOffset = 0;
+    storageSession.currentWorkspaceSave.epochCrcBodySize = 0;
+}
+
+STORAGE_PERSIST_MEM bool deferredLoopSlotFinalizeInProgress() {
+    return storageSession.currentWorkspaceSave.loopFinalizeStage != DeferredLoopFinalizeStage::Idle;
+}
+
 STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
     storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::Header;
     storageSession.currentWorkspaceSave.capturePassCursor = 0;
     storageSession.currentWorkspaceSave.chunkCursor = 0;
     storageSession.currentWorkspaceSave.midiBatch.clear();
+    resetDeferredLoopFinalizeState();
 }
 
 STORAGE_PERSIST_MEM void resetDeferredUndoWriteState() {
@@ -172,18 +188,10 @@ STORAGE_PERSIST_MEM bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t sl
     return true;
 }
 
-STORAGE_PERSIST_MEM bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
-    if (!storageSession.currentWorkspaceSave.loopFileOpen) {
-        return false;
-    }
-    if (!writeRaw(storageSession.currentWorkspaceSave.loopFile, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
-        storageSession.currentWorkspaceSave.loopFile.close();
-        storageSession.currentWorkspaceSave.loopFileOpen = false;
-        return false;
-    }
-    storageSession.currentWorkspaceSave.loopFile.close();
-    storageSession.currentWorkspaceSave.loopFileOpen = false;
-
+STORAGE_PERSIST_MEM bool stepFinalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex,
+                                                          bool& finalizeDoneOut) {
+    finalizeDoneOut = false;
+    CurrentWorkspaceSaveJob& job = storageSession.currentWorkspaceSave;
     char tempPath[48];
     char finalPath[48];
     if (!CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath), trackIndex,
@@ -192,18 +200,92 @@ STORAGE_PERSIST_MEM bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_
                                                slotIndex)) {
         return false;
     }
-    if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(tempPath)) {
-        return false;
+
+    switch (job.loopFinalizeStage) {
+        case DeferredLoopFinalizeStage::Idle:
+            return false;
+
+        case DeferredLoopFinalizeStage::WriteToken:
+            if (!job.loopFileOpen) {
+                return false;
+            }
+            if (!writeRaw(job.loopFile, &CurrentSetStorage::kSaveFileToken,
+                          sizeof(CurrentSetStorage::kSaveFileToken))) {
+                job.loopFile.close();
+                job.loopFileOpen = false;
+                return false;
+            }
+            job.loopFile.close();
+            job.loopFileOpen = false;
+            job.loopFinalizeStage = DeferredLoopFinalizeStage::EpochCrcBody;
+            return true;
+
+        case DeferredLoopFinalizeStage::EpochCrcBody: {
+            if (!job.loopFile) {
+                job.loopFile = SD.open(tempPath, FILE_READ);
+                if (!job.loopFile) {
+                    return false;
+                }
+                const size_t fileSize = job.loopFile.size();
+                if (fileSize < CurrentWorkspaceStorage::kEpochFileHeaderByteSize) {
+                    job.loopFile.close();
+                    return false;
+                }
+                job.epochCrc = 0;
+                job.epochCrcBodyOffset = 0;
+                job.epochCrcBodySize =
+                    static_cast<uint32_t>(fileSize - CurrentWorkspaceStorage::kEpochFileHeaderByteSize);
+                if (!job.loopFile.seek(CurrentWorkspaceStorage::kEpochFileHeaderByteSize)) {
+                    job.loopFile.close();
+                    return false;
+                }
+                if (job.epochCrcBodySize == 0) {
+                    job.loopFile.close();
+                    job.loopFinalizeStage = DeferredLoopFinalizeStage::EpochCrcHeader;
+                    return true;
+                }
+            }
+            uint8_t buffer[CurrentWorkspaceStorage::kEpochFileCrcSliceBytes];
+            const uint32_t remaining = job.epochCrcBodySize - job.epochCrcBodyOffset;
+            const size_t toRead = remaining < CurrentWorkspaceStorage::kEpochFileCrcSliceBytes
+                                      ? remaining
+                                      : CurrentWorkspaceStorage::kEpochFileCrcSliceBytes;
+            const int bytesRead = job.loopFile.read(buffer, toRead);
+            if (bytesRead <= 0) {
+                job.loopFile.close();
+                return false;
+            }
+            job.epochCrc = PersistenceSchema::crc32Continue(job.epochCrc, buffer,
+                                                            static_cast<size_t>(bytesRead));
+            job.epochCrcBodyOffset += static_cast<uint32_t>(bytesRead);
+            if (job.epochCrcBodyOffset >= job.epochCrcBodySize) {
+                job.loopFile.close();
+                job.loopFinalizeStage = DeferredLoopFinalizeStage::EpochCrcHeader;
+            }
+            return true;
+        }
+
+        case DeferredLoopFinalizeStage::EpochCrcHeader:
+            if (!CurrentWorkspaceStorage::writeEpochFileHeaderCrc(tempPath, job.epochCrc)) {
+                return false;
+            }
+            job.loopFinalizeStage = DeferredLoopFinalizeStage::VerifyAndRename;
+            return true;
+
+        case DeferredLoopFinalizeStage::VerifyAndRename:
+            if (!CurrentSetStorage::verifySaveFileTokenAtPath(tempPath)) {
+                return false;
+            }
+            if (!CurrentSetStorage::atomicRenameTempFile(tempPath, finalPath)) {
+                return false;
+            }
+            (void)CurrentSetStorage::removeLoopSlotSealJournal(trackIndex, slotIndex);
+            StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, true);
+            resetDeferredLoopFinalizeState();
+            finalizeDoneOut = true;
+            return true;
     }
-    if (!CurrentSetStorage::verifySaveFileTokenAtPath(tempPath)) {
-        return false;
-    }
-    if (!CurrentSetStorage::atomicRenameTempFile(tempPath, finalPath)) {
-        return false;
-    }
-    (void)CurrentSetStorage::removeLoopSlotSealJournal(trackIndex, slotIndex);
-    StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, true);
-    return true;
+    return false;
 }
 
 STORAGE_PERSIST_MEM bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex) {

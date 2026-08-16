@@ -220,29 +220,39 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
     return completePersistenceWorkItem(job, "resolve", false);
   }
 
-  if (!storageSession.currentWorkspaceSave.loopFileOpen &&
-      !openDeferredLoopSlotTemp(job.trackIndex, job.slotIndex)) {
-    return completePersistenceWorkItem(job, "open", false);
-  }
+  if (!deferredLoopSlotFinalizeInProgress()) {
+    if (!storageSession.currentWorkspaceSave.loopFileOpen &&
+        !openDeferredLoopSlotTemp(job.trackIndex, job.slotIndex)) {
+      return completePersistenceWorkItem(job, "open", false);
+    }
 
-  Track& track = trackManager.getTrack(job.trackIndex);
-  bool loopDone = false;
-  const bool loopWriteOk = track.loopsAllocated()
-                               ? stepDeferredLoopPersist(storageSession.currentWorkspaceSave.loopFile,
-                                                         track.getLoop(job.slotIndex), loopDone)
-                               : stepDeferredEmptyLoopPersist(storageSession.currentWorkspaceSave.loopFile,
-                                                              static_cast<LoopId>(job.slotIndex),
-                                                              loopDone);
-  if (!loopWriteOk) {
-    return completePersistenceWorkItem(job, "slice", false);
-  }
-  if (!loopDone) {
+    Track& track = trackManager.getTrack(job.trackIndex);
+    bool loopDone = false;
+    const bool loopWriteOk = track.loopsAllocated()
+                                 ? stepDeferredLoopPersist(storageSession.currentWorkspaceSave.loopFile,
+                                                           track.getLoop(job.slotIndex), loopDone)
+                                 : stepDeferredEmptyLoopPersist(storageSession.currentWorkspaceSave.loopFile,
+                                                                static_cast<LoopId>(job.slotIndex),
+                                                                loopDone);
+    if (!loopWriteOk) {
+      return completePersistenceWorkItem(job, "slice", false);
+    }
+    if (!loopDone) {
+      emitPersistenceWorkTelemetry(job.item, "slice", "ok");
+      return true;
+    }
+    beginDeferredLoopSlotFinalize();
     emitPersistenceWorkTelemetry(job.item, "slice", "ok");
     return true;
   }
 
-  if (!finalizeDeferredLoopSlotTemp(job.trackIndex, job.slotIndex)) {
+  bool finalizeDone = false;
+  if (!stepFinalizeDeferredLoopSlotTemp(job.trackIndex, job.slotIndex, finalizeDone)) {
     return completePersistenceWorkItem(job, "finalize", false);
+  }
+  if (!finalizeDone) {
+    emitPersistenceWorkTelemetry(job.item, "slice", "ok");
+    return true;
   }
 
   clearLoopSlotDirty(job.trackIndex, job.slotIndex);

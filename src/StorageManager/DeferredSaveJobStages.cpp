@@ -195,7 +195,8 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetLoopSlot() {
 
             const uint8_t trackIndex = storageSession.currentWorkspaceSave.trackCursor;
             const uint8_t slotIndex = storageSession.currentWorkspaceSave.poolCursor;
-            if (!shouldWriteCurrentSetLoopSlot(trackIndex, slotIndex)) {
+            if (!deferredLoopSlotFinalizeInProgress() &&
+                !shouldWriteCurrentSetLoopSlot(trackIndex, slotIndex)) {
                 ++storageSession.currentWorkspaceSave.loopSlotsSkipped;
                 storageSession.currentWorkspaceSave.poolCursor++;
                 if (storageSession.currentWorkspaceSave.poolCursor < Config::MAX_LOOPS_PER_TRACK) {
@@ -224,37 +225,45 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetLoopSlot() {
                 return true;
             }
 
-            if (!storageSession.currentWorkspaceSave.loopFileOpen &&
-                !openDeferredLoopSlotTemp(trackIndex, slotIndex)) {
-                return false;
-            }
-            Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.trackCursor);
-            bool loopDone = false;
-            const bool loopWriteOk = track.loopsAllocated()
-                                         ? stepDeferredLoopPersist(
-                                               storageSession.currentWorkspaceSave.loopFile,
-                                               track.getLoop(storageSession.currentWorkspaceSave.poolCursor), loopDone)
-                                         : stepDeferredEmptyLoopPersist(
-                                               storageSession.currentWorkspaceSave.loopFile,
-                                               static_cast<LoopId>(storageSession.currentWorkspaceSave.poolCursor),
-                                               loopDone);
-            if (!loopWriteOk) {
-                Serial.print("[StorageManager] ERROR: Deferred save failed writing loop pool entry track ");
-                Serial.print(storageSession.currentWorkspaceSave.trackCursor);
-                Serial.print(" pool ");
-                Serial.println(storageSession.currentWorkspaceSave.poolCursor);
-                return false;
-            }
-            if (!loopDone) {
+            if (!deferredLoopSlotFinalizeInProgress()) {
+                if (!storageSession.currentWorkspaceSave.loopFileOpen &&
+                    !openDeferredLoopSlotTemp(trackIndex, slotIndex)) {
+                    return false;
+                }
+                Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.trackCursor);
+                bool loopDone = false;
+                const bool loopWriteOk = track.loopsAllocated()
+                                             ? stepDeferredLoopPersist(
+                                                   storageSession.currentWorkspaceSave.loopFile,
+                                                   track.getLoop(storageSession.currentWorkspaceSave.poolCursor), loopDone)
+                                             : stepDeferredEmptyLoopPersist(
+                                                   storageSession.currentWorkspaceSave.loopFile,
+                                                   static_cast<LoopId>(storageSession.currentWorkspaceSave.poolCursor),
+                                                   loopDone);
+                if (!loopWriteOk) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing loop pool entry track ");
+                    Serial.print(storageSession.currentWorkspaceSave.trackCursor);
+                    Serial.print(" pool ");
+                    Serial.println(storageSession.currentWorkspaceSave.poolCursor);
+                    return false;
+                }
+                if (!loopDone) {
+                    return true;
+                }
+                beginDeferredLoopSlotFinalize();
                 return true;
             }
 
-            if (!finalizeDeferredLoopSlotTemp(trackIndex, slotIndex)) {
+            bool finalizeDone = false;
+            if (!stepFinalizeDeferredLoopSlotTemp(trackIndex, slotIndex, finalizeDone)) {
                 Serial.print("[StorageManager] ERROR: Deferred save failed finalizing loop slot track ");
                 Serial.print(trackIndex);
                 Serial.print(" slot ");
                 Serial.println(slotIndex);
                 return false;
+            }
+            if (!finalizeDone) {
+                return true;
             }
             ++storageSession.currentWorkspaceSave.loopSlotsWritten;
             clearCurrentSetLoopSlotDirty(trackIndex, slotIndex);
