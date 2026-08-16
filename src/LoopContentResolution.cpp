@@ -141,6 +141,31 @@ TRACK_COLD_MEM void sortResolvedEvents(SessionMidiEventVec& events) {
   std::sort(events.begin(), events.end(), resolvedEventLess);
 }
 
+// appendNoteEvents can re-add a target already in the window. NoteId is ON-only
+// (kInvalidNoteId on NoteOff), so same-tick same-pitch offs are not the same event.
+TRACK_COLD_MEM bool sameIdentifiedResolvedEvent(const MidiEvent& a, const MidiEvent& b) {
+  return a.noteId != kInvalidNoteId && a.noteId == b.noteId && a.tick == b.tick &&
+         a.type == b.type && a.channel == b.channel &&
+         a.data.noteData.note == b.data.noteData.note;
+}
+
+TRACK_COLD_MEM void uniqueIdentifiedResolvedEvents(SessionMidiEventVec& events) {
+  events.erase(std::unique(events.begin(), events.end(), sameIdentifiedResolvedEvent),
+               events.end());
+}
+
+TRACK_COLD_MEM bool workingHasNoteOnId(const SessionMidiEventVec& events, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const MidiEvent& event : events) {
+    if (event.isNoteOn() && event.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM bool noteSoundsAt(const NoteUtils::DisplayNote& note, uint32_t tick, uint32_t loopLengthTicks) {
   if (NoteUtils::isWrappedLoopNotePair(note.startTick, note.endTick, loopLengthTicks)) {
     return tick >= note.startTick || tick < note.endTick;
@@ -784,17 +809,13 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
   for (const EditPass& editPass : editPasses) {
     if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
       activeRows.push_back(editPass);
-      index.appendNoteEvents(editPass.targetNoteId, working);
+      if (!workingHasNoteOnId(working, editPass.targetNoteId)) {
+        index.appendNoteEvents(editPass.targetNoteId, working);
+      }
     }
   }
   sortResolvedEvents(working);
-  working.erase(std::unique(working.begin(), working.end(),
-                            [](const MidiEvent& a, const MidiEvent& b) {
-                              return a.tick == b.tick && a.type == b.type && a.channel == b.channel &&
-                                     a.data.noteData.note == b.data.noteData.note &&
-                                     a.noteId == b.noteId;
-                            }),
-                working.end());
+  uniqueIdentifiedResolvedEvents(working);
   if (!activeRows.empty()) {
     applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
   }
@@ -824,17 +845,13 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
   for (const EditPass& editPass : editPasses) {
     if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
       activeRows.push_back(editPass);
-      index.appendNoteEvents(editPass.targetNoteId, working);
+      if (!workingHasNoteOnId(working, editPass.targetNoteId)) {
+        index.appendNoteEvents(editPass.targetNoteId, working);
+      }
     }
   }
   sortResolvedEvents(working);
-  working.erase(std::unique(working.begin(), working.end(),
-                            [](const MidiEvent& a, const MidiEvent& b) {
-                              return a.tick == b.tick && a.type == b.type && a.channel == b.channel &&
-                                     a.data.noteData.note == b.data.noteData.note &&
-                                     a.noteId == b.noteId;
-                            }),
-                working.end());
+  uniqueIdentifiedResolvedEvents(working);
   if (!activeRows.empty()) {
     applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
   }
@@ -865,17 +882,13 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index,
   for (const EditPass& editPass : editPasses) {
     if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
       activeRows.push_back(editPass);
-      index.appendNoteEvents(editPass.targetNoteId, working);
+      if (!workingHasNoteOnId(working, editPass.targetNoteId)) {
+        index.appendNoteEvents(editPass.targetNoteId, working);
+      }
     }
   }
   sortResolvedEvents(working);
-  working.erase(std::unique(working.begin(), working.end(),
-                            [](const MidiEvent& a, const MidiEvent& b) {
-                              return a.tick == b.tick && a.type == b.type && a.channel == b.channel &&
-                                     a.data.noteData.note == b.data.noteData.note &&
-                                     a.noteId == b.noteId;
-                            }),
-                working.end());
+  uniqueIdentifiedResolvedEvents(working);
   if (!activeRows.empty()) {
     applyNoteEditPassSequence(working, activeRows, loopLengthTicks);
   }

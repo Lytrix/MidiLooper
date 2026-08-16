@@ -586,6 +586,48 @@ void test_stage3_delete_matches_materialize() {
   TEST_ASSERT_FALSE(hasNoteIdOn(actual, fixture.deletedNoteId));
 }
 
+// session_20260816_024806: Delete 1034 (12 @ 1248–1344) must not drop 1422 (12 @ 1240–1344).
+// TickIndex resolveWindow uniqued NoteOffs by tick+pitch+noteId; noteId is ON-only so both
+// offs collapsed and applyDeleteNoteById LIFO stole 1422's off.
+void test_resolve_window_delete_keeps_same_pitch_same_end_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kLoopLength = 2u * Config::TICKS_PER_BAR;
+  constexpr NoteId kKeptId = 1422;
+  constexpr NoteId kDeletedId = 1034;
+
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = makeNoteSpan(1240, 1344, 1, 12, kKeptId);
+  passes.overdubPasses.push_back(makeOverdub(2, 1, 1248, 1344, 1, 12, kDeletedId));
+  passes.editPasses.push_back(makeDelete(3, kDeletedId));
+
+  LoopContentResolution::TickIndex index;
+  index.commitCapturePass(passes.recordPass.id, passes.recordPass.committedChunkIds,
+                          passes.recordPass.state, 0);
+  index.commitCapturePass(passes.overdubPasses[0].id, passes.overdubPasses[0].committedChunkIds,
+                          passes.overdubPasses[0].state, passes.overdubPasses[0].mergeSequence);
+
+  SessionMidiEventVec expected;
+  oracleWindowEvents(passes, kLoopLength, 0, kLoopLength, expected);
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(index, passes.editPasses, kLoopLength, 0, kLoopLength,
+                                       actual, nullptr);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, kKeptId));
+  TEST_ASSERT_FALSE(hasNoteIdOn(actual, kDeletedId));
+
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(actual, kLoopLength, false, false);
+  const NoteUtils::DisplayNote* kept = findNote(notes, kKeptId);
+  TEST_ASSERT_NOT_NULL(kept);
+  TEST_ASSERT_EQUAL_UINT32(1240u, kept->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1344u, kept->endTick);
+  TEST_ASSERT_EQUAL_UINT8(12, kept->note);
+}
+
 void test_stage4_shorten_matches_reconstruct() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3691,6 +3733,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage1_resolve_notes_is_projection_of_window);
   RUN_TEST(test_stage2_overlapping_same_pitch_matches_materialize);
   RUN_TEST(test_stage3_delete_matches_materialize);
+  RUN_TEST(test_resolve_window_delete_keeps_same_pitch_same_end_note);
   RUN_TEST(test_stage4_shorten_matches_reconstruct);
   RUN_TEST(test_stage4_extend_matches_reconstruct);
   RUN_TEST(test_stage5_move_matches_reconstruct);
