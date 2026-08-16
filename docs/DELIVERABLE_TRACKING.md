@@ -24,7 +24,7 @@
 
 - **Loop content-only history (DEC-035 Layer A, Aug 2026):** content-only persist; load-time GUS fill; empty GUS headers; `LoopPersist`-only overdub stop. OpenSpec archived `2026-08-14-loop-content-history-persistence`; normative `openspec/specs/loop-content-history/`. Device PASS [`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log). Plan: [`loop_layer_history_persistence_architecture.md`](Plans/loop_layer_history_persistence_architecture.md).
 
-**Next (persistence/runtime):** **6A.1** same-end Delete unique native from [`024806`](../captures/session_20260816_024806.log) — device `6a` `match=1` vs native open. **Overdub-pass wrap pairing HITL PASS** [`021218`](../captures/session_20260816_021218.log). **038.2 landed.** Native **6E.1–6E.5 PASS**. **6D.4 landed.** Not all of LCR live. 6C consume-when-ready. **6B PASS** [`192334`](../captures/session_20260815_192334.log). **6A PASS** [`185931`](../captures/session_20260815_185931.log). Overlay track A parked.
+**Next (persistence/runtime):** **6A.1 HITL PASS** [`025651`](../captures/session_20260816_025651.log) `match=1` `pmatch=1`. **Overdub-pass wrap pairing HITL PASS** [`021218`](../captures/session_20260816_021218.log). **038.2 landed.** Native **6E.1–6E.5 PASS**. **6D.4 landed.** Not all of LCR live. 6C consume-when-ready. **6B PASS** [`192334`](../captures/session_20260815_192334.log). **6A PASS** [`185931`](../captures/session_20260815_185931.log). Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
 
