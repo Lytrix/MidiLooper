@@ -517,7 +517,15 @@ YES
 
 **Native:** `test_note_edit_idle_paint_consumes_stale_visual_cache` — 4-bar stale keeps notes without `ensureVisualCacheBuilt`.
 
-**Device:** NOTE_EDIT open still emits `VCACHE,full` from `openNoteEditSession` (`rebuildVisualCacheFromPasses`, Slice 5). 4d: no extra `VCACHE,full` from session-idle paint. Overdub → NOTE_EDIT stop paint must not full-rebuild.
+**Device [`143144`](../../captures/session_20260816_143144.log) — 4d gate not isolatable; NOTE_EDIT session FAIL on other owners.** Do not treat as 4d PASS. Do not start 4e.
+
+Open `VCACHE,full` @ 7.813 s is `openNoteEditSession` (Slice 5). Mid-session `VCACHE,full` @ 48.744 s and 83.710 s follow select `VCACHE,stale` — `getVisualNotesForSlot` (left in 4d).
+
+Sluggish select/pitch is not 4d:
+- Select: `UNDO_WARM,warm,complete` 128–451 ms on each note change (`focus_snap` 68–272 ms).
+- Pitch/move: `GEOM_APPLY,resolve` n=209, median 84 ms, max 162 ms.
+
+Exit did save rows (`saved=3` @ 88.786 s, `saved=1` @ 110.985 s). Display after first exit is stale 111 then `slice_clean` 112. Commits already report the painted note missing: `M24@120 missing in recon` / `M24@1656 missing in recon` on replay_flat, session_store, and loop_materialized. That is NOTE_EDIT commit/recon, not session-idle paint.
 
 ## Pre-implementation review (Slice 4d)
 
