@@ -115,7 +115,7 @@ Same 5 s window maxes: `idle_maint` **80 ms**, `load_frame` **90 ms**, `persist_
 
 **Attribution: OPEN — prefix owner unknown.** Next slice is measurement only: [`post_undo_playing_loop_prefix_measurement.md`](post_undo_playing_loop_prefix_measurement.md). Do not re-arm drain. Do not name a prefix child.
 
-Still parked: LoopPersist finalize CRC (RAM1), visual-cache idle grain, LoadLoopJob 915 ms, LCR `6a,nat` while STOPPED. RING flood owner on the stop path is a new question — not the snapshot.
+Still parked: visual-cache idle grain, LoadLoopJob 915 ms, LCR `6a,nat` while STOPPED. LoopPersist finalize CRC relanded (boot gate). RING flood owner on the stop path is a new question — not the snapshot.
 
 ## Out of scope
 

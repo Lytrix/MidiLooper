@@ -88,4 +88,4 @@ processDeferredSaveState LoopPersist last slice
 
 1. **Now:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) — scheduling only.
 2. Visual-cache idle grain — parked until the drain experiment reports its ceiling.
-3. LoopPersist finalize grain — blocked until RAM1-safe reland.
+3. LoopPersist finalize grain — relanded without extra RAM1 stage-name / CRC Serial strings; boot gate open.
