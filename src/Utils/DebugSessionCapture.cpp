@@ -12,6 +12,8 @@
 
 #include "Utils/CaptureLineTier.h"
 #include "Utils/DiagnosticsTypes.h"
+#include "Utils/RuntimeTimingTelemetry.h"
+#include "StorageManager.h"
 
 #if defined(__IMXRT1062__)
 extern "C" void* extmem_malloc(size_t size);
@@ -465,6 +467,19 @@ SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t tr
                 (unsigned long)durationUs, static_cast<unsigned>(track),
                 static_cast<unsigned>(slot), static_cast<unsigned>(phase),
                 static_cast<unsigned>(isFocus));
+}
+
+SC_MEM_ATTR void recordLoopRemainderSpan(const char* span, uint32_t durationUs) {
+  if (durationUs < RuntimeTimingTelemetry::kLoopRemainderOneShotUs) {
+    return;
+  }
+  bool active = false;
+  uint8_t track = 255;
+  uint8_t slot = 255;
+  uint8_t phase = 255;
+  uint8_t isFocus = 0;
+  StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
+  loopRemainder(span, durationUs, track, slot, phase, isFocus);
 }
 
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,

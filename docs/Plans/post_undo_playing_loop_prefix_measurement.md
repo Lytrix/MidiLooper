@@ -1,6 +1,6 @@
 # Post-undo PLAYING loop prefix measurement
 
-**Status:** Device PASS — `loop_prefix` is the CAP hole. Child rem **landed**, owner unknown.  
+**Status:** Device PASS — child owner is `midi_leds`. Grandchild rem **landed**.  
 **Date:** 2026-08-16  
 **Kind:** measurement (not a fix)  
 **Parent:** [`post_overdub_playing_midi_drain_bugfix.md`](post_overdub_playing_midi_drain_bugfix.md) (overdub-stop drain **shipped**)  
@@ -226,7 +226,41 @@ Re-arming PLAYING drain after undo would poll around idle and after load. It wou
 ### Proceed?
 YES
 
-## Child rem (landed, not scored)
+## Child rem — device [`111436`](../../captures/session_20260816_111436.log) PASS
+
+Seven paired remissions. No other BAR→LED child rem exists in this capture (`looper_state`, `midi_buttons`, `midi_faders`, `bar_step`, `control_surface`, `note_edit_disp`, `looper_update` never hit 50 ms).
+
+| CAP | `midi_leds` | `loop_prefix` | `midi_leds` / prefix |
+|-----|------------:|--------------:|---------------------:|
+| 59.746 s | 176439 | 176685 | 99.86% |
+| 69.761 s | 163368 | 163636 | 99.84% |
+| 75.749 s | 158375 | 158623 | 99.84% |
+| 85.827 s | 191965 | 192199 | 99.88% |
+| 101.871 s | 236890 | 237172 | 99.88% |
+| 107.909 s | 237304 | 237567 | 99.89% |
+| 121.861 s | 240290 | 240546 | 99.89% |
+
+First pair CAP bounds: `BAR,6912,9` @ 59.569 s → 174 ms silence → `LED` @ 59.743 s → `midi_leds` 176439 → `loop_prefix` 176685 → `idle_maint` 62687. BPM after rem is 84.
+
+`midi_leds` is `updateMidiLedsDeferred()` then `processDroidUsbHostOutbound()`. LED CAP lines sit at the end of that rem (last `LED` then rem 2.1 ms later). Outbound is after those LED lines.
+
+`updateMidiLedsDeferred()` calls `ledManager->updateLeds`, `ledManager->updateCurrentTick`, and `refreshTrackAndLoopSelectMidiLeds()`.
+
+## Grandchild rem (landed, not scored)
+
+Same undo window. Same `recordLoopRemainderSpan` / 50 ms one-shot, now shared on `DebugSessionCapture`.
+
+| Span | Function |
+|------|----------|
+| `midi_led_phase` | `ledManager->updateLeds` |
+| `midi_led_tick` | `ledManager->updateCurrentTick` |
+| `midi_led_select` | `refreshTrackAndLoopSelectMidiLeds` |
+
+Device gate: same cluster as [`111436`](../../captures/session_20260816_111436.log). Score against `midi_leds` 158–240 ms. If one grandchild is ~that, that is the owner. If none is, stop and re-read. Do not re-arm drain. Do not time `MidiLedManager` internals until a grandchild rem names one.
+
+Do not re-arm drain. Do not time `controlSurfaceManager.update` grandchildren.
+
+## Child rem (landed, scored)
 
 Same undo window. Same `recordLoopRemainderSpan` / 50 ms one-shot. `runLoopPrefixAfterBar()` (`FLASHMEM`) times each BAR→LED call:
 

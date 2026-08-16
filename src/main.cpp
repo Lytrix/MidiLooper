@@ -46,25 +46,11 @@ FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSele
 }
 
 #if defined(SESSION_CAPTURE)
-FLASHMEM __attribute__((noinline)) static void recordLoopRemainderSpan(const char* span,
-                                                                      uint32_t durationUs) {
-  if (durationUs < RuntimeTimingTelemetry::kLoopRemainderOneShotUs) {
-    return;
-  }
-  bool active = false;
-  uint8_t track = 255;
-  uint8_t slot = 255;
-  uint8_t phase = 255;
-  uint8_t isFocus = 0;
-  StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
-  DebugSessionCapture::loopRemainder(span, durationUs, track, slot, phase, isFocus);
-}
-
 FLASHMEM __attribute__((noinline)) static void maybeRecordLoopPrefixRemainder(uint32_t startUs) {
   if (!trackManager.anyLoopPrefixMeasureAfterUndo()) {
     return;
   }
-  recordLoopRemainderSpan("loop_prefix", micros() - startUs);
+  DebugSessionCapture::recordLoopRemainderSpan("loop_prefix", micros() - startUs);
 }
 
 FLASHMEM __attribute__((noinline)) static void maybeRecordPrefixChild(bool measure,
@@ -73,7 +59,7 @@ FLASHMEM __attribute__((noinline)) static void maybeRecordPrefixChild(bool measu
   if (!measure) {
     return;
   }
-  recordLoopRemainderSpan(span, micros() - startUs);
+  DebugSessionCapture::recordLoopRemainderSpan(span, micros() - startUs);
 }
 
 FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
@@ -453,7 +439,7 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
   RuntimeTimingTelemetry::noteIdleMaint(idleMaintUs);
-  recordLoopRemainderSpan("idle_maint", idleMaintUs);
+  DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
 #endif
   if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
     midiHandler.handleMidiInput();
@@ -475,7 +461,7 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t loadFrameUs = micros() - remainderStartUs;
   RuntimeTimingTelemetry::noteLoadFrame(loadFrameUs);
-  recordLoopRemainderSpan("load_frame", loadFrameUs);
+  DebugSessionCapture::recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
 
   // RC-C C: RECORD/OVERDUB after OLED. Same site also covers the post-overdub PLAYING window
@@ -506,7 +492,7 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;
   RuntimeTimingTelemetry::notePersistSave(persistSaveUs);
-  recordLoopRemainderSpan("persist_save", persistSaveUs);
+  DebugSessionCapture::recordLoopRemainderSpan("persist_save", persistSaveUs);
 #endif
 
   // Poll USB host again after deferred SD/display work so DROID button note-ons are not
