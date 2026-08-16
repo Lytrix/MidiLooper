@@ -179,7 +179,7 @@ Top-level stages (`DeferredSaveStage` in `StorageManager.cpp`):
 |-------|---------|
 | `CurrentSetMeta` | v6 meta header + BPM, looper state, master length, track count |
 | `TrackHeaderAndSlots` | Per-track header + slot metadata (enabled, muted, loop id) |
-| `CurrentSetLoopSlot` | Per-slot `loop_TT_SS.bin` via `stepDeferredLoopPersist` / `StorageLoopIo`; clean slots are skipped via CurrentSet dirty tracking. Finalize is `stepFinalizeDeferredLoopSlotTemp`: token, body CRC at `kEpochFileCrcSliceBytes`, header CRC, verify+rename. |
+| `CurrentSetLoopSlot` | Per-slot `loop_TT_SS.bin` via `stepDeferredLoopPersist` / `StorageLoopIo`; clean slots are skipped via CurrentSet dirty tracking |
 | `Footer` | Selected track, active loop indices, undo magic, then empty GUS headers (DEC-035 Stage 3 — no live-stack walk) |
 | `UndoStacks` | Leftover in-flight stage only: writes empty GUS headers per track. New saves finish in Footer. |
 | `CurrentSetCompletion` | One persist step per sub-stage: patch `lastActiveUnix`; `runtime.bundle.bin` body CRC at `kEpochFileCrcSliceBytes`; write epoch CRC; write `workspace.bin`; optional legacy quarantine. `PERS,result,...,ok` when Idle. |

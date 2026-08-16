@@ -1,7 +1,6 @@
 # Persist FinalizeWorkspace slice (MIDI Input Gap)
 
-**Status:** Native shipped — workspace CRC sliced; remaining PLAYING `persist_save` 72–83 ms is LoopPersist finalize, not `runtime.bundle.bin`  
-
+**Status:** Native shipped — device gate open  
 **Date:** 2026-08-16  
 **Kind:** bugfix  
 **Evidence:** [`192334`](../../captures/session_20260815_192334.log) `midi_gap` 135/119/138 ms tracks `persist_save` 77/118/109 ms and `FinalizeWorkspace` `PERS,result` 70–72 ms. [`022147`](../../captures/session_20260816_022147.log) repeats.
@@ -31,11 +30,3 @@ Native: `test_epoch_file_body_crc_slice_matches_one_shot` — chunked `continueE
 ## Device gate
 
 PLAYING/OVERDUBBING `persist_save` max in a 5 s window stays near the 300 µs budget except one SD grain. `FinalizeWorkspace` `PERS,result` may still be tens of ms wall-clock (sum of grains). `clockrate` stays ~47.
-
-## Device [`031229`](../../captures/session_20260816_031229.log)
-
-Workspace CRC slice holds: each `FinalizeWorkspace` is 6 `finalize_slice` + `done`. `PERS,result` 113–156 ms wall-clock (sum). After persist settles, PLAYING `persist_save` is 256–318 µs. `clockrate` 47 while PLAYING.
-
-Post-overdub-stop `persist_save` 72–83 ms is **not** `runtime.bundle.bin`. Every `LoopPersist` last-slice→`done` is 73.2 / 77.4 / 82.5 / 83.1 ms. That step is `finalizeDeferredLoopSlotTemp`: one-shot `finalizeEpochFileHeaderCrc` on the loop temp file, then verify + rename. Same CRC walk, different path.
-
-Same windows: `idle_maint` 69–78 ms (`rebuildVisualCacheIdleSlice` after `visualCacheDirty`). `midi_gap` 99–132 ms. Do not fold visual-cache into a persist CRC commit.
