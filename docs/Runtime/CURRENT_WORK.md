@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer A snapshot firmware — device gate open)
+Last updated: 2026-08-16 (NOTE_EDIT Layer A snapshot recorded 145518; remaining A open)
 
 ---
 
@@ -11,9 +11,9 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer A snapshot firmware — device gate op
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
-**Evidence:** [`143144`](../../captures/session_20260816_143144.log)
+**Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** Layer A snapshot firmware landed — `snapshotFocusForSessionUndo` inserts mover + overlap baselines only. Device: compare select `focus_snap` to [`143144`](../../captures/session_20260816_143144.log) 68–272 ms. Layer B still unpinned. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
+**Now:** Layer A snapshot recorded — [`145518`](../../captures/session_20260816_145518.log) `focus_snap` 46–124 ms vs [`143144`](../../captures/session_20260816_143144.log) 68–272. `warm,complete` still 110–312 ms. Next A: skip unused `sessionFlat` / full-focus copies after `baseline_probe`. Do not start clone, Layer B/C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 

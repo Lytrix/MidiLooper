@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — Layer A snapshot firmware landed; device gate open  
+**Status:** Active — Layer A snapshot recorded [`145518`](../../captures/session_20260816_145518.log); remaining A open  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -40,13 +40,14 @@ Do **not** reopen frozen RC1 driver drift. Do **not** fold this into grooming 4e
 
 `EditManager::applySelectNav` calls `scheduleKindBoundaryUndoWarm`. `ControlSurfaceManager` then calls `processKindBoundaryUndoWarm` → `buildSessionUndoEntry`.
 
-| Marker | [`143144`](../../captures/session_20260816_143144.log) | [`234116`](../../captures/session_20260805_234116.log) (2026-08-05) |
-|--------|--------|--------|
-| Session events | 220–235 | 68 |
-| Baseline map | 110 | 33 |
-| `focus_snap` | **68–272 ms** | 3.1–5.4 ms |
-| `warm,complete` | **128–451 ms** | ~6.0–6.5 ms |
-| `baseline_probe` / `edit_rows` | microseconds (same class as 234116) | <200 µs |
+| Marker | [`143144`](../../captures/session_20260816_143144.log) | [`145518`](../../captures/session_20260816_145518.log) (after snapshot firmware) | [`234116`](../../captures/session_20260805_234116.log) (2026-08-05) |
+|--------|--------|--------|--------|
+| Session events | 220–235 | 220–237 | 68 |
+| Baseline map | 110 | 110 | 33 |
+| `focus_snap` | **68–272 ms** (med 112) | **46–124 ms** (med 91) | 3.1–5.4 ms |
+| `warm,complete` | **128–451 ms** (med 203) | **110–312 ms** (med 241) | ~6.0–6.5 ms |
+| `baseline_probe` / `edit_rows` | microseconds | microseconds; probe flag **0** on all 28 | <200 µs |
+| Unlogged post-probe copies | (inside same function; not split) | **63–188 ms** (med 150); no `overlap_resolve` / `flat_copy` | — |
 
 `focus_snap` in `buildSessionUndoEntry` is `snapshotFocusForSessionUndo` plus `NoteEditCurrentState::clone` when current state is non-empty. `snapshotFocusForSessionUndo` copies the whole `NoteEditFocus` (including the 110-entry `baselineMap`) then trims.
 
@@ -73,6 +74,8 @@ In-session commits already logged:
 **Do not treat `missing in recon` as proof the edit was dropped.** The same split is what a successful pitch/range overlay looks like: take-only still has the old home; replay no longer does.
 
 What is **not** in [`143144`](../../captures/session_20260816_143144.log): a post-exit `DNTE` / visual-cache dump of the **new** span (pitch 43 at 1057, or the last painted mover). Layer B’s first job is that fixture — not a pairing patch.
+
+[`145518`](../../captures/session_20260816_145518.log) exit `@ 53.328 s`: `rows=1 saved=1` after in-session `NoteRange 216–408` + `Pitch 43` (note 280; recon looks up `M50@888`). In-session `DNTE` `43,216,216,192,8`. Post-exit `slice_clean` / `DISP` **114**. Still no post-exit `DNTE` of `43@216`. Same Layer B gap.
 
 Sibling index (open, different fixture): RC8 in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) (`M65@369` / `M65@1050` in [`212810`](../../captures/session_20260806_212810.log)). Do not merge fixtures. Do not start RC8 pairing until 143144 shows the committed **new** span absent from post-exit `visualCache.notes`.
 
@@ -124,9 +127,16 @@ Host microseconds (not a device bound): copy 14, snap 19, clone 24, build 75. De
 
 **Pinned owner:** `snapshotFocusForSessionUndo` copies the whole `NoteEditFocus` (110-entry `baselineMap`) then throws 109 entries away; `buildSessionUndoEntry` then clones 110 current-state rows.
 
-**Firmware (landed):** `snapshotFocusForSessionUndo` copies scalars + `overlapNotes`, then inserts mover and overlap baselines only. It does not copy the full `baselineMap`. Current-state clone of 110 rows is unchanged (later). Same select → warm → push contract.
+**Firmware (landed `c644a5d`):** `snapshotFocusForSessionUndo` copies scalars + `overlapNotes`, then inserts mover and overlap baselines only. It does not copy the full `baselineMap`. Same select → warm → push contract.
 
-**Device:** NOTE_EDIT select on a ~110-note loop. Compare `UNDO_WARM,phase,focus_snap` to [`143144`](../../captures/session_20260816_143144.log) 68–272 ms. Do not invent a pass bound until that capture.
+**Device [`145518`](../../captures/session_20260816_145518.log):** STOPPED 4-bar, open `visual_notes=113` `session_events=237`. 28 select warms. `focus_snap` **46–124 ms** (med 91) vs [`143144`](../../captures/session_20260816_143144.log) 68–272 (med 112). `warm,complete` **110–312 ms** (med 241) vs 128–451 (med 203). Snapshot slice is **not** a Layer A close — A still dominates select.
+
+Remaining Layer A, same owner `buildSessionUndoEntry`:
+
+1. `focus_snap` still includes `NoteEditCurrentState::clone` of 110 rows (46–124 ms).
+2. After `baseline_probe` (flag 0 on every sample), the function always does `resolvedFlat = sessionFlat` and `NoteEditFocus focusCopy = focus`. Those copies are unlogged. [`145518`](../../captures/session_20260816_145518.log) gap after named phases: **63–188 ms** (med 150). No `overlap_resolve` or `flat_copy` line in this capture.
+
+**Next firmware (not started):** skip the session-flat and full-focus copies when `!needsOverlapResolve && !needsBaselineMapDiff`. Do not clone current state in this slice. Same select → warm → push contract.
 2. **Layer B pin** — from [`143144`](../../captures/session_20260816_143144.log) saved rows (`NoteRange 1057–1249`, `Pitch 43`, later `Length 1057–1127` / `NoteRange 1128–1320`), state whether post-exit `slice_clean` / `DISP` can show that geometry. If the log cannot, add one commit-trace field for the **new** span (behavior-preserving) or a native replay of the three saved rows. Only then decide RC8 pairing vs stale-cache paint vs idle-slice omit.
 3. **Layer C** — only after A no longer dominates select/pitch.
 4. **Layer D** — only after A/B; do not globally delete `ensureVisualCacheBuilt`.
