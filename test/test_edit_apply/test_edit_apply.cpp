@@ -740,6 +740,77 @@ void test_nested_same_pitch_outer_apply_helpers_use_lifo_off() {
   }
 }
 
+uint32_t displayNoteLengthTicks(uint32_t startTick, uint32_t endTick, uint32_t loopLength) {
+  if (endTick >= startTick) {
+    return endTick - startTick;
+  }
+  return (loopLength - startTick) + endTick;
+}
+
+uint32_t reconstructedPitchLength(const MidiEventVec& events, uint8_t pitch, NoteId noteId,
+                                  uint32_t loopLength) {
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(events, loopLength, false);
+  uint32_t total = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note != pitch) {
+      continue;
+    }
+    if (noteId != kInvalidNoteId && note.noteId != kInvalidNoteId && note.noteId != noteId) {
+      continue;
+    }
+    total += displayNoteLengthTicks(note.startTick, note.endTick, loopLength);
+  }
+  return total;
+}
+
+// session_20260816_195941: wrap home Off@96 then On@2592. NoteRange must move that wrap off.
+// Session storage is linear (2784+576=3360). A wrap row (2784–288) must keep length 576 too.
+void test_195941_wrap_home_move_keeps_length() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kId = 269;
+  constexpr uint32_t kHomeOn = 2592;
+  constexpr uint32_t kHomeWrapOff = 96;
+  constexpr uint32_t kNewStart = 2784;
+  constexpr uint32_t kNoteLen = 576;
+  constexpr uint32_t kLinearOff = kNewStart + kNoteLen;
+  constexpr uint32_t kWrapOff = kLinearOff % kLoopLength;
+
+  const auto makeWrapHome = [&]() {
+    MidiEventVec events;
+    events.push_back(MidiEvent::NoteOff(kHomeWrapOff, 1, kPitch, 0));
+    MidiEvent on = MidiEvent::NoteOn(kHomeOn, 1, kPitch, 100);
+    on.noteId = kId;
+    events.push_back(on);
+    return events;
+  };
+
+  {
+    MidiEventVec events = makeWrapHome();
+    applyNoteEditPass(events, makeNoteRangeRow(kId, kHomeOn, kHomeWrapOff, kNewStart, kLinearOff),
+                      kLoopLength);
+    const int onIndex = findNoteOnById(events, kId);
+    TEST_ASSERT_TRUE(onIndex >= 0);
+    TEST_ASSERT_EQUAL_UINT32(kNewStart, events[static_cast<size_t>(onIndex)].tick);
+    TEST_ASSERT_EQUAL(0, countMatching(events, true, kPitch, kHomeOn));
+    TEST_ASSERT_EQUAL(1, countMatching(events, true, kPitch, kNewStart));
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, kPitch, kHomeWrapOff));
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, kPitch, kLinearOff));
+  }
+
+  {
+    MidiEventVec events = makeWrapHome();
+    applyNoteEditPass(events, makeNoteRangeRow(kId, kHomeOn, kHomeWrapOff, kNewStart, kWrapOff),
+                      kLoopLength);
+    const int onIndex = findNoteOnById(events, kId);
+    TEST_ASSERT_TRUE(onIndex >= 0);
+    TEST_ASSERT_EQUAL_UINT32(kNewStart, events[static_cast<size_t>(onIndex)].tick);
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, kPitch, kHomeWrapOff));
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, kPitch, kWrapOff));
+  }
+}
+
 // Regression for the HITL overlap round-trip: M0 lengthened to 681 overlaps P0 (585..682)
 // without nesting. A pitch edit on M0 must not relabel P0's note-off (tick 682).
 void test_change_pitch_on_overlapping_note_keeps_neighbor_endtick() {
@@ -1712,6 +1783,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_145518_open_assigned_note_id_missing_from_pass_rematerialize);
   RUN_TEST(test_145518_assign_on_committed_passes_makes_rematerialize_find_id);
   RUN_TEST(test_nested_same_pitch_outer_apply_helpers_use_lifo_off);
+  RUN_TEST(test_195941_wrap_home_move_keeps_length);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
   RUN_TEST(test_save_edit_appends_without_collapsing_takes);

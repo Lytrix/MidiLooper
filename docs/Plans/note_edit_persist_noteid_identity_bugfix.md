@@ -139,6 +139,17 @@ Device gate: 173806 gesture. `replay_flat` home **missing**. LOOP_EDIT shows the
 
 **Device [`195050`](../../captures/session_20260816_195050.log):** wrap select PASS (`DNTE` 12@2592 length **576**). Live moves keep 576. Deselect committed `NoteRange start=2736 end=3071` (`mover_focus`). Reselect `DNTE` length **432**, then **240**. Linear pairing / `normalizeAll` `closeOpenTails` wrote the display tail; wrap mover rows were rejected (`end < start`). Commit from current-state wrap; `isPlausibleStorageSpan` allows wrap. Do not wire `resolveNotes` onto paint. Stage 2 stays parked.
 
+**Device [`195941`](../../captures/session_20260816_195941.log):** wrap select still PASS. Live `Movement: start 2736->2784, end actual 3360 (display 288), length=576`. Wrap-modulo helper then wrote `EditSessionAction` / `NoteRange 2784–288`. `replay_flat: M12@2592 missing`; `take_only` still `M12 start=2592`. Reselect `DNTE` 12@2784 length **384** (`2784` wrap-to-`96`). Second deselect `2928–240` → length **240**. Root cause: `findNoteOffForOnIndex` LIFO skips tick-sorted wrap Off@96 (empty stack), so `applyMoveNoteById` moves the On and leaves the wrap Off. Session/edit workflow stays linear (`linearStorageOffTickForSpanEnd`); wrap pairing is the apply resolve only. Do not add more wrap-skip helpers on deselect/sync/commit. Stage 2 stays parked.
+
+**195941 files (this RC, not persist-identity):**
+
+| File | Change |
+|------|--------|
+| [`EditApply.cpp`](../../src/EditManager/EditApply.cpp) | `findNoteOffForOnIndex` wrap-off fallback after LIFO — not identity lookup |
+| [`NoteEditGeometryApplyMutate.cpp`](../../src/EditManager/NoteEditGeometryApplyMutate.cpp) | mover `editedSpan` end is `start+len`; display phase only for bracket |
+| [`NoteEditWrapHeadAdjust.cpp`](../../src/EditManager/NoteEditWrapHeadAdjust.cpp) | removed wrap-modulo `displayFocusEndTickForMove` and unused wrap helpers |
+| [`test_edit_apply.cpp`](../../test/test_edit_apply/test_edit_apply.cpp) | wrap home Off@96 / On@2592 → linear 2784–3360 and wrap 2784–288 |
+
 ---
 
 ## Stage 2 — parked
