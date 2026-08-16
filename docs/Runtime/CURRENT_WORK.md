@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT persist identity Stage 1)
+Last updated: 2026-08-16 (NOTE_EDIT open: display head must not lead wrap)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT persist identity Stage 1)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **Stage 1 persist identity** [`note_edit_persist_noteid_identity_bugfix.md`](../Plans/note_edit_persist_noteid_identity_bugfix.md) / [DEC-039](../DECISION_LOG.md#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary). Commit-boundary reconcile only. Stage 2 parked. Do not patch `applyNoteEditPass`. Do not start C5 / B2b / Layer D.
+**Now:** [`193525`](../../captures/session_20260816_193525.log) NOTE_EDIT open selected display head `DNTE` 12@0 length **96** and dropped the loop-end tail (`NOTE_EDIT_OPEN` visual 107, paint 105). Display must not lead: `ensureVisibleRowsForDisplayNotes` merges splitHeadTail to wrap `2592–96` (length 576) even when the session row is already `0–96`; projection keeps the cache tail when currentSpan is the head. Device gate: enter NOTE_EDIT, wrap at 2592 is selectable, `DNTE` length 576 not 96. Do not patch `applyNoteEditPass`. Stage 2 / C5 / B2b / Layer D parked.
 
 **Next Layer C (parked C5):** `OverlapCandidateLookup::appendNotesForIds` in overlay only — not overdub source-view / hold ids. Not reconstruct. Not empty-pair resolve.
 

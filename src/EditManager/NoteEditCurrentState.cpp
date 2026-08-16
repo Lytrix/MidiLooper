@@ -4,6 +4,8 @@
 #include "NoteEditCurrentState.h"
 
 #include <algorithm>
+#include <unordered_map>
+#include <vector>
 
 #include "EditSessionAction.h"
 #include "EditSessionLiveStoreSpan.h"
@@ -16,6 +18,96 @@ namespace {
 NOTE_EDIT_MEM bool spansEqual(const NoteBaseline& left, const NoteBaseline& right) {
   return left.pitch == right.pitch && left.velocity == right.velocity &&
          left.startTick == right.startTick && left.endTick == right.endTick;
+}
+
+NOTE_EDIT_MEM bool isWrapSpan(uint32_t startTick, uint32_t endTick) {
+  return endTick < startTick;
+}
+
+// splitHeadTail visual cache emits tail (start→loopEnd) then head (0→headEnd) with
+// the same noteId. Last-write-wins kept only the head, so NOTE_EDIT dropped the
+// loop-end tail (191411: LOOP_EDIT 109 / visual 108 / DISP 106).
+NOTE_EDIT_MEM bool mergeSplitHeadTailIntoWrap(NoteBaseline& span, uint32_t incomingStart,
+                                              uint32_t incomingEnd) {
+  if (isWrapSpan(incomingStart, incomingEnd)) {
+    span.startTick = incomingStart;
+    span.endTick = incomingEnd;
+    return true;
+  }
+  if (isWrapSpan(span.startTick, span.endTick)) {
+    // 192906: head inclusive end can be 95 vs wrap end 96. Any head fragment
+    // (start 0, ends before the tail) must not last-write-wins over the wrap.
+    const bool incomingIsHead = incomingStart == 0 && incomingEnd < span.startTick;
+    const bool incomingIsTail =
+        incomingStart == span.startTick && incomingEnd > incomingStart;
+    return incomingIsHead || incomingIsTail;
+  }
+  if (incomingStart == 0 && incomingEnd < span.startTick && span.endTick > span.startTick) {
+    span.endTick = incomingEnd;
+    return true;
+  }
+  if (span.startTick == 0 && span.endTick < incomingStart && incomingEnd > incomingStart) {
+    span.startTick = incomingStart;
+    return true;
+  }
+  return false;
+}
+
+struct DisplayNoteFragment {
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+};
+
+NOTE_EDIT_MEM NoteBaseline resolveSpanFromDisplayFragments(
+    const std::vector<DisplayNoteFragment>& fragments) {
+  NoteBaseline span{};
+  if (fragments.empty()) {
+    return span;
+  }
+  for (const DisplayNoteFragment& fragment : fragments) {
+    if (isWrapSpan(fragment.startTick, fragment.endTick)) {
+      span.pitch = fragment.pitch;
+      span.velocity = fragment.velocity;
+      span.startTick = fragment.startTick;
+      span.endTick = fragment.endTick;
+      return span;
+    }
+  }
+  const DisplayNoteFragment* head = nullptr;
+  const DisplayNoteFragment* tail = nullptr;
+  for (const DisplayNoteFragment& fragment : fragments) {
+    if (fragment.startTick == 0 && fragment.endTick > fragment.startTick) {
+      head = &fragment;
+    } else if (fragment.endTick > fragment.startTick &&
+               (tail == nullptr || fragment.startTick > tail->startTick)) {
+      tail = &fragment;
+    }
+  }
+  // splitHeadTail paint is tail (start→loopEnd) + head (0→headEnd). MIDI wrap is
+  // start=tail.start, end=head.end. Display must not lead: never last-write-wins
+  // to the head (193525: DNTE 12@0 length 96 instead of 12@2592 length 576).
+  if (head != nullptr && tail != nullptr && head->endTick < tail->startTick) {
+    span.pitch = tail->pitch;
+    span.velocity = tail->velocity;
+    span.startTick = tail->startTick;
+    span.endTick = head->endTick;
+    return span;
+  }
+  const DisplayNoteFragment* chosen = tail != nullptr ? tail : &fragments.front();
+  if (tail == nullptr) {
+    for (const DisplayNoteFragment& fragment : fragments) {
+      if (fragment.startTick > chosen->startTick) {
+        chosen = &fragment;
+      }
+    }
+  }
+  span.pitch = chosen->pitch;
+  span.velocity = chosen->velocity;
+  span.startTick = chosen->startTick;
+  span.endTick = chosen->endTick;
+  return span;
 }
 
 }  // namespace
@@ -73,23 +165,29 @@ NOTE_EDIT_MEM NoteEditCurrentState NoteEditCurrentState::buildFromSessionStore(
 
 NOTE_EDIT_MEM void NoteEditCurrentState::ensureVisibleRowsForDisplayNotes(
     const NoteUtils::DisplayNoteVec& notes) {
+  std::unordered_map<NoteId, std::vector<DisplayNoteFragment>> fragmentsById;
   for (const NoteUtils::DisplayNote& note : notes) {
-    if (note.noteId == kInvalidNoteId) {
+    if (note.noteId == kInvalidNoteId || note.endTick == note.startTick) {
       continue;
     }
-    if (note.endTick == note.startTick) {
-      continue;
-    }
-    const NoteBaseline span{note.note, note.velocity, note.startTick, note.endTick};
-    NoteEditCurrentNoteState* row = find(note.noteId);
+    fragmentsById[note.noteId].push_back(
+        {note.note, note.velocity, note.startTick, note.endTick});
+  }
+  for (const auto& [noteId, fragments] : fragmentsById) {
+    const NoteBaseline span = resolveSpanFromDisplayFragments(fragments);
+    NoteEditCurrentNoteState* row = find(noteId);
     if (row == nullptr) {
-      upsertRow(note.noteId, span, span, NoteEditPresenceType::Visible);
+      upsertRow(noteId, span, span, NoteEditPresenceType::Visible);
       continue;
     }
     if (row->presence != NoteEditPresenceType::Visible) {
       continue;
     }
     if (!spansEqual(row->committedSpan, row->currentSpan)) {
+      continue;
+    }
+    if (mergeSplitHeadTailIntoWrap(row->currentSpan, span.startTick, span.endTick)) {
+      row->committedSpan = row->currentSpan;
       continue;
     }
     row->committedSpan = span;

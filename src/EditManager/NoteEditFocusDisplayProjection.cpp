@@ -152,6 +152,50 @@ bool nonVisibleParticipantSuppressedFromProjection(const NoteEditCurrentState& c
   return noteId != kInvalidNoteId && currentState.isRowHiddenOrDeleted(noteId);
 }
 
+bool displaySpanIsWrap(uint32_t startTick, uint32_t endTick) {
+  return endTick < startTick;
+}
+
+bool committedBaseHasSplitHeadTail(const NoteUtils::DisplayNoteVec& committedBaseNotes,
+                                   NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  bool hasHead = false;
+  bool hasTail = false;
+  uint32_t headEnd = 0;
+  uint32_t tailStart = 0;
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != noteId) {
+      continue;
+    }
+    if (displaySpanIsWrap(dn.startTick, dn.endTick)) {
+      return true;
+    }
+    if (dn.startTick == 0 && dn.endTick > dn.startTick) {
+      hasHead = true;
+      headEnd = dn.endTick;
+    } else if (dn.endTick > dn.startTick && (!hasTail || dn.startTick > tailStart)) {
+      hasTail = true;
+      tailStart = dn.startTick;
+    }
+  }
+  return hasHead && hasTail && headEnd < tailStart;
+}
+
+bool participantSpanReplacesSplitCache(const NoteBaseline& current,
+                                       const NoteUtils::DisplayNoteVec& committedBaseNotes,
+                                       NoteId noteId) {
+  if (displaySpanIsWrap(current.startTick, current.endTick)) {
+    return true;
+  }
+  if (!committedBaseHasSplitHeadTail(committedBaseNotes, noteId)) {
+    return true;
+  }
+  // 193525: head-only currentSpan (0–96) must not drop the loop-end tail.
+  return current.startTick != 0;
+}
+
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
                                                const NoteEditFocus& focus, uint32_t loopLength) {
   for (const auto& [noteId, row] : currentState.rows()) {
@@ -305,6 +349,12 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     }
     if (dn.noteId != kInvalidNoteId &&
         std::find(participants.begin(), participants.end(), dn.noteId) != participants.end()) {
+      NoteBaseline current{};
+      if (currentState != nullptr && currentState->readCurrentSpan(dn.noteId, current) &&
+          currentState->rowIsVisible(dn.noteId) &&
+          !participantSpanReplacesSplitCache(current, committedBaseNotes, dn.noteId)) {
+        result.push_back(dn);
+      }
       continue;
     }
     if (invalidCommittedRowSupersededByParticipant(dn, participants, hiddenParticipants, focus,
@@ -346,6 +396,13 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
                                        participantDn.note, participantDn.velocity,
                                        participantDn.startTick, participantDn.endTick,
                                        currentState)) {
+      continue;
+    }
+
+    NoteBaseline current{};
+    if (currentState != nullptr && currentState->readCurrentSpan(noteId, current) &&
+        currentState->rowIsVisible(noteId) &&
+        !participantSpanReplacesSplitCache(current, committedBaseNotes, noteId)) {
       continue;
     }
 

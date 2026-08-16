@@ -335,6 +335,172 @@ void test_ensure_aligns_unedited_visible_row_to_display_span() {
   TEST_ASSERT_TRUE(currentState.isRowHiddenOrDeleted(kHiddenId));
 }
 
+void test_ensure_merges_split_head_tail_display_notes_to_wrap_span() {
+  // 191411: reconstruct splitHeadTail emits tail (2208→2303) then head (0→95)
+  // with the same noteId. Last-write-wins kept only the head, so NOTE_EDIT lost
+  // the loop-end tail that LOOP_EDIT paints.
+  constexpr NoteId kWrapId = 40;
+  constexpr uint8_t kPitch = 60;
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint32_t kTailStart = 2208;
+  constexpr uint32_t kHeadEnd = 95;
+
+  NoteEditCurrentState currentState;
+  NoteUtils::DisplayNoteVec splitCache;
+  splitCache.push_back({kWrapId, kPitch, 100, kTailStart, kLoopLength - 1});
+  splitCache.push_back({kWrapId, kPitch, 100, 0, kHeadEnd});
+  currentState.ensureVisibleRowsForDisplayNotes(splitCache);
+
+  NoteBaseline wrap{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT32(kTailStart, wrap.startTick);
+  TEST_ASSERT_EQUAL_UINT32(kHeadEnd, wrap.endTick);
+
+  NoteEditCurrentState headFirst;
+  NoteUtils::DisplayNoteVec reversed;
+  reversed.push_back({kWrapId, kPitch, 100, 0, kHeadEnd});
+  reversed.push_back({kWrapId, kPitch, 100, kTailStart, kLoopLength - 1});
+  headFirst.ensureVisibleRowsForDisplayNotes(reversed);
+  TEST_ASSERT_TRUE(headFirst.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT32(kTailStart, wrap.startTick);
+  TEST_ASSERT_EQUAL_UINT32(kHeadEnd, wrap.endTick);
+}
+
+void test_ensure_does_not_overwrite_wrap_with_head_off_by_one() {
+  // 192906: wrap 2592–96 then head 0–95 must stay wrap, not last-write-wins to 0–95.
+  constexpr NoteId kWrapId = 269;
+  constexpr uint8_t kPitch = 12;
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapId, {kPitch, 100, 2592, 96}, {kPitch, 100, 2592, 96},
+                         NoteEditPresenceType::Visible);
+  NoteUtils::DisplayNoteVec splitCache;
+  splitCache.push_back({kWrapId, kPitch, 100, 2592, 3071});
+  splitCache.push_back({kWrapId, kPitch, 100, 0, 95});
+  currentState.ensureVisibleRowsForDisplayNotes(splitCache);
+  NoteBaseline wrap{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT32(2592u, wrap.startTick);
+  TEST_ASSERT_TRUE(wrap.endTick < wrap.startTick);
+}
+
+void test_ensure_session_head_does_not_lead_over_split_wrap_cache() {
+  // 193525: session/store row can be the display head 0–96 (EditPass NoteRange or
+  // last-write-wins). Visual cache still has splitHeadTail. MIDI wrap must win.
+  constexpr NoteId kWrapId = 273;
+  constexpr uint8_t kPitch = 12;
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapId, {kPitch, 100, 0, 96}, {kPitch, 100, 0, 96},
+                         NoteEditPresenceType::Visible);
+  NoteUtils::DisplayNoteVec splitCache;
+  splitCache.push_back({kWrapId, kPitch, 100, 2592, 3071});
+  splitCache.push_back({kWrapId, kPitch, 100, 0, 96});
+  currentState.ensureVisibleRowsForDisplayNotes(splitCache);
+  NoteBaseline wrap{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT32(2592u, wrap.startTick);
+  TEST_ASSERT_EQUAL_UINT32(96u, wrap.endTick);
+}
+
+void test_ensure_reconstruct_wrap_midi_is_not_display_head() {
+  constexpr NoteId kWrapId = 269;
+  constexpr uint8_t kPitch = 12;
+  constexpr uint32_t kLoopLength = 3072;
+  MidiEventVec store = makeStorePair(kWrapId, kPitch, 2592, 96);
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false, false);
+  NoteEditCurrentState currentState;
+  currentState.ensureVisibleRowsForDisplayNotes(reconstructed);
+  NoteBaseline wrap{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, wrap));
+  TEST_ASSERT_EQUAL_UINT8(kPitch, wrap.pitch);
+  TEST_ASSERT_EQUAL_UINT32(2592u, wrap.startTick);
+  TEST_ASSERT_TRUE(wrap.endTick < wrap.startTick);
+  TEST_ASSERT_FALSE(wrap.startTick == 0 && wrap.endTick == 96);
+}
+
+void test_display_projection_keeps_wrap_tail_when_visual_cache_is_split() {
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kWrapId = 40;
+  constexpr NoteId kLinearId = 41;
+  constexpr uint8_t kPitchWrap = 60;
+  constexpr uint8_t kPitchLinear = 62;
+  constexpr uint32_t kTailStart = 2208;
+  constexpr uint32_t kHeadEnd = 95;
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitchWrap, 100, kTailStart, kLoopLength - 1});
+  committedBase.push_back({kWrapId, kPitchWrap, 100, 0, kHeadEnd});
+  committedBase.push_back({kLinearId, kPitchLinear, 100, 192, 383});
+
+  NoteEditCurrentState currentState;
+  currentState.ensureVisibleRowsForDisplayNotes(committedBase);
+
+  MidiEventVec store;
+  NoteEditFocus focus;
+  focus.active = false;
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+
+  bool hasWrapTail = false;
+  bool hasWrapHeadOrWrap = false;
+  bool hasLinear = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kWrapId && dn.startTick == kTailStart &&
+        (dn.endTick == kLoopLength - 1 || dn.endTick == kHeadEnd)) {
+      hasWrapTail = true;
+    }
+    if (dn.noteId == kWrapId &&
+        ((dn.startTick == 0 && dn.endTick == kHeadEnd) ||
+         (dn.startTick == kTailStart && dn.endTick == kHeadEnd))) {
+      hasWrapHeadOrWrap = true;
+    }
+    if (dn.noteId == kLinearId) {
+      hasLinear = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasWrapTail);
+  TEST_ASSERT_TRUE(hasWrapHeadOrWrap);
+  TEST_ASSERT_TRUE(hasLinear);
+}
+
+void test_display_projection_keeps_split_tail_when_current_span_is_head() {
+  // 193525: currentSpan last-write-wins to 0–96 must not drop cache tail 2592–3071.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kWrapId = 273;
+  constexpr uint8_t kPitch = 12;
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kWrapId, kPitch, 100, 2592, 3071});
+  committedBase.push_back({kWrapId, kPitch, 100, 0, 96});
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapId, {kPitch, 100, 0, 96}, {kPitch, 100, 0, 96},
+                         NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  NoteEditFocus focus;
+  focus.active = false;
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+
+  bool hasWrapTail = false;
+  bool hasHead = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId != kWrapId) {
+      continue;
+    }
+    if (dn.startTick == 2592 && dn.endTick == 3071) {
+      hasWrapTail = true;
+    }
+    if (dn.startTick == 0 && dn.endTick == 96) {
+      hasHead = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasWrapTail);
+  TEST_ASSERT_TRUE(hasHead);
+}
+
 void test_display_projection_omits_rematerialize_only_visible_row() {
   // 175621 / Stage 7: open DISP 74 vs cache 68. Rematerialize-only Visible rows
   // (ids 25 and 63 both at 1344) must not paint. This-session Added still paints.
@@ -2484,6 +2650,12 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
   RUN_TEST(test_current_state_upserts_visible_row_from_display_note_without_store_pair);
   RUN_TEST(test_ensure_aligns_unedited_visible_row_to_display_span);
+  RUN_TEST(test_ensure_merges_split_head_tail_display_notes_to_wrap_span);
+  RUN_TEST(test_ensure_does_not_overwrite_wrap_with_head_off_by_one);
+  RUN_TEST(test_ensure_session_head_does_not_lead_over_split_wrap_cache);
+  RUN_TEST(test_ensure_reconstruct_wrap_midi_is_not_display_head);
+  RUN_TEST(test_display_projection_keeps_wrap_tail_when_visual_cache_is_split);
+  RUN_TEST(test_display_projection_keeps_split_tail_when_current_span_is_head);
   RUN_TEST(test_display_projection_omits_rematerialize_only_visible_row);
   RUN_TEST(test_display_projection_binds_visible_row_to_invalid_id_committed_note);
   RUN_TEST(test_selectable_inventory_keeps_painted_note_without_current_state_row);
