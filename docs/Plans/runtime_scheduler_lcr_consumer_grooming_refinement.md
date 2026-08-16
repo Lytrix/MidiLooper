@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 3 device PASS [`140841`](../../captures/session_20260816_140841.log)  
+**Status:** Active — Slice 4 overdub-stop viewport no longer full-rebuilds
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -201,7 +201,7 @@ LCR stays an idle consumer. Do not pull it onto MIDI or display input. Grain (2�
 | PLAYING | MIDI-sensitive | **never** synchronous rebuild |
 | STOPPED idle | not MIDI-sensitive | may stay synchronous if a capture proves it harmless |
 | `EditManager::openNoteEditSession` | user action | own hydrate contract — see NOTE_EDIT below |
-| `DisplayManager::refreshViewportAfterOverdubStop` | MIDI-sensitive | must not hydrate synchronously |
+| `DisplayManager::refreshViewportAfterOverdubStop` | MIDI-sensitive | Slice 4: keep/adopt only; idle fills |
 | Display committed resolve | paint path | stale/empty rather than gather |
 | `TrackManager::prewarmSelectedDisplayVisualCache` | not PLAYING, short loop | audit; do not assume idle-slice is enough |
 | `Loop::seedRecordPassFromStore` | capture setup | separate contract |
@@ -414,9 +414,41 @@ None.
 ### Proceed?
 YES
 
+### Slice 4 — overdub-stop viewport must not full-rebuild (first `ensureVisualCacheBuilt` / `rebuildVisualCacheFromPasses` caller)
+
+**After Slice 3.** One caller only.
+
+`DisplayManager::refreshViewportAfterOverdubStop` called `rebuildVisualCacheFromPasses` on short loops (`loopLength ≤ 16` bars). Long loops already kept the loop-wide list or adopted the composed frame. PLAYING idle already runs `rebuildVisualCacheIdleSlice`.
+
+[`020910`](../../captures/session_20260814_020910.log) / [`021959`](../../captures/session_20260814_021959.log) stale paint was **adopt_partial** replacing the loop-wide list with the viewport. Keep existing `visualCache.notes` when non-empty.
+
+**Firmware:** remove the short-loop `rebuildVisualCacheFromPasses` branch. Same keep/adopt/clear path for every loop length. Do not call `ensureVisualCacheBuilt` here. Do not touch NOTE_EDIT open.
+
+**Native:** `test_short_loop_stale_keeps_notes_for_overdub_stop_handoff` — 4-bar `markDisplayCachesStale` keeps notes.
+
+**Device:** short-loop overdub stop must not emit `VCACHE,full` between `ODUB,stop,enter` and `ODUB,stop,display`. [`140841`](../../captures/session_20260816_140841.log) was 64-bar (already skipped).
+
+## Pre-implementation review (Slice 4)
+
+### Ready
+- Owner is `DisplayManager::refreshViewportAfterOverdubStop`. Idle slice already fills PLAYING dirty bars.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Caller | Short-loop stop rebuild only |
+| Keep vs adopt | Keep when notes non-empty |
+| NOTE_EDIT | Out of scope |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
 ### Later (not authorized)
 
-4. Audit `ensureVisualCacheBuilt` callers one at a time. Do not globally delete.
+4b. Remaining `ensureVisualCacheBuilt` callers one at a time (`resolveDisplayNotesCommitted`, `getVisualNotesForSlot`, STOPPED idle, `prewarmSelectedDisplayVisualCache`). Do not globally delete.
 5. NOTE_EDIT hydrate — own session design.
 6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
 
