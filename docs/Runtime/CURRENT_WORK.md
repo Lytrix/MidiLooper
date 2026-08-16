@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (overdub-pass wrap pairing HITL PASS 021218)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **Overdub-pass wrap pairing HITL PASS** [`021218`](../../captures/session_20260816_021218.log) — wrap-held note 12 ON@2976 / OFF@96 stays after overdub wrap (`WRAP,2976,96,4,12`; VCACHE 63→87, stop 88). Merged reconstruct unchanged. Extract still uses `capturePreview.openNoteIndices`. **038.1 live +1 HITL PASS** [`011413`](../../captures/session_20260816_011413.log). **038.2 landed.** Issue 3 parked. Do not start midi_gap / 6.3 until asked.
+**Now:** **Overdub-pass wrap pairing HITL PASS** [`021218`](../../captures/session_20260816_021218.log) — wrap-held note 12 ON@2976 / OFF@96 stays after overdub wrap (`WRAP,2976,96,4,12`; VCACHE 63→87, stop 88). Merged reconstruct unchanged. Extract still uses `capturePreview.openNoteIndices`. **038.1 live +1 HITL PASS** [`011413`](../../captures/session_20260816_011413.log). **038.2 landed.** Issue 3 closed (not reproduced; two loops playing). Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

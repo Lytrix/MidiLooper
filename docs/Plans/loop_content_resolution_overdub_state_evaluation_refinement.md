@@ -159,7 +159,7 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 Same on LCR candidates and the Loop note-map path. Do not change geometry.
 
-**Next when asked:** After-stop one **U:** HITL for 038.2. Issue 3 parked. Not midi_gap / 6.3.
+**Next when asked:** After-stop one **U:** HITL for 038.2. Issue 3 closed (not reproduced; two loops playing). Not midi_gap / 6.3.
 
 ---
 
@@ -314,7 +314,7 @@ Issue 1 path: `commitOverdubWrapAtSessionStart` → `publishPreparedOverdubPass`
 
 Issue 2 firmware gap (if undo was during OVERDUBBING): `Loop::undoOverdubSession` / `TrackUndo::undoOverdubSession` never call `LoopContentResolution::setPreparedCapturePassState`. DEC-038 pin required that. After stop, 038.1 GUS still has only the last wrap.
 
-Issue 3 path: `maybeCommitOverdubWrap` runs inside `playCommittedLoopMidi` before emit. Wrap 2/3 LCR `tot` 82 ms / 106 ms on that tick. `invalidateCaches` forces merge rebuild.
+Issue 3 path (historical): `maybeCommitOverdubWrap` runs inside `playCommittedLoopMidi` before emit. Wrap 2/3 LCR `tot` 82 ms / 106 ms on that tick. `invalidateCaches` forces merge rebuild. **Closed:** not reproduced. User: two loops were playing. Do not investigate wrap-on-clock stall.
 
 ## HITL [`232914`](../../captures/session_20260815_232914.log) — undo during + after stop
 
@@ -343,7 +343,7 @@ Session undo **fires** while OVERDUBBING. Sealed-wrap committed count does not f
 
 Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`, `test_source_view_prepared_window_omits_unpaired_open_tails`.
 
-Does not fix wrap-on-clock stall (issue 3). After-stop multi-wrap GUS is 038.2 (landed).
+Issue 3 (wrap-on-clock stall) is **closed** — not reproduced; two loops were playing. After-stop multi-wrap GUS is 038.2 (landed).
 
 ## Issue 2 shipped — session undo hides the wrap in prepared LCR
 
