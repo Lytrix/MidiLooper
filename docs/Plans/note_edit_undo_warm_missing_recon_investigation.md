@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 assign-at-open **does not cover** exit persist on this loop ([`173806`](../../captures/session_20260816_173806.log)). **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS**. **C5 parked:** `appendNotesForIds` on overlay. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 assign-at-open **does not cover** exit persist on this loop ([`173806`](../../captures/session_20260816_173806.log)). [`181941`](../../captures/session_20260816_181941.log): rematerialize still **M24@888 noteId=280** after NoteRange+Pitch **280**; NOTE_EDIT open and LOOP_EDIT exit both paint that rematerialize. **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS**. **C5 parked:** `appendNotesForIds` on overlay. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -613,11 +613,27 @@ This file has **no** `DNTE` lines and no session-store flatten around undo/redo.
 
 C4 [`173806`](../../captures/session_20260816_173806.log) pair-target overlay holds. **C5:** `appendNotesForIds` on overlay only. Parked behind exit-persist identity.
 
-### 6b. Exit persist — B1 identity split (Stage 1 implementing)
+### 6b. Exit persist — B1 identity split (Stage 1 device — [`181941`](../../captures/session_20260816_181941.log))
 
 [`173806`](../../captures/session_20260816_173806.log): saved NoteRange+Pitch **256**; rematerialize still **M24@888**. LOOP_EDIT paints that rematerialize. [`170942`](../../captures/session_20260816_170942.log) same home: **256** misses, **280** applies.
 
-**Design:** [`note_edit_persist_noteid_identity_bugfix.md`](note_edit_persist_noteid_identity_bugfix.md) / [DEC-039](../DECISION_LOG.md#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) — persist id is rematerialize NoteOn at commitBaseline; commit boundary reconciles. Stage 2 parked. Do not patch `applyNoteEditPass`. Do not start C5.
+[`181941`](../../captures/session_20260816_181941.log) is not the sibling-leftover case from [`181235`](../../captures/session_20260816_181235.log) / [`181651`](../../captures/session_20260816_181651.log):
+
+| Marker | Value |
+|--------|--------|
+| Open | `NOTE_EDIT_OPEN` `visual_notes=112` `session_events=233` — no `VCACHE`/`DISP`/`DNTE` in this file |
+| Live | `EditSessionAction` **280** `744–888` then pitch **45** |
+| Persist identity | no `retarget`/`unresolved`/`ambiguous` line → `AlreadyPresent` |
+| Pre-commit | NoteRange+Pitch **280** `744–888` / 45 |
+| After save | all four traces **M24 start=888 end=1032 noteId=280** `flatEvents=233` |
+| Active passes | `activeEditPasses=11` (181235 close 6 + 181651 close 3 + this commit 2) |
+| Close bake | `NoteEditPass replaced stale=2 replacement=133 rows=2` — only this session’s ids |
+
+`DisplayNote.noteId` is copied from the NoteOn. A rematerialize NoteOn **280** is still at `24@888–1032` after the Update rows were saved. NOTE_EDIT paint committed base is that rematerialize (`rebuildVisualCacheFromPasses` / `projectedNoteEditDisplayNotes`). LOOP_EDIT after exit rematerializes the same passes. That is both user symptoms: enter does not show committed edit-pass geometry; exit draws the pre-edit home.
+
+Close bake uses `buildSessionStoreEditPasses` only when `editPassIds` is empty (live capture). [`190822`](../../captures/session_20260816_190822.log): commit of **256** landed (home leftover sibling **280**); exit `replaced stale=3 rows=4` disabled those EditActions. Close now keeps committed ids. [`191411`](../../captures/session_20260816_191411.log) persist PASS. Open wrap-split paint is sibling — `ensureVisibleRowsForDisplayNotes` merges tail+head. Do not wire `resolveNotes` onto NOTE_EDIT/LOOP_EDIT paint.
+
+**Design:** [`note_edit_persist_noteid_identity_bugfix.md`](note_edit_persist_noteid_identity_bugfix.md) / [DEC-039](../DECISION_LOG.md#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) / [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype). Stage 2 parked. Do not patch `applyNoteEditPass`. Do not start C5 / B2b / Layer D.
 
 ### Layer B1 persist checkpoint (Stage 1)
 
@@ -748,3 +764,4 @@ Committed NOTE_EDIT paint must consume the same materialized committed state as 
 - [`note_edit_visual_cache_display_unification_refinement.md`](note_edit_visual_cache_display_unification_refinement.md) — undo-warm left open after Stages 8–9
 - [`loop_content_resolution_overdub_state_evaluation_refinement.md`](loop_content_resolution_overdub_state_evaluation_refinement.md) — overdub E: routing vs NOTE_EDIT E:; shared materialize, not shared undo stack
 - [`note_edit_select_commit_bracket_bugfix.md`](note_edit_select_commit_bracket_bugfix.md) — `M65@609 missing in recon` was wrong `mover_focus` (RC7b), not this layer
+- [`note_edit_persist_noteid_identity_bugfix.md`](note_edit_persist_noteid_identity_bugfix.md) — wrap open: display head must not lead ([`193525`](../../captures/session_20260816_193525.log) `DNTE` 12@0 length 96)

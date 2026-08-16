@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-16 (NOTE_EDIT persist identity Stage 1)
+Last updated: 2026-08-16 (NOTE_EDIT open keeps wrap tail selectable)
 
 ---
 
@@ -36,7 +36,7 @@ Last updated: 2026-08-16 (NOTE_EDIT persist identity Stage 1)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** NOTE_EDIT persist identity Stage 1 [DEC-039](../DECISION_LOG.md#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) [`note_edit_persist_noteid_identity_bugfix.md`](../Plans/note_edit_persist_noteid_identity_bugfix.md). Stage 2 parked. Parent [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md) — [`173806`](../captures/session_20260816_173806.log). **C1–C4 device PASS**; **C5 parked**. **B2a device PASS** [`171228`](../captures/session_20260816_171228.log). A intermediates PASS. Boot title RAM1 **closed**. LED lookup Stage 1 PASS [`114736`](../captures/session_20260816_114736.log). Consumer grooming Slice 1–4c device PASS; 4e parked. **038.2 landed.** Not all of LCR live.
+**Active work:** NOTE_EDIT persist close-keep **PASS** [`191411`](../captures/session_20260816_191411.log). Open wrap paint **PASS** [`192259`](../captures/session_20260816_192259.log) then **FAIL** [`193525`](../captures/session_20260816_193525.log) (`DNTE` 12@0 length 96, tail gone). Display must not lead: merge splitHeadTail to wrap; projection keeps cache tail when currentSpan is the head. Device gate: enter NOTE_EDIT, wrap selectable at 2592, length 576. Stage 2 parked. Parent [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md). **C1–C4 device PASS**; **C5 parked**. **B2a device PASS** [`171228`](../captures/session_20260816_171228.log). A intermediates PASS. Boot title RAM1 **closed**. LED lookup Stage 1 PASS [`114736`](../captures/session_20260816_114736.log). Consumer grooming Slice 1–4c device PASS; 4e parked. **038.2 landed.** Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
