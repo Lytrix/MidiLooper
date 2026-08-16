@@ -18,6 +18,8 @@
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
+#include "Arduino.h"
+#include "EditManagerInternal.h"
 #include "Logger.h"
 #endif
 
@@ -47,6 +49,9 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         return false;
     }
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t setupStartUs = micros();
+#endif
     // noteIds are assigned once in openNoteEditSession — never mint mid-edit (Delete rows
     // must resolve against capture-pass materialize). Stamp offs only.
     stampNoteIdsOntoPairedNoteOffs(liveStore);
@@ -89,6 +94,12 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
 
     ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel,
                                                currentStateReader, &committedDisplayNotes);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("setup", micros() - setupStartUs,
+                      static_cast<uint32_t>(evaluationScope.size()),
+                      static_cast<uint32_t>(focus.baselineMap.size()));
+    const uint32_t analyzeStartUs = micros();
+#endif
     const BaselineMap& transactionBaselineAfterEnsure = focus.baselineMap;
 
     const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
@@ -132,6 +143,11 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         buildEditSessionActions(constrained, editedGeometry, analysisBaseline,
                                 transactionBaselineAfterEnsure, leaveRestoreTargetNoteIds, liveStore,
                                 channel, focus, loopLength, currentStateReader);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("analyze", micros() - analyzeStartUs,
+                      static_cast<uint32_t>(actions.size()),
+                      static_cast<uint32_t>(interactions.size()));
+#endif
 
     if (actions.empty()) {
         return false;
@@ -160,9 +176,16 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     logEditSessionActions(actions);
 #endif
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t applyStartUs = micros();
+#endif
     applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
                             &manager.getEditSession().applyOwnedEditPassRows,
                             &currentState);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("apply", micros() - applyStartUs,
+                      static_cast<uint32_t>(actions.size()), 0);
+#endif
     manager.bumpSessionPreviewRevision();
     track.invalidateCaches(refreshPlaybackPreview);
     return true;

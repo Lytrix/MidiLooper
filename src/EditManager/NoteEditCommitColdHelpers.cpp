@@ -93,6 +93,12 @@ EDIT_MANAGER_IMPL_MEM void logGeomApplyResolve(uint32_t elapsedUs, bool applied,
                 static_cast<unsigned long>(elapsedUs), applied ? 1u : 0u,
                 static_cast<unsigned>(kind));
 }
+
+EDIT_MANAGER_IMPL_MEM void logGeomApplyPhase(const char* phase, uint32_t elapsedUs, uint32_t extra0,
+                                             uint32_t extra1) {
+    logger.info("#CAP,%lu,GEOM_APPLY,phase,%s,%lu,%u,%u", static_cast<unsigned long>(micros()),
+                phase, static_cast<unsigned long>(elapsedUs), extra0, extra1);
+}
 #endif
 
 EDIT_MANAGER_IMPL_MEM EditPassIdList collectEditPassIdsPendingDurableCheckpoint(
