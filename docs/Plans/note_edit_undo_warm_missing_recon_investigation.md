@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — investigation (no firmware yet)  
+**Status:** Active — Layer A pinned (native); no firmware yet  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -108,6 +108,23 @@ STOPPED short-loop `Track::getVisualNotesForSlot` still calls `ensureVisualCache
 One layer at a time. Native fixture before firmware.
 
 1. **Layer A pin** — native: `buildSessionUndoEntry` on a 110-note / 229-event snapshot; report `focus_snap` vs clone vs trim. Device: one select must not exceed a bound we set after the pin (do not invent a bound here).
+
+### Layer A pin (native)
+
+`test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims` — 110 notes, 229 events (220 note + 9 CC), empty overlap.
+
+| Step | Result |
+|------|--------|
+| `NoteEditFocus` copy | source `baselineMap` stays 110 |
+| `snapshotFocusForSessionUndo` | **110 → 1** (mover only) |
+| `NoteEditCurrentState::clone` | 110 rows |
+| `buildSessionUndoEntry` | `hasUndoCurrentState`; entry focus map size 1; current-state size 110 |
+
+Host microseconds (not a device bound): copy 14, snap 19, clone 24, build 75. Device `focus_snap` 68–272 ms is the same copy-then-trim on `ExternalMemoryFirstAllocator` (PSRAM). Host cannot reproduce that latency.
+
+**Pinned owner:** `snapshotFocusForSessionUndo` copies the whole `NoteEditFocus` (110-entry `baselineMap`) then throws 109 entries away; `buildSessionUndoEntry` then clones 110 current-state rows.
+
+**Next firmware (not started):** snapshot only mover + overlap keys. Do not copy the unused baselines. Same select → warm → push contract. Do not invent a device ms bound until that lands.
 2. **Layer B pin** — from [`143144`](../../captures/session_20260816_143144.log) saved rows (`NoteRange 1057–1249`, `Pitch 43`, later `Length 1057–1127` / `NoteRange 1128–1320`), state whether post-exit `slice_clean` / `DISP` can show that geometry. If the log cannot, add one commit-trace field for the **new** span (behavior-preserving) or a native replay of the three saved rows. Only then decide RC8 pairing vs stale-cache paint vs idle-slice omit.
 3. **Layer C** — only after A no longer dominates select/pitch.
 4. **Layer D** — only after A/B; do not globally delete `ensureVisualCacheBuilt`.
