@@ -41,6 +41,7 @@ TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
   const CommitResult result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
   if (result == CommitResult::Committed) {
     const PassId passId = loop.lastCommittedPassId();
+    loop.applyPendingNoteChangesToOverdubSourceView();
     EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
     for (const OverdubPass& pass : loop.passes.overdubPasses) {
       if (pass.id == passId) {

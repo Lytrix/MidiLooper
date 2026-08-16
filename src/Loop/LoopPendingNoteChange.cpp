@@ -270,6 +270,44 @@ LOOP_COLD_MEM __attribute__((noinline)) void Loop::emitOverlapHoldTotals() const
                   totals.sumLookupUs, totals.add, totals.shorten, totals.hide);
 }
 
+LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
+  if (!overdubSourceViewEstablished_) {
+    return;
+  }
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind == PendingNoteChangeKind::Add) {
+      if (change.noteId == kInvalidNoteId) {
+        continue;
+      }
+      NoteUtils::DisplayNoteVec added;
+      NoteUtils::DisplayNote note{};
+      note.noteId = change.noteId;
+      note.note = change.pitch;
+      note.velocity = change.velocity;
+      note.startTick = change.startTick;
+      note.endTick = change.endTick;
+      added.push_back(note);
+      mergeDisplayNotesIntoOverdubSourceView(added);
+      continue;
+    }
+    for (auto it = overdubSourceViewNotes_.begin(); it != overdubSourceViewNotes_.end();) {
+      if (it->noteId != change.noteId) {
+        ++it;
+        continue;
+      }
+      if (change.kind == PendingNoteChangeKind::Hide) {
+        it = overdubSourceViewNotes_.erase(it);
+        continue;
+      }
+      if (change.kind == PendingNoteChangeKind::Shorten) {
+        it->startTick = change.startTick;
+        it->endTick = change.endTick;
+      }
+      ++it;
+    }
+  }
+}
+
 EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   EditPassIdList sealedIds;
   for (const PendingNoteChange& change : pendingNoteChanges_) {

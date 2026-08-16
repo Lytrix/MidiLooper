@@ -429,7 +429,11 @@ void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
   if (phase == CapturePhase::Overdub) {
-    establishOverdubSourceView(playheadPhaseTick);
+    // Wrap beginCapture must keep the session source view. Re-establish after
+    // invalidateCaches drops this-session notes (235407 inner / same-start-longer).
+    if (!overdubSourceViewEstablished_) {
+      establishOverdubSourceView(playheadPhaseTick);
+    }
   } else {
     clearOverdubSourceView();
   }
