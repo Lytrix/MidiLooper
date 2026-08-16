@@ -1976,7 +1976,11 @@ TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes) {
 }
 
 bool sDeviceGateFinished = false;
+#if defined(__IMXRT1062__)
+DMAMEM DeviceGateSession sDeviceGateSession;
+#else
 DeviceGateSession sDeviceGateSession;
+#endif
 
 }  // namespace
 

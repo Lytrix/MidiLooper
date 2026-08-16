@@ -22,7 +22,11 @@ uint8_t resolveTrackIndex(const Track& track) {
 
 }  // namespace
 
+#if defined(__IMXRT1062__)
+DMAMEM LoopEditManager loopEditManager(midiHandler);
+#else
 LoopEditManager loopEditManager(midiHandler);
+#endif
 
 LoopEditManager::LoopEditManager(MidiHandler& midiHandler) 
     : midiHandler(midiHandler) {

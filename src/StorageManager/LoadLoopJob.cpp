@@ -42,8 +42,13 @@ struct LoadLoopJob {
     PersistedLoopParseState parseState{};
     SlotLoadSession* session = nullptr;
 };
+#if defined(__IMXRT1062__)
+DMAMEM LoadLoopJob loadLoopJob_{};
+DMAMEM LoadLoopJob parkedLoadLoopJob_{};
+#else
 LoadLoopJob loadLoopJob_{};
 LoadLoopJob parkedLoadLoopJob_{};
+#endif
 /// After boot playback ready, delay background fill so first transport press is not starved.
 uint32_t backgroundRestoreHoldoffUntilMs_ = 0;
 /// After LoadLoopJob Commit, block deferred save briefly so SD work cannot race the

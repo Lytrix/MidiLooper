@@ -216,24 +216,40 @@ void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
   store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
 }
 
+namespace {
+
+struct AssignCommittedPassNoteIdCtx {
+  Loop* loop;
+  uint32_t* assigned;
+};
+
+NoteId assignCommittedPassNoteId(void* ctx) {
+  auto* assignCtx = static_cast<AssignCommittedPassNoteIdCtx*>(ctx);
+  ++*assignCtx->assigned;
+  return assignCtx->loop->allocateNoteId();
+}
+
+}  // namespace
+
 LOOP_COLD_MEM void Loop::assignMissingNoteIdsInCommittedCapturePasses() {
   if (!hasCommittedPasses()) {
     return;
   }
   uint32_t assigned = 0;
-  auto assignFn = [this, &assigned]() {
-    ++assigned;
-    return allocateNoteId();
-  };
+  AssignCommittedPassNoteIdCtx assignCtx{this, &assigned};
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.committedChunkIds.empty()) {
-    LoopEventStore::assignMissingNoteIdsToNoteOns(passes.recordPass.committedChunkIds, assignFn);
+    const CommittedChunkIdList& chunkIds = passes.recordPass.committedChunkIds;
+    LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+        chunkIds.data(), chunkIds.size(), assignCommittedPassNoteId, &assignCtx);
   }
   for (OverdubPass& pass : passes.overdubPasses) {
     if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
       continue;
     }
-    LoopEventStore::assignMissingNoteIdsToNoteOns(pass.committedChunkIds, assignFn);
+    const CommittedChunkIdList& chunkIds = pass.committedChunkIds;
+    LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+        chunkIds.data(), chunkIds.size(), assignCommittedPassNoteId, &assignCtx);
   }
   if (assigned > 0) {
     logger.log(CAT_TRACK, LOG_WARNING,

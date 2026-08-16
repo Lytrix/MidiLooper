@@ -6,7 +6,11 @@
 #include "MidiConfig.h"
 #include <functional>
 
+#if defined(__IMXRT1062__)
+DMAMEM MidiFaderManager midiFaderManager;
+#else
 MidiFaderManager midiFaderManager;
+#endif
 
 MidiFaderManager::MidiFaderManager() {
     // Set up the callback from processor to this manager

@@ -7,6 +7,10 @@
 namespace PerformanceMonitor {
 
 // Global performance monitor instance
+#if defined(__IMXRT1062__)
+DMAMEM PerformanceMonitor globalPerformanceMonitor;
+#else
 PerformanceMonitor globalPerformanceMonitor;
+#endif
 
 } // namespace PerformanceMonitor 
