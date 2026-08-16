@@ -101,42 +101,111 @@ int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
   return -1;
 }
 
-void applyDeleteNoteById(MidiEventVec& events, NoteId noteId) {
+int findWrapHeadOffForOnIndex(const MidiEventVec& events, int onIndex, uint32_t loopLength) {
+  if (onIndex < 0 || static_cast<size_t>(onIndex) >= events.size() || loopLength == 0) {
+    return -1;
+  }
+  const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
+  const uint8_t channel = onEvt.channel;
+  const uint8_t note = onEvt.data.noteData.note;
+  int tagged = -1;
+  int preferred = -1;
+  uint32_t preferredCount = 0;
+  for (size_t i = 0; i < events.size(); ++i) {
+    const MidiEvent& evt = events[i];
+    if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != note) {
+      continue;
+    }
+    uint32_t headOffTick = evt.tick;
+    if (headOffTick >= loopLength) {
+      headOffTick %= loopLength;
+    }
+    if (!NoteUtils::isPreferredWrapTailForHeadOff(onEvt.tick, headOffTick, events, note, channel,
+                                                  loopLength)) {
+      continue;
+    }
+    if (onEvt.noteId != kInvalidNoteId && evt.noteId == onEvt.noteId) {
+      tagged = static_cast<int>(i);
+      break;
+    }
+    preferred = static_cast<int>(i);
+    ++preferredCount;
+  }
+  if (tagged >= 0) {
+    return tagged;
+  }
+  if (preferredCount == 1) {
+    return preferred;
+  }
+  return -1;
+}
+
+void eraseEventIndices(MidiEventVec& events, std::vector<int> indices) {
+  std::sort(indices.begin(), indices.end(), std::greater<int>());
+  int last = -1;
+  for (int idx : indices) {
+    if (idx < 0 || idx == last || static_cast<size_t>(idx) >= events.size()) {
+      continue;
+    }
+    events.erase(events.begin() + idx);
+    last = idx;
+  }
+}
+
+void applyDeleteNoteById(MidiEventVec& events, NoteId noteId, uint32_t loopLength) {
   const int onIndex = findNoteOnById(events, noteId);
   if (onIndex < 0) {
     return;
   }
-  const int offIndex = findNoteOffForOnIndex(events, onIndex);
+  const int lifoOff = findNoteOffForOnIndex(events, onIndex);
+  const int wrapOff = findWrapHeadOffForOnIndex(events, onIndex, inferLoopLength(events, loopLength));
   std::vector<int> remove;
   remove.push_back(onIndex);
-  if (offIndex >= 0) {
-    remove.push_back(offIndex);
+  if (lifoOff >= 0) {
+    remove.push_back(lifoOff);
   }
-  std::sort(remove.begin(), remove.end(), std::greater<int>());
-  for (int idx : remove) {
-    events.erase(events.begin() + idx);
+  if (wrapOff >= 0) {
+    remove.push_back(wrapOff);
+  }
+  eraseEventIndices(events, remove);
+}
+
+void applyMoveNoteById(MidiEventVec& events, NoteId noteId, uint32_t newStart, uint32_t newEnd,
+                       uint32_t loopLength) {
+  const int onIndex = findNoteOnById(events, noteId);
+  if (onIndex < 0) {
+    return;
+  }
+  loopLength = inferLoopLength(events, loopLength);
+  const int lifoOff = findNoteOffForOnIndex(events, onIndex);
+  const int wrapOff = findWrapHeadOffForOnIndex(events, onIndex, loopLength);
+  events[static_cast<size_t>(onIndex)].tick = newStart;
+  const int offToMove = wrapOff >= 0 ? wrapOff : lifoOff;
+  if (offToMove >= 0) {
+    events[static_cast<size_t>(offToMove)].tick = newEnd;
+  } else {
+    const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
+    events.push_back(MidiEvent::NoteOff(newEnd, onEvt.channel, onEvt.data.noteData.note, 0));
+  }
+  if (wrapOff >= 0 && lifoOff >= 0 && lifoOff != wrapOff) {
+    eraseEventIndices(events, {lifoOff});
   }
 }
 
-void applyMoveNoteById(MidiEventVec& events, NoteId noteId, uint32_t newStart, uint32_t newEnd) {
+void applyChangePitchById(MidiEventVec& events, NoteId noteId, uint8_t newPitch,
+                          uint32_t loopLength) {
   const int onIndex = findNoteOnById(events, noteId);
-  const int offIndex = findNoteOffForOnIndex(events, onIndex);
-  if (onIndex >= 0) {
-    events[static_cast<size_t>(onIndex)].tick = newStart;
+  if (onIndex < 0) {
+    return;
   }
-  if (offIndex >= 0) {
-    events[static_cast<size_t>(offIndex)].tick = newEnd;
+  const int lifoOff = findNoteOffForOnIndex(events, onIndex);
+  const int wrapOff = findWrapHeadOffForOnIndex(events, onIndex, inferLoopLength(events, loopLength));
+  events[static_cast<size_t>(onIndex)].data.noteData.note = newPitch;
+  if (lifoOff >= 0) {
+    events[static_cast<size_t>(lifoOff)].data.noteData.note = newPitch;
   }
-}
-
-void applyChangePitchById(MidiEventVec& events, NoteId noteId, uint8_t newPitch) {
-  const int onIndex = findNoteOnById(events, noteId);
-  const int offIndex = findNoteOffForOnIndex(events, onIndex);
-  if (onIndex >= 0) {
-    events[static_cast<size_t>(onIndex)].data.noteData.note = newPitch;
-  }
-  if (offIndex >= 0) {
-    events[static_cast<size_t>(offIndex)].data.noteData.note = newPitch;
+  if (wrapOff >= 0) {
+    events[static_cast<size_t>(wrapOff)].data.noteData.note = newPitch;
   }
 }
 
@@ -239,7 +308,7 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
     shortenNoteEndById(events, note.noteId, shortenedEnd);
   }
   for (const NoteUtils::DisplayNote& note : notesToDelete) {
-    applyDeleteNoteById(events, note.noteId);
+    applyDeleteNoteById(events, note.noteId, loopLength);
   }
 
   const int refreshedOnIndex = findNoteOnById(events, noteId);
@@ -354,13 +423,13 @@ PersistIdentityReconcileResult reconcileMoverPersistIdentity(
 }
 
 void deleteNoteById(MidiEventVec& events, NoteId noteId) {
-  applyDeleteNoteById(events, noteId);
+  applyDeleteNoteById(events, noteId, 0);
 }
 
 void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks) {
   switch (editPass.actionType) {
     case EditActionType::Delete:
-      applyDeleteNoteById(events, editPass.targetNoteId);
+      applyDeleteNoteById(events, editPass.targetNoteId, loopLengthTicks);
       break;
     case EditActionType::Create:
       applyAddNote(events, editPass.addedEvents);
@@ -368,13 +437,14 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
     case EditActionType::Update:
       switch (editPass.propertyType) {
         case EditPropertyType::NoteRange:
-          applyMoveNoteById(events, editPass.targetNoteId, editPass.startTick, editPass.endTick);
+          applyMoveNoteById(events, editPass.targetNoteId, editPass.startTick, editPass.endTick,
+                            loopLengthTicks);
           break;
         case EditPropertyType::Length:
           applyChangeLengthById(events, editPass.targetNoteId, editPass.endTick, loopLengthTicks);
           break;
         case EditPropertyType::Pitch:
-          applyChangePitchById(events, editPass.targetNoteId, editPass.pitch);
+          applyChangePitchById(events, editPass.targetNoteId, editPass.pitch, loopLengthTicks);
           break;
         case EditPropertyType::Velocity:
           applyChangeVelocityById(events, editPass.targetNoteId, editPass.velocity);

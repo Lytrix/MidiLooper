@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT linear wrap-move paints wrap display)
+Last updated: 2026-08-16 (NOTE_EDIT wrap-move persist drops false linear off)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT linear wrap-move paints wrap display)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** [`200952`](../../captures/session_20260816_200952.log) live wrap-move storage is linear (`EditSessionAction` 2688–3264, `DNTE` length **576**). Piano roll wrap is `end < start` only, so 3264 is clamped to loop end (no head). Projection paints display phase (`2688–192`). Device gate: first move of wrap pitch-12 still shows wrap head; `DNTE` length stays **576**. Do not patch `applyNoteEditPass` identity. Stage 2 / C5 / B2b / Layer D parked.
+**Now:** [`201446`](../../captures/session_20260816_201446.log) live wrap-move is linear (`EditSessionAction` 2832–3408, `DNTE` length **576**). Deselect persist LIFO-pairs false Off@2688 and leaves wrap Off@96; reselect `DNTE` length **336**. Apply moves the wrap-head off and drops the false linear off. Device gate: after move + deselect, `DNTE` length stays **576** (not 336/288). Do not patch `applyNoteEditPass` identity. Stage 2 / C5 / B2b / Layer D parked.
 
 **Next Layer C (parked C5):** `OverlapCandidateLookup::appendNotesForIds` in overlay only — not overdub source-view / hold ids. Not reconstruct. Not empty-pair resolve.
 
