@@ -112,16 +112,11 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     liveMergeCaptureRevision_ = captureDisplayRevision;
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
-    if (!shouldAvoidFullVisualRebuild(loop, loopLength)) {
-        loop.rebuildVisualCacheFromPasses();
-        liveDisplayCacheCommittedNoteCount_ = loop.visualCache.notes.size();
-        liveDisplayCacheBaseNoteCount_ = loop.visualCache.notes.size();
-        liveMergePlaybackRevision_ = playbackRevision;
-        liveMergeCaptureRevision_ = captureDisplayRevision;
-        livePlaybackDisplaySlot_ = displaySlot;
-        livePlaybackDisplayTrack_ = trackIndex;
-        liveWindowVisualCacheRevision_ = loop.visualCache.revision;
-    } else if (!loop.visualCache.notes.empty()) {
+    // Do not rebuildVisualCacheFromPasses / ensureVisualCacheBuilt here — overdub
+    // stop is MIDI-sensitive. Idle rebuildVisualCacheIdleSlice fills dirty bars.
+    // Keep the loop-wide list when present (020910/021959 stale paint was
+    // adopt_partial, not this keep). Empty cache may adopt the composed frame.
+    if (!loop.visualCache.notes.empty()) {
         // 6B: keep the loop-wide cache. Affected bars are already marked at commit.
         // adopt_partial would replace notes with the viewport and dirty the rest
         // (session_20260815_185931: 2403 → 496 notes, 117 bars dirty).

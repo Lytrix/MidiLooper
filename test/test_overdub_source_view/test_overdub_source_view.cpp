@@ -89,6 +89,27 @@ void test_overdub_start_establishes_source_view() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
+void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kFourBars = Config::TICKS_PER_BAR * 4;
+  loop.loopLengthTicks = kFourBars;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+  TEST_ASSERT_FALSE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks));
+  loop.rebuildVisualCacheFromPasses();
+  const size_t notesBefore = loop.visualCache.notes.size();
+  TEST_ASSERT_TRUE(notesBefore > 0);
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+}
+
 void test_overdub_begin_makes_restore_flatten_unreachable() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -948,6 +969,7 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_overdub_start_establishes_source_view);
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
+  RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
   RUN_TEST(test_record_start_does_not_keep_source_view);
   RUN_TEST(test_source_view_includes_edit_pass_geometry);
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);
