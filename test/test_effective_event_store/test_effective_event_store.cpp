@@ -214,8 +214,11 @@ void test_mark_affected_display_cache_ranges_dirties_sparse_bars() {
   TEST_ASSERT_GREATER_THAN(0u, overdubDirty);
   TEST_ASSERT_LESS_THAN(8u, overdubDirty);
   TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[3]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[2]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[4]);
   TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[0]);
   TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
+  TEST_ASSERT_EQUAL(1u, overdubDirty);
 
   EditPass hide{};
   hide.passType = EditPassType::Note;

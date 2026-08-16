@@ -208,9 +208,12 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     return;
   }
 
-  const uint32_t barsThisSlice =
-      std::min<uint32_t>(maxBarsPerSlice, totalBars - startBar);
-  const uint32_t endBar = startBar + barsThisSlice - 1;
+  const uint32_t maxEnd =
+      startBar + std::min<uint32_t>(maxBarsPerSlice, totalBars - startBar) - 1;
+  uint32_t endBar = startBar;
+  while (endBar < maxEnd && visualCache.dirtyBars[endBar + 1] != 0) {
+    ++endBar;
+  }
 
   constexpr uint32_t kPadBars = 1;
   const uint32_t eventStartBar = startBar > kPadBars ? startBar - kPadBars : 0;
@@ -404,17 +407,6 @@ LOOP_COLD_MEM void ensureVisualCacheDirtyBarCapacity(VisualCache& cache, uint32_
   }
 }
 
-LOOP_COLD_MEM void markBarNeighborhoodDirty(VisualCache& cache, uint32_t bar, uint32_t totalBars) {
-  if (totalBars == 0 || bar >= totalBars) {
-    return;
-  }
-  const uint32_t lo = bar > 0 ? bar - 1 : 0;
-  const uint32_t hi = std::min(bar + 1, totalBars - 1);
-  for (uint32_t b = lo; b <= hi; ++b) {
-    cache.markBarDirty(b);
-  }
-}
-
 LOOP_COLD_MEM void markTickSpanDirty(VisualCache& cache, uint32_t startTick, uint32_t endTick,
                        uint32_t loopLengthTicks) {
   const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
@@ -425,12 +417,14 @@ LOOP_COLD_MEM void markTickSpanDirty(VisualCache& cache, uint32_t startTick, uin
   const uint32_t startBar = visualBarForTick(startTick, Config::TICKS_PER_BAR);
   const uint32_t endBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
   auto markInclusive = [&](uint32_t loBar, uint32_t hiBar) {
-    const uint32_t lo = loBar > 0 ? loBar - 1 : 0;
-    const uint32_t hi = std::min(hiBar + 1, totalBars - 1);
-    if (lo > hi) {
+    if (loBar >= totalBars) {
       return;
     }
-    for (uint32_t bar = lo; bar <= hi; ++bar) {
+    const uint32_t hi = std::min(hiBar, totalBars - 1);
+    if (loBar > hi) {
+      return;
+    }
+    for (uint32_t bar = loBar; bar <= hi; ++bar) {
       cache.markBarDirty(bar);
     }
   };
@@ -495,8 +489,7 @@ LOOP_COLD_MEM void Loop::markAffectedDisplayCacheRanges(PassId committedPassId,
       chunkEvents.clear();
       LoopEventStore::appendChunkRefEvent(chunkId, chunkEvents);
       for (const MidiEvent& event : chunkEvents) {
-        markBarNeighborhoodDirty(visualCache, visualBarForTick(event.tick, Config::TICKS_PER_BAR),
-                                 totalBars);
+        visualCache.markBarDirty(visualBarForTick(event.tick, Config::TICKS_PER_BAR));
         if (event.isNoteOn()) {
           if (openCount < 128) {
             openOns[openCount].noteId = event.noteId;
