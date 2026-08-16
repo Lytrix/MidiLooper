@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 2 idle one-source (wrap-held edge append documented)  
+**Status:** Active — Slice 2 device PASS [`135551`](../../captures/session_20260816_135551.log)  
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -343,7 +343,16 @@ Slice 2 skip **exercised** in [`134955`](../../captures/session_20260816_134955.
 
 Interior slices: `ev=176` `notes=86` `tot≈9.6 ms`. One wrap-edge slice: `notes=500` `tot=39.6 ms`. PLAYING `clockrate` 47–48.
 
-1493 → 1476 is **not** Slice 2 note-loss. [`134955`](../../captures/session_20260816_134955.log) `MIDI: Undo` kind=1 `Overdub undone @ tick 1344` at 396.299 s, then the 6a burst and `slice_clean` 1476 at 397.221 s. Second undo at 397.747 s (`@ tick 1904`) then `stale` 1476 → `slice_clean` 1469. Overdub stops later add notes (1469 → 1556). Need a prepared rebuild with no undo between the append-path baseline and `slice_clean` before calling PASS or FAIL.
+1493 → 1476 is **not** Slice 2 note-loss. [`134955`](../../captures/session_20260816_134955.log) `MIDI: Undo` kind=1 `Overdub undone @ tick 1344` at 396.299 s, then the 6a burst and `slice_clean` 1476 at 397.221 s. Second undo at 397.747 s (`@ tick 1904`) then `stale` 1476 → `slice_clean` 1469. Overdub stops later add notes (1469 → 1556). **Device PASS [`135551`](../../captures/session_20260816_135551.log)** (same boot, no `Undo` / `undone`). Overdub stop dirties the 64-bar cache; idle-slice `6a` (`win,proj,tot`) rebuilds; count rises; coverage stays `0–63`. PLAYING `clockrate` 47–48. No `VCACHE,full`.
+
+| Event | Notes |
+|-------|------:|
+| Pre-stop `stale` | 1592 |
+| After 2× `6a` `slice_clean` | 1603 |
+| Next pre-stop `stale` | 1603 |
+| After 5× `6a` `slice_clean` | 1618 |
+
+No undo between dirty and clean. Prepared consume added the overdub; it did not drop the loop.
 
 STOPPED 64-bar count 1639 → 1456 in [`134329`](../../captures/session_20260816_134329.log) (8.765–30.994 s) is on the gather+append path (before LCR idx). Not a Slice 2 result. [`133314`](../../captures/session_20260816_133314.log) same loop started at 1643 and stayed ~1630+ until overdub.
 
