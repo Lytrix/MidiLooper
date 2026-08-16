@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 2c native (job 1: mark only occupied bars); 2b device PASS [`232423`](../../captures/session_20260816_232423.log)
+**Status:** Active — Slice 2c device PASS [`233323`](../../captures/session_20260816_233323.log)
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution); [`223548`](../../captures/session_20260816_223548.log) (Slice 1b pin)  
@@ -398,7 +398,18 @@ Owner: `Loop::markAffectedDisplayCacheRanges` + `Loop::rebuildVisualCacheIdleSli
 
 **Native:** `test_mark_affected_display_cache_ranges_dirties_sparse_bars` — overdub in bar 3 dirties bar 3 only. `test_idle_slice_keeps_untouched_next_bar_note` — bar 9 sentinel end survives idle after a bar 8 overdub.
 
-**Device:** after overdub stop, `stale_range` `dcnt` is the occupied bars only (not ±1). `slice_clean` keeps coverage `0–63`. Same-lane next-bar notes stay in `visualCache.notes`.
+**Device PASS [`233323`](../../captures/session_20260816_233323.log).** Boot past `scan,done`. No `VCACHE,full`. No `lcr,6a`. Four 6B stops:
+
+| Stop | `dcnt` | → `slice_clean` | notes | `idle_append` rem | `clockrate` |
+|------|-------:|-----------------|------:|------------------:|------------:|
+| 52.214 s | 4 | 124 ms | 1699→1714 | none | 47 |
+| 62.030 s | 5 | 127 ms | 1714→1733 | none | 47 |
+| 94.250 s | **1** | 43 ms | 1742→1743 | none | 48 |
+| 102.885 s | 4 | 107 ms | 1743→1757 | none | 47 |
+
+Coverage stays `0–63`. `dcnt=1` is a one-bar occupy — the old ±1 pad would have been 3. Cache counts rise; they do not drop next-bar rows. No post-stop `idle_append` rem. Early 21–33 s undo cluster (`1789→1691`, `clockrate` 0) is not this gate.
+
+Same capture `overlap_hold` `empty_sets = note_offs` is not this slice — [`overdub_overlap_hold_same_start_bugfix.md`](overdub_overlap_hold_same_start_bugfix.md).
 
 ### Slice 3 — retire restore flatten on overdub stop
 
