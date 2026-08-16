@@ -960,6 +960,61 @@ void test_idle_slice_prepared_interior_keeps_mid_loop_overdub() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_idle_slice_unprepared_interior_keeps_mid_loop_overdub() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 16;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  loop.seedRecordPassFromStore(record);
+  const uint32_t midOn = Config::TICKS_PER_BAR * 8 + 20;
+  const uint32_t midOff = midOn + 80;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(midOn, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(midOff, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, midOff));
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  rebuildIdleVisualCache(loop);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, midOn));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_unprepared_keeps_wrap_held() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedWrapHeldOverdubLoop(loop);
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  rebuildIdleVisualCache(loop);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 288));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 672));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2400));
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note == 12 && note.startTick == 672u) {
+      TEST_ASSERT_EQUAL(768u, note.endTick);
+    }
+    if (note.note == 12 && note.startTick == 2400u) {
+      TEST_ASSERT_EQUAL(2500u, note.endTick);
+    }
+    if (note.note == 12 && note.startTick == 2976u) {
+      TEST_ASSERT_EQUAL(3071u, note.endTick);
+    }
+    if (note.note == 12 && note.startTick == 0u) {
+      TEST_ASSERT_EQUAL(96u, note.endTick);
+    }
+  }
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_idle_slice_prepared_keeps_wrap_held() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1036,5 +1091,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);
   RUN_TEST(test_idle_slice_prepared_interior_keeps_mid_loop_overdub);
   RUN_TEST(test_idle_slice_prepared_keeps_wrap_held);
+  RUN_TEST(test_idle_slice_unprepared_interior_keeps_mid_loop_overdub);
+  RUN_TEST(test_idle_slice_unprepared_keeps_wrap_held);
   return UNITY_END();
 }

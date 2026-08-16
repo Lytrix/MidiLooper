@@ -13,6 +13,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -172,7 +173,7 @@ LOOP_COLD_MEM void Loop::emitVisualCacheState(const char* phase, int32_t gathere
             visualCacheDirty ? 1 : 0);
 }
 
-void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
+LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
   adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
                                Config::TICKS_PER_BAR);
   emitVisualCacheState("adopt_partial", -1);
@@ -235,30 +236,52 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const bool usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
       passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
       &windowCounters);
+#if defined(SESSION_CAPTURE)
+  uint32_t gatherStartUs = 0;
+  if (!usedPrepared) {
+    gatherStartUs = micros();
+  }
+#endif
   if (!usedPrepared) {
     gatherCommittedEventsInWindow(flat, windowStart, windowLength);
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-#if SESSION_CAPTURE_VCACHE_SLICE
+#if defined(SESSION_CAPTURE)
+  if (!usedPrepared) {
+    RuntimeTimingTelemetry::recordIdleMaintChildRem(0, gatherStartUs);
+  }
+#endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_gathered,ev,"));
   Serial.println(static_cast<unsigned>(flat.size()));
 #endif
+#if defined(SESSION_CAPTURE)
   const uint32_t reconstructStartUs = micros();
 #endif
   NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+#if defined(SESSION_CAPTURE)
+  RuntimeTimingTelemetry::recordIdleMaintChildRem(1, reconstructStartUs);
+#endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_recon,notes,"));
   Serial.println(static_cast<unsigned>(sliceNotes.size()));
 #endif
-  // Prepared LCR already resolved this window (linear overdub matches append).
   // Wrap-held overdub heads/tails are omitted by merged reconstruct when a later
-  // same-pitch body exists (021218). Do not use wrap pairing on the LCR flat
+  // same-pitch body exists (021218). Do not use wrap pairing on the merged flat
   // (015618 stretches record). Fill that gap only on slices that keep bar 0 or
-  // the last bar. Unprepared gather still appends every slice.
-  if (!usedPrepared || startBar == 0 || endBar + 1 >= totalBars) {
+  // the last bar. Interior slices — prepared or unprepared — use the window only.
+  const bool appendOverdub = startBar == 0 || endBar + 1 >= totalBars;
+#if defined(SESSION_CAPTURE)
+  const uint32_t appendStartUs = micros();
+#endif
+  if (appendOverdub) {
     appendOverdubPassDisplayNotes(sliceNotes);
   }
+#if defined(SESSION_CAPTURE)
+  if (appendOverdub) {
+    RuntimeTimingTelemetry::recordIdleMaintChildRem(2, appendStartUs);
+  }
+#endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   if (usedPrepared) {
@@ -355,14 +378,14 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   emitVisualCacheState("full", static_cast<int32_t>(flat.size()));
 }
 
-void Loop::ensureVisualCacheBuilt() {
+LOOP_COLD_MEM void Loop::ensureVisualCacheBuilt() {
   if (!visualCacheDirty) {
     return;
   }
   rebuildVisualCacheFromPasses();
 }
 
-void Loop::markDisplayCachesStale() {
+LOOP_COLD_MEM void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
   visualCacheDirty = true;
   markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
@@ -517,7 +540,7 @@ LOOP_COLD_MEM void Loop::markAffectedDisplayCacheRanges(PassId committedPassId,
   emitVisualCacheState("stale_range", -1);
 }
 
-void Loop::invalidateDisplayCaches() {
+LOOP_COLD_MEM void Loop::invalidateDisplayCaches() {
   if (noteCache_) {
     noteCache_->invalidate();
   }

@@ -48,6 +48,12 @@ void test_timing_telemetry_lines_are_tier_a() {
       CaptureLineTier::isTierALine("#CAP,39804843,DIAG,loop_rem,load_frame,3981504,0,4,2,0"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,39804843,DIAG,loop_rem,display_frame,64000,0,7,0,0"));
+  TEST_ASSERT_TRUE(
+      CaptureLineTier::isTierALine("#CAP,96725087,DIAG,loop_rem,idle_gather,60000,255,255,255,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,96725087,DIAG,loop_rem,idle_reconstruct,80000,255,255,255,0"));
+  TEST_ASSERT_TRUE(
+      CaptureLineTier::isTierALine("#CAP,96725087,DIAG,loop_rem,idle_append,50000,255,255,255,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,18121016,DIAG,stored_notes,track,4,slot,0,notes,1844,unique,1844,max_same_pitch,12"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
