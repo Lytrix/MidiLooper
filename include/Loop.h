@@ -240,6 +240,9 @@ struct Loop {
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
+  /// Reconstruct each active overdub pass with overdub wrap pairing and append
+  /// display notes that merged reconstruct omitted.
+  void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
   /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.
