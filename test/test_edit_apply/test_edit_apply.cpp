@@ -21,6 +21,8 @@
 #include "LoopPasses.h"
 #include "LoopEventBuffer.h"
 #include "EditSession.h"
+#include "NoteEditCurrentState.h"
+#include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
@@ -1320,6 +1322,255 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 496));
 }
 
+// B2 — committed display base must match materialize(active edit passes). Geometry from
+// session_20260816_161855 (home 888 → committed 1656). Do not treat "1656 visible" alone
+// as the pin — compare the full reconstructed base.
+
+constexpr uint32_t kB2LoopLength = 3072;
+constexpr uint8_t kB2Pitch = 24;
+constexpr uint8_t kB2Velocity = 100;
+constexpr uint8_t kB2Channel = 5;
+constexpr NoteId kB2MoverId = 280;
+constexpr uint32_t kB2HomeStart = 888;
+constexpr uint32_t kB2HomeEnd = 1032;
+constexpr uint32_t kB2CommittedStart = 1656;
+constexpr uint32_t kB2CommittedEnd = 1800;
+constexpr uint32_t kB2UncommittedStart = 648;
+constexpr uint32_t kB2UncommittedEnd = 792;
+
+EditPassIdList activeEditPassIds(const Loop& loop) {
+  EditPassIdList ids;
+  for (const EditPass& editPass : loop.passes.editPasses) {
+    if (editPass.state == EditPassState::Active) {
+      ids.push_back(editPass.id);
+    }
+  }
+  return ids;
+}
+
+NoteUtils::DisplayNoteVec committedBaseFromActivePasses(const Loop& loop) {
+  MidiEventVec flat;
+  loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
+  return NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+}
+
+const NoteUtils::DisplayNote* displayNoteById(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void assertDisplayNoteSpan(const NoteUtils::DisplayNoteVec& notes, NoteId noteId, uint8_t pitch,
+                           uint32_t startTick, uint32_t endTick, const char* message) {
+  const NoteUtils::DisplayNote* note = displayNoteById(notes, noteId);
+  TEST_ASSERT_NOT_NULL_MESSAGE(note, message);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(pitch, note->note, message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(startTick, note->startTick, message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(endTick, note->endTick, message);
+}
+
+void assertCommittedBaseEqualsMaterializeActive(const Loop& loop, const char* message) {
+  const NoteUtils::DisplayNoteVec committedBase = committedBaseFromActivePasses(loop);
+  MidiEventVec flat;
+  loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec fromFlat =
+      NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_EQUAL_MESSAGE(fromFlat.size(), committedBase.size(), message);
+  for (const NoteUtils::DisplayNote& expected : fromFlat) {
+    if (expected.noteId == kInvalidNoteId) {
+      continue;
+    }
+    assertDisplayNoteSpan(committedBase, expected.noteId, expected.note, expected.startTick,
+                          expected.endTick, message);
+  }
+}
+
+void seedB2HomeLoop(Loop& loop) {
+  loop.loopLengthTicks = kB2LoopLength;
+  loop.passes.recordPass =
+      makeRecordPassWithIdentifiedNote(1, kB2HomeStart, kB2HomeEnd, kB2Pitch, kB2MoverId, kB2Channel);
+}
+
+// commitEditAction appends saveNoteEditPass ids (Active). replaceNoteEditPass disables stale
+// ids and returns new Active ids. sessionUndo assigns editPassIds = editPassIdsAtPush after
+// disable — the session list does not retain Disabled ids. loop.passes still holds those rows.
+// B2a must filter EditPassState::Active (and must not treat "ever created" as the gate).
+void test_b2_edit_pass_ids_mean_active_committed_not_ever_created() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedB2HomeLoop(loop);
+  EditPassIdList sessionEditPassIds;
+
+  const EditPassId firstId =
+      loop.saveNoteEditPass(0, makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd,
+                                                kB2CommittedStart, kB2CommittedEnd));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, firstId);
+  sessionEditPassIds.push_back(firstId);
+  TEST_ASSERT_EQUAL(1u, sessionEditPassIds.size());
+  TEST_ASSERT_EQUAL(1u, activeEditPassIds(loop).size());
+  TEST_ASSERT_EQUAL(firstId, activeEditPassIds(loop)[0]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Active),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].state));
+
+  EditPassVec replacementRows;
+  replacementRows.push_back(makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd,
+                                             kB2CommittedStart, kB2CommittedEnd));
+  const EditPassIdList replacementIds =
+      loop.replaceNoteEditPass(0, sessionEditPassIds, std::move(replacementRows));
+  TEST_ASSERT_EQUAL(1u, replacementIds.size());
+  TEST_ASSERT_NOT_EQUAL(firstId, replacementIds[0]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Disabled),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].state));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Active),
+                          static_cast<uint8_t>(loop.passes.editPasses[1].state));
+  sessionEditPassIds = replacementIds;
+  TEST_ASSERT_EQUAL(1u, sessionEditPassIds.size());
+  TEST_ASSERT_EQUAL(replacementIds[0], sessionEditPassIds[0]);
+  TEST_ASSERT_EQUAL(1u, activeEditPassIds(loop).size());
+  TEST_ASSERT_EQUAL(2u, loop.passes.editPasses.size());
+
+  const EditPassIdList editPassIdsAtPush;
+  loop.disableEditPasses(sessionEditPassIds);
+  sessionEditPassIds = editPassIdsAtPush;
+  TEST_ASSERT_TRUE(sessionEditPassIds.empty());
+  TEST_ASSERT_TRUE(activeEditPassIds(loop).empty());
+  TEST_ASSERT_EQUAL(2u, loop.passes.editPasses.size());
+  TEST_ASSERT_FALSE(loop.passes.editPasses.empty());
+}
+
+void test_b2_committed_base_matches_materialize_active_edit_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedB2HomeLoop(loop);
+  EditPassIdList sessionEditPassIds;
+
+  // 1. Open — no committed edit pass. Oracle is takes-only (home).
+  assertCommittedBaseEqualsMaterializeActive(loop, "1 open");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch, kB2HomeStart,
+                        kB2HomeEnd, "1 open home");
+  TEST_ASSERT_TRUE(sessionEditPassIds.empty());
+  TEST_ASSERT_TRUE(activeEditPassIds(loop).empty());
+
+  // 2. Commit NoteRange — session list holds the Active id. Oracle has the move.
+  const EditPassId committedId =
+      loop.saveNoteEditPass(0, makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd,
+                                                kB2CommittedStart, kB2CommittedEnd));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, committedId);
+  sessionEditPassIds.push_back(committedId);
+  TEST_ASSERT_EQUAL(committedId, activeEditPassIds(loop)[0]);
+  assertCommittedBaseEqualsMaterializeActive(loop, "2 commit");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch,
+                        kB2CommittedStart, kB2CommittedEnd, "2 commit moved");
+
+  // 3. Deselect — focus cleared. Materialized base still has the moved span (not home).
+  NoteEditFocus deselectedFocus;
+  NoteEditCurrentState committedState;
+  committedState.upsertRow(kB2MoverId,
+                           {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                           {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                           NoteEditPresenceType::Visible);
+  MidiEventVec committedStore;
+  committedState.projectToSessionStore(committedStore, kB2Channel);
+  const NoteUtils::DisplayNoteVec committedBase = committedBaseFromActivePasses(loop);
+  const NoteUtils::DisplayNoteVec deselectedPaint =
+      projectNoteEditDisplayNotes(committedBase, committedStore, deselectedFocus, kB2Channel,
+                                  kB2LoopLength, &committedState);
+  assertDisplayNoteSpan(deselectedPaint, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "3 deselect");
+
+  // Stale visualCache that still carries the mover NoteId overlays currentState (1656).
+  NoteUtils::DisplayNoteVec staleVisualCacheWithId;
+  staleVisualCacheWithId.push_back(
+      {kB2MoverId, kB2Pitch, kB2Velocity, kB2HomeStart, kB2HomeEnd});
+  const NoteUtils::DisplayNoteVec staleIdPaint =
+      projectNoteEditDisplayNotes(staleVisualCacheWithId, committedStore, deselectedFocus,
+                                  kB2Channel, kB2LoopLength, &committedState);
+  assertDisplayNoteSpan(staleIdPaint, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "3 stale base with id overlays currentState");
+
+  // visualCache rows can lack NoteId (161117). Cleared focus then keeps the home row —
+  // currentState 1656 is not bound. B2a materialized base carries the id and the move.
+  NoteUtils::DisplayNoteVec staleVisualCacheNoId;
+  staleVisualCacheNoId.push_back(
+      {kInvalidNoteId, kB2Pitch, kB2Velocity, kB2HomeStart, kB2HomeEnd});
+  const NoteUtils::DisplayNoteVec staleNoIdPaint =
+      projectNoteEditDisplayNotes(staleVisualCacheNoId, committedStore, deselectedFocus,
+                                  kB2Channel, kB2LoopLength, &committedState);
+  TEST_ASSERT_EQUAL(1u, staleNoIdPaint.size());
+  TEST_ASSERT_EQUAL(kInvalidNoteId, staleNoIdPaint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeStart, staleNoIdPaint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeEnd, staleNoIdPaint[0].endTick);
+
+  // 4. Uncommitted move — session overlay wins over committed base.
+  NoteEditFocus liveFocus;
+  liveFocus.active = true;
+  liveFocus.movingNoteId = kB2MoverId;
+  liveFocus.commitBaseline = {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd};
+  liveFocus.last = {kB2Pitch, kB2Velocity, kB2UncommittedStart, kB2UncommittedEnd};
+  NoteEditCurrentState liveState;
+  liveState.upsertRow(kB2MoverId, liveFocus.commitBaseline, liveFocus.last,
+                      NoteEditPresenceType::Visible);
+  MidiEventVec liveStore;
+  liveState.projectToSessionStore(liveStore, kB2Channel);
+  const NoteUtils::DisplayNoteVec livePaint =
+      projectNoteEditDisplayNotes(committedBase, liveStore, liveFocus, kB2Channel, kB2LoopLength,
+                                  &liveState);
+  assertDisplayNoteSpan(livePaint, kB2MoverId, kB2Pitch, kB2UncommittedStart, kB2UncommittedEnd,
+                        "4 uncommitted overlay");
+  assertDisplayNoteSpan(committedBase, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "4 committed base unchanged");
+
+  // 5. Deselect again — committed geometry still the moved span.
+  const NoteUtils::DisplayNoteVec deselectedAgain =
+      projectNoteEditDisplayNotes(committedBase, committedStore, deselectedFocus, kB2Channel,
+                                  kB2LoopLength, &committedState);
+  assertDisplayNoteSpan(deselectedAgain, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "5 deselect again");
+
+  // 6. Exit bake / replace — in-session committed view and rematerialize stay the same span.
+  EditPassVec exitRows;
+  exitRows.push_back(makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd, kB2CommittedStart,
+                                      kB2CommittedEnd));
+  const EditPassIdList exitIds =
+      loop.replaceNoteEditPass(0, sessionEditPassIds, std::move(exitRows));
+  TEST_ASSERT_EQUAL(1u, exitIds.size());
+  sessionEditPassIds = exitIds;
+  assertCommittedBaseEqualsMaterializeActive(loop, "6 exit");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch,
+                        kB2CommittedStart, kB2CommittedEnd, "6 exit moved");
+
+  // 7. Disable committed pass (E:/U: undo). Active filter empty; oracle returns home.
+  loop.disableEditPasses(sessionEditPassIds);
+  sessionEditPassIds.clear();
+  TEST_ASSERT_TRUE(activeEditPassIds(loop).empty());
+  TEST_ASSERT_FALSE(loop.passes.editPasses.empty());
+  assertCommittedBaseEqualsMaterializeActive(loop, "7 undo disable");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch, kB2HomeStart,
+                        kB2HomeEnd, "7 undo home");
+}
+
+// Reselect calls ensureVisibleRowsForDisplayNotes(visualCache). When spans are already
+// sealed equal, a stale home cache overwrites the synced move. B2a projection owner does
+// not change that helper — pin the overwrite so the device reselect gate is not misread.
+void test_b2_stale_visual_cache_overwrites_synced_current_state_spans() {
+  NoteEditCurrentState state;
+  state.upsertRow(kB2MoverId, {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                  {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                  NoteEditPresenceType::Visible);
+  NoteUtils::DisplayNoteVec staleVisualCache;
+  staleVisualCache.push_back({kB2MoverId, kB2Pitch, kB2Velocity, kB2HomeStart, kB2HomeEnd});
+  state.ensureVisibleRowsForDisplayNotes(staleVisualCache);
+  NoteBaseline span{};
+  TEST_ASSERT_TRUE(state.readCurrentSpan(kB2MoverId, span));
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeStart, span.startTick);
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeEnd, span.endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor);
@@ -1353,5 +1604,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_global_undo_note_edit_pass_closed_disables_edit_rows);
   RUN_TEST(test_global_undo_three_step_restores_record_baseline);
   RUN_TEST(test_session_undo_move_back_insert_before_save_note_edit_pass);
+  RUN_TEST(test_b2_edit_pass_ids_mean_active_committed_not_ever_created);
+  RUN_TEST(test_b2_committed_base_matches_materialize_active_edit_passes);
+  RUN_TEST(test_b2_stale_visual_cache_overwrites_synced_current_state_spans);
   return UNITY_END();
 }
