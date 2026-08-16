@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (6A.1 HITL PASS 025651 match=1 vs native)
+Last updated: 2026-08-16 (midi_gap owner: FinalizeWorkspace persist step)
 
 ---
 
@@ -20,7 +20,9 @@ Last updated: 2026-08-16 (6A.1 HITL PASS 025651 match=1 vs native)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) — `6a` `ev=126 notes=57` `miss=0 extra=0` `match=1` `pmatch=1`. Delete 1034 still present; 1422 kept. `gmatch=0` is gather remaps, not LCR. Native fixture from [`024806`](../../captures/session_20260816_024806.log). **Overdub-pass wrap pairing HITL PASS** [`021218`](../../captures/session_20260816_021218.log). Do not start midi_gap / 6.3 until asked.
+**Now:** **MIDI Input Gap** — PLAYING/OVERDUBBING `midi_gap` > 50 ms is **not LCR**. [`192334`](../../captures/session_20260815_192334.log) windows at 54.7 / 64.7 / 69.8 s: `midi_gap` **135 / 119 / 138 ms**, `persist_save` **77 / 118 / 109 ms**, `clockrate` **47**. Same windows: `FinalizeWorkspace` `PERS,result` **72 / 70 / 72 ms**. Slice budget while transport is active is **300 µs** (`maxPersistenceMicrosActive`); one finalize/SD step overruns it. [`022147`](../../captures/session_20260816_022147.log) repeats: `midi_gap` 87 ms with `persist_save` 75 ms; 96 ms with 96 ms. Do **not** start 6.3. Do **not** patch persist in this LCR change without a separate persist slice.
+
+**6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) `match=1` `pmatch=1`. STOPPED `midi_gap` **72 ms** at LCR complete is a different sample (`6a,nat` 30 ms + `loop_rem,idle_maint` 58 ms); after that, max **13.5 ms**.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 
