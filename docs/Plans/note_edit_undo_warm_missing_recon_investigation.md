@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS** ([`173806`](../../captures/session_20260816_173806.log) pair-target overlay). Empty-pair skip holds. Crowded-lane overlay extra0 is 12, not 108. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 assign-at-open **does not cover** exit persist on this loop ([`173806`](../../captures/session_20260816_173806.log)). **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS**. **C5 parked:** `appendNotesForIds` on overlay. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -62,7 +62,7 @@ The expensive work is **bulk PSRAM copy**, not undo computation (`baseline_probe
 
 Two sub-problems. **B1** is commit/replay authority. **B2** is NOTE_EDIT paint after macro commit on deselect (move snaps back to old span on grid while exit bake is correct).
 
-#### Layer B1 — commit replay (largely closed)
+#### Layer B1 — commit replay (invalid-id assign closed; split valid ids open)
 
 Pinned from [`145518`](../../captures/session_20260816_145518.log). Same shape in [`143144`](../../captures/session_20260816_143144.log) `@ 48.603 s`.
 
@@ -106,7 +106,9 @@ Not bake (replay already wrong). Not the reload call itself (same `materializeTo
 
 Native: `test_145518_assign_on_committed_passes_makes_rematerialize_find_id` — after assign-on-chunks, rematerialize finds 280 and NoteRange+Pitch **moves** the home. The session-only test stays as the hazard pin.
 
-**Device gate (B1):** boot unblocked [`161855`](../../captures/session_20260816_161855.log). Macro commit `@ 128.4 s` → `replay_flat: M24 start=1656` (not 888). Exit `saved=1`, `NoteEditPassClosed`. Chunk assign path **PASS**.
+**Device gate (B1 invalid→assign):** boot unblocked [`161855`](../../captures/session_20260816_161855.log). Macro commit `@ 128.4 s` → `replay_flat: M24 start=1656` (not 888). Exit `saved=1`, `NoteEditPassClosed`. Chunk assign path **PASS** for unidentified chunks.
+
+**Device reopen (split valid ids):** [`173806`](../../captures/session_20260816_173806.log) exit — chunks already had ids (assign **0**). Focus/rows **256**; rematerialize still **M24@888**. Same home in [`170942`](../../captures/session_20260816_170942.log): **256** left home; **280** removed it. B1 assign-at-open does not unify two different valid ids. See Exit persist below.
 
 Sibling index (open, different fixture): RC8 in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) (`M65@369` / `M65@1050` in [`212810`](../../captures/session_20260806_212810.log)). Do not merge fixtures.
 
@@ -322,6 +324,27 @@ Empty-pair instrumented sum (setup+analyze+apply+reconstruct) med **4.5 ms**; ou
 
 Skip extra0 108 is the storage `baselineMap` size when overlay is not built — not a full-map walk. One `VCACHE,full` (open). Do not start Layer D. Remaining instrumented Move cost after C4: overlay 16 ms + reconstruct 8.9 ms.
 
+**C5 (parked — next Layer C fix):** replace per-id `displaySpanForNoteId` scans in `overlayAnalysisBaselineForSessionMovedOverlaps` with `OverlapCandidateLookup::appendNotesForIds` on the already-available `committedDisplayNotes` + pair-target ids. Do **not** reuse `overdubSourceViewNotes_` or `PendingNote.overlapNoteIds`. Empty-pair skip (C3) and pair-target restrict (C4) stay. Reconstruct and empty-pair resolve are not this helper.
+
+### Exit persist — LOOP_EDIT paints rematerialize home ([`173806`](../../captures/session_20260816_173806.log))
+
+Not a LOOP_EDIT paint owner. Exit saved the live move; `commitEditAction` rematerialize did not apply it. LOOP_EDIT then paints that rematerialize.
+
+| Time | What the log shows |
+|------|--------------------|
+| 14.424 | Open. No `assignMissingNoteIdsInCommittedCapturePasses: assigned` (assigned **0** — chunks already had ids) |
+| 18.375 | Focus `noteId=256` presence=Visible `rowProjectsToStore=1` |
+| 21.020–32.563 | Live `EditSessionAction` on **256**: pitch 24→60, move home 888 → last **696–888** |
+| 32.581 | In-session `DNTE,60,696` |
+| 34.927 | Canonical **Delete 526 + NoteRange 256 `696–888` + Pitch 60**. `apply_owned=2` vs `canonical=3` |
+| 34.954–35.015 | `replay_flat` / `take_only` / `session_store` / `loop_materialized` all **M24 start=888** (commitBaseline home still present) |
+| 35.097 | `NoteEditPass replaced … rows=3 saved=3` |
+| 35.117 | LOOP_EDIT. `VCACHE,stale` dirty=1. `DISP` `108,108,108,108` — no `DNTE,60,696` |
+
+`logChangeLengthCommitTrace` looks up `commitBaseline` pitch+start (**24@888**) on the rematerialized flat. Home still present means `applyNoteEditPass` did not move that capture note. Native oracle: `test_145518_note_range_pitch_replay_leaves_home_when_store_id_differs` — rows target 256; capture rematerialize has no NoteOn 256 at that home.
+
+Same loop home in [`170942`](../../captures/session_20260816_170942.log): pitch-only commit **256** left M24@888; later NoteRange **280** made M24@888 missing. B1 chunk-assign does not unify when both sides already have **different valid** ids. Do **not** patch `applyNoteEditPass`. Do not start C5 until this identity pin is closed or the user unparks C5.
+
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
 STOPPED short-loop `Track::getVisualNotesForSlot` still calls `ensureVisualCacheBuilt`. Every NOTE_EDIT projection caller uses it. Grooming left this for Slice 5. After Layer A/B are pinned, decide whether select-time `VCACHE,full` is a third commit or stays with hydrate.
@@ -516,9 +539,9 @@ E: undo/redo **ran**. This log has no session-store flatten before/after those t
 
 B2 still open: live 24@648 then commit rematerialize still 888.
 
-### 2. Layer B1 — closed
+### 2. Layer B1 — invalid-id assign closed; split valid ids open
 
-Commit replay + chunk NoteId assign: [`161855`](../../captures/session_20260816_161855.log) replay PASS. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
+Commit replay + chunk NoteId assign: [`161855`](../../captures/session_20260816_161855.log) replay PASS for unidentified chunks. [`173806`](../../captures/session_20260816_173806.log) exit is a different pin: both sides already have valid ids (focus **256**, rematerialize still M24@888). Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
 
 ### 3. Layer B2 — native fixture (landed)
 
@@ -586,9 +609,20 @@ Open `@ 528.009` `visual_notes=114` `session_events=235`. Pitch 526 `688–864` 
 
 This file has **no** `DNTE` lines and no session-store flatten around undo/redo. Routing and selection restore are in the log. Geometry identity is not. Do not close A on store-flat from this capture.
 
-### 6. Layer C — C4 PASS
+### 6. Layer C — C4 PASS; C5 parked
 
-C4 [`173806`](../../captures/session_20260816_173806.log) pair-target overlay holds. Crowded-lane Move overlay 123→**16 ms**. Empty-pair skip unchanged. Do not start Layer D. Further overlay/reconstruct cuts need a new pin.
+C4 [`173806`](../../captures/session_20260816_173806.log) pair-target overlay holds. **C5:** `appendNotesForIds` on overlay only. Parked behind exit-persist identity.
+
+### 6b. Exit persist — B1 identity split (Stage 1 implementing)
+
+[`173806`](../../captures/session_20260816_173806.log): saved NoteRange+Pitch **256**; rematerialize still **M24@888**. LOOP_EDIT paints that rematerialize. [`170942`](../../captures/session_20260816_170942.log) same home: **256** misses, **280** applies.
+
+**Design:** [`note_edit_persist_noteid_identity_bugfix.md`](note_edit_persist_noteid_identity_bugfix.md) / [DEC-039](../DECISION_LOG.md#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) — persist id is rematerialize NoteOn at commitBaseline; commit boundary reconciles. Stage 2 parked. Do not patch `applyNoteEditPass`. Do not start C5.
+
+### Layer B1 persist checkpoint (Stage 1)
+
+1. Ownership change? **NO** — `commitEditAction` already owns the session → `EditPass` boundary.
+2. State transition change? **NO** — same open → edit → commit → rematerialize.
 
 ### 7. Layer D — after B2
 

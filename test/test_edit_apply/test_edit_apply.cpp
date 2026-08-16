@@ -1571,6 +1571,134 @@ void test_b2_stale_visual_cache_overwrites_synced_current_state_spans() {
   TEST_ASSERT_EQUAL_UINT32(kB2HomeEnd, span.endTick);
 }
 
+// session_20260816_173806 exit: session/display id 999, rematerialize 280 at 24@888.
+// Commit-boundary reconcile retargets mover Update rows; overlap Delete stays.
+void test_173806_reconcile_unique_match_retargets_mover_not_overlap_delete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kPersistId = 280;
+  constexpr NoteId kSessionId = 999;
+  constexpr NoteId kOverlapId = 526;
+  constexpr uint8_t kHomePitch = 24;
+  constexpr uint32_t kHomeStart = 888;
+  constexpr uint32_t kHomeEnd = 1032;
+
+  LoopPasses passes;
+  passes.recordPass =
+      makeRecordPassWithIdentifiedNote(1, kHomeStart, kHomeEnd, kHomePitch, kPersistId);
+
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, kLoopLength);
+  TEST_ASSERT_EQUAL(kPersistId, noteIdAtPitchAndStart(rematerialize, kHomePitch, kHomeStart));
+  TEST_ASSERT_EQUAL(-1, findNoteOnById(rematerialize, kSessionId));
+
+  EditPassVec rows;
+  rows.push_back(makeDeleteRow(kOverlapId));
+  rows.push_back(makeNoteRangeRow(kSessionId, kHomeStart, kHomeEnd, 696, 888));
+  rows.push_back(makePitchRow(kSessionId, 696, 888, 60));
+
+  const PersistIdentityReconcileResult result = reconcileMoverPersistIdentity(
+      rematerialize, kSessionId, kHomePitch, kHomeStart, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Unique),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(kPersistId, result.persistNoteId);
+  TEST_ASSERT_EQUAL(kOverlapId, rows[0].targetNoteId);
+  TEST_ASSERT_EQUAL(kPersistId, rows[1].targetNoteId);
+  TEST_ASSERT_EQUAL(kPersistId, rows[2].targetNoteId);
+
+  pushEditPassRows(passes, 1, rows);
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundMoved = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == kHomePitch && note.startTick == kHomeStart);
+    if (note.noteId == kPersistId) {
+      foundMoved = true;
+      TEST_ASSERT_EQUAL_UINT8(60, note.note);
+      TEST_ASSERT_EQUAL_UINT32(696u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(888u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMoved);
+}
+
+void test_reconcile_added_note_does_not_retarget() {
+  MidiEventVec rematerialize;
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(999, 0, 192, 48, 240));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 999, 60, 0, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Unresolved),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL_UINT32(0, result.matchCount);
+  TEST_ASSERT_EQUAL(999, rows[0].targetNoteId);
+}
+
+void test_reconcile_zero_match_at_commit_baseline_does_not_retarget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 1000, 1144, 24, 280);
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, 3072);
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(999, 888, 1032, 696, 888));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 999, 24, 888, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Unresolved),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(999, rows[0].targetNoteId);
+}
+
+void test_reconcile_ambiguous_geometry_does_not_retarget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  appendFixtureNotePair(store, 888, 1032, 5, 24, 280);
+  appendFixtureNotePair(store, 888, 1032, 5, 24, 281);
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = std::move(committedChunkIds);
+
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, 3072);
+  const PersistIdentityResolve resolved =
+      resolvePersistIdentityForExistingNote(rematerialize, 24, 888);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityResolveStatus::Ambiguous),
+                    static_cast<int>(resolved.status));
+  TEST_ASSERT_EQUAL_UINT32(2, resolved.matchCount);
+
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(999, 888, 1032, 696, 888));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 999, 24, 888, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Ambiguous),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(999, rows[0].targetNoteId);
+}
+
+void test_reconcile_already_present_session_id_does_not_retarget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 888, 1032, 24, 280);
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, 3072);
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(280, 888, 1032, 696, 888));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 280, 24, 888, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::AlreadyPresent),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(280, rows[0].targetNoteId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor);
@@ -1607,5 +1735,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_b2_edit_pass_ids_mean_active_committed_not_ever_created);
   RUN_TEST(test_b2_committed_base_matches_materialize_active_edit_passes);
   RUN_TEST(test_b2_stale_visual_cache_overwrites_synced_current_state_spans);
+  RUN_TEST(test_173806_reconcile_unique_match_retargets_mover_not_overlap_delete);
+  RUN_TEST(test_reconcile_added_note_does_not_retarget);
+  RUN_TEST(test_reconcile_zero_match_at_commit_baseline_does_not_retarget);
+  RUN_TEST(test_reconcile_ambiguous_geometry_does_not_retarget);
+  RUN_TEST(test_reconcile_already_present_session_id_does_not_retarget);
   return UNITY_END();
 }

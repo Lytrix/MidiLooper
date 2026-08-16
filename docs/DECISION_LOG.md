@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
 | [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
 | [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; materialize stays until three gates | Accepted |
 | [DEC-036](#dec-036-runtime-effective-event-source-for-overdub) | 2026-08-14 | Runtime effective event source; overdub entry without display reconstruction | Accepted |
@@ -53,7 +54,30 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-039 -->
+<!-- Append new entries below (newest first). Next ID: DEC-040 -->
+
+## DEC-039 — Persist NoteId reconciled at NOTE_EDIT commit boundary
+
+**Date:** 2026-08-16  
+**Status:** Accepted  
+**Plan:** [`note_edit_persist_noteid_identity_bugfix.md`](Plans/note_edit_persist_noteid_identity_bugfix.md)
+
+**Context:** [`173806`](../captures/session_20260816_173806.log) exit saved NoteRange+Pitch targeting session/display **256**; rematerialize still had M24@888. `applyNoteEditPass` is strictly `targetNoteId`-keyed. `DisplayNote.noteId` is not persist authority. B1 assign-at-open does not unify two different valid ids.
+
+**Decision:**
+
+1. Capture / rematerialized NoteOn is the authoritative persisted `NoteId`.
+2. NOTE_EDIT focus/session identity may temporarily differ.
+3. `EditManager::commitEditAction` reconciles at the commit boundary via `resolvePersistIdentityForExistingNote` / `reconcileMoverPersistIdentity` against `LoopPasses::materializeToEventVector` **before** `saveNoteEditPass`.
+4. Reconciliation succeeds only with **exactly one** rematerialize NoteOn at `commitBaseline` pitch+start. Zero = unresolved; more than one = ambiguous. Neither guesses. `findNoteOnById == -1` does not by itself imply geometry identity.
+5. `applyNoteEditPass` stays strictly NoteId-keyed. Added notes keep the session-allocated id until Create persists it.
+6. Stage 2 select-time bind is parked until Stage 1 is device-proven and a fresh select still mismatches.
+
+**Does not change:** DEC-029 current-state geometry ownership; Loop `saveNoteEditPass`; `applyNoteEditPass` lookup.
+
+**Validation:** Native `test_edit_apply` unique / added / zero / ambiguous / already-present; device 173806 gesture (`replay_flat` home missing).
+
+---
 
 ## DEC-038 — Overdub wrap commit and session undo
 

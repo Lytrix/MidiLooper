@@ -232,6 +232,80 @@ int findNoteOnById(const MidiEventVec& events, NoteId noteId) {
   return -1;
 }
 
+PersistIdentityResolve resolvePersistIdentityForExistingNote(
+    const MidiEventVec& rematerializeEvents, uint8_t commitBaselinePitch,
+    uint32_t commitBaselineStartTick) {
+  PersistIdentityResolve result;
+  NoteId uniqueId = kInvalidNoteId;
+  for (const MidiEvent& evt : rematerializeEvents) {
+    if (!evt.isNoteOn() || evt.data.noteData.note != commitBaselinePitch ||
+        evt.tick != commitBaselineStartTick) {
+      continue;
+    }
+    ++result.matchCount;
+    uniqueId = evt.noteId;
+  }
+  if (result.matchCount == 1 && uniqueId != kInvalidNoteId) {
+    result.status = PersistIdentityResolveStatus::Unique;
+    result.noteId = uniqueId;
+    return result;
+  }
+  if (result.matchCount > 1) {
+    result.status = PersistIdentityResolveStatus::Ambiguous;
+    return result;
+  }
+  result.status = PersistIdentityResolveStatus::Unresolved;
+  return result;
+}
+
+static void retargetMoverEditPassRows(EditPassVec& rows, NoteId sessionNoteId, NoteId persistNoteId) {
+  if (sessionNoteId == kInvalidNoteId || persistNoteId == kInvalidNoteId ||
+      sessionNoteId == persistNoteId) {
+    return;
+  }
+  for (EditPass& row : rows) {
+    if (row.actionType != EditActionType::Update || row.targetNoteId != sessionNoteId) {
+      continue;
+    }
+    switch (row.propertyType) {
+      case EditPropertyType::NoteRange:
+      case EditPropertyType::Pitch:
+      case EditPropertyType::Length:
+      case EditPropertyType::Velocity:
+        row.targetNoteId = persistNoteId;
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+PersistIdentityReconcileResult reconcileMoverPersistIdentity(
+    const MidiEventVec& rematerializeEvents, NoteId sessionNoteId, uint8_t commitBaselinePitch,
+    uint32_t commitBaselineStartTick, EditPassVec& rows) {
+  PersistIdentityReconcileResult result;
+  if (sessionNoteId != kInvalidNoteId && findNoteOnById(rematerializeEvents, sessionNoteId) >= 0) {
+    result.status = PersistIdentityReconcileStatus::AlreadyPresent;
+    result.persistNoteId = sessionNoteId;
+    return result;
+  }
+  const PersistIdentityResolve resolved = resolvePersistIdentityForExistingNote(
+      rematerializeEvents, commitBaselinePitch, commitBaselineStartTick);
+  result.matchCount = resolved.matchCount;
+  if (resolved.status == PersistIdentityResolveStatus::Unique) {
+    result.status = PersistIdentityReconcileStatus::Unique;
+    result.persistNoteId = resolved.noteId;
+    retargetMoverEditPassRows(rows, sessionNoteId, resolved.noteId);
+    return result;
+  }
+  if (resolved.status == PersistIdentityResolveStatus::Ambiguous) {
+    result.status = PersistIdentityReconcileStatus::Ambiguous;
+    return result;
+  }
+  result.status = PersistIdentityReconcileStatus::Unresolved;
+  return result;
+}
+
 void deleteNoteById(MidiEventVec& events, NoteId noteId) {
   applyDeleteNoteById(events, noteId);
 }

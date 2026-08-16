@@ -260,6 +260,41 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     const uint32_t homeStart = editSession.focus.commitBaseline.startTick;
     const uint32_t loopLength = loop.loopLengthTicks;
 
+    MidiEventVec persistIdentityFlat;
+    loop.passes.materializeToEventVector(persistIdentityFlat, loopLength);
+    const PersistIdentityReconcileResult persistIdentity = reconcileMoverPersistIdentity(
+        persistIdentityFlat, editSession.focus.movingNoteId, homePitch, homeStart, rows);
+    bool hasMoverUpdateRow = false;
+    for (const EditPass& row : rows) {
+        if (row.actionType == EditActionType::Update &&
+            row.targetNoteId == editSession.focus.movingNoteId) {
+            hasMoverUpdateRow = true;
+            break;
+        }
+    }
+    if (persistIdentity.status == PersistIdentityReconcileStatus::Unique) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "commitEditAction persist identity: retarget from=%lu to=%lu pitch=%u start=%lu",
+                   static_cast<unsigned long>(editSession.focus.movingNoteId),
+                   static_cast<unsigned long>(persistIdentity.persistNoteId),
+                   static_cast<unsigned>(homePitch), static_cast<unsigned long>(homeStart));
+    } else if (persistIdentity.status == PersistIdentityReconcileStatus::Unresolved &&
+               hasMoverUpdateRow) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "commitEditAction persist identity: unresolved pitch=%u start=%lu "
+                   "sessionNoteId=%lu matchCount=%lu",
+                   static_cast<unsigned>(homePitch), static_cast<unsigned long>(homeStart),
+                   static_cast<unsigned long>(editSession.focus.movingNoteId),
+                   static_cast<unsigned long>(persistIdentity.matchCount));
+    } else if (persistIdentity.status == PersistIdentityReconcileStatus::Ambiguous) {
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "commitEditAction persist identity: ambiguous count=%lu pitch=%u start=%lu "
+                   "sessionNoteId=%lu",
+                   static_cast<unsigned long>(persistIdentity.matchCount),
+                   static_cast<unsigned>(homePitch), static_cast<unsigned long>(homeStart),
+                   static_cast<unsigned long>(editSession.focus.movingNoteId));
+    }
+
     for (const EditPass& row : rows) {
         if (row.actionType == EditActionType::Update &&
             row.propertyType == EditPropertyType::Length) {
