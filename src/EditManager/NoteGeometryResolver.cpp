@@ -125,13 +125,33 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     const uint32_t overlayStartUs = micros();
 #endif
     // C2a: interact / constrain / build only find() pair targets (or use storage for
-    // leave-restore). Empty pairs never read the overlaid map — skip the 108-entry copy.
+    // leave-restore). Empty pairs never read the overlaid map — skip the copy.
+    // Non-empty pairs overlay only those target ids (C4).
     BaselineMap overlaidAnalysisBaseline;
     const BaselineMap* analysisBaselinePtr = &transactionBaselineAfterEnsure;
     if (!eligiblePairs.empty()) {
+        NoteIdList pairTargetNoteIds;
+        pairTargetNoteIds.reserve(eligiblePairs.size());
+        for (const CausingTargetPair& pair : eligiblePairs) {
+            if (pair.targetNoteId == kInvalidNoteId ||
+                pair.targetNoteId == focus.movingNoteId) {
+                continue;
+            }
+            bool alreadyQueued = false;
+            for (const NoteId queued : pairTargetNoteIds) {
+                if (queued == pair.targetNoteId) {
+                    alreadyQueued = true;
+                    break;
+                }
+            }
+            if (alreadyQueued) {
+                continue;
+            }
+            pairTargetNoteIds.push_back(pair.targetNoteId);
+        }
         overlaidAnalysisBaseline = overlayAnalysisBaselineForSessionMovedOverlaps(
             transactionBaselineAfterEnsure, focus.movingNoteId, liveStore, channel, loopLength,
-            currentStateReader, causingSpan, &committedDisplayNotes);
+            currentStateReader, causingSpan, &committedDisplayNotes, &pairTargetNoteIds);
         analysisBaselinePtr = &overlaidAnalysisBaseline;
     }
     const BaselineMap& analysisBaseline = *analysisBaselinePtr;

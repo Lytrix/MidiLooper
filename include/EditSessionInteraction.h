@@ -92,7 +92,9 @@ BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(const BaselineMap& st
                                                            const NoteBaseline* causingSpan =
                                                                nullptr,
                                                            const NoteUtils::DisplayNoteVec*
-                                                               committedDisplayNotes = nullptr);
+                                                               committedDisplayNotes = nullptr,
+                                                           const NoteIdList* pairTargetNoteIds =
+                                                               nullptr);
 
 std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
 analyzeEditSessionInteractions(

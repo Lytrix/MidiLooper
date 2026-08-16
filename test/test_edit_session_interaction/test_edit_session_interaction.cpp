@@ -787,6 +787,45 @@ void test_analyze_ignores_session_moved_overlap_at_live_span_020105() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(liveInteractions.size()));
 }
 
+void test_overlay_pair_targets_omits_unrelated_baseline_entries() {
+  constexpr NoteId kPriorMoverId = 17;
+  constexpr NoteId kNewMoverId = 25;
+  constexpr NoteId kUnrelatedId = 99;
+  constexpr uint8_t kPitch = 88;
+  constexpr uint8_t kChannel = 5;
+
+  BaselineMap baseline;
+  baseline[kPriorMoverId] = {kPitch, 100, 3600, 4127};
+  baseline[kNewMoverId] = {kPitch, 100, 3504, 4031};
+  baseline[kUnrelatedId] = {60, 100, 0, 96};
+
+  MidiEventVec liveStore;
+  MidiEvent priorOn = MidiEvent::NoteOn(1248, kChannel, kPitch, 100);
+  priorOn.noteId = kPriorMoverId;
+  liveStore.push_back(priorOn);
+  MidiEvent priorOff = MidiEvent::NoteOff(1775, kChannel, kPitch, 0);
+  priorOff.noteId = kPriorMoverId;
+  liveStore.push_back(priorOff);
+
+  const BaselineMap full =
+      overlayAnalysisBaselineForSessionMovedOverlaps(baseline, kNewMoverId, liveStore, kChannel,
+                                                     5376u, nullptr, nullptr);
+  TEST_ASSERT_TRUE(full.find(kUnrelatedId) != full.end());
+  TEST_ASSERT_EQUAL_UINT32(1248u, full.find(kPriorMoverId)->second.startTick);
+
+  NoteIdList pairTargets;
+  pairTargets.push_back(kPriorMoverId);
+  pairTargets.push_back(kPriorMoverId);
+  const BaselineMap restricted = overlayAnalysisBaselineForSessionMovedOverlaps(
+      baseline, kNewMoverId, liveStore, kChannel, 5376u, nullptr, nullptr, nullptr, &pairTargets);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(restricted.size()));
+  TEST_ASSERT_TRUE(restricted.find(kUnrelatedId) == restricted.end());
+  TEST_ASSERT_TRUE(restricted.find(kNewMoverId) == restricted.end());
+  const auto restrictedIt = restricted.find(kPriorMoverId);
+  TEST_ASSERT_TRUE(restrictedIt != restricted.end());
+  TEST_ASSERT_EQUAL_UINT32(1248u, restrictedIt->second.startTick);
+}
+
 void test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600() {
   // session_20260807_020600: note 17 at 1488 after move; not in changedOverlapNoteIds on reselect.
   constexpr NoteId kPriorMoverId = 17;
@@ -1112,6 +1151,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_storage_overlap_analyze_tail_shorten_only_004127);
   RUN_TEST(test_storage_overlap_analyze_ltr_complete_cover_hides_short_target);
   RUN_TEST(test_analyze_ignores_session_moved_overlap_at_live_span_020105);
+  RUN_TEST(test_overlay_pair_targets_omits_unrelated_baseline_entries);
   RUN_TEST(test_analyze_ignores_session_moved_baseline_without_changed_overlap_id_020600);
   RUN_TEST(test_overlap_analyze_uses_current_span_not_stale_baseline_021939);
   RUN_TEST(test_overlay_committed_span_shortened_stub_ltr_overlap_181859);

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer C3 device PASS)
+Last updated: 2026-08-16 (NOTE_EDIT Layer C4 pair-target overlay)
 
 ---
 
@@ -36,7 +36,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer C3 device PASS)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** NOTE_EDIT investigation [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md) — B1 closed; **B2a device PASS** [`171228`](../captures/session_20260816_171228.log); **C1–C3 device PASS** [`173243`](../captures/session_20260816_173243.log) (empty-pair overlay skip holds). Remaining C: overlay on non-empty pairs. A intermediates PASS. Boot title RAM1 **closed**. LED lookup Stage 1 PASS [`114736`](../captures/session_20260816_114736.log). Consumer grooming Slice 1–4c device PASS; 4e parked. **038.2 landed.** Not all of LCR live.
+**Active work:** NOTE_EDIT investigation [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md) — B1 closed; **B2a device PASS** [`171228`](../captures/session_20260816_171228.log); **C1–C3 device PASS** [`173243`](../captures/session_20260816_173243.log); **C4** pair-target overlay (device gate open). A intermediates PASS. Boot title RAM1 **closed**. LED lookup Stage 1 PASS [`114736`](../captures/session_20260816_114736.log). Consumer grooming Slice 1–4c device PASS; 4e parked. **038.2 landed.** Not all of LCR live.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
