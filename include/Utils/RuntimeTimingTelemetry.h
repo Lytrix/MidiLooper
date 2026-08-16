@@ -72,14 +72,6 @@ struct Snapshot {
   uint32_t idleMaintOverCount = 0;
   uint32_t loadFrameMaxUs = 0;
   uint32_t loadFrameOverCount = 0;
-  uint32_t displayFrameMaxUs = 0;
-  uint32_t displayFrameOverCount = 0;
-  uint32_t loadJobMaxUs = 0;
-  uint32_t loadJobOverCount = 0;
-  uint32_t firstCommitMaxUs = 0;
-  uint32_t firstCommitOverCount = 0;
-  uint32_t bootCommitMaxUs = 0;
-  uint32_t bootCommitOverCount = 0;
   uint32_t persistSaveMaxUs = 0;
   uint32_t persistSaveOverCount = 0;
   uint32_t clockPulses = 0;
@@ -163,18 +155,6 @@ void noteIdleMaint(uint32_t durationUs);
 /** Post-BAR remainder: runDeferredLoadAndDisplayFrame (LoadLoopJob + OLED). */
 void noteLoadFrame(uint32_t durationUs);
 
-/** load_frame child: DisplayManager::update() cadence paint (not boot). */
-void noteDisplayFrame(uint32_t durationUs);
-
-/** load_frame child: DeferredJobScheduler::runFrame(). */
-void noteLoadJob(uint32_t durationUs);
-
-/** load_frame child: Track::ensurePlaybackMergedEventsForSlot() after first focus commit. */
-void noteFirstCommit(uint32_t durationUs);
-
-/** load_frame child: finishBootSetup / USB host / boot OLED. */
-void noteBootCommit(uint32_t durationUs);
-
 /** Post-BAR remainder: StorageManager::processDeferredSaveState. */
 void notePersistSave(uint32_t durationUs);
 
@@ -190,6 +170,13 @@ void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t sta
  * Implementation is FLASHMEM + noinline so span strings stay out of ITCM/DTCM.
  */
 void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_t startUs);
+
+/**
+ * SESSION_CAPTURE: time one load_frame child.
+ * child 0=display_frame, 1=load_job, 2=first_commit, 3=boot_commit.
+ * FLASHMEM + PSTR so span strings stay out of DTCM.
+ */
+void recordLoadFrameChildRem(uint8_t child, uint32_t startUs);
 
 /**
  * Emit Tier-A DIAG lines if the emit interval has elapsed.

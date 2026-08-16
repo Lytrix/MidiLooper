@@ -1,9 +1,9 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 1 telemetry landed (device attribution open)  
+**Status:** Active — Slice 1 rem split kept; device FAIL [`132439`](../../captures/session_20260816_132439.log) then RAM1 string-placement fix  
 **Date:** 2026-08-16  
 **Kind:** refinement  
-**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS)  
+**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset)  
 **Parent:** [`post_undo_led_lookup_resumable_source_refinement.md`](post_undo_led_lookup_resumable_source_refinement.md)  
 **Scheduling contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md)  
 **Owner-boundary roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (R1C remaining-owner inventory)  
@@ -250,7 +250,7 @@ Precedent for the consumer rule. Stage 2 rejected. Do not touch `MidiLedManager`
 
 **Measurement only. Zero behavior change.**
 
-Child `loop_rem` + 5 s windows from `runDeferredLoadAndDisplayFrame`. Parent `load_frame` kept.
+Child `loop_rem` from `runDeferredLoadAndDisplayFrame` via `RuntimeTimingTelemetry::recordLoadFrameChildRem` (`FLASHMEM` + `PSTR`). Parent `load_frame` rem + 5 s window kept.
 
 | Span | Owner |
 |------|--------|
@@ -259,7 +259,11 @@ Child `loop_rem` + 5 s windows from `runDeferredLoadAndDisplayFrame`. Parent `lo
 | `first_commit` | `Track::ensurePlaybackMergedEventsForSlot()` |
 | `boot_commit` | `finishBootSetup` / USB host / boot OLED |
 
-Device gate: one capture attributes PLAYING 59–74 ms and boot 802 ms to children. Do not start a `LoadLoopJob` or OLED-paint firmware change from an unsplit `load_frame` line.
+**5 s child windows withdrawn.** Plan originally added child maxes so work under 50 ms still shows. Those tags and Snapshot fields grew `.rodata` / DTCM. Child attribution is `loop_rem` only (50 ms one-shot). Parent `load_frame` 5 s window remains.
+
+**Device FAIL [`132439`](../../captures/session_20260816_132439.log):** title → `BOOT,load,start` → `BOOT,scan,start` → reset. Same class as LoopPersist finalize ([`persist_loop_slot_finalize_slice_bugfix.md`](persist_loop_slot_finalize_slice_bugfix.md)): hung at `scan,start` with no `scan,t0`. Cause: Slice 1 child span literals in `.rodata` (DTCM) plus four 5 s accumulators. LED rem already documents this — `recordMidiLedHelperRem` uses `PSTR` so strings stay in `.progmem`. After the `PSTR` helper and withdrawn 5 s child windows: RAM1 variables **91808**, code **425612**, padding **372**, locals **6496** (crashing Slice 1 build was **2368**).
+
+Device gate: boot past `BOOT,scan,start` to `scan,t0` / `scan,done`, then one capture that attributes PLAYING 59–74 ms and boot 802 ms to children. Do not start a `LoadLoopJob` or OLED-paint firmware change from an unsplit `load_frame` line.
 
 ## Pre-implementation review (Slice 1)
 
@@ -273,7 +277,7 @@ Device gate: one capture attributes PLAYING 59–74 ms and boot 802 ms to childr
 | Parent rem | Keep `load_frame` |
 | Boot OLED `update()` | Inside `boot_commit`, not a second `display_frame` |
 | Undo/autosave/reclaim | Unattributed inside parent |
-| 5 s windows | Child maxes so work under 50 ms still shows |
+| 5 s child windows | Withdrawn — RAM1 / `.rodata` at [`132439`](../../captures/session_20260816_132439.log). Child spans are `PSTR` `loop_rem` only |
 
 ### Open before coding
 None.
