@@ -2,20 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (overdub same-start hold collection RC1)
+Last updated: 2026-08-16 (overdub overlap hold RC2 — wrap source view)
 
 ---
 
 ## Now implementing
 
-### Overdub overlap hold — same-start collection (RC1)
+### Overdub overlap hold — same-start collection (RC1) + wrap source view (RC2)
 
 **Plan:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
-**Evidence:** [`233323`](../../captures/session_20260816_233323.log) — every scored stop `empty_sets = note_offs`, `looked_up=0`; 1-bar slot stacked 60@528 after deselect.
+**RC1 evidence:** [`233323`](../../captures/session_20260816_233323.log) — empty hold sets; stacked 60@528.  
+**RC2 evidence:** [`235407`](../../captures/session_20260816_235407.log) — `looked_up=2` `empty_sets=0`; same-start exact works; DNTE still has 60@64 length **176 and 224** plus 60@224 length **16**.
 
-`Track::snapshotOverlapHoldCandidates` now treats occupancy at S as half-open `[start, end)` (`linearStart <= S < linearEnd`). Grid-aligned same-start overdubs enter `PendingNote.overlapNoteIds`. Playback collect still covers notes that start after S. Gate 3 empty-set skip unchanged. Wrap `beginCapture` re-establish delay is a later slice.
+**RC1:** snapshot occupancy at S is `[start, end)` (`linearStart <= S < linearEnd`). Device: same-start exact Hides.
 
-**Native PASS** `test_overlap_hold_candidates` (4/4). `pio test -e native` 1281/1283 — only `test_legacy_deferred_header_without_note_id_reads` failed (unrelated). Device gate open.
+**RC2:** wrap `beginCapture` keeps the session source view. `applyPendingNoteChangesToOverdubSourceView` merges this wrap's Add/Shorten/Hide before seal so wrap-2 can inner-Shorten or same-start-longer-Hide wrap-1 notes. Do not re-establish after `invalidateCaches`. Gate 3 empty-set skip unchanged. No LCR on MIDI.
+
+**Native PASS** `test_pending_note_change` (19/19) including wrap-keep inner + same-start-longer. Device gate open.
 
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 

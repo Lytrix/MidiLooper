@@ -1,11 +1,11 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — native PASS; device gate open  
+**Status:** Active — RC1 native+device (same-start exact); RC2 native PASS; device gate open  
 **Date:** 2026-08-16  
 **Kind:** bugfix  
-**Evidence:** [`233323`](../../captures/session_20260816_233323.log)  
+**Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2)  
 **Parent:** [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md)  
-**Does not start:** wrap `beginCapture` re-establish delay; LCR `resolveState` on MIDI; Gate 3 empty-set fallback scan
+**Does not start:** LCR `resolveState` on MIDI; Gate 3 empty-set fallback scan
 
 ---
 
@@ -46,7 +46,7 @@ Consume geometry (`existingNoteOverlapsIncomingHold`) already treats same-start 
 
 After this fix, same-start note-off will `appendNotesForIds` (Gate 4, one pass). Historical 68-bar lookup was 0.4–1.1 ms ([`163422`](../../captures/session_20260813_163422.log)). Do not add an empty-set full-view fallback (Gate 3).
 
-Wrap `commitOverdubWrapAtSessionStart` → `beginCapture` → `establishOverdubSourceView` after `invalidateCaches` is a **later slice**. Not this RC.
+Wrap `beginCapture` no longer re-establishes (RC2). That also avoids a dirty-cache reconstruct on wrap.
 
 ---
 
@@ -78,7 +78,40 @@ linearStart <= holdStart && holdStart < linearEnd
 - `test_overlap_hold_candidates` — note starting at S is in the snapshot set; note ending at S is not.
 - Existing `test_pending_note_change` consume fixtures unchanged.
 
-Device: 1-bar grid re-overdub of an occupied lane. `overlap_hold` `looked_up > 0`, `shorten` or `hide` > 0. NOTE_EDIT deselect does not leave a stacked unmoved row on that lane.
+Device RC1: 1-bar grid re-overdub of an occupied lane. `overlap_hold` `looked_up > 0`.
+
+---
+
+## RC2 — wrap source view keeps this-session notes
+
+**Evidence:** [`235407`](../../captures/session_20260816_235407.log)
+
+RC1 collection works: stop `empty_sets=0`, `looked_up=2`, `max_ids=1`. Same-start exact against the session-start note (60@528) Hides. Inner and same-start-longer do not.
+
+Before overdub, undo left `slice_clean notes=1`. Five wrap commits (1152 / 1920 / 2688 / 3456 / 4224). Stop DNTE still has **60@64 length 176 and 224** plus **60@224 length 16**. Consume already Shortens an inner hold and Hides a same-start-longer hold when the prior id is in `overdubSourceViewNotes_` (`test_pending_shorten_long_source_on_overlap`, `test_pending_hide_same_start_longer`).
+
+`commitOverdubWrapAtSessionStart` called `beginCapture` → `establishOverdubSourceView` after `invalidateCaches`. Dirty cache is not authoritative, so the view was rebuilt without this-session Adds. Playback could still insert those ids; `appendNotesForIds` found nothing.
+
+### Architecture checkpoint (RC2)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `Loop` still owns `overdubSourceViewNotes_` and pending changes. |
+| **State transition change?** | NO. Wrap still seals and `beginCapture`s. Source view stays established for the session. |
+
+### Fix
+
+- `beginCapture(Overdub)` calls `establishOverdubSourceView` only when the view is not established.
+- `applyPendingNoteChangesToOverdubSourceView` merges Add / Shorten / Hide into the view before seal.
+- `commitOverdubWrapAtSessionStart` applies pending, then seals.
+
+### Tests
+
+- `test_pending_hide_same_start_longer` — incoming 64–288 Hides source 64–240.
+- `test_wrap_keeps_source_view_inner_shortens_prior_add` — wrap-2 inner 224–240 Shortens wrap-1 Add 64–240 to 223.
+- `test_wrap_keeps_source_view_same_start_longer_hides_prior_add` — wrap-2 64–288 Hides wrap-1 Add 64–240.
+
+Device: 1-bar inner (start after existing start, end before existing end) Shortens the outer. Same-start longer Hides the shorter. NOTE_EDIT does not show stacked 60@64 rows.
 
 ---
 

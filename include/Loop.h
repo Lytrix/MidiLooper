@@ -218,6 +218,9 @@ struct Loop {
                                                    NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
   EditPassIdList sealPendingNoteChangesToEditPasses();
+  /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_` so the next wrap
+  /// can overlap this wrap's notes. Does not clear pending.
+  void applyPendingNoteChangesToOverdubSourceView();
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
   /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
   void emitOverlapHoldTotals() const;
