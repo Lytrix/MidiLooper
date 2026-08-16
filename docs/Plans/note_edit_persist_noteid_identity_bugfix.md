@@ -135,7 +135,9 @@ Device gate: 173806 gesture. `replay_flat` home **missing**. LOOP_EDIT shows the
 
 **Device [`192906`](../../captures/session_20260816_192906.log):** open regression. First `DNTE` **12@0 length 96** (wrap head); no 12@2592/576. Head-only currentSpan skipped the committed tail. `ensureVisibleRowsForDisplayNotes` now groups split fragments to one wrap and does not last-write-wins a head over a wrap.
 
-**Device [`193525`](../../captures/session_20260816_193525.log):** enter NOTE_EDIT selected display head `DNTE` 12@0 length **96**; paint 105 vs visual 107. LCR extra / EditAction already `tid=273,s=0,e=96`. Session row as the head plus splitHeadTail last-write-wins dropped the loop-end tail. Display must not lead. `ensureVisibleRowsForDisplayNotes` merges tail+head to wrap `2592–96` even when the existing row is `0–96`. `projectNoteEditDisplayNotes` keeps cache tail when currentSpan is the head. Do not wire `resolveNotes` onto paint. Stage 2 stays parked.
+**Device [`193525`](../../captures/session_20260816_193525.log):** enter NOTE_EDIT selected display head `DNTE` 12@0 length **96**; paint 105 vs visual 107. LCR extra / EditAction already `tid=273,s=0,e=96`. Session row as the head plus splitHeadTail last-write-wins dropped the loop-end tail. Display must not lead. `ensureVisibleRowsForDisplayNotes` merges tail+head to wrap `2592–96` even when the existing row is `0–96`. `projectNoteEditDisplayNotes` keeps cache tail when currentSpan is the head.
+
+**Device [`195050`](../../captures/session_20260816_195050.log):** wrap select PASS (`DNTE` 12@2592 length **576**). Live moves keep 576. Deselect committed `NoteRange start=2736 end=3071` (`mover_focus`). Reselect `DNTE` length **432**, then **240**. Linear pairing / `normalizeAll` `closeOpenTails` wrote the display tail; wrap mover rows were rejected (`end < start`). Commit from current-state wrap; `isPlausibleStorageSpan` allows wrap. Do not wire `resolveNotes` onto paint. Stage 2 stays parked.
 
 ---
 

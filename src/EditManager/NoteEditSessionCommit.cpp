@@ -47,11 +47,21 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     resolveOverlapNotesForPreCommit(sessionStoreEvents, editSession.focus, channel, loopLength);
 
     normalizeNoteEditSessionProjectionForCommit(track);
-    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
-                                            loopLength);
-
-    if (!isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionStoreEvents,
-                               channel, loopLength)) {
+    bool driverValid = false;
+    if (!editSession.noteEditCurrentState.empty()) {
+        // 195050: linear store pairing cannot see wrap offs and normalize closeOpenTails
+        // writes loopLength-1. Current-state wrap is the commit source.
+        syncNoteEditFocusLastFromCurrentState(editSession.focus, sessionState.selection.primaryNote,
+                                              editSession.noteEditCurrentState);
+        driverValid = isLiveEditDriverValidFromCurrentState(
+            sessionState.selection, editSession.focus, editSession.noteEditCurrentState);
+    } else {
+        syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
+                                                loopLength);
+        driverValid = isLiveEditDriverValid(sessionState.selection, editSession.focus,
+                                            sessionStoreEvents, channel, loopLength);
+    }
+    if (!driverValid) {
 #if defined(SESSION_CAPTURE)
         logger.log(CAT_TRACK, LOG_WARNING,
                    "NOTE_EDIT macro commit skipped: driver invalid (moving=%lu primary=%lu "
@@ -165,6 +175,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitPendingOverlapNoteEdits(Track& tra
 
 EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track& track) {
     if (!editSession.active) {
+        return 0;
+    }
+    // DEC-037: committed EditActions are the persist history. A DisplayNote
+    // session-store diff must not disable them (190822: 3 working rows → 4-row replace).
+    if (!editSession.editPassIds.empty()) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "NoteEditPass close keep committed editPass=%u rows=%u (no display-diff replace)",
+                   static_cast<unsigned>(editSession.editPassIndex),
+                   static_cast<unsigned>(editSession.editPassIds.size()));
         return 0;
     }
     Loop& loop = trackManager.getSelectedLoop(track);

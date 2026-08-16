@@ -1267,6 +1267,62 @@ void test_commit_skips_painted_wrap_stub_loop_end_length_201948() {
   }
 }
 
+void test_commit_rows_keep_wrap_end_not_loop_end_195050() {
+  // 195050: live wrap 2736–240 length 576. Deselect committed NoteRange 2736–3071
+  // because wrap rows were rejected and linear pairing used the display tail.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kWrapId = 269;
+  constexpr uint8_t kPitch = 12;
+  const NoteBaseline kHome{kPitch, 100, 2592, 96};
+  const NoteBaseline kMovedWrap{kPitch, 100, 2736, 240};
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kWrapId;
+  focus.commitBaseline = kHome;
+  focus.last = kMovedWrap;
+  focus.baselineMap[kWrapId] = kHome;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapId, kHome, kMovedWrap, NoteEditPresenceType::Visible);
+
+  const EditPassVec rows =
+      buildCommitRowsFromCurrentState(focus, currentState, kChannel, kLoopLength);
+  bool foundWrapRange = false;
+  for (const EditPass& row : rows) {
+    if (row.targetNoteId != kWrapId || row.actionType != EditActionType::Update) {
+      continue;
+    }
+    TEST_ASSERT_TRUE(row.endTick != kLoopLength - 1u);
+    TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::NoteRange),
+                      static_cast<int>(row.propertyType));
+    TEST_ASSERT_EQUAL_UINT32(2736u, row.startTick);
+    TEST_ASSERT_EQUAL_UINT32(240u, row.endTick);
+    foundWrapRange = true;
+  }
+  TEST_ASSERT_TRUE(foundWrapRange);
+}
+
+void test_sync_projecting_rows_does_not_replace_wrap_with_linear_tail_195050() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kWrapId = 269;
+  constexpr uint8_t kPitch = 12;
+  const NoteBaseline kWrap{kPitch, 100, 2736, 240};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kWrapId, kWrap, kWrap, NoteEditPresenceType::Visible);
+
+  MidiEventVec store;
+  store.push_back(noteOn(kWrapId, kPitch, 2736));
+  store.push_back(noteOff(kWrapId, kPitch, kLoopLength - 1u));
+  currentState.syncProjectingRowsFromSessionStore(store, kChannel);
+
+  NoteBaseline kept{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kWrapId, kept));
+  TEST_ASSERT_EQUAL_UINT32(2736u, kept.startTick);
+  TEST_ASSERT_EQUAL_UINT32(240u, kept.endTick);
+}
+
 void test_deselect_clears_overlap_participation_without_geometry_restore_232118() {
   constexpr NoteId kOverlapId = 9;
   constexpr NoteId kMoverId = 13;
@@ -2696,6 +2752,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_deselect_commit_seals_overlap_shorten_under_parked_mover_204700);
   RUN_TEST(test_commit_skips_unpainted_loop_end_length_192755);
   RUN_TEST(test_commit_skips_painted_wrap_stub_loop_end_length_201948);
+  RUN_TEST(test_commit_rows_keep_wrap_end_not_loop_end_195050);
+  RUN_TEST(test_sync_projecting_rows_does_not_replace_wrap_with_linear_tail_195050);
   RUN_TEST(test_deselect_clears_overlap_participation_without_geometry_restore_232118);
   RUN_TEST(test_sync_committed_span_marks_visible_overlap_shorten_sealed);
   RUN_TEST(test_macro_sealed_sync_committed_aligns_current_span_on_reselect_010657);

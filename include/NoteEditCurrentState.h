@@ -124,6 +124,8 @@ class NoteEditCurrentState {
   void markOverlapParticipationActive(NoteId noteId);
   void markRowDeleted(NoteId noteId);
   void removeRow(NoteId noteId);
+  /// Copy visible linear spans from the session store. Wrap currentSpan (`end < start`)
+  /// is kept when the store only has a linear tail — display/linear pairing must not lead.
   void syncProjectingRowsFromSessionStore(const MidiEventVec& store, uint8_t channel);
   /// After macro commit seals geometry to passes, align session committed baseline so
   /// leave-restore does not revert to a stale committed span (session_20260807_200656).
