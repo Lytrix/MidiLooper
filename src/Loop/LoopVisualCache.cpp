@@ -225,7 +225,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     return;
   }
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   // Immediate Serial — ring SC_VCACHE is not flushed if this turn faults (152405).
   Serial.print(F("VCACHE,slice_enter,bars,"));
   Serial.println(totalBars);
@@ -239,13 +239,15 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     gatherCommittedEventsInWindow(flat, windowStart, windowLength);
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_gathered,ev,"));
   Serial.println(static_cast<unsigned>(flat.size()));
+#endif
   const uint32_t reconstructStartUs = micros();
 #endif
   NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_recon,notes,"));
   Serial.println(static_cast<unsigned>(sliceNotes.size()));
 #endif

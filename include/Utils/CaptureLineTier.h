@@ -23,6 +23,14 @@ inline const char* tagOf(const char* line) {
   return separator == nullptr ? nullptr : separator + 1;
 }
 
+inline bool tagStartsWith(const char* line, const char* prefix) {
+  const char* tag = tagOf(line);
+  if (tag == nullptr || prefix == nullptr) {
+    return false;
+  }
+  return strncmp(tag, prefix, strlen(prefix)) == 0;
+}
+
 /**
  * Transport state, persistence, record stage, session header, visual cache coverage, and
  * timing telemetry lines.

@@ -86,6 +86,14 @@ void test_tag_parse_survives_a_wide_micros_field() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,12345678901,DIAG,clockrate,48"));
 }
 
+void test_tag_starts_with_matches_led_mo_diag() {
+  TEST_ASSERT_TRUE(CaptureLineTier::tagStartsWith("#CAP,5388757,LED,1,40,127", "LED,"));
+  TEST_ASSERT_TRUE(CaptureLineTier::tagStartsWith("#CAP,4683903,MO,176,7,123,0", "MO,"));
+  TEST_ASSERT_TRUE(CaptureLineTier::tagStartsWith("#CAP,5416701,DIAG,midi_gap,28081,1", "DIAG,"));
+  TEST_ASSERT_FALSE(CaptureLineTier::tagStartsWith("#CAP,5460688,VCACHE,stale_all,ev,-1", "LED,"));
+  TEST_ASSERT_FALSE(CaptureLineTier::tagStartsWith("#CAP,BOOT,scan,t0", "DIAG,"));
+}
+
 void test_malformed_lines_are_not_tier_a() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(nullptr));
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(""));
@@ -101,6 +109,7 @@ int main() {
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);
   RUN_TEST(test_tag_parse_survives_a_wide_micros_field);
+  RUN_TEST(test_tag_starts_with_matches_led_mo_diag);
   RUN_TEST(test_malformed_lines_are_not_tier_a);
   return UNITY_END();
 }
