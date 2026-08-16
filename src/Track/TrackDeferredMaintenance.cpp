@@ -54,6 +54,12 @@ void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
   DebugSessionCapture::appendCaptureTextLine(line);
 }
 
+TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
+                                             const NoteUtils::DisplayNote& b) {
+  return a.noteId == b.noteId && a.note == b.note && a.startTick == b.startTick &&
+         a.endTick == b.endTick;
+}
+
 TRACK_COLD_MEM bool displayNotesMatch(const NoteUtils::DisplayNoteVec& expected,
                                       const NoteUtils::DisplayNoteVec& actual) {
   if (expected.size() != actual.size()) {
@@ -62,8 +68,7 @@ TRACK_COLD_MEM bool displayNotesMatch(const NoteUtils::DisplayNoteVec& expected,
   for (const NoteUtils::DisplayNote& note : expected) {
     bool found = false;
     for (const NoteUtils::DisplayNote& other : actual) {
-      if (note.noteId == other.noteId && note.note == other.note &&
-          note.startTick == other.startTick && note.endTick == other.endTick) {
+      if (displayNoteIdentityMatch(note, other)) {
         found = true;
         break;
       }
@@ -73,6 +78,80 @@ TRACK_COLD_MEM bool displayNotesMatch(const NoteUtils::DisplayNoteVec& expected,
     }
   }
   return true;
+}
+
+TRACK_COLD_MEM uint32_t countDisplayNoteMatches(const NoteUtils::DisplayNoteVec& expected,
+                                                const NoteUtils::DisplayNoteVec& actual,
+                                                const NoteUtils::DisplayNote** firstMissing) {
+  if (firstMissing != nullptr) {
+    *firstMissing = nullptr;
+  }
+  uint32_t found = 0;
+  for (const NoteUtils::DisplayNote& note : expected) {
+    bool matched = false;
+    for (const NoteUtils::DisplayNote& other : actual) {
+      if (displayNoteIdentityMatch(note, other)) {
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      ++found;
+    } else if (firstMissing != nullptr && *firstMissing == nullptr) {
+      *firstMissing = &note;
+    }
+  }
+  return found;
+}
+
+TRACK_COLD_MEM const NoteUtils::DisplayNote* findDisplayNoteGeometry(
+    const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick && note.endTick == endTick) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+TRACK_COLD_MEM void logDisplayNoteDiffs(const char* tag, const NoteUtils::DisplayNoteVec& expected,
+                                        const NoteUtils::DisplayNoteVec& actual) {
+  uint32_t logged = 0;
+  for (const NoteUtils::DisplayNote& note : expected) {
+    bool matched = false;
+    for (const NoteUtils::DisplayNote& other : actual) {
+      if (displayNoteIdentityMatch(note, other)) {
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      continue;
+    }
+    const NoteUtils::DisplayNote* geom = findDisplayNoteGeometry(actual, note.note, note.startTick,
+                                                                 note.endTick);
+    char line[192];
+    if (geom != nullptr) {
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,lcr,6a,%s,id=%lu,n=%u,s=%lu,e=%lu,alt=%lu",
+               static_cast<unsigned long>(micros()), tag,
+               static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick),
+               static_cast<unsigned long>(geom->noteId));
+    } else {
+      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,6a,%s,id=%lu,n=%u,s=%lu,e=%lu",
+               static_cast<unsigned long>(micros()), tag,
+               static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick));
+    }
+    DebugSessionCapture::appendCaptureTextLine(line);
+    ++logged;
+    if (logged >= 8) {
+      break;
+    }
+  }
 }
 
 TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
@@ -92,24 +171,73 @@ TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
   }
   const uint32_t reconstructStartUs = micros();
   const NoteUtils::DisplayNoteVec preparedNotes =
-      NoteUtils::reconstructDisplayNotes(prepared, loop.loopLengthTicks, false);
+      NoteUtils::reconstructDisplayNotes(prepared, loop.loopLengthTicks, false, false);
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   const uint32_t oracleStartUs = micros();
   SessionMidiEventVec oracle;
   loop.gatherCommittedEventsInWindow(oracle, windowStart, windowLength);
   const NoteUtils::DisplayNoteVec oracleNotes =
-      NoteUtils::reconstructDisplayNotes(oracle, loop.loopLengthTicks, false);
+      NoteUtils::reconstructDisplayNotes(oracle, loop.loopLengthTicks, false, false);
   const uint32_t oracleUs = micros() - oracleStartUs;
+  const uint32_t nativeStartUs = micros();
+  SessionMidiEventVec nativeFull;
+  loop.gatherCommittedEvents(nativeFull);
+  SessionMidiEventVec nativeWindow;
+  DisplayWindowUtils::filterMidiEventsToWindow(nativeFull, nativeWindow, windowStart, windowLength,
+                                               loop.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec nativeNotes =
+      NoteUtils::reconstructDisplayNotes(nativeWindow, loop.loopLengthTicks, false, false);
+  const uint32_t nativeUs = micros() - nativeStartUs;
   const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
-  char line[224];
+  const uint32_t foundInPrepared = countDisplayNoteMatches(nativeNotes, preparedNotes, nullptr);
+  const uint32_t foundInNative = countDisplayNoteMatches(preparedNotes, nativeNotes, nullptr);
+  const uint32_t miss = static_cast<uint32_t>(nativeNotes.size()) - foundInPrepared;
+  const uint32_t extra = static_cast<uint32_t>(preparedNotes.size()) - foundInNative;
+  const uint32_t nativeFoundPrepared = foundInPrepared;
+  const uint32_t nativeFoundGather = countDisplayNoteMatches(nativeNotes, oracleNotes, nullptr);
+  uint32_t editRows = 0;
+  char line[300];
+  for (const EditPass& editPass : loop.passes.editPasses) {
+    if (editPass.state != EditPassState::Active || editPass.passType != EditPassType::Note) {
+      continue;
+    }
+    ++editRows;
+    if (editRows > 4) {
+      continue;
+    }
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,6a,ed,id=%lu,act=%u,prop=%u,tid=%lu,s=%lu,e=%lu,p=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(editPass.id),
+             static_cast<unsigned>(editPass.actionType),
+             static_cast<unsigned>(editPass.propertyType),
+             static_cast<unsigned long>(editPass.targetNoteId),
+             static_cast<unsigned long>(editPass.startTick),
+             static_cast<unsigned long>(editPass.endTick),
+             static_cast<unsigned>(editPass.pitch));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,6a,win=%lu,proj=%lu,oracle=%lu,tot=%lu,ev=%u,notes=%u,match=%u",
+           "#CAP,%lu,DIAG,lcr,6a,win=%lu,proj=%lu,oracle=%lu,tot=%lu,ev=%u,notes=%u,"
+           "oev=%u,onotes=%u,found=%u,miss=%u,extra=%u,ed=%u,match=%u",
            static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
            static_cast<unsigned long>(reconstructUs), static_cast<unsigned long>(oracleUs),
            static_cast<unsigned long>(windowUs + reconstructUs),
            static_cast<unsigned>(prepared.size()), static_cast<unsigned>(preparedNotes.size()),
-           displayNotesMatch(oracleNotes, preparedNotes) ? 1u : 0u);
+           static_cast<unsigned>(nativeWindow.size()), static_cast<unsigned>(nativeNotes.size()),
+           static_cast<unsigned>(foundInPrepared), static_cast<unsigned>(miss),
+           static_cast<unsigned>(extra), static_cast<unsigned>(editRows),
+           displayNotesMatch(nativeNotes, preparedNotes) ? 1u : 0u);
   DebugSessionCapture::appendCaptureTextLine(line);
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,6a,nat,us=%lu,ev=%u,notes=%u,pfound=%u,gfound=%u,pmatch=%u,gmatch=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned long>(nativeUs),
+           static_cast<unsigned>(nativeWindow.size()), static_cast<unsigned>(nativeNotes.size()),
+           static_cast<unsigned>(nativeFoundPrepared), static_cast<unsigned>(nativeFoundGather),
+           displayNotesMatch(nativeNotes, preparedNotes) ? 1u : 0u,
+           displayNotesMatch(nativeNotes, oracleNotes) ? 1u : 0u);
+  DebugSessionCapture::appendCaptureTextLine(line);
+  logDisplayNoteDiffs("miss", nativeNotes, preparedNotes);
+  logDisplayNoteDiffs("extra", preparedNotes, nativeNotes);
 }
 #endif
 
