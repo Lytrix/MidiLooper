@@ -121,6 +121,15 @@ bool TrackManager::anyPlayingMidiDrainAfterOverdubStop() const {
   return false;
 }
 
+FLASHMEM bool TrackManager::anyLoopPrefixMeasureAfterUndo() const {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    if (tracks[i].loopPrefixMeasureAfterUndoActive()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool TrackManager::isSelectedTrack(const Track& track) const {
   return &track == &tracks[selectedTrack];
 }

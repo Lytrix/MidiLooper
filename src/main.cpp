@@ -59,6 +59,20 @@ FLASHMEM __attribute__((noinline)) static void recordLoopRemainderSpan(const cha
   StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
   DebugSessionCapture::loopRemainder(span, durationUs, track, slot, phase, isFocus);
 }
+
+FLASHMEM __attribute__((noinline)) static void maybeRecordLoopPrefixRemainder(uint32_t startUs) {
+  if (!trackManager.anyLoopPrefixMeasureAfterUndo()) {
+    return;
+  }
+  recordLoopRemainderSpan("loop_prefix", micros() - startUs);
+}
+
+FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
+    trackManager.getTrack(i).noteLoopPrefixMeasureAfterUndo();
+  }
+}
 #endif
 
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
@@ -286,6 +300,9 @@ void loop() {
   uint32_t now = millis();
   // Poll MIDI input
   midiHandler.handleMidiInput();
+#if defined(SESSION_CAPTURE)
+  const uint32_t loopPrefixStartUs = micros();
+#endif
 
   midiHandler.processDroidUsbHostOutbound();
 
@@ -349,6 +366,9 @@ void loop() {
     }
   }
   const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
+#if defined(SESSION_CAPTURE)
+  maybeRecordLoopPrefixRemainder(loopPrefixStartUs);
+#endif
 
   // Post-overdub PLAYING only: poll before idle so visual-cache work cannot start a stacked gap.
   if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
@@ -368,9 +388,13 @@ void loop() {
   if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
     midiHandler.handleMidiInput();
   }
+#if defined(SESSION_CAPTURE)
+  notePostRemainderWindows();
+#else
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
   }
+#endif
 #if defined(SESSION_CAPTURE)
   remainderStartUs = micros();
 #endif
