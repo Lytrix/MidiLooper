@@ -1,9 +1,9 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 1 rem split kept; device FAIL [`132439`](../../captures/session_20260816_132439.log) then RAM1 string-placement fix  
+**Status:** Active — Slice 1 device PASS [`133314`](../../captures/session_20260816_133314.log); Slice 2 next  
 **Date:** 2026-08-16  
 **Kind:** refinement  
-**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset)  
+**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
 **Parent:** [`post_undo_led_lookup_resumable_source_refinement.md`](post_undo_led_lookup_resumable_source_refinement.md)  
 **Scheduling contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md)  
 **Owner-boundary roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (R1C remaining-owner inventory)  
@@ -84,6 +84,30 @@ Every PLAYING `load_frame` rem sits immediately after a `DISP`. At 69.413 s, `DF
 
 Treat those as two measurements until child spans prove otherwise.
 
+## What [`133314`](../../captures/session_20260816_133314.log) shows
+
+Boot: `BOOT,scan,start` → `t0` … `t7` → `done` → `load,ok`. RAM1 PSTR fix holds.
+
+Child rem (50 ms one-shot; no 5 s child windows):
+
+| Span | Samples | Duration | Parent `load_frame` |
+|------|--------:|----------|---------------------|
+| `boot_commit` | 1 | 784.3 ms @ 6.798 s | 791.5 ms |
+| `display_frame` | 8 | 50.7–72.3 ms | parent +0.6–7.0 ms |
+| `load_job` | 0 | never ≥50 ms | — |
+| `first_commit` | 0 | never ≥50 ms | — |
+
+PLAYING `display_frame` sits on the `DISP` immediately before it (592 notes @ 21.054 s → 72.3 ms; 528 notes @ 58.572 s → 67.4 ms). Parent is the same turn.
+
+PLAYING 5 s windows with `clockrate` 47–48:
+
+| `midi_gap` | Composition |
+|------------|-------------|
+| 111–118 ms | `idle_maint` 48–52 ms + `display_frame` 67–72 ms |
+| 48–54 ms | `idle_maint` 48–54 ms only (no paint rem that window) |
+
+[`114736`](../../captures/session_20260816_114736.log) still holds. Boot 792 ms is `boot_commit`, not `load_job`. PLAYING 67–72 ms is OLED paint, not LoadLoopJob. Do not start a `LoadLoopJob` firmware change from these lines.
+
 ## Already on the consumer-rule path
 
 | Consumer | Source today | Resume | Stalker closed |
@@ -113,10 +137,10 @@ load_frame
     └── finishBootSetup / USB host
 ```
 
-| Mode | Bundled rem | Likely child (unproven until split) |
+| Mode | Bundled rem | Child ([`133314`](../../captures/session_20260816_133314.log)) |
 |------|-------------|-------------------------------------|
-| PLAYING | 59–74 ms | `display_frame` — OLED paint of 450–1677 notes |
-| Boot | 802 ms | `boot_commit` + `load_job` commit + first paint |
+| PLAYING | 67–73 ms | `display_frame` — OLED paint (528–592 notes in this capture) |
+| Boot | 792 ms | `boot_commit` 784 ms; `load_job` / `first_commit` never ≥50 ms |
 
 Read/parse is already resumable. These pieces are not:
 
@@ -124,7 +148,7 @@ Read/parse is already resumable. These pieces are not:
 - **First-commit `Track::ensurePlaybackMergedEventsForSlot`** — `ensurePlaybackMergedMidiEventsBuilt` still `gatherCommittedEvents*` (full loop if ≤16 bars, 2-bar window if longer). That is 6.3, parked.
 - **`DisplayManager::update`** — already reads `visualCache.notes` when covered. PLAYING 60–74 ms is paint, not flatten (**B**). Do not start optimizing `LoadLoopJob` from a 70 ms `load_frame` line.
 
-**Next measurement:** emit the four child spans. Zero behavior change. Keep parent `load_frame` until one capture proves the children.
+Child spans proven in [`133314`](../../captures/session_20260816_133314.log). Keep parent `load_frame`. Do not optimize `LoadLoopJob` from a PLAYING `display_frame` line.
 
 ### `rebuildVisualCacheIdleSlice` + `appendOverdubPassDisplayNotes` — duplicate derivation
 
@@ -246,7 +270,7 @@ Do not fold these into the PLAYING scheduler pass.
 
 Precedent for the consumer rule. Stage 2 rejected. Do not touch `MidiLedManager` lookup unless a later capture shows one-bar LED lag that product rejects.
 
-### Slice 1 — split `load_frame` telemetry (landed, device open)
+### Slice 1 — split `load_frame` telemetry (device PASS [`133314`](../../captures/session_20260816_133314.log))
 
 **Measurement only. Zero behavior change.**
 
@@ -263,7 +287,7 @@ Child `loop_rem` from `runDeferredLoadAndDisplayFrame` via `RuntimeTimingTelemet
 
 **Device FAIL [`132439`](../../captures/session_20260816_132439.log):** title → `BOOT,load,start` → `BOOT,scan,start` → reset. Same class as LoopPersist finalize ([`persist_loop_slot_finalize_slice_bugfix.md`](persist_loop_slot_finalize_slice_bugfix.md)): hung at `scan,start` with no `scan,t0`. Cause: Slice 1 child span literals in `.rodata` (DTCM) plus four 5 s accumulators. LED rem already documents this — `recordMidiLedHelperRem` uses `PSTR` so strings stay in `.progmem`. After the `PSTR` helper and withdrawn 5 s child windows: RAM1 variables **91808**, code **425612**, padding **372**, locals **6496** (crashing Slice 1 build was **2368**).
 
-Device gate: boot past `BOOT,scan,start` to `scan,t0` / `scan,done`, then one capture that attributes PLAYING 59–74 ms and boot 802 ms to children. Do not start a `LoadLoopJob` or OLED-paint firmware change from an unsplit `load_frame` line.
+Device gate **PASS** [`133314`](../../captures/session_20260816_133314.log): boot past `scan,start`; PLAYING 67–72 ms is `display_frame`; boot 792 ms is `boot_commit` 784 ms. Do not start a `LoadLoopJob` firmware change from a PLAYING `display_frame` line. Remaining boot **B** work is later (not Slice 2).
 
 ## Pre-implementation review (Slice 1)
 
@@ -287,7 +311,7 @@ YES
 
 ### Slice 2 — one resolution source on idle visual-cache rebuild (first behavioral)
 
-**After Slice 1, if [`114736`](../../captures/session_20260816_114736.log) still holds.**
+**After Slice 1.** [`114736`](../../captures/session_20260816_114736.log) still holds in [`133314`](../../captures/session_20260816_133314.log).
 
 When `tryResolvePreparedWindow` succeeds, `rebuildVisualCacheIdleSlice` must not call `appendOverdubPassDisplayNotes` as a second reconstruction of that window.
 
