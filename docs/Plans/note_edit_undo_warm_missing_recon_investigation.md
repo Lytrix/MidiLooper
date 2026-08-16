@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1 device PASS** [`172608`](../../captures/session_20260816_172608.log) (`analyze` owns resolve). **C2** analyze sub-phases (device gate open). E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 closed; **B2a device PASS**; **A intermediates PASS**; **C1 device PASS** [`172608`](../../captures/session_20260816_172608.log); **C2 device PASS** [`172909`](../../captures/session_20260816_172909.log) (`overlay` owns analyze). **C3** skip unused overlay when `eligiblePairs` empty (device gate open). E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -256,7 +256,7 @@ committedBase == reconstructDisplayNotes(materialize(active edit passes))
 
 **Hard don'ts (unchanged):** do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase for B2; do not reuse overdub session pass-id stack for NOTE_EDIT E:; do not start grooming 4e / Slice 5 hydrate in this slice.
 
-### Layer C — pitch/move `GEOM_APPLY,resolve` (C1 device PASS; C2 analyze split next)
+### Layer C — pitch/move `GEOM_APPLY,resolve` (C1/C2 device PASS; C3 skip unused overlay)
 
 A no longer hides this. Outer `GEOM_APPLY,resolve` wraps **all** of `applyNoteEditChange`, including `finalReconstructAndSelect` (`selectableDisplayNotesAtEditSelect` → projection). `GEOM_APPLY,focus` is microseconds; `GEOM_APPLY,undo` is microseconds except first-kind warm.
 
@@ -279,16 +279,28 @@ A no longer hides this. Outer `GEOM_APPLY,resolve` wraps **all** of `applyNoteEd
 
 Pitch here is empty-overlap: `scope=0`, `candidates=0`, `interactions` med 0. First Pitch `GEOM_APPLY,undo` is 36 ms (kind-boundary warm); later undos are 2 µs. Crowded-lane Move (`scope=12`, `candidates=12`) analyze 73–86 ms. No `VCACHE,full` in this file.
 
-**C2 (this slice):** split `analyze` only. Keep the outer `analyze` total. Do not skip overlay / interact / constrain / build until a capture names the unused sub-phase. Do not change the resolver algorithm.
+**C2 device PASS [`172909`](../../captures/session_20260816_172909.log):** 57 resolves, every sub-phase present. `overlay` owns `analyze` (Move 99.6% med, Pitch 99.7% med). `pairs` / `interact` / `constrain` / `build` are microseconds. Do **not** skip those four. Do **not** skip `overlay` when pairs are non-empty.
 
-```text
-#CAP,<us>,GEOM_APPLY,phase,pairs,<elapsedUs>,<pairCount>,<scopeSize>
-#CAP,<us>,GEOM_APPLY,phase,overlay,<elapsedUs>,<analysisBaselineSize>,<storageBaselineSize>
-#CAP,<us>,GEOM_APPLY,phase,interact,<elapsedUs>,<interactionCount>,<pairCount>
-#CAP,<us>,GEOM_APPLY,phase,constrain,<elapsedUs>,<constrainedCount>,<leaveRestoreCount>
-#CAP,<us>,GEOM_APPLY,phase,build,<elapsedUs>,<actionCount>,0
-#CAP,<us>,GEOM_APPLY,phase,analyze,<elapsedUs>,<actionCount>,<interactionCount>
-```
+| Kind | n | pairs | **overlay** | interact | constrain | build | analyze | resolve |
+|------|---|-------|-------------|----------|-----------|-------|---------|---------|
+| Move (3) | 22 | 8 µs | **65.2 ms** | 26 µs | 103 µs | 36 µs | 65.5 ms | 78.5 ms |
+| Pitch (4) | 35 | 1 µs | **74.8 ms** | 13 µs | 105 µs | 9 µs | 75.0 ms | 84.0 ms |
+
+Pitch `pairs=0` on 32/35 ticks: overlay still **74.8 ms**. Those ticks never `find()` the overlaid map (C2a). First Pitch `undo` 49 ms (kind-boundary warm).
+
+**C2a consumer audit of `analysisBaseline`**
+
+| Consumer | What it reads | Empty `eligiblePairs` |
+|----------|---------------|------------------------|
+| `analyzeEditSessionInteractions` | `findBaselineSpan(pair.targetNoteId)` only | No reads |
+| `resolveAllConstrainedGeometry` | `projected.find(target)` only when that target has incoming interactions | Leave-restore uses **storage** baseline |
+| `determineConstrainedGeometryTargetNoteIds` | Walks **storage** baseline | No projected reads |
+| `appendOverlapTargetActions` | `projected.find(constrained.noteId)` for non-leave-restore rows | Empty constrained → no reads |
+| `appendCausingNoteActions` | Does not take the map | — |
+
+**Best skip:** `overlayAnalysisBaselineForSessionMovedOverlaps` when `eligiblePairs.empty()`; pass storage `baselineMap`. **Required:** overlay when pairs are non-empty (Move in this file always had 4–12 pairs). Do not change the overlay algorithm this slice.
+
+**C3 (this slice):** skip unused overlay on empty pairs. `GEOM_APPLY,phase,overlay` extra1 is `0` skipped / `1` ran. Do not restrict the 108-entry copy on non-empty pairs until a later pin.
 
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
@@ -554,9 +566,9 @@ Open `@ 528.009` `visual_notes=114` `session_events=235`. Pitch 526 `688–864` 
 
 This file has **no** `DNTE` lines and no session-store flatten around undo/redo. Routing and selection restore are in the log. Geometry identity is not. Do not close A on store-flat from this capture.
 
-### 6. Layer C — C2 analyze sub-phases (device gate next)
+### 6. Layer C — C3 skip unused overlay (device gate next)
 
-C1 [`172608`](../../captures/session_20260816_172608.log) pinned `analyze`. Next capture must show `pairs|overlay|interact|constrain|build` under the existing `analyze` total. Then pin which sub-phase to cut. Do not skip `analyze`.
+C2 [`172909`](../../captures/session_20260816_172909.log) pinned `overlay`. Empty-pair pitch must show `overlay` extra1 `0` and overlay elapsed microseconds. Move with pairs must still run overlay (extra1 `1`). Do not skip overlay on non-empty pairs.
 
 ### 7. Layer D — after B2
 
@@ -602,7 +614,14 @@ Reuse: **YES** — existing `GEOM_APPLY` CAP helpers. **NO** — skip setup/appl
 1. Ownership change? **NO** — same `NoteGeometryResolver::resolve`. CAP sub-phases only.
 2. State transition change? **NO** — same pitch/move/length apply contract.
 
-Reuse: **YES** — `logGeomApplyPhase`. **NO** — skip overlay/interact/constrain/build without a C2 pin.
+Reuse: **YES** — `logGeomApplyPhase`. C2 pinned `overlay`. **NO** — skip `pairs` / `interact` / `constrain` / `build`. **NO** — skip overlay when pairs are non-empty.
+
+### Layer C firmware checkpoint (C3 — skip unused overlay)
+
+1. Ownership change? **NO** — same `NoteGeometryResolver::resolve`. Empty-pair path passes storage `baselineMap` instead of building an unread copy.
+2. State transition change? **NO** — same pitch/move/length apply contract.
+
+Reuse: **YES** — skip `overlayAnalysisBaselineForSessionMovedOverlaps` when C2a proved no consumer reads it. **NO** — change overlay for non-empty pairs this slice.
 
 ## Pre-implementation review (B2a)
 

@@ -124,16 +124,21 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
                       static_cast<uint32_t>(evaluationScope.size()));
     const uint32_t overlayStartUs = micros();
 #endif
-
-    const BaselineMap analysisBaseline =
-        overlayAnalysisBaselineForSessionMovedOverlaps(transactionBaselineAfterEnsure,
-                                                       focus.movingNoteId, liveStore, channel,
-                                                       loopLength, currentStateReader,
-                                                       causingSpan, &committedDisplayNotes);
+    // C2a: interact / constrain / build only find() pair targets (or use storage for
+    // leave-restore). Empty pairs never read the overlaid map — skip the 108-entry copy.
+    BaselineMap overlaidAnalysisBaseline;
+    const BaselineMap* analysisBaselinePtr = &transactionBaselineAfterEnsure;
+    if (!eligiblePairs.empty()) {
+        overlaidAnalysisBaseline = overlayAnalysisBaselineForSessionMovedOverlaps(
+            transactionBaselineAfterEnsure, focus.movingNoteId, liveStore, channel, loopLength,
+            currentStateReader, causingSpan, &committedDisplayNotes);
+        analysisBaselinePtr = &overlaidAnalysisBaseline;
+    }
+    const BaselineMap& analysisBaseline = *analysisBaselinePtr;
 #if defined(SESSION_CAPTURE)
     logGeomApplyPhase("overlay", micros() - overlayStartUs,
                       static_cast<uint32_t>(analysisBaseline.size()),
-                      static_cast<uint32_t>(transactionBaselineAfterEnsure.size()));
+                      eligiblePairs.empty() ? 0u : 1u);
     const uint32_t interactStartUs = micros();
 #endif
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
