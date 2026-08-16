@@ -399,7 +399,11 @@ Same-tick extract (ON@2880 completed + held ON@2880) is a second collision on th
 
 Note 12 ON at 2976, OFF at storage **96** (abs 3168; first beat, described as ~192). Wrap resolution at loop wrap is correct. Same pitch is replayed at 288 / 384 / …. Overdub wrap 31.126 `wrap_synth=0`, DISP 88→87. The tail On is extracted and re-appended, so the note appears to wrap to S instead of ending at 96.
 
-Tick-0-only `tryPairWrappedTailOn` does not cover Off@96. Playback / materialize sort live capture, so `findOpenNoteOns` on ticks treats `ON@2976` as open when a later same-pitch On is still held. Pin: extract uses `capturePreview.openNoteIndices` (append-order wrap pairing). `allLaterOnsInTailOrNone` ignores completed body pairs so committed reconstruct still shows the wrap-held note. Orphan Off + two open Ons still blocks.
+Tick-0-only `tryPairWrappedTailOn` does not cover Off@96. Playback / materialize sort live capture, so `findOpenNoteOns` on ticks treats `ON@2976` as open when a later same-pitch On is still held. Pin: extract uses `capturePreview.openNoteIndices` (overdub wrap only). Do **not** change `allLaterOnsInTailOrNone` — `rebuildVisualCacheFromPasses` reconstructs record+overdub together; that pairing rewrote record spans around wrap ([`015618`](../../captures/session_20260816_015618.log)).
+
+## HITL [`015618`](../../captures/session_20260816_015618.log) — record spans around overdub wrap
+
+Overdub 21.058, wrap 29.048 `wrap_synth=0`, committed 63→87, stop 90. Changing `allLaterOnsInTailOrNone` for completed body pairs applied to merged reconstruct and stretched record-pass notes around the wrap. Reverted. Overdub extract-from-preview stays.
 
 ## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
 
