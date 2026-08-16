@@ -885,7 +885,9 @@ void test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims() {
   TEST_ASSERT_TRUE(entry.hasUndoCurrentState);
   TEST_ASSERT_EQUAL(1u, entry.focus.baselineMap.size());
   TEST_ASSERT_EQUAL(110u, entry.undoCurrentState.size());
+  TEST_ASSERT_EQUAL(0u, entry.editRows.size());
   TEST_ASSERT_EQUAL(110u, focus.baselineMap.size());
+  TEST_ASSERT_EQUAL(110u, currentState.size());
 
   std::printf("143144 UNDO_WARM host pin us: copy=%lld snap=%lld clone=%lld build=%lld\n",
               static_cast<long long>(copyUs), static_cast<long long>(snapUs),
