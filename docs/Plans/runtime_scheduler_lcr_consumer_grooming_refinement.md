@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 4c device PASS [`142548`](../../captures/session_20260816_142548.log)
+**Status:** Active — Slice 4d NOTE_EDIT idle paint consumes stale
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -203,6 +203,7 @@ LCR stays an idle consumer. Do not pull it onto MIDI or display input. Grain (2�
 | `EditManager::openNoteEditSession` | user action | own hydrate contract — see NOTE_EDIT below |
 | `DisplayManager::refreshViewportAfterOverdubStop` | MIDI-sensitive | Slice 4: keep/adopt only; idle fills |
 | Display committed resolve | paint path | Slice 4b: no `ensureVisualCacheBuilt`; last-resort gather remains |
+| NOTE_EDIT session-idle `resolveDisplayNotes` | paint path | Slice 4d: consume stale/empty; idle fills |
 | `TrackManager::prewarmSelectedDisplayVisualCache` | not PLAYING, short loop | audit; do not assume idle-slice is enough |
 | `Loop::seedRecordPassFromStore` | capture setup | separate contract |
 
@@ -506,10 +507,40 @@ None.
 ### Proceed?
 YES
 
+### Slice 4d — NOTE_EDIT session-idle paint must not call `ensureVisualCacheBuilt`
+
+**After Slice 4c.** One caller only.
+
+`DisplayManager::resolveDisplayNotes` called `ensureVisualCacheBuilt` when session type is Note and the session is not active. `sendEditSessionChange(Note)` sets the type before `openNoteEditSession`. Overdub-stop paint in that window is MIDI-sensitive.
+
+**Firmware:** assign existing `visualCache.notes` (stale or empty). Do not call `ensureVisualCacheBuilt`. Leave `getVisualNotesForSlot` (NOTE_EDIT projection / Slice 5) and `prewarmSelectedDisplayVisualCache` (no production callers). Long-loop window gather unchanged (4e).
+
+**Native:** `test_note_edit_idle_paint_consumes_stale_visual_cache` — 4-bar stale keeps notes without `ensureVisualCacheBuilt`.
+
+**Device:** NOTE_EDIT open still emits `VCACHE,full` from `openNoteEditSession` (`rebuildVisualCacheFromPasses`, Slice 5). 4d: no extra `VCACHE,full` from session-idle paint. Overdub → NOTE_EDIT stop paint must not full-rebuild.
+
+## Pre-implementation review (Slice 4d)
+
+### Ready
+- Owner is `DisplayManager::resolveDisplayNotes` session-idle branch.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| `getVisualNotesForSlot` | Leave — NOTE_EDIT projection |
+| `prewarmSelectedDisplayVisualCache` | Leave — no production callers |
+| Idle paint | Consume stale/empty |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
 ### Later (not authorized)
 
-4d. Remaining `ensureVisualCacheBuilt` callers (`getVisualNotesForSlot`, NOTE_EDIT `resolveDisplayNotes`, `prewarmSelectedDisplayVisualCache`). Do not globally delete.
 4e. Display fallback gather in `resolveDisplayNotesCommitted` / `rebuildDisplayNotesInWindow`.
+4f. `getVisualNotesForSlot` / NOTE_EDIT projection — Slice 5 hydrate, not this audit.
 5. NOTE_EDIT hydrate — own session design.
 6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
 
