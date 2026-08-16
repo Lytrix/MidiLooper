@@ -186,9 +186,11 @@ EDIT_MANAGER_IMPL_MEM void logChangeLengthCommitTrace(const char* stage, const S
     for (const DisplayNote& n : notes) {
         if (n.note == homePitch && n.startTick == homeStart) {
             logger.log(CAT_TRACK, LOG_INFO,
-                       "commitEditAction %s: M%d start=%lu end=%lu flatEvents=%u", stage,
+                       "commitEditAction %s: M%d start=%lu end=%lu noteId=%lu flatEvents=%u", stage,
                        static_cast<unsigned>(homePitch), static_cast<unsigned long>(n.startTick),
-                       static_cast<unsigned long>(n.endTick), static_cast<unsigned>(flat.size()));
+                       static_cast<unsigned long>(n.endTick),
+                       static_cast<unsigned long>(n.noteId),
+                       static_cast<unsigned>(flat.size()));
             return;
         }
     }
@@ -204,9 +206,11 @@ EDIT_MANAGER_IMPL_MEM void logChangeLengthCommitTrace(const char* stage, const M
     for (const DisplayNote& n : notes) {
         if (n.note == homePitch && n.startTick == homeStart) {
             logger.log(CAT_TRACK, LOG_INFO,
-                       "commitEditAction %s: M%d start=%lu end=%lu flatEvents=%u", stage,
+                       "commitEditAction %s: M%d start=%lu end=%lu noteId=%lu flatEvents=%u", stage,
                        static_cast<unsigned>(homePitch), static_cast<unsigned long>(n.startTick),
-                       static_cast<unsigned long>(n.endTick), static_cast<unsigned>(flat.size()));
+                       static_cast<unsigned long>(n.endTick),
+                       static_cast<unsigned long>(n.noteId),
+                       static_cast<unsigned>(flat.size()));
             return;
         }
     }

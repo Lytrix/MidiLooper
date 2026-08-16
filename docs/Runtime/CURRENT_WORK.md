@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer C4 device PASS)
+Last updated: 2026-08-16 (NOTE_EDIT persist identity Stage 1)
 
 ---
 
@@ -13,7 +13,9 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer C4 device PASS)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** **C4 device PASS** [`173806`](../../captures/session_20260816_173806.log) — crowded-lane overlay extra0 **12** (not 108); overlay 123→**16 ms**; resolve 142→**34 ms**. Empty-pair skip holds. Do not skip `currentState->clone()`. Do not start B2b / Layer D. Further overlay/reconstruct cuts need a new pin.
+**Now:** **Stage 1 persist identity** [`note_edit_persist_noteid_identity_bugfix.md`](../Plans/note_edit_persist_noteid_identity_bugfix.md) / [DEC-039](../DECISION_LOG.md#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary). Commit-boundary reconcile only. Stage 2 parked. Do not patch `applyNoteEditPass`. Do not start C5 / B2b / Layer D.
+
+**Next Layer C (parked C5):** `OverlapCandidateLookup::appendNotesForIds` in overlay only — not overdub source-view / hold ids. Not reconstruct. Not empty-pair resolve.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
