@@ -3,6 +3,8 @@
 
 #include <unity.h>
 
+#include <chrono>
+#include <cstdio>
 #include <utility>
 
 #include "../../src/Logger.cpp"
@@ -816,6 +818,80 @@ void test_session_undo_entry_trims_baseline_map_to_overlap_closure() {
   TEST_ASSERT_EQUAL(40u, focus.baselineMap.size());
 }
 
+void test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims() {
+  constexpr uint8_t kCh = 5;
+  constexpr uint32_t kLoopLen = 3072;
+  constexpr size_t kNotes = 110;
+  constexpr size_t kExtraCc = 9;
+
+  MidiEventVec sessionFlat;
+  sessionFlat.reserve(kNotes * 2 + kExtraCc);
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 1;
+  focus.commitBaseline = {60, 100, 10, 58};
+  focus.last = focus.commitBaseline;
+  for (size_t i = 0; i < kNotes; ++i) {
+    const NoteId id = static_cast<NoteId>(i + 1);
+    const uint32_t start = static_cast<uint32_t>(10 + i * 24);
+    const uint32_t end = start + 48;
+    const uint8_t pitch = static_cast<uint8_t>(24 + (i % 48));
+    MidiEvent on = MidiEvent::NoteOn(start, kCh, pitch, 100);
+    on.noteId = id;
+    MidiEvent off = MidiEvent::NoteOff(end, kCh, pitch, 0);
+    off.noteId = id;
+    sessionFlat.push_back(on);
+    sessionFlat.push_back(off);
+    focus.baselineMap[id] = {pitch, 100, start, end};
+  }
+  for (size_t i = 0; i < kExtraCc; ++i) {
+    sessionFlat.push_back(MidiEvent::ControlChange(static_cast<uint32_t>(i), kCh, 1, 0));
+  }
+  TEST_ASSERT_EQUAL(229u, sessionFlat.size());
+  TEST_ASSERT_EQUAL(110u, focus.baselineMap.size());
+
+  const NoteEditCurrentState currentState =
+      NoteEditCurrentState::buildFromSessionStore(sessionFlat, kCh);
+  TEST_ASSERT_EQUAL(110u, currentState.size());
+
+  const auto nowUs = []() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  };
+
+  const int64_t copyStart = nowUs();
+  const NoteEditFocus focusCopy = focus;
+  const int64_t copyUs = nowUs() - copyStart;
+  TEST_ASSERT_EQUAL(110u, focusCopy.baselineMap.size());
+
+  const int64_t snapStart = nowUs();
+  const NoteEditFocus snap = snapshotFocusForSessionUndo(focus);
+  const int64_t snapUs = nowUs() - snapStart;
+  TEST_ASSERT_EQUAL(1u, snap.baselineMap.size());
+  TEST_ASSERT_TRUE(snap.baselineMap.count(1) > 0);
+  TEST_ASSERT_EQUAL(110u, focus.baselineMap.size());
+
+  const int64_t cloneStart = nowUs();
+  const NoteEditCurrentState cloned = currentState.clone();
+  const int64_t cloneUs = nowUs() - cloneStart;
+  TEST_ASSERT_EQUAL(110u, cloned.size());
+
+  const int64_t buildStart = nowUs();
+  const SessionUndoEntry entry =
+      buildSessionUndoEntry(focus, EditorSelection{}, sessionFlat, kCh, kLoopLen,
+                            EditPassIdList{}, &currentState);
+  const int64_t buildUs = nowUs() - buildStart;
+  TEST_ASSERT_TRUE(entry.hasUndoCurrentState);
+  TEST_ASSERT_EQUAL(1u, entry.focus.baselineMap.size());
+  TEST_ASSERT_EQUAL(110u, entry.undoCurrentState.size());
+  TEST_ASSERT_EQUAL(110u, focus.baselineMap.size());
+
+  std::printf("143144 UNDO_WARM host pin us: copy=%lld snap=%lld clone=%lld build=%lld\n",
+              static_cast<long long>(copyUs), static_cast<long long>(snapUs),
+              static_cast<long long>(cloneUs), static_cast<long long>(buildUs));
+}
+
 void test_current_state_undo_restore_parity_with_clone() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1026,6 +1102,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_kind_boundary_reselect_move_pushes_again);
   RUN_TEST(test_kind_boundary_select_nav_no_push);
   RUN_TEST(test_session_undo_entry_trims_baseline_map_to_overlap_closure);
+  RUN_TEST(test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims);
   RUN_TEST(test_overdub_survives_exit_bake_after_note_range_commit);
   RUN_TEST(test_stale_record_only_session_bake_must_not_delete_overdub);
   RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
