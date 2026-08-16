@@ -226,7 +226,7 @@ Rematerialize on the NOTE_EDIT fader path:
 - `NoteGeometryResolver::resolve` stamps offs and pairs from `editAwareMidiEvents()` (`readLiveLinearSpan`) every step.
 - `openNoteEditSession` still calls `loop.rematerializeEditView` once at open (keep; session-store apply, DEC-029).
 
-`UNDO_WARM` is a separate measured cost. Do not fold it into Stage 8/9.
+`UNDO_WARM` is a separate measured cost. Do not fold it into Stage 8/9. Active investigation: [`note_edit_undo_warm_missing_recon_investigation.md`](note_edit_undo_warm_missing_recon_investigation.md).
 
 ### Stage 8 — Overlap targets use display spans ✅ shipped
 
