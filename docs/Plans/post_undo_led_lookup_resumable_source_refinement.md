@@ -175,3 +175,5 @@ Derived content requested on a MIDI-sensitive path, not where it is owned:
 ```
 
 Keep this a `MidiLedManager` lookup cleanup. Do not fold it into LCR or overdub architecture.
+
+Successor inventory (no firmware): [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](runtime_scheduler_lcr_consumer_grooming_refinement.md).

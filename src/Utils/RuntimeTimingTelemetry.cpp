@@ -45,6 +45,10 @@ struct State {
   Accumulator notepair;
   Accumulator idleMaint;
   Accumulator loadFrame;
+  Accumulator displayFrame;
+  Accumulator loadJob;
+  Accumulator firstCommit;
+  Accumulator bootCommit;
   Accumulator persistSave;
   uint32_t usbNestedCaptureUs = 0;
   uint32_t usbNestedThruUs = 0;
@@ -93,6 +97,10 @@ void clearWindow(State& s) {
   s.notepair = Accumulator{};
   s.idleMaint = Accumulator{};
   s.loadFrame = Accumulator{};
+  s.displayFrame = Accumulator{};
+  s.loadJob = Accumulator{};
+  s.firstCommit = Accumulator{};
+  s.bootCommit = Accumulator{};
   s.persistSave = Accumulator{};
   s.clockPulses = 0;
 }
@@ -121,6 +129,13 @@ void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
   DebugSessionCapture::runtimeTimingTelemetry("notepair", s.notepair.maxUs, s.notepair.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("idle_maint", s.idleMaint.maxUs, s.idleMaint.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("display_frame", s.displayFrame.maxUs,
+                                             s.displayFrame.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("load_job", s.loadJob.maxUs, s.loadJob.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("first_commit", s.firstCommit.maxUs,
+                                             s.firstCommit.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("boot_commit", s.bootCommit.maxUs,
+                                             s.bootCommit.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("persist_save", s.persistSave.maxUs,
                                              s.persistSave.overCount);
   uint32_t pulsesPerSecond = 0;
@@ -302,6 +317,22 @@ void noteLoadFrame(uint32_t durationUs) {
   recordSample(state().loadFrame, durationUs);
 }
 
+void noteDisplayFrame(uint32_t durationUs) {
+  recordSample(state().displayFrame, durationUs);
+}
+
+void noteLoadJob(uint32_t durationUs) {
+  recordSample(state().loadJob, durationUs);
+}
+
+void noteFirstCommit(uint32_t durationUs) {
+  recordSample(state().firstCommit, durationUs);
+}
+
+void noteBootCommit(uint32_t durationUs) {
+  recordSample(state().bootCommit, durationUs);
+}
+
 void notePersistSave(uint32_t durationUs) {
   recordSample(state().persistSave, durationUs);
 }
@@ -421,6 +452,14 @@ Snapshot peek(uint32_t nowUs) {
   out.idleMaintOverCount = s.idleMaint.overCount;
   out.loadFrameMaxUs = s.loadFrame.maxUs;
   out.loadFrameOverCount = s.loadFrame.overCount;
+  out.displayFrameMaxUs = s.displayFrame.maxUs;
+  out.displayFrameOverCount = s.displayFrame.overCount;
+  out.loadJobMaxUs = s.loadJob.maxUs;
+  out.loadJobOverCount = s.loadJob.overCount;
+  out.firstCommitMaxUs = s.firstCommit.maxUs;
+  out.firstCommitOverCount = s.firstCommit.overCount;
+  out.bootCommitMaxUs = s.bootCommit.maxUs;
+  out.bootCommitOverCount = s.bootCommit.overCount;
   out.persistSaveMaxUs = s.persistSave.maxUs;
   out.persistSaveOverCount = s.persistSave.overCount;
   out.clockPulses = s.clockPulses;

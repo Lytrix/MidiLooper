@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (LED lookup Stage 1 PASS 114736)
+Last updated: 2026-08-16 (LCR consumer grooming Slice 1 landed)
 
 ---
 
@@ -21,6 +21,8 @@ Last updated: 2026-08-16 (LED lookup Stage 1 PASS 114736)
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
 **Now:** LED lookup Stage 1 **PASS** [`114736`](../../captures/session_20260816_114736.log) — [`post_undo_led_lookup_resumable_source_refinement.md`](../Plans/post_undo_led_lookup_resumable_source_refinement.md). No LED gather rem; BAR→LED 3.7 ms; PLAYING `clockrate` 47–48. Remaining PLAYING `midi_gap` 110–127 ms is idle/load, not lookup. Stage 2 **rejected**. Do **not** re-arm drain. Do **not** start 6.3.
+
+**Scheduler prep:** [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](../Plans/runtime_scheduler_lcr_consumer_grooming_refinement.md). **Slice 1 landed** — `load_frame` children `display_frame` / `load_job` / `first_commit` / `boot_commit` (measurement only; parent rem kept). Device gate: one capture that attributes PLAYING 59–74 ms and boot 802 ms. **Slice 2** waits on that capture. Do not globally delete `ensureVisualCacheBuilt`. Do not fold NOTE_EDIT hydrate into Slice 2.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 

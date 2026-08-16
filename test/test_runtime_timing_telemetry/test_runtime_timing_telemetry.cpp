@@ -186,6 +186,10 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.notepairMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.idleMaintMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.displayFrameMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadJobMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.firstCommitMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.bootCommitMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.persistSaveMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
 }
@@ -194,6 +198,10 @@ void test_loop_remainder_spans_accumulate_independently() {
   RuntimeTimingTelemetry::noteIdleMaint(800);
   RuntimeTimingTelemetry::noteIdleMaint(1200);
   RuntimeTimingTelemetry::noteLoadFrame(3981504);
+  RuntimeTimingTelemetry::noteDisplayFrame(64000);
+  RuntimeTimingTelemetry::noteLoadJob(8000);
+  RuntimeTimingTelemetry::noteFirstCommit(12000);
+  RuntimeTimingTelemetry::noteBootCommit(801000);
   RuntimeTimingTelemetry::notePersistSave(80);
   RuntimeTimingTelemetry::notePersistSave(40);
 
@@ -202,6 +210,14 @@ void test_loop_remainder_spans_accumulate_independently() {
   TEST_ASSERT_EQUAL_UINT32(0, snap.idleMaintOverCount);
   TEST_ASSERT_EQUAL_UINT32(3981504, snap.loadFrameMaxUs);
   TEST_ASSERT_EQUAL_UINT32(1, snap.loadFrameOverCount);
+  TEST_ASSERT_EQUAL_UINT32(64000, snap.displayFrameMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.displayFrameOverCount);
+  TEST_ASSERT_EQUAL_UINT32(8000, snap.loadJobMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.loadJobOverCount);
+  TEST_ASSERT_EQUAL_UINT32(12000, snap.firstCommitMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.firstCommitOverCount);
+  TEST_ASSERT_EQUAL_UINT32(801000, snap.bootCommitMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.bootCommitOverCount);
   TEST_ASSERT_EQUAL_UINT32(80, snap.persistSaveMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.persistSaveOverCount);
 }

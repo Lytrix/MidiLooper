@@ -1,0 +1,336 @@
+# Runtime scheduler — LCR consumer grooming
+
+**Status:** Active — Slice 1 telemetry landed (device attribution open)  
+**Date:** 2026-08-16  
+**Kind:** refinement  
+**Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS)  
+**Parent:** [`post_undo_led_lookup_resumable_source_refinement.md`](post_undo_led_lookup_resumable_source_refinement.md)  
+**Scheduling contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md)  
+**Owner-boundary roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (R1C remaining-owner inventory)  
+**LCR architecture:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
+**Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) (do not wire resolution onto MIDI/display until three gates); DEC-016 derived representations
+
+LED Stage 1 is the architectural precedent. Do not reopen it unless Stage 2 is demonstrated necessary.
+
+This file is **not** a license to implement the whole inventory. Authorized slices are listed under [Approved slices](#approved-slices). Later rows stay investigation until a slice is opened.
+
+## Consumer rule
+
+A MIDI-sensitive consumer must never turn “derived content is dirty/empty” into “rebuild derived content now.”
+
+```text
+producer / idle owner
+        ↓
+prepare notes incrementally
+        ↓
+consumer
+        ↓
+read whatever prepared/stale notes exist
+        ↓
+never synchronously flatten because they are dirty
+```
+
+LED Stage 1 demonstrated this: after the BAR gather left, `midi_led_*` rem disappeared and the remaining PLAYING gaps became `idle_maint` + `load_frame`. That is the next class of work, not the same gather moved.
+
+DEC-037 still forbids calling `tryResolvePreparedWindow` / `resolveWindow` / `resolveState` from `handleMidiInput`, BAR `updateLeds`, `startOverdubbing`, `stopOverdubbing`, or `commitLoadLoopJobPublish`. Idle may consume prepared LCR. MIDI-sensitive and paint-critical paths may not.
+
+Long work stays in an existing owner that can stop and resume across `loop()` turns. No new Session, no new Manager.
+
+## Derived-work stalkers
+
+Three distinct classes. Fixes are not interchangeable.
+
+```text
+A. Flatten-on-demand
+   consumer asks for dirty content
+       → full materialize/gather
+
+B. Non-resumable derived work
+   legitimate preparation
+       → happens in one loop() turn
+
+C. Duplicate derivation
+   prepared/derived content already exists
+       → another owner reconstructs the same content anyway
+```
+
+| Stalker | Correct response |
+|---------|------------------|
+| **A** Flatten-on-demand | Consume stale/prepared representation |
+| **B** Non-resumable work | Make the existing owner resumable |
+| **C** Duplicate derivation | Remove the second derivation |
+
+LED Stage 1 eliminated **A** on the BAR path. `appendOverdubPassDisplayNotes` after a prepared LCR window is **C**. Bundled `load_frame` / OLED paint is currently **B** (the bundle hides which sub-operation owns the µs).
+
+Do not turn every new timing line into a bespoke optimization. Name the stalker first.
+
+## What [`114736`](../../captures/session_20260816_114736.log) shows
+
+Rem one-shots (≥50 ms):
+
+| Span | Count | Range | Owner in this capture |
+|------|------:|-------|------------------------|
+| `idle_maint` | 67 | 50–122 ms | `Track::processDeferredIdleMaintenance` → `Loop::rebuildVisualCacheIdleSlice` |
+| `load_frame` | 17 | 59–802 ms | `runDeferredLoadAndDisplayFrame` |
+
+`persist_save` max is 10 ms. No `midi_led_*`, no `VCACHE,full`, no `DIAG,lcr,6a`. The only LCR line is `lcr,skip,restore` at 6.303 s, so this session never had a prepared LCR window. Idle used `gatherCommittedEventsInWindow` + `reconstructDisplayNotes`.
+
+| Window | `midi_gap` | Composition |
+|--------|------------|-------------|
+| Boot 10.554 s | 835 ms | `load_frame` 802 ms + `idle_maint` 122 ms |
+| PLAYING 5 s | 110–127 ms | `idle_maint` 46–55 ms + `load_frame` 60–74 ms |
+
+Every PLAYING `load_frame` rem sits immediately after a `DISP`. At 69.413 s, `DFRAME` paint is 63.3 ms and `load_frame` is 64.1 ms. That is OLED paint, not LoadLoopJob hydrate. Boot 802 ms is a different class ([`032803`](../../captures/session_20260816_032803.log) 915 ms).
+
+Treat those as two measurements until child spans prove otherwise.
+
+## Already on the consumer-rule path
+
+| Consumer | Source today | Resume | Stalker closed |
+|----------|--------------|--------|----------------|
+| LED presence | `visualCache.notes` if non-empty (Stage 1) | idle `slice_clean` | **A** on BAR |
+| Display when cache covers the window | filter `visualCache.notes` | idle slice | **A** when covered |
+| Overdub entry | prepared LCR window, else copy `visualCache.notes` | consume-only | **A** on entry |
+| Idle visual cache | `tryResolvePreparedWindow`, else window gather | 2–4 bars/slice | sliced; **C** still open |
+| LoadLoopJob read/parse | SD bytes / parse state | `DeferredJobScheduler::runFrame` | read/parse already **B**-sliced |
+| Persist | work-queue item | budgeted | — |
+
+## Inventory (not an implementation queue)
+
+### `runDeferredLoadAndDisplayFrame` — bundle, not one owner
+
+`load_frame` times the whole function. Child work:
+
+```text
+load_frame
+├── display_frame
+│   └── DisplayManager::update()
+├── load_job
+│   └── DeferredJobScheduler::runFrame()
+├── first_commit
+│   └── Track::ensurePlaybackMergedEventsForSlot()
+└── boot_commit
+    └── finishBootSetup / USB host
+```
+
+| Mode | Bundled rem | Likely child (unproven until split) |
+|------|-------------|-------------------------------------|
+| PLAYING | 59–74 ms | `display_frame` — OLED paint of 450–1677 notes |
+| Boot | 802 ms | `boot_commit` + `load_job` commit + first paint |
+
+Read/parse is already resumable. These pieces are not:
+
+- **`commitLoadLoopJobPublish`** — one turn: `applySnapshotToLoop` → `adoptPersistedSnapshot` → `markDisplayCachesStale` → `TrackUndo::rebuildSlotFromLoopContent`. No note gather, but it cannot yield (**B**).
+- **First-commit `Track::ensurePlaybackMergedEventsForSlot`** — `ensurePlaybackMergedMidiEventsBuilt` still `gatherCommittedEvents*` (full loop if ≤16 bars, 2-bar window if longer). That is 6.3, parked.
+- **`DisplayManager::update`** — already reads `visualCache.notes` when covered. PLAYING 60–74 ms is paint, not flatten (**B**). Do not start optimizing `LoadLoopJob` from a 70 ms `load_frame` line.
+
+**Next measurement:** emit the four child spans. Zero behavior change. Keep parent `load_frame` until one capture proves the children.
+
+### `rebuildVisualCacheIdleSlice` + `appendOverdubPassDisplayNotes` — duplicate derivation
+
+Idle is already the resume owner. In [`114736`](../../captures/session_20260816_114736.log) it is 50–80 ms (122 ms at boot) because LCR was not prepared.
+
+When a window **is** prepared, today’s path is:
+
+```text
+tryResolvePreparedWindow
+        ↓
+reconstructDisplayNotes
+        ↓
+appendOverdubPassDisplayNotes
+        ↓
+walk every active overdub pass
+        ↓
+reconstruct again
+```
+
+`Loop::appendOverdubPassDisplayNotes` copies chunks, applies all edit rows, and reconstructs on every slice even after LCR supplied the window. That is **C**.
+
+Desired path:
+
+```text
+rebuildVisualCacheIdleSlice
+    ├── prepared LCR window? → resolve notes → visualCache
+    └── no → existing window gather
+
+appendOverdubPassDisplayNotes
+    └── not a second reconstruction of the same window
+```
+
+**Invariant (first behavioral slice):** for a prepared window, `rebuildVisualCacheIdleSlice` has exactly one content-resolution source. It must not resolve the window through LCR and then reconstruct it again by walking overdub passes.
+
+LCR stays an idle consumer. Do not pull it onto MIDI or display input. Grain (2–4 bars) is a later **B** bound, not this slice.
+
+### `ensureVisualCacheBuilt` — caller-by-caller, not a global delete
+
+`gatherCommittedEvents` + full reconstruct. Callers do not share one latency contract.
+
+| Caller | Context | Desired behavior |
+|--------|---------|------------------|
+| PLAYING | MIDI-sensitive | **never** synchronous rebuild |
+| STOPPED idle | not MIDI-sensitive | may stay synchronous if a capture proves it harmless |
+| `EditManager::openNoteEditSession` | user action | own hydrate contract — see NOTE_EDIT below |
+| `DisplayManager::refreshViewportAfterOverdubStop` | MIDI-sensitive | must not hydrate synchronously |
+| Display committed resolve | paint path | stale/empty rather than gather |
+| `TrackManager::prewarmSelectedDisplayVisualCache` | not PLAYING, short loop | audit; do not assume idle-slice is enough |
+| `Loop::seedRecordPassFromStore` | capture setup | separate contract |
+
+Direction is mark-stale → existing resumable owner → slices. Audit each caller before replacing it. Do not delete `ensureVisualCacheBuilt` in one pass.
+
+### Display fallback gather — flatten-on-demand on paint
+
+`DisplayManager::resolveWindowedDisplayNotes` filters `visualCache.notes` when the window is covered. If not, `rebuildDisplayNotesInWindow` still `gatherCommittedEventsInWindow*` + reconstruct on the paint path (**A**).
+
+`resolveCommittedDisplayNotes` has a last-resort full `gatherCommittedEvents` + reconstruct when the cache is dirty/empty and the window path cannot run (**A**).
+
+Same consumer rule as LED: if notes are empty, paint stale/empty and let idle fill. Not the first slice.
+
+### NOTE_EDIT hydrate — separate session design
+
+`EditManager::openNoteEditSession` builds three representations:
+
+```text
+openNoteEditSession
+    → rebuildVisualCacheFromPasses
+    → rematerializeEditView
+    → midiEvents()
+        → ensureEffectiveEventStoreCurrent
+        → materializeToEventVector
+```
+
+Later, `EditManager::materializedLoopEventsForNoteEditFocus` materializes again on revision change. Session undo rematerializes on each undo.
+
+Do **not** fold this into the idle-slice or `ensureVisualCacheBuilt` audit. NOTE_EDIT needs authoritative session content, not display stale-while-revalidate.
+
+Later design (not this file’s next slice):
+
+```text
+NOTE_EDIT open
+    ↓
+create edit-hydrate session
+    ↓
+consume prepared content where possible
+    ↓
+resume across loop()
+    ↓
+editable session becomes ready
+```
+
+Not `resolveWindow` on the button path. Not in [`114736`](../../captures/session_20260816_114736.log).
+
+### `shouldRestoreCommittedOverlapOnOverdubStop` — investigate before replace
+
+`passes.materializeToEventVector` of the whole loop to answer “is this pitch sounding” on the overdub-stop path (**A** or **B**, stop-path). Overdub source view and `visualCache.notes` already hold a note list.
+
+The question is not “can I find the pitch in `visualCache.notes`?” It is: **does the existing source-view representation contain precisely the temporal/sounding information this predicate needs at overdub stop?**
+
+If yes, replace the flatten with a note-list read. That removes a synchronous whole-loop derivation without a new resumable subsystem. If no, leave it and record the missing field. Investigate after the idle **C** slice, before any global `ensureVisualCacheBuilt` change.
+
+### Playback merge — parked 6.3
+
+`ensurePlaybackMergedMidiEventsBuilt` still gathers (2-bar window on long loops, full gather on short). Called from clock/slot launch and from load-frame first-commit prewarm. Do not start this.
+
+### Cold / idle-only leftovers
+
+| Function | Flatten | Already deferred? |
+|----------|---------|-------------------|
+| `Track::processDeferredStoredMidiVerification` | first slice `mergeActiveCapturePasses`, then reconstruct for `DNTE` | Yes — idle, one-shot per boot |
+| `Loop::liveEventCount` | full `materializeToEventVector` for a count | Only if something calls `Track::getMidiEventCount` |
+| LCR device gate | own sliced build | STOPPED only; skipped during PLAYING |
+
+Do not fold these into the PLAYING scheduler pass.
+
+## Approved slices
+
+### Slice 0 — LED Stage 1 (done)
+
+Precedent for the consumer rule. Stage 2 rejected. Do not touch `MidiLedManager` lookup unless a later capture shows one-bar LED lag that product rejects.
+
+### Slice 1 — split `load_frame` telemetry (landed, device open)
+
+**Measurement only. Zero behavior change.**
+
+Child `loop_rem` + 5 s windows from `runDeferredLoadAndDisplayFrame`. Parent `load_frame` kept.
+
+| Span | Owner |
+|------|--------|
+| `display_frame` | cadence `DisplayManager::update()` (not the boot paint) |
+| `load_job` | `DeferredJobScheduler::runFrame()` |
+| `first_commit` | `Track::ensurePlaybackMergedEventsForSlot()` |
+| `boot_commit` | `finishBootSetup` / USB host / boot OLED |
+
+Device gate: one capture attributes PLAYING 59–74 ms and boot 802 ms to children. Do not start a `LoadLoopJob` or OLED-paint firmware change from an unsplit `load_frame` line.
+
+## Pre-implementation review (Slice 1)
+
+### Ready
+- Owner is `runDeferredLoadAndDisplayFrame`. Parent rem + 5 s window already exist.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Behavior | Zero change — timers only |
+| Parent rem | Keep `load_frame` |
+| Boot OLED `update()` | Inside `boot_commit`, not a second `display_frame` |
+| Undo/autosave/reclaim | Unattributed inside parent |
+| 5 s windows | Child maxes so work under 50 ms still shows |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
+### Slice 2 — one resolution source on idle visual-cache rebuild (first behavioral)
+
+**After Slice 1, if [`114736`](../../captures/session_20260816_114736.log) still holds.**
+
+When `tryResolvePreparedWindow` succeeds, `rebuildVisualCacheIdleSlice` must not call `appendOverdubPassDisplayNotes` as a second reconstruction of that window.
+
+Owner: `Loop::rebuildVisualCacheIdleSlice`. LCR remains idle-only. Native fixture: prepared window notes match today’s LCR+append result (or document the semantic delta before coding). Device: no `VCACHE` note-loss vs a same-loop capture that used the append path.
+
+### Later (not authorized)
+
+3. Investigate `shouldRestoreCommittedOverlapOnOverdubStop` — semantic dependency, then replace if the source-view list is sufficient.
+4. Audit `ensureVisualCacheBuilt` callers one at a time. Do not globally delete.
+5. NOTE_EDIT hydrate — own session design.
+6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
+
+Each firmware slice: one owner, one invariant, one stalker class, native test, `pio test -e native`. Do not bundle.
+
+## Architecture checkpoint (per slice, before firmware)
+
+1. Ownership change? Extending the named owner: **NO**. New Session / Manager / LCR call on a transport or BAR path: **YES** — stop.
+2. State transition change? Telemetry-only, or removing a second idle reconstruct: **NO**. Deferring NOTE_EDIT open or overdub stop until hydrate finishes: **YES** — design session.
+
+Reuse: extend the existing owner. Do not add `tryResolvePreparedWindow` on MIDI-sensitive paths.
+
+## Does not start
+
+- 6.3 long-loop playback gather
+- Re-arm PLAYING drain
+- Interval reservation
+- `tryResolvePreparedWindow` from `MidiLedManager`, `handleMidiInput`, `commitLoadLoopJobPublish`, `startOverdubbing`, or `stopOverdubbing`
+- Deleting `materializeToEventVector`
+- Global deletion of `ensureVisualCacheBuilt`
+- Folding NOTE_EDIT open into Slice 2 or the visual-cache audit
+- Visual-cache idle grain change (2–4 bars) until the idle notes source is single
+- LoopPersist CRC
+- Optimizing `LoadLoopJob` from an unsplit PLAYING `load_frame` line
+
+## Consumer-path pattern
+
+```text
+                    derived content
+                         │
+          ┌──────────────┼──────────────┐
+          ↓              ↓              ↓
+       display          LED          overdub
+          │              │              │
+       idle slice     BAR path       prepared consume
+          │              │              │
+       bounded        Stage 1        bounded/
+       rebuild        no gather      prepared
+```
+
+LED Stage 1 is the template: the consumer reads notes that already exist; resume stays on `rebuildVisualCacheIdleSlice`. `load_frame` is the next named span, but it is a bundle — split the timer before changing hydrate or paint.
