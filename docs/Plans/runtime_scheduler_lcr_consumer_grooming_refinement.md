@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 4b device PASS [`142100`](../../captures/session_20260816_142100.log)  
+**Status:** Active — Slice 4c STOPPED idle always slices
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -199,7 +199,7 @@ LCR stays an idle consumer. Do not pull it onto MIDI or display input. Grain (2�
 | Caller | Context | Desired behavior |
 |--------|---------|------------------|
 | PLAYING | MIDI-sensitive | **never** synchronous rebuild |
-| STOPPED idle | not MIDI-sensitive | may stay synchronous if a capture proves it harmless |
+| STOPPED idle | not MIDI-sensitive | Slice 4c: always `rebuildVisualCacheIdleSlice` |
 | `EditManager::openNoteEditSession` | user action | own hydrate contract — see NOTE_EDIT below |
 | `DisplayManager::refreshViewportAfterOverdubStop` | MIDI-sensitive | Slice 4: keep/adopt only; idle fills |
 | Display committed resolve | paint path | Slice 4b: no `ensureVisualCacheBuilt`; last-resort gather remains |
@@ -476,10 +476,40 @@ None.
 ### Proceed?
 YES
 
+### Slice 4c — STOPPED idle must not call `ensureVisualCacheBuilt`
+
+**After Slice 4b.** One caller only.
+
+`Track::processDeferredIdleMaintenance` called `ensureVisualCacheBuilt` on short loops when not under save/hydrate pressure. Long loops and heavy defer already used `rebuildVisualCacheIdleSlice`. [`142100`](../../captures/session_20260816_142100.log) STOPPED undos already `slice_clean` under save pressure.
+
+**Firmware:** STOPPED dirty visual cache always calls `rebuildVisualCacheIdleSlice` (2 bars if deferred save, else 4). Do not call `ensureVisualCacheBuilt`. Leave `getVisualNotesForSlot`, NOTE_EDIT `resolveDisplayNotes`, and `prewarmSelectedDisplayVisualCache`.
+
+**Native:** `test_short_loop_idle_slice_cleans_without_full_rebuild` — 4-bar stale → one 4-bar slice → clean, note kept.
+
+**Device:** STOPPED short-loop after undo/stop must not emit `VCACHE,full` (boot seed/load may still).
+
+## Pre-implementation review (Slice 4c)
+
+### Ready
+- Owner is `Track::processDeferredIdleMaintenance`. Slice function already exists.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Short-loop STOPPED | Always slice |
+| Grain | Unchanged (2 / 4 bars) |
+| NOTE_EDIT / `getVisualNotesForSlot` | Out of scope |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
 ### Later (not authorized)
 
-4c. Remaining `ensureVisualCacheBuilt` callers (`getVisualNotesForSlot`, STOPPED idle, `prewarmSelectedDisplayVisualCache`). Do not globally delete.
-4d. Display fallback gather in `resolveDisplayNotesCommitted` / `rebuildDisplayNotesInWindow`.
+4d. Remaining `ensureVisualCacheBuilt` callers (`getVisualNotesForSlot`, NOTE_EDIT `resolveDisplayNotes`, `prewarmSelectedDisplayVisualCache`). Do not globally delete.
+4e. Display fallback gather in `resolveDisplayNotesCommitted` / `rebuildDisplayNotesInWindow`.
 5. NOTE_EDIT hydrate — own session design.
 6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
 
