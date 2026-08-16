@@ -34,7 +34,9 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
   if (endInPlaying) {
     const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t stateStartUs = micros();
-    sendAllNotesOff();
+    silenceTrackMidiOutput();
+    playbackRuntime.clearAllLedgers();
+    pendingNotes.clear();
     resetPlaybackState(currentTick);
     setState(TRACK_PLAYING);
     logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
@@ -159,8 +161,11 @@ void Track::stopOverdubbing() {
                       commitResultLabel(sideEffectResult));
   const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateStartUs = micros();
-  // Wire-only silence before resuming loop playback; stored capture is unchanged.
-  sendAllNotesOff();
+  // Silence this track only, then resume loop playback. Do not CC123 every channel —
+  // that mutes other playing tracks. Transport stop still uses sendAllNotesOff().
+  silenceTrackMidiOutput();
+  playbackRuntime.clearAllLedgers();
+  pendingNotes.clear();
   resetPlaybackState(currentTick);
   setState(TRACK_PLAYING);
   logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
