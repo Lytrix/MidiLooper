@@ -87,7 +87,15 @@ Apply is not the owner when IDs match. Device 23.445 replay matching take-only i
 
 Not bake (replay already wrong). Not the reload call itself (same `materializeToEventVector`).
 
-**Next (not started):** pin why `focus.movingNoteId` / commit `targetNoteId` is 280 when the capture NoteOn at 888 is not 280. Start at `noteEditFocusApplyDisplayNote` and current-state upsert from the selected display note. Do not patch `applyNoteEditPass` or the apply-owned `ChangePitch` erase.
+**ID source (native landed):** `openNoteEditSession` rematerializes into `editSession.store`, then `assignMissingNoteIdsInStore(editSession.store)` / `assignMissingNoteIds` on event caches. Those IDs live on the session copy. `commitEditAction` rematerializes from capture chunks via `LoopPasses::materializeToEventVector` — chunks never received the assigned id.
+
+`test_145518_open_assigned_note_id_missing_from_pass_rematerialize`: unidentified capture note at 888–1032 pitch 24; open assign yields 280 on the session store; pass rematerialize still has `kInvalidNoteId`; `findNoteOnById(280)` is -1; NoteRange+Pitch targeting 280 leaves **M24@888**.
+
+`assignMissingNoteIdsInStore` does not log. The vector overloads log `assignMissingNoteIds: assigned …` — [`145518`](../../captures/session_20260816_145518.log) has none, which matches assign-on-store-only.
+
+`noteEditFocusApplyDisplayNote` copies `liveSelected.noteId`. That id is 280 because current state was built from the assigned session store. Not a focus-rebuild bug.
+
+**Next firmware:** not started. Writing assigned ids back into capture chunks, or applying commit rows onto the session store instead of pass rematerialize, changes who owns NoteId identity — answer the architecture checkpoint before coding. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
 
 Sibling index (open, different fixture): RC8 in [`note_edit_overlap_projection_followup.md`](note_edit_overlap_projection_followup.md) (`M65@369` / `M65@1050` in [`212810`](../../captures/session_20260806_212810.log)). Do not merge fixtures. Do not start RC8 pairing until 143144 shows the committed **new** span absent from post-exit `visualCache.notes`.
 
@@ -111,7 +119,7 @@ STOPPED short-loop `Track::getVisualNotesForSlot` still calls `ensureVisualCache
 | A run | `EditManager::processKindBoundaryUndoWarm` | [`NoteEditSessionUndo.cpp`](../../src/EditManager/NoteEditSessionUndo.cpp) |
 | A cost | `buildSessionUndoEntry` / `snapshotFocusForSessionUndo` | [`NoteEditSessionUndoStack.cpp`](../../src/EditManager/NoteEditSessionUndoStack.cpp) |
 | A pump | `ControlSurfaceManager` (every surface tick) | [`ControlSurfaceManager.cpp`](../../src/ControlSurfaceManager.cpp) |
-| B commit | `EditManager::commitEditAction` + `logChangeLengthCommitTrace` | [`NoteEditSessionCommit.cpp`](../../src/EditManager/NoteEditSessionCommit.cpp), [`NoteEditCommitColdHelpers.cpp`](../../src/EditManager/NoteEditCommitColdHelpers.cpp) |
+| B commit | `commitEditAction` rematerialize vs `openNoteEditSession` `assignMissingNoteIdsInStore` | [`NoteEditSessionCommit.cpp`](../../src/EditManager/NoteEditSessionCommit.cpp), [`NoteEditSessionLifecycle.cpp`](../../src/EditManager/NoteEditSessionLifecycle.cpp) |
 | B paint after exit | `resolveDisplayNotesCommitted` + idle `rebuildVisualCacheIdleSlice` | grooming 4b / 4c |
 | C | `NoteGeometryResolver::resolve` | [`NoteGeometryResolver.cpp`](../../src/EditManager/NoteGeometryResolver.cpp) |
 | D | `Track::getVisualNotesForSlot` | [`Track.h`](../../include/Track.h) |
@@ -149,7 +157,7 @@ Remaining Layer A, same owner `buildSessionUndoEntry`:
 2. After `baseline_probe` (flag 0 on every sample), the function always does `resolvedFlat = sessionFlat` and `NoteEditFocus focusCopy = focus`. Those copies are unlogged. [`145518`](../../captures/session_20260816_145518.log) gap after named phases: **63–188 ms** (med 150). No `overlap_resolve` or `flat_copy` line in this capture.
 
 **Next firmware (not started):** skip the session-flat and full-focus copies when `!needsOverlapResolve && !needsBaselineMapDiff`. Do not clone current state in this slice. Same select → warm → push contract.
-2. **Layer B pin** — deselect + native replay done. Next: why commit `targetNoteId` is 280 when capture replay has no NoteOn 280 at the 888 home. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
+2. **Layer B pin** — deselect + replay + ID source done. Next firmware needs an architecture checkpoint: session-only `assignMissingNoteIds` vs capture-chunk identity. Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase.
 3. **Layer C** — only after A no longer dominates select/pitch.
 4. **Layer D** — only after A/B; do not globally delete `ensureVisualCacheBuilt`.
 

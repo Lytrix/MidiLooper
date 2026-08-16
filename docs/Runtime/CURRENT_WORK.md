@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer B: replay ID mismatch pinned)
+Last updated: 2026-08-16 (NOTE_EDIT Layer B: session-only assigned NoteId pinned)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer B: replay ID mismatch pinned)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** Layer B native replay **pinned** — `applyNoteEditPassSequence` moves when store `NoteId` is 280 and leaves `M24@888` when it is not. Device is the mismatch case. Next: why commit targets 280 when capture has no NoteOn 280 at that home. Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
+**Now:** Layer B ID source **pinned** — `openNoteEditSession` assigns missing ids on the session store only; `commitEditAction` rematerializes from capture chunks that never got 280. Native `test_145518_open_assigned_note_id_missing_from_pass_rematerialize`. Next firmware needs an architecture checkpoint (who owns NoteId). Remaining A parked. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
