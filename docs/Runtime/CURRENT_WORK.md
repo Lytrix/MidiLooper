@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT open: display head must not lead wrap)
+Last updated: 2026-08-16 (NOTE_EDIT deselect keeps wrap length)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT open: display head must not lead wrap)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log), [`145518`](../../captures/session_20260816_145518.log)
 
-**Now:** [`193525`](../../captures/session_20260816_193525.log) NOTE_EDIT open selected display head `DNTE` 12@0 length **96** and dropped the loop-end tail (`NOTE_EDIT_OPEN` visual 107, paint 105). Display must not lead: `ensureVisibleRowsForDisplayNotes` merges splitHeadTail to wrap `2592–96` (length 576) even when the session row is already `0–96`; projection keeps the cache tail when currentSpan is the head. Device gate: enter NOTE_EDIT, wrap at 2592 is selectable, `DNTE` length 576 not 96. Do not patch `applyNoteEditPass`. Stage 2 / C5 / B2b / Layer D parked.
+**Now:** [`195050`](../../captures/session_20260816_195050.log) wrap select PASS (`DNTE` 12@2592 length **576**). Move+deselect committed `NoteRange 2736–3071` (display tail); reselect length **432** then **240**. Linear store pairing / `closeOpenTails` must not lead wrap MIDI. Commit from current-state wrap; mover wrap rows are plausible. Device gate: move a wrap, deselect, length stays **576** (not minus the wrap head). Do not patch `applyNoteEditPass`. Stage 2 / C5 / B2b / Layer D parked.
 
 **Next Layer C (parked C5):** `OverlapCandidateLookup::appendNotesForIds` in overlay only — not overdub source-view / hold ids. Not reconstruct. Not empty-pair resolve.
 

@@ -441,9 +441,16 @@ NOTE_EDIT_MEM void NoteEditCurrentState::syncProjectingRowsFromSessionStore(
       continue;
     }
     NoteBaseline span{};
-    if (readLiveLinearSpan(store, noteId, channel, span)) {
-      row.currentSpan = span;
+    if (!readLiveLinearSpan(store, noteId, channel, span)) {
+      continue;
     }
+    // 195050: linear pairing cannot see wrap offs (tick <= on). Normalize then
+    // closeOpenTails writes loopLength-1. Display/linear store must not lead wrap MIDI.
+    if (isWrapSpan(row.currentSpan.startTick, row.currentSpan.endTick) &&
+        !isWrapSpan(span.startTick, span.endTick)) {
+      continue;
+    }
+    row.currentSpan = span;
   }
 }
 
