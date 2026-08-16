@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (NOTE_EDIT Layer A pin — copy-then-trim)
+Last updated: 2026-08-16 (NOTE_EDIT Layer A snapshot firmware — device gate open)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-16 (NOTE_EDIT Layer A pin — copy-then-trim)
 **Plan:** [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md)  
 **Evidence:** [`143144`](../../captures/session_20260816_143144.log)
 
-**Now:** Layer A **pinned** — `snapshotFocusForSessionUndo` copies 110 baselines then keeps 1. Native `test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims`. Do not start the snapshot firmware until authorized. Layer B still unpinned. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
+**Now:** Layer A snapshot firmware landed — `snapshotFocusForSessionUndo` inserts mover + overlap baselines only. Device: compare select `focus_snap` to [`143144`](../../captures/session_20260816_143144.log) 68–272 ms. Layer B still unpinned. Do not start Layer C/D, grooming 4e, or Slice 5 hydrate.
 
 ### DEC-037 — LoopContentResolution parallel prototype
 
