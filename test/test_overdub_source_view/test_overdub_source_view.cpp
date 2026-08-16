@@ -89,6 +89,17 @@ void test_overdub_start_establishes_source_view() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
+void test_overdub_begin_makes_restore_flatten_unreachable() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  Loop::resetCommittedPitchQueryWork();
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
+}
+
 void test_record_start_does_not_keep_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -936,6 +947,7 @@ void test_should_commit_overdub_wrap_after_leaving_start() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_overdub_start_establishes_source_view);
+  RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
   RUN_TEST(test_record_start_does_not_keep_source_view);
   RUN_TEST(test_source_view_includes_edit_pass_geometry);
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);

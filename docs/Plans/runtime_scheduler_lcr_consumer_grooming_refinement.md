@@ -1,6 +1,6 @@
 # Runtime scheduler — LCR consumer grooming
 
-**Status:** Active — Slice 2 device PASS [`135551`](../../captures/session_20260816_135551.log)  
+**Status:** Active — Slice 3 restore flatten removed (native)
 **Date:** 2026-08-16  
 **Kind:** refinement  
 **Evidence:** [`114736`](../../captures/session_20260816_114736.log) (LED Stage 1 PASS); [`132439`](../../captures/session_20260816_132439.log) (Slice 1 boot reset); [`133314`](../../captures/session_20260816_133314.log) (Slice 1 attribution)  
@@ -249,13 +249,11 @@ editable session becomes ready
 
 Not `resolveWindow` on the button path. Not in [`114736`](../../captures/session_20260816_114736.log).
 
-### `shouldRestoreCommittedOverlapOnOverdubStop` — investigate before replace
+### `shouldRestoreCommittedOverlapOnOverdubStop` — Slice 3 closed
 
-`passes.materializeToEventVector` of the whole loop to answer “is this pitch sounding” on the overdub-stop path (**A** or **B**, stop-path). Overdub source view and `visualCache.notes` already hold a note list.
+`passes.materializeToEventVector` of the whole loop answered “is this pitch sounding” on the overdub-stop path. DEC-031 G2 already made `overdubSourceView` authoritative; `finalizePendingNotes` skipped the predicate when the view existed. `beginCapture(Overdub)` always establishes the view, so the flatten was unreachable on production stop.
 
-The question is not “can I find the pitch in `visualCache.notes`?” It is: **does the existing source-view representation contain precisely the temporal/sounding information this predicate needs at overdub stop?**
-
-If yes, replace the flatten with a note-list read. That removes a synchronous whole-loop derivation without a new resumable subsystem. If no, leave it and record the missing field. Investigate after the idle **C** slice, before any global `ensureVisualCacheBuilt` change.
+Slice 3 removes the flatten. The function returns false. Do not read `visualCache.notes` here. Do not call LCR from stop.
 
 ### Playback merge — parked 6.3
 
@@ -356,6 +354,27 @@ No undo between dirty and clean. Prepared consume added the overdub; it did not 
 
 STOPPED 64-bar count 1639 → 1456 in [`134329`](../../captures/session_20260816_134329.log) (8.765–30.994 s) is on the gather+append path (before LCR idx). Not a Slice 2 result. [`133314`](../../captures/session_20260816_133314.log) same loop started at 1643 and stayed ~1630+ until overdub.
 
+### Slice 3 — retire restore flatten on overdub stop
+
+**After Slice 2.** Investigate `shouldRestoreCommittedOverlapOnOverdubStop`, then remove the flatten if a note list already owns the question.
+
+**Investigation (code):**
+
+| Fact | Proof |
+|------|-------|
+| Predicate used whole-loop `materializeToEventVector` + reconstruct | `shouldRestoreCommittedOverlapOnOverdubStop` before this slice |
+| Caller already skips when the view exists | `Track::finalizePendingNotes`: `!hasOverdubSourceView()` |
+| Production overdub always has the view | `beginCapture(Overdub)` → `establishOverdubSourceView` always sets `overdubSourceViewEstablished_` |
+| View still live at finalize | `finalizePendingNotes` runs before `commitCapturePass` → `clearOverdubSourceView` |
+| Source-view notes cannot replace the fallback | No view ⇒ notes empty |
+| `visualCache.notes` is not overlap authority | DEC-031 G2; display cache may be dirty / wrap-incomplete |
+
+**Firmware:** `shouldRestoreCommittedOverlapOnOverdubStop` returns false and does not materialize. Missing-view sessions keep the Add and synthesize NoteOff (same as G2 when the view exists).
+
+**Native:** `test_overdub_begin_makes_restore_flatten_unreachable` — `beginCapture(Overdub)` establishes the view with `committedEventsFullMaterializeCount() == 0`.
+
+This does not cut PLAYING `clockrate` or OLED paint. It removes the last whole-loop flatten from the restore function so a missing-view stop cannot stall.
+
 ## Pre-implementation review (Slice 2)
 
 ### Ready
@@ -375,9 +394,26 @@ None.
 ### Proceed?
 YES
 
+## Pre-implementation review (Slice 3)
+
+### Ready
+- Owner is `shouldRestoreCommittedOverlapOnOverdubStop`. Caller already G2-gated.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Source-view sufficient? | Yes for established sessions — those already skip this function |
+| Replace with `visualCache.notes`? | No |
+| Firmware | Return false; no `materializeToEventVector` |
+
+### Open before coding
+None.
+
+### Proceed?
+YES
+
 ### Later (not authorized)
 
-3. Investigate `shouldRestoreCommittedOverlapOnOverdubStop` — semantic dependency, then replace if the source-view list is sufficient.
 4. Audit `ensureVisualCacheBuilt` callers one at a time. Do not globally delete.
 5. NOTE_EDIT hydrate — own session design.
 6. Remaining `load_frame` / boot **B** work — only after Slice 1 names the child. Boot 800–900 ms is a different class from PLAYING 60–70 ms paint.
