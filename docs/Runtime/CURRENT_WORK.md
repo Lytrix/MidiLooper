@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (overdub-pass wrap pairing on visual cache; merged reconstruct unchanged)
+Last updated: 2026-08-16 (overdub-pass wrap pairing HITL PASS 021218)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (overdub-pass wrap pairing on visual cache; merged reco
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **Overdub-pass wrap pairing on visual cache** — merged `reconstructDisplayNotes` keeps the original `allLaterOnsInTailOrNone` rule (015618 record spans). Each active overdub pass is reconstructed with `overdubPassWrapPairing` and missing wrap-held notes are appended (`appendOverdubPassDisplayNotes`). Extract still uses `capturePreview.openNoteIndices`. **038.1 live +1 HITL PASS** [`011413`](../../captures/session_20260816_011413.log). **038.2 landed.** Issue 3 parked. Do not start midi_gap / 6.3 until asked. HITL owed: wrap-held overdub note stays after wrap; record lengths around wrap unchanged (not [`015618`](../../captures/session_20260816_015618.log) — that log is pre-fix).
+**Now:** **Overdub-pass wrap pairing HITL PASS** [`021218`](../../captures/session_20260816_021218.log) — wrap-held note 12 ON@2976 / OFF@96 stays after overdub wrap (`WRAP,2976,96,4,12`; VCACHE 63→87, stop 88). Merged reconstruct unchanged. Extract still uses `capturePreview.openNoteIndices`. **038.1 live +1 HITL PASS** [`011413`](../../captures/session_20260816_011413.log). **038.2 landed.** Issue 3 parked. Do not start midi_gap / 6.3 until asked.
 
 **Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
 

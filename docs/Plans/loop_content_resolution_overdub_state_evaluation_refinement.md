@@ -403,7 +403,11 @@ Tick-0-only `tryPairWrappedTailOn` does not cover Off@96. Playback / materialize
 
 ## HITL [`015618`](../../captures/session_20260816_015618.log) — record spans around overdub wrap
 
-Overdub 21.058, wrap 29.048 `wrap_synth=0`, committed 63→87, stop 90. Changing `allLaterOnsInTailOrNone` for completed body pairs applied to merged reconstruct and stretched record-pass notes around the wrap. Reverted. Overdub extract-from-preview stays. Visual cache now keeps wrap-held overdub notes via per-overdub-pass reconstruct only. HITL owed on a new `session_*.log` (not this file).
+Overdub 21.058, wrap 29.048 `wrap_synth=0`, committed 63→87, stop 90. Changing `allLaterOnsInTailOrNone` for completed body pairs applied to merged reconstruct and stretched record-pass notes around the wrap. Reverted. Overdub extract-from-preview stays. Visual cache keeps wrap-held overdub notes via per-overdub-pass reconstruct only.
+
+## HITL [`021218`](../../captures/session_20260816_021218.log) — wrap-held overdub note PASS
+
+Track 5, loop 3072. Overdub 27.057 from committed 63. Note 12 ON storage **2976** (abs 9120), OFF storage **96** (abs 9312), then same pitch at 288 / 384 / …. Overdub wrap 35.043 tick 10840. VCACHE 63→**87** (`slice_clean`); stop `VCACHE,full` **88**, `DISP` 88. Storage `SEVT,N,2976,4,12` and `WRAP,2976,96,4,12`. Undo 39.745 `Overdub undone` → VCACHE/DISP **63**. Record chromatic `DNTE` lengths stay 48. Second overdub wrap 83.434: LCR 6a `notes=87`, stop 89, `wrap_synth=0`.
 
 ## HITL [`011413`](../../captures/session_20260816_011413.log) — live +1 PASS
 
