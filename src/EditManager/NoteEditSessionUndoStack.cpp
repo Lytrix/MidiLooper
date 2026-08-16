@@ -201,17 +201,29 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
                    needsBaselineMapDiff ? 1U : 0U);
 #endif
 
-  std::vector<MidiEvent, Alloc> resolvedFlat = sessionFlat;
-  NoteEditFocus focusCopy = focus;
+  // A0: resolvedFlat / focusCopy are build intermediates, not SessionUndoEntry payload.
+  // Simple select (both flags false) has no consumer — do not copy PSRAM flats or the
+  // full focus. currentState->clone() above is the restore representation; keep it.
+  const NoteEditFocus* focusForRows = &focus;
+  std::vector<MidiEvent, Alloc> resolvedFlat;
+  NoteEditFocus focusCopy;
   if (needsOverlapResolve) {
 #if defined(SESSION_CAPTURE)
     phaseStartUs = micros();
 #endif
+    resolvedFlat = sessionFlat;
+    focusCopy = focus;
     resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
+    focusForRows = &focusCopy;
 #if defined(SESSION_CAPTURE)
     logUndoWarmPhase("overlap_resolve", phaseStartUs, baselineCount, sessionEventCount);
 #endif
   }
+#if defined(SESSION_CAPTURE)
+  if (!needsOverlapResolve && !needsBaselineMapDiff) {
+    logUndoWarmPhase("intermediates", micros(), baselineCount, sessionEventCount, 0);
+  }
+#endif
 
   const MidiEventVec* baselineDiffSource = nullptr;
   MidiEventVec flatForBaselineDiff;
@@ -219,7 +231,11 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
     phaseStartUs = micros();
 #endif
-    flatForBaselineDiff.assign(resolvedFlat.begin(), resolvedFlat.end());
+    if (needsOverlapResolve) {
+      flatForBaselineDiff.assign(resolvedFlat.begin(), resolvedFlat.end());
+    } else {
+      flatForBaselineDiff.assign(sessionFlat.begin(), sessionFlat.end());
+    }
 #if defined(SESSION_CAPTURE)
     logUndoWarmPhase("flat_copy", phaseStartUs, baselineCount, sessionEventCount);
 #endif
@@ -228,7 +244,7 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
   phaseStartUs = micros();
 #endif
-  entry.editRows = buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength,
+  entry.editRows = buildPreCommitEditPasses(*focusForRows, channel, baselineDiffSource, loopLength,
                                             currentStateAtPush);
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("edit_rows", phaseStartUs, baselineCount, sessionEventCount);
