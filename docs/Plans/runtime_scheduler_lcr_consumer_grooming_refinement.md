@@ -328,9 +328,13 @@ Owner: `Loop::rebuildVisualCacheIdleSlice`. LCR remains idle-only.
 
 Device: no `VCACHE` note-loss vs a same-loop capture that used the append path. Wrap-edge append stays until LCR pairing owns wrap-held overdub heads.
 
-**Device [`134329`](../../captures/session_20260816_134329.log) — gate not exercised.** Zero `DIAG,lcr,6a`. `lcr,skip,restore` at 6.327 s; idx/pair still running at PLAYING 36.263 s. `tryResolvePreparedWindow` never succeeded, so the interior skip did not run. No `VCACHE,full`. 64-bar `slice_clean` always `first,0,last,63`. After overdub stop, notes rise 1456 → 1469 → 1556. PLAYING `clockrate` 47–48. Need a later capture that emits `6a` before calling Slice 2 PASS.
+**Device [`134329`](../../captures/session_20260816_134329.log) + [`134701`](../../captures/session_20260816_134701.log).** [`134329`](../../captures/session_20260816_134329.log) cut off during LCR idx. [`134701`](../../captures/session_20260816_134701.log) is the same boot (micros continue at 86.7 s).
 
-STOPPED 64-bar count 1639 → 1456 (8.765–30.994 s) is on the gather+append path (before LCR idx). Not a Slice 2 result. [`133314`](../../captures/session_20260816_133314.log) same loop started at 1643 and stayed ~1630+ until overdub.
+6A.1 compare at 109.362 s (`Track::` deferred 6a, not idle-slice 6a): `match=1` `miss=0` `extra=0` `pmatch=1` `gmatch=0` — same as [`025651`](../../captures/session_20260816_025651.log). Window `ev=117` `notes=52`. LCR `hist=1493` equals [`134329`](../../captures/session_20260816_134329.log) last 64-bar `slice_clean` 1493. After that, `idle_maint` is 285 µs (cache already clean). No `VCACHE` in [`134701`](../../captures/session_20260816_134701.log). No idle-slice `6a` (`win,proj,tot` without `oracle`). The interior skip did not run — visual cache was not dirty after prepare.
+
+Slice 2 device gate still needs a dirty idle slice after LCR is prepared (overdub stop / `stale` while `preparedWindowReady`).
+
+STOPPED 64-bar count 1639 → 1456 in [`134329`](../../captures/session_20260816_134329.log) (8.765–30.994 s) is on the gather+append path (before LCR idx). Not a Slice 2 result. [`133314`](../../captures/session_20260816_133314.log) same loop started at 1643 and stayed ~1630+ until overdub.
 
 ## Pre-implementation review (Slice 2)
 
