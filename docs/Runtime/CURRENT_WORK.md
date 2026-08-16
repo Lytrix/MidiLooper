@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (gather rem PASS: gatherCommittedEventsWithCapture)
+Last updated: 2026-08-16 (LED lookup Stage 1 landed, not scored)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (gather rem PASS: gatherCommittedEventsWithCapture)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** Post-undo PLAYING prefix **measurement** — [`post_undo_playing_loop_prefix_measurement.md`](../Plans/post_undo_playing_loop_prefix_measurement.md). Device PASS [`113804`](../../captures/session_20260816_113804.log): `midi_led_gather` (`gatherCommittedEventsWithCapture`) is **99.99%** of `midi_led_lookup`. Do **not** re-arm drain. Do **not** start 6.3. Do **not** split gather/merge until asked.
+**Now:** LED lookup Stage 1 **landed** — [`post_undo_led_lookup_resumable_source_refinement.md`](../Plans/post_undo_led_lookup_resumable_source_refinement.md). Score vs [`113804`](../../captures/session_20260816_113804.log): no `midi_led_gather`, no 225–400 ms lookup. Stage 2 **rejected**. Do **not** re-arm drain. Do **not** start 6.3. Do **not** call LCR from `updateLeds`.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 

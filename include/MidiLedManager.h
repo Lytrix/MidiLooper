@@ -84,6 +84,7 @@ private:
     void prepareLedNoteLookup(Loop& loop, bool measure = false);
     bool hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) const;
 
+    // Unused after Stage 1 lookup (visualCache.notes). Follow-up cleanup only.
     SessionMidiEventVec ledNoteLookupEvents_;
     bool ledNoteLookupUsesMerge_ = false;
 }; 

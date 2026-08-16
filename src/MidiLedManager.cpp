@@ -295,27 +295,15 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
 }  // namespace
 
 void MidiLedManager::prepareLedNoteLookup(Loop& loop, bool measure) {
-    ledNoteLookupEvents_.clear();
-    ledNoteLookupUsesMerge_ = loop.hasCommittedPasses() && loop.visualCacheDirty;
-    if (ledNoteLookupUsesMerge_) {
-#if defined(SESSION_CAPTURE)
-        uint32_t gatherStartUs = 0;
-        if (measure) {
-            gatherStartUs = micros();
-        }
-#endif
-        loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_);
-#if defined(SESSION_CAPTURE)
-        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 3, gatherStartUs);
-#endif
-    }
-#if !defined(SESSION_CAPTURE)
+    (void)loop;
     (void)measure;
-#endif
 }
 
 bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStart,
                                             uint32_t rangeEnd) const {
+    // updateLeds must never gather committed content because visualCacheDirty.
+    // Stale visualCache.notes are the Layer D display contract; idle slice_clean
+    // resumes the rebuild. Empty notes → no presence (do not flatten).
     if (loop.captureActive()) {
         const size_t captureCount = loop.capture.store.size();
         for (size_t i = 0; i < captureCount; ++i) {
@@ -325,20 +313,12 @@ bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStar
             }
         }
     }
-    if (!loop.hasCommittedPasses()) {
+    if (loop.visualCache.notes.empty()) {
         return false;
     }
-    if (!loop.visualCacheDirty) {
-        const uint32_t loopLength = loop.loopLengthTicks;
-        for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
-            if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    for (const MidiEvent& event : ledNoteLookupEvents_) {
-        if (noteOnInRange(event, rangeStart, rangeEnd)) {
+    const uint32_t loopLength = loop.loopLengthTicks;
+    for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+        if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
             return true;
         }
     }
