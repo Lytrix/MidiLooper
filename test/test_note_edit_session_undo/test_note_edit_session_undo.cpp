@@ -78,9 +78,9 @@ RecordPass makeRecordPassWithNote(uint8_t channel, uint32_t startTick) {
 
 OverdubPass makeOverdubPassWithNote(uint8_t channel, uint32_t startTick, uint8_t pitch,
                                     PassId id) {
-  resetNoteIdCounter();
+  resetNoteIdCounter(2);
   LoopEventStore store;
-  TEST_ASSERT_TRUE(storeAppendNoteOn(store, startTick, channel, pitch, 100, 1));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, startTick, channel, pitch, 100, 2));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(startTick + 48, channel, pitch, 0)));
   CommittedChunkIdList committedChunkIds;
   TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
