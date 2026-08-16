@@ -165,7 +165,8 @@ constexpr uint32_t kLoopRemainderOneShotUs = 50000u;
 void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs);
 
 /**
- * SESSION_CAPTURE: time one updateLeds helper. helper 0=lookup, 1=analyze, 2=bars.
+ * SESSION_CAPTURE: time one updateLeds helper.
+ * helper 0=lookup, 1=analyze, 2=bars, 3=gather.
  * Implementation is FLASHMEM + noinline so span strings stay out of ITCM/DTCM.
  */
 void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_t startUs);

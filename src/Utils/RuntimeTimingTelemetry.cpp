@@ -335,6 +335,8 @@ RT_FLASHMEM_FN void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_
     span = PSTR("midi_led_analyze");
   } else if (helper == 2) {
     span = PSTR("midi_led_bars");
+  } else if (helper == 3) {
+    span = PSTR("midi_led_gather");
   }
   recordLoopRemainderIfMeasuring(measure, span, startUs);
 #elif defined(SESSION_CAPTURE)
@@ -343,6 +345,8 @@ RT_FLASHMEM_FN void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_
     span = "midi_led_analyze";
   } else if (helper == 2) {
     span = "midi_led_bars";
+  } else if (helper == 3) {
+    span = "midi_led_gather";
   }
   recordLoopRemainderIfMeasuring(measure, span, startUs);
 #else
