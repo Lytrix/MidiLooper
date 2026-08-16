@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC3 — wrap commit keeps source view)
+Last updated: 2026-08-17 (overdub overlap hold RC5 — LCR per-pass apply Hide)
 
 ---
 
@@ -13,7 +13,9 @@ Last updated: 2026-08-17 (overdub overlap hold RC3 — wrap commit keeps source 
 **Plan:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
 **RC1 evidence:** [`233323`](../../captures/session_20260816_233323.log) — empty hold sets; stacked 60@528.  
 **RC2 evidence:** [`235407`](../../captures/session_20260816_235407.log) — `looked_up=2` `empty_sets=0`; same-start exact works; DNTE still has 60@64 length **176 and 224** plus 60@224 length **16**.  
-**RC3 evidence:** [`000417`](../../captures/session_20260817_000417.log) — RC2 was a no-op on device: `lcr,6c` every wrap; stop `overlap_hold` all zeros; DNTE still 60@64 **176 and 224** plus 60@296 **96 and 120**.
+**RC3 evidence:** [`000417`](../../captures/session_20260817_000417.log) — RC2 was a no-op on device: `lcr,6c` every wrap; stop `overlap_hold` all zeros; DNTE still 60@64 **176 and 224** plus 60@296 **96 and 120**.  
+**RC4 evidence:** [`001517`](../../captures/session_20260817_001517.log) — RC3 ran (`looked_up=12` `max_examined=8`); Hide sealed; DNTE still 60@64 **176 and 224**.  
+**RC5 evidence:** [`003204`](../../captures/session_20260817_003204.log) — RC4 on device; `lcr,6a` idle cache; select 60@64 **176 and 224**.
 
 **RC1:** snapshot occupancy at S is `[start, end)` (`linearStart <= S < linearEnd`). Device: same-start exact Hides.
 
@@ -21,7 +23,11 @@ Last updated: 2026-08-17 (overdub overlap hold RC3 — wrap commit keeps source 
 
 **RC3:** `commitPendingCapturePass` must not clear the source view while `hasOverdubSession()` is true. `closeOverdubSession` / `discardCapture` clear it. Otherwise apply is a no-op and wrap `beginCapture` re-establishes from a dirty cache (LCR reconstruct pairs the shorter Add with a later off — looks lengthened, still duplicated).
 
-**Native PASS** `test_pending_note_change` including wrap-commit same-start-longer Hide. Device gate open.
+**RC4:** `LoopPasses::materializeToEventVector` applies note edits on each capture pass, then merges. Merged-flatten Delete LIFO-paired the shorter On with Off@288 and `appendOverdubPassDisplayNotes` re-added 64–288. Not a new pass type. No LCR on MIDI. Native PASS. Device FAIL [`003204`](../../captures/session_20260817_003204.log) — idle display used prepared LCR, not this flatten.
+
+**RC5:** `LoopContentResolution::resolveWindow` applies note edits on each capture pass, then merges. Same invariant as RC4. Already-wired 6A idle consumer (DEC-037). Not a new MIDI/display wire.
+
+**Native PASS** `test_resolve_window_hide_drops_shorter_same_start`. Device gate open.
 
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 

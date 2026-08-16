@@ -628,6 +628,58 @@ void test_resolve_window_delete_keeps_same_pitch_same_end_note() {
   TEST_ASSERT_EQUAL_UINT8(12, kept->note);
 }
 
+// session_20260817_003204: Hide of wrap-1 60@64-240 must not LIFO-pair Off@288
+// from wrap-2. resolveWindow apply-after-merge left both 176 and 224.
+void test_resolve_window_hide_drops_shorter_same_start() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kLoopLength = 768;
+  constexpr NoteId kShortId = 10;
+  constexpr NoteId kLongId = 11;
+
+  LoopPasses passes;
+  passes.overdubPasses.push_back(makeOverdub(1, 1, 64, 240, 1, 60, kShortId));
+  passes.overdubPasses.push_back(makeOverdub(2, 2, 64, 288, 1, 60, kLongId));
+  passes.editPasses.push_back(makeDelete(3, kShortId));
+
+  LoopContentResolution::TickIndex index;
+  index.commitCapturePass(passes.overdubPasses[0].id, passes.overdubPasses[0].committedChunkIds,
+                          passes.overdubPasses[0].state, passes.overdubPasses[0].mergeSequence);
+  index.commitCapturePass(passes.overdubPasses[1].id, passes.overdubPasses[1].committedChunkIds,
+                          passes.overdubPasses[1].state, passes.overdubPasses[1].mergeSequence);
+
+  SessionMidiEventVec expected;
+  oracleWindowEvents(passes, kLoopLength, 0, kLoopLength, expected);
+  SessionMidiEventVec actual;
+  LoopContentResolution::resolveWindow(index, passes.editPasses, kLoopLength, 0, kLoopLength,
+                                       actual, nullptr);
+  assertResolvedEventsMatch(expected, actual);
+  TEST_ASSERT_FALSE(hasNoteIdOn(actual, kShortId));
+  TEST_ASSERT_TRUE(hasNoteIdOn(actual, kLongId));
+
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(actual, kLoopLength, false, false);
+  int sixtyAt64 = 0;
+  bool has176 = false;
+  bool has224 = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note != 60 || note.startTick != 64) {
+      continue;
+    }
+    ++sixtyAt64;
+    if (note.endTick == 240) {
+      has176 = true;
+    }
+    if (note.endTick == 288) {
+      has224 = true;
+    }
+  }
+  TEST_ASSERT_EQUAL(1, sixtyAt64);
+  TEST_ASSERT_FALSE(has176);
+  TEST_ASSERT_TRUE(has224);
+}
+
 void test_stage4_shorten_matches_reconstruct() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3734,6 +3786,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage2_overlapping_same_pitch_matches_materialize);
   RUN_TEST(test_stage3_delete_matches_materialize);
   RUN_TEST(test_resolve_window_delete_keeps_same_pitch_same_end_note);
+  RUN_TEST(test_resolve_window_hide_drops_shorter_same_start);
   RUN_TEST(test_stage4_shorten_matches_reconstruct);
   RUN_TEST(test_stage4_extend_matches_reconstruct);
   RUN_TEST(test_stage5_move_matches_reconstruct);
