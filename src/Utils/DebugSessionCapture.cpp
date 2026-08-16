@@ -106,6 +106,21 @@ SC_MEM_ATTR bool queueCaptureTextLine(const char* line) {
   if (line == nullptr) {
     return false;
   }
+#if !SESSION_CAPTURE_LED
+  if (CaptureLineTier::tagStartsWith(line, "LED,")) {
+    return false;
+  }
+#endif
+#if !SESSION_CAPTURE_MO
+  if (CaptureLineTier::tagStartsWith(line, "MO,")) {
+    return false;
+  }
+#endif
+#if !SESSION_CAPTURE_DIAG
+  if (CaptureLineTier::tagStartsWith(line, "DIAG,")) {
+    return false;
+  }
+#endif
   const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
   if (len == 0) {
     return false;

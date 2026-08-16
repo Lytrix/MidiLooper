@@ -23,6 +23,22 @@
 
 #ifdef SESSION_CAPTURE
 
+// Compile-time tag gates. Default on so teensy41-capture-serial keeps the HITL #CAP
+// contract. Set a tag to 0 to drop that family at queue time (investigation builds).
+#ifndef SESSION_CAPTURE_LED
+#define SESSION_CAPTURE_LED 1
+#endif
+#ifndef SESSION_CAPTURE_MO
+#define SESSION_CAPTURE_MO 1
+#endif
+#ifndef SESSION_CAPTURE_DIAG
+#define SESSION_CAPTURE_DIAG 1
+#endif
+// Immediate Serial breadcrumbs in rebuildVisualCacheIdleSlice. Off by default.
+#ifndef SESSION_CAPTURE_VCACHE_SLICE
+#define SESSION_CAPTURE_VCACHE_SLICE 0
+#endif
+
 #include "MidiEvent.h"
 
 #if defined(__IMXRT1062__)

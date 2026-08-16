@@ -1,6 +1,6 @@
 # Boot title LoadLoopJob idle-slice crash
 
-**Status:** Active — owner pinned; sub-step breadcrumbs not yet device-gated  
+**Status:** Active — sub-step pinned to LCR/gather; quiet capture env for next gate  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_152405.log`](../../captures/session_20260816_152405.log) — title boot reset after first focus `LoadLoopJob`  
@@ -95,7 +95,13 @@ Immediate `Serial` under `SESSION_CAPTURE` in `rebuildVisualCacheIdleSlice`:
 | `VCACHE,slice_gathered,ev,<n>` | after LCR or gather |
 | `VCACHE,slice_recon,notes,<n>` | after `reconstructDisplayNotes` |
 
-Device gate: one title boot. Last breadcrumb before `#CAPTURE_RECONNECT` is the sub-step.
+### [`153545`](../../captures/session_20260816_153545.log)
+
+First completed boot: `LoadLoopJob done 0/5` → `VCACHE,stale_*` → **`VCACHE,slice_enter,bars,4`** → `#CAPTURE_RECONNECT`. No `slice_gathered`. Fault is `tryResolvePreparedWindow` or `gatherCommittedEventsInWindow`.
+
+Full `teensy41-capture-serial` also dumped LED / MO / DIAG before that. Those tags are now compile-gated. This investigation uses `teensy41-capture-serial-vcache-slice` (`SESSION_CAPTURE_VCACHE_SLICE=1`, LED/MO/DIAG off). Default `teensy41-capture-serial` keeps the HITL contract; slice breadcrumbs stay off there.
+
+Device gate: one title boot on the vcache-slice env. Last breadcrumb before `#CAPTURE_RECONNECT` is the sub-step.
 
 ---
 
