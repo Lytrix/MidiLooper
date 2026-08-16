@@ -256,7 +256,7 @@ committedBase == reconstructDisplayNotes(materialize(active edit passes))
 
 **Hard don'ts (unchanged):** do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase for B2; do not reuse overdub session pass-id stack for NOTE_EDIT E:; do not start grooming 4e / Slice 5 hydrate in this slice.
 
-### Layer C — pitch/move `GEOM_APPLY,resolve` (C1–C3 device PASS)
+### Layer C — pitch/move `GEOM_APPLY,resolve` (C1–C4 device PASS)
 
 A no longer hides this. Outer `GEOM_APPLY,resolve` wraps **all** of `applyNoteEditChange`, including `finalReconstructAndSelect` (`selectableDisplayNotesAtEditSelect` → projection). `GEOM_APPLY,focus` is microseconds; `GEOM_APPLY,undo` is microseconds except first-kind warm.
 
