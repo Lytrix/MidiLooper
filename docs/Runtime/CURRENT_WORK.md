@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (Slice 4c device PASS 142548)
+Last updated: 2026-08-16 (Slice 4d NOTE_EDIT idle paint consumes stale)
 
 ---
 
@@ -22,7 +22,7 @@ Last updated: 2026-08-16 (Slice 4c device PASS 142548)
 
 **Now:** LED lookup Stage 1 **PASS** [`114736`](../../captures/session_20260816_114736.log) — [`post_undo_led_lookup_resumable_source_refinement.md`](../Plans/post_undo_led_lookup_resumable_source_refinement.md). No LED gather rem; BAR→LED 3.7 ms; PLAYING `clockrate` 47–48. Remaining PLAYING `midi_gap` 110–127 ms is idle/load, not lookup. Stage 2 **rejected**. Do **not** re-arm drain. Do **not** start 6.3.
 
-**Scheduler prep:** [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](../Plans/runtime_scheduler_lcr_consumer_grooming_refinement.md). **Slice 1–4c device PASS** [`142548`](../../captures/session_20260816_142548.log) — 4-bar STOPPED undos/stops have no `VCACHE,full`; idle `slice_clean` only. Do not globally delete `ensureVisualCacheBuilt`. Do not fold NOTE_EDIT hydrate into this slice. Do not optimize `LoadLoopJob` from PLAYING paint.
+**Scheduler prep:** [`runtime_scheduler_lcr_consumer_grooming_refinement.md`](../Plans/runtime_scheduler_lcr_consumer_grooming_refinement.md). **Slice 1–4c device PASS.** **Slice 4d:** NOTE_EDIT session-idle `resolveDisplayNotes` consumes stale (no `ensureVisualCacheBuilt`). Leave `getVisualNotesForSlot` and NOTE_EDIT open hydrate. Do not globally delete `ensureVisualCacheBuilt`. Do not optimize `LoadLoopJob` from PLAYING paint.
 
 **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
 
