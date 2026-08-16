@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (LoopPersist finalize reverted — boot loop)
+Last updated: 2026-08-16 (post-overdub PLAYING MIDI drain)
 
 ---
 
@@ -20,11 +20,15 @@ Last updated: 2026-08-16 (LoopPersist finalize reverted — boot loop)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528). Do not reland until RAM1 locals stay near 6528. Remaining post-stop `persist_save` 72–83 ms is still one-shot loop-temp CRC. Do **not** start 6.3.
+**Now:** Post-overdub PLAYING MIDI drain — [`post_overdub_playing_midi_drain_bugfix.md`](../Plans/post_overdub_playing_midi_drain_bugfix.md). Attribution **CLOSED**. Do not grain visual cache or LoopPersist CRC in this slice. Do **not** start 6.3. Not all PLAYING.
+
+**FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528).
+
+**Parked:** 915 ms boot `load_frame` [`032803`](../../captures/session_20260816_032803.log) — `commitLoadLoopJobPublish` / `runDeferredLoadAndDisplayFrame`; not a freeze; not the revert.
 
 **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) `match=1` `pmatch=1`. STOPPED `midi_gap` **72 ms** at LCR complete is a different sample (`6a,nat` 30 ms + `loop_rem,idle_maint` 58 ms); after that, max **13.5 ms**.
 
-**Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. MIDI Input Gap > 50 ms in [`192334`](../../captures/session_20260815_192334.log) (`midi_gap` 135 / 119 / 138 ms, `clockrate` 47) — investigation **after 6C**.
+**Does not start:** Track A overlay, Stage 3b GUS replacement, interval reservation, RC-J patches, deleting `materializeToEventVector`. PLAYING `midi_gap` in [`192334`](../../captures/session_20260815_192334.log) was FinalizeWorkspace (sliced). Post-stop gap owner is idle visual cache, not LCR.
 
 ### DEC-036 Layer D 3b — overdub entry without display reconstruct (shipped)
 

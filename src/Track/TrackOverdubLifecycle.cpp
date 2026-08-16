@@ -57,6 +57,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                         MemoryMonitor::getInternalHeapFreeBytes(), "ok");
     HotPathTelemetry::requestDeferredSummary("overdub_stop");
+    armPlayingMidiDrainAfterOverdubStop();
   } else {
     logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
     setState(TRACK_STOPPED);
@@ -78,6 +79,8 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
     return;
   }
+  playingMidiDrainAfterOverdubStop_ = false;
+  playingMidiDrainAfterOverdubStopIdleNoted_ = false;
   const uint32_t telemetryStartUs = micros();
   const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
   SC_ODUB_STAGE("enter", 0, heapAtEnter, heapAtEnter, "ok");
@@ -182,6 +185,29 @@ void Track::stopOverdubbing() {
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   HotPathTelemetry::requestDeferredSummary("overdub_stop");
   loop.closeOverdubSession();
+  armPlayingMidiDrainAfterOverdubStop();
+}
+
+void Track::armPlayingMidiDrainAfterOverdubStop() {
+  playingMidiDrainAfterOverdubStop_ = true;
+  playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+}
+
+bool Track::playingMidiDrainAfterOverdubStopActive() const {
+  if (!playingMidiDrainAfterOverdubStop_ || !isPlaying() || !loopsAllocated()) {
+    return false;
+  }
+  return getActiveLoop().visualCacheDirty || !playingMidiDrainAfterOverdubStopIdleNoted_;
+}
+
+void Track::notePlayingMidiDrainAfterOverdubStopIdle() {
+  if (!playingMidiDrainAfterOverdubStop_) {
+    return;
+  }
+  playingMidiDrainAfterOverdubStopIdleNoted_ = true;
+  if (!isPlaying() || !loopsAllocated() || !getActiveLoop().visualCacheDirty) {
+    playingMidiDrainAfterOverdubStop_ = false;
+  }
 }
 
 void Track::stopOverdubbingToStopped() {

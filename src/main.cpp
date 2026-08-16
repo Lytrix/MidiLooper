@@ -31,6 +31,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
+#include "Utils/MidiServiceDrain.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
@@ -339,6 +340,20 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
+  bool captureActiveForMidiDrain = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isRecording() || t.isOverdubbing()) {
+      captureActiveForMidiDrain = true;
+      break;
+    }
+  }
+  const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
+
+  // Post-overdub PLAYING only: poll before idle so visual-cache work cannot start a stacked gap.
+  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
+    midiHandler.handleMidiInput();
+  }
 #if defined(SESSION_CAPTURE)
   uint32_t remainderStartUs = micros();
 #endif
@@ -349,6 +364,14 @@ void loop() {
   const uint32_t idleMaintUs = micros() - remainderStartUs;
   RuntimeTimingTelemetry::noteIdleMaint(idleMaintUs);
   recordLoopRemainderSpan("idle_maint", idleMaintUs);
+#endif
+  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
+    midiHandler.handleMidiInput();
+  }
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
+  }
+#if defined(SESSION_CAPTURE)
   remainderStartUs = micros();
 #endif
 
@@ -361,17 +384,10 @@ void loop() {
   recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
 
-  // RC-C C: safety MIDI drain after OLED work during RECORD/OVERDUB only. Not a substitute
-  // for bounded display — keeps clock/notes moving if resolve still ran long.
-  bool captureActiveForMidiDrain = false;
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing()) {
-      captureActiveForMidiDrain = true;
-      break;
-    }
-  }
-  if (captureActiveForMidiDrain) {
+  // RC-C C: RECORD/OVERDUB after OLED. Same site also covers the post-overdub PLAYING window
+  // so load_frame cannot stack with persist. Not all PLAYING.
+  if (MidiServiceDrain::afterDeferredDisplay(captureActiveForMidiDrain,
+                                             postOverdubPlayingMidiDrain)) {
     midiHandler.handleMidiInput();
   }
 
