@@ -67,20 +67,24 @@ EditPass makeSessionStoreRow(EditActionType actionType, EditPropertyType propert
 }  // namespace
 
 NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
-  NoteEditFocus snap = focus;
+  NoteEditFocus snap;
+  snap.active = focus.active;
+  snap.movingNoteId = focus.movingNoteId;
+  snap.commitBaseline = focus.commitBaseline;
+  snap.movingNoteRange = focus.movingNoteRange;
+  snap.last = focus.last;
+  snap.overlapNotes = focus.overlapNotes;
   if (!focus.active) {
-    snap.baselineMap.clear();
     return snap;
   }
 
-  BaselineMap trimmed;
   const auto keepBaseline = [&](NoteId noteId) {
     if (noteId == kInvalidNoteId) {
       return;
     }
     const auto it = focus.baselineMap.find(noteId);
     if (it != focus.baselineMap.end()) {
-      trimmed[noteId] = it->second;
+      snap.baselineMap[noteId] = it->second;
     }
   };
 
@@ -88,12 +92,11 @@ NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
   for (const auto& [noteId, overlap] : focus.overlapNotes) {
     const auto it = focus.baselineMap.find(noteId);
     if (it != focus.baselineMap.end()) {
-      trimmed[noteId] = it->second;
+      snap.baselineMap[noteId] = it->second;
     } else if (noteId != kInvalidNoteId) {
-      trimmed[noteId] = overlap.baseline;
+      snap.baselineMap[noteId] = overlap.baseline;
     }
   }
-  snap.baselineMap = std::move(trimmed);
   return snap;
 }
 

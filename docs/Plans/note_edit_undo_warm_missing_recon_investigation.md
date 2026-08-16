@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — Layer A pinned (native); no firmware yet  
+**Status:** Active — Layer A snapshot firmware landed; device gate open  
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -124,7 +124,9 @@ Host microseconds (not a device bound): copy 14, snap 19, clone 24, build 75. De
 
 **Pinned owner:** `snapshotFocusForSessionUndo` copies the whole `NoteEditFocus` (110-entry `baselineMap`) then throws 109 entries away; `buildSessionUndoEntry` then clones 110 current-state rows.
 
-**Next firmware (not started):** snapshot only mover + overlap keys. Do not copy the unused baselines. Same select → warm → push contract. Do not invent a device ms bound until that lands.
+**Firmware (landed):** `snapshotFocusForSessionUndo` copies scalars + `overlapNotes`, then inserts mover and overlap baselines only. It does not copy the full `baselineMap`. Current-state clone of 110 rows is unchanged (later). Same select → warm → push contract.
+
+**Device:** NOTE_EDIT select on a ~110-note loop. Compare `UNDO_WARM,phase,focus_snap` to [`143144`](../../captures/session_20260816_143144.log) 68–272 ms. Do not invent a pass bound until that capture.
 2. **Layer B pin** — from [`143144`](../../captures/session_20260816_143144.log) saved rows (`NoteRange 1057–1249`, `Pitch 43`, later `Length 1057–1127` / `NoteRange 1128–1320`), state whether post-exit `slice_clean` / `DISP` can show that geometry. If the log cannot, add one commit-trace field for the **new** span (behavior-preserving) or a native replay of the three saved rows. Only then decide RC8 pairing vs stale-cache paint vs idle-slice omit.
 3. **Layer C** — only after A no longer dominates select/pitch.
 4. **Layer D** — only after A/B; do not globally delete `ensureVisualCacheBuilt`.
