@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
+Last updated: 2026-08-16 (LoopPersist finalize reverted — boot loop)
 
 ---
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-16 (FinalizeWorkspace CurrentSetCompletion CRC slice)
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](../Plans/loop_content_resolution_stage9_handoff.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)
 
-**Now:** **FinalizeWorkspace slice** — native shipped. `CurrentSetCompletion` grains CRC of `runtime.bundle.bin` at 256 bytes (`continueEpochFileBodyCrc`). Plan: [`persist_finalize_workspace_slice_bugfix.md`](../Plans/persist_finalize_workspace_slice_bugfix.md). Device gate: PLAYING `persist_save` must not stay at 70–118 ms. Do **not** start 6.3.
+**Now:** **FinalizeWorkspace slice** shipped (`48bd36f`). LoopPersist finalize (`8abeac6`) **reverted** (`baa03e1`) — boot hung at `BOOT,scan,start` [`032326`](../../captures/session_20260816_032326.log) / [`032137`](../../captures/session_20260816_032137.log); RAM1 locals 2432 (was 6528). Do not reland until RAM1 locals stay near 6528. Remaining post-stop `persist_save` 72–83 ms is still one-shot loop-temp CRC. Do **not** start 6.3.
 
 **6A.1 HITL PASS** [`025651`](../../captures/session_20260816_025651.log) `match=1` `pmatch=1`. STOPPED `midi_gap` **72 ms** at LCR complete is a different sample (`6a,nat` 30 ms + `loop_rem,idle_maint` 58 ms); after that, max **13.5 ms**.
 
