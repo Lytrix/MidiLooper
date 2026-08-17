@@ -186,7 +186,7 @@ struct Loop {
   bool redoOverdubSession();
   bool canUndoOverdubSession() const;
   bool canRedoOverdubSession() const;
-  /// Sealed wraps on the cursor, plus 1 when live `capture.store` is non-empty.
+  /// Sealed wraps on the cursor. Live `capture.store` is not a session layer.
   size_t overdubSessionUndoDepth() const;
   size_t overdubSessionRedoDepth() const;
   /// Session-start source view: reset overlap-hold totals, then `rebuildOverdubSourceView`
