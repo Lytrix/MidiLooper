@@ -4,6 +4,7 @@
 #include "TrackInternal.h"
 
 #include "ClockManager.h"
+#include "DisplayManager.h"
 #include "Logger.h"
 #include "LoopContentResolution.h"
 #include "Utils/TrackMem.h"
@@ -39,7 +40,8 @@ TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
   }
   const uint32_t sealedAtTick = loop.playheadPhaseTick;
   const CommitResult result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
-  if (result == CommitResult::Committed) {
+  const bool wrapped = result == CommitResult::Committed;
+  if (wrapped) {
     const PassId passId = loop.lastCommittedPassId();
     EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
     for (const OverdubPass& pass : loop.passes.overdubPasses) {
@@ -58,5 +60,11 @@ TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
     loop.appendCaptureEvent(evt);
   }
   loop.noteOverdubWrapCommitted();
+  if (wrapped) {
+    // RC-W1: live composition keeps liveDisplayCacheCommittedNoteCount_ across wrap when
+    // source-view note count is unchanged. Reset so the next frame rebuilds the committed
+    // prefix from overdubSourceViewNotes and reapplies the new capturePreview.
+    displayManager.invalidateLiveDisplayCache();
+  }
   logger.logTrackEvent("Overdub wrap committed", clockManager.getCurrentTick());
 }
