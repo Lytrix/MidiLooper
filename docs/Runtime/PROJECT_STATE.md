@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-17 (6C/6D closed on [`205928`]/[`210508`]; playback gather moved)
+Last updated: 2026-08-17 (playback gather Stage 1 lateness hooks)
 
 ---
 

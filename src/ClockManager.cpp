@@ -14,6 +14,12 @@
 #include "Utils/ClockTransportUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
+#if defined(__IMXRT1062__)
+#define CLOCK_COLD_MEM FLASHMEM
+#else
+#define CLOCK_COLD_MEM
+#endif
+
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
 
@@ -42,6 +48,10 @@ uint32_t ClockManager::getCurrentTick() const {
   uint32_t tick = currentTick;
   interrupts();
   return tick;
+}
+
+uint32_t ClockManager::getMicrosPerTick() const {
+  return microsPerTick;
 }
 
 float ClockManager::getDisplayTickPhase() const {
@@ -130,6 +140,8 @@ void ClockManager::updateInternalClock() {
   // When slaved to external MIDI clock, tick is driven only by onMidiClockPulse
   if (clockSource == CLOCK_EXTERNAL) return;
   currentTick++;
+  const uint32_t nowUs = micros();
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(nowUs, microsPerTick);
   // Output MIDI clock when we are master (every 8 internal ticks = 24 PPQN)
   if (currentTick % Config::TICKS_PER_CLOCK == 0) {
     midiHandler.sendClock();
@@ -182,6 +194,8 @@ void ClockManager::onMidiClockPulse() {
     currentTick += Config::TICKS_PER_CLOCK;
     trackManager.advanceJamTicks(Config::TICKS_PER_CLOCK);
   }
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(clockDispatchStartUs,
+                                                   microsPerTick * Config::TICKS_PER_CLOCK);
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = micros();
   RuntimeTimingTelemetry::noteClockDispatch(lastMidiClockTime - clockDispatchStartUs);
@@ -205,9 +219,10 @@ void ClockManager::checkClockSource() {
   }
 }
 
-void ClockManager::onMidiStart() {
+CLOCK_COLD_MEM void ClockManager::onMidiStart() {
   sequencerRunning = true;
   pendingStart = false;
+  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
   requestTransitionTo(CLOCK_EXTERNAL);
   // Slave immediately: while clockSource stays INTERNAL, updateInternalClock()
   // keeps advancing currentTick at 192 PPQN until checkClockSource() runs.
@@ -242,6 +257,7 @@ void ClockManager::onMidiStart() {
 void ClockManager::onMidiStop() {
   sequencerRunning = false;
   firstPulseAfterStart = false;
+  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
 }
 
 void ClockManager::handleMidiClock() {
@@ -284,7 +300,7 @@ void ClockManager::assignCurrentTickSilently(uint32_t tick) {
   interrupts();
 }
 
-void ClockManager::toggleTransport() {
+CLOCK_COLD_MEM void ClockManager::toggleTransport() {
   const uint32_t now = micros();
   const bool emitTransport =
       ClockTransportUtils::shouldEmitMidiTransportAsMaster(
@@ -292,6 +308,7 @@ void ClockManager::toggleTransport() {
 
   if (sequencerRunning) {
     sequencerRunning = false;
+    RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
     if (emitTransport) {
       if (clockSource == CLOCK_EXTERNAL) {
         actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);
@@ -302,6 +319,7 @@ void ClockManager::toggleTransport() {
     logger.info("Transport stopped");
   } else {
     sequencerRunning = true;
+    RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
     if (emitTransport) {
       if (clockSource == CLOCK_EXTERNAL) {
         actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);

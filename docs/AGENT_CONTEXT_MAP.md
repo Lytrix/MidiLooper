@@ -73,7 +73,8 @@ Always load first:
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
 - `TrackManager`, `LoopPasses` materialize APIs
 - [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037; do not treat `materializeToEventVector` as the long-term playback owner
-- [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — queued; firmware not authorized
+- [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — Stage 1 hooks link; MIDI-deadline hypothesis A→B→C; `lateness_us` also the scheduling musical gate; no per-event `#CAP`
+- [plans/runtime_scheduling_admission_model_architecture.md](Plans/runtime_scheduling_admission_model_architecture.md) — MIDI Input Gap is interval/contention; per-event lateness is product correctness when hooked
 
 **Optional**
 

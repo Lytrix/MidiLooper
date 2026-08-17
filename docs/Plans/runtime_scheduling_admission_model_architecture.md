@@ -18,6 +18,18 @@ The architectural goal is valid:
 
 > **No lower-priority operation may cause the gap between timing-critical MIDI Input handling opportunities to exceed an evidence-based real-time bound.**
 
+That bound exists to protect **MIDI deadline correctness**: every required note-on, note-off, and MIDI clock is emitted on or before its scheduled deadline.
+
+```text
+lateness_us = sendMidiEvent() − scheduled_deadline
+late_event_count == 0
+max_lateness_us <= 0
+```
+
+Score on, off, and clock independently. MIDI Input Gap and `handleMidiInput()` duration diagnose **contention** (why a deadline was lost). They do **not** prove events were on time: a small gap can still miss a send, and a large gap can still deliver every event on time.
+
+Per-event lateness is the same measurement specified for playback gather Stage 1 ([`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md)). One hook owner (`RuntimeTimingTelemetry` / `#CAP` next to `sendMidiEvent`). Do not invent a second telemetry path. Those hooks do **not** authorize interval reservation, extra `handleMidiInput()` call sites, or playback-horizon firmware from this contract.
+
 The previously proposed stateless:
 
 ```text
@@ -60,8 +72,9 @@ Do not collapse these into one “admission” noun.
 | **Runtime admission** | Future coordinator of which bounded runtime units may execute between `handleMidiInput()` entries | Persist `admit*`; a “MIDI service” owner |
 | **Interval reservation** | Future shared remaining-µs check at a `handleMidiInput()` entry before running one bounded owner unit | Persist `admit*` |
 | **Deferred / scheduled work** | Resumable owner jobs drained later (`processDeferredSaveState`, `DeferredJobScheduler::runFrame`) | Synchronous algorithms |
-| **MIDI Input Gap (MIG)** | Wall-clock time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`; historical captures used `DIAG,msi`) | Time spent *inside* `handleMidiInput()` |
+| **MIDI Input Gap (MIG)** | Wall-clock time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`; historical captures used `DIAG,msi`) | Time spent *inside* `handleMidiInput()`; proof that MIDI was on time |
 | **`handleMidiInput()` duration** | Time spent inside `handleMidiInput()` (`DIAG,midi_input`; historical captures used `DIAG,midisvc`) | MIDI Input Gap |
+| **MIDI deadline lateness** | `lateness_us` per required note-on, note-off, and MIDI clock at `sendMidiEvent()` | MIDI Input Gap; `clockrate` half-tempo proxy |
 | **Timing-critical** | Architectural property of MIDI Input | An owner name |
 
 ---
@@ -302,6 +315,7 @@ The numerical ceiling is not selected before measurement. 2 ms / 5 ms are **with
 | C12 Evidence-based ceiling | Final MIDI Input Gap ceiling from device evidence |
 | C13 Dual execution context | ISR `updateInternalClock` overlap is part of the cost model |
 | C14 Observation non-loss | Tier-A DIAG must egress or the timing telemetry is invalid |
+| C15 MIDI deadline correctness | Lateness hooks exist: `late_event_count == 0` and `max_lateness_us <= 0` for note-on, note-off, and clock (`DIAG,late_*`). A passing MIDI Input Gap with late sends is not a pass |
 
 If interval reservation is required later, minimum shared state is: interval deadline/remaining budget and generation; per-class fairness cursor; reserved unit cost; re-entry/ISR depth. Owner continuation cursors remain owner state.
 
@@ -319,6 +333,8 @@ Allocation (`assign`, `resize`, `push_back`, sort) is part of unit cost. O(loop)
 |--------|------------|----------|
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries | `midi_gap` (historical captures: `msi`) |
 | **`handleMidiInput()` duration** | Time spent inside `handleMidiInput()` | `midi_input` (historical captures: `midisvc`) |
+
+Playback gather Stage 1 hooks exist on this owner: 5 s `DIAG,late_on` / `late_off` / `late_clk` plus `DIAG,late_event` / `DIAG,playback_build` one-shots. C15 still needs a device window (`late_event_count == 0`, `max_lateness_us <= 0`). Until Stage 3 scores those lines, `clockrate` is not the musical pass criterion.
 
 S0b–S0e attributed PLAYING/OVERDUB `handleMidiInput()` duration (`midisvc` in those captures) as `usbdev` → `usbdisp` → `usbnote` → `notechg`. RC-K1–K3 moved reconstruct off the note-off path (`noterecon` 0 on that path after [`225803`](../../captures/session_20260812_225803.log)). `DIAG,noterecon` remains a probe; after RC-K3 it reads 0 on the production note-off path and must not be treated as an active cost owner.
 
@@ -387,6 +403,7 @@ This document does **not** authorize: moving MIDI Clock to an ISR; timestamping 
 | O | Owner boundary — interval reservation coordinates existing owners and never becomes a domain owner |
 | P | Dual execution context — ISR overlap is accounted for, not assumed serialized |
 | Q | Observation non-loss — Tier-A timing telemetry must survive or measurement is invalid |
+| R | MIDI deadline correctness — MIG protects the opportunity; `lateness_us` proves the send. Do not treat `midi_gap` as the musical pass criterion |
 
 ---
 

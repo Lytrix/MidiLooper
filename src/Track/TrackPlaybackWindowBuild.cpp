@@ -15,6 +15,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 extern TrackManager trackManager;
 
@@ -156,7 +157,11 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   }
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
-  DIAG_TIMING_RECORD(PlaybackBuild, micros() - playbackBuildStartUs);
+  const uint32_t playbackBuildUs = micros() - playbackBuildStartUs;
+  DIAG_TIMING_RECORD(PlaybackBuild, playbackBuildUs);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(
+      playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
+      runtime.mergedMidiEvents.windowLengthTicks, windowRevision);
   mergedMidiEventsBuildInProgress = false;
 }
 void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,

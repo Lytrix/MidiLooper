@@ -96,7 +96,8 @@ MIDI Input is timing-critical. The owner is `MidiHandler`; the operation is `han
 |------|---------|
 | **MIDI Input handling duration** | Time spent inside `handleMidiInput()` (`DIAG,midi_input`) |
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`) |
-| **RuntimeTimingTelemetry** | Instrumentation that measures that relationship — not a MIDI owner |
+| **MIDI deadline lateness** | `lateness_us = sendMidiEvent() − scheduled_deadline` for each required note-on, note-off, and MIDI clock (scored independently). Equality is on time. This is **product correctness**, not a synonym for MIDI Input Gap |
+| **RuntimeTimingTelemetry** | Instrumentation for MIDI Input Gap, `handleMidiInput()` duration, and (when hooked) MIDI deadline lateness — not a MIDI owner |
 | **Runtime admission** | Future coordinator of which bounded runtime units may execute between MIDI Input handling opportunities |
 
 Historical captures (2026-08-12) emit `DIAG,msi` / `DIAG,midisvc` for the same two measurements. Do not rename `MidiHandler` or `handleMidiInput()` to fit scheduling prose.
