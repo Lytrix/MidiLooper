@@ -811,7 +811,7 @@ None. Session-undo inverse is Phase 2a.
 
 ## 013327 A vs B — B is a superset; fixture-first
 
-**Device** [`013327`](../../captures/session_20260818_013327.log) — prepared served (53 `from=prep`). Every `eq=0` is **B extra** (`ao=0`, `bo>0`). Session 1 enter is `eq=1`. After wraps, `b` grows (`2…7`) while `a` stays `0` or `1`. Hold merge is not the source (144/145 `merged=0`). `late_clk=0`.
+**Device** [`013327`](../../captures/session_20260818_013327.log) — 16-bar loop. Prepared served (53 `from=prep`, 14 `from=miss`). Every `eq=0` is **B extra** (`ao=0`, `bo>0`): 22 `eq=1`, 31 `eq=0`. Session 1 enter is `eq=1`. After wraps, `b` grows (`2…7`) while `a` stays `0` or `1`. Majority of mismatches are `a=0` (`bo=1…6`). Occupied mismatches are `a=1` with `bo=1…6`. Hold merge is not the source (144/145 `merged=0`). One idle `lcr,mat` at boot only — no rematerialize between wraps. First `eq=0` (pitch 79 `a=1,b=2`) is before the first `sess_undo`. `#CAP` `lcr,part` does not print NoteIds. `late_clk=0`.
 
 Both collects already call `displayNotePresentAtHold`. The disagreement is the **population**, not the hold predicate.
 
@@ -853,7 +853,7 @@ Source view drops the hidden wrap-N Add. Sealed Delete companions target those i
 | Disabled-companion restore vs disabled-capture skip | **Not exercised** (no undo). |
 | duplicate `NoteSpan` for one `NoteId` | **No.** Counts match; no second id. |
 
-013327 device extras are **not** produced by occupy + seal + publish + source-view rebuild alone. Do not pick a B-list fix from this pin. Next pin must add the missing device population (idle rematerialize between wraps, multi-note wrap, or `a=0` occupy).
+013327 device extras are **not** produced by occupy + seal + publish + source-view rebuild alone. Do not pick a B-list fix from this pin. Next pin must reproduce `a=0,b>0` at a repeating phase (013327 majority): a wrap-local `NoteSpan` that covers S while source-view reconstruct does not. Not rematerialize-between-wraps (one `lcr,mat` at boot). Not session-undo restore (first extra is before `sess_undo`).
 
 ---
 
