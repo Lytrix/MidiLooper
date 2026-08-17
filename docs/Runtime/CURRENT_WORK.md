@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (wrap undo rebuilds source view)
+Last updated: 2026-08-18 (Phase 2 B collect via RC8 hold)
 
 ---
 
@@ -17,11 +17,11 @@ Last updated: 2026-08-18 (wrap undo rebuilds source view)
 
 **PresentNote** = present at S (`PresentNote` / `resolveState` / `presentAt` / `notePresentAt` / `presentAtHoldOnly`). **ActiveNote** = execution ledger, mute-decoupled. **Sounding** = MIDI output only.
 
-Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`notePresentAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
+Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Observation B now walks prepared `NoteSpan`s with `displayNotePresentAtHold` (same function A uses). `notePresentAt` is unchanged (playback / checkpoint fill). Prepared miss still returns false; no cold `resolveState` on note-on. Hard test still open: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
 
 Phase 1 **device capture** [`002447`](../../captures/session_20260818_002447.log) (`b9b9336`): 1-bar (768). 31 `lcr,part`. **`eq=0` = 0.** After wrap 1 and wrap 2, occupied holds are `a=1,b=1` (`ao=0`,`bo=0`). [`232510`](../../captures/session_20260817_232510.log) wrap-2/3 `b=k` extras are gone. Enter before first wrap is still `from=miss` (6). Hold fill still `from=win`. Production consume still A.
 
-**Phase 2a** `76623cd` + **O:** `a384a47`. Device [`011009`](../../captures/session_20260818_011009.log) **PASS** for wrap-undo source-view refresh: `why=undo` on peel, post-undo A `a=1`, hold `merged=0`. That is the test. Do **not** start Phase 3 fill disable until Phase 2 wrap predicates and LinearSpan-from-`NoteSpan` pass. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
+**Phase 2a** `76623cd` + **O:** `a384a47`. Device [`011009`](../../captures/session_20260818_011009.log) **PASS** for wrap-undo source-view refresh: `why=undo` on peel, post-undo A `a=1`, hold `merged=0`. **Phase 2 B collect** uses RC8 hold on prepared spans. Production consume still A. Do **not** start Phase 3 fill disable until hard PLAYING/STOPPED/MUTED/outside-gather identity and prepared HITL `eq=1`. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 

@@ -10,6 +10,7 @@
 #include "EditApply.h"
 #include "Globals.h"
 #include "LoopEventStore.h"
+#include "OverlapNoteIdObservation.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/TrackMem.h"
@@ -2289,6 +2290,47 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedState(uint32_t tick
   resolveState(sDeviceGateSession.checkpoints, tick, out, counters);
   eraseDisabledSounding(sDeviceGateSession.index, out);
   restoreDisabledCompanions(tick, out);
+  return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+    uint32_t tick, uint8_t pitch, uint32_t playbackRevision, OverlapNoteIdSet& out) {
+  out.clear();
+  if (!preparedWindowReady(playbackRevision) ||
+      sDeviceGateSession.checkpoints.spans.empty() ||
+      sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
+    return false;
+  }
+  const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;
+  const TickIndex& index = sDeviceGateSession.index;
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.pitch != pitch || span.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(span.note.noteId);
+    if (found != nullptr) {
+      const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+      if (pass != nullptr && pass->state != CapturePassState::Active) {
+        continue;
+      }
+    }
+    if (!OverlapNoteIdObservation::displayNotePresentAtHold(span.startTick, span.endTick, tick,
+                                                            loopLength)) {
+      continue;
+    }
+    (void)out.insert(span.note.noteId);
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId ||
+        row.note.pitch != pitch) {
+      continue;
+    }
+    if (!OverlapNoteIdObservation::displayNotePresentAtHold(row.startTick, row.endTick, tick,
+                                                            loopLength)) {
+      continue;
+    }
+    (void)out.insert(row.note.noteId);
+  }
   return true;
 }
 

@@ -18,6 +18,7 @@
 #include "Loop.h"
 #include "GlobalUndoStack.h"
 #include "LoopContentResolution.h"
+#include "OverlapNoteIdSet.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
@@ -774,6 +775,11 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
   }
   TEST_ASSERT_FALSE(sawRecord);
   TEST_ASSERT_TRUE(sawWrap);
+  OverlapNoteIdSet publishedIds;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+      300, 60, loop.playbackRevision, publishedIds));
+  TEST_ASSERT_FALSE(publishedIds.contains(1));
+  TEST_ASSERT_TRUE(publishedIds.contains(10));
 
   loop.pushOverdubSessionPass(wrapId, EditPassIdList{hideId});
   loop.beginCapture(CapturePhase::Overdub, 0);
@@ -794,6 +800,11 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
   }
   TEST_ASSERT_TRUE(sawRecord);
   TEST_ASSERT_FALSE(sawWrap);
+  OverlapNoteIdSet undoneIds;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+      300, 60, loop.playbackRevision, undoneIds));
+  TEST_ASSERT_TRUE(undoneIds.contains(1));
+  TEST_ASSERT_FALSE(undoneIds.contains(10));
 
   SessionMidiEventVec window;
   TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
