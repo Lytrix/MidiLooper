@@ -188,6 +188,8 @@ struct Loop {
   bool canRedoOverdubSession() const;
   /// Sealed wraps on the cursor. Live `capture.store` is not a session layer.
   size_t overdubSessionUndoDepth() const;
+  /// Sidebar `O:` — current wrap (`overdubSessionUndoDepth() + 1` while the session is open).
+  size_t overdubSessionDisplayDepth() const;
   size_t overdubSessionRedoDepth() const;
   /// Session-start source view: reset overlap-hold totals, then `rebuildOverdubSourceView`
   /// (`why=open`), then clear pending. Not visual cache.

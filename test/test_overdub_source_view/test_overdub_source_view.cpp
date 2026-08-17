@@ -921,16 +921,20 @@ void test_overdub_session_undo_depth_counts_sealed_wraps_only() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
   TEST_ASSERT_EQUAL(0u, loop.overdubSessionUndoDepth());
+  TEST_ASSERT_EQUAL(1u, loop.overdubSessionDisplayDepth());
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::OverdubWrap, 777));
   loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
   loop.beginCapture(CapturePhase::Overdub, 777);
   TEST_ASSERT_EQUAL(1u, loop.overdubSessionUndoDepth());
+  TEST_ASSERT_EQUAL(2u, loop.overdubSessionDisplayDepth());
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 64, 90)));
   TEST_ASSERT_EQUAL(1u, loop.overdubSessionUndoDepth());
+  TEST_ASSERT_EQUAL(2u, loop.overdubSessionDisplayDepth());
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
   TEST_ASSERT_FALSE(loop.capture.store.empty());
   TEST_ASSERT_EQUAL(0u, loop.overdubSessionUndoDepth());
+  TEST_ASSERT_EQUAL(1u, loop.overdubSessionDisplayDepth());
   bool wrapDisabled = false;
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.id == loop.lastCommittedPassId()) {

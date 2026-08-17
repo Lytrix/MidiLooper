@@ -200,6 +200,13 @@ LOOP_COLD_MEM size_t Loop::overdubSessionUndoDepth() const {
   return overdubSessionCursor_;
 }
 
+LOOP_COLD_MEM size_t Loop::overdubSessionDisplayDepth() const {
+  if (!hasOverdubSession()) {
+    return 0;
+  }
+  return overdubSessionUndoDepth() + 1;
+}
+
 LOOP_COLD_MEM size_t Loop::overdubSessionRedoDepth() const {
   size_t depth = overdubSessionPassIds_.size() - overdubSessionCursor_;
   if (capture.store.empty() && !overdubSessionLiveUndoEvents_.empty()) {
