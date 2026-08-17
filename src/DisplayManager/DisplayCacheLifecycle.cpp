@@ -174,6 +174,8 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveWindowGatherValid_ = false;
     liveDisplayCommittedFromWindowGather_ = false;
     liveWindowVisualCacheRevision_ = UINT32_MAX;
+    liveCommittedLayerHeldForDirtyCache_ = false;
+    liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
     editManager.invalidateProjectedNoteEditDisplayCache();
 }
 

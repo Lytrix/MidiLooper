@@ -239,6 +239,8 @@ private:
     /// RC-F follow-up: committed layer is being held because the visual cache is dirty. Cache
     /// recovery belongs to idle work, so the layer is rebuilt once the cache goes clean again.
     bool liveCommittedLayerHeldForDirtyCache_ = false;
+    /// RC12: invalidate committed layer when overdub source-view note count changes (JIT merge).
+    size_t liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
 
     /// RC-G: bounded overview density for capture states with no usable `visualCache`.
     /// One byte per loop bar; bit N set when a preview note in that bar falls in pitch band N

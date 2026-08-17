@@ -1,6 +1,6 @@
 # Overdub occupied lane — source-view consume + display parity (RC11 / RC12)
 
-**Status:** RC11 shipped (2026-08-17); RC12 queued  
+**Status:** RC11 + RC12 shipped (2026-08-17); device Gate 4 re-verify on hardware  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](overdub_overlap_hold_same_start_bugfix.md)  
@@ -202,7 +202,16 @@ overdub occupied lane
 
 ### Proceed
 
-YES — RC11 shipped; implement RC12 next (separate stage commit).
+YES — RC11 + RC12 shipped; re-run device Gate 4–5 on hardware.
+
+---
+
+## RC12 validation (2026-08-17)
+
+- Live overdub committed prefix from `overdubSourceViewNotes_` when `hasOverdubSourceView()` (`DisplayNoteResolveLiveCapture`).
+- Prepared LCR idle slice skips `appendOverdubPassDisplayNotes` (`rebuildVisualCacheIdleSlice`).
+- Native: `test_idle_slice_prepared_matches_lcr_without_append_wrap_held`; 1294/1294 pass.
+- **HITL Gate 4–5:** re-verify after flash (expect `slice_clean notes=N` == LCR `notes=N`; single `60@64` at stop).
 
 ---
 
@@ -212,4 +221,5 @@ YES — RC11 shipped; implement RC12 next (separate stage commit).
 - `stopOverdubbingToStopped` emits `logOverdubStopStage(..., "seal")` with `overlap_hold` telemetry.
 - Native: `test_overdub_consumes_existing_source_view_overlap`, `test_overdub_consumes_source_view_when_hold_ids_incomplete` — 1294/1294 pass.
 - Firmware: `teensy41-capture-serial` RAM1 free **4512**.
-- Device gates 1–5: pending HITL after flash.
+- **HITL Gate 1–3 PASS** [`135339`](../../captures/session_20260817_135339.log): `overlap_hold` hide=2 add=5; wrap `lcr,src,notes=4`; consume path active (`merged=0` holds still resolve).
+- **HITL Gate 4 FAIL (RC12)** same capture: post-wrap `slice_clean notes=5` vs LCR `notes=4`; live `DISP` committed prefix stuck at 5 while visual grows (e.g. 6→11); stop `DNTE` still stacked `60@64` rows (224 + 704).

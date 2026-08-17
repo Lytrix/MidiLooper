@@ -2,34 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC11 — source-view consume completion)
+Last updated: 2026-08-17 (overdub overlap hold RC12 — display parity with source view)
 
 ---
 
 ## Now implementing
 
-### Overdub occupied lane — display parity (RC12)
+### Overdub occupied lane — device re-verify (RC11/RC12)
 
 **Plan:** [`overdub_overlap_hold_display_cache_bugfix.md`](../Plans/overdub_overlap_hold_display_cache_bugfix.md)  
-**Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
-**Evidence:** [`132647`](../../captures/session_20260817_132647.log), [`132857`](../../captures/session_20260817_132857.log)  
-**1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — keep consume.
+**Evidence:** [`135339`](../../captures/session_20260817_135339.log) RC11 PASS; Gate 4 FAIL pre-RC12  
+**1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — re-verify after RC12 flash.
 
-**RC11 shipped:** complete `selected` from active overdub source view at note-off (window-bounded + incoming overlap); `overlap_hold` on transport stop seal. Native 1294/1294.
+**RC12 shipped:** live committed prefix from `overdubSourceViewNotes_`; prepared LCR idle slice skips `appendOverdubPassDisplayNotes`. Native 1294/1294.
 
-**RC12 next:** live committed prefix from `overdubSourceViewNotes_`; skip `appendOverdubPassDisplayNotes` after LCR idle slice. Do not fix `appendOverdubPassDisplayNotes` itself.
+**RC11 shipped:** source-view consume completion at note-off. See plan validation section.
 
-**RC10:** live capture paint applies pending Hide/Shorten on a copy. Not visual cache.  
-**RC9:** overdub transport stop finalizes pending before `sendAllNotesOff`. Stop-close accumulates overlap.  
-**RC8:** 16-bar this-pitch hold JIT.  
-**RC7:** enter rebuild, not visual cache.  
-**RC6:** wrap rebuild after publish.
-
-**RC1–RC5:** same-start collection, keep view, per-pass Hide apply. See parent plan.
-
-### Overdub overlap hold — transport-stop pending + live Hide paint (RC9/RC10) — shipped
-
-**Plans:** [`overdub_overlap_hold_transport_stop_pending_bugfix.md`](../Plans/overdub_overlap_hold_transport_stop_pending_bugfix.md), [`overdub_overlap_hold_live_pending_display_bugfix.md`](../Plans/overdub_overlap_hold_live_pending_display_bugfix.md)
+**RC10:** live capture paint applies pending Hide/Shorten on a copy.  
+**RC9:** overdub transport stop finalizes pending before `sendAllNotesOff`.  
+**RC8–RC6:** see parent plan.
 
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 

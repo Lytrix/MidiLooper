@@ -1161,32 +1161,21 @@ void test_idle_slice_keeps_untouched_next_bar_note() {
   LoopContentResolution::deviceGateReset();
 }
 
-void test_idle_slice_prepared_keeps_wrap_held() {
+void test_idle_slice_prepared_matches_lcr_without_append_wrap_held() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedWrapHeldOverdubLoop(loop);
   prepareLcrFromLoop(loop);
+  NoteUtils::DisplayNoteVec lcrOnly;
+  NoteUtils::DisplayNoteVec lcrPlusAppend;
+  preparedWindowNotes(loop, lcrOnly, lcrPlusAppend);
   rebuildIdleVisualCache(loop);
-  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
-  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 0));
-  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 288));
+  TEST_ASSERT_TRUE(sameDisplayGeometry(loop.visualCache.notes, lcrOnly));
   TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 672));
   TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2400));
-  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
-    if (note.note == 12 && note.startTick == 672u) {
-      TEST_ASSERT_EQUAL(768u, note.endTick);
-    }
-    if (note.note == 12 && note.startTick == 2400u) {
-      TEST_ASSERT_EQUAL(2500u, note.endTick);
-    }
-    if (note.note == 12 && note.startTick == 2976u) {
-      TEST_ASSERT_EQUAL(3071u, note.endTick);
-    }
-    if (note.note == 12 && note.startTick == 0u) {
-      TEST_ASSERT_EQUAL(96u, note.endTick);
-    }
-  }
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 0));
   LoopContentResolution::deviceGateReset();
 }
 
@@ -1238,7 +1227,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);
   RUN_TEST(test_idle_slice_prepared_interior_keeps_mid_loop_overdub);
-  RUN_TEST(test_idle_slice_prepared_keeps_wrap_held);
+  RUN_TEST(test_idle_slice_prepared_matches_lcr_without_append_wrap_held);
   RUN_TEST(test_idle_slice_unprepared_interior_keeps_mid_loop_overdub);
   RUN_TEST(test_idle_slice_unprepared_keeps_wrap_held);
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
