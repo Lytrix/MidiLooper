@@ -648,7 +648,7 @@ Phase 1 observation is in tree. Production participant ids still come from the R
 
 Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Do **not** start Phase 2 wrap-predicate unification or Phase 3 fill disable until the extra prepared ids after wrap (`232510` `b=k` vs `a=1`) are classified.
+Do **not** start Phase 2 wrap-predicate unification or Phase 3 fill disable until companion Hide/Shorten is folded into prepared `PresentNote` (see Wrap notes into PresentNote).
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -684,6 +684,30 @@ If present-at-S parity succeeds after wrap-predicate proof, the likely change is
 Pitch 60 at storage tick 528 (`COORD` 1296 / 2064 / 2832): wrap1 `b=1`, wrap2 `b=2`, wrap3 `b=3`; `a=1` each time. Source-view `notes=5` `ev=10` on those holds. Same pattern on 71 and 86 after wrap 2 (`a=1,b=2`). Session 2 new pitches stay `eq=1`.
 
 Hold fill stays `from=win` (77 lines, `merged=0`, win 146–1909 µs). Open: session 1 `from=win` tot 1368 µs; session 2 `from=prep` tot 4931 µs. `late_clk=0`. Consume used A: `max_ids=1`.
+
+---
+
+## Wrap notes into PresentNote at S
+
+Completed wrap notes already enter prepared `PresentNote` via `Track::commitOverdubWrapAtSessionStart` → `LoopContentResolution::publishPreparedOverdubPass`. That reconstructs **this wrap’s** `OverdubPass` events, appends `NoteSpan`s, merges `spanBoundaries`, and patches sparse `presentAt`. `tryResolvePreparedState` then includes those ids at S. Native: `test_rebuild_overdub_source_view_after_publish_includes_wrap_add`, `test_overdub_session_undo_hides_wrap_from_prepared_lcr`. [`232510`](../../captures/session_20260817_232510.log) pitch 60 at tick 528: wrap1 `b=1`, wrap2 `b=2`, wrap3 `b=3`.
+
+`232510` `eq=0` is not “wrap notes missing from PresentNote.” B is a **superset**. Source-view `notes=5` stayed flat while `b` grew. Cause in code:
+
+| Path | EditPasses | Result |
+|------|------------|--------|
+| `tryResolvePreparedWindow` (A / source view) | applied (`editPasses` argument) | Hide/Shorten from `sealPendingNoteChangesToEditPasses` drop or shorten spans before RC8 |
+| `tryResolvePreparedState` (B) | **not applied** | `publishPreparedOverdubPass` patches raw wrap spans; `eraseDisabledSounding` only drops disabled **capture** passes |
+
+Companion Delete/Length rows exist after each wrap seal. Window reconstruct sees them; checkpoint `presentAt` does not.
+
+Still required before PresentNote can own discovery:
+
+1. **Prepared kept before first wrap.** `publishPreparedOverdubPass` no-ops unless `deviceGateFinished` and `preparedIndexKept`. Session 1 enter was `from=miss` / open `from=win` until wrap 1. Idle gate (DEC-037 6.0), not a button cold-build.
+2. **Fold sealed companions into checkpoints** after wrap publish (apply Hide/Shorten to spans / `presentAt`, or rebuild spans from index+delta+`editPasses`). Same edit sequence `prepareRebuildResolvedEvents` already uses at idle gate.
+3. **LinearSpan from `NoteSpan`**, not emitted `PresentNote` (no `endTick`). Consume still needs start and end.
+4. **Leave live capture out of LCR.** Path B remains forbidden. `extractOpenCaptureNoteOns` removes held ons **before** seal and re-appends them to the next wrap’s `capture.store`. Those notes are not in the published pass until a later wrap or stop completes them.
+
+Do not copy per-bar `presentAt` as a new store ([`225351`](../../captures/session_20260814_225351.log)). Do not put `resolveWindow` on USB miss.
 
 ---
 
