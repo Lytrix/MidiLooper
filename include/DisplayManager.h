@@ -203,6 +203,9 @@ private:
                                                      uint32_t windowLength);
     void invalidateNoteEditDisplayCache();
     DisplayNoteVec liveDisplayNotes;
+    /// Paint copy with pending Hide/Shorten applied. `liveDisplayNotes` stays the
+    /// un-hidden compose so capture-layer index math stays valid.
+    DisplayNoteVec liveDisplayPendingPaintNotes_;
     std::vector<NoteUtils::OpenNoteOn> liveDisplayCacheOpenNotes;
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
     /// Committed-layer note count in `liveDisplayNotes` before capturePreview overlay (overdub).

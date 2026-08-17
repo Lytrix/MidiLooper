@@ -247,13 +247,13 @@ void Track::stopOverdubbingToStopped() {
   if (loop.loopLengthTicks > 0) {
     closeTick = capturePhaseTick(currentTick);
   }
-  sendAllNotesOff();
   if (handleNoteEditFold(false, currentTick, closeTick, /*stopStartUs=*/0)) {
     loop.closeOverdubSession();
     return;
   }
   finalizePendingNotes(currentTick);
   commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
+  silenceTrackMidiOutput();
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);

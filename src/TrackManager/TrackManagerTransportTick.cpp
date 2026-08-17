@@ -61,8 +61,10 @@ void TrackManager::handleTransportStop() {
         t.setLoopLength(masterLoopLength);
       }
     } else if (t.isOverdubbing()) {
-      t.sendAllNotesOff();
+      // Same order as record: finalize held notes before sendAllNotesOff()
+      // clears pendingNotes. [`122152`] wrap_synth Off@168 was an orphaned On.
       t.stopOverdubbingToStopped();
+      t.sendAllNotesOff();
     } else if (t.isPlaying()) {
       t.stopPlaying();  // sends All Notes Off internally
     } else if (t.isArmed()) {

@@ -96,6 +96,29 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
   pending.push_back(change);
 }
 
+void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
+                                       const PendingNoteChangeVec& pending) {
+  for (const PendingNoteChange& change : pending) {
+    if (change.kind != PendingNoteChangeKind::Shorten &&
+        change.kind != PendingNoteChangeKind::Hide) {
+      continue;
+    }
+    for (auto it = notes.begin(); it != notes.end();) {
+      if (it->noteId != change.noteId) {
+        ++it;
+        continue;
+      }
+      if (change.kind == PendingNoteChangeKind::Hide) {
+        it = notes.erase(it);
+        continue;
+      }
+      it->startTick = change.startTick;
+      it->endTick = change.endTick;
+      ++it;
+    }
+  }
+}
+
 }  // namespace
 
 LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
@@ -353,24 +376,13 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
       note.endTick = change.endTick;
       added.push_back(note);
       mergeDisplayNotesIntoOverdubSourceView(added);
-      continue;
-    }
-    for (auto it = overdubSourceViewNotes_.begin(); it != overdubSourceViewNotes_.end();) {
-      if (it->noteId != change.noteId) {
-        ++it;
-        continue;
-      }
-      if (change.kind == PendingNoteChangeKind::Hide) {
-        it = overdubSourceViewNotes_.erase(it);
-        continue;
-      }
-      if (change.kind == PendingNoteChangeKind::Shorten) {
-        it->startTick = change.startTick;
-        it->endTick = change.endTick;
-      }
-      ++it;
     }
   }
+  applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, pendingNoteChanges_);
+}
+
+LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
+  applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_);
 }
 
 EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
