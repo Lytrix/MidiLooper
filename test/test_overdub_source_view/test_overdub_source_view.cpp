@@ -14,6 +14,13 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/NoteEditCurrentState.cpp"
+#include "../../src/EditManager/EditSessionInteraction.cpp"
+#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"
+#include "../../src/Loop/LoopPendingNoteChange.cpp"
+#include "../../src/Utils/RuntimeTimingTelemetry.cpp"
 
 #include "Loop.h"
 #include "GlobalUndoStack.h"
@@ -27,6 +34,9 @@
 #include "Globals.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
+
+#include <cstdio>
+#include <initializer_list>
 
 namespace {
 
@@ -82,6 +92,81 @@ int countDisplayNotesAtStartTick(const NoteUtils::DisplayNoteVec& notes, uint32_
     }
   }
   return count;
+}
+
+OverlapNoteIdSet overlapIds(std::initializer_list<NoteId> ids) {
+  OverlapNoteIdSet out;
+  for (NoteId id : ids) {
+    (void)out.insert(id);
+  }
+  return out;
+}
+
+const OverdubPass* findOverdubPass(const Loop& loop, PassId id) {
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == id) {
+      return &pass;
+    }
+  }
+  return nullptr;
+}
+
+void formatNoteIds(const OverlapNoteIdSet& ids, char* buf, size_t cap) {
+  if (buf == nullptr || cap == 0) {
+    return;
+  }
+  buf[0] = '\0';
+  size_t used = 0;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    const int n = snprintf(buf + used, cap - used, "%s%u", i == 0 ? "" : ",",
+                           static_cast<unsigned>(ids.at(i)));
+    if (n < 0 || static_cast<size_t>(n) >= cap - used) {
+      return;
+    }
+    used += static_cast<size_t>(n);
+  }
+}
+
+void collectHoldParticipantSets(Loop& loop, uint32_t tick, uint8_t pitch, OverlapNoteIdSet& sourceIds,
+                                OverlapNoteIdSet& preparedIds) {
+  loop.collectOverdubSourceHoldParticipantIds(tick, pitch, sourceIds);
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+      tick, pitch, loop.playbackRevision, preparedIds));
+}
+
+void commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint32_t onTick, uint32_t offTick,
+                                   const OverlapNoteIdSet& occupyIds) {
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, onTick, offTick,
+                                                                   wrapNoteId, occupyIds));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(onTick, 1, 60, 90, wrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  const EditPassIdList companions = loop.sealPendingNoteChangesToEditPasses();
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.passes.editPasses, companions);
+  loop.rebuildOverdubSourceView(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+}
+
+bool sourceViewHasNoteId(const Loop& loop, NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool editPassesHideTarget(const Loop& loop, NoteId noteId) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.state == EditPassState::Active && row.passType == EditPassType::Note &&
+        row.actionType == EditActionType::Delete && row.targetNoteId == noteId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -1497,6 +1582,118 @@ void test_retire_superseded_pitch_keeps_same_start_sibling_end() {
   TEST_ASSERT_FALSE(keptGhost);
 }
 
+void pinHoldSetsAfterWrap(int wrapIndex, Loop& loop, uint32_t holdTick, uint8_t pitch,
+                          OverlapNoteIdSet& sourceIds, OverlapNoteIdSet& preparedIds,
+                          OverlapNoteIdSet& onlyA, OverlapNoteIdSet& onlyB) {
+  sourceIds.clear();
+  preparedIds.clear();
+  onlyA.clear();
+  onlyB.clear();
+  collectHoldParticipantSets(loop, holdTick, pitch, sourceIds, preparedIds);
+  for (size_t i = 0; i < sourceIds.size(); ++i) {
+    const NoteId id = sourceIds.at(i);
+    if (!preparedIds.contains(id)) {
+      (void)onlyA.insert(id);
+    }
+  }
+  for (size_t i = 0; i < preparedIds.size(); ++i) {
+    const NoteId id = preparedIds.at(i);
+    if (!sourceIds.contains(id)) {
+      (void)onlyB.insert(id);
+    }
+  }
+  char aBuf[64];
+  char bBuf[64];
+  char aoBuf[64];
+  char boBuf[64];
+  formatNoteIds(sourceIds, aBuf, sizeof(aBuf));
+  formatNoteIds(preparedIds, bBuf, sizeof(bBuf));
+  formatNoteIds(onlyA, aoBuf, sizeof(aoBuf));
+  formatNoteIds(onlyB, boBuf, sizeof(boBuf));
+  printf("wrap %d hold=%u a=%u b=%u eq=%d ao=%u bo=%u A=[%s] B=[%s] onlyA=[%s] onlyB=[%s]\n",
+         wrapIndex, static_cast<unsigned>(holdTick), static_cast<unsigned>(sourceIds.size()),
+         static_cast<unsigned>(preparedIds.size()), sourceIds == preparedIds ? 1 : 0,
+         static_cast<unsigned>(onlyA.size()), static_cast<unsigned>(onlyB.size()), aBuf, bBuf,
+         aoBuf, boBuf);
+}
+
+// 013327 device holds grew B extras after wrap 2. This fixture is that occupy
+// geometry (same-start longer Hide) on the wrap-publish path. It records the
+// actual A/B NoteIds: hide bake finds wrap-N Add, so A IDs == B IDs after each
+// wrap. No unbaked hide, wrap-local-only span, restore, or duplicate extra.
+void test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 64, 176, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+
+  constexpr uint32_t kHoldTick = 100;
+  constexpr uint8_t kPitch = 60;
+  OverlapNoteIdSet occupy;
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(1));
+  commitSamePitchWrapAndPublish(loop, 10, 64, 240, occupy);
+
+  OverlapNoteIdSet a1;
+  OverlapNoteIdSet b1;
+  OverlapNoteIdSet ao1;
+  OverlapNoteIdSet bo1;
+  pinHoldSetsAfterWrap(1, loop, kHoldTick, kPitch, a1, b1, ao1, bo1);
+  TEST_ASSERT_TRUE(a1 == b1);
+  TEST_ASSERT_EQUAL(0u, ao1.size());
+  TEST_ASSERT_EQUAL(0u, bo1.size());
+  TEST_ASSERT_TRUE(a1.contains(10));
+  TEST_ASSERT_FALSE(a1.contains(1));
+
+  occupy.clear();
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(10));
+  commitSamePitchWrapAndPublish(loop, 11, 64, 288, occupy);
+
+  OverlapNoteIdSet a2;
+  OverlapNoteIdSet b2;
+  OverlapNoteIdSet ao2;
+  OverlapNoteIdSet bo2;
+  pinHoldSetsAfterWrap(2, loop, kHoldTick, kPitch, a2, b2, ao2, bo2);
+  TEST_ASSERT_TRUE(a2.contains(11));
+  TEST_ASSERT_FALSE(a2.contains(10));
+  TEST_ASSERT_TRUE(a2 == b2);
+  TEST_ASSERT_EQUAL(0u, ao2.size());
+  TEST_ASSERT_EQUAL(0u, bo2.size());
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 10));
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 10));
+
+  occupy.clear();
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(11));
+  commitSamePitchWrapAndPublish(loop, 12, 64, 336, occupy);
+
+  OverlapNoteIdSet a3;
+  OverlapNoteIdSet b3;
+  OverlapNoteIdSet ao3;
+  OverlapNoteIdSet bo3;
+  pinHoldSetsAfterWrap(3, loop, kHoldTick, kPitch, a3, b3, ao3, bo3);
+  TEST_ASSERT_TRUE(a3.contains(12));
+  TEST_ASSERT_FALSE(a3.contains(11));
+  TEST_ASSERT_TRUE(a3 == b3);
+  TEST_ASSERT_EQUAL(0u, ao3.size());
+  TEST_ASSERT_EQUAL(0u, bo3.size());
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 11));
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 11));
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1562,6 +1759,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_retire_superseded_pitch_drops_home_when_settled_present);
   RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);
   RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
+  RUN_TEST(test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);
