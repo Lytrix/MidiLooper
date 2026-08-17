@@ -1,10 +1,10 @@
 # Overdub participant discovery from loop content
 
-**Status:** Architecture contract **pinned** 2026-08-17. Phase 0b identity mapping **done**. Phase 1 firmware **not authorized**. PresentNote C++ rename **not authorized**.  
+**Status:** Architecture contract **pinned** 2026-08-17. Phase 0b identity mapping **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Phase 1 firmware **not authorized**. PresentNote C++ rename **not authorized**. Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
-**Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), DEC-037 LoopContentResolution  
+**Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
 **Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; Phase 1 observation firmware; renaming LCR `SoundingNote` in C++ until a naming-only go
@@ -218,6 +218,56 @@ A passing Experiment 1 clamp (1/2/4/8/16) is evidence, not this contract.
       overdub participants
 ```
 
+### NOTE_EDIT sibling
+
+NOTE_EDIT overlap is the same consumer class. The query interval is the **selected / mover LinearSpan**, not a window around `selectedTick`.
+
+```text
+OVERDUB
+    incoming note at tick S  (later hold [S, E))
+        ↓
+    notes present at S / overlapping [S, E)
+        ↓
+    RC8 participants (NoteId + LinearSpan)
+
+NOTE_EDIT overlap
+    selected / mover LinearSpan [start, end)
+        ↓
+    notes that participate with that span
+        ↓
+    same identity (NoteId + LinearSpan)
+```
+
+Do **not** map `currentTick` → `selectedTick` as the overlap origin. That is the 16-bar analog: a geometric interval around a tick, then reconstruct, then find overlaps.
+
+Keep Select as a **different** query (already pinned in the hydrate architecture):
+
+```text
+Select encoder   → tickEvents / spanBoundaries neighborhood around selectedTick
+                   (navigation, not participants)
+
+Overlap/analyze  → participants vs current selected/mover LinearSpan
+                   (same query class as overdub; interval, not a selectedTick window)
+
+Open             → must not rematerialize the loop to analyze
+```
+
+Paint stays `visualCache` + `NoteEditCurrentState` overlay. Path B (live geometry into LCR) stays forbidden. `NoteGeometryResolver` stays overlap Resolution.
+
+Phase 0b applies: emitted `SoundingNote` lacks `endTick`; overlap needs LinearSpan (`NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal.
+
+Cost for NOTE_EDIT overlap:
+
+```text
+not: loop length × rematerialize × pairwise all notes
+yes: traversal to spans that can intersect the selected LinearSpan
+     + participant filter
+```
+
+Firmware for hydrate stays unauthorized until that work is in CURRENT_WORK § Now implementing. Do not start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.”
+
+Work path: [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md).
+
 ---
 
 ## 6. Present-at-S is a definition, not a shared mutable object
@@ -243,6 +293,7 @@ Advance vs query is **implementation, not ownership**:
 7. Keep playback gather ownership unchanged (`ensurePlaybackMergedMidiEventsBuilt`).
 8. Avoid `WindowManager` / `WindowRequest` / `WindowPolicy`.
 9. Use **PresentNote** for present-at-S; do not invent a Manager.
+10. NOTE_EDIT overlap uses the same participant query keyed by selected/mover LinearSpan, not a `selectedTick` window.
 
 Secondary: USB latency closer to 1-bar behavior; source/hold JIT no longer inherits a 16-bar geometric window.
 
@@ -584,9 +635,12 @@ Prepared prerequisites: idle device gate completed, `playbackRevision` stamp mat
              │
              ▼
         note-off snapshot
+
+NOTE_EDIT overlap (sibling): same present-at-S / participant identity,
+keyed by selected/mover LinearSpan — not a window around selectedTick.
 ```
 
-One **definition** of notes present at a tick. Overdub does not reconstruct a 16-bar window to rediscover it. Playback send is a separate consumer.
+One **definition** of notes present at a tick. Overdub does not reconstruct a 16-bar window to rediscover it. Playback send is a separate consumer. NOTE_EDIT overlap uses the same participant query; Select stays a `selectedTick` neighborhood.
 
 ---
 
@@ -599,6 +653,8 @@ Do **not** implement send-side present-at-S.
 Do **not** start Phase 1 until authorized.
 
 Do **not** rename `SoundingNote` → `PresentNote` in C++ until a naming-only go.
+
+Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
 If present-at-S parity succeeds after wrap-predicate proof, the likely change is:
 

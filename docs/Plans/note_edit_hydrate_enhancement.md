@@ -1,23 +1,24 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Decided — not now. Architecture PASS; firmware not authorized.  
-**Date:** 2026-08-16  
+**Status:** Decided — not now. Architecture PASS (overlap retarget 2026-08-17); firmware not authorized.  
+**Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
 **Architecture (proposal):** [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md)  
+**Sibling (overlap participants):** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) amendment 2026-08-16  
-**Overdub analog:** [6E](loop_content_resolution_overdub_state_evaluation_refinement.md) `resolveState(tick)` consume  
-**Does not authorize:** firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5
+**Overdub analog:** notes present vs incoming hold LinearSpan (same participant class). Select stays a `selectedTick` neighborhood.  
+**Does not authorize:** firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
 
 ---
 
 ## What this work is
 
-NOTE_EDIT still rematerializes the loop on open (`openNoteEditSession` → `rebuildVisualCacheFromPasses` + `rematerializeEditView`). Overdub already left that model: consume prepared LoopContentResolution (LCR) around `currentTick`, identity lookup, overlay compose.
+NOTE_EDIT still rematerializes the loop on open (`openNoteEditSession` → `rebuildVisualCacheFromPasses` + `rematerializeEditView`). Overdub already left that model: participant discovery vs the incoming hold LinearSpan, identity lookup, overlay compose.
 
-This work is that same consume shape for the editor. Query origin is `selectedTick`. The proposal is the architecture. This file is the **work path** so it is not a leftover LCR 6.4 production-swap task.
+This work is that same consume shape for the editor. Overlap query origin is the **selected / mover LinearSpan**, not `selectedTick`. Select encoder origin stays `selectedTick` (neighborhood navigation). The proposal is the architecture. This file is the **work path** so it is not a leftover LCR 6.4 production-swap task.
 
-Play / display / analyze / LEDs are consumers ([DerivedViews.md](../Authority/Architecture/DerivedViews.md) § Consumers). Hydrate moves NOTE_EDIT **analyze** onto prepared `LoopContentResolution` around `selectedTick`. It does not make LCR the piano-roll list and does not delete `visualCache`.
+Play / display / analyze / LEDs are consumers ([DerivedViews.md](../Authority/Architecture/DerivedViews.md) § Consumers). Hydrate moves NOTE_EDIT **analyze** onto the overdub sibling participant query. It does not make LCR the piano-roll list and does not delete `visualCache`. Do not implement overlap as “prepared LCR × interval around `selectedTick`” — that is the 16-bar analog.
 
 Grooming already named the gap **NOTE_EDIT hydrate** and forbade folding it into idle-slice / `ensureVisualCacheBuilt` audits. That name stays for this work. It is **not** `lazy-slot-hydration` (SD load to COMMITTED) and not undo-snapshot hydrate.
 
@@ -29,7 +30,7 @@ Grooming already named the gap **NOTE_EDIT hydrate** and forbade folding it into
 prepared LCR ∪ NoteEditCurrentState overlay
     │
     ├─ Select: tickEvents / spanBoundaries neighborhood around selectedTick
-    ├─ Overlap: indexed identities → appendNoteEvents (same hold as overdub)
+    ├─ Overlap: participants vs selected/mover LinearSpan (same class as overdub)
     └─ Paint / audition: visualCache + settled overlay (not a second loop)
 ```
 
@@ -59,7 +60,7 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 | Grooming Slice 4e / 4f / 5 | Grooming must not implement editor hydrate. |
 | `lazy-slot-hydration` | SD slot load. Different owner (`StorageManager` / `LoadLoopJob`). |
 | A new hydrate session that resumes across `loop()` before NOTE_EDIT is ready | That is a **state-transition change** (defer open until hydrate finishes). The proposal’s checkpoint is **NO**. Consume-when-ready + legacy miss, same as 6C. |
-| New types: `EditHydrateSession`, `EditSourceView`, `NoteEditSourceView` | NAMING / DEC-037 rejected new domain nouns. Working set is a Runtime Request: prepared LCR × interval around `selectedTick`. |
+| New types: `EditHydrateSession`, `EditSourceView`, `NoteEditSourceView` | NAMING / DEC-037 rejected new domain nouns. Overlap working set is the participant query vs selected/mover LinearSpan. Select is a Runtime Request: prepared LCR × neighborhood around `selectedTick`. |
 | Redesign `rematerializeEditView` / `materializeToEventVector` / `EditSession.store` | Prove the consumer first. |
 
 ---
