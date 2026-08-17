@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT display — undo, wrap, pitch-move ghosts
 
-**Status:** Native PASS (1299/1299) — RC-W1 / RC-N1 / RC-U1 firmware landed; HITL device gate open  
+**Status:** Native PASS (1299/1299) — RC-W1 / RC-N1 / RC-U1 firmware committed; HITL device gate open  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`144703`](../../captures/session_20260817_144703.log), [`144939`](../../captures/session_20260817_144939.log); original report [`142813`](../../captures/session_20260817_142813.log)  
@@ -150,3 +150,22 @@ Producer is correct (`rebuildOverdubSourceView`, `why=wrap,from=prep`). Live com
 | RC-U1 | Disable overdub pass + idle refresh matches materialize note count | `144939` class: undo whole overdub session → record-layer display, not `VCACHE,full` |
 
 `pio test -e native` before each stage commit.
+
+---
+
+## Shipped firmware
+
+| Slice | Commit | Native |
+|-------|--------|--------|
+| RCA | `9292368` | docs only |
+| **RC-W1** | `f0b0e66` | wrap `beginCapture` clears preview; held-on re-append |
+| **RC-N1** | `142b95b` | persist-twin projection hide + `retireSupersededPitchDisplayNote` |
+| **RC-U1** | `324ffdd` | `refreshVisualCacheAfterPassStateChange` idle slices; no `VCACHE,full` on undo/redo |
+
+HITL (after flash `teensy41-capture-serial`):
+
+| Slice | Gate |
+|-------|------|
+| RC-W1 | After wrap `slice_clean`, DISP committed/live prefix agree until the next capture note |
+| RC-N1 | Pitch-move deselect does not stack `3/3` inventory at the unchanged start tick |
+| RC-U1 | Post-stop `OverdubPassAdded` undo paints the remaining record layer; no `VCACHE,full` |

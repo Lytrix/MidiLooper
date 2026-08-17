@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (display undo/wrap/pitch-move RCA; RC-W1/N1/U1)
+Last updated: 2026-08-17 (RC-W1/N1/U1 firmware committed; HITL open)
 
 ---
 
@@ -13,7 +13,9 @@ Last updated: 2026-08-17 (display undo/wrap/pitch-move RCA; RC-W1/N1/U1)
 **Plan:** [`note_edit_display_undo_overdub_wrap_bugfix.md`](../Plans/note_edit_display_undo_overdub_wrap_bugfix.md)  
 **Evidence:** [`144703`](../../captures/session_20260817_144703.log), [`144939`](../../captures/session_20260817_144939.log)
 
-Prior `rebuildVisualCacheFromPasses` on undo/commit is insufficient (and wrong oracle). JIT consume-only: wrap invalidates live display cache; pitch commit retires overlay/home geometry; undo uses idle visual-cache slices. Do not reopen RC11/RC12. Do not change DEC-038.2 session undo grain.
+**Firmware committed** (`f0b0e66` / `142b95b` / `324ffdd`). Native 1299/1299. **HITL device gate open** after flash `teensy41-capture-serial`.
+
+Wrap invalidates live display cache; pitch commit retires persist-twin overlay and home pitch in `visualCache`; undo/redo uses idle visual-cache slices (`refreshVisualCacheAfterPassStateChange`). Do not reopen RC11/RC12. Do not change DEC-038.2 session undo grain.
 
 ### Loop length during overdub (queued — do not start firmware)
 
