@@ -192,11 +192,15 @@ struct Loop {
   /// Session-start source view: reset overlap-hold totals, then `rebuildOverdubSourceView`
   /// (`why=open`), then clear pending. Not visual cache.
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
+  /// Source/hold resolution breadth in bars. Independent of
+  /// `DisplayWindowUtils::kMaxDetailedWindowBars`. Experiment 1 rebuilds this
+  /// value (1/2/4/8/16); a timing-passing length is evidence, not policy.
+  static constexpr uint32_t kOverdubSourceWindowBars = 16;
   /// Rebuild source notes from prepared window, else per-pass `resolveWindow`.
   /// Not visual cache. `why` is CAP `open` (enter) or `wrap` (after publish).
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
-  /// D2: just-in-time merge of this pitch's notes from the 16-bar hold window
-  /// into the session source view. Not the full loop. Skips noteIds already
+  /// D2: just-in-time merge of this pitch's notes from the source/hold window
+  /// (`kOverdubSourceWindowBars`) into the session source view. Not the full loop. Skips noteIds already
   /// present. Optional `newlyMergedPitchNotes` receives only those new rows.
   /// `soundingAtHoldOnly` is the note-on snapshot path: merge notes sounding at
   /// the hold tick, not ahead notes in the same window.

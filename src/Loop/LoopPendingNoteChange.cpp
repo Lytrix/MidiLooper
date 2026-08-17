@@ -182,13 +182,14 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
     *newlyMergedPitchNotes = toMerge;
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-  char line[192];
+  char line[224];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=hold,from=win,pitch=%u,win=%lu,ev=%u,merged=%u,notes=%u",
+           "#CAP,%lu,DIAG,lcr,src,why=hold,from=win,pitch=%u,win=%lu,ev=%u,merged=%u,notes=%u,bars=%u",
            static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
            static_cast<unsigned long>(windowCounters.elapsedMicros),
            static_cast<unsigned>(windowEvents.size()), static_cast<unsigned>(toMerge.size()),
-           static_cast<unsigned>(overdubSourceViewNotes_.size()));
+           static_cast<unsigned>(overdubSourceViewNotes_.size()),
+           static_cast<unsigned>(kOverdubSourceWindowBars));
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)windowCounters;

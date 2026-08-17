@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-17 (consumer window budget architecture after 213401)
+Last updated: 2026-08-17 (Experiment 1 source/hold window detach)
 
 ---
 

@@ -320,7 +320,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
 }
 
 uint32_t Loop::overdubSourceWindowLengthTicks() const {
-  return DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+  return kOverdubSourceWindowBars * Config::TICKS_PER_BAR;
 }
 
 void Loop::resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
@@ -393,14 +393,15 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
-  char line[192];
+  char line[224];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u",
            static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
            static_cast<unsigned long>(reconstructUs),
            static_cast<unsigned long>(windowUs + reconstructUs),
            static_cast<unsigned>(overdubSourceViewEvents_.size()),
-           static_cast<unsigned>(overdubSourceViewNotes_.size()));
+           static_cast<unsigned>(overdubSourceViewNotes_.size()),
+           static_cast<unsigned>(kOverdubSourceWindowBars));
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)from;
