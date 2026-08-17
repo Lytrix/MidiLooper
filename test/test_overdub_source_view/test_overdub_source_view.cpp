@@ -84,9 +84,47 @@ void test_overdub_start_establishes_source_view() {
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(kLoopLen, loop.overdubSourceViewLoopLengthTicks());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+}
+
+void test_overdub_enter_rebuilds_source_view_not_visual_cache() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 80, 1, 72, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(120, 1, 72, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, 80));
+
+  NoteUtils::DisplayNote kept{};
+  bool foundKept = false;
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note == 60 && note.startTick == 10) {
+      kept = note;
+      foundKept = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE(foundKept);
+  loop.visualCache.notes.clear();
+  loop.visualCache.notes.push_back(kept);
+  loop.visualCacheDirty = false;
+  loop.visualCache.dirtyBars.clear();
+  TEST_ASSERT_TRUE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(
+      loop.visualCacheDirty, !loop.visualCache.notes.empty()));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 72, 80));
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
 }
 
 void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
@@ -314,7 +352,8 @@ void test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch() {
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_EQUAL(1, countNoteOns(loop.overdubSourceViewEvents(), 60));
   LoopContentResolution::deviceGateReset();
 }
@@ -1167,6 +1206,7 @@ void test_should_commit_overdub_wrap_after_leaving_start() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_overdub_start_establishes_source_view);
+  RUN_TEST(test_overdub_enter_rebuilds_source_view_not_visual_cache);
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
   RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
   RUN_TEST(test_short_loop_idle_slice_cleans_without_full_rebuild);

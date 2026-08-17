@@ -86,7 +86,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 **Owner:** overdub lifecycle — `Track` trigger / `Loop` pass list + `capture.store`. LCR publish stays `publishPreparedOverdubPass`. GUS kind stays `OverdubPassAdded`.  
 **Plan:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)  
 **Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) (6E native PASS); [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) / [DEC-032](#dec-032-overdub-editpass-unification-reassessment) companions  
-**Does not supersede:** DEC-037 6.0 (no LCR construct on the button); DEC-036 3b fallback; DEC-031 companion encode
+**Does not supersede:** DEC-037 6.0 (no LCR construct on the button); DEC-036 3b for **display** idle visual cache; DEC-031 companion encode. Overdub **source view** does not copy visual cache (RC7).
 
 ### Problem
 
@@ -98,7 +98,7 @@ Overdub source view is frozen at session start. A wrap that returns to the start
 2. **Still an `OverdubPass`.** No new domain noun. No session-id on the pass in this DEC.
 3. **Held note at S.** Do not call `Track::finalizePendingNotes`. That closer is STOP only (6E.5). Publish completed ON/OFF pairs only. Add stays NoteOff-owned (`accumulatePendingNoteChangesForIncomingNote`).
 4. **Empty wrap.** No pass, no session-stack push, no revision bump, no LCR publish.
-5. **6.0 at wrap.** Bounded 6D.4 publish, then a **bounded source-view window reconstruct** (`Loop::rebuildOverdubSourceView`: `tryResolvePreparedWindow` + `reconstructDisplayNotes`, else windowed `resolveWindow(passes)`). No LCR construct on the MIDI/button path, no full-loop materialize, no `resolveState` on note-off, no `VCACHE,full`, no SD. Clarified 2026-08-17 (RC6).
+5. **6.0 at wrap and enter.** Bounded 6D.4 publish (wrap), then a **bounded source-view window reconstruct** (`Loop::rebuildOverdubSourceView`: `tryResolvePreparedWindow` + `reconstructDisplayNotes`, else windowed `resolveWindow(passes)`). Session-start `establishOverdubSourceView` calls the same helper (`why=open`). Not visual cache. No LCR construct on the MIDI/button path, no full-loop materialize, no `resolveState` on note-off, no `VCACHE,full`, no SD. Clarified 2026-08-17 (RC6 wrap, RC7 enter).
 6. **Undo while OVERDUBBING.** Session-gate in `MidiButtonActions::handleUndo` / `handleRedo` (same routing as NOTE_EDIT **E:** — no **U:** fallthrough). Stack is a Loop-owned `PassId` list of this session’s sealed wraps plus live `capture.store`. Not `NoteEditSessionUndoStack`. Not `EditManager`. Undo: live wrap first (`discardCapture`), then `setPreparedCapturePassState(Disabled)` on the last sealed wrap. No GUS pop.
 7. **Undo after stop.** One **U:** `OverdubPassAdded` for the whole session. `passIds` = wrap 1..N. `editPassIds` = all companions. Extend that kind; do not add a new `UndoEntryKind`. GUS wire bump (STK2 → next token) for the `passIds` list.
 8. **Crash mid-session.** Out of this DEC. Reboot during OVERDUBBING is the same loss as today’s uncommitted overdub.
@@ -134,7 +134,7 @@ Persist grain is one wrap so wrap-2 can overlap wrap-1 via prepared `resolveStat
 - Wrap commit must not call `finalizePendingNotes` or `LoopStopFinalize::finalizeWrapWindowOnStore` to invent an OFF at S.
 - `handleUndo` while OVERDUBBING must not fall through to GUS.
 - Do not add a new undo kind. Do not put wraps on `NoteEditSessionUndoStack`.
-- Keep 3b on `tryResolvePreparedState` miss.
+- Keep display idle 3b (`DIAG,lcr,vch`) on `tryResolvePreparedState` miss. Overdub source-view enter/wrap uses `rebuildOverdubSourceView`, not a visual-cache copy.
 - No SD on wrap. No session-id on `OverdubPass` in this DEC.
 - S is session-scoped. Do not store it only on `Capture` if `discardCapture` would drop it mid-session.
 
@@ -328,7 +328,7 @@ Not multi-second MIDI or OLED stall. **5.1 PASS.** 5.2 (overdub entry / `VCACHE,
 
 Not a new DEC. Stage 9 device gates are complete. **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` **10050 µs** after restoring DEC-036 3b (copy authoritative `visualCache.notes`; no `markDisplayCachesStale` on `startOverdubbing`). Prior FAIL [`175544`](../captures/session_20260815_175544.log) **108979 µs**. Original 3b [`045556`](../captures/session_20260814_045556.log) **2214 µs**.
 
-**Invariant:** Overdub **start and stop** MUST NOT cold-build `LoopContentResolution`. LCR construction belongs to idle/background preparation. Overdub entry consumes already-prepared derived state (3b visual-cache copy when authoritative; already-complete LCR only if that work already finished off the overdub path).
+**Invariant:** Overdub **start and stop** MUST NOT cold-build `LoopContentResolution`. LCR construction belongs to idle/background preparation. Overdub entry consumes already-prepared derived state (prepared window when ready). Clarified 2026-08-17 (RC7): source view is `rebuildOverdubSourceView` (prepared window, else bounded `resolveWindow(passes)`). Display idle may still copy visual cache (`vch`). Do not copy visual cache into `overdubSourceViewNotes_`.
 
 Content authority stays `LoopPasses`. Do not add a `LoopContent` type. Do not treat the 2214 µs 3b number as proof that LCR queries are faster — that number is a cache copy, not an LCR setup/query cost.
 
@@ -337,11 +337,10 @@ Content authority stays `LoopPasses`. Do not add a `LoopContent` type. Do not tr
 ```
 start/stop overdub
   → create/rebuild LCR indexes
-  → resolve committed state
-  → construct source view
+  → resolveState / full-loop materialize
 ```
 
-That recreates [`175544`](../captures/session_20260815_175544.log) (`markDisplayCachesStale` → discard → materialize → reconstruct) under a new owner.
+That recreates [`175544`](../captures/session_20260815_175544.log) (`markDisplayCachesStale` → discard → materialize → reconstruct) under a new owner. Bounded `rebuildOverdubSourceView` is allowed (DEC-038 RC6/RC7).
 
 **Acceptance (Stage 6 overdub path):**
 
@@ -352,7 +351,7 @@ That recreates [`175544`](../captures/session_20260815_175544.log) (`markDisplay
 
 A 4–10 ms landing still proves the invariant if those architecture bars hold. Do not optimize the old 2214 µs number at the expense of the invariant.
 
-Dirty-cache is **not** a license to call `resolveWindow` from `startOverdubbing`. Idle slices (`6.2`) own LCR gather. If LCR is not ready, keep the existing non-LCR 3b fallback (`CommittedEventRange::inWindow` + edit apply) — do not cold-build indexes to help.
+Dirty-cache is **not** a license to cold-build LCR indexes from `startOverdubbing`. Idle slices (`6.2`) own LCR gather. Source-view miss uses bounded `LoopContentResolution::resolveWindow(passes)` (RC7), not a visual-cache copy and not `ensureLcrIndexCurrent()`.
 
 Firmware production swap (`6.1`+) does not start until an explicit implement request. This amendment pins the invariant only.
 
@@ -369,7 +368,7 @@ Not a new DEC. Strengthens the previous Stage 6 amendment. 5.18 is **FROZEN**; d
 
 **Invariant (strengthened):** Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. It may only consume already-prepared derived state. `ensureLcrIndexCurrent()` (or any other ensure/rebuild helper) on that path is still a violation.
 
-**Role:** `LoopContentResolution` is the **producer of prepared derived state**, not a replacement for `overdubSourceView`. `establishOverdubSourceView` stays the consumer. Keep the 3b `visualCache.notes` copy as fallback so LCR can fail to be ready without making overdub entry expensive.
+**Role:** `LoopContentResolution` is the **producer of prepared derived state**, not a replacement for `overdubSourceView`. `establishOverdubSourceView` stays the consumer via `rebuildOverdubSourceView`. Display idle may copy visual cache (`vch`). Source view does not.
 
 **Preparation is established architecture** (cooperative / bulk / sliced). Device complete-path [`173842`](../captures/session_20260815_173842.log) / channel [`170024`](../captures/session_20260815_170024.log): `spanBoundaries` `app=1420` `sort=9439`; `tickEvents` `iapp=197743` `isort=28116`; channel `capp=12373` `csort=1779`; pair `tot=7950` `nsort=10003`. Do not rediscover this in the migration.
 
@@ -379,7 +378,7 @@ Not a new DEC. Strengthens the previous Stage 6 amendment. 5.18 is **FROZEN**; d
 |-------|------|-------------------|
 | **6A** | One dirty display range: `resolveWindow` → display projection instead of `CommittedEventRange` → `reconstructDisplayNotes`. Idle only. | Keep old path as oracle. Measure `resolveWindow`, projection, total slice, worst slice, `midi_gap`, `DFRAME`. |
 | **6B** | Overdub stop: commit → mark **only affected ranges** → return. No materialize, no whole-loop reconstruct, no `VCACHE,full`. | Separate `stopOverdubbing` entry, `commitCapturePass`, bookkeeping, return-to-MIDI, first idle prep, display repaint, eventual consistency. |
-| **6C** | Prepared LCR range → `overdubSourceView`. **Only after 6A/6B.** | Keep 3b visual-cache copy. Score `begin_capture` against 3b **2214 µs**, not against 5.2 **10050 µs**. |
+| **6C** | Prepared LCR range → `overdubSourceView`. **Only after 6A/6B.** | RC7: miss uses bounded `resolveWindow(passes)`, not visual-cache copy. Score `begin_capture` against 3b **2214 µs**, not against 5.2 **10050 µs**. |
 
 `< 3 ms` is a **regression target**, not an architectural promise. LCR’s job is to eliminate post-commit / full-rebuild machinery, not to make an already-cheap transition intrinsically faster.
 

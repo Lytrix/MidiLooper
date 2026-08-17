@@ -356,59 +356,14 @@ void Loop::mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVe
 
 LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) {
   overlapHoldTotals_ = {};
-  overdubSourceViewEvents_.clear();
-  overdubSourceViewNotes_.clear();
-  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
-  if (loopLengthTicks == 0) {
-    overdubSourceViewEstablished_ = true;
-    clearPendingNoteChanges();
-    return;
-  }
-  uint32_t windowStart = 0;
-  uint32_t windowLength = 0;
-  resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
-  ResolutionCostCounters windowCounters;
-  if (LoopContentResolution::tryResolvePreparedWindow(
-          passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision,
-          overdubSourceViewEvents_, &windowCounters)) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    const uint32_t reconstructStartUs = micros();
-#endif
-    overdubSourceViewNotes_ =
-        NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    const uint32_t reconstructUs = micros() - reconstructStartUs;
-    const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
-    char line[192];
-    snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,src,why=open,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
-             static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
-             static_cast<unsigned long>(reconstructUs),
-             static_cast<unsigned long>(windowUs + reconstructUs),
-             static_cast<unsigned>(overdubSourceViewEvents_.size()),
-             static_cast<unsigned>(overdubSourceViewNotes_.size()));
-    DebugSessionCapture::appendCaptureTextLine(line);
-#endif
-    overdubSourceViewEstablished_ = true;
-    clearPendingNoteChanges();
-    return;
-  }
-  // Idle slice_clean already holds committed DisplayNotes (043822: 1799 notes, bars 0–67).
-  // Copy that list; do not flatten or reconstruct. Dirty/empty cache falls through to a
-  // windowed chunk walk (overlap can fill notes later via ensureOverdubSourceNotesForHold).
-  if (DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(visualCacheDirty,
-                                                                   !visualCache.notes.empty())) {
-    overdubSourceViewNotes_ = visualCache.notes;
-    overdubSourceViewEstablished_ = true;
-    clearPendingNoteChanges();
-    return;
-  }
-  copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
-  overdubSourceViewEstablished_ = true;
+  rebuildOverdubSourceView(playheadPhaseTick, "open");
   clearPendingNoteChanges();
 }
 
-LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick) {
+LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why) {
+  if (why == nullptr || why[0] == '\0') {
+    why = "wrap";
+  }
   overdubSourceViewEvents_.clear();
   overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
@@ -440,8 +395,8 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick) {
   const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
   char line[192];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=wrap,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
-           static_cast<unsigned long>(micros()), from, static_cast<unsigned long>(windowUs),
+           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+           static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
            static_cast<unsigned long>(reconstructUs),
            static_cast<unsigned long>(windowUs + reconstructUs),
            static_cast<unsigned>(overdubSourceViewEvents_.size()),
@@ -449,6 +404,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick) {
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)from;
+  (void)why;
 #endif
 }
 

@@ -189,12 +189,12 @@ struct Loop {
   /// Sealed wraps on the cursor, plus 1 when live `capture.store` is non-empty.
   size_t overdubSessionUndoDepth() const;
   size_t overdubSessionRedoDepth() const;
-  /// Establish overdubSourceView: consume prepared LCR window when ready, else copy clean
-  /// visualCache.notes (3b), else a windowed chunk walk.
+  /// Session-start source view: reset overlap-hold totals, then `rebuildOverdubSourceView`
+  /// (`why=open`), then clear pending. Not visual cache.
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
-  /// After wrap publish: rebuild source notes from prepared window, else per-pass
-  /// `resolveWindow`. Not visual cache. Not `establishOverdubSourceView`.
-  void rebuildOverdubSourceView(uint32_t playheadPhaseTick);
+  /// Rebuild source notes from prepared window, else per-pass `resolveWindow`.
+  /// Not visual cache. `why` is CAP `open` (enter) or `wrap` (after publish).
+  void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// D2: merge hold-window display notes into the session source view for overlap lookup.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch);
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.

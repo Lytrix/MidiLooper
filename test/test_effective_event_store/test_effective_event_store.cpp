@@ -157,8 +157,23 @@ void test_overdub_entry_uses_windowed_source_on_long_loop() {
   const uint32_t playhead = 32u * Config::TICKS_PER_BAR;
   loop.beginCapture(CapturePhase::Overdub, playhead);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewEvents().empty());
+  TEST_ASSERT_FALSE(loop.overdubSourceViewEvents().empty());
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_LESS_THAN(68u, loop.overdubSourceViewNotes().size());
+  const uint32_t playheadOn = playhead + 10;
+  const uint8_t playheadPitch = static_cast<uint8_t>(60 + (32 % 12));
+  bool foundPlayhead = false;
+  bool foundBar0 = false;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.startTick == playheadOn && note.note == playheadPitch) {
+      foundPlayhead = true;
+    }
+    if (note.startTick == 10u && note.note == 60) {
+      foundBar0 = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundPlayhead);
+  TEST_ASSERT_FALSE(foundBar0);
 }
 
 uint32_t visualCacheDirtyBarCount(const VisualBarVec& dirtyBars) {
