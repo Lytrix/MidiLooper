@@ -648,7 +648,7 @@ Phase 1 observation is in tree. Production participant ids still come from the R
 
 Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Do **not** start Phase 2 wrap-predicate unification or Phase 3 fill disable until a capture shows the compare line and wrap cases are classified.
+Do **not** start Phase 2 wrap-predicate unification or Phase 3 fill disable until the extra prepared ids after wrap (`232510` `b=k` vs `a=1`) are classified.
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -672,6 +672,18 @@ If present-at-S parity succeeds after wrap-predicate proof, the likely change is
 `a` = RC8 id count. `b` = prepared present-at-S id count. `eq=1` when the sets match. `ao` / `bo` are ids only in A / only in B. `from=miss` does not call `resolveWindow` or cold `resolveState`.
 
 **Native:** `test_prepared_present_note_ids_*` in `test_pending_note_change`.
+
+**Device** [`232510`](../../captures/session_20260817_232510.log) — 1-bar (768), two overdub sessions:
+
+| Class | Count | What the log shows |
+|-------|-------|--------------------|
+| `from=miss` | 6 | First session before wrap 1. `a=0`. `us=2–6`. No `resolveWindow` on the observe path. |
+| `from=prep` `eq=1` | 22 | After wrap 1, and all of session 2. Includes empty `a=0,b=0` and occupied `a=1,b=1`. |
+| `from=prep` `eq=0` | 6 | Session 1 after wrap 2 and wrap 3 only. Always `ao=0`. |
+
+Pitch 60 at storage tick 528 (`COORD` 1296 / 2064 / 2832): wrap1 `b=1`, wrap2 `b=2`, wrap3 `b=3`; `a=1` each time. Source-view `notes=5` `ev=10` on those holds. Same pattern on 71 and 86 after wrap 2 (`a=1,b=2`). Session 2 new pitches stay `eq=1`.
+
+Hold fill stays `from=win` (77 lines, `merged=0`, win 146–1909 µs). Open: session 1 `from=win` tot 1368 µs; session 2 `from=prep` tot 4931 µs. `late_clk=0`. Consume used A: `max_ids=1`.
 
 ---
 
