@@ -128,9 +128,19 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     const NoteBaseline previousHome = editSession.focus.commitBaseline;
     const NoteBaseline settled = editSession.focus.last;
     Loop& loop = trackManager.getSelectedLoop(track);
+    uint32_t retainedEndTicks[16];
+    size_t retainedEndTickCount = 0;
+    for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+      if (note.note == previousHome.pitch && note.startTick == previousHome.startTick &&
+          note.endTick != previousHome.endTick &&
+          retainedEndTickCount < (sizeof(retainedEndTicks) / sizeof(retainedEndTicks[0]))) {
+        retainedEndTicks[retainedEndTickCount++] = note.endTick;
+      }
+    }
     loop.rebuildVisualCacheFromPasses();
     loop.retireSupersededPitchDisplayNote(previousHome.pitch, previousHome.startTick,
-                                          previousHome.endTick, settled.pitch);
+                                          previousHome.endTick, settled.pitch, retainedEndTicks,
+                                          retainedEndTickCount);
 
     track.invalidateCaches();
 

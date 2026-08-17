@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT display — undo, wrap, pitch-move ghosts
 
-**Status:** Native PASS (1299/1299) — RC-W1 / RC-N1 / RC-U1 firmware committed; HITL device gate open  
+**Status:** Native PASS — RC-W1 / RC-U1 HITL PASS [`152627`](../../captures/session_20260817_152627.log); RC-N1 follow-up native PASS, device retest open  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`144703`](../../captures/session_20260817_144703.log), [`144939`](../../captures/session_20260817_144939.log); original report [`142813`](../../captures/session_20260817_142813.log)  
@@ -164,8 +164,8 @@ Producer is correct (`rebuildOverdubSourceView`, `why=wrap,from=prep`). Live com
 
 HITL (after flash `teensy41-capture-serial`):
 
-| Slice | Gate |
-|-------|------|
-| RC-W1 | After wrap `slice_clean`, DISP committed/live prefix agree until the next capture note |
-| RC-N1 | Pitch-move deselect does not stack `3/3` inventory at the unchanged start tick |
-| RC-U1 | Post-stop `OverdubPassAdded` undo paints the remaining record layer; no `VCACHE,full` |
+| Slice | Gate | [`152627`](../../captures/session_20260817_152627.log) |
+|-------|------|------|
+| RC-W1 | After wrap `slice_clean`, DISP committed/live prefix agree until the next capture note | **PASS** — second wrap `DISP 7,7,7,7` then new note `8,7,8,8` |
+| RC-N1 | Pitch-move deselect does not add a home-pitch ghost | **FAIL** then follow-up: `VCACHE` 7→8 at 38.415 s; persist rematerialized home `60@64–288` vs display home `176`; sibling `60@64–224` must stay. Retire now keeps sibling end ticks. Device retest open. |
+| RC-U1 | Post-stop `OverdubPassAdded` undo paints the remaining record layer; no `VCACHE,full` | **PASS** — boot `kind=1` undos; DISP `7,7,7,7` → `1,1,1,1`; no `VCACHE,full` on that path (`VCACHE,full` later is NOTE_EDIT open) |
