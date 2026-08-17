@@ -268,8 +268,10 @@ struct Loop {
   /// as PLAYING). Long loops stay idle-deferred — no `VCACHE,full` flatten+append.
   void refreshVisualCacheAfterPassStateChange();
   /// RC-N1: if settled pitch is present at the mover start, drop the previous home pitch there.
+  /// `retainedEndTicks` are same-pitch same-start sibling ends that must survive (152627).
   void retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick, uint32_t endTick,
-                                        uint8_t settledPitch);
+                                        uint8_t settledPitch, const uint32_t* retainedEndTicks = nullptr,
+                                        size_t retainedEndTickCount = 0);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
   /// 6B: dirty only bars touched by `committedPassId` and companion edit rows. No whole-loop reconstruct.

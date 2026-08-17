@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (RC-W1/N1/U1 firmware committed; HITL open)
+Last updated: 2026-08-17 (RC-W1/U1 HITL PASS [`152627`]; RC-N1 follow-up native; device retest open)
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-17 (RC-W1/N1/U1 firmware committed; HITL open)
 **Plan:** [`note_edit_display_undo_overdub_wrap_bugfix.md`](../Plans/note_edit_display_undo_overdub_wrap_bugfix.md)  
 **Evidence:** [`144703`](../../captures/session_20260817_144703.log), [`144939`](../../captures/session_20260817_144939.log)
 
-**Firmware committed** (`f0b0e66` / `142b95b` / `324ffdd`). Native 1299/1299. **HITL device gate open** after flash `teensy41-capture-serial`.
+**Firmware committed** (`f0b0e66` / `142b95b` / `324ffdd`). [`152627`](../../captures/session_20260817_152627.log): RC-W1 / RC-U1 **HITL PASS**. RC-N1 `VCACHE` 7→8 at pitch deselect — follow-up keeps same-start sibling ends; native PASS; **device retest open**.
 
 Wrap invalidates live display cache; pitch commit retires persist-twin overlay and home pitch in `visualCache`; undo/redo uses idle visual-cache slices (`refreshVisualCacheAfterPassStateChange`). Do not reopen RC11/RC12. Do not change DEC-038.2 session undo grain.
 

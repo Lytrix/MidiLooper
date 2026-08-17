@@ -1267,6 +1267,53 @@ void test_retire_superseded_pitch_drops_home_when_settled_present() {
   TEST_ASSERT_EQUAL(1, countDisplayNotesAtStartTick(loop.visualCache.notes, 296));
 }
 
+void test_retire_superseded_pitch_keeps_same_start_sibling_end() {
+  // 152627: two 60s at tick 64 (176 + 224). Persist rematerialized the mover home to 288.
+  // Settled 72 is at 64 with a different end than home. Drop 288, keep sibling 224.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  NoteUtils::DisplayNote sibling{};
+  sibling.note = 60;
+  sibling.startTick = 64;
+  sibling.endTick = 224;
+  sibling.noteId = 403;
+  NoteUtils::DisplayNote rematerializedHome{};
+  rematerializedHome.note = 60;
+  rematerializedHome.startTick = 64;
+  rematerializedHome.endTick = 288;
+  rematerializedHome.noteId = 404;
+  NoteUtils::DisplayNote settled{};
+  settled.note = 72;
+  settled.startTick = 64;
+  settled.endTick = 176;
+  settled.noteId = 410;
+  loop.visualCache.notes.push_back(sibling);
+  loop.visualCache.notes.push_back(rematerializedHome);
+  loop.visualCache.notes.push_back(settled);
+  const uint32_t retainedEnds[] = {224};
+  loop.retireSupersededPitchDisplayNote(60, 64, 176, 72, retainedEnds, 1);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, 64));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 64));
+  TEST_ASSERT_EQUAL(2, countDisplayNotesAtStartTick(loop.visualCache.notes, 64));
+  bool keptSibling = false;
+  bool keptGhost = false;
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note != 60 || note.startTick != 64) {
+      continue;
+    }
+    if (note.endTick == 224) {
+      keptSibling = true;
+    }
+    if (note.endTick == 288) {
+      keptGhost = true;
+    }
+  }
+  TEST_ASSERT_TRUE(keptSibling);
+  TEST_ASSERT_FALSE(keptGhost);
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1328,6 +1375,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
   RUN_TEST(test_retire_superseded_pitch_drops_home_when_settled_present);
+  RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);
   RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);

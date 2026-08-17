@@ -399,13 +399,15 @@ LOOP_COLD_MEM void Loop::refreshVisualCacheAfterPassStateChange() {
 }
 
 LOOP_COLD_MEM void Loop::retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick,
-                                                          uint32_t endTick, uint8_t settledPitch) {
+                                                          uint32_t /*endTick*/, uint8_t settledPitch,
+                                                          const uint32_t* retainedEndTicks,
+                                                          size_t retainedEndTickCount) {
   if (previousPitch == settledPitch) {
     return;
   }
   bool hasSettled = false;
   for (const NoteUtils::DisplayNote& note : visualCache.notes) {
-    if (note.note == settledPitch && note.startTick == startTick && note.endTick == endTick) {
+    if (note.note == settledPitch && note.startTick == startTick) {
       hasSettled = true;
       break;
     }
@@ -413,10 +415,21 @@ LOOP_COLD_MEM void Loop::retireSupersededPitchDisplayNote(uint8_t previousPitch,
   if (!hasSettled) {
     return;
   }
+  auto isRetainedEnd = [&](uint32_t candidateEnd) {
+    if (retainedEndTicks == nullptr) {
+      return false;
+    }
+    for (size_t i = 0; i < retainedEndTickCount; ++i) {
+      if (retainedEndTicks[i] == candidateEnd) {
+        return true;
+      }
+    }
+    return false;
+  };
   auto newEnd = std::remove_if(visualCache.notes.begin(), visualCache.notes.end(),
                                [&](const NoteUtils::DisplayNote& note) {
                                  return note.note == previousPitch && note.startTick == startTick &&
-                                        note.endTick == endTick;
+                                        !isRetainedEnd(note.endTick);
                                });
   visualCache.notes.erase(newEnd, visualCache.notes.end());
 }
