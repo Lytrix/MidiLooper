@@ -243,8 +243,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.invalidateCaches();
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -271,7 +271,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -381,8 +382,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.invalidateCaches();
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -408,7 +409,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
