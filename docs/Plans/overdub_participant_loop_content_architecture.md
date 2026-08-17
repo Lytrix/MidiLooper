@@ -651,7 +651,7 @@ Phase 1 observation is in tree. Production participant ids still come from the R
 
 Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. Do **not** start Phase 3 fill disable until hard identity and prepared HITL `eq=1` pass.
+Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. [`013327`](../../captures/session_20260818_013327.log) mismatches are B extras; occupy+publish native pin has no extras. Do **not** pick a B-list fix until a fixture names those extra ids. Do **not** start Phase 3 fill disable until hard identity and prepared HITL `eq=1` pass.
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -805,7 +805,55 @@ None. Session-undo inverse is Phase 2a.
 
 **Miss:** `!preparedWindowReady` or empty spans or `loopLength == 0`. Does not require nonempty `presentAt`. Does not call `resolveState`.
 
-**Native:** `test_prepared_present_note_ids_*`, `test_display_note_present_at_hold_linearizes_short_wrap_pair`, companion restore via `tryCollectPreparedPresentNoteIdsAtTick` in `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`.
+**Native:** `test_prepared_present_note_ids_*`, `test_display_note_present_at_hold_linearizes_short_wrap_pair`, companion restore via `tryCollectPreparedPresentNoteIdsAtTick` in `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Occupy wrap pin: `test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps`.
+
+---
+
+## 013327 A vs B — B is a superset; fixture-first
+
+**Device** [`013327`](../../captures/session_20260818_013327.log) — prepared served (53 `from=prep`). Every `eq=0` is **B extra** (`ao=0`, `bo>0`). Session 1 enter is `eq=1`. After wraps, `b` grows (`2…7`) while `a` stays `0` or `1`. Hold merge is not the source (144/145 `merged=0`). `late_clk=0`.
+
+Both collects already call `displayNotePresentAtHold`. The disagreement is the **population**, not the hold predicate.
+
+```text
+A  overdubSourceViewNotes_
+   = tryResolvePreparedWindow(editPasses) + reconstruct
+   → displayNotePresentAtHold
+
+B  every checkpoint NoteSpan
+   = idle rematerialize
+   + wrap-local reconstruct(entry->events) in publishPreparedOverdubPass
+   + only this wrap's companionIds bake
+   → displayNotePresentAtHold
+```
+
+Owners: A `Loop::collectOverdubSourceHoldParticipantIds`; B `LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick`; wrap publish `Track::commitOverdubWrapAtSessionStart` → `publishPreparedOverdubPass`.
+
+Do **not** choose “apply all EditPasses at collect” vs “B = prepared window + reconstruct + RC8” until extra NoteIds are named. Do not change `notePresentAt`. Do not start Phase 3 fill disable. Idle-gate miss / `from=miss` (013327 session-2 open burst) is a separate class.
+
+### Native pin (occupy + wrap publish)
+
+`test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps` — same-start longer Hide at tick 100, pitch 60. Occupy ids come from A, then `commitCapturePass(OverdubWrap)` + `sealPendingNoteChangesToEditPasses` + `publishPreparedOverdubPass` + `rebuildOverdubSourceView`.
+
+| After | A NoteIds | B NoteIds | `eq` | B extras |
+|-------|-----------|-----------|------|----------|
+| wrap 1 (id 10 hides record 1) | `10` | `10` | 1 | none |
+| wrap 2 (id 11 hides 10) | `11` | `11` | 1 | none |
+| wrap 3 (id 12 hides 11) | `12` | `12` | 1 | none |
+
+Source view drops the hidden wrap-N Add. Sealed Delete companions target those ids. B also drops them — `projectSealedCompanionsOntoCheckpoints` finds the wrap-local span (`findSpanIndexByNoteId` hit).
+
+### Classification (this fixture)
+
+| Class | This fixture |
+|-------|----------------|
+| wrap-N Add still in spans after a later Hide/Length companion | **No.** Hide of 10 then 11 is baked; B does not keep them. |
+| source note whose Delete/Length was not baked (`findSpanIndexByNoteId` miss) | **No.** Record 1 and wrap Adds are found. |
+| wrap-local reconstruct row that prepared-window reconstruct never created | **No.** Same ids after each wrap. |
+| Disabled-companion restore vs disabled-capture skip | **Not exercised** (no undo). |
+| duplicate `NoteSpan` for one `NoteId` | **No.** Counts match; no second id. |
+
+013327 device extras are **not** produced by occupy + seal + publish + source-view rebuild alone. Do not pick a B-list fix from this pin. Next pin must add the missing device population (idle rematerialize between wraps, multi-note wrap, or `a=0` occupy).
 
 ---
 
