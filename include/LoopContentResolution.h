@@ -347,6 +347,8 @@ struct LoopContentResolution {
                                          const EditPassIdList& companionIds = EditPassIdList());
   /// Session-disable / re-enable a prepared capture pass. Does not restamp.
   static void setPreparedCapturePassState(PassId id, CapturePassState state);
+  /// Session-disable / re-enable a published companion. Does not restamp.
+  static void setPreparedEditPassState(EditPassId id, EditPassState state);
   /// Keep prepared ready after `Loop` bumps `playbackRevision` (undo/redo). No-op on miss.
   static void restampPreparedPlaybackRevision(uint32_t playbackRevision);
   /// Consume the kept index. Returns false on miss or stamp mismatch — never rebuilds.

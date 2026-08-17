@@ -1,13 +1,13 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1 observation firmware **in tree**. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). Phase 2a (session-undo inverse) **planned, not started**. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1 observation firmware **in tree**. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). Phase 2a (session-undo inverse) **in tree**. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; Phase 2 wrap-predicate unification; Phase 2a session-undo inverse firmware; Phase 3 disable of the 16-bar fill
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; Phase 2 wrap-predicate unification; Phase 3 disable of the 16-bar fill
 
 **Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
@@ -470,7 +470,7 @@ A note whose canonical span crosses the loop boundary is present on both sides o
 | **Naming** | `SoundingNote` → `PresentNote` at present-at-S sites only. | naming-only, **done** |
 | **1** | Prototype present-at-S query at overdub note-on **alongside** source-window fill. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). | observation only, **in tree** |
 | **2** | Parity A vs B including the hard PLAYING/STOPPED/MUTED/outside-gather test. Wrap-predicate unification (§18.3). | keep old path |
-| **2a** | Session-undo inverse of baked companions. After wrap undo, A and B both show the restored source note. **Phase 3 entry gate.** | keep old path |
+| **2a** | Session-undo inverse of baked companions. After wrap undo, A and B both show the restored source note. **In tree.** Phase 3 still waits on Phase 2 wrap predicates. | keep old path |
 | **3** | Disable redundant source-window lookup for note-on discovery. Measure cost. | after Phase 2 + 2a |
 | **4** | Note-off classification. | after Phase 3 |
 | **5** | Make present-at-S the owner of that one responsibility. Leave unrelated `overdubSourceView`. | narrow migration |
@@ -649,7 +649,7 @@ Phase 1 observation is in tree. Production participant ids still come from the R
 
 Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Do **not** start Phase 3 fill disable until Phase 2 wrap predicates and Phase 2a session-undo inverse both pass. Phase 2a firmware is not authorized until that step is in CURRENT_WORK.
+Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Do **not** start Phase 3 fill disable until Phase 2 wrap predicates pass.
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -715,7 +715,7 @@ Still required before PresentNote can own discovery:
 
 1. **Prepared kept before first wrap.** `publishPreparedOverdubPass` no-ops unless `deviceGateFinished` and `preparedIndexKept`. Session 1 enter was `from=miss` / open `from=win` until wrap 1. Idle gate (DEC-037 6.0), not a button cold-build.
 2. **Fold sealed companions into checkpoints** — **in tree** (`b9b9336`, [`002447`](../../captures/session_20260818_002447.log)).
-3. **Phase 2a — session-undo inverse of baked companions.** `Loop::undoOverdubSession` disables the wrap `OverdubPass` and its companion `EditPass`es. `eraseDisabledSounding` drops Disabled **capture** notes only. Path A reapplies Active edits at query time, so the source note returns. Path B keeps the baked Hide/Shorten. After wrap undo, A and B must both show the restored source note. Do not call `StateCheckpoints::rebuild` on undo. Do not call `applyNoteEditPass` from prepared consume. Production stays A until Phase 3.
+3. **Phase 2a — session-undo inverse of baked companions.** **In tree.** Publish records the original span. `disableEditPasses` / `enableEditPasses` call `setPreparedEditPassState`. `tryResolvePreparedState` restores Disabled companion originals after `eraseDisabledSounding`. Native: `test_stage6e4_disabled_companion_restores_*`, `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Do not call `StateCheckpoints::rebuild` on undo. Production stays A until Phase 3.
 4. **LinearSpan from `NoteSpan`**, not emitted `PresentNote` (no `endTick`). Consume still needs start and end.
 5. **Leave live capture out of LCR.** Path B remains forbidden. `extractOpenCaptureNoteOns` removes held ons **before** seal and re-appends them to the next wrap’s `capture.store`. Those notes are not in the published pass until a later wrap or stop completes them.
 
@@ -743,19 +743,38 @@ None. Session-undo inverse is Phase 2a.
 
 ## Phase 2a — session-undo inverse of baked companions
 
-**Status:** planned. Not in CURRENT_WORK. No firmware.
+**Status:** in tree. Device undo `eq=1` not yet captured.
 
 **Invariant:** after `Loop::undoOverdubSession` disables wrap N’s `OverdubPass` and companion `EditPass`es, `tryResolvePreparedState` and `tryResolvePreparedWindow` return the same participant ids at S, including the restored source note.
 
-**Owner:** extend the existing session-undo path (`disableEditPasses` + `setCapturePassState` / `setPreparedCapturePassState`) and prepared consume (`eraseDisabledSounding` or a companion-state projection). Do not add a new Manager.
+**Owner:** `publishPreparedOverdubPass` records the original span. `Loop::disableEditPasses` / `enableEditPasses` call `setPreparedEditPassState`. `tryResolvePreparedState` restores Disabled originals after `eraseDisabledSounding`. No new Manager.
 
 **Not:** `StateCheckpoints::rebuild` on undo. `applyNoteEditPass` from prepared consume. Phase 3 fill disable.
 
-**Native:** wrap + sealed Hide/Shorten + `undoOverdubSession` (live store empty so wrap disable runs). A == B for the restored source note. Redo restores the baked Hide/Shorten. Existing `test_overdub_session_undo_hides_wrap_from_prepared_lcr` covers the Add half only.
+**Native:** `test_stage6e4_disabled_companion_restores_hidden_source`, `test_stage6e4_disabled_companion_restores_shortened_tail`, `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Redo re-applies the baked Hide/Shorten.
 
-**Device:** observation `eq=1` after wrap undo while OVERDUBBING. Production consume stays A.
+**Device:** observation `eq=1` after wrap undo while OVERDUBBING still owed. Production consume stays A.
 
-**Gate:** Phase 3 must not start until this and Phase 2 wrap predicates pass.
+**Gate:** Phase 3 must not start until Phase 2 wrap predicates pass.
+
+---
+
+## Pre-implementation review (Phase 2a)
+
+### Ready
+- `publishPreparedOverdubPass` already records sealed companion ids.
+- `disableEditPasses` / `enableEditPasses` already own session undo/redo of companions.
+- `eraseDisabledSounding` is the existing query-time inverse for capture Adds.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Path | Query-time restore of recorded original spans after `eraseDisabledSounding` |
+| Not | undo-time `StateCheckpoints::rebuild`; `applyNoteEditPass` from prepared consume |
+| Stamp | `setPreparedEditPassState` + `restampPreparedPlaybackRevision` (same as capture disable) |
+
+### Open before coding
+None. Device `eq=1` after wrap undo is a HITL gate, not an implementation blocker.
 
 ---
 

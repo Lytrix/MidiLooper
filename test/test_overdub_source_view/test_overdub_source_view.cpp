@@ -21,6 +21,7 @@
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
+#include "PendingNoteChange.h"
 #include "MidiEvent.h"
 #include "Globals.h"
 #include "Utils/DisplayWindowUtils.h"
@@ -722,6 +723,107 @@ void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 0, 480, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(200, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrap = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrap = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrap);
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 1;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.passes.editPasses, EditPassIdList{hideId});
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  PresentNoteVec published;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision,
+                                                                  published, nullptr));
+  bool sawRecord = false;
+  bool sawWrap = false;
+  for (const PresentNote& note : published) {
+    if (note.noteId == 1) {
+      sawRecord = true;
+    }
+    if (note.noteId == 10) {
+      sawWrap = true;
+    }
+  }
+  TEST_ASSERT_FALSE(sawRecord);
+  TEST_ASSERT_TRUE(sawWrap);
+
+  loop.pushOverdubSessionPass(wrapId, EditPassIdList{hideId});
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  PresentNoteVec undone;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, undone, nullptr));
+  sawRecord = false;
+  sawWrap = false;
+  for (const PresentNote& note : undone) {
+    if (note.noteId == 1) {
+      sawRecord = true;
+    }
+    if (note.noteId == 10) {
+      sawWrap = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sawRecord);
+  TEST_ASSERT_FALSE(sawWrap);
+
+  SessionMidiEventVec window;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+      loop.passes.editPasses, loop.loopLengthTicks, 0, loop.loopLengthTicks, loop.playbackRevision,
+      window, nullptr));
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(window, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_TRUE(hasDisplayNote(notes, 60, 0));
+  TEST_ASSERT_FALSE(hasDisplayNote(notes, 60, 200));
+
+  TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  PresentNoteVec redone;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, redone, nullptr));
+  sawRecord = false;
+  sawWrap = false;
+  for (const PresentNote& note : redone) {
+    if (note.noteId == 1) {
+      sawRecord = true;
+    }
+    if (note.noteId == 10) {
+      sawWrap = true;
+    }
+  }
+  TEST_ASSERT_FALSE(sawRecord);
+  TEST_ASSERT_TRUE(sawWrap);
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_rebuild_overdub_source_view_after_publish_includes_wrap_add() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1368,6 +1470,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_empty_wrap_does_not_commit_a_pass);
   RUN_TEST(test_wrap_commit_publishes_completed_pair_and_keeps_held);
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
+  RUN_TEST(test_overdub_session_undo_restores_companion_source_on_prepared_lcr);
   RUN_TEST(test_rebuild_overdub_source_view_after_publish_includes_wrap_add);
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_overdub_session_undo_depth_adds_live_after_first_wrap);

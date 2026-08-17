@@ -3778,6 +3778,82 @@ void test_stage6e4_publish_projects_companion_shorten() {
   TEST_ASSERT_TRUE(hasPresentNoteId(atExclusiveEnd, wrapNoteId));
 }
 
+void test_stage6e4_disabled_companion_restores_hidden_source() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const uint32_t loopLength = 8u * Config::TICKS_PER_BAR;
+  const NoteId recordNoteId = 1;
+  const NoteId wrapNoteId = 9001;
+  LoopPasses prepared;
+  prepared.recordPass.id = 1;
+  prepared.recordPass.state = CapturePassState::Active;
+  prepared.recordPass.committedChunkIds = makeNoteSpan(0, 480, 1, 60, recordNoteId);
+
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(prepared, loopLength, sample);
+  constexpr uint32_t kPreparedRevision = 1;
+  LoopContentResolution::deviceGateComplete(kPreparedRevision);
+
+  const OverdubPass wrap1 = makeOverdub(2, 1, 200, 400, 1, 60, wrapNoteId);
+  const EditPass hide = makeDelete(10, recordNoteId);
+  LoopPasses live = prepared;
+  live.overdubPasses.push_back(wrap1);
+  live.editPasses.push_back(hide);
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+                                                    EditPassIdList{hide.id});
+
+  LoopContentResolution::setPreparedEditPassState(hide.id, EditPassState::Disabled);
+  LoopContentResolution::setPreparedCapturePassState(wrap1.id, CapturePassState::Disabled);
+  PresentNoteVec undone;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u,
+                                                                  undone, nullptr));
+  TEST_ASSERT_TRUE(hasPresentNoteId(undone, recordNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(undone, wrapNoteId));
+
+  LoopContentResolution::setPreparedEditPassState(hide.id, EditPassState::Active);
+  LoopContentResolution::setPreparedCapturePassState(wrap1.id, CapturePassState::Active);
+  PresentNoteVec redone;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u,
+                                                                  redone, nullptr));
+  TEST_ASSERT_FALSE(hasPresentNoteId(redone, recordNoteId));
+  TEST_ASSERT_TRUE(hasPresentNoteId(redone, wrapNoteId));
+}
+
+void test_stage6e4_disabled_companion_restores_shortened_tail() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const uint32_t loopLength = 8u * Config::TICKS_PER_BAR;
+  const NoteId recordNoteId = 1;
+  const NoteId wrapNoteId = 9001;
+  LoopPasses prepared;
+  prepared.recordPass.id = 1;
+  prepared.recordPass.state = CapturePassState::Active;
+  prepared.recordPass.committedChunkIds = makeNoteSpan(0, 480, 1, 60, recordNoteId);
+
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(prepared, loopLength, sample);
+  constexpr uint32_t kPreparedRevision = 1;
+  LoopContentResolution::deviceGateComplete(kPreparedRevision);
+
+  const OverdubPass wrap1 = makeOverdub(2, 1, 200, 400, 1, 60, wrapNoteId);
+  const EditPass shorten = makeLength(11, recordNoteId, 0, 200);
+  LoopPasses live = prepared;
+  live.overdubPasses.push_back(wrap1);
+  live.editPasses.push_back(shorten);
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+                                                    EditPassIdList{shorten.id});
+
+  LoopContentResolution::setPreparedEditPassState(shorten.id, EditPassState::Disabled);
+  LoopContentResolution::setPreparedCapturePassState(wrap1.id, CapturePassState::Disabled);
+  PresentNoteVec undone;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u,
+                                                                  undone, nullptr));
+  TEST_ASSERT_TRUE(hasPresentNoteId(undone, recordNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(undone, wrapNoteId));
+}
+
 const NoteUtils::DisplayNote* findDisplayNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId id) {
   for (const NoteUtils::DisplayNote& note : notes) {
     if (note.noteId == id) {
@@ -4002,6 +4078,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6e4_publish_is_next_wrap_source);
   RUN_TEST(test_stage6e4_publish_projects_companion_hide);
   RUN_TEST(test_stage6e4_publish_projects_companion_shorten);
+  RUN_TEST(test_stage6e4_disabled_companion_restores_hidden_source);
+  RUN_TEST(test_stage6e4_disabled_companion_restores_shortened_tail);
   RUN_TEST(test_stage6e5_held_note_across_session_start_does_not_seal_add);
   return UNITY_END();
 }
