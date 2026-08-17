@@ -1,6 +1,6 @@
 # Overdub wrap-crossing hold — consume head + tail as one hold
 
-**Status:** Native **PASS** `pio test -e native` 1300/1300; HITL device gate open  
+**Status:** Native **PASS** 1300/1300 (`e1f57c5`). HITL **PASS** [`155450`](../../captures/session_20260817_155450.log) — NOTE_EDIT at tick 64 is **1/2** (86 + one `60@64–240`); not [`153213`](../../captures/session_20260817_153213.log) **1/3**. Exit `VCACHE`/`DFRAME` **5** (not `DISP 8`).  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](overdub_overlap_hold_same_start_bugfix.md)  
@@ -65,6 +65,6 @@ Do not call `rebuildVisualCacheFromPasses` on the MIDI wrap path. Do not change 
 
 ## HITL
 
-1-bar occupied `60@64`, note-on just before wrap, hold through `240`. After stop, NOTE_EDIT at tick 64 is **one** 60 (plus other pitches), not stacked `176` + `224`. Contrast [`122152`](../../captures/session_20260817_122152.log) vs [`153213`](../../captures/session_20260817_153213.log).
+1-bar occupied `60@64`, overdub `64–240`. After stop, NOTE_EDIT at tick 64 is **one** 60 plus `86` (`1/2 notes at this position`), not stacked `176` + `224` in the select inventory. [`155450`](../../captures/session_20260817_155450.log) **PASS** vs [`153213`](../../captures/session_20260817_153213.log) `1/3`. `overlap_hold` `hide=1` `add=1` (not [`170449`](../../captures/session_20260813_170449.log) `hide=14`). Exit `slice_clean`/`DFRAME` **5**.
 
-NOTE_EDIT exit `DISP 8` / persist 417 vs 423 is **out of this slice** (DEC-039).
+The `64–240` overdub in [`155450`](../../captures/session_20260817_155450.log) is linear after wrap (`COORD` storage `64`→`240`). Wrap-crossing `60` in that log is on@0 off@8, not hold-through-240.
