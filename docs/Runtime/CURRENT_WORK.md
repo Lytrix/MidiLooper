@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (wrap-crossing hold head+tail consume)
+Last updated: 2026-08-17 (wrap-crossing consume HITL PASS [`155450`])
 
 ---
 
@@ -13,7 +13,7 @@ Last updated: 2026-08-17 (wrap-crossing hold head+tail consume)
 **Plan:** [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](../Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md)  
 **Evidence:** [`153213`](../../captures/session_20260817_153213.log) two 60s at tick 64; [`122152`](../../captures/session_20260817_122152.log) linear `hide=1`; [`170449`](../../captures/session_20260813_170449.log) `hide=14` double-hold forbid.
 
-One wrap-crossing incoming note occupies `[S, L) ∪ [0, E)` as a single hold. Do not reopen RC11/RC12. Do not patch `applyNoteEditPass`. NOTE_EDIT exit `DISP 8` / 417 vs 423 is DEC-039 — out of this slice.
+One wrap-crossing incoming note occupies `[S, L) ∪ [0, E)` as a single hold. **HITL PASS** [`155450`](../../captures/session_20260817_155450.log): NOTE_EDIT tick 64 is `1/2` (86 + `60@64–240`); [`153213`](../../captures/session_20260817_153213.log) was `1/3`. Exit notes **5**. Do not reopen RC11/RC12. Do not patch `applyNoteEditPass`.
 
 ### Display undo / wrap / pitch-move ghosts (RC-W1, RC-N1, RC-U1)
 
