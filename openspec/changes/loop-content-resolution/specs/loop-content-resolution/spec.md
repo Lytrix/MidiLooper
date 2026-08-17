@@ -66,7 +66,7 @@ Walking `for each pass if intersects(window)` SHALL fail this requirement even w
 
 A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop. `checkpointIntervalTicks` SHALL be a performance parameter, not a semantic property of the loop. Changing density (native 1 bar, device 8 bars, device 16 bars, later adaptive) MUST NOT change `resolveState` answers for a fixed active history.
 
-`spans` plus a tick-ordered span-boundary index (start **and** exclusive-end) are currently sufficient as the base index for `resolveState`. The index container MUST NOT be required to be a PSRAM associative map. Equal-tick boundaries MUST apply in the same order as C-order insertion (start then end per span, spans in `rebuildNotes` order) after a stable tick sort. Span channel lookup is `NoteId` → first NOTE_ON channel in resolved C-order and MUST use a contiguous `{noteId, channel}` list (append, `stable_sort` by `noteId`, first-wins unique), not a PSRAM associative map. The device probe SHALL measure whether additional indexing is required. The probe MUST NOT assume a per-bar full `soundingAt` snapshot is the checkpoint.
+`spans` plus a tick-ordered span-boundary index (start **and** exclusive-end) are currently sufficient as the base index for `resolveState`. The index container MUST NOT be required to be a PSRAM associative map. Equal-tick boundaries MUST apply in the same order as C-order insertion (start then end per span, spans in `rebuildNotes` order) after a stable tick sort. Span channel lookup is `NoteId` → first NOTE_ON channel in resolved C-order and MUST use a contiguous `{noteId, channel}` list (append, `stable_sort` by `noteId`, first-wins unique), not a PSRAM associative map. The device probe SHALL measure whether additional indexing is required. The probe MUST NOT assume a per-bar full `presentAt` snapshot is the checkpoint.
 
 Building a sounding-state snapshot at every bar of an `035414`-class loop (notes × bars membership copies) SHALL fail this requirement.
 
@@ -81,7 +81,7 @@ Building a sounding-state snapshot at every bar of an `035414`-class loop (notes
 
 - **WHEN** `resolveState` runs at the same high tick with `checkpointIntervalTicks` equal to one bar and again equal to eight or sixteen bars
 - **THEN** the sounding-state results are identical
-- **AND** the sparse run stores fewer `soundingAt` snapshots than the one-bar run
+- **AND** the sparse run stores fewer `presentAt` snapshots than the one-bar run
 
 #### Scenario: Per-bar sounding copies are not the device checkpoint
 

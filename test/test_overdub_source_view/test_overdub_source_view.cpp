@@ -691,11 +691,11 @@ void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
-  SoundingNoteVec sounding;
+  PresentNoteVec presentNotes;
   TEST_ASSERT_TRUE(
-      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, sounding, nullptr));
+      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, presentNotes, nullptr));
   bool sawWrap = false;
-  for (const SoundingNote& note : sounding) {
+  for (const PresentNote& note : presentNotes) {
     if (note.pitch == 72) {
       sawWrap = true;
     }
@@ -706,10 +706,10 @@ void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
   loop.beginCapture(CapturePhase::Overdub, 777);
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
-  sounding.clear();
+  presentNotes.clear();
   TEST_ASSERT_TRUE(
-      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, sounding, nullptr));
-  for (const SoundingNote& note : sounding) {
+      LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, presentNotes, nullptr));
+  for (const PresentNote& note : presentNotes) {
     TEST_ASSERT_FALSE(note.pitch == 72);
   }
   SessionMidiEventVec window;

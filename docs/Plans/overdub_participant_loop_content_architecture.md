@@ -1,15 +1,15 @@
 # Overdub participant discovery from loop content
 
-**Status:** Architecture contract **pinned** 2026-08-17. Phase 0b identity mapping **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Phase 1 firmware **not authorized**. PresentNote C++ rename **not authorized**. Hydrate Stages 1–5 **not authorized**.  
+**Status:** Architecture contract **pinned** 2026-08-17. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Phase 1 firmware **not authorized**. Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; Phase 1 observation firmware; renaming LCR `SoundingNote` in C++ until a naming-only go
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; Phase 1 observation firmware; hydrate Stages 1–5
 
-**Approved type name (docs now, C++ later):** `PresentNote` = which loop notes are present at tick S. Not a new Manager.
+**Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
 ---
 
@@ -25,8 +25,8 @@ Shorter: overdub needs to know which loop notes are **present** at the current l
 
 | Question | Name | Use |
 |----------|------|-----|
-| Which loop notes are present at tick S? | **PresentNote** | Overdub participant discovery. Today’s LCR `SoundingNote` / `resolveState` / `soundingAt` / `noteSoundsAt` / `soundingAtHoldOnly` ask this. Independent of send and mute. |
-| Has this note been sent to MIDI output? | **Sounding** (MIDI output only) | Coupled to `sendMidiEvent` / audible output. Today that is **not** the LCR type. Do not keep LCR results named Sounding after the naming step. |
+| Which loop notes are present at tick S? | **PresentNote** | Overdub participant discovery. LCR `PresentNote` / `resolveState` / `presentAt` / `notePresentAt` / `presentAtHoldOnly`. Independent of send and mute. |
+| Has this note been sent to MIDI output? | **Sounding** (MIDI output only) | Coupled to `sendMidiEvent` / audible output. Not the LCR type. |
 | Is this note ON in playback execution, including when muted? | **ActiveNote** | [`ActiveNoteLedger`](../../include/ActiveNoteLedger.h). Mute suppresses send; the ledger still runs. Do not call this sounding (that couples to mute). Do not use it for overdub. |
 
 ```text
@@ -254,7 +254,7 @@ Open             → must not rematerialize the loop to analyze
 
 Paint stays `visualCache` + `NoteEditCurrentState` overlay. Path B (live geometry into LCR) stays forbidden. `NoteGeometryResolver` stays overlap Resolution.
 
-Phase 0b applies: emitted `SoundingNote` lacks `endTick`; overlap needs LinearSpan (`NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal.
+Phase 0b applies: emitted `PresentNote` lacks `endTick`; overlap needs LinearSpan (`NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal.
 
 Cost for NOTE_EDIT overlap:
 
@@ -308,10 +308,9 @@ Secondary: USB latency closer to 1-bar behavior; source/hold JIT no longer inher
 * deleting `overdubSourceView` in the first change;
 * treating `PlaybackMergedMidiEvents` as notes present at S;
 * treating `ActiveNoteLedger` as the participant store;
-* treating LCR present-at-S (`SoundingNote` today) as MIDI execution state;
-* copying present-at-S at every bar as a new derived owner (DEC-037 `soundingAt` heap fail [`225351`](../../captures/session_20260814_225351.log));
-* Phase 1 firmware before user authorization;
-* C++ rename `SoundingNote` → `PresentNote` before a naming-only go.
+* treating LCR present-at-S (`PresentNote`) as MIDI execution state;
+* copying present-at-S at every bar as a new derived owner (DEC-037 `presentAt` heap fail [`225351`](../../captures/session_20260814_225351.log));
+* Phase 1 firmware before user authorization.
 
 ---
 
@@ -424,13 +423,13 @@ LCR stays:
 
 > Given this exact tick or interval, resolve it.
 
-`resolveState` is the existing **canonical note-state query** for notes present at S (C++ type still `SoundingNote` until rename).
+`resolveState` is the existing **canonical note-state query** for notes present at S (`PresentNote`).
 
 Prepared miss must **not** silently become unlimited 16-bar `resolveWindow` on USB. Development failure is an explicit miss (`PARTICIPANT_MISS`). Design a bounded fallback only after the miss class is understood.
 
 DEC-037 6.0 still holds: overdub start must not cold-build LCR. Preparation stays idle/background.
 
-DEC-037 per-bar copied `soundingAt` as an O(history) store remains rejected ([`225351`](../../captures/session_20260814_225351.log)). This plan is a present-at-S **query**, not a proportional history replica.
+DEC-037 per-bar copied `presentAt` as an O(history) store remains rejected ([`225351`](../../captures/session_20260814_225351.log)). This plan is a present-at-S **query**, not a proportional history replica.
 
 ---
 
@@ -468,7 +467,7 @@ A note whose canonical span crosses the loop boundary is present on both sides o
 |-------|------|----------|
 | **0** | Negative result: execution ledger is the wrong owner. **Done.** | none |
 | **0b** | Identity mapping `resolveState` vs RC8. Site classification Present / Sounding / Active. **Done** (this file). | none |
-| **Naming** | `SoundingNote` → `PresentNote` at present-at-S sites only. | naming-only, **not authorized** |
+| **Naming** | `SoundingNote` → `PresentNote` at present-at-S sites only. | naming-only, **done** |
 | **1** | Prototype present-at-S query at overdub note-on **alongside** source-window fill. | observation only, **not authorized** |
 | **2** | Parity A vs B including the hard PLAYING/STOPPED/MUTED/outside-gather test. | keep old path |
 | **3** | Disable redundant source-window lookup for note-on discovery. Measure cost. | after parity |
@@ -489,21 +488,21 @@ Explicit miss first. Bounded fallback only after the miss class is understood.
 
 **Decisive question:** Can `resolveState` / `tryResolvePreparedState` provide enough canonical identity to reproduce RC8’s `(NoteId, LinearSpan)` participant set exactly?
 
-**Answer:** **Not from the `SoundingNote` result type alone.** Presence filtering inside LCR uses full spans. The **emitted** `SoundingNote` drops `endTick`. RC8 selection and later consume need start **and** end (plus wrap). Do not extend `SoundingNote` speculatively; the missing end already exists on internal `NoteSpan` and on source-view `DisplayNote`.
+**Answer:** **Not from the `PresentNote` result type alone.** Presence filtering inside LCR uses full spans. The **emitted** `PresentNote` drops `endTick`. RC8 selection and later consume need start **and** end (plus wrap). Do not extend `PresentNote` speculatively; the missing end already exists on internal `NoteSpan` and on source-view `DisplayNote`.
 
 ### 18.1 Three paths
 
 ```text
 canonical loop content
         │
-        ├── resolveState(passes)          → SoundingNote (cold; full-loop reconstruct)
-        ├── tryResolvePreparedState(S)    → SoundingNote (prepared spans + checkpoints)
+        ├── resolveState(passes)          → PresentNote (cold; full-loop reconstruct)
+        ├── tryResolvePreparedState(S)    → PresentNote (prepared spans + checkpoints)
         └── snapshotOverlapHoldCandidates → DisplayNote walk (RC8 gold)
 ```
 
 **RC8 gold** — `Track::snapshotOverlapHoldCandidates`:
 
-1. `ensureOverdubSourceNotesForHold(holdStart, pitch, …, soundingAtHoldOnly=true)` (16-bar `resolveWindow` fill).
+1. `ensureOverdubSourceNotesForHold(holdStart, pitch, …, presentAtHoldOnly=true)` (16-bar `resolveWindow` fill).
 2. Walk `overdubSourceViewNotes_`.
 3. Keep `note == pitch` and `noteId != kInvalidNoteId`.
 4. Phase start/end; skip zero-length; if `end < start` after phase, `end += loopLength`.
@@ -515,45 +514,45 @@ canonical loop content
 
 1. `gatherActiveResolvedEvents` for the **full loop**.
 2. `reconstructDisplayNotes`.
-3. Keep notes where `noteSoundsAt` is true.
+3. Keep notes where `notePresentAt` is true.
 4. Emit `{channel, pitch, noteId, onTick=startTick}`. **No endTick.**
 5. This is a full-loop reconstruct — not the USB replacement.
 
 **Prepared `tryResolvePreparedState(tick, playbackRevision)`:**
 
-Requires `preparedWindowReady`, non-empty `spans`, `spanBoundaries`, and `soundingAt`. Miss returns false (does not rebuild). Internal `StateCheckpoints::NoteSpan` has `startTick` and `endTick` plus a nested `SoundingNote`. Replay: seed from checkpoint `soundingAt[i]`, then `applySpanBoundaryAtTick` (add at start, erase at end). Output is still `SoundingNote` (no end).
+Requires `preparedWindowReady`, non-empty `spans`, `spanBoundaries`, and `presentAt`. Miss returns false (does not rebuild). Internal `StateCheckpoints::NoteSpan` has `startTick` and `endTick` plus a nested `PresentNote`. Replay: seed from checkpoint `presentAt[i]`, then `applySpanBoundaryAtTick` (add at start, erase at end). Output is still `PresentNote` (no end).
 
 ### 18.2 Field mapping
 
-| Required by RC8 | Available on `SoundingNote` (emitted) | Available on `NoteSpan` (internal) | Available on RC8 `DisplayNote` |
+| Required by RC8 | Available on `PresentNote` (emitted) | Available on `NoteSpan` (internal) | Available on RC8 `DisplayNote` |
 |-----------------|----------------------------------------|------------------------------------|--------------------------------|
 | pitch | yes (`pitch`) | yes | yes (`note`) |
 | channel / lane | yes (`channel`) — extra; RC8 does not filter channel (DEC-033, `DisplayNote` has no channel) | yes | no |
 | NoteId | yes | yes | yes |
 | start tick | yes (`onTick`) | yes (`startTick`) | yes |
 | end tick | **no** | **yes** | **yes** |
-| wrap representation | only via how `noteSoundsAt` filtered membership | start/end as stored | phase + optional `+ loopLength` |
-| simultaneous same-pitch notes | `upsertSounding` keys by `noteId` | one span per id in that table | distinct `noteId` inserts |
+| wrap representation | only via how `notePresentAt` filtered membership | start/end as stored | phase + optional `+ loopLength` |
+| simultaneous same-pitch notes | `upsertPresentNote` keys by `noteId` | one span per id in that table | distinct `noteId` inserts |
 
 **NoteId uniqueness:** both paths treat one `noteId` as one note. If two `DisplayNote` rows ever shared a `noteId` with different spans, both would collapse. No evidence in this mapping that production assigns two live spans the same id.
 
-**Discovery vs consume:** RC8 **discovery** stores `NoteId` only. Consume looks up span on `overdubSourceViewNotes_`. So `SoundingNote.noteId` can match the **id set** if membership at S matches. LinearSpan is still required to *decide* membership and to *consume*. Membership today uses end tick **inside** LCR (`noteSoundsAt` / `NoteSpan`) even though the emitted struct drops it.
+**Discovery vs consume:** RC8 **discovery** stores `NoteId` only. Consume looks up span on `overdubSourceViewNotes_`. So `PresentNote.noteId` can match the **id set** if membership at S matches. LinearSpan is still required to *decide* membership and to *consume*. Membership today uses end tick **inside** LCR (`notePresentAt` / `NoteSpan`) even though the emitted struct drops it.
 
 ### 18.3 Wrap predicates — not proven equal
 
-`noteSoundsAt` (LCR):
+`notePresentAt` (LCR):
 
 * If `isWrappedLoopNotePair(start, end, L)` (`off < on` and `(on - off) > L/2`): present when `tick >= start || tick < end`.
 * Else: present when `tick >= start && tick < end`.
 
-RC8 / `displayNoteSoundingAtHold`:
+RC8 / `displayNotePresentAtHold`:
 
 * Phase start/end; skip zero-length; if phased `end < start`, `end += L` **without** the half-loop test.
 * Present when `start <= S < end` or the same interval shifted by `L`.
 
 Inclusive start / exclusive end match for non-wrap.
 
-**Gap:** a pair with `end < start` that **fails** `isWrappedLoopNotePair` (span not greater than half the loop) is never present under `noteSoundsAt`, but **is** present under RC8’s linearize-if-end-before-start rule. Phase 2 must prove production `DisplayNote` rows never take that shape, or the predicates must be unified **before** replacing the 16-bar fill. Do not assume they are the same.
+**Gap:** a pair with `end < start` that **fails** `isWrappedLoopNotePair` (span not greater than half the loop) is never present under `notePresentAt`, but **is** present under RC8’s linearize-if-end-before-start rule. Phase 2 must prove production `DisplayNote` rows never take that shape, or the predicates must be unified **before** replacing the 16-bar fill. Do not assume they are the same.
 
 ### 18.4 Prepared miss vs cold cost
 
@@ -563,17 +562,17 @@ Inclusive start / exclusive end match for non-wrap.
 | `tryResolvePreparedState` | Checkpoint seed + boundary replay. Cost ≈ traversal from checkpoint to S + present set. Matches the desired cost model **when prepared**. |
 | Prepared miss | Returns false. Must not become 16-bar `resolveWindow` on USB. |
 
-Prepared prerequisites: idle device gate completed, `playbackRevision` stamp match, `spans` / `spanBoundaries` / `soundingAt` non-empty. DEC-037 6.0: do not cold-build this on the overdub button.
+Prepared prerequisites: idle device gate completed, `playbackRevision` stamp match, `spans` / `spanBoundaries` / `presentAt` non-empty. DEC-037 6.0: do not cold-build this on the overdub button.
 
 ### 18.5 Site classification (Present / Sounding / Active)
 
 **PresentNote (notes present at S) — LCR + overdub hold fill**
 
-* `struct SoundingNote` / `SoundingNoteVec` in [`LoopContentResolution.h`](../../include/LoopContentResolution.h)
+* `struct PresentNote` / `PresentNoteVec` in [`LoopContentResolution.h`](../../include/LoopContentResolution.h)
 * `resolveState`, `tryResolvePreparedState`, `resolveStateFromSpanBoundaries`
-* `StateCheckpoints::soundingAt`, `NoteSpan`, `spanBoundaries`
-* `noteSoundsAt`, `upsertSounding`, `eraseSounding`, `applySpanBoundaryAtTick`
-* `Loop::soundingAtHoldOnly` / `ensureOverdubSourceNotesForHold` / `displayNoteSoundingAtHold`
+* `StateCheckpoints::presentAt`, `NoteSpan`, `spanBoundaries`
+* `notePresentAt`, `upsertPresentNote`, `erasePresentNote`, `applySpanBoundaryAtTick`
+* `Loop::presentAtHoldOnly` / `ensureOverdubSourceNotesForHold` / `displayNotePresentAtHold`
 * native tests in `test_loop_content_resolution`, `test_overdub_source_view` that call `tryResolvePreparedState`
 
 **ActiveNote (execution, mute-decoupled)**
@@ -595,7 +594,6 @@ Prepared prerequisites: idle device gate completed, `playbackRevision` stamp mat
 
 * Whether consume should read `NoteSpan.endTick` or keep looking up `DisplayNote` by `noteId` on `overdubSourceViewNotes_`.
 * Whether to unify wrap predicates now.
-* C++ rename (naming-only go still required).
 
 ---
 
@@ -652,13 +650,11 @@ Do **not** implement send-side present-at-S.
 
 Do **not** start Phase 1 until authorized.
 
-Do **not** rename `SoundingNote` → `PresentNote` in C++ until a naming-only go.
-
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
 If present-at-S parity succeeds after wrap-predicate proof, the likely change is:
 
-> Replace the 16-bar discovery fill with the existing exact-tick canonical query (`tryResolvePreparedState` / `resolveState`), while leaving RC8 consume/transaction machinery intact — and obtaining LinearSpan from `NoteSpan` or source-view lookup, not from the emitted `SoundingNote` alone.
+> Replace the 16-bar discovery fill with the existing exact-tick canonical query (`tryResolvePreparedState` / `resolveState`), while leaving RC8 consume/transaction machinery intact — and obtaining LinearSpan from `NoteSpan` or source-view lookup, not from the emitted `PresentNote` alone.
 
 ---
 

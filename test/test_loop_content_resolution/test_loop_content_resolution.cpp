@@ -237,8 +237,8 @@ void oracleWindowNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint3
   out = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
 }
 
-void sortSounding(SoundingNoteVec& notes) {
-  std::sort(notes.begin(), notes.end(), [](const SoundingNote& a, const SoundingNote& b) {
+void sortPresentNotes(PresentNoteVec& notes) {
+  std::sort(notes.begin(), notes.end(), [](const PresentNote& a, const PresentNote& b) {
     if (a.noteId != b.noteId) {
       return a.noteId < b.noteId;
     }
@@ -246,9 +246,9 @@ void sortSounding(SoundingNoteVec& notes) {
   });
 }
 
-void assertSoundingMatch(SoundingNoteVec expected, SoundingNoteVec actual) {
-  sortSounding(expected);
-  sortSounding(actual);
+void assertPresentNoteMatch(PresentNoteVec expected, PresentNoteVec actual) {
+  sortPresentNotes(expected);
+  sortPresentNotes(actual);
   TEST_ASSERT_EQUAL(expected.size(), actual.size());
   for (size_t i = 0; i < expected.size(); ++i) {
     TEST_ASSERT_EQUAL(expected[i].noteId, actual[i].noteId);
@@ -257,8 +257,8 @@ void assertSoundingMatch(SoundingNoteVec expected, SoundingNoteVec actual) {
   }
 }
 
-bool hasSoundingNoteId(const SoundingNoteVec& notes, NoteId id) {
-  for (const SoundingNote& note : notes) {
+bool hasPresentNoteId(const PresentNoteVec& notes, NoteId id) {
+  for (const PresentNote& note : notes) {
     if (note.noteId == id) {
       return true;
     }
@@ -480,19 +480,19 @@ void test_stage1_resolve_state_during_host_note() {
   CanonicalResolutionFixture full = buildCanonicalResolutionFixture();
   const LoopPasses onePass = recordOnly(full);
 
-  SoundingNoteVec sounding;
-  LoopContentResolution::resolveState(onePass, full.loopLengthTicks, 100, sounding);
+  PresentNoteVec presentNotes;
+  LoopContentResolution::resolveState(onePass, full.loopLengthTicks, 100, presentNotes);
   bool foundHost = false;
-  for (const SoundingNote& note : sounding) {
+  for (const PresentNote& note : presentNotes) {
     if (note.noteId == full.overlapHostNoteId && note.pitch == 60) {
       foundHost = true;
     }
   }
   TEST_ASSERT_TRUE(foundHost);
 
-  SoundingNoteVec after;
+  PresentNoteVec after;
   LoopContentResolution::resolveState(onePass, full.loopLengthTicks, 201, after);
-  for (const SoundingNote& note : after) {
+  for (const PresentNote& note : after) {
     TEST_ASSERT_FALSE(note.noteId == full.overlapHostNoteId);
   }
 }
@@ -504,9 +504,9 @@ void test_stage1_resolve_state_wrap_note() {
   const LoopPasses onePass = recordOnly(full);
 
   auto hasWrap = [&](uint32_t tick) {
-    SoundingNoteVec sounding;
-    LoopContentResolution::resolveState(onePass, full.loopLengthTicks, tick, sounding);
-    for (const SoundingNote& note : sounding) {
+    PresentNoteVec presentNotes;
+    LoopContentResolution::resolveState(onePass, full.loopLengthTicks, tick, presentNotes);
+    for (const PresentNote& note : presentNotes) {
       if (note.noteId == full.wrapNoteId) {
         return true;
       }
@@ -554,11 +554,11 @@ void test_stage2_overlapping_same_pitch_matches_materialize() {
 
   // DEC-031/032 overlap is a committed EditPass delta, not a query-time re-resolve.
   // This fixture stores both raw spans; sounding state matches materialize (both On).
-  SoundingNoteVec atOverlap;
+  PresentNoteVec atOverlap;
   LoopContentResolution::resolveState(twoPass, full.loopLengthTicks, 100, atOverlap);
   bool host = false;
   bool incoming = false;
-  for (const SoundingNote& note : atOverlap) {
+  for (const PresentNote& note : atOverlap) {
     if (note.noteId == full.overlapHostNoteId) {
       host = true;
     }
@@ -1023,10 +1023,10 @@ void test_stage7_resolve_state_from_checkpoint_not_tick_zero() {
   checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
 
   const uint32_t highTick = fixture.loopLengthTicks - 24u;
-  SoundingNoteVec expected;
+  PresentNoteVec expected;
   LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, highTick, expected);
   ResolutionCostCounters counters;
-  SoundingNoteVec actual;
+  PresentNoteVec actual;
   LoopContentResolution::resolveState(checkpoints, highTick, actual, &counters);
   printCounters("stage7_high_tick", counters);
   std::printf("stage7 replay_start=%u events_replayed=%u history_events=%u\n",
@@ -1035,8 +1035,8 @@ void test_stage7_resolve_state_from_checkpoint_not_tick_zero() {
   TEST_ASSERT_GREATER_THAN(0u, counters.replayStartTick);
   TEST_ASSERT_TRUE(highTick - counters.replayStartTick < interval);
   TEST_ASSERT_LESS_THAN(counters.eventsInHistory, counters.eventsReplayed);
-  assertSoundingMatch(expected, actual);
-  TEST_ASSERT_TRUE(hasSoundingNoteId(actual, fixture.wrapNoteId));
+  assertPresentNoteMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasPresentNoteId(actual, fixture.wrapNoteId));
 }
 
 void test_stage8_loop_switch_high_tick_bounded_replay() {
@@ -1065,7 +1065,7 @@ void test_stage8_loop_switch_high_tick_bounded_replay() {
   destinationCheckpoints.rebuild(destinationIndex, destination.passes.editPasses,
                                  destination.loopLengthTicks, interval);
   const uint32_t destCheckpointCount =
-      static_cast<uint32_t>(destinationCheckpoints.soundingAt.size());
+      static_cast<uint32_t>(destinationCheckpoints.presentAt.size());
   const size_t destSpanCount = destinationCheckpoints.spans.size();
   TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, destCheckpointCount);
 
@@ -1075,17 +1075,17 @@ void test_stage8_loop_switch_high_tick_bounded_replay() {
   const uint32_t destinationPhase =
       IntervalProjection::tickPhaseInLoop(playheadTick, 0, destination.loopLengthTicks);
 
-  SoundingNoteVec playingExpected;
-  SoundingNoteVec playingActual;
+  PresentNoteVec playingExpected;
+  PresentNoteVec playingActual;
   LoopContentResolution::resolveState(playingPasses, playingLength, playingPhase, playingExpected);
   ResolutionCostCounters playingCounters;
   LoopContentResolution::resolveState(playingCheckpoints, playingPhase, playingActual,
                                       &playingCounters);
   TEST_ASSERT_EQUAL_UINT32(0u, playingCounters.passChunkListsWalked);
-  assertSoundingMatch(playingExpected, playingActual);
+  assertPresentNoteMatch(playingExpected, playingActual);
 
-  SoundingNoteVec destExpected;
-  SoundingNoteVec destActual;
+  PresentNoteVec destExpected;
+  PresentNoteVec destActual;
   LoopContentResolution::resolveState(destination.passes, destination.loopLengthTicks,
                                       destinationPhase, destExpected);
   ResolutionCostCounters switchCounters;
@@ -1099,10 +1099,10 @@ void test_stage8_loop_switch_high_tick_bounded_replay() {
   TEST_ASSERT_GREATER_THAN(0u, switchCounters.replayStartTick);
   TEST_ASSERT_TRUE(destinationPhase - switchCounters.replayStartTick < interval);
   TEST_ASSERT_LESS_THAN(switchCounters.eventsInHistory, switchCounters.eventsReplayed);
-  assertSoundingMatch(destExpected, destActual);
-  TEST_ASSERT_TRUE(hasSoundingNoteId(destActual, destination.wrapNoteId));
+  assertPresentNoteMatch(destExpected, destActual);
+  TEST_ASSERT_TRUE(hasPresentNoteId(destActual, destination.wrapNoteId));
   TEST_ASSERT_EQUAL_UINT32(destCheckpointCount,
-                           static_cast<uint32_t>(destinationCheckpoints.soundingAt.size()));
+                           static_cast<uint32_t>(destinationCheckpoints.presentAt.size()));
   TEST_ASSERT_EQUAL(destSpanCount, destinationCheckpoints.spans.size());
 
   const uint32_t windowLength = kCanonicalQueryWindowBars * Config::TICKS_PER_BAR;
@@ -1118,13 +1118,13 @@ void test_stage8_loop_switch_high_tick_bounded_replay() {
   TEST_ASSERT_EQUAL_UINT32(0u, windowCounters.passChunkListsWalked);
   assertResolvedEventsMatch(windowExpected, windowActual);
 
-  SoundingNoteVec backExpected;
-  SoundingNoteVec backActual;
+  PresentNoteVec backExpected;
+  PresentNoteVec backActual;
   LoopContentResolution::resolveState(playingPasses, playingLength, playingPhase, backExpected);
   ResolutionCostCounters backCounters;
   LoopContentResolution::resolveState(playingCheckpoints, playingPhase, backActual, &backCounters);
   TEST_ASSERT_EQUAL_UINT32(0u, backCounters.passChunkListsWalked);
-  assertSoundingMatch(backExpected, backActual);
+  assertPresentNoteMatch(backExpected, backActual);
 }
 
 void test_stage7_resolve_state_matches_oracle_mid_and_wrap() {
@@ -1139,11 +1139,11 @@ void test_stage7_resolve_state_matches_oracle_mid_and_wrap() {
 
   const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks - 24u};
   for (uint32_t tick : ticks) {
-    SoundingNoteVec expected;
-    SoundingNoteVec actual;
+    PresentNoteVec expected;
+    PresentNoteVec actual;
     LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, expected);
     LoopContentResolution::resolveState(checkpoints, tick, actual);
-    assertSoundingMatch(expected, actual);
+    assertPresentNoteMatch(expected, actual);
   }
 }
 
@@ -1163,23 +1163,23 @@ void test_stage7_sparse_checkpoints_agree_with_dense() {
   dense.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, denseInterval);
   sparse.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, sparseInterval);
 
-  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, static_cast<uint32_t>(dense.soundingAt.size()));
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, static_cast<uint32_t>(dense.presentAt.size()));
   TEST_ASSERT_EQUAL_UINT32(kCanonicalBars / LoopContentResolution::kDeviceCheckpointBarStride,
-                           static_cast<uint32_t>(sparse.soundingAt.size()));
-  TEST_ASSERT_TRUE(sparse.soundingAt.size() < dense.soundingAt.size());
+                           static_cast<uint32_t>(sparse.presentAt.size()));
+  TEST_ASSERT_TRUE(sparse.presentAt.size() < dense.presentAt.size());
   TEST_ASSERT_EQUAL(dense.spans.size(), sparse.spans.size());
 
   const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks / 2u,
                             fixture.loopLengthTicks - 24u};
   for (uint32_t tick : ticks) {
-    SoundingNoteVec fromDense;
-    SoundingNoteVec fromSparse;
-    SoundingNoteVec fromOracle;
+    PresentNoteVec fromDense;
+    PresentNoteVec fromSparse;
+    PresentNoteVec fromOracle;
     LoopContentResolution::resolveState(dense, tick, fromDense);
     LoopContentResolution::resolveState(sparse, tick, fromSparse);
     LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, fromOracle);
-    assertSoundingMatch(fromOracle, fromDense);
-    assertSoundingMatch(fromOracle, fromSparse);
+    assertPresentNoteMatch(fromOracle, fromDense);
+    assertPresentNoteMatch(fromOracle, fromSparse);
   }
 }
 
@@ -1202,15 +1202,15 @@ void test_stage7_loop_shorter_than_device_stride_keeps_one_checkpoint() {
 
   LoopContentResolution::StateCheckpoints checkpoints;
   checkpoints.rebuild(index, passes.editPasses, loopLength, interval);
-  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(checkpoints.soundingAt.size()));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(checkpoints.presentAt.size()));
 
   const uint32_t ticks[] = {0u, 100u, 150u, loopLength - 1u};
   for (uint32_t tick : ticks) {
-    SoundingNoteVec expected;
-    SoundingNoteVec actual;
+    PresentNoteVec expected;
+    PresentNoteVec actual;
     LoopContentResolution::resolveState(passes, loopLength, tick, expected);
     LoopContentResolution::resolveState(checkpoints, tick, actual);
-    assertSoundingMatch(expected, actual);
+    assertPresentNoteMatch(expected, actual);
   }
 }
 
@@ -1283,7 +1283,7 @@ void test_stage9_sliced_spans_match_full_rebuild() {
       NoteUtils::reconstructDisplayNotes(resolved, fixture.loopLengthTicks, false);
   sliced.spans.clear();
   sliced.spanBoundaries.clear();
-  sliced.soundingAt.clear();
+  sliced.presentAt.clear();
   sliced.channelByNoteId.clear();
   fillChannelByNoteIdIndex(sliced, resolved);
   for (uint32_t i = 0; i < static_cast<uint32_t>(notes.size()); ++i) {
@@ -1294,17 +1294,17 @@ void test_stage9_sliced_spans_match_full_rebuild() {
   if (count == 0) {
     count = 1;
   }
-  sliced.soundingAt.resize(count);
+  sliced.presentAt.resize(count);
   TEST_ASSERT_TRUE(sliced.fillCheckpointRange(0, count, nullptr));
   TEST_ASSERT_EQUAL(full.spans.size(), sliced.spans.size());
 
   const uint32_t ticks[] = {10u, 100u, 201u, fixture.loopLengthTicks - 24u};
   for (uint32_t tick : ticks) {
-    SoundingNoteVec fromFull;
-    SoundingNoteVec fromSliced;
+    PresentNoteVec fromFull;
+    PresentNoteVec fromSliced;
     LoopContentResolution::resolveState(full, tick, fromFull);
     LoopContentResolution::resolveState(sliced, tick, fromSliced);
-    assertSoundingMatch(fromFull, fromSliced);
+    assertPresentNoteMatch(fromFull, fromSliced);
   }
 }
 
@@ -1480,7 +1480,7 @@ void test_stage9_range_spans_match_one_span() {
       NoteUtils::reconstructDisplayNotes(resolved, fixture.loopLengthTicks, false);
   oneSpan.spans.clear();
   oneSpan.spanBoundaries.clear();
-  oneSpan.soundingAt.clear();
+  oneSpan.presentAt.clear();
   oneSpan.channelByNoteId.clear();
   fillChannelByNoteIdIndex(oneSpan, resolved);
   for (uint32_t i = 0; i < static_cast<uint32_t>(notes.size()); ++i) {
@@ -1493,7 +1493,7 @@ void test_stage9_range_spans_match_one_span() {
       index, fixture.passes.editPasses, fixture.loopLengthTicks, interval, resolved, nullptr));
   batched.spans.clear();
   batched.spanBoundaries.clear();
-  batched.soundingAt.clear();
+  batched.presentAt.clear();
   batched.channelByNoteId.clear();
   fillChannelByNoteIdIndex(batched, resolved);
   const uint32_t step = LoopContentResolution::kDeviceGateEventsPerSlice;
@@ -1525,7 +1525,7 @@ void test_stage57_span_boundaries_reserve_final_size() {
   TEST_ASSERT_TRUE(notes.size() > LoopContentResolution::kDeviceGateEventsPerSlice);
   checkpoints.spans.clear();
   checkpoints.spanBoundaries.clear();
-  checkpoints.soundingAt.clear();
+  checkpoints.presentAt.clear();
   checkpoints.channelByNoteId.clear();
   fillChannelByNoteIdIndex(checkpoints, resolved);
   TEST_ASSERT_TRUE(checkpoints.appendSpansFromNotes(
@@ -2009,7 +2009,7 @@ void test_stage515b_equal_tick_boundary_order() {
   LoopContentResolution::StateCheckpoints checkpoints;
   checkpoints.intervalTicks = Config::TICKS_PER_BAR;
   checkpoints.loopLengthTicks = 4u * Config::TICKS_PER_BAR;
-  checkpoints.soundingAt.resize(4);
+  checkpoints.presentAt.resize(4);
 
   LoopContentResolution::StateCheckpoints::NoteSpan ending{};
   ending.note.channel = 1;
@@ -2029,7 +2029,7 @@ void test_stage515b_equal_tick_boundary_order() {
 
   checkpoints.spans.push_back(ending);
   checkpoints.spans.push_back(starting);
-  checkpoints.soundingAt[0].push_back(ending.note);
+  checkpoints.presentAt[0].push_back(ending.note);
   LoopContentResolution::StateCheckpoints::appendSpanBoundaryEntries(
       checkpoints.spans, 0, static_cast<uint32_t>(checkpoints.spans.size()),
       checkpoints.spanBoundaries);
@@ -2045,13 +2045,13 @@ void test_stage515b_equal_tick_boundary_order() {
 
   const uint32_t ticks[] = {99u, 100u, 101u};
   for (uint32_t tick : ticks) {
-    SoundingNoteVec actual;
+    PresentNoteVec actual;
     ResolutionCostCounters counters;
     checkpoints.resolveState(tick, actual, &counters);
     TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
   }
 
-  SoundingNoteVec atJoin;
+  PresentNoteVec atJoin;
   checkpoints.resolveState(100u, atJoin, nullptr);
   TEST_ASSERT_EQUAL(1u, atJoin.size());
   TEST_ASSERT_EQUAL(starting.note.noteId, atJoin[0].noteId);
@@ -2095,9 +2095,9 @@ void test_stage515b_flat_span_boundaries_match_map() {
   uint64_t productionResolveUs = 0;
   uint64_t flatResolveUs = 0;
   for (uint32_t tick : ticks) {
-    SoundingNoteVec fromProduction;
-    SoundingNoteVec fromFlat;
-    SoundingNoteVec fromOracle;
+    PresentNoteVec fromProduction;
+    PresentNoteVec fromFlat;
+    PresentNoteVec fromOracle;
     ResolutionCostCounters productionCounters;
     ResolutionCostCounters flatCounters;
     const Clock::time_point productionStart = Clock::now();
@@ -2110,8 +2110,8 @@ void test_stage515b_flat_span_boundaries_match_map() {
     TEST_ASSERT_EQUAL_UINT32(0u, productionCounters.passChunkListsWalked);
     TEST_ASSERT_EQUAL_UINT32(0u, flatCounters.passChunkListsWalked);
     TEST_ASSERT_EQUAL_UINT32(productionCounters.eventsReplayed, flatCounters.eventsReplayed);
-    assertSoundingMatch(fromOracle, fromProduction);
-    assertSoundingMatch(fromProduction, fromFlat);
+    assertPresentNoteMatch(fromOracle, fromProduction);
+    assertPresentNoteMatch(fromProduction, fromFlat);
   }
 
   std::printf(
@@ -3039,8 +3039,8 @@ void stage6e1CollectTreatmentNotes(const LoopContentResolution::TickIndex& index
                                    uint8_t pitch, uint32_t consumeStart, uint32_t consumeEnd,
                                    NoteUtils::DisplayNoteVec& out) {
   out.clear();
-  SoundingNoteVec sounding;
-  LoopContentResolution::resolveState(checkpoints, consumeStart, sounding);
+  PresentNoteVec presentNotes;
+  LoopContentResolution::resolveState(checkpoints, consumeStart, presentNotes);
   SessionMidiEventVec window;
   TEST_ASSERT_TRUE(consumeEnd > consumeStart);
   LoopContentResolution::resolveWindow(index, editPasses, loopLength, consumeStart,
@@ -3048,7 +3048,7 @@ void stage6e1CollectTreatmentNotes(const LoopContentResolution::TickIndex& index
 
   NoteId ids[8]{};
   uint8_t idCount = 0;
-  for (const SoundingNote& note : sounding) {
+  for (const PresentNote& note : presentNotes) {
     if (note.pitch == pitch) {
       stage6e1AddUniqueNoteId(ids, idCount, 8, note.noteId);
     }
@@ -3510,8 +3510,8 @@ void test_stage6e2_consume_tracks_checkpoint_replay_not_history() {
   checkpoints.rebuild(index, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
 
   ResolutionCostCounters stateCounters;
-  SoundingNoteVec sounding;
-  LoopContentResolution::resolveState(checkpoints, consumeStart, sounding, &stateCounters);
+  PresentNoteVec presentNotes;
+  LoopContentResolution::resolveState(checkpoints, consumeStart, presentNotes, &stateCounters);
   TEST_ASSERT_GREATER_THAN(0u, stateCounters.replayStartTick);
   TEST_ASSERT_TRUE(consumeStart - stateCounters.replayStartTick < interval);
   TEST_ASSERT_LESS_THAN(stateCounters.eventsInHistory, stateCounters.eventsReplayed);
@@ -3558,8 +3558,8 @@ void test_stage6e2_consume_tracks_checkpoint_replay_not_history() {
   LoopContentResolution::StateCheckpoints grownCheckpoints;
   grownCheckpoints.rebuild(grownIndex, fixture.passes.editPasses, fixture.loopLengthTicks, interval);
   ResolutionCostCounters grownState;
-  SoundingNoteVec grownSounding;
-  LoopContentResolution::resolveState(grownCheckpoints, consumeStart, grownSounding, &grownState);
+  PresentNoteVec grownPresentNotes;
+  LoopContentResolution::resolveState(grownCheckpoints, consumeStart, grownPresentNotes, &grownState);
   TEST_ASSERT_TRUE(consumeStart - grownState.replayStartTick < interval);
   TEST_ASSERT_LESS_THAN(grownState.eventsInHistory, grownState.eventsReplayed);
   TEST_ASSERT_TRUE(grownState.eventsInHistory > stateCounters.eventsInHistory);
@@ -3568,7 +3568,7 @@ void test_stage6e2_consume_tracks_checkpoint_replay_not_history() {
 
 uint32_t countSoundingCopies(const LoopContentResolution::StateCheckpoints& checkpoints) {
   uint32_t copies = 0;
-  for (const SoundingNoteVec& snap : checkpoints.soundingAt) {
+  for (const PresentNoteVec& snap : checkpoints.presentAt) {
     copies += static_cast<uint32_t>(snap.size());
   }
   return copies;
@@ -3593,8 +3593,8 @@ void test_stage6e3_keep_spans_after_drop_rebuild_buffers() {
   const uint32_t sparseCopies = countSoundingCopies(sparse);
   TEST_ASSERT_EQUAL(dense.spans.size(), sparse.spans.size());
   TEST_ASSERT_EQUAL(dense.spanBoundaries.size(), sparse.spanBoundaries.size());
-  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, static_cast<uint32_t>(dense.soundingAt.size()));
-  TEST_ASSERT_LESS_THAN(dense.soundingAt.size(), sparse.soundingAt.size());
+  TEST_ASSERT_EQUAL_UINT32(kCanonicalBars, static_cast<uint32_t>(dense.presentAt.size()));
+  TEST_ASSERT_LESS_THAN(dense.presentAt.size(), sparse.presentAt.size());
   TEST_ASSERT_LESS_THAN(denseCopies, sparseCopies);
 
   LoopContentResolution::deviceGateReset();
@@ -3607,13 +3607,13 @@ void test_stage6e3_keep_spans_after_drop_rebuild_buffers() {
 
   const uint32_t ticks[] = {10u, 100u, fixture.loopLengthTicks / 2u, fixture.loopLengthTicks - 240u};
   for (uint32_t tick : ticks) {
-    SoundingNoteVec expected;
-    SoundingNoteVec actual;
+    PresentNoteVec expected;
+    PresentNoteVec actual;
     ResolutionCostCounters counters;
     LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, tick, expected);
     TEST_ASSERT_TRUE(
         LoopContentResolution::tryResolvePreparedState(tick, kRevision, actual, &counters));
-    assertSoundingMatch(expected, actual);
+    assertPresentNoteMatch(expected, actual);
     TEST_ASSERT_EQUAL_UINT32(0u, counters.passChunkListsWalked);
     TEST_ASSERT_EQUAL_UINT32(kCanonicalBars / LoopContentResolution::kDeviceCheckpointBarStride,
                              counters.checkpointCount);
@@ -3622,7 +3622,7 @@ void test_stage6e3_keep_spans_after_drop_rebuild_buffers() {
     TEST_ASSERT_EQUAL(sparse.spans.size(), counters.eventsInHistory);
   }
 
-  SoundingNoteVec missed;
+  PresentNoteVec missed;
   TEST_ASSERT_FALSE(
       LoopContentResolution::tryResolvePreparedState(10u, kRevision + 1u, missed, nullptr));
   TEST_ASSERT_TRUE(missed.empty());
@@ -3647,12 +3647,12 @@ void test_stage6e4_publish_is_next_wrap_source() {
   LoopContentResolution::deviceGateComplete(kPreparedRevision);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision));
 
-  SoundingNoteVec before;
+  PresentNoteVec before;
   ResolutionCostCounters beforeCounters;
   TEST_ASSERT_TRUE(
       LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision, before, &beforeCounters));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(before, wrapNoteId));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(before, recordNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(before, wrapNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(before, recordNoteId));
   const uint32_t preparedSpans = beforeCounters.eventsInHistory;
 
   LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u);
@@ -3661,30 +3661,30 @@ void test_stage6e4_publish_is_next_wrap_source() {
 
   LoopPasses live = prepared;
   live.overdubPasses.push_back(wrap1);
-  SoundingNoteVec expected;
+  PresentNoteVec expected;
   LoopContentResolution::resolveState(live, loopLength, 300, expected);
-  SoundingNoteVec actual;
+  PresentNoteVec actual;
   ResolutionCostCounters afterCounters;
   TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u,
                                                                   actual, &afterCounters));
-  assertSoundingMatch(expected, actual);
-  TEST_ASSERT_TRUE(hasSoundingNoteId(actual, wrapNoteId));
+  assertPresentNoteMatch(expected, actual);
+  TEST_ASSERT_TRUE(hasPresentNoteId(actual, wrapNoteId));
   TEST_ASSERT_EQUAL_UINT32(preparedSpans + 1u, afterCounters.eventsInHistory);
   TEST_ASSERT_EQUAL_UINT32(0u, afterCounters.passChunkListsWalked);
 
-  SoundingNoteVec outside;
+  PresentNoteVec outside;
   TEST_ASSERT_TRUE(
       LoopContentResolution::tryResolvePreparedState(10, kPreparedRevision + 1u, outside, nullptr));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(outside, wrapNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(outside, wrapNoteId));
 
   LoopContentResolution::setPreparedCapturePassState(wrap1.id, CapturePassState::Disabled);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
-  SoundingNoteVec hidden;
+  PresentNoteVec hidden;
   TEST_ASSERT_TRUE(
       LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 1u, hidden, nullptr));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(hidden, wrapNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(hidden, wrapNoteId));
 
-  SoundingNoteVec missed;
+  PresentNoteVec missed;
   TEST_ASSERT_FALSE(
       LoopContentResolution::tryResolvePreparedState(300, kPreparedRevision + 2u, missed, nullptr));
   TEST_ASSERT_TRUE(missed.empty());
@@ -3761,17 +3761,17 @@ void test_stage6e5_held_note_across_session_start_does_not_seal_add() {
   LoopContentResolution::publishPreparedOverdubPass(completedWrap, kPreparedRevision + 1u);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
 
-  SoundingNoteVec atCompleted;
+  PresentNoteVec atCompleted;
   TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(
       300, kPreparedRevision + 1u, atCompleted, nullptr));
-  TEST_ASSERT_TRUE(hasSoundingNoteId(atCompleted, completedNoteId));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(atCompleted, heldNoteId));
+  TEST_ASSERT_TRUE(hasPresentNoteId(atCompleted, completedNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(atCompleted, heldNoteId));
 
-  SoundingNoteVec duringHold;
+  PresentNoteVec duringHold;
   TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(
       600, kPreparedRevision + 1u, duringHold, nullptr));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(duringHold, heldNoteId));
-  TEST_ASSERT_FALSE(hasSoundingNoteId(duringHold, completedNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(duringHold, heldNoteId));
+  TEST_ASSERT_FALSE(hasPresentNoteId(duringHold, completedNoteId));
 }
 
 void test_stage6d4_publish_restamps_without_device_gate_complete() {

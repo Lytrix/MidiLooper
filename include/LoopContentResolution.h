@@ -63,14 +63,14 @@ struct ResolutionCostCounters {
   uint64_t pairOpenOnHeapBytes = 0;
 };
 
-struct SoundingNote {
+struct PresentNote {
   uint8_t channel = 0;
   uint8_t pitch = 0;
   NoteId noteId = kInvalidNoteId;
   uint32_t onTick = 0;
 };
 
-using SoundingNoteVec = std::vector<SoundingNote, ExternalMemoryFirstAllocator<SoundingNote>>;
+using PresentNoteVec = std::vector<PresentNote, ExternalMemoryFirstAllocator<PresentNote>>;
 
 // Stage 1 vocabulary pin (DEC-037): three roles, no fourth synonym.
 // RawMidiEvent  — MIDI shape stored on capture passes (today: MidiEvent).
@@ -189,10 +189,10 @@ struct LoopContentResolution {
     }
   };
 
-  /// Stage 7 in-RAM sounding snapshots. Not persisted (D3 is out of scope).
+  /// Stage 7 in-RAM present-at-S snapshots. Not persisted (D3 is out of scope).
   struct StateCheckpoints {
     struct NoteSpan {
-      SoundingNote note;
+      PresentNote note;
       uint32_t startTick = 0;
       uint32_t endTick = 0;
     };
@@ -214,7 +214,7 @@ struct LoopContentResolution {
 
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
-    std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> soundingAt;
+    std::vector<PresentNoteVec, ExternalMemoryFirstAllocator<PresentNoteVec>> presentAt;
     NoteSpanVec spans;
     /// Tick-ordered start and exclusive-end entries for tail replay (flat A).
     SpanBoundaryEntryVec spanBoundaries;
@@ -250,7 +250,7 @@ struct LoopContentResolution {
     void sortChannelByNoteId(ResolutionCostCounters* counters = nullptr);
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
-    void resolveState(uint32_t tick, SoundingNoteVec& out,
+    void resolveState(uint32_t tick, PresentNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;
     /// C-order append (start then end per span), then `stable_sort` by tick.
     static void appendSpanBoundaryEntries(const NoteSpanVec& spans, uint32_t begin,
@@ -261,7 +261,7 @@ struct LoopContentResolution {
     static void sortAndUniqueChannelByNoteIdEntries(ChannelByNoteIdEntryVec& entries);
     static uint8_t findChannelByNoteId(const ChannelByNoteIdEntryVec& entries, NoteId noteId);
     void resolveStateFromSpanBoundaries(const SpanBoundaryEntryVec& entries, uint32_t tick,
-                                        SoundingNoteVec& out,
+                                        PresentNoteVec& out,
                                         ResolutionCostCounters* counters = nullptr) const;
   };
 
@@ -298,9 +298,9 @@ struct LoopContentResolution {
                             SessionMidiEventVec& out, ResolutionCostCounters* counters = nullptr);
 
   static void resolveState(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t tick,
-                           SoundingNoteVec& out, ResolutionCostCounters* counters = nullptr);
+                           PresentNoteVec& out, ResolutionCostCounters* counters = nullptr);
 
-  static void resolveState(const StateCheckpoints& checkpoints, uint32_t tick, SoundingNoteVec& out,
+  static void resolveState(const StateCheckpoints& checkpoints, uint32_t tick, PresentNoteVec& out,
                            ResolutionCostCounters* counters = nullptr);
 
   static void resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
@@ -334,7 +334,7 @@ struct LoopContentResolution {
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
-  /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `soundingAt`.
+  /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `presentAt`.
   /// Drop rebuild working buffers. Does not construct or sort. Stamp is `playbackRevision`.
   static void deviceGateComplete(uint32_t playbackRevision);
   static bool preparedWindowReady(uint32_t playbackRevision);
@@ -351,6 +351,6 @@ struct LoopContentResolution {
                                        uint32_t playbackRevision, SessionMidiEventVec& out,
                                        ResolutionCostCounters* counters = nullptr);
   /// Consume kept `spans` + `spanBoundaries`. Returns false on miss or stamp mismatch.
-  static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, SoundingNoteVec& out,
+  static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, PresentNoteVec& out,
                                       ResolutionCostCounters* counters = nullptr);
 };

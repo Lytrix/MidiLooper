@@ -157,7 +157,7 @@ NOTE_EDIT overlap uses that **same participant query**. The query interval is th
 | Incoming hold `[S, E)` | Selected / mover LinearSpan `[start, end)` |
 | Notes present at S / overlapping `[S, E)` | Same participant identity (`NoteId` + LinearSpan) vs that span |
 | Playhead tick is **not** the overlap origin | `selectedTick` is **not** the overlap origin (Select only) |
-| Prepared present-at-S / span query (Phase 0b: not `SoundingNote` alone) | Same. **Not** the Select contract |
+| Prepared present-at-S / span query (Phase 0b: not `PresentNote` alone) | Same. **Not** the Select contract |
 | 16-bar `resolveWindow` around playhead (withdrawn as USB fill) | Geometric interval around `selectedTick` (withdrawn as overlap fill) |
 | `tickEvents` / `spanBoundaries` | Select neighborhood navigation around `selectedTick` |
 | `appendNoteEvents(noteId)` | Same — mover and overlap targets |
@@ -359,7 +359,7 @@ selected note(s) N with LinearSpan [S, E) at pitch P
   → Shorten / Hide
 ```
 
-Phase 0b applies: emitted `SoundingNote` lacks `endTick`; overlap needs LinearSpan (`NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal. See [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §18.
+Phase 0b applies: emitted `PresentNote` lacks `endTick`; overlap needs LinearSpan (`NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal. See [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §18.
 
 Prepared-hit overlap **must** perform: indexed query → bounded candidate enumeration → identity lookup.
 
