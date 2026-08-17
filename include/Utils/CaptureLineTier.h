@@ -61,7 +61,10 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,stored_notes,", 18) == 0 ||
          strncmp(tag, "DIAG,lcr,", 9) == 0 ||
          strncmp(tag, "DIAG,lcr,skip,", 14) == 0 ||
-         strncmp(tag, "DIAG,overlap_hold,", 18) == 0;
+         strncmp(tag, "DIAG,overlap_hold,", 18) == 0 ||
+         strncmp(tag, "DIAG,late_on,", 13) == 0 || strncmp(tag, "DIAG,late_off,", 14) == 0 ||
+         strncmp(tag, "DIAG,late_clk,", 14) == 0 || strncmp(tag, "DIAG,late_event,", 16) == 0 ||
+         strncmp(tag, "DIAG,playback_build,", 20) == 0;
 }
 
 }  // namespace CaptureLineTier

@@ -13,6 +13,7 @@
 #include "TickPhase.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
   Loop& loop = getActiveLoop();
@@ -227,6 +228,9 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   }
   if (playbackEmitMidiOutput_) {
     midiHandler.sendMidiEvent(evtCopy);
+    if (evt.isNoteOn() || evt.isNoteOff()) {
+      RuntimeTimingTelemetry::recordNoteSendLateness(evt.isNoteOn(), micros(), evt.tick);
+    }
   }
   ignorePlaybackMidiInput = false;  // Reset playback state
 }

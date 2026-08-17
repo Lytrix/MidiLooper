@@ -62,6 +62,12 @@ void test_timing_telemetry_lines_are_tier_a() {
       "add,3,shorten,1,hide,0"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,328705775,DIAG,timing_max,PlaybackBuildTime,74729"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701476,DIAG,late_on,0,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701477,DIAG,late_off,1200,2"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,late_clk,4000,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701479,DIAG,late_event,on,5000,192"));
+  TEST_ASSERT_TRUE(
+      CaptureLineTier::isTierALine("#CAP,6701480,DIAG,playback_build,12345,0,384,9"));
 }
 
 void test_transport_and_persistence_lines_are_tier_a() {

@@ -2,7 +2,7 @@
 
 **Kind:** refinement (follow-up)  
 **Date:** 2026-07-17  
-**Status:** Parked — after bounded display reconstruction  
+**Status:** Parked as a standalone follow-up. Engine play-ahead first path is the **per-event MIDI deadline vs 2-bar rebuild hypothesis** on [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md) (A→B usable region→C LCR; 2-bar LCR not default after A). Domain `PlaybackWindow` and W2 pending-slot queue stay here / `slot-performance-interaction`.  
 **Depends on:** [`boot_load_windowed_display_reconstruction_refinement.md`](boot_load_windowed_display_reconstruction_refinement.md) (`gatherPublishedEventsInWindow` / `PublishedEventRange`)  
 **Does not fix:** OLED / boot display hang (separate path)  
 **Does not own naming:** Name split is already planned elsewhere (see below)

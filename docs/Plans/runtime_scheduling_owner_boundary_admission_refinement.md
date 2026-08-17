@@ -21,6 +21,7 @@ This is the **sole actionable roadmap** for runtime scheduling work. Historical 
 | **Runtime admission** | Future coordinator of bounded units between `handleMidiInput()` entries |
 | **Interval reservation** | Future remaining-µs check at a `handleMidiInput()` entry |
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`) |
+| **MIDI deadline lateness** | Per-event `lateness_us` at `sendMidiEvent()` — product correctness. Specified with playback gather Stage 1; not a synonym for MIG |
 | **Owner-Boundary Gate** | Bound or remove pathological owners before interval reservation |
 
 See the contract §2 and [NAMING.md](../Authority/NAMING.md) § Timing-critical MIDI Input. Do not say “admission” without persist vs runtime meaning. Do not use “MIDI service” as an owner.
@@ -36,7 +37,7 @@ R  Owner-Boundary Gate
       R1A  source-view transition (design session)
       R1B  persistence payload / undo scope (ownership + wire format)
       R1C  remaining owner inventory
-C  Contract (MIDI Input Gap ceiling + reservation semantics)
+C  Contract (MIDI Input Gap ceiling + reservation semantics; MIDI deadline lateness is the musical gate when hooks exist)
 A  Interval reservation (OpenSpec + DEC + ARCHITECTURE-REVIEW)
 P  Proof and closeout
 ```
@@ -55,7 +56,7 @@ Each firmware slice: one invariant, one owner, focused native tests, `pio test -
 |----|------|-------|----------------------|
 | O1 | Snapshot persist work type at runtime-bundle **start** (`PERS,bundle` attribution) | `StorageManagerInternal::beginPersistenceWorkItem` / `PersistenceWorkItemJob` | Yes |
 | O2 | Close RC-S0c: bounded Tier-A transmit under `SC_CAPTURE_FLUSH(8)` so RECORD and stop windows survive | `DebugSessionCapture::flushCaptureBuffer` | Yes if transmit stays count/time bounded |
-| O3 | Keep `DIAG,midi_gap`, `midi_input`, transition stages, `PERS,bundle`, and `begin_capture` in the same capture; treat `DIAG,noterecon` as a post-RC-K3 zero on the note-off path. Historical captures used `DIAG,msi` / `midisvc` | `RuntimeTimingTelemetry` | Yes |
+| O3 | Keep `DIAG,midi_gap`, `midi_input`, transition stages, `PERS,bundle`, and `begin_capture` in the same capture; treat `DIAG,noterecon` as a post-RC-K3 zero on the note-off path. Historical captures used `DIAG,msi` / `midisvc`. Per-event `lateness_us` is specified on [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md) Stage 1 — consume those hooks when they exist; do not start that plan from this roadmap | `RuntimeTimingTelemetry` | Yes |
 | O4 | Re-run native suite + ≈100-bar RECORD + two OVERDUB baseline after O1–O2 | — | — |
 
 **Exit:** continuous DIAG through RECORD → stop → PLAYING → two OVERDUB; `PERS,bundle` work type matches the item that opened the bundle; remainder spans plus stop/source-view stages cover the 4–16 s class stalls.
@@ -173,6 +174,7 @@ Only after R exits.
 - Reservation uses the complete bounded cost of the next unit. Overrun: emit diagnostic, stop reserving that class, retain continuation.
 - Specify nested `updateAllTracks`, display, persistence, load, reclaim, fader, serial, USB-host, and ISR consumption of the same interval.
 - Order: timing safety, timing-critical MIDI Input, reservation fit, fairness among fitting units, throughput.
+- Musical gate (when Stage 1 lateness hooks exist): `late_event_count == 0` and `max_lateness_us <= 0` for note-on, note-off, and clock. The MIDI Input Gap ceiling is the **interval** contract. It is not a substitute for per-event deadline proof.
 
 **Exit:** contract in the architecture document proves collective reservation from declared work units. Still no firmware for interval reservation.
 
@@ -206,7 +208,7 @@ Native: `pio test -e native`. Firmware: `teensy41-capture-serial`. Device matrix
 - load / reclaim / display concurrent with transport;
 - boot / slot-restore variant.
 
-Required evidence: no multi-second PLAYING MIDI Input Gap; no lost external MIDI clock; source-view entry and persistence bundle within measured budgets; deferred work remains pending and completes later; no regression in display completeness, undo, persistence reload, or slot selection.
+Required evidence: no multi-second PLAYING MIDI Input Gap; no lost external MIDI clock; when lateness hooks exist, `late_event_count == 0` and `max_lateness_us <= 0` for note-on, note-off, and clock (a passing gap with late sends is not a pass); source-view entry and persistence bundle within measured budgets; deferred work remains pending and completes later; no regression in display completeness, undo, persistence reload, or slot selection.
 
 Closeout: architecture contract, this roadmap, `CURRENT_WORK.md`, `PROJECT_STATE.md`, `DELIVERABLE_TRACKING.md`, `DEC-###`, OpenSpec archive if A shipped.
 

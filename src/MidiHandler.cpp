@@ -807,6 +807,9 @@ void MidiHandler::sendProgramChange(uint8_t channel, uint8_t program) {
 
 // --- Clock / Transport Output ---
 void MidiHandler::sendClock() {
+  const uint32_t tickUs = clockManager.getMicrosPerTick();
+  RuntimeTimingTelemetry::recordOutgoingClockSend(micros(), tickUs * Config::TICKS_PER_CLOCK, tickUs,
+                                                  clockManager.getCurrentTick());
   if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Clock);
   if (outputSerial) MIDIserial.sendRealTime(midi::Clock);
 }
