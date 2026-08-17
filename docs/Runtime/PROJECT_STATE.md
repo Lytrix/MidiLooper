@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-17 (RC11/RC12 FROZEN [`140355`]; loop length during overdub queued)
+Last updated: 2026-08-17 (display undo/wrap/pitch-move RCA [`144703`]/[`144939`]; RC11/RC12 FROZEN [`140355`])
 
 ---
 
