@@ -57,6 +57,7 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 | [overdub_overlap_hold_transport_stop_pending_bugfix.md](overdub_overlap_hold_transport_stop_pending_bugfix.md) | RC9: overdub transport stop finalizes pending before All Notes Off |
 | [overdub_overlap_hold_live_pending_display_bugfix.md](overdub_overlap_hold_live_pending_display_bugfix.md) | RC10: piano-roll paint applies pending Hide/Shorten at note-off |
 | [overdub_overlap_hold_display_cache_bugfix.md](overdub_overlap_hold_display_cache_bugfix.md) | RC11/RC12 FROZEN: source-view consume + display parity; HITL [`140355`](../../captures/session_20260817_140355.log) |
+| [overdub_wrap_crossing_hold_head_consume_bugfix.md](overdub_wrap_crossing_hold_head_consume_bugfix.md) | Wrap-shaped off consumes `[S, L) ∪ [0, E)` as one hold; HITL [`155450`](../../captures/session_20260817_155450.log) |
 | [overdub_loop_length_during_overdub_enhancement.md](overdub_loop_length_during_overdub_enhancement.md) | Queued: LOOP_EDIT length change during overdub keeps source view, LEN, and playback aligned |
 | [overdub_lifecycle_representation_authority.md](overdub_lifecycle_representation_authority.md) | Overdub consume → seal → rebuild → display authority diagram |
 | [refactor_priority_backlog.md](refactor_priority_backlog.md) | Cross-cutting refactor priority (P1/P2/P3) |

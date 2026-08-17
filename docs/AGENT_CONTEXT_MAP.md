@@ -46,6 +46,8 @@ Always load first:
 
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
 - [plans/record_overdub_memory_display_timeline_enhancement.md](Plans/record_overdub_memory_display_timeline_enhancement.md)
+- [plans/overdub_lifecycle_representation_authority.md](Plans/overdub_lifecycle_representation_authority.md) — overdub wrap consume/seal/rebuild authority
+- [plans/overdub_wrap_crossing_hold_head_consume_bugfix.md](Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md) — wrap-shaped off consumes `[S, L) ∪ [0, E)` as one hold (shipped; HITL [`155450`](../../captures/session_20260817_155450.log))
 - `openspec/specs/timeline-epochs/` (if present)
 - `Track`, `Loop`, `LoopEventStore` headers
 - [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037 `LoopContentResolution` (native prototype; materialize stays until gates)
