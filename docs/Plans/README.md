@@ -54,6 +54,8 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 | [overdub_overlap_hold_same_start_bugfix.md](overdub_overlap_hold_same_start_bugfix.md) | Overdub hold snapshot includes same-start notes (RC1–RC8) |
 | [overdub_overlap_hold_enter_source_view_rebuild_bugfix.md](overdub_overlap_hold_enter_source_view_rebuild_bugfix.md) | RC7: enter source view uses wrap rebuild, not visual cache |
 | [overdub_overlap_hold_hold_window_jit_bugfix.md](overdub_overlap_hold_hold_window_jit_bugfix.md) | RC8: hold fill is 16-bar this-pitch JIT, not full-loop adds |
+| [overdub_overlap_hold_transport_stop_pending_bugfix.md](overdub_overlap_hold_transport_stop_pending_bugfix.md) | RC9: overdub transport stop finalizes pending before All Notes Off |
+| [overdub_overlap_hold_live_pending_display_bugfix.md](overdub_overlap_hold_live_pending_display_bugfix.md) | RC10: piano-roll paint applies pending Hide/Shorten at note-off |
 | [refactor_priority_backlog.md](refactor_priority_backlog.md) | Cross-cutting refactor priority (P1/P2/P3) |
 | [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) | Hygiene backlog + item 18 archive remainder |
 | [docs_folder_hygiene_refinement.md](docs_folder_hygiene_refinement.md) | Docs folder cleanup plan |

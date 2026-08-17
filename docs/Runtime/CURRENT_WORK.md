@@ -2,24 +2,24 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC8 — hold-window JIT)
+Last updated: 2026-08-17 (overdub overlap hold RC9/RC10 — transport-stop pending + live Hide paint)
 
 ---
 
 ## Now implementing
 
-### Overdub overlap hold — hold-window just-in-time fill (RC8)
+### Overdub overlap hold — transport-stop pending + live Hide paint (RC9/RC10)
 
-**Plan:** [`overdub_overlap_hold_hold_window_jit_bugfix.md`](../Plans/overdub_overlap_hold_hold_window_jit_bugfix.md)  
+**Plans:** [`overdub_overlap_hold_transport_stop_pending_bugfix.md`](../Plans/overdub_overlap_hold_transport_stop_pending_bugfix.md), [`overdub_overlap_hold_live_pending_display_bugfix.md`](../Plans/overdub_overlap_hold_live_pending_display_bugfix.md)  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
-**Evidence:** [`120324`](../../captures/session_20260817_120324.log), [`115622`](../../captures/session_20260817_115622.log) — enter window missed 60@224; empty hold IDs Add-only.  
+**Evidence:** [`122152`](../../captures/session_20260817_122152.log) — extra 60@64 length 104 from wrap_synth Off@168; Hide of record only after stop `slice_clean`.  
 **1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — keep consume.
 
-**RC8:** `ensureOverdubSourceNotesForHold` fills **this pitch** from the 16-bar hold window via `resolveWindow(passes)`. Not the full loop. Not prepared. Note-on snapshot is sounding-only; note-off unions newly merged overlapping notes when hold IDs are empty. Gate 3 stays for notes already in the enter view. Device gate open.
-
-**RC7:** `establishOverdubSourceView` calls `rebuildOverdubSourceView(..., "open")`. Not visual cache. Wrap still keeps an established view (RC2).
-
-**RC6:** wrap rebuild after publish — [`overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md`](../Plans/overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md)
+**RC10:** live capture paint applies pending Hide/Shorten on a copy. Not visual cache.  
+**RC9:** overdub transport stop finalizes pending before `sendAllNotesOff`. Stop-close accumulates overlap.  
+**RC8:** 16-bar this-pitch hold JIT.  
+**RC7:** enter rebuild, not visual cache.  
+**RC6:** wrap rebuild after publish.
 
 **RC1–RC5:** same-start collection, keep view, per-pass Hide apply. See parent plan.
 

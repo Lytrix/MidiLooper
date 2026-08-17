@@ -632,6 +632,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
     }
 
+    const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
+    if (track.isOverdubbing() && loop.hasPendingNoteChanges()) {
+        liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_);
+        paintedNotes = &liveDisplayPendingPaintNotes_;
+    }
+
     const uint32_t resolveElapsedUs = micros() - resolveStartUs;
     DIAG_TIMING_RECORD(DisplayResolveLiveCapture, resolveElapsedUs);
     if (resolveElapsedUs > Diagnostics::kDisplayResolveBudgetMicros) {
@@ -653,5 +660,5 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 #endif
     }
 
-    return liveDisplayNotes;
+    return *paintedNotes;
 }

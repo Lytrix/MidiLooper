@@ -242,6 +242,26 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
       }
       logOverdubCaptureCoordinate(*this, offAbsTick, storageTick, channel, note);
 #endif
+      if (isOverdubbing() && loop.hasOverdubSourceView()) {
+        const auto overlapIt = pendingNotes.find(key);
+        static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
+        const OverlapNoteIdSet& overlapNoteIds = (overlapIt != pendingNotes.end())
+                                                     ? overlapIt->second.overlapNoteIds
+                                                     : kEmptyOverlapNoteIds;
+        const uint8_t velocity =
+            (overlapIt != pendingNotes.end()) ? overlapIt->second.velocity : 0;
+        const LoopEventStore& capture = loop.capture.store;
+        for (size_t i = capture.size(); i > 0; --i) {
+          const MidiEvent& prior = capture.at(i - 1);
+          if (!prior.isNoteOn() || prior.channel != channel ||
+              prior.data.noteData.note != note) {
+            continue;
+          }
+          (void)loop.accumulatePendingNoteChangesForIncomingNote(
+              channel, note, velocity, prior.tick, phaseTick, prior.noteId, overlapNoteIds);
+          break;
+        }
+      }
       pendingNotes.erase(key);
       ++captureNoteOffsAppended;
     } else {

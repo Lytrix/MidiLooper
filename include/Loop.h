@@ -231,6 +231,9 @@ struct Loop {
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
   /// uses `rebuildOverdubSourceView` instead. Does not clear pending.
   void applyPendingNoteChangesToOverdubSourceView();
+  /// Paint overlay: apply pending Hide/Shorten onto a display-note list. Not Add
+  /// (live capture already has those). Does not mutate the source view or visual cache.
+  void applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
   /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
   void emitOverlapHoldTotals() const;

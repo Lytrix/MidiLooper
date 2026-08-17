@@ -288,6 +288,49 @@ void test_pending_hide_same_start_longer() {
                     static_cast<int>(findTransform(loop.pendingNoteChanges(), 1)->kind));
 }
 
+void test_pending_hide_applies_to_display_notes_not_source_view() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 64, 240, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 288, 10,
+                                                                   overlapIds({1})));
+  NoteUtils::DisplayNoteVec paint = loop.overdubSourceViewNotes();
+  TEST_ASSERT_TRUE(hasDisplayNote(paint, 60, 64));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_FALSE(hasDisplayNote(paint, 60, 64));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 64));
+}
+
+void test_pending_shorten_applies_to_display_notes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
+  NoteUtils::DisplayNoteVec paint = loop.overdubSourceViewNotes();
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  bool shortened = false;
+  for (const NoteUtils::DisplayNote& note : paint) {
+    if (note.noteId == 1 && note.startTick == 50 && note.endTick == 119) {
+      shortened = true;
+    }
+  }
+  TEST_ASSERT_TRUE(shortened);
+  bool sourceUnchanged = false;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == 1 && note.startTick == 50 && note.endTick == 200) {
+      sourceUnchanged = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sourceUnchanged);
+}
+
 void test_wrap_keeps_source_view_inner_shortens_prior_add() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -669,6 +712,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);
   RUN_TEST(test_pending_hide_same_start_longer);
+  RUN_TEST(test_pending_hide_applies_to_display_notes_not_source_view);
+  RUN_TEST(test_pending_shorten_applies_to_display_notes);
   RUN_TEST(test_wrap_keeps_source_view_inner_shortens_prior_add);
   RUN_TEST(test_wrap_keeps_source_view_same_start_longer_hides_prior_add);
   RUN_TEST(test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add);

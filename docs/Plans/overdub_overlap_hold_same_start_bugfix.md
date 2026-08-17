@@ -1,6 +1,6 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1–RC5 as below; RC6 wrap rebuild native; RC7 enter rebuild native; RC8 hold-window JIT native; device gate open  
+**Status:** Active — RC1–RC5 as below; RC6 wrap rebuild native; RC7 enter rebuild native; RC8 hold-window JIT native; RC9 transport-stop pending native; RC10 live pending paint native; device gate open  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3); [`001517`](../../captures/session_20260817_001517.log) (RC4); [`003204`](../../captures/session_20260817_003204.log) (RC5)  
@@ -279,6 +279,44 @@ Device: enter emits `src,why=open,from=prep|win`; first occupied-lane notes `loo
 16-bar `resolveWindow(passes)` for **this pitch** at the hold tick. Not prepared. Not the full loop. Note-on snapshot merges sounding notes only. Note-off unions newly merged overlapping pitch notes when hold IDs are empty. Gate 3 stays for notes already in the enter view.
 
 Device: `src,why=hold,from=win` with `merged>0` on occupied-lane hold that starts before the missed note; Hide or Shorten, not Add-only stacked `SEVT`.
+
+---
+
+## RC9 — transport stop finalizes pending before All Notes Off
+
+**Status:** Native in this commit; device gate open.  
+**Evidence:** [`122152`](../../captures/session_20260817_122152.log) — extra 60@64 length 104 from wrap_synth Off@168 after `sendAllNotesOff` cleared pending.  
+**Sibling:** [`overdub_overlap_hold_transport_stop_pending_bugfix.md`](overdub_overlap_hold_transport_stop_pending_bugfix.md)
+
+### Architecture checkpoint (RC9)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. |
+| **State transition change?** | NO. |
+
+### Fix
+
+Same order as record: `stopOverdubbingToStopped` / `finalizePendingNotes` then `sendAllNotesOff`. Stop-close also accumulates overlap, same as MIDI note-off.
+
+---
+
+## RC10 — live paint applies pending Hide/Shorten
+
+**Status:** Native in this commit; device gate open.  
+**Evidence:** [`122152`](../../captures/session_20260817_122152.log) — Hide at note-off, `DISP` unchanged until stop cache rebuild.  
+**Sibling:** [`overdub_overlap_hold_live_pending_display_bugfix.md`](overdub_overlap_hold_live_pending_display_bugfix.md)
+
+### Architecture checkpoint (RC10)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. Paint overlay only. |
+| **State transition change?** | NO. |
+
+### Fix
+
+`resolveDisplayNotesLiveCapture` paints a copy with pending Hide/Shorten. Does not mutate visual cache or the live-capture compose indices.
 
 ---
 
