@@ -2,18 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (RC-W1/U1 HITL PASS [`152627`]; RC-N1 follow-up native; device retest open)
+Last updated: 2026-08-17 (wrap-crossing hold head+tail consume)
 
 ---
 
 ## Now implementing
+
+### Wrap-crossing overdub consume (head + tail, one hold)
+
+**Plan:** [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](../Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md)  
+**Evidence:** [`153213`](../../captures/session_20260817_153213.log) two 60s at tick 64; [`122152`](../../captures/session_20260817_122152.log) linear `hide=1`; [`170449`](../../captures/session_20260813_170449.log) `hide=14` double-hold forbid.
+
+One wrap-crossing incoming note occupies `[S, L) ∪ [0, E)` as a single hold. Do not reopen RC11/RC12. Do not patch `applyNoteEditPass`. NOTE_EDIT exit `DISP 8` / 417 vs 423 is DEC-039 — out of this slice.
 
 ### Display undo / wrap / pitch-move ghosts (RC-W1, RC-N1, RC-U1)
 
 **Plan:** [`note_edit_display_undo_overdub_wrap_bugfix.md`](../Plans/note_edit_display_undo_overdub_wrap_bugfix.md)  
 **Evidence:** [`144703`](../../captures/session_20260817_144703.log), [`144939`](../../captures/session_20260817_144939.log)
 
-**Firmware committed** (`f0b0e66` / `142b95b` / `324ffdd`). [`152627`](../../captures/session_20260817_152627.log): RC-W1 / RC-U1 **HITL PASS**. RC-N1 `VCACHE` 7→8 at pitch deselect — follow-up keeps same-start sibling ends; native PASS; **device retest open**.
+**Firmware committed** (`f0b0e66` / `142b95b` / `324ffdd` / `4aabf1c`). [`152627`](../../captures/session_20260817_152627.log): RC-W1 / RC-U1 **HITL PASS**. [`153213`](../../captures/session_20260817_153213.log): in-session pitch deselect 7 notes; exit `DISP 8` is persist identity, not wrap live-cache.
 
 Wrap invalidates live display cache; pitch commit retires persist-twin overlay and home pitch in `visualCache`; undo/redo uses idle visual-cache slices (`refreshVisualCacheAfterPassStateChange`). Do not reopen RC11/RC12. Do not change DEC-038.2 session undo grain.
 
@@ -149,7 +156,7 @@ LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_2
 
 **Note-off consumes overlapNoteIds (wired):** `accumulatePendingNoteChangesForIncomingNote` looks up the set in `overdubSourceViewNotes_` (`appendNotesForIds`) and applies geometry + `[S, E)`. Empty set skips lookup (Add only; Gate 3). Native: `test_pending_note_change`.
 
-**Wrap-crossing hold consume (tail only):** wrap-head `[0, E)` is not a second incoming hold. Shorten/Hide run on `[S, loopLength)` only. [`170449`](../../captures/session_20260813_170449.log) `hide=14` was the head segment. Native: wrap tail Shorten + skipped head Hide.
+**Wrap-crossing hold consume (head + tail, one hold):** wrap-head `[0, E)` is the same incoming hold as the tail `[S, loopLength)`, not a second note-off. [`170449`](../../captures/session_20260813_170449.log) `hide=14` was the double-hold. Plan: [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](../Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md).
 
 **NOTE_EDIT mover wrap-length jump (RC1 device PASS in [`200154`](../../captures/session_20260813_200154.log)):** no `2351` / `2975`. Mover **22** `DNTE` stays **95** while overlap runs on many neighbors. Note **14** `ChangeLength` `2256–2304` stays on the wrap-stub plan. Plan: [`note_edit_mover_wrap_length_jump_bugfix.md`](../Plans/note_edit_mover_wrap_length_jump_bugfix.md).
 
