@@ -3162,6 +3162,61 @@ void stage6e1AssertExpectedTransform(const Stage6e1OverlapCase& overlapCase,
                                    static_cast<uint32_t>(transforms.size()), detail);
 }
 
+void stage6e1UnionNotes(NoteUtils::DisplayNoteVec& dest, const NoteUtils::DisplayNoteVec& src) {
+  for (const NoteUtils::DisplayNote& note : src) {
+    bool found = false;
+    for (const NoteUtils::DisplayNote& existing : dest) {
+      if (existing.noteId == note.noteId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      dest.push_back(note);
+    }
+  }
+}
+
+void stage6e1UpsertTransforms(PendingNoteChangeVec& pending, const PendingNoteChangeVec& incoming) {
+  for (const PendingNoteChange& change : incoming) {
+    if (change.kind != PendingNoteChangeKind::Shorten &&
+        change.kind != PendingNoteChangeKind::Hide) {
+      pending.push_back(change);
+      continue;
+    }
+    bool replaced = false;
+    for (PendingNoteChange& existing : pending) {
+      if ((existing.kind == PendingNoteChangeKind::Shorten ||
+           existing.kind == PendingNoteChangeKind::Hide) &&
+          existing.noteId == change.noteId) {
+        existing = change;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      pending.push_back(change);
+    }
+  }
+}
+
+void stage6e1CollectWindow(const LoopPasses& passes, const LoopContentResolution::TickIndex& index,
+                           const LoopContentResolution::StateCheckpoints& checkpoints,
+                           uint32_t loopLength, uint8_t pitch, uint32_t windowStart,
+                           uint32_t windowEnd, NoteUtils::DisplayNoteVec& oracle,
+                           NoteUtils::DisplayNoteVec& treatment) {
+  if (windowStart >= windowEnd) {
+    return;
+  }
+  NoteUtils::DisplayNoteVec windowOracle;
+  stage6e1CollectOracleNotes(passes, loopLength, pitch, windowStart, windowEnd, windowOracle);
+  NoteUtils::DisplayNoteVec windowTreatment;
+  stage6e1CollectTreatmentNotes(index, checkpoints, passes.editPasses, loopLength, pitch,
+                                windowStart, windowEnd, windowTreatment);
+  stage6e1UnionNotes(oracle, windowOracle);
+  stage6e1UnionNotes(treatment, windowTreatment);
+}
+
 void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   TEST_MESSAGE(overlapCase.name);
   LoopEventStore::resetPoolForTests();
@@ -3191,6 +3246,7 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   LoopContentResolution::StateCheckpoints checkpoints;
   checkpoints.rebuild(index, passes.editPasses, loopLength, Config::TICKS_PER_BAR);
 
+  const bool wrapCrossing = incomingEnd < incomingStart;
   uint32_t consumeStart = 0;
   uint32_t consumeEnd = 0;
   stage6e1ConsumeHold(incomingStart, incomingEnd, loopLength, overlapCase.sessionStart,
@@ -3198,11 +3254,13 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
   TEST_ASSERT_TRUE(consumeEnd > consumeStart);
 
   NoteUtils::DisplayNoteVec oracle;
-  stage6e1CollectOracleNotes(passes, loopLength, overlapCase.incomingPitch, consumeStart,
-                             consumeEnd, oracle);
   NoteUtils::DisplayNoteVec treatment;
-  stage6e1CollectTreatmentNotes(index, checkpoints, passes.editPasses, loopLength,
-                                overlapCase.incomingPitch, consumeStart, consumeEnd, treatment);
+  stage6e1CollectWindow(passes, index, checkpoints, loopLength, overlapCase.incomingPitch,
+                        consumeStart, consumeEnd, oracle, treatment);
+  if (wrapCrossing && incomingEnd > 0) {
+    stage6e1CollectWindow(passes, index, checkpoints, loopLength, overlapCase.incomingPitch, 0,
+                          incomingEnd, oracle, treatment);
+  }
   assertDisplayNotesMatch(oracle, treatment);
 
   if (overlapCase.expected == Stage6e1ExpectedTransform::CandidatesOnly) {
@@ -3213,8 +3271,16 @@ void stage6e1RunCase(const Stage6e1OverlapCase& overlapCase) {
     TEST_ASSERT_MESSAGE(!treatment.empty(), overlapCase.name);
   }
   PendingNoteChangeVec transforms;
+  PendingNoteChangeVec windowTransforms;
   stage6e1ApplyGeometry(treatment, overlapCase.incomingPitch, consumeStart, consumeEnd, loopLength,
-                        transforms);
+                        windowTransforms);
+  stage6e1UpsertTransforms(transforms, windowTransforms);
+  if (wrapCrossing && incomingEnd > 0) {
+    windowTransforms.clear();
+    stage6e1ApplyGeometry(treatment, overlapCase.incomingPitch, 0, incomingEnd, loopLength,
+                          windowTransforms);
+    stage6e1UpsertTransforms(transforms, windowTransforms);
+  }
   stage6e1AssertExpectedTransform(overlapCase, transforms);
 }
 
@@ -3242,8 +3308,10 @@ bool stage6e1RotationPreservesLinearSpans(const Stage6e1OverlapCase& overlapCase
       return false;
     }
   }
-  if (overlapCase.incomingEnd > overlapCase.incomingStart &&
-      !staysLinear(overlapCase.incomingStart, overlapCase.incomingEnd)) {
+  if (overlapCase.incomingEnd < overlapCase.incomingStart) {
+    return false;
+  }
+  if (!staysLinear(overlapCase.incomingStart, overlapCase.incomingEnd)) {
     return false;
   }
   return true;
@@ -3325,16 +3393,16 @@ uint32_t stage6e1LoadCases(Stage6e1OverlapCase* out, uint32_t cap) {
        loopLen - 80,
        loopLen - 41,
        1},
-      {"pending_wrap_crossing_skips_head",
-       {{1, 60, 8, 40}},
+      {"pending_wrap_crossing_consumes_head_occupied_lane",
+       {{1, 60, 64, 288}},
        1,
        60,
        loopLen - 40,
-       50,
-       Stage6e1ExpectedTransform::None,
-       0,
-       0,
-       0},
+       240,
+       Stage6e1ExpectedTransform::Hide,
+       64,
+       288,
+       1},
       {"user_long_source_contained_shorten",
        {{1, 60, 0, 5000}},
        1,
@@ -3362,9 +3430,9 @@ uint32_t stage6e1LoadCases(Stage6e1OverlapCase* out, uint32_t cap) {
        60,
        4000,
        200,
-       Stage6e1ExpectedTransform::Shorten,
+       Stage6e1ExpectedTransform::Hide,
        0,
-       3999,
+       4099,
        1,
        4100},
   };
@@ -3418,9 +3486,9 @@ void test_stage6e1b_session_start_is_wrap_origin() {
   absolute.incomingPitch = 60;
   absolute.incomingStart = stage6e1RotateTick(4000, kSessionStart, kStage6e1LoopLen);
   absolute.incomingEnd = stage6e1RotateTick(200, kSessionStart, kStage6e1LoopLen);
-  absolute.expected = Stage6e1ExpectedTransform::Shorten;
+  absolute.expected = Stage6e1ExpectedTransform::Hide;
   absolute.expectedStart = 0;
-  absolute.expectedEnd = absolute.incomingStart - 1;
+  absolute.expectedEnd = 5000;
   absolute.expectedTransformCount = 1;
   absolute.loopLength = kStage6e1LoopLen;
   absolute.sessionStart = kSessionStart;

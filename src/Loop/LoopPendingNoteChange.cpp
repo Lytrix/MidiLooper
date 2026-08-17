@@ -81,6 +81,18 @@ bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingE
   return direct || existingShifted || incomingShifted;
 }
 
+void unionSelectedNote(NoteUtils::DisplayNoteVec& selected, const NoteUtils::DisplayNote& note) {
+  if (note.noteId == kInvalidNoteId) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& picked : selected) {
+    if (picked.noteId == note.noteId) {
+      return;
+    }
+  }
+  selected.push_back(note);
+}
+
 void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChange& change) {
   if (change.kind != PendingNoteChangeKind::Shorten && change.kind != PendingNoteChangeKind::Hide) {
     pending.push_back(change);
@@ -266,13 +278,11 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     return false;
   }
 
-  uint32_t consumeStart = startTick;
-  uint32_t consumeEnd = endTick;
-  if (endTick < startTick) {
-    consumeStart = startTick;
-    consumeEnd = loopLen;
+  const bool wrapCrossing = endTick < startTick;
+  if (!wrapCrossing && startTick >= endTick) {
+    return false;
   }
-  if (consumeStart >= consumeEnd) {
+  if (wrapCrossing && startTick >= loopLen) {
     return false;
   }
 
@@ -285,8 +295,6 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     ++overlapHoldTotals_.overflows;
   }
   NoteUtils::DisplayNoteVec selected;
-  NoteUtils::DisplayNoteVec jitHoldPitchNotes;
-  ensureOverdubSourceNotesForHold(consumeStart, pitch, &jitHoldPitchNotes);
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
     size_t notesExamined = 0;
     const uint32_t lookupStartUs = micros();
@@ -306,52 +314,59 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   } else {
     ++overlapHoldTotals_.emptySets;
   }
-  for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
-    if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, consumeStart, consumeEnd,
-                                          loopLen)) {
-      continue;
+
+  auto collectConsumeWindow = [&](uint32_t windowStart, uint32_t windowEnd) {
+    if (windowStart >= windowEnd) {
+      return;
     }
-    bool already = false;
-    for (const NoteUtils::DisplayNote& picked : selected) {
-      if (picked.noteId == note.noteId) {
-        already = true;
-        break;
+    NoteUtils::DisplayNoteVec jitHoldPitchNotes;
+    ensureOverdubSourceNotesForHold(windowStart, pitch, &jitHoldPitchNotes);
+    for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
+      if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, windowStart, windowEnd,
+                                            loopLen)) {
+        continue;
       }
+      unionSelectedNote(selected, note);
     }
-    if (!already) {
-      selected.push_back(note);
-    }
-  }
-  uint32_t sourceWindowStart = 0;
-  uint32_t sourceWindowLength = 0;
-  resolveOverdubSourceWindow(consumeStart, sourceWindowStart, sourceWindowLength);
-  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
-    if (note.note != pitch || note.noteId == kInvalidNoteId) {
-      continue;
-    }
-    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, sourceWindowStart,
-                                                  sourceWindowLength, loopLen)) {
-      continue;
-    }
-    if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, consumeStart, consumeEnd,
-                                          loopLen)) {
-      continue;
-    }
-    bool already = false;
-    for (const NoteUtils::DisplayNote& picked : selected) {
-      if (picked.noteId == note.noteId) {
-        already = true;
-        break;
+    uint32_t sourceWindowStart = 0;
+    uint32_t sourceWindowLength = 0;
+    resolveOverdubSourceWindow(windowStart, sourceWindowStart, sourceWindowLength);
+    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+      if (note.note != pitch || note.noteId == kInvalidNoteId) {
+        continue;
       }
+      if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, sourceWindowStart,
+                                                    sourceWindowLength, loopLen)) {
+        continue;
+      }
+      if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, windowStart, windowEnd,
+                                            loopLen)) {
+        continue;
+      }
+      unionSelectedNote(selected, note);
     }
-    if (!already) {
-      selected.push_back(note);
-    }
+  };
+
+  if (wrapCrossing) {
+    collectConsumeWindow(startTick, loopLen);
+    collectConsumeWindow(0, endTick);
+  } else {
+    collectConsumeWindow(startTick, endTick);
   }
+
   const NoteId causingId =
       (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
-  accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, consumeStart,
-                                              consumeEnd, causingId);
+  if (wrapCrossing) {
+    accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, startTick,
+                                                loopLen, causingId);
+    if (endTick > 0) {
+      accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, 0, endTick,
+                                                  causingId);
+    }
+  } else {
+    accumulatePendingNoteChangesFromSourceNotes(selected, channel, pitch, velocity, startTick,
+                                                endTick, causingId);
+  }
 
   PendingNoteChange addChange{};
   addChange.kind = PendingNoteChangeKind::Add;
