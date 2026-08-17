@@ -277,7 +277,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #if defined(SESSION_CAPTURE)
   const uint32_t appendStartUs = micros();
 #endif
-  if (appendOverdub) {
+  if (appendOverdub && !usedPrepared) {
     appendOverdubPassDisplayNotes(sliceNotes);
   }
 #if defined(SESSION_CAPTURE)
