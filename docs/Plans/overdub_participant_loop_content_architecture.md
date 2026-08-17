@@ -715,7 +715,7 @@ Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like
 
 **Device** [`005000`](../../captures/session_20260818_005000.log) — 2-bar (1536). Prepared served (`from=prep` 73; `eq=1` 30, `eq=0` 43 `ao=1,bo=1`). After wrap 3, seven session undos stayed `why=live` depth 3 — live `+1` blocked sealed-wrap peel. DEC-038.6 clarified: `O:` increments only at S wrap; undo peels the last sealed wrap.
 
-**Device** [`005509`](../../captures/session_20260818_005509.log) — same 2-bar loop, new undo on device. Five `#CAP` `sess_undo`: three `why=wrap,depth=0`, then two `why=live,depth=0`. One press peels the last sealed wrap. Two undos at 44.345 / 46.641 peel two sealed wraps; the next S wrap at 47.131 (+1) is a real start-tick crossing, not an undo side effect. 124 `lcr,part` all `from=miss` (idle gate finishes after stop). Production consume still A.
+**Device** [`005509`](../../captures/session_20260818_005509.log) — same 2-bar loop, new undo on device. Five `#CAP` `sess_undo`: three `why=wrap,depth=0`, then two `why=live,depth=0`. One press peels the last sealed wrap. Two undos at 44.345 / 46.641 peel two sealed wraps; the next S wrap at 47.131 (+1) is a real start-tick crossing, not an undo side effect. Sidebar `O:` was sealed-only (missing the in-progress wrap). Display is now `overdubSessionDisplayDepth` = sealed + 1. 124 `lcr,part` all `from=miss` (idle gate finishes after stop). Production consume still A.
 
 ---
 

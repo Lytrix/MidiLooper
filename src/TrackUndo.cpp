@@ -833,7 +833,7 @@ TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop
         return 0;
     }
     if (loop.hasOverdubSession()) {
-        return loop.overdubSessionUndoDepth();
+        return loop.overdubSessionDisplayDepth();
     }
     if (loopHasLiveOverdubCapture(loop)) {
         return 1u + countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
