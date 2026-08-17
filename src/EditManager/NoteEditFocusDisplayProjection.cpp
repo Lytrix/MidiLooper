@@ -357,6 +357,13 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     if (dn.noteId != kInvalidNoteId && hiddenParticipants.count(dn.noteId) > 0) {
       continue;
     }
+    // RC-N1: persist twin at the mover home (session id ≠ capture id) must not stay next to
+    // the overlay pitch. Chord notes at the same start with a different pitch are kept.
+    if (focus.active && focus.movingNoteId != kInvalidNoteId &&
+        dn.noteId != focus.movingNoteId && dn.note == focus.commitBaseline.pitch &&
+        dn.startTick == focus.commitBaseline.startTick) {
+      continue;
+    }
     if (dn.noteId != kInvalidNoteId &&
         std::find(participants.begin(), participants.end(), dn.noteId) != participants.end()) {
       NoteBaseline current{};

@@ -381,6 +381,46 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   emitVisualCacheState("full", static_cast<int32_t>(flat.size()));
 }
 
+LOOP_COLD_MEM void Loop::refreshVisualCacheAfterPassStateChange() {
+  markDisplayCachesStale();
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    return;
+  }
+  constexpr uint32_t kImmediateFillBarLimit = 16;
+  if (totalBars > kImmediateFillBarLimit) {
+    return;
+  }
+  constexpr uint8_t kBarsPerSlice = 4;
+  const uint32_t maxSlices = (totalBars + kBarsPerSlice - 1) / kBarsPerSlice + 1;
+  for (uint32_t slice = 0; slice < maxSlices && visualCacheDirty; ++slice) {
+    rebuildVisualCacheIdleSlice(kBarsPerSlice, 0);
+  }
+}
+
+LOOP_COLD_MEM void Loop::retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick,
+                                                          uint32_t endTick, uint8_t settledPitch) {
+  if (previousPitch == settledPitch) {
+    return;
+  }
+  bool hasSettled = false;
+  for (const NoteUtils::DisplayNote& note : visualCache.notes) {
+    if (note.note == settledPitch && note.startTick == startTick && note.endTick == endTick) {
+      hasSettled = true;
+      break;
+    }
+  }
+  if (!hasSettled) {
+    return;
+  }
+  auto newEnd = std::remove_if(visualCache.notes.begin(), visualCache.notes.end(),
+                               [&](const NoteUtils::DisplayNote& note) {
+                                 return note.note == previousPitch && note.startTick == startTick &&
+                                        note.endTick == endTick;
+                               });
+  visualCache.notes.erase(newEnd, visualCache.notes.end());
+}
+
 LOOP_COLD_MEM void Loop::ensureVisualCacheBuilt() {
   if (!visualCacheDirty) {
     return;

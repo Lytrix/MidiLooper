@@ -264,6 +264,12 @@ struct Loop {
   /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.
   void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
                                    uint32_t maxBarDistanceFromPriority = UINT32_MAX);
+  /// After pass-state change: mark stale and fill short loops via idle slices (same oracle
+  /// as PLAYING). Long loops stay idle-deferred — no `VCACHE,full` flatten+append.
+  void refreshVisualCacheAfterPassStateChange();
+  /// RC-N1: if settled pitch is present at the mover start, drop the previous home pitch there.
+  void retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick, uint32_t endTick,
+                                        uint8_t settledPitch);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
   /// 6B: dirty only bars touched by `committedPassId` and companion edit rows. No whole-loop reconstruct.

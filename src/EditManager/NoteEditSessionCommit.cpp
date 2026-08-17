@@ -125,9 +125,16 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     }
     lastPushedGeometryKind_ = NoteEditKind::Select;
 
+    const NoteBaseline previousHome = editSession.focus.commitBaseline;
+    const NoteBaseline settled = editSession.focus.last;
+    Loop& loop = trackManager.getSelectedLoop(track);
+    loop.rebuildVisualCacheFromPasses();
+    loop.retireSupersededPitchDisplayNote(previousHome.pitch, previousHome.startTick,
+                                          previousHome.endTick, settled.pitch);
+
     track.invalidateCaches();
 
-    editSession.focus.commitBaseline = editSession.focus.last;
+    editSession.focus.commitBaseline = settled;
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
     if (!editSession.noteEditCurrentState.empty()) {
