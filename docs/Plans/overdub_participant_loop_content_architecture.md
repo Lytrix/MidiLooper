@@ -717,6 +717,17 @@ Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like
 
 **Device** [`005509`](../../captures/session_20260818_005509.log) — same 2-bar loop, new undo on device. Five `#CAP` `sess_undo`: three `why=wrap,depth=0`, then two `why=live,depth=0`. One press peels the last sealed wrap. Two undos at 44.345 / 46.641 peel two sealed wraps; the next S wrap at 47.131 (+1) is a real start-tick crossing, not an undo side effect. Sidebar `O:` was sealed-only (missing the in-progress wrap). Display is now `overdubSessionDisplayDepth` = sealed + 1. 124 `lcr,part` all `from=miss` (idle gate finishes after stop). Production consume still A.
 
+**Device** [`010422`](../../captures/session_20260818_010422.log) — 2-bar (1536). Idle gate finished before overdub (`lcr,mat=0` @ 12.427 s; overdub @ 21.509 s). Open and all three wraps `from=prep`. 54 `lcr,part` all `from=prep`. One `#CAP` `sess_undo why=wrap` @ tick 3744.
+
+| Phase | `eq=1` | `eq=0` | Split |
+|-------|--------|--------|-------|
+| Enter → wrap 1 | 17 | 1 | pitch 87 `a=1,b=2` `ao=0,bo=1` |
+| Wrap 1 → undo | 8 | 1 | same 87 extra in B |
+| **Undo → wrap 2** | **0** | **9** | **all `a=2,b=1` `ao=1,bo=0`** |
+| Wrap 2 → wrap 3 | 3 | 15 | mostly `a=1,b=2` `ao=0,bo=1` |
+
+After wrap undo, hold fill `from=win` merges into the frozen source view (`merged=1`…`5`, `notes` 19→31) because `rebuildOverdubSourceView` is not called from `TrackUndo::undoOverdubSession`. A keeps the wrap add and gains the restored source. B stays at 1. Next wrap rebuilds A (`notes=22`) and the split flips to B-superset. Production consume still A. `late_clk=0`.
+
 ---
 
 ## Wrap notes into PresentNote at S
