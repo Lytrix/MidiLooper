@@ -1,11 +1,12 @@
 # Overdub occupied lane — source-view consume + display parity (RC11 / RC12)
 
-**Status:** RC11 + RC12 shipped (2026-08-17); device Gate 4 re-verify on hardware  
+**Status:** FROZEN — RC11 + RC12 HITL PASS [`140355`](../../captures/session_20260817_140355.log)  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](overdub_overlap_hold_same_start_bugfix.md)  
 **Authority diagram:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md) — lifecycle + representation authority (debugging; not a state-machine spec)  
-**Evidence:** [`132647`](../../captures/session_20260817_132647.log), [`132857`](../../captures/session_20260817_132857.log)
+**Evidence:** [`132647`](../../captures/session_20260817_132647.log), [`132857`](../../captures/session_20260817_132857.log), [`135339`](../../captures/session_20260817_135339.log) (RC11 PASS / Gate 4 FAIL), [`140355`](../../captures/session_20260817_140355.log) (Gate 1–4 PASS)  
+**Successor:** [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) — accidental 81-bar length jump in `140355` is LOOP_EDIT preview, not RC12
 
 ---
 
@@ -202,7 +203,25 @@ overdub occupied lane
 
 ### Proceed
 
-YES — RC11 + RC12 shipped; re-run device Gate 4–5 on hardware.
+FROZEN — do not reopen consume or LCR idle-slice append. Length-during-overdub is a separate enhancement.
+
+---
+
+## HITL proof — [`140355`](../../captures/session_20260817_140355.log)
+
+Firmware: RC11 `2e8f480` + RC12 `e1ebcbb`. Occupied-lane overdub on 1-bar slot.
+
+| Gate | Evidence | Verdict |
+|------|----------|---------|
+| **1 Consume** | `#CAP,27408662,DIAG,overlap_hold,...,hide,1,add,2` | PASS |
+| **2 Persist** | Wrap commits + companion seals before stop | PASS |
+| **3 Source rebuild** | `#CAP,24890866,DIAG,lcr,src,why=wrap,...,notes=6` and `#CAP,26892929,...,notes=6` | PASS |
+| **4 Display** | Post-wrap `slice_clean notes=6` matches LCR `notes=6`; live `DISP` committed prefix tracks source (`768,6,6` then `62208,7,6` after a later length change) | **PASS** |
+| **5 Regression** | Not re-run in this capture; standing 1-wrap [`005745`](../../captures/session_20260817_005745.log) remains the reference | Optional re-verify |
+
+**Pre-RC12 contrast** ([`135339`](../../captures/session_20260817_135339.log)): `lcr,src,why=wrap,notes=4` vs `slice_clean notes=5`; `DISP` committed stuck at 5 while visual grew.
+
+**Misattribution guard:** At 25.541 s the loop jumped 768 → 62208 ticks via LOOP_EDIT CC `ch=15 cc=2 value=80`. That is not an RC12 display defect. See [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md).
 
 ---
 
@@ -211,7 +230,8 @@ YES — RC11 + RC12 shipped; re-run device Gate 4–5 on hardware.
 - Live overdub committed prefix from `overdubSourceViewNotes_` when `hasOverdubSourceView()` (`DisplayNoteResolveLiveCapture`).
 - Prepared LCR idle slice skips `appendOverdubPassDisplayNotes` (`rebuildVisualCacheIdleSlice`).
 - Native: `test_idle_slice_prepared_matches_lcr_without_append_wrap_held`; 1294/1294 pass.
-- **HITL Gate 4–5:** re-verify after flash (expect `slice_clean notes=N` == LCR `notes=N`; single `60@64` at stop).
+- Firmware: `teensy41-capture-serial` RAM1 free **4512**.
+- **HITL Gate 4 PASS** [`140355`](../../captures/session_20260817_140355.log).
 
 ---
 

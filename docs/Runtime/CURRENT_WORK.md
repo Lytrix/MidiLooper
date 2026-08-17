@@ -2,25 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC12 — display parity with source view)
+Last updated: 2026-08-17 (RC11/RC12 FROZEN; loop length during overdub queued)
 
 ---
 
 ## Now implementing
 
-### Overdub occupied lane — device re-verify (RC11/RC12)
+### Loop length during overdub (queued — do not start firmware)
 
-**Plan:** [`overdub_overlap_hold_display_cache_bugfix.md`](../Plans/overdub_overlap_hold_display_cache_bugfix.md)  
-**Evidence:** [`135339`](../../captures/session_20260817_135339.log) RC11 PASS; Gate 4 FAIL pre-RC12  
-**1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — re-verify after RC12 flash.
+**Plan:** [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md)  
+**Evidence:** [`140355`](../../captures/session_20260817_140355.log) @ 25.541 s — LOOP_EDIT CC `ch=15 cc=2 value=80` set 768 → 62208 ticks during overdub; MIDI length feedback lagged until ~38 s.  
+**Parent authority:** [`overdub_lifecycle_representation_authority.md`](../Plans/overdub_lifecycle_representation_authority.md)
 
-**RC12 shipped:** live committed prefix from `overdubSourceViewNotes_`; prepared LCR idle slice skips `appendOverdubPassDisplayNotes`. Native 1294/1294.
+Do **not** start Stage 1–4 firmware until this file is explicitly in implementation (user approved the plan + tasks only). Do not reopen RC11 consume or RC12 `appendOverdubPassDisplayNotes` skip.
 
-**RC11 shipped:** source-view consume completion at note-off. See plan validation section.
+**RC11/RC12 FROZEN:** [`overdub_overlap_hold_display_cache_bugfix.md`](../Plans/overdub_overlap_hold_display_cache_bugfix.md) — HITL Gate 1–4 PASS [`140355`](../../captures/session_20260817_140355.log). Native 1294/1294. Commits `2e8f480` / `e1ebcbb`.
 
 **RC10:** live capture paint applies pending Hide/Shorten on a copy.  
 **RC9:** overdub transport stop finalizes pending before `sendAllNotesOff`.  
-**RC8–RC6:** see parent plan.
+**RC8–RC6:** see parent [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md).
 
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 

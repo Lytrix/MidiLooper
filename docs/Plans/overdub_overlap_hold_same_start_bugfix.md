@@ -1,6 +1,6 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1–RC5 as below; RC6 wrap rebuild native; RC7 enter rebuild native; RC8 hold-window JIT native; RC9 transport-stop pending native; RC10 live pending paint native; device gate open  
+**Status:** RC1–RC12 shipped — occupied-lane consume + display FROZEN [`140355`](../../captures/session_20260817_140355.log); successor [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md)  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3); [`001517`](../../captures/session_20260817_001517.log) (RC4); [`003204`](../../captures/session_20260817_003204.log) (RC5)  
