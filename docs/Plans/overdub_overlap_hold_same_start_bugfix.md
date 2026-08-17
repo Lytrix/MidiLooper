@@ -1,6 +1,6 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1–RC5 as below; RC6 wrap rebuild native; RC7 enter rebuild native; device gate open  
+**Status:** Active — RC1–RC5 as below; RC6 wrap rebuild native; RC7 enter rebuild native; RC8 hold-window JIT native; device gate open  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3); [`001517`](../../captures/session_20260817_001517.log) (RC4); [`003204`](../../captures/session_20260817_003204.log) (RC5)  
@@ -258,6 +258,27 @@ Device: 1-bar same-start-longer two wraps; select at 64 one 60 ending 288. Wrap 
 `establishOverdubSourceView` calls `rebuildOverdubSourceView(..., "open")`. Not visual cache. Not `copyEffectiveCommittedEventsInRange`. Display idle `vch` unchanged. Consume unchanged.
 
 Device: enter emits `src,why=open,from=prep|win`; first occupied-lane notes `looked_up > 0`.
+
+---
+
+## RC8 — hold-window just-in-time fill (not full loop)
+
+**Status:** Native in this commit; device gate open.  
+**Evidence:** [`120324`](../../captures/session_20260817_120324.log) / [`115622`](../../captures/session_20260817_115622.log) — enter window missed 60@224; empty hold IDs Add-only.  
+**Sibling:** [`overdub_overlap_hold_hold_window_jit_bugfix.md`](overdub_overlap_hold_hold_window_jit_bugfix.md)
+
+### Architecture checkpoint (RC8)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `Loop::ensureOverdubSourceNotesForHold` still owns D2 fill. |
+| **State transition change?** | NO. Consume unchanged. |
+
+### Fix
+
+16-bar `resolveWindow(passes)` for **this pitch** at the hold tick. Not prepared. Not the full loop. Note-on snapshot merges sounding notes only. Note-off unions newly merged overlapping pitch notes when hold IDs are empty. Gate 3 stays for notes already in the enter view.
+
+Device: `src,why=hold,from=win` with `merged>0` on occupied-lane hold that starts before the missed note; Hide or Shorten, not Add-only stacked `SEVT`.
 
 ---
 

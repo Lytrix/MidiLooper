@@ -2,20 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC7 — enter source-view rebuild)
+Last updated: 2026-08-17 (overdub overlap hold RC8 — hold-window JIT)
 
 ---
 
 ## Now implementing
 
-### Overdub overlap hold — enter source-view rebuild (RC7)
+### Overdub overlap hold — hold-window just-in-time fill (RC8)
 
-**Plan:** [`overdub_overlap_hold_enter_source_view_rebuild_bugfix.md`](../Plans/overdub_overlap_hold_enter_source_view_rebuild_bugfix.md)  
+**Plan:** [`overdub_overlap_hold_hold_window_jit_bugfix.md`](../Plans/overdub_overlap_hold_hold_window_jit_bugfix.md)  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
-**Evidence:** [`113236`](../../captures/session_20260817_113236.log) — enter copied 1-note visual cache.  
+**Evidence:** [`120324`](../../captures/session_20260817_120324.log), [`115622`](../../captures/session_20260817_115622.log) — enter window missed 60@224; empty hold IDs Add-only.  
 **1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — keep consume.
 
-**RC7:** `establishOverdubSourceView` calls `rebuildOverdubSourceView(..., "open")`. Not visual cache. Wrap still keeps an established view (RC2). Device gate open.
+**RC8:** `ensureOverdubSourceNotesForHold` fills **this pitch** from the 16-bar hold window via `resolveWindow(passes)`. Not the full loop. Not prepared. Note-on snapshot is sounding-only; note-off unions newly merged overlapping notes when hold IDs are empty. Gate 3 stays for notes already in the enter view. Device gate open.
+
+**RC7:** `establishOverdubSourceView` calls `rebuildOverdubSourceView(..., "open")`. Not visual cache. Wrap still keeps an established view (RC2).
 
 **RC6:** wrap rebuild after publish — [`overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md`](../Plans/overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md)
 

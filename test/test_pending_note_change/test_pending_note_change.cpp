@@ -48,6 +48,15 @@ int countKind(const PendingNoteChangeVec& pending, PendingNoteChangeKind kind) {
   return count;
 }
 
+bool hasDisplayNote(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint32_t startTick) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const PendingNoteChange* findTransform(const PendingNoteChangeVec& pending, NoteId noteId) {
   for (const PendingNoteChange& change : pending) {
     if ((change.kind == PendingNoteChangeKind::Shorten ||
@@ -150,6 +159,64 @@ void test_empty_overlap_ids_add_only_when_source_overlaps() {
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().maxExamined);
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().add);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().shorten);
+}
+
+void test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  loop.loopLengthTicks = kLongLoop;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 224, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(288, 1, 60, 0)));
+  for (uint32_t bar = 0; bar < 64; ++bar) {
+    const uint32_t onTick = bar * kBar + 10;
+    TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, 1, 72, 100, static_cast<NoteId>(bar + 2)));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(onTick + 40, 1, 72, 0)));
+  }
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 66;
+  loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
+
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+  TEST_ASSERT_TRUE(notesAtEnter > 0);
+  TEST_ASSERT_LESS_THAN(64u, notesAtEnter);
+
+  loop.ensureOverdubSourceNotesForHold(64, 60, nullptr, true);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+
+  NoteUtils::DisplayNoteVec merged;
+  loop.ensureOverdubSourceNotesForHold(64, 60, &merged);
+  TEST_ASSERT_EQUAL(1, merged.size());
+  TEST_ASSERT_EQUAL(60, merged[0].note);
+  TEST_ASSERT_EQUAL_UINT32(224u, merged[0].startTick);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  TEST_ASSERT_EQUAL(notesAtEnter + 1, loop.overdubSourceViewNotes().size());
+}
+
+void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLongLoop = Config::TICKS_PER_BAR * 64;
+  seedLongSourceNote(loop, 1, 224, 288, 60, kLongLoop);
+  loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+
+  loop.ensureOverdubSourceNotesForHold(64, 60, nullptr, true);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_TRUE(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
+                       countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
+                   1);
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
 void test_pending_shorten_long_source_on_overlap() {
@@ -596,6 +663,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_add_only_when_no_overlap);
   RUN_TEST(test_no_overlap_with_companion_edit_does_not_full_materialize);
   RUN_TEST(test_empty_overlap_ids_add_only_when_source_overlaps);
+  RUN_TEST(test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop);
+  RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);

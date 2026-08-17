@@ -6,6 +6,7 @@
 #include "EditSessionAction.h"
 #include "EditSessionInteraction.h"
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "OverlapCandidateLookup.h"
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/IntervalProjection.h"
@@ -15,6 +16,7 @@
 #include "Utils/RuntimeTimingTelemetry.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 #include <cstdint>
@@ -39,6 +41,19 @@ bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLengt
     linearEnd += loopLength;
   }
   return linearStart < linearEnd;
+}
+
+bool displayNoteSoundingAtHold(uint32_t startTick, uint32_t endTick, uint32_t holdStart,
+                               uint32_t loopLength) {
+  uint32_t linearStart = 0;
+  uint32_t linearEnd = 0;
+  if (!linearSoundingSpan(startTick, endTick, loopLength, linearStart, linearEnd)) {
+    return false;
+  }
+  const uint32_t s = IntervalProjection::tickPhaseInLoop(holdStart, 0, loopLength);
+  const bool direct = linearStart <= s && s < linearEnd;
+  const bool shifted = linearStart <= s + loopLength && s + loopLength < linearEnd;
+  return direct || shifted;
 }
 
 bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingEnd,
@@ -83,11 +98,13 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
 
 }  // namespace
 
-LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch) {
-  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
-    return;
+LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
+                                                        NoteUtils::DisplayNoteVec* newlyMergedPitchNotes,
+                                                        bool soundingAtHoldOnly) {
+  if (newlyMergedPitchNotes != nullptr) {
+    newlyMergedPitchNotes->clear();
   }
-  if (!overdubSourceViewNotes_.empty()) {
+  if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
     return;
   }
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
@@ -96,7 +113,9 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
 
   SessionMidiEventVec windowEvents;
-  copyEffectiveCommittedEventsInRange(windowEvents, windowStart, windowLength);
+  ResolutionCostCounters windowCounters;
+  LoopContentResolution::resolveWindow(passes, loopLen, windowStart, windowLength, windowEvents,
+                                       &windowCounters);
   if (windowEvents.empty()) {
     return;
   }
@@ -104,11 +123,40 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
       NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
   NoteUtils::DisplayNoteVec toMerge;
   for (const NoteUtils::DisplayNote& note : windowNotes) {
-    if (note.note == pitch) {
+    if (note.note != pitch || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (soundingAtHoldOnly &&
+        !displayNoteSoundingAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+      continue;
+    }
+    bool already = false;
+    for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
+      if (existing.noteId == note.noteId) {
+        already = true;
+        break;
+      }
+    }
+    if (!already) {
       toMerge.push_back(note);
     }
   }
   mergeDisplayNotesIntoOverdubSourceView(toMerge);
+  if (newlyMergedPitchNotes != nullptr) {
+    *newlyMergedPitchNotes = toMerge;
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  char line[192];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,src,why=hold,from=win,pitch=%u,win=%lu,ev=%u,merged=%u,notes=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+           static_cast<unsigned long>(windowCounters.elapsedMicros),
+           static_cast<unsigned>(windowEvents.size()), static_cast<unsigned>(toMerge.size()),
+           static_cast<unsigned>(overdubSourceViewNotes_.size()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)windowCounters;
+#endif
 }
 
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
@@ -213,8 +261,9 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     ++overlapHoldTotals_.overflows;
   }
   NoteUtils::DisplayNoteVec selected;
+  NoteUtils::DisplayNoteVec jitHoldPitchNotes;
+  ensureOverdubSourceNotesForHold(consumeStart, pitch, &jitHoldPitchNotes);
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
-    ensureOverdubSourceNotesForHold(consumeStart, pitch);
     size_t notesExamined = 0;
     const uint32_t lookupStartUs = micros();
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
@@ -232,6 +281,22 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   } else {
     ++overlapHoldTotals_.emptySets;
+  }
+  for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
+    if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, consumeStart, consumeEnd,
+                                          loopLen)) {
+      continue;
+    }
+    bool already = false;
+    for (const NoteUtils::DisplayNote& picked : selected) {
+      if (picked.noteId == note.noteId) {
+        already = true;
+        break;
+      }
+    }
+    if (!already) {
+      selected.push_back(note);
+    }
   }
   const NoteId causingId =
       (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
