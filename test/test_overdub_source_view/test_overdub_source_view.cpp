@@ -864,6 +864,86 @@ void test_rebuild_overdub_source_view_after_publish_includes_wrap_add() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_overdub_session_undo_rebuilds_source_view_to_match_prepared() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 0, 480, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(200, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrap = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrap = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrap);
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 1;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.passes.editPasses, EditPassIdList{hideId});
+  loop.rebuildOverdubSourceView(0);
+  loop.pushOverdubSessionPass(wrapId, EditPassIdList{hideId});
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  auto sourceHas = [&loop](NoteId noteId) {
+    for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+      if (note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto preparedHas = [&loop](NoteId noteId) {
+    PresentNoteVec presentNotes;
+    if (!LoopContentResolution::tryResolvePreparedState(300, loop.playbackRevision, presentNotes,
+                                                        nullptr)) {
+      return false;
+    }
+    for (const PresentNote& note : presentNotes) {
+      if (note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  TEST_ASSERT_TRUE(sourceHas(10));
+  TEST_ASSERT_FALSE(sourceHas(1));
+  TEST_ASSERT_TRUE(preparedHas(10));
+  TEST_ASSERT_FALSE(preparedHas(1));
+
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  TEST_ASSERT_TRUE(sourceHas(1));
+  TEST_ASSERT_FALSE(sourceHas(10));
+  TEST_ASSERT_TRUE(preparedHas(1));
+  TEST_ASSERT_FALSE(preparedHas(10));
+
+  TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  TEST_ASSERT_TRUE(sourceHas(10));
+  TEST_ASSERT_FALSE(sourceHas(1));
+  TEST_ASSERT_TRUE(preparedHas(10));
+  TEST_ASSERT_FALSE(preparedHas(1));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_overdub_session_undo_disables_sealed_wrap() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1462,6 +1542,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
   RUN_TEST(test_overdub_session_undo_restores_companion_source_on_prepared_lcr);
   RUN_TEST(test_rebuild_overdub_source_view_after_publish_includes_wrap_add);
+  RUN_TEST(test_overdub_session_undo_rebuilds_source_view_to_match_prepared);
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_overdub_session_undo_depth_counts_sealed_wraps_only);
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);

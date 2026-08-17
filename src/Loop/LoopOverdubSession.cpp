@@ -224,6 +224,9 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
     const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
     disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
     const bool ok = setCapturePassState(passId, CapturePassState::Disabled);
+    if (ok && hasOverdubSourceView()) {
+      rebuildOverdubSourceView(playheadPhaseTick, "undo");
+    }
     return ok;
   }
   if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
@@ -249,6 +252,9 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
     const bool ok = setCapturePassState(passId, CapturePassState::Active);
     if (ok) {
       ++overdubSessionCursor_;
+      if (hasOverdubSourceView()) {
+        rebuildOverdubSourceView(playheadPhaseTick, "redo");
+      }
     }
     return ok;
   }
