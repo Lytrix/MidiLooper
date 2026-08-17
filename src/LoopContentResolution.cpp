@@ -249,6 +249,16 @@ struct EventRef {
   }
 };
 
+struct PreparedCompanion {
+  EditPassId id = kInvalidEditPassId;
+  EditPassState state = EditPassState::Active;
+  PresentNote note{};
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+};
+using PreparedCompanionVec =
+    std::vector<PreparedCompanion, ExternalMemoryFirstAllocator<PreparedCompanion>>;
+
 TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::CapturePassEntry& pass,
                                          LoopContentResolution::TickIndex& index,
                                          uint32_t beginEvent, uint32_t endEventExclusive,
@@ -1292,7 +1302,7 @@ TRACK_COLD_MEM const EditPass* findEditPassById(const EditPassVec& editPasses, E
 
 TRACK_COLD_MEM void projectSealedCompanionsOntoCheckpoints(
     LoopContentResolution::StateCheckpoints& checkpoints, const EditPassVec& editPasses,
-    const EditPassIdList& companionIds) {
+    const EditPassIdList& companionIds, PreparedCompanionVec& recorded) {
   for (const EditPassId id : companionIds) {
     const EditPass* row = findEditPassById(editPasses, id);
     if (row == nullptr || row->state != EditPassState::Active ||
@@ -1310,6 +1320,13 @@ TRACK_COLD_MEM void projectSealedCompanionsOntoCheckpoints(
       continue;
     }
     LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
+    PreparedCompanion recordedRow{};
+    recordedRow.id = id;
+    recordedRow.state = EditPassState::Active;
+    recordedRow.note = span.note;
+    recordedRow.startTick = span.startTick;
+    recordedRow.endTick = span.endTick;
+    recorded.push_back(recordedRow);
     removeSpanBoundaries(checkpoints.spanBoundaries, spanIndex);
     if (hide) {
       span.endTick = span.startTick;
@@ -1526,6 +1543,7 @@ struct DeviceGateSession {
     delta = LoopContentResolution::TickIndex::TickEventEntryVec{};
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
+    preparedCompanions.clear();
     rebuildEvents = SessionMidiEventVec{};
     rebuildNotes = NoteUtils::DisplayNoteVec{};
     sample_ = LoopContentResolution::DeviceGateSample{};
@@ -2080,6 +2098,7 @@ struct DeviceGateSession {
   /// 6D.4: committed overdub rows since the last full prepare. Not a TickIndex member.
   LoopContentResolution::TickIndex::TickEventEntryVec delta;
   LoopContentResolution::StateCheckpoints checkpoints;
+  PreparedCompanionVec preparedCompanions;
   SessionMidiEventVec rebuildEvents;
   NoteUtils::DisplayNoteVec rebuildNotes;
   LoopContentResolution::DeviceGateSample sample_;
@@ -2182,7 +2201,8 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
       }
     }
   }
-  projectSealedCompanionsOntoCheckpoints(checkpoints, editPasses, companionIds);
+  projectSealedCompanionsOntoCheckpoints(checkpoints, editPasses, companionIds,
+                                         sDeviceGateSession.preparedCompanions);
   sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
 }
 
@@ -2192,6 +2212,41 @@ TRACK_COLD_MEM void LoopContentResolution::setPreparedCapturePassState(PassId id
     return;
   }
   sDeviceGateSession.index.setCapturePassState(id, state);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::setPreparedEditPassState(EditPassId id,
+                                                                   EditPassState state) {
+  if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
+      id == kInvalidEditPassId) {
+    return;
+  }
+  for (PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.id == id) {
+      row.state = state;
+    }
+  }
+}
+
+TRACK_COLD_MEM void restoreDisabledCompanions(uint32_t tick, PresentNoteVec& out) {
+  const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;
+  if (loopLength == 0) {
+    return;
+  }
+  const uint32_t queryTick = IntervalProjection::tickPhaseInLoop(tick, 0, loopLength);
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    NoteUtils::DisplayNote probe{};
+    probe.noteId = row.note.noteId;
+    probe.note = row.note.pitch;
+    probe.startTick = row.startTick;
+    probe.endTick = row.endTick;
+    if (!notePresentAt(probe, queryTick, loopLength)) {
+      continue;
+    }
+    upsertPresentNote(out, row.note);
+  }
 }
 
 TRACK_COLD_MEM void LoopContentResolution::restampPreparedPlaybackRevision(uint32_t playbackRevision) {
@@ -2233,6 +2288,7 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedState(uint32_t tick
   }
   resolveState(sDeviceGateSession.checkpoints, tick, out, counters);
   eraseDisabledSounding(sDeviceGateSession.index, out);
+  restoreDisabledCompanions(tick, out);
   return true;
 }
 
