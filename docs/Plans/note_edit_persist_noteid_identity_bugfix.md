@@ -1,6 +1,6 @@
 # NOTE_EDIT persist NoteId identity
 
-**Status:** Stage 1 native PASS — device gate open; Stage 2 parked  
+**Status:** Stage 1 native PASS — device gate open; Stage 2 parked; **wrap-move persist parked** (current-structure issue)  
 **Date:** 2026-08-16  
 **Kind:** bugfix (identity / persist bind)  
 **Parent investigation:** [`note_edit_undo_warm_missing_recon_investigation.md`](note_edit_undo_warm_missing_recon_investigation.md)  
@@ -143,7 +143,9 @@ Device gate: 173806 gesture. `replay_flat` home **missing**. LOOP_EDIT shows the
 
 **Device [`200952`](../../captures/session_20260816_200952.log):** live storage is linear (`EditSessionAction` 2688–3264, `DNTE` length **576**). Piano roll wrap paint is `end < start` only (`clampNonWrapDisplayNoteBarTicks` clamps 3264 to loop end — tail, no head). `projectNoteEditDisplayNotes` now writes display phase (`2688–192`) so wrap paint runs. Session `currentSpan` stays linear. After deselect, reselect `DNTE` 12@2784 length **384** remains a persist-apply gate. Stage 2 stays parked.
 
-**Device [`201446`](../../captures/session_20260816_201446.log):** wrap display during move PASS (`DNTE` length **576**, `EditSessionAction` 2832–3408). Deselect `pre-commit` NoteRange `2832–3408`; `replay_flat: M12@2592 missing`; `take_only` still `M12 start=2592 end=2688`. After: `DNTE` 12@2832 length **336** (`3072-2832+96`). Second deselect `2880–3216` → length **288**. Rematerialize has wrap Off@96 and false linear Off@2688. LIFO pairs 2688 and never reaches wrap fallback; leftover Off@96 reconstructs with the moved On. `applyMoveNoteById` moves the wrap-head off (`isPreferredWrapTailForHeadOff`) and erases the LIFO off when they differ. Session storage stays linear. Do not add deselect wrap-skip helpers. Stage 2 stays parked.
+**Device [`201446`](../../captures/session_20260816_201446.log):** wrap display during move PASS (`DNTE` length **576**, `EditSessionAction` 2832–3408). Deselect `pre-commit` NoteRange `2832–3408`; `replay_flat: M12@2592 missing`; `take_only` still `M12 start=2592 end=2688`. After: `DNTE` 12@2832 length **336** (`3072-2832+96`). Second deselect `2880–3216` → length **288**. Rematerialize has wrap Off@96 and false linear Off@2688. LIFO pairs 2688 and never reaches wrap fallback; leftover Off@96 reconstructs with the moved On. `applyMoveNoteById` moves the wrap-head off (`isPreferredWrapTailForHeadOff`) and erases the LIFO off when they differ. Session storage stays linear.
+
+**Parked 2026-08-16 — wrap-move persist.** The 336/288 shorten after deselect is partly the current rematerialize / full-loop session-store structure. Do **not** add more LIFO / wrap-off persist patches in that structure. Do not add deselect wrap-skip helpers. Re-evaluate after [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md) if the [`201446`](../../captures/session_20260816_201446.log) symptom remains. Stage 2 stays parked.
 
 **195941 / 201446 files (this RC, not persist-identity):**
 
@@ -191,6 +193,7 @@ No `EditApply.cpp` apply-path change. No `NoteEditCurrentState` persist rule. No
 - Do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase  
 - Do not skip `currentState->clone()`  
 - Do not start Stage 2 / C5 / B2b / Layer D / grooming 4e  
+- Do not resume wrap-move persist patches; that RC is parked as a current-structure issue  
 - Do not reuse `overdubSourceViewNotes_` / `PendingNote.overlapNoteIds`  
 - Do not rewrite existing valid chunk ids at open  
 - Do not use `take_only` as the identity-resolution source  

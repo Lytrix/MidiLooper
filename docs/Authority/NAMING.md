@@ -43,6 +43,7 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Resolution** | Deterministic synchronous conflict solving | Runtime scheduling; pipeline or queue metaphors; a generic `Resolver` type |
 | **NoteGeometryResolver** | Live NOTE_EDIT overlap Resolution (geometry → actions) | Loop history / playback effective-state queries |
 | **LoopContentResolution** | Query-time effective musical state from active pass set + edit history (`resolveState`, `resolveWindow`; `resolveNotes` is a derived consumer) | `LoopPasses::materialize`; `NoteGeometryResolver`; a generic `Resolver` / `LoopContentResolver` |
+| **Analyze** (consumer role) | Select / overlap / effective-state queries against prepared `LoopContentResolution` around a tick | A new type; piano-roll `visualCache`; playback `mergedEvents` |
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
 | **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress (`handleMidiInput`) | Control-surface motor path (Outbound); **MIDI service** (not a domain noun or owner) |

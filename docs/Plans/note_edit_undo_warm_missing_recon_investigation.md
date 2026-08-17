@@ -1,6 +1,6 @@
 # NOTE_EDIT UNDO_WARM + commit-recon investigation
 
-**Status:** Active — B1 assign-at-open **does not cover** exit persist on this loop ([`173806`](../../captures/session_20260816_173806.log)). [`181941`](../../captures/session_20260816_181941.log): rematerialize still **M24@888 noteId=280** after NoteRange+Pitch **280**; NOTE_EDIT open and LOOP_EDIT exit both paint that rematerialize. **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS**. **C5 parked:** `appendNotesForIds` on overlay. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
+**Status:** Active — B1 assign-at-open **does not cover** exit persist on this loop ([`173806`](../../captures/session_20260816_173806.log)). [`181941`](../../captures/session_20260816_181941.log): rematerialize still **M24@888 noteId=280** after NoteRange+Pitch **280**; NOTE_EDIT open and LOOP_EDIT exit both paint that rematerialize. **B2a device PASS**; **A intermediates PASS**; **C1–C4 device PASS**. **C5 parked:** `appendNotesForIds` on overlay. **Wrap-move persist parked** [`201446`](../../captures/session_20260816_201446.log) — current rematerialize / session-store structure is part of the 576→336 shorten; do not add more LIFO/wrap-off persist patches. E: routing works; store-flat identity not logged. RAM1 bank recovered: `snapshotFocusForSessionUndo` → `NOTE_EDIT_MEM` (locals **8608** again).
 **Date:** 2026-08-16  
 **Kind:** investigation  
 **Trigger:** [`session_20260816_143144.log`](../../captures/session_20260816_143144.log) — STOPPED 4-bar NOTE_EDIT: select/pitch sluggish; exit does not keep edits on display  
@@ -29,7 +29,7 @@ macro / exit commit → commitEditAction recon trace     ← Layer B1 (commit re
 getVisualNotesForSlot ensure           ← Layer D (adjacent; after A/B)
 ```
 
-Do **not** reopen frozen RC1 driver drift. Do **not** fold this into grooming 4e or Slice 5 hydrate. Do **not** start a GitHub Bug from this file until a layer has a pinned fixture.
+Do **not** reopen frozen RC1 driver drift. Do **not** fold this into grooming 4e or NOTE_EDIT hydrate ([`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md)). Do **not** start a GitHub Bug from this file until a layer has a pinned fixture.
 
 ---
 
@@ -256,7 +256,7 @@ committedBase == reconstructDisplayNotes(materialize(active edit passes))
 | 6 | Exit | Same geometry as in-session committed view |
 | 7 | **U:** undo committed pass | Pass disabled → old geometry returns |
 
-**Hard don'ts (unchanged):** do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase for B2; do not reuse overdub session pass-id stack for NOTE_EDIT E:; do not start grooming 4e / Slice 5 hydrate in this slice.
+**Hard don'ts (unchanged):** do not patch `applyNoteEditPass` or apply-owned `ChangePitch` erase for B2; do not reuse overdub session pass-id stack for NOTE_EDIT E:; do not start grooming 4e or NOTE_EDIT hydrate in this slice.
 
 ### Layer C — pitch/move `GEOM_APPLY,resolve` (C1–C4 device PASS)
 
@@ -347,7 +347,7 @@ Same loop home in [`170942`](../../captures/session_20260816_170942.log): pitch-
 
 ### Layer D — `getVisualNotesForSlot` ensure (adjacent)
 
-STOPPED short-loop `Track::getVisualNotesForSlot` still calls `ensureVisualCacheBuilt`. Every NOTE_EDIT projection caller uses it. Grooming left this for Slice 5. After Layer A/B are pinned, decide whether select-time `VCACHE,full` is a third commit or stays with hydrate.
+STOPPED short-loop `Track::getVisualNotesForSlot` still calls `ensureVisualCacheBuilt`. Every NOTE_EDIT projection caller uses it. Grooming left this for NOTE_EDIT hydrate ([`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md)). After Layer A/B are pinned, decide whether select-time `VCACHE,full` is a third commit or stays with that work path.
 
 ---
 
