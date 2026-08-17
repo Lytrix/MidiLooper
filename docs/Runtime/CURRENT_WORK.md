@@ -2,21 +2,31 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (Experiment 1 source/hold window detach)
+Last updated: 2026-08-17 (Phase 0b present-at-S identity mapping)
 
 ---
 
 ## Now implementing
 
-### Consumer window budget — Experiment 1 (source/hold detach)
+### Overdub participant discovery — notes present at S (Phase 0b done)
+
+**Plan:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
+**Parent:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
+**Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
+**Owner:** canonical notes **present** at tick `S` (`resolveState` / prepared spans). Not `sendMidiEvent`. Not `ActiveNoteLedger`. Not a smaller source window.
+
+**PresentNote** = present at S (LCR type still `SoundingNote` until naming-only go). **ActiveNote** = execution ledger, mute-decoupled. **Sounding** = MIDI output only.
+
+Phase 0b **done:** `SoundingNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`noteSoundsAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
+
+**Firmware not authorized** (Phase 1 observation and `PresentNote` C++ rename). Do **not** start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`.
+
+### Consumer window budget — Experiment 1 (detach landed; series not next)
 
 **Plan:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
-**Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
-**Owner:** `Loop::kOverdubSourceWindowBars` / `overdubSourceWindowLengthTicks`. Not display. Not playback gather.
+**Owner:** `Loop::kOverdubSourceWindowBars` / `overdubSourceWindowLengthTicks`. Default **16**. CAP `lcr,src` includes `bars=`.
 
-Architecture pinned: LCR does not choose 16 bars; no WindowManager; no `WindowRequest` types. Default **16** (behavior-preserving). Measurement series is rebuild at 1/2/4/8/16 — a passing length is evidence, not policy. CAP `lcr,src` includes `bars=`. Do not shrink 2-bar gather. Do not start Experiment 2 firmware.
-
-Playback gather Stage 2 / Problem B length is **not** the next firmware. Stage 1 lateness hooks stay on device for scoring.
+Detach from display 16 is in tree. A timing-passing clamp is evidence, not policy. Successor is notes present at tick `S` (above), not a smaller geometric window. Do not shrink 2-bar gather.
 
 ### Playback gather Stage 1 — MIDI deadline lateness hooks (measurement landed)
 

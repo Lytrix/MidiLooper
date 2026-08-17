@@ -175,13 +175,13 @@ Owner: `Loop::overdubSourceWindowLengthTicks` / `resolveOverdubSourceWindow`. No
 
 Do not ask “which arbitrary window is safe?”
 
-For `open`: what information is required to establish sounding state at S?
+For `open`: what information is required to establish which canonical notes are **present** at S?
 
 For `hold`: not merely `[S, E)`. Occupied-lane already showed **history matters**. The question is:
 
-> What minimum information is required to determine whether this pitch is already sounding at `S`, and whether it remains/changes through `E`, including loop wrap?
+> What minimum information is required to determine whether this pitch is present at `S`, and whether it remains/changes through `E`, including loop wrap — independent of MIDI send and mute?
 
-That may be `state-at-S` + pitch-specific boundaries relevant to `[S, E)` (wrap-shaped `[S, L) ∪ [0, E)` included), not every note in a 16-bar interval. Not Experiment 1 firmware.
+**Preferred answer (2026-08-17, Phase 0b):** overdub consumes **notes present at tick `S`**. MIDI-execution sounding state is withdrawn. `SoundingNote` alone lacks `endTick` (it lives on `NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal. Plan: [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md). Phase 1 firmware not authorized. Do not start a 1/2/4/8/16 production clamp from this file.
 
 ---
 
