@@ -2,18 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC9/RC10 — transport-stop pending + live Hide paint)
+Last updated: 2026-08-17 (overdub overlap hold RC11 — source-view consume completion)
 
 ---
 
 ## Now implementing
 
-### Overdub overlap hold — transport-stop pending + live Hide paint (RC9/RC10)
+### Overdub occupied lane — display parity (RC12)
 
-**Plans:** [`overdub_overlap_hold_transport_stop_pending_bugfix.md`](../Plans/overdub_overlap_hold_transport_stop_pending_bugfix.md), [`overdub_overlap_hold_live_pending_display_bugfix.md`](../Plans/overdub_overlap_hold_live_pending_display_bugfix.md)  
+**Plan:** [`overdub_overlap_hold_display_cache_bugfix.md`](../Plans/overdub_overlap_hold_display_cache_bugfix.md)  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
-**Evidence:** [`122152`](../../captures/session_20260817_122152.log) — extra 60@64 length 104 from wrap_synth Off@168; Hide of record only after stop `slice_clean`.  
+**Evidence:** [`132647`](../../captures/session_20260817_132647.log), [`132857`](../../captures/session_20260817_132857.log)  
 **1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — keep consume.
+
+**RC11 shipped:** complete `selected` from active overdub source view at note-off (window-bounded + incoming overlap); `overlap_hold` on transport stop seal. Native 1294/1294.
+
+**RC12 next:** live committed prefix from `overdubSourceViewNotes_`; skip `appendOverdubPassDisplayNotes` after LCR idle slice. Do not fix `appendOverdubPassDisplayNotes` itself.
 
 **RC10:** live capture paint applies pending Hide/Shorten on a copy. Not visual cache.  
 **RC9:** overdub transport stop finalizes pending before `sendAllNotesOff`. Stop-close accumulates overlap.  
@@ -22,6 +26,10 @@ Last updated: 2026-08-17 (overdub overlap hold RC9/RC10 — transport-stop pendi
 **RC6:** wrap rebuild after publish.
 
 **RC1–RC5:** same-start collection, keep view, per-pass Hide apply. See parent plan.
+
+### Overdub overlap hold — transport-stop pending + live Hide paint (RC9/RC10) — shipped
+
+**Plans:** [`overdub_overlap_hold_transport_stop_pending_bugfix.md`](../Plans/overdub_overlap_hold_transport_stop_pending_bugfix.md), [`overdub_overlap_hold_live_pending_display_bugfix.md`](../Plans/overdub_overlap_hold_live_pending_display_bugfix.md)
 
 ### NOTE_EDIT UNDO_WARM + commit-recon (investigation)
 

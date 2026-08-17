@@ -11,6 +11,7 @@
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
@@ -306,6 +307,32 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     ++overlapHoldTotals_.emptySets;
   }
   for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
+    if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, consumeStart, consumeEnd,
+                                          loopLen)) {
+      continue;
+    }
+    bool already = false;
+    for (const NoteUtils::DisplayNote& picked : selected) {
+      if (picked.noteId == note.noteId) {
+        already = true;
+        break;
+      }
+    }
+    if (!already) {
+      selected.push_back(note);
+    }
+  }
+  uint32_t sourceWindowStart = 0;
+  uint32_t sourceWindowLength = 0;
+  resolveOverdubSourceWindow(consumeStart, sourceWindowStart, sourceWindowLength);
+  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+    if (note.note != pitch || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, sourceWindowStart,
+                                                  sourceWindowLength, loopLen)) {
+      continue;
+    }
     if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, consumeStart, consumeEnd,
                                           loopLen)) {
       continue;

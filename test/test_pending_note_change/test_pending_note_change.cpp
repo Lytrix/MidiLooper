@@ -139,7 +139,7 @@ void test_no_overlap_with_companion_edit_does_not_full_materialize() {
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
-void test_empty_overlap_ids_add_only_when_source_overlaps() {
+void test_overdub_consumes_existing_source_view_overlap() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -150,15 +150,41 @@ void test_empty_overlap_ids_add_only_when_source_overlaps() {
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
                                                                    overlapIds({})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
-  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
-  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_TRUE(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
+                       countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
+                   1);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().noteOffs);
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().emptySets);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lookedUp);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().maxExamined);
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().add);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().shorten);
+}
+
+void test_overdub_consumes_source_view_when_hold_ids_incomplete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 50, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 100, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(250, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 3;
+  loop.beginCapture(CapturePhase::Overdub);
+  Loop::resetCommittedPitchQueryWork();
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 2));
+  TEST_ASSERT_TRUE(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
+                       countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
+                   1);
+  TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
 }
 
 void test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop() {
@@ -705,7 +731,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_requires_source_view);
   RUN_TEST(test_pending_add_only_when_no_overlap);
   RUN_TEST(test_no_overlap_with_companion_edit_does_not_full_materialize);
-  RUN_TEST(test_empty_overlap_ids_add_only_when_source_overlaps);
+  RUN_TEST(test_overdub_consumes_existing_source_view_overlap);
+  RUN_TEST(test_overdub_consumes_source_view_when_hold_ids_incomplete);
   RUN_TEST(test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop);
   RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
