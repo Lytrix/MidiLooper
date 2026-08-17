@@ -1,6 +1,6 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1 observation firmware **in tree**. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). Phase 2a firmware **committed** (`76623cd`). Device [`003503`](../../captures/session_20260818_003503.log): `eq=0` = 0; restored-source-after-undo **not in log**. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1 observation firmware **in tree**. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). Phase 2a `76623cd`. Sidebar **O:** HITL [`004341`](../../captures/session_20260818_004341.log) (`a384a47`). Prepared B missed that session (idle gate never finished). Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
@@ -709,6 +709,10 @@ In-overdub undo **is** in this log as DEBUG `Overdub session undone` (21 times),
 
 Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like **E:**). Next firmware: **O:** while `hasOverdubSession()`, and `#CAP,DIAG,odub,sess_undo,why=live|wrap`.
 
+**Device** [`004341`](../../captures/session_20260818_004341.log) — `a384a47`. User confirmed sidebar **O:**. 125 `lcr,part`, all `from=miss` (no `eq`). No `lcr,phase` / `lcr,mat` after boot `DIAG,lcr,skip,restore` @ 8.756 s. All four overdub opens and three wrap source fills are `from=win`. Five `#CAP,DIAG,odub,sess_undo,why=live` (depth 1–3). Zero `why=wrap`. `late_clk=0`. Production consume still A (`max_ids=1`).
+
+[`003503`](../../captures/session_20260818_003503.log) finished the idle gate at ~14 s *before* the boot GUS undos. This session’s GUS undos start at 13.949 s while restore is still the defer reason, and the gate never starts. DEC-037 6.0: no button cold-build. Phase 2a wrap-disable is not in this `#CAP` set.
+
 ---
 
 ## Wrap notes into PresentNote at S
@@ -766,7 +770,7 @@ None. Session-undo inverse is Phase 2a.
 
 **Native:** `test_stage6e4_disabled_companion_restores_hidden_source`, `test_stage6e4_disabled_companion_restores_shortened_tail`, `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Redo re-applies the baked Hide/Shorten.
 
-**Device:** [`003503`](../../captures/session_20260818_003503.log) has 21 DEBUG `Overdub session undone` during OVERDUBBING (not `#CAP`). Occupied holds after those undos stay `eq=1`. `#CAP,DIAG,odub,sess_undo,why=live|wrap` is required to pin wrap-disable vs live discard. Production consume stays A. Sidebar **O:** while the overdub session is open.
+**Device:** [`004341`](../../captures/session_20260818_004341.log) — **O:** confirmed. `sess_undo` `#CAP` is `why=live` only (5). Prepared B is `from=miss` for the whole session (idle gate never finished). Wrap-disable `why=wrap` + `eq=1` after restore still owed. Production consume stays A.
 
 **Gate:** Phase 3 must not start until Phase 2 wrap predicates pass.
 
