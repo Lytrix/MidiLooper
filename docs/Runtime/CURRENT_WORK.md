@@ -2,20 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (playback gather Stage 1 ISR lateness ITCM)
+Last updated: 2026-08-17 (consumer window budget architecture after 213401)
 
 ---
 
 ## Now implementing
 
-### Playback gather Stage 1 — MIDI deadline lateness hooks
+### Consumer window budget — architecture (no firmware yet)
+
+**Plan:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
+**Evidence:** [`213401`](../../captures/session_20260817_213401.log)
+
+North star: no latency-sensitive path synchronously resolves more than its consumer requires. LCR stays a resolver. Display’s `kMaxDetailedWindowBars` (16) currently sets overdub source/hold via `overdubSourceWindowLengthTicks`. Do **not** add a WindowManager. Do **not** start Experiment 1 clamp until this paragraph still names it and the user pins the length series.
+
+Playback gather Stage 2 / Problem B length is **not** the next firmware. Stage 1 lateness hooks stay on device for scoring.
+
+### Playback gather Stage 1 — MIDI deadline lateness hooks (measurement landed)
 
 **Plan:** [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md)  
 **Owner:** `RuntimeTimingTelemetry`. No geometry change. No LCR consume.
 
 Hot path accumulates `late_on` / `late_off` / `late_clk` (on time = sent before the next tick / one-tick clock window). ISR stores stay in ITCM (`noteClockPulse` region). Main loop `maybeEmit` drains a first-late one-shot (`DIAG,late_event`) and a gather rebuild one-shot (`DIAG,playback_build`), then the 5 s Tier-A `DIAG,late_*` window. No per-event `#CAP`. Native 1307/1307. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768).
 
-[`213401`](../../captures/session_20260817_213401.log): USB no longer dies at Start. 64-bar loop (`DISP` 49152 / 1757 notes) **stalls at overdub enter and on incoming notes**, not on the 3–6 ms `playback_build`. Overdub enter: `DIAG,lcr,src,why=open` **133 ms** (536 notes), `ODUB,stage,complete` 133 ms, `manager_done` **154 ms**, BPM 120→92, `clockrate` 25. During overdub: `usbnote` **396 ms**, `notechg` 133 ms, `lcr,src,why=hold` **99 ms**, `clk`/`tracks` **22 ms**. Same session 1-bar overdub (5 notes): `why=open` 3.4 ms, `late_*` **0**. PLAYING-only 64-bar already has `tracks` 7–10 ms and `late_*` hundreds of ms while BAR 32→33 is 2.009 s — 2-bar gather is not the 154/396 ms stall. Do not start Stage 2 stamp redesign, Problem B length, or LCR consume from this file. Overdub-enter source/hold is a different owner; pin before firmware.
+[`213401`](../../captures/session_20260817_213401.log): 2-bar `playback_build` 3–6 ms; 64-bar stall is source/hold on USB. Do not start Stage 2 stamp redesign, Problem B length, or LCR consume from this file.
 
 ### Display undo / wrap / pitch-move ghosts (RC-W1, RC-N1, RC-U1)
 
