@@ -1,6 +1,6 @@
 # NOTE_EDIT / LOOP_EDIT display — undo, wrap, pitch-move ghosts
 
-**Status:** Native PASS — RC-W1 / RC-U1 HITL PASS [`152627`](../../captures/session_20260817_152627.log); RC-N1 follow-up native PASS, device retest open  
+**Status:** Native PASS — RC-W1 / RC-U1 HITL PASS [`152627`](../../captures/session_20260817_152627.log); RC-N1 follow-up native PASS. [`155450`](../../captures/session_20260817_155450.log) NOTE_EDIT exit notes **5** after occupied-lane consume unique’d tick 64.  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`144703`](../../captures/session_20260817_144703.log), [`144939`](../../captures/session_20260817_144939.log); original report [`142813`](../../captures/session_20260817_142813.log)  
@@ -167,5 +167,5 @@ HITL (after flash `teensy41-capture-serial`):
 | Slice | Gate | [`152627`](../../captures/session_20260817_152627.log) |
 |-------|------|------|
 | RC-W1 | After wrap `slice_clean`, DISP committed/live prefix agree until the next capture note | **PASS** — second wrap `DISP 7,7,7,7` then new note `8,7,8,8` |
-| RC-N1 | Pitch-move deselect does not add a home-pitch ghost | **FAIL** then follow-up: `VCACHE` 7→8 at 38.415 s; persist rematerialized home `60@64–288` vs display home `176`; sibling `60@64–224` must stay. Retire now keeps sibling end ticks. Device retest open. |
+| RC-N1 | Pitch-move deselect does not add a home-pitch ghost | [`152627`](../../captures/session_20260817_152627.log) in-session still 7→8 then sibling-end retire. [`153213`](../../captures/session_20260817_153213.log) exit `DISP 8` was stacked persist `60@64` (consume). [`155450`](../../captures/session_20260817_155450.log) select at 64 is `1/2`; exit `slice_clean`/`DFRAME` **5**. |
 | RC-U1 | Post-stop `OverdubPassAdded` undo paints the remaining record layer; no `VCACHE,full` | **PASS** — boot `kind=1` undos; DISP `7,7,7,7` → `1,1,1,1`; no `VCACHE,full` on that path (`VCACHE,full` later is NOTE_EDIT open) |

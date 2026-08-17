@@ -3,7 +3,7 @@
 **Kind:** design / debugging artifact (not implementation spec)  
 **Date:** 2026-08-17  
 **Use:** trace one overdub note across a wrap; decide which representation is authoritative at each moment; spot forbidden consumer edges before patching.  
-**Shipped consumer:** [`overdub_overlap_hold_display_cache_bugfix.md`](overdub_overlap_hold_display_cache_bugfix.md) — RC11 + RC12 **FROZEN**, HITL PASS [`140355`](../../captures/session_20260817_140355.log)  
+**Shipped consumer:** [`overdub_overlap_hold_display_cache_bugfix.md`](overdub_overlap_hold_display_cache_bugfix.md) — RC11 + RC12 **FROZEN**, HITL PASS [`140355`](../../captures/session_20260817_140355.log). Wrap-shaped consume: [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](overdub_wrap_crossing_hold_head_consume_bugfix.md) HITL PASS [`155450`](../../captures/session_20260817_155450.log).  
 **Queued successor:** [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) (length preview vs source-view length)
 
 **Not this document's job:** introduce a runtime state machine, new owners, or drive refactors. It names **authority** and **allowed derivation** so RC layers stop circular fixes.
@@ -51,6 +51,9 @@ Each box is a **representation stage**, not a `TrackState` enum. Time flows down
                  │      +                 │
                  │ source-view overlaps   │
                  │ (same pitch, window)   │
+                 │ wrap-shaped off:       │
+                 │ [S, L) ∪ [0, E)        │
+                 │ one hold, one Add      │
                  └───────────┬────────────┘
                              │
                              ▼
@@ -139,7 +142,7 @@ new source view
 |--------|------------------------------|-------------------|-------------------------------|
 | Overdub enter / post-rebuild | `overdubSourceViewNotes_` | overlap hold, note-off consume, display (RC12) | `visualCache`, LCR flatten alone |
 | Hold start @ S | `overdubSourceViewNotes_` + `overlapNoteIds` (sounding @ S) | hold bookkeeping only | treating IDs ≡ full source view |
-| Note-off | source view + hold IDs → **complete consume set** | `resolveConstrainedGeometry` → `pendingNoteChanges_` | `visualCache`, stale cache |
+| Note-off | source view + hold IDs → **complete consume set** (wrap-shaped off: `[S, L) ∪ [0, E)`, one Add) | `resolveConstrainedGeometry` → `pendingNoteChanges_` | `visualCache`, stale cache; head as a second hold |
 | In-bar (before seal) | `pendingNoteChanges_` on top of source view | live paint copy (`applyPendingNoteChangesToDisplayNotes`) | persist, next hold consume |
 | After wrap / stop seal | `editPasses` (companions) + committed overdub pass | LCR prepare, persistence, source rebuild | independent display reconstruct |
 | After `rebuildOverdubSourceView` | `overdubSourceViewNotes_` | **next** hold, **next** consume, display (RC12) | `appendOverdubPassDisplayNotes` beside LCR picture |
@@ -241,6 +244,7 @@ overdub occupied lane wrong
 | [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md) | General play / display / analyze consumers; overdub overlap is the analyze-adjacent path on `overdubSourceViewNotes_`, not NOTE_EDIT `selectedTick` |
 | [`Display.md`](../Authority/Architecture/Display.md) | Display is derivative; RC12 aligns live capture with source view instead of competing cache paths |
 | [`overdub_overlap_hold_display_cache_bugfix.md`](overdub_overlap_hold_display_cache_bugfix.md) | **FROZEN** RC11/RC12 — consume completion + display from source view; HITL [`140355`](../../captures/session_20260817_140355.log) |
+| [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](overdub_wrap_crossing_hold_head_consume_bugfix.md) | Wrap-shaped off occupies `[S, L) ∪ [0, E)` as one hold; HITL [`155450`](../../captures/session_20260817_155450.log) |
 | [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) | Queued: keep `loop.loopLengthTicks` and `overdubSourceViewLoopLengthTicks_` aligned on LOOP_EDIT length change |
 | [`overdub_playback_observation_overlap_refinement.md`](overdub_playback_observation_overlap_refinement.md) | Hold ID collection; does not replace source-view authority |
 | DEC-037 / LCR plans | Prepared window feeds **rebuild**, not parallel consume owner |
