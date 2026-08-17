@@ -23,6 +23,7 @@
 #include "../../src/Utils/RuntimeTimingTelemetry.cpp"
 
 #include "Loop.h"
+#include "LoopContentResolution.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
@@ -84,6 +85,14 @@ OverlapNoteIdSet overlapIds(std::initializer_list<NoteId> ids) {
     (void)out.insert(id);
   }
   return out;
+}
+
+void prepareLoopContent(Loop& loop) {
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 }
 
 }  // namespace
@@ -729,6 +738,66 @@ void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   TEST_ASSERT_TRUE(foundShortenedOff);
 }
 
+void test_prepared_present_note_ids_match_source_hold_participants() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(100, 60, sourceIds);
+  OverlapNoteIdSet preparedIds;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(100, 60, preparedIds));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(1));
+  TEST_ASSERT_TRUE(sourceIds == preparedIds);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_prepared_present_note_ids_miss_does_not_fill_source_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  const size_t notesBefore = loop.overdubSourceViewNotes().size();
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  OverlapNoteIdSet preparedIds;
+  preparedIds.insert(99);
+  TEST_ASSERT_FALSE(loop.tryCollectPreparedPresentNoteIdsAtTick(100, 60, preparedIds));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(preparedIds.size()));
+  TEST_ASSERT_EQUAL(notesBefore, loop.overdubSourceViewNotes().size());
+}
+
+void test_prepared_present_note_ids_filters_pitch_and_exclusive_end() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  OverlapNoteIdSet atStart;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(50, 60, atStart));
+  TEST_ASSERT_TRUE(atStart.contains(1));
+
+  OverlapNoteIdSet atEnd;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(200, 60, atEnd));
+  TEST_ASSERT_FALSE(atEnd.contains(1));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(atEnd.size()));
+
+  OverlapNoteIdSet otherPitch;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(100, 72, otherPitch));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(otherPitch.size()));
+  LoopContentResolution::deviceGateReset();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -757,5 +826,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_long_source_wrap_loop_4100);
   RUN_TEST(test_pending_wrap_crossing_incoming_consumes_head_occupied_lane);
   RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
+  RUN_TEST(test_prepared_present_note_ids_match_source_hold_participants);
+  RUN_TEST(test_prepared_present_note_ids_miss_does_not_fill_source_window);
+  RUN_TEST(test_prepared_present_note_ids_filters_pitch_and_exclusive_end);
   return UNITY_END();
 }

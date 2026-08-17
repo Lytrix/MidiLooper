@@ -2,13 +2,13 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (PresentNote C++ rename)
+Last updated: 2026-08-17 (overdub present-at-S Phase 1 observation)
 
 ---
 
 ## Now implementing
 
-### Overdub participant discovery — notes present at S (Phase 0b done)
+### Overdub participant discovery — notes present at S (Phase 1 observation)
 
 **Plan:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
@@ -19,7 +19,7 @@ Last updated: 2026-08-17 (PresentNote C++ rename)
 
 Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`notePresentAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
 
-**Firmware not authorized** (Phase 1 observation). PresentNote C++ rename **done**. Do **not** start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized.
+Phase 1 **in tree:** `Track::snapshotOverlapHoldCandidates` still commits RC8 source-view ids (A). Alongside, `tryCollectPreparedPresentNoteIdsAtTick` records B. CAP `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. Prepared miss is explicit; it does not `resolveWindow`. Production consume unchanged. Do **not** start Phase 2 wrap-predicate unification or Phase 3 fill disable without a capture of the compare line. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 

@@ -1,13 +1,13 @@
 # Overdub participant discovery from loop content
 
-**Status:** Architecture contract **pinned** 2026-08-17. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Phase 1 firmware **not authorized**. Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1 observation firmware **in tree**. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; Phase 1 observation firmware; hydrate Stages 1–5
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; Phase 2 wrap-predicate unification; Phase 3 disable of the 16-bar fill
 
 **Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
@@ -310,7 +310,7 @@ Secondary: USB latency closer to 1-bar behavior; source/hold JIT no longer inher
 * treating `ActiveNoteLedger` as the participant store;
 * treating LCR present-at-S (`PresentNote`) as MIDI execution state;
 * copying present-at-S at every bar as a new derived owner (DEC-037 `presentAt` heap fail [`225351`](../../captures/session_20260814_225351.log));
-* Phase 1 firmware before user authorization.
+* Phase 3 disable of the source-window lookup before A vs B parity including wrap predicates.
 
 ---
 
@@ -468,7 +468,7 @@ A note whose canonical span crosses the loop boundary is present on both sides o
 | **0** | Negative result: execution ledger is the wrong owner. **Done.** | none |
 | **0b** | Identity mapping `resolveState` vs RC8. Site classification Present / Sounding / Active. **Done** (this file). | none |
 | **Naming** | `SoundingNote` → `PresentNote` at present-at-S sites only. | naming-only, **done** |
-| **1** | Prototype present-at-S query at overdub note-on **alongside** source-window fill. | observation only, **not authorized** |
+| **1** | Prototype present-at-S query at overdub note-on **alongside** source-window fill. | observation only, **in tree** |
 | **2** | Parity A vs B including the hard PLAYING/STOPPED/MUTED/outside-gather test. | keep old path |
 | **3** | Disable redundant source-window lookup for note-on discovery. Measure cost. | after parity |
 | **4** | Note-off classification. | after Phase 3 |
@@ -644,11 +644,11 @@ One **definition** of notes present at a tick. Overdub does not reconstruct a 16
 
 ## 22. Next action
 
-Do **not** implement a new window size.
+Phase 1 observation is in tree. Production participant ids still come from the RC8 source-view walk.
 
-Do **not** implement send-side present-at-S.
+Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Do **not** start Phase 1 until authorized.
+Do **not** start Phase 2 wrap-predicate unification or Phase 3 fill disable until a capture shows the compare line and wrap cases are classified.
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -658,14 +658,51 @@ If present-at-S parity succeeds after wrap-predicate proof, the likely change is
 
 ---
 
-## Architecture gate (investigation only)
+## Phase 1 observation (landed)
+
+**Owner:** `Track::snapshotOverlapHoldCandidates`. Production A remains `ensureOverdubSourceNotesForHold` + `collectOverdubSourceHoldParticipantIds`. Observation B is `tryCollectPreparedPresentNoteIdsAtTick` → `tryResolvePreparedState`, pitch-filtered NoteIds.
+
+**CAP** (`SESSION_CAPTURE` only):
+
+```text
+#CAP,…,DIAG,lcr,part,why=on,from=prep,pitch=,a=,b=,eq=,ao=,bo=,us=
+#CAP,…,DIAG,lcr,part,why=on,from=miss,pitch=,a=,us=
+```
+
+`a` = RC8 id count. `b` = prepared present-at-S id count. `eq=1` when the sets match. `ao` / `bo` are ids only in A / only in B. `from=miss` does not call `resolveWindow` or cold `resolveState`.
+
+**Native:** `test_prepared_present_note_ids_*` in `test_pending_note_change`.
+
+---
+
+## Pre-implementation review (Phase 1)
+
+### Ready
+- `snapshotOverlapHoldCandidates` is the RC8 gold site.
+- `tryResolvePreparedState` is the prepared present-at-S query; miss returns false and does not rebuild.
+- Emitted `PresentNote` is enough for id-set observation.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Production result | Still A (source-view RC8 ids) |
+| Prepared miss | Explicit `from=miss`; no 16-bar fallback |
+| Observation cost | `SESSION_CAPTURE` + `ARDUINO` only |
+| Wrap predicates | Not unified (Phase 2) |
+
+### Open before coding
+None that blocked Phase 1.
+
+---
+
+## Architecture gate (Phase 1)
 
 | Question | Answer |
 |----------|--------|
-| **Owner module** | Loop content via LCR `resolveState` / prepared spans. Overdub reads present-at-S; playback send does not write it. |
-| **Primary invariant** | Notes present at `S` are canonical span containment, independent of MIDI execution, mute, and gather. |
+| **Owner module** | `Track::snapshotOverlapHoldCandidates`. Query: `LoopContentResolution::tryResolvePreparedState`. Fill stays `Loop::ensureOverdubSourceNotesForHold`. |
+| **Primary invariant** | Notes present at `S` are canonical span containment. Production participant ids stay the RC8 source-view walk. |
 | **Ownership change?** | NO while consuming existing `resolveState`. YES (stop) if a new Manager is proposed. `PresentNote` is a type rename, not a new owner. |
 | **State transition change?** | NO until Phase 3 disables the source-window lookup. |
-| **Behavior-preserving?** | YES until Phase 3. |
-| **Reuse** | YES — present-at-S query already exists (`resolveState`). Do not overload `ActiveNoteLedger`. Do not add `resolveWindow` on USB. |
-| **Phase scope** | Phase 0b done. Phase 1 and C++ rename not authorized. |
+| **Behavior-preserving?** | YES — observation alongside fill. |
+| **Reuse** | YES — extend `snapshotOverlapHoldCandidates`; reuse `tryResolvePreparedState`. Do not overload `ActiveNoteLedger`. Do not add `resolveWindow` on USB miss. |
+| **Phase scope** | Phase 1 observation in tree. Hydrate not authorized. |
