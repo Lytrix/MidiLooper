@@ -1,6 +1,6 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1–RC5 as below; RC6 native (wrap source-view rebuild); device gate open  
+**Status:** Active — RC1–RC5 as below; RC6 wrap rebuild native; RC7 enter rebuild native; device gate open  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3); [`001517`](../../captures/session_20260817_001517.log) (RC4); [`003204`](../../captures/session_20260817_003204.log) (RC5)  
@@ -237,6 +237,27 @@ CAP: `DIAG,lcr,vch` (idle visual cache; was `6a`); `DIAG,lcr,src,why=open` (esta
 - `test_rebuild_overdub_source_view_after_publish_includes_wrap_add` — prepared index after publish.
 
 Device: 1-bar same-start-longer two wraps; select at 64 one 60 ending 288. Wrap `src,why=wrap`; wrap `beginCapture` must not emit `why=open`. 1-wrap [`005745`](../../captures/session_20260817_005745.log) stays green.
+
+---
+
+## RC7 — enter uses the same rebuild as wrap
+
+**Status:** Native in this commit; device gate open.  
+**Evidence:** [`113236`](../../captures/session_20260817_113236.log) — overdub undo left `VCACHE slice_clean notes=1`; enter copied that cache; first wrap was Gate 3 empty-set Adds until wrap rebuild.  
+**Sibling:** [`overdub_overlap_hold_enter_source_view_rebuild_bugfix.md`](overdub_overlap_hold_enter_source_view_rebuild_bugfix.md)
+
+### Architecture checkpoint (RC7)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `Loop` still owns the source view. |
+| **State transition change?** | NO. Enter is still `beginCapture(Overdub)` → `establishOverdubSourceView`. |
+
+### Fix
+
+`establishOverdubSourceView` calls `rebuildOverdubSourceView(..., "open")`. Not visual cache. Not `copyEffectiveCommittedEventsInRange`. Display idle `vch` unchanged. Consume unchanged.
+
+Device: enter emits `src,why=open,from=prep|win`; first occupied-lane notes `looked_up > 0`.
 
 ---
 

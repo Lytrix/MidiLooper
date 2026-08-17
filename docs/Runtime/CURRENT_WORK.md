@@ -2,20 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub overlap hold RC6 — wrap source-view rebuild)
+Last updated: 2026-08-17 (overdub overlap hold RC7 — enter source-view rebuild)
 
 ---
 
 ## Now implementing
 
-### Overdub overlap hold — wrap source-view rebuild (RC6)
+### Overdub overlap hold — enter source-view rebuild (RC7)
 
-**Plan:** [`overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md`](../Plans/overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md)  
+**Plan:** [`overdub_overlap_hold_enter_source_view_rebuild_bugfix.md`](../Plans/overdub_overlap_hold_enter_source_view_rebuild_bugfix.md)  
 **Parent:** [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md)  
-**1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — keep consume.  
-**Multi-wrap evidence:** [`004947`](../../captures/session_20260817_004947.log) — stale S snapshot after wrap publish.
+**Evidence:** [`113236`](../../captures/session_20260817_113236.log) — enter copied 1-note visual cache.  
+**1-wrap PASS:** [`005745`](../../captures/session_20260817_005745.log) — keep consume.
 
-**RC6:** After each committed wrap, `rebuildOverdubSourceView` from prepared window (else per-pass `resolveWindow`). Not visual cache. CAP `vch` / `src`. Device gate open.
+**RC7:** `establishOverdubSourceView` calls `rebuildOverdubSourceView(..., "open")`. Not visual cache. Wrap still keeps an established view (RC2). Device gate open.
+
+**RC6:** wrap rebuild after publish — [`overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md`](../Plans/overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md)
 
 **RC1–RC5:** same-start collection, keep view, per-pass Hide apply. See parent plan.
 
