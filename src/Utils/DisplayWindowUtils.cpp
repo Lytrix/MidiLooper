@@ -270,7 +270,7 @@ void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,
   if (bars > 999UL) {
     bars = 999UL;
   }
-  snprintf(out, outSize, "%3lu", bars);
+  snprintf(out, outSize, "%3lu", static_cast<unsigned long>(bars));
 }
 
 }  // namespace DisplayWindowUtils

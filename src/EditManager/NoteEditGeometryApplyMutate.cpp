@@ -440,18 +440,13 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
         currentStart = focus.last.startTick;
         currentEnd = focus.last.endTick;
     }
-    const uint32_t originalStart =
-        focus.active ? focus.commitBaseline.startTick : currentNote.startTick;
-    
     logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d, start=%lu, end=%lu", 
               movingNotePitch, currentStart, currentEnd);
     
-    uint32_t displayCurrentEnd = noteEditGeometryApplyStorageTickToDisplayPhase(currentEnd, loopLength);
     if (focus.active && focus.last.pitch == movingNotePitch &&
         focus.last.startTick == currentStart &&
         focus.last.endTick > currentEnd) {
         currentEnd = focus.last.endTick;
-        displayCurrentEnd = noteEditGeometryApplyStorageTickToDisplayPhase(currentEnd, loopLength);
     }
     const NoteId movingNoteId =
         focus.active ? focus.movingNoteId : kInvalidNoteId;
@@ -531,7 +526,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     uint32_t loopLength = track.getLoopLength();
     manager.ensureNoteEditFocusForLiveEdit(track, currentNote);
     manager.syncNoteEditFocusLastFromSessionStore(track);
-    const uint8_t channel = track.getMidiChannel();
     const NoteEditFocus& focus = noteEditGeometryApplyEditFocus(manager);
 
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
@@ -556,7 +550,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
         currentEnd %= loopLength;
         targetEndTick %= loopLength;
     }
-    uint32_t displayCurrentEnd = currentEnd;
 
     if (targetEndTick == currentEnd) {
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
@@ -575,12 +568,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     if (nonWrapMovingNote && newEnd < noteStart + minNoteDuration) {
         newEnd = noteStart + minNoteDuration;
     }
-
-    const int delta = (newEnd > currentEnd) ? 1 : -1;
-    const uint32_t baselineStart =
-        focus.active ? focus.commitBaseline.startTick : noteStart;
-
-    const uint32_t displayNewEnd = noteEditGeometryApplyStorageTickToDisplayPhase(newEnd, loopLength);
 
     logger.log(CAT_MIDI, LOG_DEBUG,
               "Length change with overlap: pitch=%d, start=%lu, end %lu->%lu",

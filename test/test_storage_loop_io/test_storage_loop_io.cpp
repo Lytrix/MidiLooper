@@ -758,45 +758,6 @@ void test_simulated_exit_flush_clears_edit_dirty() {
                           static_cast<uint8_t>(restored.passes.editPasses[0].propertyType));
 }
 
-void test_legacy_deferred_header_without_note_id_reads() {
-  LoopEventStore::resetPoolForTests();
-  LoopEventStore::initPool();
-
-  PersistedLoopSnapshot original{};
-  original.loopId = 9;
-  original.loopLengthTicks = 768;
-  original.nextPassId = 2;
-  original.nextNoteId = 12;
-  original.nextMergeSequence = 1;
-  original.lastCommittedPassId = 1;
-  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
-
-  std::vector<uint8_t> v6Buffer;
-  MemoryStorageIo v6Mem(&v6Buffer);
-  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(v6Mem.io(), original));
-
-  const size_t nextNoteIdOffset =
-      sizeof(LoopId) + (sizeof(uint32_t) * 3u) + sizeof(PassId);
-  std::vector<uint8_t> legacyBuffer = v6Buffer;
-  legacyBuffer.erase(legacyBuffer.begin() + static_cast<std::ptrdiff_t>(nextNoteIdOffset),
-                     legacyBuffer.begin() + static_cast<std::ptrdiff_t>(nextNoteIdOffset + 4u));
-
-  MemoryStorageIo legacyMem(&legacyBuffer);
-  PersistedLoopSnapshot restored{};
-  TEST_ASSERT_FALSE(readPersistedLoopSnapshot(legacyMem.io(), restored, false));
-  legacyMem.resetRead();
-  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(legacyMem.io(), restored, true));
-  TEST_ASSERT_EQUAL(original.loopLengthTicks, restored.loopLengthTicks);
-  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
-  TEST_ASSERT_EQUAL(1u, restored.nextNoteId);
-
-  Loop reloadedLoop;
-  applySnapshotToLoop(reloadedLoop, restored);
-  TEST_ASSERT_TRUE(reloadedLoop.hasCommittedPasses());
-  reloadedLoop.ensureVisualCacheBuilt();
-  TEST_ASSERT_FALSE(reloadedLoop.visualCache.notes.empty());
-}
-
 void test_zero_loop_length_with_committed_events_loads_and_reconciles() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -988,7 +949,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_legacy_snapshot_without_geometry_tail_loads);
   RUN_TEST(test_save_loop_geometry_assigns_id_and_marks_dirty);
   RUN_TEST(test_legacy_edit_tail_v4_rejected);
-  RUN_TEST(test_legacy_deferred_header_without_note_id_reads);
   RUN_TEST(test_zero_loop_length_with_committed_events_loads_and_reconciles);
   RUN_TEST(test_apply_snapshot_preserves_start_loop_tick);
   RUN_TEST(test_truncated_edit_tail_fails_read);

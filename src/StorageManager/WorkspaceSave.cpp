@@ -519,7 +519,7 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassChunk(File& file, uint16_t chun
 }
 
 STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, bool& loopDone,
-                              LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None) {
+                              LoopPersistPayloadCrc crcMode) {
     loopDone = false;
 
     switch (storageSession.currentWorkspaceSave.loopWriteStage) {

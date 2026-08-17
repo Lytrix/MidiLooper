@@ -123,63 +123,6 @@ static bool readScopedEditUndoExtension(File& file, UndoEntry& entry, bool scope
     return readOverdubPassIdsExtension(file, entry, overdubPassIdsExtension);
 }
 
-static bool skipOverdubPassIdsExtension(File& file, UndoEntryKind kind,
-                                        bool overdubPassIdsExtension) {
-    if (!overdubPassIdsExtension || kind != UndoEntryKind::OverdubPassAdded) {
-        return true;
-    }
-    uint16_t count = 0;
-    if (!readRaw(file, &count, sizeof(count))) {
-        return false;
-    }
-    for (uint16_t i = 0; i < count; ++i) {
-        PassId id = kInvalidPassId;
-        if (!readRaw(file, &id, sizeof(id))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool skipScopedEditUndoExtension(File& file, UndoEntryKind kind, bool scopedEditExtension,
-                                        bool overdubCompanionExtension,
-                                        bool overdubPassIdsExtension) {
-    if (!scopedEditExtension) {
-        return skipOverdubPassIdsExtension(file, kind, overdubPassIdsExtension);
-    }
-    switch (kind) {
-        case UndoEntryKind::NoteEditPassClosed:
-        case UndoEntryKind::ControlChangeEditPassClosed:
-            break;
-        case UndoEntryKind::OverdubPassAdded:
-            if (!overdubCompanionExtension) {
-                return skipOverdubPassIdsExtension(file, kind, overdubPassIdsExtension);
-            }
-            break;
-        default:
-            return true;
-    }
-    uint8_t editPassIndex = 0;
-    uint8_t editPassTypeRaw = 0;
-    uint16_t count = 0;
-    if (!readRaw(file, &editPassIndex, sizeof(editPassIndex))) {
-        return false;
-    }
-    if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
-        return false;
-    }
-    if (!readRaw(file, &count, sizeof(count))) {
-        return false;
-    }
-    for (uint16_t i = 0; i < count; ++i) {
-        EditPassId id = kInvalidEditPassId;
-        if (!readRaw(file, &id, sizeof(id))) {
-            return false;
-        }
-    }
-    return skipOverdubPassIdsExtension(file, kind, overdubPassIdsExtension);
-}
-
 static bool stackNeedsOverdubCompanionExtension(const GlobalUndoStack& stack) {
     for (const UndoEntry& entry : stack.entries) {
         if (entry.kind == UndoEntryKind::OverdubPassAdded && !entry.editPassIds.empty()) {
