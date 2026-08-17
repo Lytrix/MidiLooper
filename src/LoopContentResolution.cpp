@@ -1207,6 +1207,121 @@ TRACK_COLD_MEM void mergeSortedSpanBoundaryEntries(
              });
 }
 
+TRACK_COLD_MEM size_t findSpanIndexByNoteId(
+    const LoopContentResolution::StateCheckpoints::NoteSpanVec& spans, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return spans.size();
+  }
+  for (size_t i = 0; i < spans.size(); ++i) {
+    if (spans[i].note.noteId == noteId) {
+      return i;
+    }
+  }
+  return spans.size();
+}
+
+TRACK_COLD_MEM void removeSpanBoundaries(
+    LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& entries, size_t spanIndex) {
+  entries.erase(std::remove_if(entries.begin(), entries.end(),
+                               [spanIndex](const LoopContentResolution::StateCheckpoints::SpanBoundaryEntry&
+                                               entry) { return entry.spanIndex == spanIndex; }),
+                entries.end());
+}
+
+TRACK_COLD_MEM void insertSpanBoundarySorted(
+    LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& entries, uint32_t tick,
+    size_t spanIndex) {
+  LoopContentResolution::StateCheckpoints::SpanBoundaryEntry entry;
+  entry.tick = tick;
+  entry.spanIndex = spanIndex;
+  auto it = std::lower_bound(entries.begin(), entries.end(), tick,
+                             [](const LoopContentResolution::StateCheckpoints::SpanBoundaryEntry& existing,
+                                uint32_t bound) { return existing.tick < bound; });
+  entries.insert(it, entry);
+}
+
+TRACK_COLD_MEM void erasePresentNoteId(PresentNoteVec& presentNotes, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return;
+  }
+  presentNotes.erase(std::remove_if(presentNotes.begin(), presentNotes.end(),
+                                    [noteId](const PresentNote& note) { return note.noteId == noteId; }),
+                     presentNotes.end());
+}
+
+TRACK_COLD_MEM void refreshPresentAtForSpan(LoopContentResolution::StateCheckpoints& checkpoints,
+                                            size_t spanIndex) {
+  if (spanIndex >= checkpoints.spans.size() || checkpoints.intervalTicks == 0) {
+    return;
+  }
+  const LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
+  NoteUtils::DisplayNote probe{};
+  probe.noteId = span.note.noteId;
+  probe.note = span.note.pitch;
+  probe.startTick = span.startTick;
+  probe.endTick = span.endTick;
+  for (uint32_t c = 0; c < static_cast<uint32_t>(checkpoints.presentAt.size()); ++c) {
+    const bool nowPresent =
+        notePresentAt(probe, c * checkpoints.intervalTicks, checkpoints.loopLengthTicks);
+    bool wasPresent = false;
+    for (const PresentNote& note : checkpoints.presentAt[c]) {
+      if (note.noteId == span.note.noteId) {
+        wasPresent = true;
+        break;
+      }
+    }
+    if (wasPresent && !nowPresent) {
+      erasePresentNoteId(checkpoints.presentAt[c], span.note.noteId);
+    } else if (!wasPresent && nowPresent) {
+      checkpoints.presentAt[c].push_back(span.note);
+    }
+  }
+}
+
+TRACK_COLD_MEM const EditPass* findEditPassById(const EditPassVec& editPasses, EditPassId id) {
+  if (id == kInvalidEditPassId) {
+    return nullptr;
+  }
+  for (const EditPass& row : editPasses) {
+    if (row.id == id) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+TRACK_COLD_MEM void projectSealedCompanionsOntoCheckpoints(
+    LoopContentResolution::StateCheckpoints& checkpoints, const EditPassVec& editPasses,
+    const EditPassIdList& companionIds) {
+  for (const EditPassId id : companionIds) {
+    const EditPass* row = findEditPassById(editPasses, id);
+    if (row == nullptr || row->state != EditPassState::Active ||
+        row->passType != EditPassType::Note) {
+      continue;
+    }
+    const bool hide = row->actionType == EditActionType::Delete;
+    const bool shorten =
+        row->actionType == EditActionType::Update && row->propertyType == EditPropertyType::Length;
+    if (!hide && !shorten) {
+      continue;
+    }
+    const size_t spanIndex = findSpanIndexByNoteId(checkpoints.spans, row->targetNoteId);
+    if (spanIndex >= checkpoints.spans.size()) {
+      continue;
+    }
+    LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
+    removeSpanBoundaries(checkpoints.spanBoundaries, spanIndex);
+    if (hide) {
+      span.endTick = span.startTick;
+    } else {
+      span.endTick = row->endTick;
+      insertSpanBoundarySorted(checkpoints.spanBoundaries, span.startTick, spanIndex);
+      insertSpanBoundarySorted(checkpoints.spanBoundaries, span.endTick, spanIndex);
+    }
+    refreshPresentAtForSpan(checkpoints, spanIndex);
+  }
+}
+
 TRACK_COLD_MEM void eraseDisabledSounding(const LoopContentResolution::TickIndex& index,
                                           PresentNoteVec& out) {
   auto isDisabled = [&](const PresentNote& note) {
@@ -2011,8 +2126,9 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
          sDeviceGateSession.preparedPlaybackRevision == playbackRevision;
 }
 
-TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const OverdubPass& pass,
-                                                                     uint32_t playbackRevision) {
+TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
+    const OverdubPass& pass, uint32_t playbackRevision, const EditPassVec& editPasses,
+    const EditPassIdList& companionIds) {
   if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
       pass.id == kInvalidPassId) {
     return;
@@ -2066,6 +2182,7 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const Over
       }
     }
   }
+  projectSealedCompanionsOntoCheckpoints(checkpoints, editPasses, companionIds);
   sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
 }
 

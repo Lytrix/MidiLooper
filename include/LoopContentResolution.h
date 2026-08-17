@@ -339,8 +339,12 @@ struct LoopContentResolution {
   static void deviceGateComplete(uint32_t playbackRevision);
   static bool preparedWindowReady(uint32_t playbackRevision);
   /// 6D.4 / 6E.4: append one committed overdub into the session `delta`, pair it, append
-  /// its spans, and restamp. No-op when no prepared index is kept. Does not write `tickEvents`.
-  static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision);
+  /// its spans, and restamp. Projects this wrap's sealed companion Delete/Length rows onto
+  /// existing `spans` / `spanBoundaries` / `presentAt`. Does not call `applyNoteEditPass`.
+  /// No-op when no prepared index is kept. Does not write `tickEvents`.
+  static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision,
+                                         const EditPassVec& editPasses = EditPassVec(),
+                                         const EditPassIdList& companionIds = EditPassIdList());
   /// Session-disable / re-enable a prepared capture pass. Does not restamp.
   static void setPreparedCapturePassState(PassId id, CapturePassState state);
   /// Keep prepared ready after `Loop` bumps `playbackRevision` (undo/redo). No-op on miss.

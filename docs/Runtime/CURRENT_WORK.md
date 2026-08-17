@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (overdub present-at-S Phase 1 observation)
+Last updated: 2026-08-18 (overdub present-at-S companion publish)
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-17 (overdub present-at-S Phase 1 observation)
 
 Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`notePresentAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
 
-Phase 1 **device capture** [`232510`](../../captures/session_20260817_232510.log): 1-bar loop (768). Wrap notes **are** in prepared `PresentNote` after `publishPreparedOverdubPass` (`b` grows per wrap). `eq=0` is extra B ids: `tryResolvePreparedState` does not apply companion Hide/Shorten that `tryResolvePreparedWindow` applies. Held-across-wrap ons stay in live capture until a later seal. Idle gate must be kept before first wrap or enter is `from=miss`. Do **not** start Phase 3 fill disable until companions are folded into checkpoints. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized.
+Phase 1 **device capture** [`232510`](../../captures/session_20260817_232510.log): 1-bar loop (768). Wrap Adds already entered prepared `PresentNote`. **Companion projection in tree:** `publishPreparedOverdubPass` now projects this wrap’s sealed Hide/Shorten onto prepared `spans` / `spanBoundaries` / `presentAt` (Option 1). Idle rebuild is not the wrap owner. Held-across-wrap ons stay in live capture until a later seal. Idle gate must be kept before first wrap or enter is `from=miss`. Do **not** start Phase 3 fill disable until a device capture shows `eq=1` after wrap 2+. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized. Session-undo inverse of baked companions is not in this stage.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 
