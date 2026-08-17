@@ -728,7 +728,7 @@ Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like
 
 After wrap undo, hold fill `from=win` merged into the frozen source view (`merged=1`…`5`, `notes` 19→31) because `rebuildOverdubSourceView` was not called on session undo. A kept the wrap add and gained the restored source. B stayed at 1. **Fix in tree:** wrap undo/redo calls `rebuildOverdubSourceView` (`why=undo` / `why=redo`) when the source view is established. Live discard does not. Native: `test_overdub_session_undo_rebuilds_source_view_to_match_prepared`.
 
-**Device** [`011009`](../../captures/session_20260818_011009.log) — `fd2effb` on device. Seven `lcr,src,why=undo` (paired with `sess_undo why=wrap`). After those undos, hold `merged=0` and the next `lcr,part` stays `a=1` (or `a=0`), not the 010422 `a=2` set. 86/86 `from=miss` — idle gate finishes after stop, so `eq=` is not in this log. Production consume still A. `late_clk=0`.
+**Device** [`011009`](../../captures/session_20260818_011009.log) — wrap-undo source-view refresh **PASS**. Seven `lcr,src,why=undo` with `sess_undo why=wrap`. After peel, hold `merged=0` and the next `lcr,part` is `a=1` (or `a=0`), not the 010422 `a=2` set. Production consume still A. `late_clk=0`.
 
 ---
 
