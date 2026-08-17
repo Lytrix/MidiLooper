@@ -2,18 +2,19 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (consumer window budget architecture after 213401)
+Last updated: 2026-08-17 (Experiment 1 source/hold window detach)
 
 ---
 
 ## Now implementing
 
-### Consumer window budget — architecture (no firmware yet)
+### Consumer window budget — Experiment 1 (source/hold detach)
 
 **Plan:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
-**Evidence:** [`213401`](../../captures/session_20260817_213401.log)
+**Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
+**Owner:** `Loop::kOverdubSourceWindowBars` / `overdubSourceWindowLengthTicks`. Not display. Not playback gather.
 
-North star: no latency-sensitive path synchronously resolves more than its consumer requires. LCR stays a resolver. Display’s `kMaxDetailedWindowBars` (16) currently sets overdub source/hold via `overdubSourceWindowLengthTicks`. Do **not** add a WindowManager. Do **not** start Experiment 1 clamp until this paragraph still names it and the user pins the length series.
+Architecture pinned: LCR does not choose 16 bars; no WindowManager; no `WindowRequest` types. Default **16** (behavior-preserving). Measurement series is rebuild at 1/2/4/8/16 — a passing length is evidence, not policy. CAP `lcr,src` includes `bars=`. Do not shrink 2-bar gather. Do not start Experiment 2 firmware.
 
 Playback gather Stage 2 / Problem B length is **not** the next firmware. Stage 1 lateness hooks stay on device for scoring.
 
