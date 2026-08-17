@@ -685,6 +685,16 @@ Pitch 60 at storage tick 528 (`COORD` 1296 / 2064 / 2832): wrap1 `b=1`, wrap2 `b
 
 Hold fill stays `from=win` (77 lines, `merged=0`, win 146–1909 µs). Open: session 1 `from=win` tot 1368 µs; session 2 `from=prep` tot 4931 µs. `late_clk=0`. Consume used A: `max_ids=1`.
 
+**Device** [`002447`](../../captures/session_20260818_002447.log) — companion publish (`b9b9336`). 1-bar (768). 31 `lcr,part` lines. **`eq=0` count = 0.**
+
+| Class | Count | What the log shows |
+|-------|-------|--------------------|
+| `from=miss` | 6 | First compare session before wrap 1. Same enter miss as [`232510`](../../captures/session_20260817_232510.log). |
+| `from=prep` `eq=1` | 25 | After wrap 1, after wrap 2, and the next overdub. Occupied `a=1,b=1`. Empty `a=0,b=0`. `ao=0` `bo=0`. |
+| `from=prep` `eq=0` | 0 | [`232510`](../../captures/session_20260817_232510.log) wrap-2/3 extras are gone. Source-view `notes=5` stayed flat and `b` stayed 1. |
+
+Session 2 open `from=prep`. Hold fill still `from=win` (73, `merged=0`). `late_clk=0`. Production consume still A.
+
 ---
 
 ## Wrap notes into PresentNote at S
