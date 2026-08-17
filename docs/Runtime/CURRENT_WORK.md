@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (companion publish HITL 002447)
+Last updated: 2026-08-18 (Phase 2a planned)
 
 ---
 
@@ -19,7 +19,9 @@ Last updated: 2026-08-18 (companion publish HITL 002447)
 
 Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`notePresentAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
 
-Phase 1 **device capture** [`002447`](../../captures/session_20260818_002447.log) (`b9b9336`): 1-bar (768). 31 `lcr,part`. **`eq=0` = 0.** After wrap 1 and wrap 2, occupied holds are `a=1,b=1` (`ao=0`,`bo=0`). [`232510`](../../captures/session_20260817_232510.log) wrap-2/3 `b=k` extras are gone. Enter before first wrap is still `from=miss` (6). Hold fill still `from=win`. Production consume still A. Do **not** start Phase 3 fill disable until wrap predicates (Phase 2) and LinearSpan-from-`NoteSpan` are decided. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer. Session-undo inverse of baked companions is not in this stage.
+Phase 1 **device capture** [`002447`](../../captures/session_20260818_002447.log) (`b9b9336`): 1-bar (768). 31 `lcr,part`. **`eq=0` = 0.** After wrap 1 and wrap 2, occupied holds are `a=1,b=1` (`ao=0`,`bo=0`). [`232510`](../../captures/session_20260817_232510.log) wrap-2/3 `b=k` extras are gone. Enter before first wrap is still `from=miss` (6). Hold fill still `from=win`. Production consume still A.
+
+**Planned next (not started):** Phase 2a — session-undo inverse of baked companions. After wrap undo, A and B must both show the restored source note. Phase 3 entry gate. Do **not** start Phase 2a firmware until this item is moved into Now implementing. Do **not** start Phase 3 fill disable until Phase 2 wrap predicates, Phase 2a, and LinearSpan-from-`NoteSpan` pass. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 
