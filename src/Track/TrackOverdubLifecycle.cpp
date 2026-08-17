@@ -243,16 +243,25 @@ void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
+  const uint32_t stopStartUs = micros();
+  const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
+  logOverdubStopStage(loop, stopStartUs, "enter", 0, heapAtEnter, heapAtEnter, "entered");
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
     closeTick = capturePhaseTick(currentTick);
   }
-  if (handleNoteEditFold(false, currentTick, closeTick, /*stopStartUs=*/0)) {
+  if (handleNoteEditFold(false, currentTick, closeTick, stopStartUs)) {
     loop.closeOverdubSession();
     return;
   }
   finalizePendingNotes(currentTick);
-  commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
+  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t sealStartUs = micros();
+  const CommitResult commitResult =
+      commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
+  logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
+                      MemoryMonitor::getInternalHeapFreeBytes(),
+                      commitResultLabel(commitResult));
   silenceTrackMidiOutput();
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
