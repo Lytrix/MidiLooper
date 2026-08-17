@@ -696,18 +696,36 @@ Completed wrap notes already enter prepared `PresentNote` via `Track::commitOver
 | Path | EditPasses | Result |
 |------|------------|--------|
 | `tryResolvePreparedWindow` (A / source view) | applied (`editPasses` argument) | Hide/Shorten from `sealPendingNoteChangesToEditPasses` drop or shorten spans before RC8 |
-| `tryResolvePreparedState` (B) | **not applied** | `publishPreparedOverdubPass` patches raw wrap spans; `eraseDisabledSounding` only drops disabled **capture** passes |
+| `tryResolvePreparedState` (B) | projected at wrap publish | `publishPreparedOverdubPass` patches wrap Adds, then projects this wrap’s sealed Delete/Length companions onto `spans` / `spanBoundaries` / `presentAt`. `eraseDisabledSounding` still only drops disabled **capture** passes |
 
-Companion Delete/Length rows exist after each wrap seal. Window reconstruct sees them; checkpoint `presentAt` does not.
+Idle `StateCheckpoints::rebuild` remains the full-history owner. Wrap publish does not rematerialize. Session-undo inverse of baked companions is a later stage.
 
 Still required before PresentNote can own discovery:
 
 1. **Prepared kept before first wrap.** `publishPreparedOverdubPass` no-ops unless `deviceGateFinished` and `preparedIndexKept`. Session 1 enter was `from=miss` / open `from=win` until wrap 1. Idle gate (DEC-037 6.0), not a button cold-build.
-2. **Fold sealed companions into checkpoints** after wrap publish (apply Hide/Shorten to spans / `presentAt`, or rebuild spans from index+delta+`editPasses`). Same edit sequence `prepareRebuildResolvedEvents` already uses at idle gate.
+2. **Fold sealed companions into checkpoints** — **in tree.** `publishPreparedOverdubPass` projects this wrap’s sealed Delete/Length rows onto existing `spans` / `spanBoundaries` / `presentAt`. Idle `StateCheckpoints::rebuild` stays the full-history owner. Do not call `applyNoteEditPass` from publish. Session-undo inverse of baked companions is not in this stage.
 3. **LinearSpan from `NoteSpan`**, not emitted `PresentNote` (no `endTick`). Consume still needs start and end.
 4. **Leave live capture out of LCR.** Path B remains forbidden. `extractOpenCaptureNoteOns` removes held ons **before** seal and re-appends them to the next wrap’s `capture.store`. Those notes are not in the published pass until a later wrap or stop completes them.
 
 Do not copy per-bar `presentAt` as a new store ([`225351`](../../captures/session_20260814_225351.log)). Do not put `resolveWindow` on USB miss.
+
+---
+
+## Pre-implementation review (companion publish)
+
+### Ready
+- `publishPreparedOverdubPass` already incrementally applies wrap Adds.
+- Sealed companions are Delete / Length only.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Path | Option 1 — project sealed rows onto prepared checkpoints |
+| Not | wrap-time `StateCheckpoints::rebuild` |
+| Authority | `EditPass` payload; no second `applyNoteEditPass` |
+
+### Open before coding
+None. Session-undo inverse of baked companions is a later stage.
 
 ---
 
