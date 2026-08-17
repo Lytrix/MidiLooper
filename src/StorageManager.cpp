@@ -78,20 +78,6 @@ bool setCurrentSetLoadedFromFolder(const char* folderName) {
     return true;
 }
 
-LoopId loopIdForPersistSlot(uint8_t trackIndex, uint8_t slotIndex) {
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return kInvalidLoopId;
-    }
-    if (trackIndex >= trackManager.getTrackCount()) {
-        return static_cast<LoopId>(slotIndex);
-    }
-    Track& track = trackManager.getTrack(trackIndex);
-    if (!track.loopsAllocated()) {
-        return static_cast<LoopId>(slotIndex);
-    }
-    return track.loopIdForSlot(slotIndex);
-}
-
 }  // namespace
 
 namespace StorageManagerInternal {
