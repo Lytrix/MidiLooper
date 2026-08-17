@@ -653,6 +653,8 @@ Rebuild count/cost and affected ∩ prepared explain **why**. They do not pass t
 
 **Stop and ask.** late MIDI = 0 on mutation → lag hypothesis **not demonstrated** (optimization pin optional). late MIDI > 0 coincident with large rebuilds → **Problem B**, not 2-bar LCR.
 
+Device [`213401`](../../captures/session_20260817_213401.log) (after ISR ITCM fix): 64-bar overdub enter/hold stalls are `lcr,src,why=open` 133 ms / `why=hold` 99 ms / `usbnote` 396 ms. 2-bar `playback_build` is 3–6 ms. 1-bar overdub in the same capture has `late_*` 0. Do not treat this capture as a pin to shrink the gather window or to consume LCR on playback.
+
 ### Stage 4 — Problem B: usable region (experiment, not policy)
 
 **Only after Stage 3 shows late MIDI (or an explicit optimization pin).** Candidate horizons (2-bar control vs 1 / 1/2 / 1/4 / 1/8 as **measurement lengths**, not Config). Mandatory: `late_event_count == 0` for on, off, and clock. Then rebuild pressure, CPU, mutation visibility.
