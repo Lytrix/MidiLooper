@@ -291,7 +291,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
     char line[192];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,6a,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+             "#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
              static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
              static_cast<unsigned long>(reconstructUs),
              static_cast<unsigned long>(windowUs + reconstructUs),

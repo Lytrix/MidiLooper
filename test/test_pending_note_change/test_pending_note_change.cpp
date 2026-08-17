@@ -256,29 +256,34 @@ void test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  loop.loopLengthTicks = kLoopLen;
+  seedLongSourceNote(loop, 1, 64, 176, 60);
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub);
 
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
-                                                                   overlapIds({})));
+                                                                   overlapIds({1})));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, 60, 90, 10)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(240, 1, 60, 0)));
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  loop.applyPendingNoteChangesToOverdubSourceView();
   (void)loop.sealPendingNoteChangesToEditPasses();
+  loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
 
   bool foundPriorAdd = false;
+  bool foundHiddenOccupant = false;
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
     if (note.noteId == 10 && note.startTick == 64 && note.endTick == 240) {
       foundPriorAdd = true;
     }
+    if (note.noteId == 1 && note.startTick == 64 && note.endTick == 176) {
+      foundHiddenOccupant = true;
+    }
   }
   TEST_ASSERT_TRUE(foundPriorAdd);
+  TEST_ASSERT_FALSE(foundHiddenOccupant);
 
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 288, 11,
                                                                    overlapIds({10})));
