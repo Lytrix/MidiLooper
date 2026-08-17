@@ -41,6 +41,21 @@ inline bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t lo
   return linearStart < linearEnd;
 }
 
+/// RC8 hold membership. Inclusive start, exclusive end. Phased `end < start`
+/// unwraps by one loop length with no half-loop test.
+inline bool displayNotePresentAtHold(uint32_t startTick, uint32_t endTick, uint32_t holdStart,
+                                     uint32_t loopLength) {
+  uint32_t linearStart = 0;
+  uint32_t linearEnd = 0;
+  if (!linearSoundingSpan(startTick, endTick, loopLength, linearStart, linearEnd)) {
+    return false;
+  }
+  const uint32_t s = IntervalProjection::tickPhaseInLoop(holdStart, 0, loopLength);
+  const bool direct = linearStart <= s && s < linearEnd;
+  const bool shifted = linearStart <= s + loopLength && s + loopLength < linearEnd;
+  return direct || shifted;
+}
+
 inline bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingEnd,
                                              uint32_t incomingStart, uint32_t incomingEnd,
                                              uint32_t loopLength) {

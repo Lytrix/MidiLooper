@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "LoopContentResolution.h"
 #include "OverlapCandidateLookup.h"
+#include "OverlapNoteIdObservation.h"
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
@@ -30,31 +31,14 @@ namespace {
 
 bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
                         uint32_t& linearStart, uint32_t& linearEnd) {
-  if (loopLength == 0) {
-    return false;
-  }
-  linearStart = IntervalProjection::tickPhaseInLoop(startTick, 0, loopLength);
-  linearEnd = IntervalProjection::tickPhaseInLoop(endTick, 0, loopLength);
-  if (linearEnd == linearStart) {
-    return false;
-  }
-  if (linearEnd < linearStart) {
-    linearEnd += loopLength;
-  }
-  return linearStart < linearEnd;
+  return OverlapNoteIdObservation::linearSoundingSpan(startTick, endTick, loopLength, linearStart,
+                                                      linearEnd);
 }
 
 bool displayNotePresentAtHold(uint32_t startTick, uint32_t endTick, uint32_t holdStart,
                                uint32_t loopLength) {
-  uint32_t linearStart = 0;
-  uint32_t linearEnd = 0;
-  if (!linearSoundingSpan(startTick, endTick, loopLength, linearStart, linearEnd)) {
-    return false;
-  }
-  const uint32_t s = IntervalProjection::tickPhaseInLoop(holdStart, 0, loopLength);
-  const bool direct = linearStart <= s && s < linearEnd;
-  const bool shifted = linearStart <= s + loopLength && s + loopLength < linearEnd;
-  return direct || shifted;
+  return OverlapNoteIdObservation::displayNotePresentAtHold(startTick, endTick, holdStart,
+                                                            loopLength);
 }
 
 bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingEnd,
@@ -216,19 +200,8 @@ LOOP_COLD_MEM void Loop::collectOverdubSourceHoldParticipantIds(uint32_t holdPha
 
 LOOP_COLD_MEM bool Loop::tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                                                OverlapNoteIdSet& out) const {
-  out.clear();
-  PresentNoteVec presentNotes;
-  if (!LoopContentResolution::tryResolvePreparedState(tick, playbackRevision, presentNotes,
-                                                      nullptr)) {
-    return false;
-  }
-  for (const PresentNote& note : presentNotes) {
-    if (note.pitch != pitch || note.noteId == kInvalidNoteId) {
-      continue;
-    }
-    (void)out.insert(note.noteId);
-  }
-  return true;
+  return LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(tick, pitch, playbackRevision,
+                                                                       out);
 }
 
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(

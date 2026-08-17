@@ -213,8 +213,8 @@ struct Loop {
   /// Does not fill the source window. Clears `out` then inserts.
   void collectOverdubSourceHoldParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
-  /// Prepared present-at-S NoteIds for pitch (B). Returns false on prepared miss.
-  /// Never `resolveWindow` / cold `resolveState`. Clears `out`.
+  /// Prepared present-at-S NoteIds for pitch (B). RC8 hold on prepared `NoteSpan`s.
+  /// Returns false on prepared miss. Never `resolveWindow` / cold `resolveState`. Clears `out`.
   bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.

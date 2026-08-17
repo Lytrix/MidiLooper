@@ -8,6 +8,7 @@
 #include "EditPass.h"
 #include "LoopPasses.h"
 #include "MidiEvent.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
 
 #include <cstdint>
@@ -359,4 +360,9 @@ struct LoopContentResolution {
   /// Consume kept `spans` + `spanBoundaries`. Returns false on miss or stamp mismatch.
   static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, PresentNoteVec& out,
                                       ResolutionCostCounters* counters = nullptr);
+  /// Prepared present-at-S NoteIds for pitch using RC8 `displayNotePresentAtHold` on
+  /// `NoteSpan`s. Does not call `resolveState`. Returns false on prepared miss.
+  static bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
+                                                     uint32_t playbackRevision,
+                                                     OverlapNoteIdSet& out);
 };
