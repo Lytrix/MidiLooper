@@ -1,6 +1,6 @@
 # Playback gather LCR consume
 
-**Status:** Architecture **re-ranked** 2026-08-17 around **per-event MIDI deadline correctness**. Problem A: prove whether today’s 2-bar fill causes late MIDI. Problem B: usable region (only if A shows late MIDI). Problem C: LCR of the **required** horizon (not automatically 2-bar LCR). **No firmware** until this file is in CURRENT_WORK § Now implementing.  
+**Status:** Architecture **re-ranked** 2026-08-17. Stage 1 hooks on device. [`213401`](../../captures/session_20260817_213401.log): 2-bar gather is 3–6 ms; 64-bar overdub stall is 16-bar source/hold `resolveWindow` on USB. Playback Problem B is **not** the next firmware. Successor architecture: [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md). **No gather firmware** (stamp redesign, length clamp, LCR consume) until that file’s Experiment 1 is explicitly in CURRENT_WORK.  
 **Date:** 2026-08-17  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from remaining `loop-content-resolution` 6.x, NOTE_EDIT hydrate, and LED lookup.  

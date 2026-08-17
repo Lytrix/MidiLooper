@@ -49,7 +49,8 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 | [loop_layer_history_persistence_architecture.md](loop_layer_history_persistence_architecture.md) | DEC-035 — Loop persists content only; Layer A next |
 | [runtime_scheduling_admission_model_architecture.md](runtime_scheduling_admission_model_architecture.md) | Runtime timing-telemetry contract (interval reservation deferred). Musical gate: per-event MIDI deadline lateness; MIG is interval/contention |
 | [runtime_scheduling_owner_boundary_admission_refinement.md](runtime_scheduling_owner_boundary_admission_refinement.md) | Owner-Boundary Gate roadmap (O–T–R–C–A–P) |
-| [playback_gather_lcr_consume_enhancement.md](playback_gather_lcr_consume_enhancement.md) | Hypothesis: 2-bar rebuild causes late MIDI (deadline gate shared with scheduling); A→B→C. Stage 1 hooks link (no per-event `#CAP`; 2-bar LCR not default after A) |
+| [consumer_window_budget_ownership_architecture.md](consumer_window_budget_ownership_architecture.md) | After [`213401`](../../captures/session_20260817_213401.log): per-consumer horizon/budget; LCR stays resolver; Experiment 1 clamps source/hold only |
+| [playback_gather_lcr_consume_enhancement.md](playback_gather_lcr_consume_enhancement.md) | Stage 1 hooks on device. 2-bar gather not the 64-bar overdub stall; Problem B not next firmware |
 | [runtime_scheduler_lcr_consumer_grooming_refinement.md](runtime_scheduler_lcr_consumer_grooming_refinement.md) | Consumer rule + A/B/C stalkers; Slice 1 rem split, Slice 2/2b idle one-source (wrap-held edge append). NOTE_EDIT hydrate is not this file. |
 | [note_edit_hydrate_enhancement.md](note_edit_hydrate_enhancement.md) | NOTE_EDIT consume prepared LCR around `selectedTick` (queued; proposal is the architecture) |
 | [overdub_overlap_hold_same_start_bugfix.md](overdub_overlap_hold_same_start_bugfix.md) | Overdub hold snapshot includes same-start notes (RC1–RC8) |
