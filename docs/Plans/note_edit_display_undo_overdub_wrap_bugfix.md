@@ -159,7 +159,7 @@ Producer is correct (`rebuildOverdubSourceView`, `why=wrap,from=prep`). Live com
 |-------|--------|--------|
 | RCA | `9292368` | docs only |
 | **RC-W1** | `f0b0e66` | wrap `beginCapture` clears preview; held-on re-append |
-| **RC-N1** | `142b95b` | persist-twin projection hide + `retireSupersededPitchDisplayNote` |
+| **RC-N1** | `142b95b` + `4aabf1c` | persist-twin projection hide + sibling-end retire |
 | **RC-U1** | `324ffdd` | `refreshVisualCacheAfterPassStateChange` idle slices; no `VCACHE,full` on undo/redo |
 
 HITL (after flash `teensy41-capture-serial`):
