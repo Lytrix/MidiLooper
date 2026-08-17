@@ -74,7 +74,7 @@ Always load first:
 - `TrackManager`, `LoopPasses` materialize APIs
 - [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037; do not treat `materializeToEventVector` as the long-term playback owner
 - [plans/consumer_window_budget_ownership_architecture.md](Plans/consumer_window_budget_ownership_architecture.md) — per-consumer horizon/budget; `kMaxDetailedWindowBars` must not govern overdub source/hold; no WindowManager
-- [plans/overdub_participant_loop_content_architecture.md](Plans/overdub_participant_loop_content_architecture.md) — overdub participants from notes present at tick `S`; not MIDI send / mute; Phase 0b done; Phase 1 not authorized
+- [plans/overdub_participant_loop_content_architecture.md](Plans/overdub_participant_loop_content_architecture.md) — overdub participants from notes present at tick `S`; NOTE_EDIT overlap sibling (selected/mover LinearSpan); not MIDI send / mute; Phase 0b done; Phase 1 / hydrate firmware not authorized
 - [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — Stage 1 hooks on device; 2-bar gather not the 64-bar overdub stall
 - [plans/runtime_scheduling_admission_model_architecture.md](Plans/runtime_scheduling_admission_model_architecture.md) — MIDI Input Gap is interval/contention; per-event lateness is product correctness when hooked
 

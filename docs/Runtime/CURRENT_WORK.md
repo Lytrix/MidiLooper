@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (Phase 0b present-at-S identity mapping)
+Last updated: 2026-08-17 (NOTE_EDIT overlap = selected-span participants)
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-17 (Phase 0b present-at-S identity mapping)
 
 Phase 0b **done:** `SoundingNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`noteSoundsAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
 
-**Firmware not authorized** (Phase 1 observation and `PresentNote` C++ rename). Do **not** start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`.
+**Firmware not authorized** (Phase 1 observation and `PresentNote` C++ rename). Do **not** start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 
@@ -103,9 +103,12 @@ Do **not** start Stage 1–4 firmware until this file is explicitly in implement
 ### NOTE_EDIT hydrate (queued — own work path)
 
 **Work identity:** [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md)  
-**Architecture:** [`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md) — DEC-037 amendment 2026-08-16; architecture **PASS**; stages **PASS WITH AMENDMENTS**.
+**Architecture:** [`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md) — DEC-037 amendment 2026-08-16; overlap retarget 2026-08-17; architecture **PASS**; stages **PASS WITH AMENDMENTS**.  
+**Sibling:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling.
 
-Same consume shape as overdub 6E: prepared LCR around `selectedTick`, not a full-loop rematerialize. Select is neighborhood navigation (`tickEvents` / `spanBoundaries`), not `resolveState`. Overlap is identity-bounded lookup. Stages 4a/4b/4c split.
+Overlap uses the **same participant query as overdub**, keyed by **selected/mover LinearSpan**, not a window around `selectedTick`. Select stays neighborhood navigation (`tickEvents` / `spanBoundaries` around `selectedTick`), not `resolveState`. Paint stays `visualCache` + `NoteEditCurrentState`. Stages 4a/4b/4c split.
+
+Do **not** start firmware from “prepared LCR around `selectedTick`.” That mapping is withdrawn for overlap.
 
 **Not** remaining `loop-content-resolution` 6.4 firmware. **Not** grooming Slice 5. **Not** `lazy-slot-hydration`. **Not** a resumable open-until-ready session. **Not** playback gather ([`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md)).
 

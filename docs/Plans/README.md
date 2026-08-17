@@ -50,10 +50,10 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 | [runtime_scheduling_admission_model_architecture.md](runtime_scheduling_admission_model_architecture.md) | Runtime timing-telemetry contract (interval reservation deferred). Musical gate: per-event MIDI deadline lateness; MIG is interval/contention |
 | [runtime_scheduling_owner_boundary_admission_refinement.md](runtime_scheduling_owner_boundary_admission_refinement.md) | Owner-Boundary Gate roadmap (O–T–R–C–A–P) |
 | [consumer_window_budget_ownership_architecture.md](consumer_window_budget_ownership_architecture.md) | After [`213401`](../../captures/session_20260817_213401.log): per-consumer horizon/budget; LCR stays resolver; Experiment 1 detach only |
-| [overdub_participant_loop_content_architecture.md](overdub_participant_loop_content_architecture.md) | Notes present at tick `S`; PresentNote vs ActiveNote vs MIDI sounding; Phase 0b done; no Phase 1 firmware |
+| [overdub_participant_loop_content_architecture.md](overdub_participant_loop_content_architecture.md) | Notes present at tick `S`; NOTE_EDIT overlap is sibling (selected/mover LinearSpan); Phase 0b done; no Phase 1 / hydrate firmware |
 | [playback_gather_lcr_consume_enhancement.md](playback_gather_lcr_consume_enhancement.md) | Stage 1 hooks on device. 2-bar gather not the 64-bar overdub stall; Problem B not next firmware |
 | [runtime_scheduler_lcr_consumer_grooming_refinement.md](runtime_scheduler_lcr_consumer_grooming_refinement.md) | Consumer rule + A/B/C stalkers; Slice 1 rem split, Slice 2/2b idle one-source (wrap-held edge append). NOTE_EDIT hydrate is not this file. |
-| [note_edit_hydrate_enhancement.md](note_edit_hydrate_enhancement.md) | NOTE_EDIT consume prepared LCR around `selectedTick` (queued; proposal is the architecture) |
+| [note_edit_hydrate_enhancement.md](note_edit_hydrate_enhancement.md) | NOTE_EDIT overlap = selected/mover LinearSpan participants (queued; Select stays `selectedTick` neighborhood) |
 | [overdub_overlap_hold_same_start_bugfix.md](overdub_overlap_hold_same_start_bugfix.md) | Overdub hold snapshot includes same-start notes (RC1–RC8) |
 | [overdub_overlap_hold_enter_source_view_rebuild_bugfix.md](overdub_overlap_hold_enter_source_view_rebuild_bugfix.md) | RC7: enter source view uses wrap rebuild, not visual cache |
 | [overdub_overlap_hold_hold_window_jit_bugfix.md](overdub_overlap_hold_hold_window_jit_bugfix.md) | RC8: hold fill is 16-bar this-pitch JIT, not full-loop adds |
