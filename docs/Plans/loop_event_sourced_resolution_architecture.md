@@ -1,13 +1,13 @@
 # Loop content resolution — event-sourced prototype
 
-**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); 6C consume-when-ready native landed; **6D.4 landed** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) (commit-site delta publish; not all of LCR live; 6D.3/6D.2 PASS; 6D.1 FAIL; A/B rejected)  
+**Status:** Active — native Stages 0–8 PASS; Stage 9 complete (**5.18 FROZEN**, **5.1 PASS** [`173842`](../captures/session_20260815_173842.log), **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` 10050 µs); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); **6C closed** [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log); **6D.4 HITL PASS** same captures [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md) (overdub-query slice; not all of LCR live; 6D.3/6D.2 PASS; 6D.1 FAIL; A/B rejected)  
 **Date:** 2026-08-14  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub) Layer D 3b (overdub entry PASS); [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) Layers C–D  
 **OpenSpec:** `openspec/changes/loop-content-resolution/`  
 **Next-chat handoff:** [`loop_content_resolution_stage9_handoff.md`](loop_content_resolution_stage9_handoff.md)  
 **6D investigation:** [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md)  
-**Does not authorize:** deleting `materializeToEventVector`; wiring resolution onto `handleMidiInput`; persisted checkpoint (D3) until Stage 7 shape is proven in RAM; overlay picker; Stage 3b GUS; interval reservation; RC-J; NOTE_EDIT hydrate firmware (own work path)
+**Does not authorize:** deleting `materializeToEventVector`; wiring resolution onto `handleMidiInput`; persisted checkpoint (D3) until Stage 7 shape is proven in RAM; overlay picker; Stage 3b GUS; interval reservation; RC-J; NOTE_EDIT hydrate firmware (own work path); playback gather firmware (own work path)
 
 ---
 
@@ -266,7 +266,7 @@ Native-only first. Replay overdub overlap from archived `openspec/specs/overdub-
 | 6 | Window query on the full fixture; cost vs `materializeToEventVector` + reconstruct | tick index; `CommittedEventRange` is not sufficient if it still walks pass lists |
 | 7 | **PASS** In-RAM checkpoints at `checkpointIntervalTicks`; `resolveState` from checkpoint + tail | DEC-035 D3 *shape*; not persisted yet |
 | 8 | **PASS** Loop switch at a high tick — warm destination `resolveState`; bounded replay, never from 0, no checkpoint rebuild | `resolveState` is required here |
-| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log). 6C not started | keep 3b copy path |
+| 9 | Device three-part gate — **5.18 FROZEN**; **5.1 PASS** [`173842`](../captures/session_20260815_173842.log); **5.2 PASS** [`180624`](../captures/session_20260815_180624.log); **6A PASS** [`185931`](../captures/session_20260815_185931.log) `match=1`; **6B PASS** [`192334`](../captures/session_20260815_192334.log); **6C closed** [`205928`](../captures/session_20260815_205928.log) | keep 3b copy path |
 
 **Layer semantics:** the cut-at-boundary example is existing overdub overlap. The prototype consumes that spec. It does not replace `NoteGeometryResolver` for live NOTE_EDIT.
 
@@ -349,9 +349,9 @@ Keep 3b `visualCache.notes` copy as fallback. Do not remove it in 6A–6C. LCR c
 | display repaint | sliced |
 | eventual full consistency | asynchronous |
 
-3. **6C — overdub source.** Native landed. [`194643`](../../captures/session_20260815_194643.log): `mat=` complete, `6a` `match=1`; `6c`/`begin_capture` lost to `RING,overflow`. INFO open 42 ms then 9 ms. Recapture: overdub+stop within ~1 s. Score against 3b **2214 µs**.
+3. **6C — overdub source.** **Closed.** Native landed. Device [`205928`](../../captures/session_20260815_205928.log) `DIAG,lcr,6c` `begin_capture` **37747 µs**; [`210508`](../../captures/session_20260815_210508.log) **31128 µs** / **312636 µs**. [`194643`](../../captures/session_20260815_194643.log) RING dropped the first `6c`. 3b stays the fast path (**2214 µs**). LCR reconstruct on the button is not a 3b replacement.
 4. **After 6C — MIDI Input Gap > 50 ms.** [`192334`](../../captures/session_20260815_192334.log) `DIAG,midi_gap` **135 / 119 / 138 ms** at 54.7 / 64.7 / 69.8 s; `clockrate` stayed **47**. **Not LCR.** Same windows `persist_save` **77 / 118 / 109 ms**; `FinalizeWorkspace` `PERS,result` **70–72 ms**. Slice budget while transport is active is 300 µs; one finalize/SD step overruns. Not RC-J. Persist fix is a separate change.
-5. **Later:** long-loop playback gather (6.3). NOTE_EDIT hydrate is a separate work path: [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md).
+5. **Later:** long-loop playback gather is a separate work path: [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md). NOTE_EDIT hydrate is a separate work path: [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md).
 6. **D3 persist checkpoint** — same checkpoint type as stage 7; `StorageManager` remains persist owner (DEC-008).
 
 `< 3 ms` is a **regression target**, not an architectural promise. `< 50 ms` stays the hard gate. LCR’s job is to eliminate post-commit / full-rebuild machinery.

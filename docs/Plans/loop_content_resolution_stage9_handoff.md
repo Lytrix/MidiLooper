@@ -15,7 +15,7 @@
 
 > Continue DEC-037 from [`docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md`](docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
 >
-> **Now:** **6D.4 restamp holds** on [`210508`](../../captures/session_20260815_210508.log) (same boot as [`205928`](../../captures/session_20260815_205928.log)). Undo miss → 3b `begin_capture` **120 µs**. Next two PLAYING publishes consume `6c` at **31128 µs** then **312636 µs**. Restamp is not the 6C cost. Do not start midi_gap / 6.3.
+> **Now:** **6C closed** and **6D.4 HITL PASS** on [`205928`](../../captures/session_20260815_205928.log) / [`210508`](../../captures/session_20260815_210508.log). Undo miss → 3b `begin_capture` **120 µs**. Next two PLAYING publishes consume `6c` at **31128 µs** then **312636 µs**. 3b stays the fast path. Playback gather is a separate work path ([`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md)). Do not start midi_gap from this handoff.
 >
 > Read CURRENT_WORK + the 6D plan first.
 

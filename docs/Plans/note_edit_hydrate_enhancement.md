@@ -3,7 +3,7 @@
 **Status:** Decided — not now. Architecture PASS; firmware not authorized.  
 **Date:** 2026-08-16  
 **Kind:** enhancement  
-**Work identity:** this file. Separate from parked wrap-move persist, LCR 6C/6D/6.3, and scheduler grooming.  
+**Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
 **Architecture (proposal):** [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md)  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) amendment 2026-08-16  
 **Overdub analog:** [6E](loop_content_resolution_overdub_state_evaluation_refinement.md) `resolveState(tick)` consume  
@@ -70,8 +70,8 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 |--------------|--------|
 | LCR `resolveState` / `resolveWindow` native | PASS |
 | 6.0 no construct on button | accepted — same rule on NOTE_EDIT open / fader |
-| 6A / 6C consume-when-ready | 6A device PASS; 6C native |
-| 6D.4 post-commit publish | landed; not all of LCR live |
+| 6A / 6C consume-when-ready | 6A device PASS; 6C **closed** [`205928`](../../captures/session_20260815_205928.log) / [`210508`](../../captures/session_20260815_210508.log) (3b stays) |
+| 6D.4 post-commit publish | **HITL PASS** same captures; not all of LCR live |
 | 6E overlap query | native PASS; not wired to Track |
 | Wrap-move persist | **parked** — current-structure issue; not a start gate |
 

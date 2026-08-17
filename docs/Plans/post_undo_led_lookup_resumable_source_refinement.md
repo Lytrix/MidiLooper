@@ -35,7 +35,7 @@ DEC-037 §10: production consumers swap only after three gates. CURRENT_WORK: do
 
 `tryResolvePreparedWindow` from `updateLeds` would run on the BAR `loop()` prefix (same class as “do not put resolution on `handleMidiInput`”). Device 6C consume on this branch has been **31 ms** and **313 ms** ([`210508`](../../captures/session_20260815_210508.log)). That is not a MIDI-safe BAR query.
 
-Do **not** start 6.3 (long-loop playback gather). That is a different consumer.
+Do **not** start playback gather ([`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md)). That is a different consumer.
 
 ## Rule this change must keep
 
@@ -133,7 +133,7 @@ Do not reset `lastUpdateBar` on dirty→clean. Reopen only if Stage 1 HITL shows
 - Re-arm PLAYING drain
 - `tryResolvePreparedWindow` / `resolveWindow` / `resolveState` from `MidiLedManager`
 - Sliced gather session inside `MidiLedManager` (parallel flatten)
-- 6.3 playback gather
+- Playback gather ([`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md))
 - Visual-cache idle grain / LoopPersist CRC
 - Splitting `gatherCommittedEvents` vs merge (measurement closed; that function leaves this path)
 

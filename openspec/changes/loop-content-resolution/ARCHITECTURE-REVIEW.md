@@ -78,7 +78,7 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **State transition change?** | NO |
 | **Behavior-preserving?** | YES for overdub FSM. Keep 3b `visualCache.notes` copy. Dirty-cache `resolveWindow` / `ensure*` on `startOverdubbing` is **forbidden** |
 | **Reuse** | YES — idle gate already owns LCR construction; 3b copy stays fallback |
-| **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. **6C native** (`tryResolvePreparedWindow` → `overdubSourceView`; 3b fallback). Consume-when-ready only |
+| **Phase scope** | **6A PASS** [`185931`](../../../captures/session_20260815_185931.log) `match=1`. **6B PASS** [`192334`](../../../captures/session_20260815_192334.log) `stale_range` `dcnt` 15/5/5. **6C closed** [`205928`](../../../captures/session_20260815_205928.log) / [`210508`](../../../captures/session_20260815_210508.log) (`tryResolvePreparedWindow` → `overdubSourceView`; 3b stays the fast path). Consume-when-ready only |
 
 ### Phase 6D — Incremental overdub-query index (investigation; 6D.3 now)
 
@@ -90,7 +90,7 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 | **State transition change?** | NO — 6D.3 does not touch production. Later firmware placement is not this phase |
 | **Behavior-preserving?** | YES — native tests only |
 | **Reuse** | YES — same two-source `findRawWindowFromTickEvents`. Each commit appends into the existing delta `TickEventEntryVec` and sorts that vector only |
-| **Phase scope** | **6D.3 native PASS:** N=1/4/16 at H=8192 and 32768, δ=8. `no_delta` stays 8+0. Commit tracks accumulated Δ, not H. Not authorization to make LCR incrementally live. Next: consider production architecture gate. Production untouched. Plan [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md). **A rejected. B rejected.** |
+| **Phase scope** | **6D.3 native PASS:** N=1/4/16 at H=8192 and 32768, δ=8. `no_delta` stays 8+0. Commit tracks accumulated Δ, not H. **6D.4 landed** + HITL PASS [`205928`](../../../captures/session_20260815_205928.log) / [`210508`](../../../captures/session_20260815_210508.log). Overdub-query slice closed. Not all of LCR incrementally live. Plan [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md). **A rejected. B rejected.** |
 
 ---
 
@@ -108,4 +108,4 @@ Do not optimize `materializeToEventVector` again. Prove whether indexed, checkpo
 
 **Approval:** DEC-038 pins recorded. **038.1 HITL PASS.** **038.2 landed** (GUS `passIds` + STK3). Live +1 after first wrap restored ([`010535`](../../../captures/session_20260816_010535.log)). Native 6E.1–6E.5 PASS. 6D.4 publish already exists.
 
-**Approval:** APPROVE design gate — native Phase 0–5 may proceed. **6D.4 landed** (`publishPreparedOverdubPass`, `DeviceGateSession::delta`, two-source consume). Prepared validity may come from commit-site restamp, not only `deviceGateComplete`. Do not treat 6D as “LCR is always live.” Device HITL open.
+**Approval:** APPROVE design gate — native Phase 0–5 may proceed. **6D.4 landed** (`publishPreparedOverdubPass`, `DeviceGateSession::delta`, two-source consume). Prepared validity may come from commit-site restamp, not only `deviceGateComplete`. Do not treat 6D as “LCR is always live.” **6D HITL PASS** [`205928`](../../../captures/session_20260815_205928.log) / [`210508`](../../../captures/session_20260815_210508.log).

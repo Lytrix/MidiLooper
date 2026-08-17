@@ -16,7 +16,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 |----|------|-------|--------|
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
 | [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
-| [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; NOTE_EDIT hydrate is a separate work path (amended 2026-08-16) | Accepted |
+| [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; NOTE_EDIT hydrate and playback gather are separate work paths (amended 2026-08-16/17) | Accepted |
 | [DEC-036](#dec-036-runtime-effective-event-source-for-overdub) | 2026-08-14 | Runtime effective event source; overdub entry without display reconstruction | Accepted |
 | [DEC-035](#dec-035-loop-persists-content-only) | 2026-08-14 | Loop persists content only; undo/redo is derived and not persisted | Accepted |
 | [DEC-034](#dec-034-overlap-shorten-seals-at-the-user-triggered-commit) | 2026-08-13 | Overlap shorten seals at the user-triggered commit; closure defers leave-restore only | Accepted |
@@ -438,20 +438,30 @@ Not a new DEC. Pins the Editor consumer already drawn in DEC-037. Architecture: 
 
 **Affected modules (when firmware is authorized):** `NoteGeometryResolver` candidate source; `SelectNavigation`; `openNoteEditSession`; `ensurePlaybackMergedMidiEventsBuilt` overlay. Owners unchanged.
 
+### Amendment 2026-08-17 — 6C/6D closeout; playback gather is a separate work path
+
+Not a new DEC. Closes the OpenSpec 6C recapture and 6D HITL rows on existing device evidence. Moves leftover 6.3 out of `loop-content-resolution` the same way 6.4 moved to hydrate.
+
+**6C closed** as consume-when-ready. Native landed. Device: [`205928`](../captures/session_20260815_205928.log) `DIAG,lcr,6c` `begin_capture` **37747 µs**; [`210508`](../captures/session_20260815_210508.log) restamp hit **31128 µs**, third consume **312636 µs**. [`194643`](../captures/session_20260815_194643.log) RING dropped the first `6c`. 3b copy stays the fast path ([`045556`](../captures/session_20260814_045556.log) **2214 µs**). LCR window reconstruct on the button is not a 3b replacement. Do not treat 6C as “LCR beat 3b.”
+
+**6D closed** as the overdub-query slice only. 6D.4 firmware + HITL: [`205928`](../captures/session_20260815_205928.log) PLAYING publish restamp (`6c` without a second `deviceGateComplete`); [`210508`](../captures/session_20260815_210508.log) undo miss → 3b `begin_capture` **120 µs**, then PLAYING publish `6c`. Not all of LCR live. A/B remain rejected.
+
+**6.3 moved.** Long-loop playback gather is not remaining firmware in this OpenSpec change. Work identity: [`playback_gather_lcr_consume_enhancement.md`](Plans/playback_gather_lcr_consume_enhancement.md). Same 6.0 rule: no construct on MIDI / `handleMidiInput`. Miss keeps today’s gather. Firmware not authorized until that file is in CURRENT_WORK § Now implementing.
+
 ### Constraints created
 
-- Overdub button / source-view open must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included). Commit-site delta publish + restamp is the approved 6D.4 placement (firmware not yet authorized).
+- Overdub button / source-view open must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included). Commit-site delta publish + restamp is the approved 6D.4 placement (**landed**; HITL PASS [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log)).
 - No second O(history) derived owner that `invalidateCaches` will discard.
 - A checkpoint must not be a proportional copy of the resolved loop (per-bar full `soundingAt` fails this).
 - Derived indexes must not per-entry-allocate into PSRAM associative containers on realtime-adjacent construction paths (5.15 / 5.17 / 5.7c). Representation follows the query contract; B only if a measured flat query is too expensive.
 - `resolveNotes` must not become the playback primitive.
 - Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
-- Always-ready for the **next overdub query** is **6D** (6D.1 one-vector mutation FAIL; 6D.2 split PASS; 6D.3 repeated overdub PASS native). Not all of LCR. Not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready only.
+- Always-ready for the **next overdub query** is **6D** (6D.1 one-vector mutation FAIL; 6D.2 split PASS; 6D.3 repeated overdub PASS native; **6D.4 HITL PASS** [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log)). Not all of LCR. Not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready **closed** (same captures; 3b stays the fast path).
 - NOTE_EDIT open / fader must not construct, sort, checkpoint, or resolve LCR (same 6.0 consume-only rule). Select is neighborhood `tickEvents` / `spanBoundaries`, not `resolveState`. Participating-note find runs after mover stop plus one `DisplayManager::update` as trigger; data source is LCR ∪ overlay, not `visualCache` rebuild. Intra-action leave restores (`RestoreNote`); it does not apply DEC-030 sticky overlap end-of-participation. Remaining Active overlay rows are the session delta for the next select/overlap/audition (prepared LCR ∪ overlay). Do not insert live geometry into LCR (Path B). Editor paint follows overdub compose: `visualCache` + neighborhood overlay. Audition overlays settled session `NoteId`s onto the playback window around `currentTick`. Do not full-replace `mergedEvents` from a whole-loop session store. Do not fill current-state from every visual-cache row. Prepared miss is legacy compatibility only. `appendNoteEvents(NoteId)` must not scan the whole loop per id.
 
 ### Related OpenSpec
 
-`openspec/changes/loop-content-resolution/` (producer). Editor hydrate is a separate work path: [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md). DEC-036 change `loop-effective-event-source` remains for Layer D 3b closeout; D3/D4 stay out of that change.
+`openspec/changes/loop-content-resolution/` (producer). Editor hydrate is a separate work path: [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md). Playback gather is a separate work path: [`playback_gather_lcr_consume_enhancement.md`](Plans/playback_gather_lcr_consume_enhancement.md). DEC-036 change `loop-effective-event-source` remains for Layer D 3b closeout; D3/D4 stay out of that change.
 
 ### Migration notes
 

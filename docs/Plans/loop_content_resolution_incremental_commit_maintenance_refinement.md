@@ -1,13 +1,13 @@
 # LoopContentResolution — incremental post-commit index (6D / 6D.1 / 6D.2 / 6D.3)
 
-**Status:** Active — design/measurement investigation. No firmware.  
+**Status:** 6D.4 overdub-query slice **closed** (firmware + HITL [`205928`](../../captures/session_20260815_205928.log) / [`210508`](../../captures/session_20260815_210508.log)). Not all of LCR live. A/B rejected.  
 **Date:** 2026-08-15  
 **Kind:** refinement (investigation)  
 **Decision:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype)  
 **Parent:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md)  
 **Handoff:** [`loop_content_resolution_stage9_handoff.md`](loop_content_resolution_stage9_handoff.md)  
 **OpenSpec:** `openspec/changes/loop-content-resolution/`  
-**Does not authorize:** firmware; production commit/idle/overdub paths; A; B; making all of LCR incrementally live; 6C consume-path edits; flattening `openOnByPitch`; representation B; deleting `materializeToEventVector`
+**Does not authorize:** making all of LCR incrementally live; A; B; 6C consume-path edits; flattening `openOnByPitch`; representation B; deleting `materializeToEventVector`; playback gather firmware
 
 ---
 
