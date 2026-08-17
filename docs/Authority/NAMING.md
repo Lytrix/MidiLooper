@@ -43,7 +43,7 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Resolution** | Deterministic synchronous conflict solving | Runtime scheduling; pipeline or queue metaphors; a generic `Resolver` type |
 | **NoteGeometryResolver** | Live NOTE_EDIT overlap Resolution (geometry → actions) | Loop history / playback effective-state queries |
 | **LoopContentResolution** | Query-time effective musical state from active pass set + edit history (`resolveState`, `resolveWindow`; `resolveNotes` is a derived consumer) | `LoopPasses::materialize`; `NoteGeometryResolver`; a generic `Resolver` / `LoopContentResolver` |
-| **PresentNote** | Loop notes present at tick S from canonical content (`resolveState`). Independent of MIDI send, mute, and gather. C++ type is still `SoundingNote` until a naming-only rename | MIDI-output sounding; `ActiveNoteLedger`; overdub participant set after RC8 filter |
+| **PresentNote** | Loop notes present at tick S from canonical content (`resolveState`). Independent of MIDI send, mute, and gather. C++: `PresentNote` / `PresentNoteVec` | MIDI-output sounding; `ActiveNoteLedger`; overdub participant set after RC8 filter |
 | **ActiveNote** | Playback execution ON, including when muted — `ActiveNoteLedger`. Mute suppresses send; ledger still runs | Notes present at S; audible MIDI output |
 | **Sounding** (MIDI output) | Note has been sent / is audible — coupled to `sendMidiEvent` | LCR present-at-S; `ActiveNoteLedger` |
 | **Analyze** (consumer role) | Select / overlap / effective-state queries against prepared `LoopContentResolution` around a tick | A new type; piano-roll `visualCache`; playback `mergedEvents` |

@@ -31,8 +31,8 @@ startsByTick.emplace(span.endTick, spanIndex);
 
 ```text
 lower_bound(replayStart + 1) … lower_bound(queryTick + 1)
-  key == startTick → upsertSounding
-  key == endTick   → eraseSounding
+  key == startTick → upsertPresentNote
+  key == endTick   → erasePresentNote
 ```
 
 So the contract is:
@@ -47,7 +47,7 @@ That is a sorted sequence of `(tick, spanIndex)` with two entries per span. An a
 
 `walk=0` on the complete `DIAG,lcr` line is `passChunkListsWalked` from `resolveState` after the index exists. Preserve that.
 
-`fillCheckpointRange` does **not** use `startsByTick`. It walks every `spans` row per checkpoint (`noteSoundsAt`). That is the `ckpt` phase (not the 5.7 `spans` stall).
+`fillCheckpointRange` does **not** use `startsByTick`. It walks every `spans` row per checkpoint (`notePresentAt`). That is the `ckpt` phase (not the 5.7 `spans` stall).
 
 ---
 
@@ -67,7 +67,7 @@ Therefore a flat index cannot be “just append during the existing span pass”
 
 A MUST append in that same sequence, then **`stable_sort` by `tick` only**. Do not sort by `(tick, spanIndex)` until a native test proves that matches C — it can reorder two boundaries that share a tick (one span ends where another starts).
 
-If `startTick == endTick` on one span, C’s apply runs **both** `upsertSounding` and `eraseSounding` on that entry (`if` / `if`, not `else if`). A must keep two entries and the same apply.
+If `startTick == endTick` on one span, C’s apply runs **both** `upsertPresentNote` and `erasePresentNote` on that entry (`if` / `if`, not `else if`). A must keep two entries and the same apply.
 
 Do not add another `materializeToEventVector` / reconstruct to get tick order.
 

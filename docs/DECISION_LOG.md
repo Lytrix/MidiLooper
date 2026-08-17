@@ -274,7 +274,7 @@ Not a new DEC. Restates [DEC-033](#dec-033-overdub-overlap-ignores-per-note-chan
 
 A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiChannel` (`Track::sendMidiEvent` remaps recorded 1–16). `NoteUtils::DisplayNote` has no channel field. Pairing, overlap, and sounding identity use `NoteId` / pitch + tick, not `event.channel`.
 
-`openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `SoundingNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
+`openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `PresentNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
 
 ### Amendment 2026-08-15 — 5.18a pair instrument (no flatten)
 
@@ -456,13 +456,17 @@ Not a new DEC. Withdraws mapping `currentTick` → `selectedTick` as the **overl
 
 **Decision:**
 
-1. **Overlap** uses the same participant query as overdub, keyed by **selected / mover LinearSpan**. Identity is `NoteId` + LinearSpan. Phase 0b applies (`SoundingNote` lacks `endTick`; wrap predicates not proven equal).
+1. **Overlap** uses the same participant query as overdub, keyed by **selected / mover LinearSpan**. Identity is `NoteId` + LinearSpan. Phase 0b applies (`PresentNote` lacks `endTick`; wrap predicates not proven equal).
 2. **Select** stays a `tickEvents` / `spanBoundaries` neighborhood around `selectedTick`. That is navigation, not participants.
 3. **Open** must not rematerialize the loop to analyze.
 4. Paint stays `visualCache` + `NoteEditCurrentState`. Path B stays forbidden. `NoteGeometryResolver` stays overlap Resolution.
 5. Do **not** start hydrate Stages 1–5 from “prepared LCR × interval around `selectedTick`.” Firmware stays unauthorized until hydrate is in CURRENT_WORK § Now implementing.
 
 **Rejected:** treating `selectedTick` as the overlap origin because overdub used `currentTick` for present-at-S ON discovery. Overdub hold is already `[S, E)`; NOTE_EDIT overlap is that hold analog from the first query.
+
+### Amendment 2026-08-17 — PresentNote C++ rename
+
+Not a new DEC. Executes the naming phase of [`overdub_participant_loop_content_architecture.md`](Plans/overdub_participant_loop_content_architecture.md): LCR present-at-S type and helpers are `PresentNote` / `PresentNoteVec` / `presentAt` / `notePresentAt` / `presentAtHoldOnly` / `displayNotePresentAtHold`. `isSoundingNoteOn` (pairing helper) and `ActiveNoteLedger` are unchanged. No ownership or transition change. Phase 1 observation firmware still not authorized.
 
 ### Constraints created
 

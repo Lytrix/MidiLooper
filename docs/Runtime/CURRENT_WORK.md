@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (NOTE_EDIT overlap = selected-span participants)
+Last updated: 2026-08-17 (PresentNote C++ rename)
 
 ---
 
@@ -15,11 +15,11 @@ Last updated: 2026-08-17 (NOTE_EDIT overlap = selected-span participants)
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Owner:** canonical notes **present** at tick `S` (`resolveState` / prepared spans). Not `sendMidiEvent`. Not `ActiveNoteLedger`. Not a smaller source window.
 
-**PresentNote** = present at S (LCR type still `SoundingNote` until naming-only go). **ActiveNote** = execution ledger, mute-decoupled. **Sounding** = MIDI output only.
+**PresentNote** = present at S (`PresentNote` / `resolveState` / `presentAt` / `notePresentAt` / `presentAtHoldOnly`). **ActiveNote** = execution ledger, mute-decoupled. **Sounding** = MIDI output only.
 
-Phase 0b **done:** `SoundingNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`noteSoundsAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
+Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTick` dropped; present on `NoteSpan` / `DisplayNote`). Wrap predicates (`notePresentAt` half-loop vs RC8 linearize) are **not proven equal**. Prepared `tryResolvePreparedState` matches the cost model when ready; cold `resolveState(passes)` is a full-loop reconstruct. Hard test: PLAYING / STOPPED / MUTED / outside-gather must yield the same participant ids.
 
-**Firmware not authorized** (Phase 1 observation and `PresentNote` C++ rename). Do **not** start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized.
+**Firmware not authorized** (Phase 1 observation). PresentNote C++ rename **done**. Do **not** start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer (selected/mover LinearSpan) — hydrate firmware also not authorized.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 

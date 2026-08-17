@@ -44,7 +44,7 @@ bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLengt
   return linearStart < linearEnd;
 }
 
-bool displayNoteSoundingAtHold(uint32_t startTick, uint32_t endTick, uint32_t holdStart,
+bool displayNotePresentAtHold(uint32_t startTick, uint32_t endTick, uint32_t holdStart,
                                uint32_t loopLength) {
   uint32_t linearStart = 0;
   uint32_t linearEnd = 0;
@@ -136,7 +136,7 @@ void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
 
 LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
                                                         NoteUtils::DisplayNoteVec* newlyMergedPitchNotes,
-                                                        bool soundingAtHoldOnly) {
+                                                        bool presentAtHoldOnly) {
   if (newlyMergedPitchNotes != nullptr) {
     newlyMergedPitchNotes->clear();
   }
@@ -162,8 +162,8 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
     if (note.note != pitch || note.noteId == kInvalidNoteId) {
       continue;
     }
-    if (soundingAtHoldOnly &&
-        !displayNoteSoundingAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+    if (presentAtHoldOnly &&
+        !displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
       continue;
     }
     bool already = false;

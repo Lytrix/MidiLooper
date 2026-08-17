@@ -181,7 +181,7 @@ For `hold`: not merely `[S, E)`. Occupied-lane already showed **history matters*
 
 > What minimum information is required to determine whether this pitch is present at `S`, and whether it remains/changes through `E`, including loop wrap — independent of MIDI send and mute?
 
-**Preferred answer (2026-08-17, Phase 0b):** overdub consumes **notes present at tick `S`**. MIDI-execution sounding state is withdrawn. `SoundingNote` alone lacks `endTick` (it lives on `NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal. Plan: [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md). NOTE_EDIT overlap is the same participant class, keyed by selected/mover LinearSpan — not a window around `selectedTick`. Phase 1 firmware not authorized. Hydrate Stages 1–5 not authorized. Do not start a 1/2/4/8/16 production clamp from this file.
+**Preferred answer (2026-08-17, Phase 0b):** overdub consumes **notes present at tick `S`**. MIDI-execution sounding state is withdrawn. `PresentNote` alone lacks `endTick` (it lives on `NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal. Plan: [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md). NOTE_EDIT overlap is the same participant class, keyed by selected/mover LinearSpan — not a window around `selectedTick`. Phase 1 firmware not authorized. Hydrate Stages 1–5 not authorized. Do not start a 1/2/4/8/16 production clamp from this file.
 
 ---
 

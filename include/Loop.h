@@ -202,11 +202,11 @@ struct Loop {
   /// D2: just-in-time merge of this pitch's notes from the source/hold window
   /// (`kOverdubSourceWindowBars`) into the session source view. Not the full loop. Skips noteIds already
   /// present. Optional `newlyMergedPitchNotes` receives only those new rows.
-  /// `soundingAtHoldOnly` is the note-on snapshot path: merge notes sounding at
+  /// `presentAtHoldOnly` is the note-on snapshot path: merge notes present at
   /// the hold tick, not ahead notes in the same window.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
                                        NoteUtils::DisplayNoteVec* newlyMergedPitchNotes = nullptr,
-                                       bool soundingAtHoldOnly = false);
+                                       bool presentAtHoldOnly = false);
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
