@@ -713,6 +713,10 @@ Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like
 
 [`003503`](../../captures/session_20260818_003503.log) finished the idle gate at ~14 s *before* the boot GUS undos. This session’s GUS undos start at 13.949 s while restore is still the defer reason, and the gate never starts. DEC-037 6.0: no button cold-build. Phase 2a wrap-disable is not in this `#CAP` set.
 
+**Device** [`005000`](../../captures/session_20260818_005000.log) — 2-bar (1536). Prepared served (`from=prep` 73; `eq=1` 30, `eq=0` 43 `ao=1,bo=1`). After wrap 3, seven session undos stayed `why=live` depth 3 — live `+1` blocked sealed-wrap peel. DEC-038.6 clarified: `O:` increments only at S wrap; undo peels the last sealed wrap.
+
+**Device** [`005509`](../../captures/session_20260818_005509.log) — same 2-bar loop, new undo on device. Five `#CAP` `sess_undo`: three `why=wrap,depth=0`, then two `why=live,depth=0`. One press peels the last sealed wrap. Two undos at 44.345 / 46.641 peel two sealed wraps; the next S wrap at 47.131 (+1) is a real start-tick crossing, not an undo side effect. 124 `lcr,part` all `from=miss` (idle gate finishes after stop). Production consume still A.
+
 ---
 
 ## Wrap notes into PresentNote at S

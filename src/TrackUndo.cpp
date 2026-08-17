@@ -623,8 +623,7 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
         return false;
     }
 #if defined(SESSION_CAPTURE)
-    const bool liveCapture =
-        loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty();
+    const bool peelWrap = loop.overdubSessionUndoDepth() > 0;
 #endif
     const uint32_t revisionBefore = loop.playbackRevision;
     if (!loop.undoOverdubSession()) {
@@ -639,7 +638,7 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
     char line[160];
     snprintf(line, sizeof(line),
              "#CAP,%lu,DIAG,odub,sess_undo,why=%s,tick=%lu,depth=%u",
-             static_cast<unsigned long>(micros()), liveCapture ? "live" : "wrap",
+             static_cast<unsigned long>(micros()), peelWrap ? "wrap" : "live",
              static_cast<unsigned long>(clockManager.getCurrentTick()),
              static_cast<unsigned>(loop.overdubSessionUndoDepth()));
     DebugSessionCapture::appendCaptureTextLine(line);
