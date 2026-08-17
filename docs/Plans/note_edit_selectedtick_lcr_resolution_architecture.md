@@ -450,8 +450,8 @@ Prerequisites (already decided, not all live):
 | LCR `resolveState` / `resolveWindow` native | PASS | Editor consume oracle |
 | 6.0 no construct on button | accepted | Same rule on NOTE_EDIT open / fader |
 | 6A idle display consume | PASS | Prepared window exists |
-| 6C consume-when-ready | native; device slower than 3b | Miss remains legacy compatibility |
-| 6D.4 post-commit publish | landed; not all of LCR live | Edit after a new pass must see restamp |
+| 6C consume-when-ready | **closed** [`205928`](../../captures/session_20260815_205928.log) / [`210508`](../../captures/session_20260815_210508.log); slower than 3b | Miss remains legacy compatibility |
+| 6D.4 post-commit publish | **HITL PASS** [`205928`](../../captures/session_20260815_205928.log) / [`210508`](../../captures/session_20260815_210508.log); not all of LCR live | Edit after a new pass must see restamp |
 | 6E `resolveState(tick)` overlap | native PASS; not wired to Track | Exact overlap query to reuse |
 | Wrap-move persist | **parked** | Current-structure issue; not a start gate. Re-evaluate [`201446`](../../captures/session_20260816_201446.log) after hydrate |
 

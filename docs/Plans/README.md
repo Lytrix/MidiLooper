@@ -51,6 +51,7 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 | [runtime_scheduling_owner_boundary_admission_refinement.md](runtime_scheduling_owner_boundary_admission_refinement.md) | Owner-Boundary Gate roadmap (O–T–R–C–A–P) |
 | [runtime_scheduler_lcr_consumer_grooming_refinement.md](runtime_scheduler_lcr_consumer_grooming_refinement.md) | Consumer rule + A/B/C stalkers; Slice 1 rem split, Slice 2/2b idle one-source (wrap-held edge append). NOTE_EDIT hydrate is not this file. |
 | [note_edit_hydrate_enhancement.md](note_edit_hydrate_enhancement.md) | NOTE_EDIT consume prepared LCR around `selectedTick` (queued; proposal is the architecture) |
+| [playback_gather_lcr_consume_enhancement.md](playback_gather_lcr_consume_enhancement.md) | Long-loop playback gather consumes prepared `resolveWindow` (queued; not remaining LCR 6.3) |
 | [overdub_overlap_hold_same_start_bugfix.md](overdub_overlap_hold_same_start_bugfix.md) | Overdub hold snapshot includes same-start notes (RC1–RC8) |
 | [overdub_overlap_hold_enter_source_view_rebuild_bugfix.md](overdub_overlap_hold_enter_source_view_rebuild_bugfix.md) | RC7: enter source view uses wrap rebuild, not visual cache |
 | [overdub_overlap_hold_hold_window_jit_bugfix.md](overdub_overlap_hold_hold_window_jit_bugfix.md) | RC8: hold fill is 16-bar this-pitch JIT, not full-loop adds |

@@ -73,6 +73,7 @@ Always load first:
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
 - `TrackManager`, `LoopPasses` materialize APIs
 - [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037; do not treat `materializeToEventVector` as the long-term playback owner
+- [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — queued; firmware not authorized
 
 **Optional**
 
