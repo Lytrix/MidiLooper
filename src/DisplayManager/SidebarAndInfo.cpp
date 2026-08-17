@@ -282,11 +282,15 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
 
     const int undoY = 37;
     const int wUndoVal = static_cast<int>(strlen(undoValStr)) * 6;
-    const bool sessionUndo = editManager.isSessionUndoDisplayActive();
     const int wPrefix = 2 * 6;
     const int undoValX = textRight - wUndoVal;
     const int undoPrefixX = undoValX - wPrefix;
-    char prefixGlyph[2] = {sessionUndo ? 'E' : 'U', '\0'};
+    char prefixGlyph[2] = {'U', '\0'};
+    if (editManager.isSessionUndoDisplayActive()) {
+        prefixGlyph[0] = 'E';
+    } else if (undoLoop.hasOverdubSession()) {
+        prefixGlyph[0] = 'O';
+    }
     char colonGlyph[2] = ":";
     _display.gfx.draw_text(_display.api.getFrameBuffer(), prefixGlyph, undoPrefixX, undoY,
                            MODE_VALUE_BRIGHTNESS);

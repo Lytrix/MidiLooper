@@ -18,6 +18,9 @@
 #include "Utils/TrackMem.h"
 #include "UndoLoopGeometry.h"
 #include "LoopContentHistory.h"
+#include "Utils/DebugSessionCapture.h"
+
+#include <cstdio>
 
 extern TrackManager trackManager;
 
@@ -619,6 +622,10 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
     if (!loop.hasOverdubSession() || !loop.canUndoOverdubSession()) {
         return false;
     }
+#if defined(SESSION_CAPTURE)
+    const bool liveCapture =
+        loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty();
+#endif
     const uint32_t revisionBefore = loop.playbackRevision;
     if (!loop.undoOverdubSession()) {
         return false;
@@ -628,6 +635,15 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
         refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     }
     logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
+#if defined(SESSION_CAPTURE)
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,odub,sess_undo,why=%s,tick=%lu,depth=%u",
+             static_cast<unsigned long>(micros()), liveCapture ? "live" : "wrap",
+             static_cast<unsigned long>(clockManager.getCurrentTick()),
+             static_cast<unsigned>(loop.overdubSessionUndoDepth()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
     return true;
 }
 
@@ -644,6 +660,15 @@ TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
         refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     }
     logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
+#if defined(SESSION_CAPTURE)
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,odub,sess_redo,tick=%lu,depth=%u",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned long>(clockManager.getCurrentTick()),
+             static_cast<unsigned>(loop.overdubSessionUndoDepth()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
     return true;
 }
 

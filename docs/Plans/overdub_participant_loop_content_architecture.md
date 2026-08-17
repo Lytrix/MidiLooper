@@ -1,6 +1,6 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1 observation firmware **in tree**. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). Phase 2a (session-undo inverse) **in tree**. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1 observation firmware **in tree**. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). Phase 2a firmware **committed** (`76623cd`). Device [`003503`](../../captures/session_20260818_003503.log): `eq=0` = 0; restored-source-after-undo **not in log**. Phase 0b identity mapping **done**. PresentNote C++ rename **done**. NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
@@ -696,6 +696,19 @@ Hold fill stays `from=win` (77 lines, `merged=0`, win 146–1909 µs). Open: ses
 
 Session 2 open `from=prep`. Hold fill still `from=win` (73, `merged=0`). `late_clk=0`. Production consume still A.
 
+**Device** [`003503`](../../captures/session_20260818_003503.log) — Phase 2a firmware on device. 1-bar (768). 112 `lcr,part`. **`eq=0` = 0. `from=miss` = 0.** All 112 are `from=prep` `ao=0` `bo=0`.
+
+| Session | Host | `lcr,part` | Occupied | Empty | Hide at stop |
+|---------|------|------------|----------|-------|--------------|
+| 1 | 31.851–54.500, then undo @ 55.195 while PLAYING | 26 | 60/71/86 `a=1,b=1` | 0 | hide=6 add=22 |
+| 2 | 61.125–79.969, undo @ 80.836 and 81.715, redo @ 87.206 | 24 | 72/79/80/82/87/90/95 `a=1,b=1` | 79 `a=0,b=0` ×1 | hide=9 add=35 |
+| 3 | 90.213–98.950 | 38 | same pitches `a=1,b=1` | 13 empty | hide=4 add=4 |
+| 4 | 99.311–104.671 | 24 | includes 80 `a=2,b=2` | 2 empty | hide=9 add=8 |
+
+In-overdub undo **is** in this log as DEBUG `Overdub session undone` (21 times), not as `#CAP` and not as `Overdub undone` (that string is GUS after stop). Session 1 has 11 in-overdub undos (36.243–53.427); session 2 has 9; sessions 3–4 have one each. `Loop::undoOverdubSession` discards live `capture.store` first (`why` will be `live` on the new `#CAP`); only an empty capture disables the last sealed wrap (`why=wrap`). [`003503`](../../captures/session_20260818_003503.log) cannot tell those apart from `#CAP`. After the early session-1 undos, later occupied holds on 60/71/86 stay `a=1,b=1` — no `a=1,b=0`. Hold fill still `from=win` (228). Session 1 open `from=win`; session 3 open `from=prep`. `late_clk=0`. Production consume still A.
+
+Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like **E:**). Next firmware: **O:** while `hasOverdubSession()`, and `#CAP,DIAG,odub,sess_undo,why=live|wrap`.
+
 ---
 
 ## Wrap notes into PresentNote at S
@@ -743,7 +756,7 @@ None. Session-undo inverse is Phase 2a.
 
 ## Phase 2a — session-undo inverse of baked companions
 
-**Status:** in tree. Device undo `eq=1` not yet captured.
+**Status:** committed (`76623cd`). Device [`003503`](../../captures/session_20260818_003503.log): A/B `eq=1` on 112/112. Restored-source-after-undo **not in log**.
 
 **Invariant:** after `Loop::undoOverdubSession` disables wrap N’s `OverdubPass` and companion `EditPass`es, `tryResolvePreparedState` and `tryResolvePreparedWindow` return the same participant ids at S, including the restored source note.
 
@@ -753,7 +766,7 @@ None. Session-undo inverse is Phase 2a.
 
 **Native:** `test_stage6e4_disabled_companion_restores_hidden_source`, `test_stage6e4_disabled_companion_restores_shortened_tail`, `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Redo re-applies the baked Hide/Shorten.
 
-**Device:** observation `eq=1` after wrap undo while OVERDUBBING still owed. Production consume stays A.
+**Device:** [`003503`](../../captures/session_20260818_003503.log) has 21 DEBUG `Overdub session undone` during OVERDUBBING (not `#CAP`). Occupied holds after those undos stay `eq=1`. `#CAP,DIAG,odub,sess_undo,why=live|wrap` is required to pin wrap-disable vs live discard. Production consume stays A. Sidebar **O:** while the overdub session is open.
 
 **Gate:** Phase 3 must not start until Phase 2 wrap predicates pass.
 
@@ -774,7 +787,7 @@ None. Session-undo inverse is Phase 2a.
 | Stamp | `setPreparedEditPassState` + `restampPreparedPlaybackRevision` (same as capture disable) |
 
 ### Open before coding
-None. Device `eq=1` after wrap undo is a HITL gate, not an implementation blocker.
+None. Device restored-source-after-undo is a HITL gate ([`003503`](../../captures/session_20260818_003503.log) did not contain that gesture).
 
 ---
 
