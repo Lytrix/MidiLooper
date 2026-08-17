@@ -72,7 +72,52 @@ EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t
   return row;
 }
 
+int countDisplayNotesAtStartTick(const NoteUtils::DisplayNoteVec& notes, uint32_t startTick) {
+  int count = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.startTick == startTick) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 }  // namespace
+
+void test_pitch_edit_rebuild_shows_only_new_pitch_at_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 64, 240, 60);
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 64));
+
+  const EditPassId pitchEditId = loop.saveNoteEditPass(0, makePitchRow(1, 64, 240, 70));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, pitchEditId);
+  loop.rebuildVisualCacheFromPasses();
+
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 60, 64));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 70, 64));
+  TEST_ASSERT_EQUAL(1, countDisplayNotesAtStartTick(loop.visualCache.notes, 64));
+}
+
+void test_disable_edit_pass_rebuild_restores_pre_edit_display() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 64, 240, 60);
+
+  const EditPassId pitchEditId = loop.saveNoteEditPass(0, makePitchRow(1, 64, 240, 70));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, pitchEditId);
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 70, 64));
+
+  loop.disableEditPasses(EditPassIdList{pitchEditId});
+  loop.rebuildVisualCacheFromPasses();
+
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 64));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 70, 64));
+}
 
 void test_overdub_start_establishes_source_view() {
   LoopEventStore::resetPoolForTests();
@@ -599,7 +644,13 @@ void test_wrap_commit_publishes_completed_pair_and_keeps_held() {
   loop.pushOverdubSessionPass(wrapId, {});
   TEST_ASSERT_TRUE(loop.hasOverdubSession());
   TEST_ASSERT_EQUAL(777u, loop.playheadPhaseTick);
+  loop.rebuildOverdubSourceView(loop.playheadPhaseTick);
+  const uint32_t previewRevisionBeforeBegin = loop.capturePreview.revision;
+  const uint16_t displayRevisionBeforeBegin = loop.captureDisplayRevision;
   loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
+  TEST_ASSERT_TRUE(loop.capturePreview.notes.empty());
+  TEST_ASSERT_NOT_EQUAL(previewRevisionBeforeBegin, loop.capturePreview.revision);
+  TEST_ASSERT_NOT_EQUAL(displayRevisionBeforeBegin, loop.captureDisplayRevision);
   for (const MidiEvent& evt : held) {
     TEST_ASSERT_TRUE(loop.appendCaptureEvent(evt));
   }
@@ -607,6 +658,7 @@ void test_wrap_commit_publishes_completed_pair_and_keeps_held() {
   loop.capture.store.copyEventsTo(live);
   TEST_ASSERT_EQUAL(1u, live.size());
   TEST_ASSERT_EQUAL(60, live[0].data.noteData.note);
+  TEST_ASSERT_EQUAL(1u, loop.capturePreview.notes.size());
   TEST_ASSERT_EQUAL(2u, loop.overdubSessionUndoDepth());
 }
 
@@ -1192,8 +1244,60 @@ void test_should_commit_overdub_wrap_after_leaving_start() {
   TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
 }
 
+void test_retire_superseded_pitch_drops_home_when_settled_present() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  NoteUtils::DisplayNote home{};
+  home.note = 62;
+  home.startTick = 296;
+  home.endTick = 416;
+  home.noteId = 352;
+  NoteUtils::DisplayNote settled{};
+  settled.note = 79;
+  settled.startTick = 296;
+  settled.endTick = 416;
+  settled.noteId = 358;
+  loop.visualCache.notes.push_back(home);
+  loop.visualCache.notes.push_back(settled);
+  loop.retireSupersededPitchDisplayNote(62, 296, 416, 79);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 62, 296));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 79, 296));
+  TEST_ASSERT_EQUAL(1, countDisplayNotesAtStartTick(loop.visualCache.notes, 296));
+}
+
+void test_undo_overdub_idle_refresh_restores_record_layer() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 64, 240, 60);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(296, 1, 62, 100, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(416, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const PassId overdubId = loop.lastCommittedPassId();
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 64));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 62, 296));
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(overdubId, CapturePassState::Disabled));
+  loop.refreshVisualCacheAfterPassStateChange();
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 64));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 62, 296));
+  SessionMidiEventVec flat;
+  loop.gatherCommittedEvents(flat);
+  const NoteUtils::DisplayNoteVec materialized =
+      NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_EQUAL(materialized.size(), loop.visualCache.notes.size());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
+  RUN_TEST(test_disable_edit_pass_rebuild_restores_pre_edit_display);
   RUN_TEST(test_overdub_start_establishes_source_view);
   RUN_TEST(test_overdub_enter_rebuilds_source_view_not_visual_cache);
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
@@ -1223,6 +1327,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);
   RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
+  RUN_TEST(test_retire_superseded_pitch_drops_home_when_settled_present);
+  RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);
