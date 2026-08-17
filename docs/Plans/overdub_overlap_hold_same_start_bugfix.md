@@ -1,6 +1,6 @@
 # Overdub overlap hold — same-start collection (RC1)
 
-**Status:** Active — RC1–RC3 device/native as below; RC4 native (per-pass materialize Hide); RC4 device FAIL [`003204`](../../captures/session_20260817_003204.log) (idle LCR apply-after-merge); RC5 native (LCR per-pass apply)  
+**Status:** Active — RC1–RC5 as below; RC6 native (wrap source-view rebuild); device gate open  
 **Date:** 2026-08-17  
 **Kind:** bugfix  
 **Evidence:** [`233323`](../../captures/session_20260816_233323.log) (RC1); [`235407`](../../captures/session_20260816_235407.log) (RC2); [`000417`](../../captures/session_20260817_000417.log) (RC3); [`001517`](../../captures/session_20260817_001517.log) (RC4); [`003204`](../../captures/session_20260817_003204.log) (RC5)  
@@ -207,6 +207,36 @@ Reuse: apply note edits on each capture pass, then merge — same as `LoopPasses
 - `test_resolve_window_hide_drops_shorter_same_start` — index `resolveWindow` matches per-pass materialize; one 60@64 ending 288.
 
 Device: stop select DNTE one 60@64 (the longest). No stacked 176+224.
+
+---
+
+## RC6 — rebuild source view after each committed wrap
+
+**Status:** Native in this commit; device gate open.  
+**Evidence:** [`005745`](../../captures/session_20260817_005745.log) 1-wrap PASS (keep consume); [`004947`](../../captures/session_20260817_004947.log) multi-wrap stale S snapshot.  
+**Sibling:** [`overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md`](overdub_overlap_hold_wrap_source_view_rebuild_bugfix.md)
+
+`overdubSourceViewNotes_` stayed the session-start snapshot. Wrap 1 consume worked. After `publishPreparedOverdubPass`, wrap 2 had no wrap-1 span geometry.
+
+### Architecture checkpoint (RC6)
+
+| Question | Answer |
+|----------|--------|
+| **Ownership change?** | NO. `Loop` still owns the source view. |
+| **State transition change?** | NO. Wrap still seals, publishes, `beginCapture(Overdub)`. |
+
+### Fix
+
+After seal + publish, `Loop::rebuildOverdubSourceView` consumes `tryResolvePreparedWindow` (else windowed `resolveWindow(passes)`) and `reconstructDisplayNotes`. Not visual cache. Not `establishOverdubSourceView`. Wrap path no longer calls `applyPendingNoteChangesToOverdubSourceView`. Consume unchanged.
+
+CAP: `DIAG,lcr,vch` (idle visual cache; was `6a`); `DIAG,lcr,src,why=open` (establish; was `6c`); `DIAG,lcr,src,why=wrap,from=prep|win` (rebuild).
+
+### Tests
+
+- `test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add` — rebuild, no applyPending; wrap-2 Hides wrap-1 Add.
+- `test_rebuild_overdub_source_view_after_publish_includes_wrap_add` — prepared index after publish.
+
+Device: 1-bar same-start-longer two wraps; select at 64 one 60 ending 288. Wrap `src,why=wrap`; wrap `beginCapture` must not emit `why=open`. 1-wrap [`005745`](../../captures/session_20260817_005745.log) stays green.
 
 ---
 

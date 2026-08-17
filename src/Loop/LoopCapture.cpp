@@ -381,7 +381,7 @@ LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) 
     const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
     char line[192];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,6c,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+             "#CAP,%lu,DIAG,lcr,src,why=open,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
              static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
              static_cast<unsigned long>(reconstructUs),
              static_cast<unsigned long>(windowUs + reconstructUs),
@@ -406,6 +406,50 @@ LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) 
   copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
   overdubSourceViewEstablished_ = true;
   clearPendingNoteChanges();
+}
+
+LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick) {
+  overdubSourceViewEvents_.clear();
+  overdubSourceViewNotes_.clear();
+  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  if (loopLengthTicks == 0) {
+    overdubSourceViewEstablished_ = true;
+    return;
+  }
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
+  ResolutionCostCounters windowCounters;
+  const char* from = "win";
+  if (LoopContentResolution::tryResolvePreparedWindow(
+          passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision,
+          overdubSourceViewEvents_, &windowCounters)) {
+    from = "prep";
+  } else {
+    LoopContentResolution::resolveWindow(passes, loopLengthTicks, windowStart, windowLength,
+                                         overdubSourceViewEvents_, &windowCounters);
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructStartUs = micros();
+#endif
+  overdubSourceViewNotes_ =
+      NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
+  overdubSourceViewEstablished_ = true;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructUs = micros() - reconstructStartUs;
+  const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
+  char line[192];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,src,why=wrap,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+           static_cast<unsigned long>(micros()), from, static_cast<unsigned long>(windowUs),
+           static_cast<unsigned long>(reconstructUs),
+           static_cast<unsigned long>(windowUs + reconstructUs),
+           static_cast<unsigned>(overdubSourceViewEvents_.size()),
+           static_cast<unsigned>(overdubSourceViewNotes_.size()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)from;
+#endif
 }
 
 LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
@@ -859,7 +903,7 @@ bool Loop::commitPendingCapturePass() {
   capturePreview.clear();
   // Wrap and stop commit keep the session source view. Clearing here makes
   // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
-  // re-establishes from a dirty cache (000417 lcr,6c every wrap).
+  // re-establishes from a dirty cache (000417 src,why=open every wrap).
   // closeOverdubSession / discardCapture clear the view.
   if (!hasOverdubSession()) {
     clearOverdubSourceView();

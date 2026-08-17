@@ -192,6 +192,9 @@ struct Loop {
   /// Establish overdubSourceView: consume prepared LCR window when ready, else copy clean
   /// visualCache.notes (3b), else a windowed chunk walk.
   void establishOverdubSourceView(uint32_t playheadPhaseTick);
+  /// After wrap publish: rebuild source notes from prepared window, else per-pass
+  /// `resolveWindow`. Not visual cache. Not `establishOverdubSourceView`.
+  void rebuildOverdubSourceView(uint32_t playheadPhaseTick);
   /// D2: merge hold-window display notes into the session source view for overlap lookup.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch);
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
@@ -219,8 +222,8 @@ struct Loop {
                                                    NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
   EditPassIdList sealPendingNoteChangesToEditPasses();
-  /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_` so the next wrap
-  /// can overlap this wrap's notes. Does not clear pending.
+  /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
+  /// uses `rebuildOverdubSourceView` instead. Does not clear pending.
   void applyPendingNoteChangesToOverdubSourceView();
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
   /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.

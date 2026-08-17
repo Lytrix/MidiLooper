@@ -631,6 +631,46 @@ void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_rebuild_overdub_source_view_after_publish_includes_wrap_add() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(240, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrap = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrap = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrap);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  bool foundWrapAdd = false;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == 10 && note.startTick == 64 && note.endTick == 240) {
+      foundWrapAdd = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundWrapAdd);
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_overdub_session_undo_disables_sealed_wrap() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1148,6 +1188,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_empty_wrap_does_not_commit_a_pass);
   RUN_TEST(test_wrap_commit_publishes_completed_pair_and_keeps_held);
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
+  RUN_TEST(test_rebuild_overdub_source_view_after_publish_includes_wrap_add);
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_overdub_session_undo_depth_adds_live_after_first_wrap);
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);

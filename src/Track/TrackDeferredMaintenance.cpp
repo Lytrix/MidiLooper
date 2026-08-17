@@ -133,14 +133,14 @@ TRACK_COLD_MEM void logDisplayNoteDiffs(const char* tag, const NoteUtils::Displa
     char line[192];
     if (geom != nullptr) {
       snprintf(line, sizeof(line),
-               "#CAP,%lu,DIAG,lcr,6a,%s,id=%lu,n=%u,s=%lu,e=%lu,alt=%lu",
+               "#CAP,%lu,DIAG,lcr,vch,%s,id=%lu,n=%u,s=%lu,e=%lu,alt=%lu",
                static_cast<unsigned long>(micros()), tag,
                static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
                static_cast<unsigned long>(note.startTick),
                static_cast<unsigned long>(note.endTick),
                static_cast<unsigned long>(geom->noteId));
     } else {
-      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,6a,%s,id=%lu,n=%u,s=%lu,e=%lu",
+      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,vch,%s,id=%lu,n=%u,s=%lu,e=%lu",
                static_cast<unsigned long>(micros()), tag,
                static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
                static_cast<unsigned long>(note.startTick),
@@ -206,7 +206,7 @@ TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
       continue;
     }
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,6a,ed,id=%lu,act=%u,prop=%u,tid=%lu,s=%lu,e=%lu,p=%u",
+             "#CAP,%lu,DIAG,lcr,vch,ed,id=%lu,act=%u,prop=%u,tid=%lu,s=%lu,e=%lu,p=%u",
              static_cast<unsigned long>(micros()), static_cast<unsigned long>(editPass.id),
              static_cast<unsigned>(editPass.actionType),
              static_cast<unsigned>(editPass.propertyType),
@@ -217,7 +217,7 @@ TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
     DebugSessionCapture::appendCaptureTextLine(line);
   }
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,6a,win=%lu,proj=%lu,oracle=%lu,tot=%lu,ev=%u,notes=%u,"
+           "#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,oracle=%lu,tot=%lu,ev=%u,notes=%u,"
            "oev=%u,onotes=%u,found=%u,miss=%u,extra=%u,ed=%u,match=%u",
            static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
            static_cast<unsigned long>(reconstructUs), static_cast<unsigned long>(oracleUs),
@@ -229,7 +229,7 @@ TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
            displayNotesMatch(nativeNotes, preparedNotes) ? 1u : 0u);
   DebugSessionCapture::appendCaptureTextLine(line);
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,6a,nat,us=%lu,ev=%u,notes=%u,pfound=%u,gfound=%u,pmatch=%u,gmatch=%u",
+           "#CAP,%lu,DIAG,lcr,vch,nat,us=%lu,ev=%u,notes=%u,pfound=%u,gfound=%u,pmatch=%u,gmatch=%u",
            static_cast<unsigned long>(micros()), static_cast<unsigned long>(nativeUs),
            static_cast<unsigned>(nativeWindow.size()), static_cast<unsigned>(nativeNotes.size()),
            static_cast<unsigned>(nativeFoundPrepared), static_cast<unsigned>(nativeFoundGather),
