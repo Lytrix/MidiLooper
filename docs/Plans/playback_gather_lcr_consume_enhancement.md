@@ -550,9 +550,9 @@ Done. No firmware.
 
 Firmware: hooks only. No MIN/MAX. No LCR consume. Logging shape is pinned below.
 
-**Status:** firmware links `teensy41-capture-serial` (RAM1 code 425612, locals 4768). Native 1307/1307. Not on device until upload. Device score is Stage 3.
+**Status:** firmware links `teensy41-capture-serial` (RAM1 code 425852, locals 4768). Native 1307/1307. ISR lateness stores are ITCM. Device score is Stage 3.
 
-First link crossed the 32 KB ITCM page (`code` 426188). Recovery: `FLASHMEM` on `ClockManager::onMidiStart` / `toggleTransport` (not the tick ISR). `maybeEmit` drains one-shots so `loop()` has one telemetry call. Note lateness records `evt.tick`.
+First link crossed the 32 KB ITCM page (`code` 426188). Recovery: `FLASHMEM` on `ClockManager::onMidiStart` / `toggleTransport` (not the tick ISR). Putting the lateness recorders in FLASHMEM then hung USB at transport start ([`212654`](../../captures/session_20260817_212654.log) — last `#CAP` 23.994 s, last BAR idle `0,0`). Those recorders are ITCM with `noteClockPulse`. `maybeEmit` drains one-shots so `loop()` has one telemetry call. Note lateness records `evt.tick`.
 
 ---
 

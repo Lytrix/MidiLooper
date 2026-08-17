@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-17 (playback gather Stage 1 lateness hooks)
+Last updated: 2026-08-17 (playback gather Stage 1 ISR lateness ITCM)
 
 ---
 
@@ -13,7 +13,9 @@ Last updated: 2026-08-17 (playback gather Stage 1 lateness hooks)
 **Plan:** [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md)  
 **Owner:** `RuntimeTimingTelemetry`. No geometry change. No LCR consume.
 
-Hot path accumulates `late_on` / `late_off` / `late_clk` (on time = sent before the next tick / one-tick clock window). Main loop `maybeEmit` drains a first-late one-shot (`DIAG,late_event`) and a gather rebuild one-shot (`DIAG,playback_build`), then the 5 s Tier-A `DIAG,late_*` window. No per-event `#CAP`. Native 1307/1307. `teensy41-capture-serial` links (RAM1 code 425612, locals 4768). Not on device until upload. Device score is Stage 3 (control vs mutation). Do not start Stage 2 stamp redesign or Problem B/C.
+Hot path accumulates `late_on` / `late_off` / `late_clk` (on time = sent before the next tick / one-tick clock window). ISR stores stay in ITCM (`noteClockPulse` region). Main loop `maybeEmit` drains a first-late one-shot (`DIAG,late_event`) and a gather rebuild one-shot (`DIAG,playback_build`), then the 5 s Tier-A `DIAG,late_*` window. No per-event `#CAP`. Native 1307/1307. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768).
+
+[`212654`](../../captures/session_20260817_212654.log): FLASHMEM lateness hooks from `IntervalTimer` `updateInternalClock` killed USB at transport start (last line 23.994 s; last BAR idle `0,0`; no PLAYING DIAG). Device score is Stage 3 after this ISR placement is on the board. Do not start Stage 2 stamp redesign or Problem B/C.
 
 ### Display undo / wrap / pitch-move ghosts (RC-W1, RC-N1, RC-U1)
 
