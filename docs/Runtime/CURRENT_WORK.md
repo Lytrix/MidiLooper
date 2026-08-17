@@ -21,7 +21,7 @@ Phase 0b **done:** `PresentNote` alone is not enough for RC8 LinearSpan (`endTic
 
 Phase 1 **device capture** [`002447`](../../captures/session_20260818_002447.log) (`b9b9336`): 1-bar (768). 31 `lcr,part`. **`eq=0` = 0.** After wrap 1 and wrap 2, occupied holds are `a=1,b=1` (`ao=0`,`bo=0`). [`232510`](../../captures/session_20260817_232510.log) wrap-2/3 `b=k` extras are gone. Enter before first wrap is still `from=miss` (6). Hold fill still `from=win`. Production consume still A.
 
-**Phase 2a** `76623cd` + **O:** `a384a47`. Device [`005509`](../../captures/session_20260818_005509.log): `sess_undo why=wrap` peels a sealed wrap in one press. Undo depth = sealed wraps. Sidebar `O:` = sealed + 1 (current wrap). Do **not** start Phase 3 fill disable until Phase 2 wrap predicates and LinearSpan-from-`NoteSpan` pass. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
+**Phase 2a** `76623cd` + **O:** `a384a47`. Device [`010422`](../../captures/session_20260818_010422.log): idle gate finished; `from=prep` throughout; one `why=wrap` undo. After that undo every hold is `a=2,b=1` `ao=1,bo=0` — A not rebuilt on undo, hold fill merges into the frozen source view. Do **not** start Phase 3 fill disable until Phase 2 wrap predicates and LinearSpan-from-`NoteSpan` pass. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 
