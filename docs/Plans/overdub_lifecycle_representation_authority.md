@@ -4,7 +4,8 @@
 **Date:** 2026-08-17  
 **Use:** trace one overdub note across a wrap; decide which representation is authoritative at each moment; spot forbidden consumer edges before patching.  
 **Shipped consumer:** [`overdub_overlap_hold_display_cache_bugfix.md`](overdub_overlap_hold_display_cache_bugfix.md) — RC11 + RC12 **FROZEN**, HITL PASS [`140355`](../../captures/session_20260817_140355.log). Wrap-shaped consume: [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](overdub_wrap_crossing_hold_head_consume_bugfix.md) HITL PASS [`155450`](../../captures/session_20260817_155450.log).  
-**Queued successor:** [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) (length preview vs source-view length)
+**Queued successor:** [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) (length preview vs source-view length)  
+**Participant-discovery successor:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) — notes present at tick `S` from loop content, independent of MIDI send and mute; Phase 0b done. Does not change this consume → seal → rebuild spine.
 
 **Not this document's job:** introduce a runtime state machine, new owners, or drive refactors. It names **authority** and **allowed derivation** so RC layers stop circular fixes.
 
