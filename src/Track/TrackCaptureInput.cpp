@@ -4,6 +4,7 @@
 #include "TrackInternal.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <utility>
 #include <vector>
 
@@ -44,36 +45,47 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   if (loopLength == 0) {
     return;
   }
-  // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart, with
-  // same-start included (`<=` on start). Keep the walk in this FLASHMEM
-  // function — do not call the observation header (ITCM). Ahead notes in the
-  // hold window are merged at note-off, not here.
+  // Same-start included (`<=` on start). RC8 walk is
+  // `collectOverdubSourceHoldParticipantIds`. Ahead notes merge at note-off.
   const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
   loop.ensureOverdubSourceNotesForHold(holdStart, pending.note, nullptr, true);
-  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
-    if (note.note != pending.note || note.noteId == kInvalidNoteId) {
-      continue;
+  loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, pending.overlapNoteIds);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  OverlapNoteIdSet preparedIds;
+  const uint32_t observeStartUs = micros();
+  const bool prepared =
+      loop.tryCollectPreparedPresentNoteIdsAtTick(holdStart, pending.note, preparedIds);
+  const uint32_t observeUs = micros() - observeStartUs;
+  char line[224];
+  if (!prepared) {
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,part,why=on,from=miss,pitch=%u,a=%u,us=%lu",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
+             static_cast<unsigned>(pending.overlapNoteIds.size()),
+             static_cast<unsigned long>(observeUs));
+  } else {
+    unsigned onlyA = 0;
+    unsigned onlyB = 0;
+    for (size_t i = 0; i < pending.overlapNoteIds.size(); ++i) {
+      if (!preparedIds.contains(pending.overlapNoteIds.at(i))) {
+        ++onlyA;
+      }
     }
-    uint32_t linearStart = IntervalProjection::tickPhaseInLoop(note.startTick, 0, loopLength);
-    uint32_t linearEnd = IntervalProjection::tickPhaseInLoop(note.endTick, 0, loopLength);
-    if (linearEnd == linearStart) {
-      continue;
+    for (size_t i = 0; i < preparedIds.size(); ++i) {
+      if (!pending.overlapNoteIds.contains(preparedIds.at(i))) {
+        ++onlyB;
+      }
     }
-    if (linearEnd < linearStart) {
-      linearEnd += loopLength;
-    }
-    if (linearStart >= linearEnd) {
-      continue;
-    }
-    // Half-open [start, end) at S. Same-start grid overdubs must be included;
-    // playback collect cannot recover them (pendingNotes still empty at that tick).
-    const bool direct = linearStart <= holdStart && holdStart < linearEnd;
-    const bool shifted =
-        linearStart <= holdStart + loopLength && holdStart + loopLength < linearEnd;
-    if (direct || shifted) {
-      (void)pending.overlapNoteIds.insert(note.noteId);
-    }
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,part,why=on,from=prep,pitch=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,us=%lu",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
+             static_cast<unsigned>(pending.overlapNoteIds.size()),
+             static_cast<unsigned>(preparedIds.size()),
+             (onlyA == 0 && onlyB == 0) ? 1u : 0u, onlyA, onlyB,
+             static_cast<unsigned long>(observeUs));
   }
+  DebugSessionCapture::appendCaptureTextLine(line);
+#endif
 }
 
 TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackNoteOn(

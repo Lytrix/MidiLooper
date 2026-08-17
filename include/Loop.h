@@ -207,6 +207,14 @@ struct Loop {
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
                                        NoteUtils::DisplayNoteVec* newlyMergedPitchNotes = nullptr,
                                        bool presentAtHoldOnly = false);
+  /// RC8 gold (A): NoteIds in `overdubSourceViewNotes` present at the hold tick for pitch.
+  /// Does not fill the source window. Clears `out` then inserts.
+  void collectOverdubSourceHoldParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
+                                              OverlapNoteIdSet& out) const;
+  /// Prepared present-at-S NoteIds for pitch (B). Returns false on prepared miss.
+  /// Never `resolveWindow` / cold `resolveState`. Clears `out`.
+  bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
+                                              OverlapNoteIdSet& out) const;
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }

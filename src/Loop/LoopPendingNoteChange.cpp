@@ -196,6 +196,41 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
 #endif
 }
 
+LOOP_COLD_MEM void Loop::collectOverdubSourceHoldParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
+                                                               OverlapNoteIdSet& out) const {
+  out.clear();
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  if (!overdubSourceViewEstablished_ || loopLen == 0) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+    if (note.note != pitch || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+      continue;
+    }
+    (void)out.insert(note.noteId);
+  }
+}
+
+LOOP_COLD_MEM bool Loop::tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
+                                                               OverlapNoteIdSet& out) const {
+  out.clear();
+  PresentNoteVec presentNotes;
+  if (!LoopContentResolution::tryResolvePreparedState(tick, playbackRevision, presentNotes,
+                                                      nullptr)) {
+    return false;
+  }
+  for (const PresentNote& note : presentNotes) {
+    if (note.pitch != pitch || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    (void)out.insert(note.noteId);
+  }
+  return true;
+}
+
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
     const NoteUtils::DisplayNoteVec& sourceNotes,
                                                        uint8_t channel, uint8_t pitch,
