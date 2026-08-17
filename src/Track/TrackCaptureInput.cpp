@@ -44,10 +44,12 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   if (loopLength == 0) {
     return;
   }
-  // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart. Keep the
-  // walk in this FLASHMEM function — do not call the observation header (ITCM).
+  // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart, with
+  // same-start included (`<=` on start). Keep the walk in this FLASHMEM
+  // function — do not call the observation header (ITCM). Ahead notes in the
+  // hold window are merged at note-off, not here.
   const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
-  loop.ensureOverdubSourceNotesForHold(holdStart, pending.note);
+  loop.ensureOverdubSourceNotesForHold(holdStart, pending.note, nullptr, true);
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
     if (note.note != pending.note || note.noteId == kInvalidNoteId) {
       continue;
