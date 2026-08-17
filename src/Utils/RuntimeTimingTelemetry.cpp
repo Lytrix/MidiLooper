@@ -32,7 +32,10 @@ void recordSample(Accumulator& acc, uint32_t durationUs) {
   }
 }
 
-RT_FLASHMEM_FN void recordLateness(Accumulator& acc, uint32_t latenessUs) {
+// ISR-called (IntervalTimer updateInternalClock / sendClock / sendMidiEvent).
+// Must stay in ITCM with noteClockPulse — FLASHMEM from that ISR starved USB
+// after transport start (session_20260817_212654).
+void recordLateness(Accumulator& acc, uint32_t latenessUs) {
   if (latenessUs > acc.maxUs) {
     acc.maxUs = latenessUs;
   }
@@ -41,7 +44,7 @@ RT_FLASHMEM_FN void recordLateness(Accumulator& acc, uint32_t latenessUs) {
   }
 }
 
-RT_FLASHMEM_FN uint32_t latenessAfterDeadline(uint32_t nowUs, uint32_t dueUs, uint32_t periodUs) {
+uint32_t latenessAfterDeadline(uint32_t nowUs, uint32_t dueUs, uint32_t periodUs) {
   if (periodUs == 0) {
     return 0;
   }
@@ -119,7 +122,7 @@ State& state() {
   return s;
 }
 
-RT_FLASHMEM_FN void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t tick) {
+void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t tick) {
   if (latenessUs == 0 || !s.lateOneShotArmed) {
     return;
   }
@@ -360,7 +363,7 @@ void noteClockPulse() {
   ++s.clockPulses;
 }
 
-RT_FLASHMEM_FN void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs) {
+void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs) {
   State& s = state();
   s.servicePeriodUs = tickPeriodUs;
   if (!s.serviceCadenceActive || tickPeriodUs == 0) {
@@ -381,7 +384,7 @@ RT_FLASHMEM_FN void resetPlaybackDeadlineCadence() {
   s.clockCadenceActive = false;
 }
 
-RT_FLASHMEM_FN void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick) {
+void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick) {
   State& s = state();
   const uint32_t latenessUs =
       latenessAfterDeadline(nowUs, s.serviceDueUs, s.servicePeriodUs);
@@ -389,8 +392,8 @@ RT_FLASHMEM_FN void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32
   queueFirstLate(s, isNoteOn ? 0 : 1, latenessUs, tick);
 }
 
-RT_FLASHMEM_FN void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs,
-                                            uint32_t onTimeWindowUs, uint32_t tick) {
+void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t onTimeWindowUs,
+                             uint32_t tick) {
   State& s = state();
   if (clockPeriodUs == 0) {
     return;

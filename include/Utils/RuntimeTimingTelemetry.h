@@ -162,8 +162,8 @@ void noteClockPulse();
 
 /**
  * Mark the start of one playback service interval (internal tick ISR or external
- * clock pulse). ISR-safe: integer stores only. `tickPeriodUs` is one internal tick
- * or one MIDI-clock period (`TICKS_PER_CLOCK` ticks).
+ * clock pulse). ISR-safe ITCM integer stores — not FLASHMEM. `tickPeriodUs` is one
+ * internal tick or one MIDI-clock period (`TICKS_PER_CLOCK` ticks).
  */
 void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs);
 
@@ -171,14 +171,14 @@ void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs);
 void resetPlaybackDeadlineCadence();
 
 /**
- * Note-on/off send lateness. ISR-safe. On time iff sent before the next playback
- * tick is due (`now <= serviceDue + period`). Equality and early are 0.
+ * Note-on/off send lateness. ISR-safe ITCM stores. On time iff sent before the next
+ * playback tick is due (`now <= serviceDue + period`). Equality and early are 0.
  */
 void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick);
 
 /**
- * Outgoing MIDI clock send lateness (internal master `sendClock`). ISR-safe.
- * Cadence is `clockPeriodUs`. On time iff sent before `clockDue + onTimeWindowUs`
+ * Outgoing MIDI clock send lateness (internal master `sendClock`). ISR-safe ITCM
+ * stores. Cadence is `clockPeriodUs`. On time iff sent before `clockDue + onTimeWindowUs`
  * (one internal tick). Equality and early are 0.
  */
 void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t onTimeWindowUs,
