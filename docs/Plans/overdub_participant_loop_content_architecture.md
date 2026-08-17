@@ -726,7 +726,7 @@ Sidebar still painted **U:** during OVERDUBBING (DEC-038 session-gates undo like
 | **Undo → wrap 2** | **0** | **9** | **all `a=2,b=1` `ao=1,bo=0`** |
 | Wrap 2 → wrap 3 | 3 | 15 | mostly `a=1,b=2` `ao=0,bo=1` |
 
-After wrap undo, hold fill `from=win` merges into the frozen source view (`merged=1`…`5`, `notes` 19→31) because `rebuildOverdubSourceView` is not called from `TrackUndo::undoOverdubSession`. A keeps the wrap add and gains the restored source. B stays at 1. Next wrap rebuilds A (`notes=22`) and the split flips to B-superset. Production consume still A. `late_clk=0`.
+After wrap undo, hold fill `from=win` merged into the frozen source view (`merged=1`…`5`, `notes` 19→31) because `rebuildOverdubSourceView` was not called on session undo. A kept the wrap add and gained the restored source. B stayed at 1. **Fix in tree:** wrap undo/redo calls `rebuildOverdubSourceView` (`why=undo` / `why=redo`) when the source view is established. Live discard does not. Native: `test_overdub_session_undo_rebuilds_source_view_to_match_prepared`. HITL owed: after `why=wrap`, next holds `eq=1` (not `a=2,b=1`). Production consume still A. `late_clk=0`.
 
 ---
 
