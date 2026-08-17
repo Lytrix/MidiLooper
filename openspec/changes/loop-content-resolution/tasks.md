@@ -79,7 +79,7 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - [ ] **6D** Incremental post-commit overdub-query index. **6D.1 FAIL.** **6D.2/6D.3 native PASS.** **6D.4 landed:** `publishPreparedOverdubPass` + `DeviceGateSession::delta` + two-source consume; `finalizeCommitSideEffects` call. Native restamp/oracle PASS. Not all of LCR live. Device HITL open. [`PREFLIGHT.md`](PREFLIGHT.md). [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](../../../docs/Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md) § 6D.4. A/B **rejected**.
 - [x] After 6C device score — investigate MIDI Input Gap > 50 ms in [`192334`](../../../captures/session_20260815_192334.log): `DIAG,midi_gap` **135 / 119 / 138 ms** at 54.7 / 64.7 / 69.8 s while `clockrate` stayed **47**. **Owner:** `StorageManager::processDeferredSaveState` / `FinalizeWorkspace` (`PERS,result` 70–72 ms). Same windows `persist_save` **77 / 118 / 109 ms**. Not LCR. Not RC-J. Persist slice budget while PLAYING is 300 µs; one finalize/SD step overruns. Fix is a persist change, not this LCR change.
 - [ ] 6.3 Long-loop playback gather → `resolveWindow` / `ResolvedEvent` (after 6C)
-- [ ] 6.4 Short-loop playback / NOTE_EDIT hydrate last
+- [ ] 6.4 **Moved.** Editor consume around `selectedTick` is **not** remaining LCR production-swap firmware. Work identity: [`note_edit_hydrate_enhancement.md`](../../../docs/Plans/note_edit_hydrate_enhancement.md). Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](../../../docs/Plans/note_edit_selectedtick_lcr_resolution_architecture.md) (PASS; stages PASS WITH AMENDMENTS). DEC-037 amendment 2026-08-16. Do not start from this change’s remaining 6.x tasks.
 - [x] **6E** Native overdub evaluation **PASS** (6E.1–6E.5). Plan: [`loop_content_resolution_overdub_state_evaluation_refinement.md`](../../../docs/Plans/loop_content_resolution_overdub_state_evaluation_refinement.md). No Track wiring.
 - [x] **DEC-038** recorded. Preflight: [`PREFLIGHT-WRAP-COMMIT.md`](PREFLIGHT-WRAP-COMMIT.md). Firmware not started.
 - [x] **038.1** Firmware: wrap at S + session stack. Completed-pair seal + publish + `beginCapture` + stay OVERDUBBING. Session undo/redo while OVERDUBBING. No GUS `passIds`. Native `test_overdub_source_view` + `test_interval_projection`. `teensy41-capture-serial` RAM1 free 6528.
@@ -94,3 +94,4 @@ Device probe: sliced `DeviceGateSession` in idle maintenance (`linker/imxrt1062_
 - Stage 3b GUS replacement
 - Overlay picker, interval reservation, RC-J
 - Replacing `NoteGeometryResolver`
+- NOTE_EDIT hydrate firmware — [`note_edit_hydrate_enhancement.md`](../../../docs/Plans/note_edit_hydrate_enhancement.md)

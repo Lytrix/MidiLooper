@@ -27,7 +27,7 @@ Track::processDeferredIdleMaintenance (STOPPED)
         → VCACHE,slice_clean                       ← 145518 next line; 152405 never emits
 ```
 
-Do not reopen Layer B NoteId. Do not start grooming 4e or Slice 5 hydrate. Do not treat `#CAP,BOOT,scan,t*` after `BOOT,heap` as leftover session markers — those are this boot’s `emitBootMilestone` ring flush (same in [`145518`](../../captures/session_20260816_145518.log)).
+Do not reopen Layer B NoteId. Do not start grooming 4e or NOTE_EDIT hydrate. Do not treat `#CAP,BOOT,scan,t*` after `BOOT,heap` as leftover session markers — those are this boot’s `emitBootMilestone` ring flush (same in [`145518`](../../captures/session_20260816_145518.log)).
 
 ---
 
@@ -108,7 +108,7 @@ Device gate: one title boot on the vcache-slice env. Last breadcrumb before `#CA
 ## Does not start
 
 - Layer B remaining A copies/clone
-- Layer C/D, grooming 4e, Slice 5 hydrate
+- Layer C/D, grooming 4e, NOTE_EDIT hydrate
 - Patching `applyNoteEditPass` / apply-owned erase
 - GitHub Bug until a sub-step is pinned
 - `LoadLoopJob` paint / PLAYING drain work

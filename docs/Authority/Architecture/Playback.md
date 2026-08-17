@@ -17,6 +17,8 @@ Derived Event Representation  +  Playback interval  →  MIDI out
 | Representation | `LoopPlaybackRuntime` (`mergedEvents`, `playbackOrder`); NOTE_EDIT: `editManager.sessionMidiEvents()` when edit active |
 | Interval | Rolling cycle via `projectionCycleStartTick` + `playbackEventPhase` per event |
 
+`currentTick` is the clock. `Track::playMidiEvents` does **not** read `visualCache`. It phases `currentTick` and sends from `mergedEvents` (raw MIDI). Long loops gather **2 bars** around the playhead; short loops gather the loop. Live overdub adds `loop.capture.store`. That is the play consumer in [DerivedViews.md](DerivedViews.md) § Consumers.
+
 ---
 
 ## Owner
@@ -31,7 +33,7 @@ Playback **does not** own storage or display representations.
 
 - **No** `LoopPlaybackRuntime` allocation on first tick after transport start (prewarm when heap allows).
 - Rebuild playback order off hot path when `invalidateCaches()` or pass revision changes.
-- NOTE_EDIT: `sessionPreviewRevision_` gates preview refresh; edited pairs audition via session store, not per-fader MIDI note-on.
+- NOTE_EDIT: `sessionPreviewRevision_` gates preview refresh; this-session settled overlay rows audition via splice onto the playback window around `currentTick`, not per-fader MIDI note-on. Today’s firmware still full-replaces from `sessionMidiEvents()` (DEC-037 Editor amendment 2026-08-16).
 
 ---
 

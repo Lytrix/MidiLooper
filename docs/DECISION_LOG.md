@@ -16,7 +16,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 |----|------|-------|--------|
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
 | [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
-| [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; materialize stays until three gates | Accepted |
+| [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; NOTE_EDIT hydrate is a separate work path (amended 2026-08-16) | Accepted |
 | [DEC-036](#dec-036-runtime-effective-event-source-for-overdub) | 2026-08-14 | Runtime effective event source; overdub entry without display reconstruction | Accepted |
 | [DEC-035](#dec-035-loop-persists-content-only) | 2026-08-14 | Loop persists content only; undo/redo is derived and not persisted | Accepted |
 | [DEC-034](#dec-034-overlap-shorten-seals-at-the-user-triggered-commit) | 2026-08-13 | Overlap shorten seals at the user-triggered commit; closure defers leave-restore only | Accepted |
@@ -196,7 +196,7 @@ DEC-016 already requires representation × interval. The missing owner is query-
 
 ### Affected modules
 
-Native prototype first: new `LoopContentResolution` headers/tests. Production later: `LoopMaterialization`, `LoopVisualCache`, `TrackPlaybackWindowBuild`, `establishOverdubSourceView` fallback only. `LoopPasses`, `StorageManager`, `NoteGeometryResolver` unchanged as owners.
+Native prototype first: new `LoopContentResolution` headers/tests. Production later: `LoopMaterialization`, `LoopVisualCache`, `TrackPlaybackWindowBuild`, `establishOverdubSourceView` fallback only. Editor consume (2026-08-16): `NoteGeometryResolver` candidate source, `SelectNavigation`, `openNoteEditSession`, `ensurePlaybackMergedMidiEventsBuilt` overlay. `LoopPasses`, `StorageManager`, `NoteGeometryResolver` unchanged as owners.
 
 ### Amendment 2026-08-14 — Checkpoint is a jump point
 
@@ -403,6 +403,41 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 
 **6.0 approved reading 2026-08-15:** overdub **button / source-view open** must not construct, sort, checkpoint, or resolve LCR. Bounded delta sort + restamp may run at `finalizeCommitSideEffects` after a committed `OverdubPass` when a prepared index already exists. A prepared index may become valid through that commit-site update, not exclusively through STOPPED `deviceGateComplete`. **6D.4 landed** (`publishPreparedOverdubPass`, session `delta`). Not all of LCR incrementally live.
 
+### Amendment 2026-08-16 — Editor consumes prepared LCR around `selectedTick`
+
+Not a new DEC. Pins the Editor consumer already drawn in DEC-037. Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](Plans/note_edit_selectedtick_lcr_resolution_architecture.md). **Work identity:** [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md) — separate from remaining LCR 6.x firmware. Firmware not authorized. Wrap-move persist is **parked** (current rematerialize / session-store structure is part of the [`201446`](../captures/session_20260816_201446.log) defect); it is not a start gate.
+
+**Problem:** NOTE_EDIT analyze still rematerializes the loop (`rematerializeEditView`, `visualCache.notes`, `collectEvaluationScopeNoteIds` over `liveStore`). On a 16-bar / ~1000-note loop the 16-bar piano-roll window is the whole loop, so windowed reconstruct does not shrink the working set. Overdub already consumes prepared `resolveState(tick)` / identity lookup (6E Path A; 6.0 consume-only).
+
+**Decision:**
+
+1. **`selectedTick` is the Editor query origin**, the same role `currentTick` / `playheadPhaseTick` has for overdub.
+2. **Idle `visualCache` stays the piano-roll committed list.** LCR consume is select, overlap, and analyze only.
+3. **Select encoder is a neighborhood around `selectedTick`.** Not a full-loop onset list. Not `resolveState(selectedTick)` — that is sounding-at-tick (overlap at S). Select is a bounded onset/navigation query on `tickEvents` / `spanBoundaries`, then identity geometry only if needed.
+4. **Participating notes are found after the mover stops.** Last geometry input, then one completed `DisplayManager::update` as **trigger only**, then indexed overlap find vs the **current** mover span of this Move/Pitch action. Data source is prepared LCR ∪ `NoteEditCurrentState`, not the display frame’s `visualCache` rebuild and not playback refresh. Do not run that find on the fader stack. Do not reuse `kDeferredNoteEditPlaybackRefreshIdleMs`. Within that action, the overlap set **updates**: still intersecting → Active Shorten/Hide; no longer intersecting → `RestoreNote` to `committedSpan` and drop from the overlap delta (existing leave-restore). That is not DEC-030 sticky overlap end-of-participation (`Ended` after deselect). If the fader moves again before the action ends, repeat the find against the new span. Remaining Active rows after the action stay in the session delta.
+5. **Selected note(s) are the incoming hold.** Same DEC-031/032 `[S, E)` Shorten/Hide as overdub. `NoteGeometryResolver` stays live overlap Resolution. Empty candidate set does not gather (overdub Gate 3). Prepared-hit lookup is indexed query → bounded identities → `appendNoteEvents`. Cost of `appendNoteEvents(NoteId)` is O(events of that id), not O(loop)×candidates. `resolveWindow` must not return a reconstructed whole-loop `DisplayNote` vector.
+6. **Audition while the session is open:** `currentTick` sounds every settled this-session overlay row when the playhead crosses it — selected note, impacted overlaps, and earlier edits in this session (wrap-1-still-playing analog). Overlay those `NoteId`s onto the existing playback window. Do **not** full-replace `mergedEvents` from a whole-loop `sessionMidiEvents()`. Unrelated notes keep committed playback around `currentTick`.
+7. **Session is overlay state, not a second loop.** Paint follows overdub compose: committed `visualCache` + this-session overlay. Overlay is the mover plus **remaining Active** participants of the current/last action, not every note that was ever overlapped. After settle, that overlay is the session delta for the **next** select/overlap (6D.4 analog). Do not insert it into LCR indexes (Path B). `EditSession.store` is not a display or query layer and must not be a full-loop rematerialize. `saveNoteEditPass` remains the content record at deselect/close.
+8. **6.0 applies to NOTE_EDIT open and fader.** No LCR construct / sort / checkpoint / `ensure*` rebuild on those stacks. Prepared **hit** is the analysis authority. Prepared **miss** is a legacy compatibility path with today’s semantics — not a second analysis authority. Never Path B (live session geometry into LCR).
+9. **Implementation stages are split.** Select neighborhood (work-shape gate) → overlap identities (`appendNoteEvents` bounded) → resolver consume + legacy miss → 4a open without full-loop analysis → 4b first select → 4c playback overlay (not `sessionMidiEvents()` full-stream replace) → integrated device gate. Do not redesign `rematerializeEditView` / `materializeToEventVector` / `EditSession.store` during this consumer migration. Device gates measure work shape, not only function-call absence.
+
+**Rejected:**
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| New DEC | Editor was already a DEC-037 consumer; interval change is an amendment |
+| `EditSourceView` / second note map | 6E rejected premapped maps; NAMING forbids a new domain noun |
+| 16-bar `resolveWindow` then reconstruct all `DisplayNote`s | On a 16-bar loop that is the full cache cost under a new name |
+| Select defined as `resolveState(selectedTick)` | Sounding-state is overlap at S; Select is onset/navigation |
+| Full-loop select encoder via `tickEvents` | User pin: neighborhood only |
+| Overlap find on every geometry apply | User pin: after motion stops, one display frame |
+| Keep full session-store playback replace | `ensurePlaybackMergedMidiEventsBuilt` assigns all `sessionMidiEvents()`; audition only needs selected + participants |
+| Miss path as a second analysis authority | Prepared hit is authoritative; miss is temporary legacy compatibility |
+| Redesign `EditSession.store` / `rematerializeEditView` in this migration | Prove the consumer first; then ask which old machinery is unreachable |
+| New DEC to delete session store | Apply scratch can remain; deleting the store is a later ownership question |
+
+**Affected modules (when firmware is authorized):** `NoteGeometryResolver` candidate source; `SelectNavigation`; `openNoteEditSession`; `ensurePlaybackMergedMidiEventsBuilt` overlay. Owners unchanged.
+
 ### Constraints created
 
 - Overdub button / source-view open must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included). Commit-site delta publish + restamp is the approved 6D.4 placement (firmware not yet authorized).
@@ -412,10 +447,11 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 - `resolveNotes` must not become the playback primitive.
 - Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
 - Always-ready for the **next overdub query** is **6D** (6D.1 one-vector mutation FAIL; 6D.2 split PASS; 6D.3 repeated overdub PASS native). Not all of LCR. Not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready only.
+- NOTE_EDIT open / fader must not construct, sort, checkpoint, or resolve LCR (same 6.0 consume-only rule). Select is neighborhood `tickEvents` / `spanBoundaries`, not `resolveState`. Participating-note find runs after mover stop plus one `DisplayManager::update` as trigger; data source is LCR ∪ overlay, not `visualCache` rebuild. Intra-action leave restores (`RestoreNote`); it does not apply DEC-030 sticky overlap end-of-participation. Remaining Active overlay rows are the session delta for the next select/overlap/audition (prepared LCR ∪ overlay). Do not insert live geometry into LCR (Path B). Editor paint follows overdub compose: `visualCache` + neighborhood overlay. Audition overlays settled session `NoteId`s onto the playback window around `currentTick`. Do not full-replace `mergedEvents` from a whole-loop session store. Do not fill current-state from every visual-cache row. Prepared miss is legacy compatibility only. `appendNoteEvents(NoteId)` must not scan the whole loop per id.
 
 ### Related OpenSpec
 
-`openspec/changes/loop-content-resolution/` (new). DEC-036 change `loop-effective-event-source` remains for Layer D 3b closeout; D3/D4 stay out of that change.
+`openspec/changes/loop-content-resolution/` (producer). Editor hydrate is a separate work path: [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md). DEC-036 change `loop-effective-event-source` remains for Layer D 3b closeout; D3/D4 stay out of that change.
 
 ### Migration notes
 
