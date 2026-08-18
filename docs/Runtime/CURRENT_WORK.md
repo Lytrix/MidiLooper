@@ -2,26 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (wrap-tick ledger catch-up from committed pass)
+Last updated: 2026-08-18 (wrap-S HITL PASS; loop-head ledger investigation)
 
 ---
 
 ## Now implementing
 
-### Wrap-tick ledger catch-up from committed pass
+### Loop-head playback ledger after wrap (investigation)
+
+**Plan:** [`overdub_loop_head_playback_ledger_investigation.md`](../Plans/overdub_loop_head_playback_ledger_investigation.md)  
+**Evidence:** [`185831`](../../captures/session_20260818_185831.log) occupy 60 @ storage **0** `n=0 a=1 b=1` (`54243271`); same pitch @ **64** `n=1 a=1 b=1`
+
+**Question:** After wrap commit, what playback event establishes `ActiveNoteLedger` for notes logically present at loop tick 0? Do not assume carry-across vs NoteOn-at-0 vs cursor skip.
+
+**Owner:** `Track::playCommittedLoopMidi` / `playbackCursorAdvanceSend` / `ActiveNoteLedger`. Occupy stays a reader. Do not implement a second catch-up until the event/ledger trace names the missing write.
+
+**Does not reopen:** wrap-S `(prev, S]` (HITL PASS below). No occupy fallback.
+
+### Wrap-tick ledger catch-up from committed pass — HITL PASS
 
 **Plan:** [`overdub_wrap_committed_pass_playback_bugfix.md`](../Plans/overdub_wrap_committed_pass_playback_bugfix.md)  
-**Parent:** [`overdub_present_at_tick_jit_enhancement.md`](../Plans/overdub_present_at_tick_jit_enhancement.md)  
-**Supersedes:** [`overdub_wrap_playback_rebuild_before_occupy_bugfix.md`](../Plans/overdub_wrap_playback_rebuild_before_occupy_bugfix.md) (FROZEN; HITL [`180844`](../../captures/session_20260818_180844.log) wrap 15)  
-**Evidence:** [`180844`](../../captures/session_20260818_180844.log) wrap 15 `n=0 a=1 b=1` pitch **60** @ **416** (`310503348`)
-
-**Invariant:** Before occupy at wrap tick S, `ActiveNoteLedger` contains every committed playback event that crosses into S. Full-loop `playback_build` is not a prerequisite. This is wrap-tick **playback** catch-up, not a special occupy path.
-
-**Owner:** `Track::playCommittedLoopMidi`. `commitOverdubWrapAtSessionStart` stays the sealer. Occupy stays a reader of `Entry.noteId`. Consume stays on `overdubSourceView`.
-
-**Pin:** wrap-committed NoteOn at S was missing from the ledger after wrap. Source-view had it (`a=1 b=1`). Occupy `n=0`. Apply old merged `(prev, S]`, then `lastCommittedPassId()` chunks for `(prev, S]`, then rebuild and **reanchor at S** so `(prev, S]` is applied once. `playback_build` CAP is emit time.
-
-**HITL after flash:** 1-bar overdub, note that **starts at S**, wrap, play that pitch again at S. Expect `from=ledger,n=1,a=1,b=1` not `310503348` `n=0 a=1 b=1`.
+**HITL PASS:** [`185831`](../../captures/session_20260818_185831.log) wrap at storage **696**, occupy 71 @ **704** `n=1 a=1 b=1`. Fail pin remains [`180844`](../../captures/session_20260818_180844.log) wrap 15.
 
 ### Occupy — lookup `Entry.noteId`
 
@@ -36,7 +37,7 @@ Last updated: 2026-08-18 (wrap-tick ledger catch-up from committed pass)
 
 **Stage 0:** **Yes** — `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Not a 1:1 pitch lookup.
 
-**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-tick ledger miss is the committed-pass catch-up bugfix above.
+**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-S ledger catch-up **HITL PASS** [`185831`](../../captures/session_20260818_185831.log). Loop-head 60 @ 0 is a separate investigation.
 
 **Parked:** `evaluateOccupyOverlap`; wait-STOPPED-for-`lcr,mat`; consume merge; “occupy = ledger” ownership transfer.
 
