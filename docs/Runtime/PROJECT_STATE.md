@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-18 (Phase 3 note-on occupy from present-at-S; device HITL open)
+Last updated: 2026-08-18 (Phase 4 note-off fill skip when source view covers the loop; 64-bar occupy parked)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — overdub participant Phase 3 **in tree** (note-on fill disable). Phase 2 **closed** ([`040236`](../../captures/session_20260818_040236.log)). Device HITL open. Native **1332/1332**. PR pending → `dev`.
+**`feature/overdub-participant-discovery`** — overdub participant Phase 4 **in tree** (note-off fill skip when source view covers the loop). Phase 3 1-bar occupy **PASS** ([`121933`](../../captures/session_20260818_121933.log)); 64-bar occupy identity **parked** ([`122848`](../../captures/session_20260818_122848.log)). Device HITL open. Native **1333/1333**. PR pending → `dev`.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
@@ -38,7 +38,7 @@ Last updated: 2026-08-18 (Phase 3 note-on occupy from present-at-S; device HITL 
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** Overdub participants = notes **present** at tick `S`. Phase 2 **PASS** [`040236`](../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 3 in tree** — note-on occupy from prepared present-at-S; no 16-bar `ensureOverdubSourceNotesForHold` on USB note-on. Device HITL open. Do not shrink `kOverdubSourceWindowBars`. Queued (no firmware): [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md). **NOTE_EDIT hydrate** queued ([`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md)). **Playback gather** Stage 1 hooks landed. Wrap-move persist parked [`201446`](../captures/session_20260816_201446.log).
+**Active work:** Overdub participants = notes **present** at tick `S`. Phase 2 **PASS** [`040236`](../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 4 in tree** — note-off skips 16-bar fill when the source view covers the loop. Phase 3 1-bar occupy **PASS** [`121933`](../captures/session_20260818_121933.log). 64-bar occupy identity **parked** [`122848`](../captures/session_20260818_122848.log). Device HITL open. Do not shrink `kOverdubSourceWindowBars`. Queued (no firmware): [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md). **NOTE_EDIT hydrate** queued ([`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md)). **Playback gather** Stage 1 hooks landed. Wrap-move persist parked [`201446`](../captures/session_20260816_201446.log).
 
 **Merged to `dev`:** PR [#35](https://github.com/Lytrix/MidiLooper/pull/35) LoopContentResolution prototype (`be0e05f`); PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
@@ -62,7 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Overdub participant discovery:** `feature/overdub-participant-discovery` — Phase 3 **in tree** (device HITL open) — [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Overdub participant discovery:** `feature/overdub-participant-discovery` — Phase 4 **in tree** (device HITL open; 64-bar occupy parked) — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Codebase consistency:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) **NOW** — Phase 4 TrackManager **shipped** PR #22; next extractions in [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)
 - **StorageManager TU remaining:** **Merged** PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08); closeout [#16](https://github.com/Lytrix/MidiLooper/issues/16)
 - **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor
@@ -70,7 +70,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 - **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../Plans/note_edit_control_surface_split_refinement.md)
 - **Long record display freeze:** queued — [`long_record_onset_display_freeze_bugfix.md`](../Plans/long_record_onset_display_freeze_bugfix.md); evidence [`012342`](../../captures/session_20260812_012342.log)
-- **Next product slice:** overdub participant Phase 3 device HITL, then HITL CLI Phase 3 or persistence overlay — see [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Next product slice:** overdub participant Phase 4 device HITL, then HITL CLI Phase 3 or persistence overlay — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 - **Hygiene (`chore/codebase-hygiene-sprint1`):** safe debt **complete** — see [`codebase_hygiene_technical_debt_review.md`](../Plans/codebase_hygiene_technical_debt_review.md); sprint plans Status Done + [README index](../Plans/README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)

@@ -207,7 +207,8 @@ struct Loop {
   /// full loop. Skips noteIds already present. Optional `newlyMergedPitchNotes`
   /// receives only those new rows. `presentAtHoldOnly` keeps notes present at
   /// the hold tick (not ahead notes in the same window). Note-on occupy does
-  /// not call this (Phase 3).
+  /// not call this (Phase 3). Note-off skips this when the source view already
+  /// covers the whole loop (Phase 4). Empty occupy still walks source-view notes.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
                                        NoteUtils::DisplayNoteVec* newlyMergedPitchNotes = nullptr,
                                        bool presentAtHoldOnly = false);
@@ -237,6 +238,7 @@ struct Loop {
   /// Resolve incoming note against hold-candidate ids, then geometry.
   /// Wrap-head off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold.
   /// Empty `overlapNoteIds` skips span lookup (Gate 3); source-view overlap still consumes.
+  /// Note-off JIT-fills only when the source view does not already cover the loop (Phase 4).
   /// Returns false when no source view.
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
