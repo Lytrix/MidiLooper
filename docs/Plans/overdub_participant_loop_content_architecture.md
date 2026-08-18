@@ -853,7 +853,13 @@ Source view drops the hidden wrap-N Add. Sealed Delete companions target those i
 | Disabled-companion restore vs disabled-capture skip | **Not exercised** (no undo). |
 | duplicate `NoteSpan` for one `NoteId` | **No.** Counts match; no second id. |
 
-013327 device extras are **not** produced by occupy + seal + publish + source-view rebuild alone. Do not pick a B-list fix from this pin. Next pin must reproduce `a=0,b>0` at a repeating phase (013327 majority): a wrap-local `NoteSpan` that covers S while source-view reconstruct does not. Not rematerialize-between-wraps (one `lcr,mat` at boot). Not session-undo restore (first extra is before `sess_undo`).
+013327 device extras are **not** produced by occupy + seal + publish + source-view rebuild alone. Do not pick a B-list fix from this pin.
+
+### Native pin (tick 64 + undo + sibling)
+
+013327 `a=0,b>0` holds are `COORD` storage **64** (also 296 / 528). `test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo`: after wrap 1/2 at 64, A IDs == B IDs (`10` / `11`). After session undo at 64 and 100, both are `10`. `test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64`: two record notes cover 64; occupy `{1}` still consumes the sibling via source-view overlap; after wrap, A=`10` B=`10`.
+
+These populations do **not** produce `a=0,b>0`. Next pin must put a wrap-local `NoteSpan` over 64 while source-view reconstruct has no covering DisplayNote. Not rematerialize-between-wraps. First device extra (pitch 79 `a=1,b=2` at storage 576) is before `sess_undo`; the `a=0` majority is after undo.
 
 ---
 
