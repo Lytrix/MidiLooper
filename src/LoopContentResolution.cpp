@@ -2298,16 +2298,28 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTic
   }
   const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;
   const TickIndex& index = sDeviceGateSession.index;
+  auto capturePassIsActive = [&index](NoteId noteId) -> bool {
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(noteId);
+    if (found == nullptr) {
+      return false;
+    }
+    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    return pass == nullptr || pass->state == CapturePassState::Active;
+  };
+  auto hasActiveCompanion = [](NoteId noteId) -> bool {
+    for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+      if (row.state == EditPassState::Active && row.note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
   for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
     if (span.note.pitch != pitch || span.note.noteId == kInvalidNoteId) {
       continue;
     }
-    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(span.note.noteId);
-    if (found != nullptr) {
-      const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
-      if (pass != nullptr && pass->state != CapturePassState::Active) {
-        continue;
-      }
+    if (!capturePassIsActive(span.note.noteId)) {
+      continue;
     }
     if (!OverlapNoteIdObservation::displayNotePresentAtHold(span.startTick, span.endTick, tick,
                                                             loopLength)) {
@@ -2318,6 +2330,9 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTic
   for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
     if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId ||
         row.note.pitch != pitch) {
+      continue;
+    }
+    if (!capturePassIsActive(row.note.noteId) || hasActiveCompanion(row.note.noteId)) {
       continue;
     }
     if (!OverlapNoteIdObservation::displayNotePresentAtHold(row.startTick, row.endTick, tick,
