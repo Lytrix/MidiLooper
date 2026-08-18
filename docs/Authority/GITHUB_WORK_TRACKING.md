@@ -2,6 +2,8 @@
 
 **Purpose:** Define how GitHub Issues and Projects represent decided work without becoming a second architecture or execution system.
 
+**Way of working (WOW):** This document. The **[Work](https://github.com/users/Lytrix/projects/1)** project is the **feature-level roadmap**; plans and runtime docs hold implementation detail; Issues and PRs appear only when something is actually being implemented, reviewed, or merged.
+
 **Related:** [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md), [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md), [DELIVERY_RULES.md](DELIVERY_RULES.md).
 
 **Authority:** Subordinate to [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) and [DELIVERY_RULES.md](DELIVERY_RULES.md). Coordination only — does not replace [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md).
@@ -10,11 +12,18 @@
 
 ## 1. Role of GitHub
 
-GitHub is the project's **work inventory and relationship system**.
+GitHub serves two coordinated roles:
 
-A GitHub Issue answers:
+| Surface | Answers |
+|---------|---------|
+| **Work project** | What capabilities and architectural milestones are planned, in progress, or parked? |
+| **Issues / PRs** | What concrete implementation is being reviewed or merged right now? |
 
-> **What decided piece of work exists?**
+A GitHub **Issue** answers:
+
+> **What decided piece of work is being implemented, reviewed, or verified?**
+
+Create an Issue when implementation starts — not when an idea first appears, and not for every planned capability on the board.
 
 It does not answer:
 
@@ -24,6 +33,35 @@ It does not answer:
 * How must an architecture migration be performed?
 
 Those responsibilities remain with the repository's existing authority, delivery, and runtime documents.
+
+---
+
+## 1.1 Three levels of work visibility
+
+Planned architecture and features are spread across plans, runtime docs, decisions, and implementation notes. Use **three levels** so the project can answer: *What are we actually building, and what remains to be done?*
+
+```text
+Work project (capability / milestone cards)
+    → What capabilities are planned?
+
+Plans / design docs + runtime docs
+    → How are we going to solve them?
+
+Issues / PRs
+    → What are we implementing right now?
+```
+
+| Level | Holds | Does not hold |
+|-------|--------|----------------|
+| **Work project** | Meaningful capabilities and architectural milestones; Status NOW / NEXT / PARKED; short link to the authoritative plan | Hypotheses, capture IDs, stage checklists, RC layers, device gate tables |
+| **Plans / runtime docs** | Hypotheses, measurements, experiments, stages, captures, device gates, implementation steps, decisions that change during investigation | Normative SHALL/MUST (OpenSpec specs after archive) |
+| **Issues / PRs** | Concrete implementation under review or merge; verification checklist for that slice | Whole-architecture design; backlog of every future idea |
+
+**Populate the Work project** with feature/milestone cards. A single active slice (for example overdub participant discovery) must **not** be the only card — that misrepresents the rest of the planned work you are actively reasoning about.
+
+Keep the **Issues list** free of premature implementation tickets. Use **draft project items** (no Issue) for capabilities that are planned but not yet in implementation.
+
+**Do not** use an empty project board as the default. An empty board hides planned work that is not yet stable enough to be a GitHub Issue but is still part of the product architecture.
 
 ---
 
@@ -197,25 +235,36 @@ When a Bug investigation becomes a broader ownership/model migration, create or 
 
 ---
 
-## 6. GitHub Project fields
+## 6. GitHub Project — feature-level roadmap
 
 Use **one** Project: **[Work](https://github.com/users/Lytrix/projects/1)** (owner `Lytrix`, number `1`, linked to `Lytrix/MidiLooper`).
+
+The Work project is a **central capability overview**, not a development-task tracker. Each card is a **meaningful capability or architectural milestone** with a short body linking to the authoritative plan or architecture doc. Implementation detail stays in plans and [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md).
+
+### Card types on the board
+
+| Card kind | When to use | GitHub object |
+|-----------|-------------|---------------|
+| **Capability / milestone** | Planned or active architectural slice; may span many commits and stages | **Draft project item** (preferred) or linked Feature Issue when implementation is underway |
+| **Implementation** | A specific Bug/Task under active development or review | **Issue** (+ PR), linked to the board when work starts |
+
+Prefer **draft items** for capabilities that do not yet need an Issue. Promote to an Issue when you open a branch and need review/merge identity.
 
 ### Status (board columns)
 
 | Status | Meaning |
 |--------|---------|
-| **NOW** | Eligible for execution; may appear in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) |
-| **NEXT** | Decided work ready or likely after current work |
-| **PARKED** | Valid deferred work — visible without entering execution |
+| **NOW** | Active architectural slice; should appear in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Now implementing |
+| **NEXT** | Decided capability ready or likely after current NOW work |
+| **PARKED** | Valid deferred capability — visible without entering execution |
 
 Flow:
 
 ```text
-PARKED → NEXT → NOW → CURRENT_WORK → implement → close
+PARKED → NEXT → NOW → CURRENT_WORK → (optional Issue) → branch → PR → merge → update card / close Issue
 ```
 
-The Project must **not** become a second detailed execution queue. [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) remains execution authority for what is being implemented now.
+The Project must **not** become a second detailed execution queue. [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) remains execution authority for stages, captures, and device gates.
 
 ### Optional fields
 
@@ -226,7 +275,7 @@ Add only when useful:
 | **Priority** | P0 / P1 / P2 / P3 |
 | **Area**     | Note Edit / Playback / Storage / Display / MIDI / HITL / etc. |
 
-**Type** is the GitHub Issue type (Feature / Bug / Task), not a parallel Project taxonomy.
+**Type** is the GitHub Issue type (Feature / Bug / Task) when an Issue exists — not a parallel Project taxonomy.
 
 Avoid creating labels for information that should be a structured field.
 
@@ -234,15 +283,40 @@ Use labels only for genuinely orthogonal cross-cutting information.
 
 Do not create a large taxonomy before it is needed. Do not adopt Epic → Story → Task hierarchy initially.
 
+### 6.1 Capability roadmap (maintain on Work)
+
+Keep these **draft milestone cards** on the board (titles may be shortened on the card; plan link is required in the body). Status reflects **capability** progress, not every RC or capture.
+
+| Status | Capability | Plan / authority |
+|--------|------------|------------------|
+| **NOW** | Overdub participant discovery (present at S; Phase 3 fill disable next) | [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md) |
+| **NEXT** | NOTE_EDIT hydrate (LCR consume; overlap = selected/mover LinearSpan) | [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md) |
+| **NEXT** | Playback gather / playback horizon (LCR consume; JIT window) | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) |
+| **NEXT** | Loop length during overdub | [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md) |
+| **NEXT** | HITL CLI rebuild (layered `base` + `edit_full`) | [`hitl_cli_rebuild_enhancement.md`](../Plans/hitl_cli_rebuild_enhancement.md) |
+| **PARKED** | Streaming / range-first loop resolution (LCR Layer D) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) § Layer D |
+| **PARKED** | Undo architecture — derived editing state (Stage 3b; replace GUS) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) § Stage 3b |
+| **PARKED** | Loop content history Layers B–C (clear-as-unlink, checkpoint + tail) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) |
+| **PARKED** | Persistence overlay / set-revision loop picker | `set-revision-persistence` §4.8–4.10; [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md) |
+| **PARKED** | Crash recovery / persistence Phase 5 | [`continuous_runtime_persistence_phase5_recovery_handoff.md`](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
+| **PARKED** | Display / piano-roll architecture (visual cache, paint gap follow-ups) | [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md) |
+| **PARKED** | Memory / performance / runtime scheduling | [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md); [`memory_pressure_reclaim_refinement.md`](../Plans/memory_pressure_reclaim_refinement.md) |
+| **PARKED** | Jam / multi-loop capture (D13 deferred) | [`phase-3-multi-loop.md`](../Plans/phase-3-multi-loop.md); [`ROADMAP.md`](../Runtime/ROADMAP.md) |
+
+Update this table when a capability moves column or a new architectural milestone is decided. Do not duplicate stage checklists here.
+
+**Shipped capabilities** (example): Loop content-only history (DEC-035 Layer A) — close or archive the card; normative spec in `openspec/specs/loop-content-history/`. LoopContentResolution prototype on `dev` (PR #35) — card optional; remaining LCR consumer work lives in the NEXT rows above.
+
 ---
 
 ## 7. GitHub versus repository documents
 
 | Question                                  | System                                   |
 | ----------------------------------------- | ---------------------------------------- |
-| What work exists?                         | GitHub Issues                            |
-| How are work items related?               | GitHub sub-issues                        |
-| How do I filter/group work?               | GitHub Project (NOW / NEXT / PARKED)     |
+| What capabilities are we building?      | **Work project** (§1.1, §6.1)            |
+| What work is being implemented now?       | GitHub Issues (when opened) + PRs        |
+| How are work items related?               | GitHub sub-issues (implementation only)  |
+| How do I filter/group capabilities?       | GitHub Project Status / Area / Priority  |
 | What should I work on now?                | [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) |
 | What is the architecture?                 | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) + authority docs |
 | What was decided architecturally?         | [`DECISION_LOG.md`](../DECISION_LOG.md) |
@@ -444,16 +518,19 @@ Without OpenSpec, the minimum durable record is: GitHub Bug + bugfix plan/invest
 Do not:
 
 * create a Bug for an uninvestigated hypothesis;
+* create an Issue for every planned capability (use a **draft project card** instead);
 * create an issue for every tiny implementation step;
 * create one GitHub Issue per RC;
 * use GitHub labels as a replacement for architecture;
 * duplicate OpenSpec requirements in the issue;
-* copy an entire plan into the issue;
+* copy an entire plan into the issue or project card body;
 * use GitHub status as a replacement for `CURRENT_WORK.md`;
 * create a second backlog in Markdown;
 * migrate all historical plans into GitHub merely for completeness;
 * adopt Epic → Story → Task hierarchy initially;
 * skip a short-lived branch/PR for reviewable refinements by defaulting to commits on `dev`;
-* auto-sync GitHub and `CURRENT_WORK.md`.
+* auto-sync GitHub and `CURRENT_WORK.md`;
+* leave the **Work project empty** while substantial capabilities exist only in plans;
+* put a **single active slice** on the board as if it were the whole product roadmap.
 
 GitHub should reduce coordination overhead, not create another documentation system.

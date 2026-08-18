@@ -150,7 +150,7 @@ Do not resolve conflicts by:
 | [Architecture/](Architecture/) | Child docs: Storage, DerivedViews, IntervalProjection, Playback, Display |
 | [DELIVERY_RULES.md](DELIVERY_RULES.md) | How work is tracked, verified, and shipped |
 | [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md) | Discovery → decision → work item → verify → docs closeout |
-| [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) | GitHub Issues / Project NOW·NEXT·PARKED — work identity only |
+| [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) | **WOW** — Work project capability roadmap; Issues/PRs for implementation only |
 | [DOCUMENTATION_CLOSEOUT.md](DOCUMENTATION_CLOSEOUT.md) | Durable docs must match shipped behavior before close |
 
 ---
