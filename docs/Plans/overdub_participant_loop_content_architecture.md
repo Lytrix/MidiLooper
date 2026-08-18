@@ -888,7 +888,9 @@ Do **not** wrap-pair merged record+overdub (015618). Do not feed consume from vi
 
 Wrap-paired overdub fill cannot create those pre-wrap extras: `appendOverdubPassWrapPairedNotes` has no Active overdub wrap yet, and live-pass reconstruct also `merged=0`. The extras exist only on prepared `NoteSpan`s that B walks (`finishCanonicalSpansFromMidi`). Occupy uses A → empty occupy → B extras stay Visible after wrap.
 
-**Native fill in tree:** [`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md). Prepared `NoteSpan`s → `overdubSourceViewNotes_` when ready. Unprepared MIDI reconstruct must not finish opens. Device gate: `eq=1` at storage 64 **before** first wrap on a 1-bar overdub like 021716. Occupied storage-576 stays a later class. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
+**Native fill in tree:** [`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md). Prepared `NoteSpan`s → `overdubSourceViewNotes_` when ready. Unprepared MIDI reconstruct must not finish opens.
+
+**Device** [`024225`](../../captures/session_20260818_024225.log) — 1-bar (768). 122 `lcr,part`. Prepared `eq=0` = **0** (110 `from=prep` `a=b`). 12 `from=miss` on later `from=win` opens. Pre-wrap holds are empty agreement (`a=0,b=0`), first `COORD` storage **672**. No `storage,64` in the log. Loop was cleared to 1 note before overdub; first `why=open` is `from=span,notes=0`. This does not close the 021716 storage-64 pin. Occupied storage-576 stays a later class. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
 
 ---
 
