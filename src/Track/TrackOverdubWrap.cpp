@@ -9,25 +9,25 @@
 #include "LoopContentResolution.h"
 #include "Utils/TrackMem.h"
 
-void Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
+bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   Loop& loop = getActiveLoop();
   if (!loop.hasOverdubSession() || loop.loopLengthTicks == 0) {
-    return;
+    return false;
   }
   if (loop.consumeSuppressedOverdubWrapCrossing(prevPhase, currentPhase)) {
-    return;
+    return false;
   }
   loop.armOverdubWrapAfterLeavingStart(currentPhase);
   if (!loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
-    return;
+    return false;
   }
-  commitOverdubWrapAtSessionStart();
+  return commitOverdubWrapAtSessionStart();
 }
 
-TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
+TRACK_COLD_MEM bool Track::commitOverdubWrapAtSessionStart() {
   Loop& loop = getActiveLoop();
   if (!loop.hasOverdubSession() || loop.capture.phase != CapturePhase::Overdub) {
-    return;
+    return false;
   }
   SessionMidiEventVec heldOns;
   loop.extractOpenCaptureNoteOns(heldOns);
@@ -36,7 +36,7 @@ TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
       loop.appendCaptureEvent(evt);
     }
     loop.noteOverdubWrapCommitted();
-    return;
+    return false;
   }
   const uint32_t sealedAtTick = loop.playheadPhaseTick;
   const CommitResult result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
@@ -69,4 +69,5 @@ TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
     displayManager.invalidateLiveDisplayCache();
   }
   logger.logTrackEvent("Overdub wrap committed", clockManager.getCurrentTick());
+  return wrapped;
 }
