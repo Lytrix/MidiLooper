@@ -402,15 +402,29 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
-  char line[224];
-  snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u",
-           static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
-           static_cast<unsigned long>(reconstructUs),
-           static_cast<unsigned long>(windowUs + reconstructUs),
-           static_cast<unsigned>(overdubSourceViewEvents_.size()),
-           static_cast<unsigned>(overdubSourceViewNotes_.size()),
-           static_cast<unsigned>(kOverdubSourceWindowBars));
+  char line[256];
+  if (std::strcmp(from, "span") == 0) {
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u",
+             static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
+             static_cast<unsigned long>(reconstructUs),
+             static_cast<unsigned long>(windowUs + reconstructUs),
+             static_cast<unsigned>(overdubSourceViewEvents_.size()),
+             static_cast<unsigned>(overdubSourceViewNotes_.size()),
+             static_cast<unsigned>(kOverdubSourceWindowBars));
+  } else {
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u,"
+             "live=%lu,prep=%lu",
+             static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
+             static_cast<unsigned long>(reconstructUs),
+             static_cast<unsigned long>(windowUs + reconstructUs),
+             static_cast<unsigned>(overdubSourceViewEvents_.size()),
+             static_cast<unsigned>(overdubSourceViewNotes_.size()),
+             static_cast<unsigned>(kOverdubSourceWindowBars),
+             static_cast<unsigned long>(loopLengthTicks),
+             static_cast<unsigned long>(LoopContentResolution::deviceGateLoopLengthTicks()));
+  }
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)from;

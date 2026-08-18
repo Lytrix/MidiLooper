@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-18 (Stage 1 source-view span copy past occupy-set cap 128)
+Last updated: 2026-08-18 (Stage 1b prepared-session length identity)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — Stage 1 source-view span copy **in tree** (window NoteOn IDs past occupy-set cap 128). Phase 4 1-bar HITL **PASS** ([`123803`](../../captures/session_20260818_123803.log)). Do not start Stage 2 until 64-bar `from=span` / `ao=0` device gate. Native HITL open. PR pending → `dev`.
+**`feature/overdub-participant-discovery`** — Stage 1b prepared-session length identity **in tree**. Stage 1 membership (window NoteOn IDs past occupy-set cap 128) shipped; [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0. Do not start Stage 2 until 64-bar `from=span` / `ao=0` after STOPPED `lcr,mat` on the 64-bar loop. Phase 4 1-bar HITL **PASS** ([`123803`](../../captures/session_20260818_123803.log)). Native 1338/1338. PR pending → `dev`.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 

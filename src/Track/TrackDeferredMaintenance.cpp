@@ -359,7 +359,7 @@ TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
 #if !defined(SESSION_CAPTURE)
   return;
 #else
-  if (LoopContentResolution::deviceGateFinished() || LoopContentResolution::deviceGateActive()) {
+  if (LoopContentResolution::deviceGateActive()) {
     return;
   }
   if (this != &trackManager.getSelectedTrack()) {
@@ -381,6 +381,15 @@ TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
     return;
   }
 #endif
+  if (LoopContentResolution::deviceGateFinished()) {
+    if (loop.loopLengthTicks == LoopContentResolution::deviceGateLoopLengthTicks()) {
+      return;
+    }
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "length");
+#endif
+    LoopContentResolution::deviceGateReset();
+  }
   LoopContentResolution::deviceGateBegin(loop.loopLengthTicks);
 #endif
 }

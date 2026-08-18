@@ -106,6 +106,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
         for (const OverdubPass& pass : loop.passes.overdubPasses) {
           if (pass.id == undoPassId) {
             LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision,
+                                                              loop.loopLengthTicks,
                                                               loop.passes.editPasses, companionIds);
             break;
           }

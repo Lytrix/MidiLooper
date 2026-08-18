@@ -2131,6 +2131,10 @@ TRACK_COLD_MEM void LoopContentResolution::deviceGateReset() {
   sDeviceGateFinished = false;
 }
 
+uint32_t LoopContentResolution::deviceGateLoopLengthTicks() {
+  return sDeviceGateSession.loopLengthTicks;
+}
+
 TRACK_COLD_MEM void LoopContentResolution::deviceGateComplete(uint32_t playbackRevision) {
   sDeviceGateSession.keepPreparedIndex(playbackRevision);
   sDeviceGateFinished = true;
@@ -2142,10 +2146,13 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
 }
 
 TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
-    const OverdubPass& pass, uint32_t playbackRevision, const EditPassVec& editPasses,
-    const EditPassIdList& companionIds) {
+    const OverdubPass& pass, uint32_t playbackRevision, uint32_t loopLengthTicks,
+    const EditPassVec& editPasses, const EditPassIdList& companionIds) {
   if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
       pass.id == kInvalidPassId) {
+    return;
+  }
+  if (loopLengthTicks == 0 || loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
     return;
   }
   TickIndex& index = sDeviceGateSession.index;
@@ -2289,11 +2296,14 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedState(uint32_t tick
 }
 
 TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-    uint32_t tick, uint8_t pitch, uint32_t playbackRevision, OverlapNoteIdSet& out) {
+    uint32_t tick, uint8_t pitch, uint32_t playbackRevision, uint32_t loopLengthTicks,
+    OverlapNoteIdSet& out) {
   out.clear();
   if (!preparedWindowReady(playbackRevision) ||
       sDeviceGateSession.checkpoints.spans.empty() ||
-      sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
+      sDeviceGateSession.checkpoints.loopLengthTicks == 0 || loopLengthTicks == 0 ||
+      loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks ||
+      loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
     return false;
   }
   const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;

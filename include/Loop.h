@@ -217,7 +217,8 @@ struct Loop {
   void collectOverdubSourceHoldParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
   /// Prepared present-at-S NoteIds for pitch (B). RC8 hold on prepared `NoteSpan`s.
-  /// Returns false on prepared miss. Never `resolveWindow` / cold `resolveState`. Clears `out`.
+  /// Returns false on prepared miss or live loop-length mismatch. Never
+  /// `resolveWindow` / cold `resolveState`. Clears `out`.
   bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
   /// Note-on occupy (Phase 3): prepared present-at-S when ready, else source-view

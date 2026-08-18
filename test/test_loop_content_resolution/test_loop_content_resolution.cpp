@@ -3655,7 +3655,7 @@ void test_stage6e4_publish_is_next_wrap_source() {
   TEST_ASSERT_FALSE(hasPresentNoteId(before, recordNoteId));
   const uint32_t preparedSpans = beforeCounters.eventsInHistory;
 
-  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u);
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, loopLength);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
   TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(kPreparedRevision));
 
@@ -3718,7 +3718,7 @@ void test_stage6e4_publish_hides_every_wrap_pair_span() {
 
   OverlapNoteIdSet beforeHide;
   TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-      64, 60, kPreparedRevision, beforeHide));
+      64, 60, kPreparedRevision, loopLength, beforeHide));
   TEST_ASSERT_TRUE(beforeHide.contains(recordNoteId));
 
   const OverdubPass wrap1 = makeOverdub(2, 1, 200, 400, 1, 72, wrapNoteId);
@@ -3726,12 +3726,13 @@ void test_stage6e4_publish_hides_every_wrap_pair_span() {
   LoopPasses live = prepared;
   live.overdubPasses.push_back(wrap1);
   live.editPasses.push_back(hide);
-  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, loopLength,
+                                                    live.editPasses,
                                                     EditPassIdList{hide.id});
 
   OverlapNoteIdSet afterHide;
   TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-      64, 60, kPreparedRevision + 1u, afterHide));
+      64, 60, kPreparedRevision + 1u, loopLength, afterHide));
   TEST_ASSERT_FALSE(afterHide.contains(recordNoteId));
   PresentNoteVec atTail;
   TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(64, kPreparedRevision + 1u,
@@ -3761,7 +3762,8 @@ void test_stage6e4_publish_projects_companion_hide() {
   LoopPasses live = prepared;
   live.overdubPasses.push_back(wrap1);
   live.editPasses.push_back(hide);
-  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, loopLength,
+                                                    live.editPasses,
                                                     EditPassIdList{hide.id});
 
   assertPreparedMatchesOracle(live, loopLength, 100, kPreparedRevision + 1u);
@@ -3800,7 +3802,8 @@ void test_stage6e4_publish_projects_companion_shorten() {
   LoopPasses live = prepared;
   live.overdubPasses.push_back(wrap1);
   live.editPasses.push_back(shorten);
-  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, loopLength,
+                                                    live.editPasses,
                                                     EditPassIdList{shorten.id});
 
   assertPreparedMatchesOracle(live, loopLength, 100, kPreparedRevision + 1u);
@@ -3840,7 +3843,8 @@ void test_stage6e4_disabled_companion_restores_hidden_source() {
   LoopPasses live = prepared;
   live.overdubPasses.push_back(wrap1);
   live.editPasses.push_back(hide);
-  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, loopLength,
+                                                    live.editPasses,
                                                     EditPassIdList{hide.id});
 
   LoopContentResolution::setPreparedEditPassState(hide.id, EditPassState::Disabled);
@@ -3882,7 +3886,8 @@ void test_stage6e4_disabled_companion_restores_shortened_tail() {
   LoopPasses live = prepared;
   live.overdubPasses.push_back(wrap1);
   live.editPasses.push_back(shorten);
-  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, live.editPasses,
+  LoopContentResolution::publishPreparedOverdubPass(wrap1, kPreparedRevision + 1u, loopLength,
+                                                    live.editPasses,
                                                     EditPassIdList{shorten.id});
 
   LoopContentResolution::setPreparedEditPassState(shorten.id, EditPassState::Disabled);
@@ -3962,7 +3967,8 @@ void test_stage6e5_held_note_across_session_start_does_not_seal_add() {
   LoopContentResolution::deviceGateComplete(kPreparedRevision);
 
   const OverdubPass completedWrap = makeOverdub(2, 1, 200, 400, 1, 72, completedNoteId);
-  LoopContentResolution::publishPreparedOverdubPass(completedWrap, kPreparedRevision + 1u);
+  LoopContentResolution::publishPreparedOverdubPass(completedWrap, kPreparedRevision + 1u,
+                                                    loopLength);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kPreparedRevision + 1u));
 
   PresentNoteVec atCompleted;
@@ -4012,7 +4018,7 @@ void test_stage6d4_publish_restamps_without_device_gate_complete() {
   for (uint32_t i = 0; i < publishCount; ++i) {
     const OverdubPass& pass = fixture.passes.overdubPasses[preparedOverdubs + i];
     revision += 1;
-    LoopContentResolution::publishPreparedOverdubPass(pass, revision);
+    LoopContentResolution::publishPreparedOverdubPass(pass, revision, fixture.loopLengthTicks);
     TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(revision));
     TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(revision - 1u));
     livePasses.overdubPasses.push_back(pass);
@@ -4037,7 +4043,7 @@ void test_stage6d4_publish_restamps_without_device_gate_complete() {
 
   LoopContentResolution::deviceGateReset();
   LoopContentResolution::publishPreparedOverdubPass(fixture.passes.overdubPasses.back(),
-                                                    revision + 2u);
+                                                    revision + 2u, fixture.loopLengthTicks);
   TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(revision + 2u));
   SessionMidiEventVec unprepared;
   TEST_ASSERT_FALSE(LoopContentResolution::tryResolvePreparedWindow(
