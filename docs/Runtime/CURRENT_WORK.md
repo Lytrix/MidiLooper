@@ -2,22 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (occupy merged-capture ledger — playback mergedMidiEvents committed-only)
+Last updated: 2026-08-18 (occupy merged-capture ledger HITL FAIL 231038 — n=1 a=0 met)
 
 ---
 
 ## Now implementing
 
-### Occupy merged-capture ledger — pin [`224719`](../../captures/session_20260818_224719.log)
+### Occupy merged-capture ledger — HITL FAIL [`231038`](../../captures/session_20260818_231038.log)
 
 **Plan:** [`overdub_occupy_merged_capture_ledger_bugfix.md`](../Plans/overdub_occupy_merged_capture_ledger_bugfix.md)  
-**Parent (FROZEN):** [`overdub_occupy_capture_stream_ledger_bugfix.md`](../Plans/overdub_occupy_capture_stream_ledger_bugfix.md) — emit-only capture walk shipped; remaining writer was capture folded into `mergedMidiEvents`  
-**Pin:** [`224719`](../../captures/session_20260818_224719.log) — 8 `n=0 a=1`; 6 `n=1 a=0`; `hs=` on 109/109 occupies  
+**Parent (FROZEN):** [`overdub_occupy_capture_stream_ledger_bugfix.md`](../Plans/overdub_occupy_capture_stream_ledger_bugfix.md)  
+**Pin (pre-fix):** [`224719`](../../captures/session_20260818_224719.log) — 8 `n=0 a=1`; 6 `n=1 a=0`  
+**HITL FAIL:** [`231038`](../../captures/session_20260818_231038.log) — **6 `n=0 a=1`**; **0 `n=1 a=0`**; `hs=` on 86/86 occupies  
 **USB catch-up:** **reverted** [`214856`](../../captures/session_20260818_214856.log) — do **not** call `playMidiEvents` from occupy
 
-**Invariant:** Playback `runtime.mergedMidiEvents` is committed-only. Occupy reads `ActiveNoteLedger` written from that representation, wrap-pass, and loop-head. Live capture echo uses `playbackCursorAdvanceSendCapture` and must not last-write that ledger. CAP `hs=` is phased hold tick; `as=`/`ae=` stay.
+**Invariant:** Playback `runtime.mergedMidiEvents` is committed-only. Occupy reads `ActiveNoteLedger` written from that representation, wrap-pass, and loop-head. Live capture echo uses `playbackCursorAdvanceSendCapture` and must not last-write that ledger.
 
-**Firmware:** `ensurePlaybackMergedMidiEventsBuilt` gathers `gatherCommittedEventsForDerivedView` / `gatherCommittedEventsInWindow` even while capture is active. Display `WithCapture` stays paint.
+**This RC leftover gate met:** `n=1 a=0` = 0 (capture On no longer occupies empty source-view). Remaining `n=0 a=1` are pitch 12; five occupy at span start (`hs==as`); L5241 playback `MO` On 12 is after occupy. Do not fold capture into `mergedMidiEvents` again.
 
 **Does not reopen:** wrap-S `(prev, S]`; loop-head Q16 (HITL PASS below). No occupy fallback. No DisplayManager patch. Do not treat `n=1 a=2` as this FAIL.
 
