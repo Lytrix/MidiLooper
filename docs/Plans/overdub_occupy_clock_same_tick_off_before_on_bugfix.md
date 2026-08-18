@@ -1,6 +1,6 @@
 # Occupy clock same-tick Off before On
 
-**Status:** Native **PASS** 1358/1358. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL gate open.  
+**Status:** Native **PASS** 1358/1358. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **PASS** [`001021`](../../captures/session_20260819_001021.log) — `n=0 a=1` = 0; `n=1 a=0` = 0. Pin [`235314`](../../captures/session_20260818_235314.log) was 4 `n=0 a=1`.  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (catch-up two-pass shipped, gate not met):** [`overdub_occupy_same_tick_off_before_on_bugfix.md`](overdub_occupy_same_tick_off_before_on_bugfix.md)  
@@ -27,8 +27,8 @@ Clock playback at equal phase applies Off before On so abutting same-pitch repla
 
 ```
 … → USB occupy ledger catch-up (lastTick, occupyPhase] ← trust two-pass when it runs
- → clock equal-phase Off before On ← current investigation
- → unmatched Off vs overlapping same-pitch / L4294 ← parked
+ → clock equal-phase Off before On ← trust (HITL PASS 001021)
+ → unmatched Off vs overlapping same-pitch / L4294 ← parked (not in 001021)
 ```
 
 Do not make occupy catch-up run when `occupyPhase == lastTick`. That was rejected as occupy repairing clock.
@@ -69,4 +69,16 @@ Native cannot compile `rebuildPlaybackOrder` (`TrackInternal.h` → `Track.h` �
 
 ## HITL
 
-Same 1-bar overdub. Gates: `n=0 a=1` = 0 and `n=1 a=0` = 0. Keep occupy 12 @ `hs=0`. Do not treat `n=1 a=2` as this FAIL. If only span-start abuts clear and interior L4750/L4294 remain, freeze this RC and open unmatched-Off separately — do not widen `applyPlaybackEvent` in this commit.
+**PASS** [`001021`](../../captures/session_20260819_001021.log): 1-bar 768 OVERDUBBING; `hs=` on 82/82 occupies. Firmware `f584e6f`. `RING,overflow` once (observability).
+
+| Kind | Count | Gate |
+|------|------:|------|
+| `n=1 a=1` | 45 | match |
+| `n=0 a=0` | 37 | empty lane |
+| **`n=0 a=1`** | **0** | **met** (was 4 on [`235314`](../../captures/session_20260818_235314.log)) |
+| **`n=1 a=0`** | **0** | **met** |
+| `n=1 a=2` | 0 | not this gate |
+
+Span-start fixture from 235314 L4899 (`240–336` @ 240): L2715 **`n=1 a=1`**. Occupy 12 @ `hs=0` sounding **`n=1 a=1`** (L1028 `0–64`, L1371 `0–96`, L2515 `0–192`, L3572 `0–96`). Empty `as=ae=0` at `hs=0` stays `n=0 a=0`.
+
+235314 interiors L4750 (`192–288` @ 240) and L4294 (`240–384` @ 352) are **not** in this capture. `n=0 a=1` is 0 on the run, so unmatched-Off is not opened. Do not widen `applyPlaybackEvent`. Do not call `playMidiEvents` from occupy. Do not fold capture into `mergedMidiEvents`.

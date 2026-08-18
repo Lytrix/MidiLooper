@@ -1,6 +1,6 @@
 # Occupy same-tick Off before On (catch-up interval)
 
-**Status:** Native **PASS** 1357/1357. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **FAIL** [`235314`](../../captures/session_20260818_235314.log) — leftover `n=1 a=0` **met** (0); `n=0 a=1` **not met** (4). Pin [`233247`](../../captures/session_20260818_233247.log) was 11.  
+**Status:** Native **PASS** 1357/1357. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **FAIL** [`235314`](../../captures/session_20260818_235314.log) — leftover `n=1 a=0` **met** (0); `n=0 a=1` **not met** (4). Successor clock equal-tick HITL **PASS** [`001021`](../../captures/session_20260819_001021.log) (`n=0 a=1` = 0). Pin [`233247`](../../captures/session_20260818_233247.log) was 11.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent (interval catch-up shipped, gate not met):** [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md)  
