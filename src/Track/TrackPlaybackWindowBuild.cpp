@@ -156,8 +156,8 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       runtime.mergedMidiEvents.windowLengthTicks, windowRevision);
   mergedMidiEventsBuildInProgress = false;
 }
-void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
-                          const ProjectionContext& playbackContext) {
+TRACK_INTERNAL_MEM __attribute__((noinline)) void rebuildPlaybackOrder(
+    Loop& loop, const SessionMidiEventVec& mergedEvents, const ProjectionContext& playbackContext) {
   PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   playbackOrder.resize(mergedEvents.size());
   for (size_t i = 0; i < mergedEvents.size(); i++) {
@@ -174,6 +174,34 @@ void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
     }
     return mergedEvents[a].tick < mergedEvents[b].tick;
   });
+  // Equal-phase Off before On — same keys as NoteUtils::sortMidiEventsChronologically.
+  // Keep those keys out of the std::sort lambda so the ITCM sort instantiation does not grow.
+  for (size_t i = 0; i < playbackOrder.size();) {
+    size_t groupEnd = i + 1;
+    while (groupEnd < playbackOrder.size() &&
+           sortPhases[playbackOrder[groupEnd]] == sortPhases[playbackOrder[i]] &&
+           mergedEvents[playbackOrder[groupEnd]].tick == mergedEvents[playbackOrder[i]].tick) {
+      ++groupEnd;
+    }
+    for (size_t a = i + 1; a < groupEnd; ++a) {
+      const size_t inserted = playbackOrder[a];
+      const int insertedOrder =
+          mergedEvents[inserted].isNoteOff() ? 0 : (mergedEvents[inserted].isNoteOn() ? 1 : 2);
+      size_t k = a;
+      while (k > i) {
+        const size_t prev = playbackOrder[k - 1];
+        const int prevOrder =
+            mergedEvents[prev].isNoteOff() ? 0 : (mergedEvents[prev].isNoteOn() ? 1 : 2);
+        if (prevOrder <= insertedOrder) {
+          break;
+        }
+        playbackOrder[k] = prev;
+        --k;
+      }
+      playbackOrder[k] = inserted;
+    }
+    i = groupEnd;
+  }
   loop.playbackOrderDirty = false;
 }
 void reanchorCaptureIndex(Loop& loop) {
