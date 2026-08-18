@@ -1,6 +1,6 @@
 # Loop-head playback ledger after wrap
 
-**Status:** Closed — firmware in [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md). Native PASS. HITL open.  
+**Status:** Closed — firmware in [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md). Native PASS. HITL **PASS** [`203948`](../../captures/session_20260818_203948.log) 12 @ storage 0 `n=1 a=1 b=1`.  
 **Date:** 2026-08-18  
 **Kind:** investigation  
 **Parent:** [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md)  
@@ -108,7 +108,7 @@ Production wrap seal ran Q16 min-length on OverdubWrap (span 8 < 12), so On@0 ne
 
 ## Still open
 
-HITL: first loop-head 60 @ 0 `n=1 a=1 b=1` after the wrap-seal fix. Native pin is closed.
+HITL **PASS** [`203948`](../../captures/session_20260818_203948.log): 12 @ storage 0 `n=1 a=1 b=1` (`214037034`, `232043429`). Native pin is closed.
 
 ---
 

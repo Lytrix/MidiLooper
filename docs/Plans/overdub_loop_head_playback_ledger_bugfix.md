@@ -1,6 +1,6 @@
 # Loop-head playback ledger after wrap
 
-**Status:** Native **PASS** 1348/1348. HITL open (same 1-bar overdub as [`185831`](../../captures/session_20260818_185831.log)).  
+**Status:** Native **PASS** 1348/1348. HITL **PASS** [`203948`](../../captures/session_20260818_203948.log) loop-head occupy at storage **0**.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md)  
@@ -45,4 +45,13 @@ Do **not** change wrap-S `(prev, S]`, apply On@0 at wrap S, or teach occupy abou
 
 ## HITL
 
-Same 1-bar overdub as [`185831`](../../captures/session_20260818_185831.log). Gate: wrap-S 71 @ 704 still `n=1`; first loop-head 60 @ 0 `n=1 a=1 b=1`; 60 @ 64 still `n=1`.
+**PASS** [`203948`](../../captures/session_20260818_203948.log): track 6, 1-bar 768, OVERDUBBING. This run has no pitch 60/71 (USB ch 4 notes 12/23/24/30). The 185831 shape is occupy at storage **0** with source-view present (`a=1`):
+
+| CAP | Pitch | Storage | Occupy |
+|-----|-------|---------|--------|
+| `214037034` | 12 | **0** | `n=1 a=1 b=1` |
+| `232043429` | 12 | **0** | `n=1 a=1 b=1` |
+
+Opposite of [`185831`](../../captures/session_20260818_185831.log) `54243271` 60 @ 0 `n=0 a=1 b=1`. After wrap 1, occupy 12 @ 160 is `n=1 a=1 b=1`. Wrap-S 71 @ 704 stays the 185831 PASS.
+
+`n=0 a=1` still appears **off** storage 0 in this capture (12 @ **96** `204277855` after wrap 2; later 12 @ 384, 23 @ 432, 30 without COORD). Those are outside this invariant. Do not reopen wrap-S `(prev, S]`.
