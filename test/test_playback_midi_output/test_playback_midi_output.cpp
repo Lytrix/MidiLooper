@@ -120,6 +120,24 @@ void test_ledger_note_on_overwrites_note_id() {
   TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 60));
 }
 
+void test_ledger_apply_playback_event_before_emit() {
+  ActiveNoteLedger ledger;
+  MidiEvent on = MidiEvent::NoteOn(1000, 1, 60, 90);
+  on.noteId = 42;
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, on));
+  TEST_ASSERT_TRUE(ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_UINT32(42, ledger.noteId(1, 60));
+
+  MidiEvent orphanOff = MidiEvent::NoteOff(2000, 1, 61, 0);
+  TEST_ASSERT_FALSE(ledger.applyPlaybackEvent(1, orphanOff));
+  TEST_ASSERT_TRUE(ledger.isActive(1, 60));
+
+  MidiEvent off = MidiEvent::NoteOff(9000, 1, 60, 0);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, off));
+  TEST_ASSERT_FALSE(ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 60));
+}
+
 void test_all_notes_off_clears_ledger_mute_does_not() {
   ActiveNoteLedger ledger;
   ledger.noteOn(1, 60, 42, 100, 90);
@@ -188,6 +206,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_midi_send_requires_unmuted_track_and_slot);
   RUN_TEST(test_ledger_stays_active_after_note_on);
   RUN_TEST(test_ledger_note_on_overwrites_note_id);
+  RUN_TEST(test_ledger_apply_playback_event_before_emit);
   RUN_TEST(test_all_notes_off_clears_ledger_mute_does_not);
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);
   RUN_TEST(test_unmute_does_not_resend_crossed_events);
