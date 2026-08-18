@@ -341,7 +341,7 @@ Session undo **fires** while OVERDUBBING. Sealed-wrap committed count does not f
 - `establishOverdubSourceView` LCR hit
 - `publishPreparedOverdubPass`
 
-Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`, `test_source_view_prepared_window_omits_unpaired_open_tails`.
+Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`. Prepared source-view fill includes finished opens; the unprepared MIDI fallback still omits them (`test_source_view_prepared_window_includes_unpaired_open_tails`).
 
 Issue 3 (wrap-on-clock stall) is **closed** — not reproduced; two loops were playing. After-stop multi-wrap GUS is 038.2 (landed).
 

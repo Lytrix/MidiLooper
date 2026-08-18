@@ -198,8 +198,9 @@ struct Loop {
   /// `DisplayWindowUtils::kMaxDetailedWindowBars`. Experiment 1 rebuilds this
   /// value (1/2/4/8/16); a timing-passing length is evidence, not policy.
   static constexpr uint32_t kOverdubSourceWindowBars = 16;
-  /// Rebuild source notes from prepared window, else per-pass `resolveWindow`.
-  /// Not visual cache. `why` is CAP `open` / `wrap` / `undo` / `redo`.
+  /// Rebuild source notes from prepared `NoteSpan`s when ready, else window MIDI
+  /// reconstruct + wrap-paired overdub fill. Not visual cache.
+  /// `why` is CAP `open` / `wrap` / `undo` / `redo`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// D2: just-in-time merge of this pitch's notes from the source/hold window
   /// (`kOverdubSourceWindowBars`) into the session source view. Not the full loop. Skips noteIds already

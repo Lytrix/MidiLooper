@@ -428,7 +428,9 @@ void test_source_view_wrap_safe_high_then_low_capture_order() {
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 71, 12));
 }
 
-void test_source_view_prepared_window_omits_unpaired_open_tails() {
+void test_source_view_prepared_window_includes_unpaired_open_tails() {
+  // Prepared path copies finished opens (projected endTick == loopLength-1).
+  // Unprepared MIDI reconstruct (finishOpenNotes=false) must still omit them.
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopContentResolution::deviceGateReset();
@@ -447,6 +449,18 @@ void test_source_view_prepared_window_omits_unpaired_open_tails() {
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
   loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
+  bool finishedOpen = false;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.note == 72 && note.startTick == 80u && note.endTick == kLoopLen - 1) {
+      finishedOpen = true;
+    }
+  }
+  TEST_ASSERT_TRUE(finishedOpen);
+
+  ++loop.playbackRevision;
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
@@ -1913,6 +1927,117 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 021716 pre-wrap: prepared checkpoints finish unpaired ONs; source-view MIDI
+// reconstruct does not (finishOpenNotes=false). 1-bar loop. Hold at 64 before wrap.
+void test_prepared_hold_ids_pin_finished_open_covering_64() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 200, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(300, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 10, 1, 60, 100, 2));
+  loop.seedRecordPassFromStore(record);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  OverlapNoteIdSet a64;
+  OverlapNoteIdSet b64;
+  OverlapNoteIdSet ao64;
+  OverlapNoteIdSet bo64;
+  pinHoldSetsAfterWrap(0, loop, 64, 60, a64, b64, ao64, bo64);
+  TEST_ASSERT_TRUE(a64 == b64);
+  TEST_ASSERT_TRUE(a64.contains(2));
+  TEST_ASSERT_EQUAL(0u, ao64.size());
+  TEST_ASSERT_EQUAL(0u, bo64.size());
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
+  LoopContentResolution::deviceGateReset();
+}
+
+// 1-bar tailStart=0: complete wrap-crossing record pair is not the finished-open class.
+void test_prepared_hold_ids_pin_complete_wrap_pair_covering_64() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 720, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(96, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 200, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(300, 1, 60, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  OverlapNoteIdSet a64;
+  OverlapNoteIdSet b64;
+  OverlapNoteIdSet ao64;
+  OverlapNoteIdSet bo64;
+  pinHoldSetsAfterWrap(0, loop, 64, 60, a64, b64, ao64, bo64);
+  TEST_ASSERT_TRUE(a64 == b64);
+  TEST_ASSERT_TRUE(a64.contains(1));
+  TEST_ASSERT_EQUAL(0u, ao64.size());
+  TEST_ASSERT_EQUAL(0u, bo64.size());
+  LoopContentResolution::deviceGateReset();
+}
+
+// Seven unpaired ONs covering 64 when checkpoints finish them. Not one open note.
+void test_source_view_includes_seven_finished_opens_covering_64() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  LoopEventStore record;
+  for (uint8_t i = 0; i < 7; ++i) {
+    TEST_ASSERT_TRUE(storeAppendNoteOn(record, static_cast<uint32_t>(10 + i * 4), 1,
+                                       static_cast<uint8_t>(60 + i), 100,
+                                       static_cast<NoteId>(i + 1)));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.rebuildVisualCacheFromPasses();
+  const size_t visualCount = loop.visualCache.notes.size();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  const size_t sourceCount = loop.overdubSourceViewNotes().size();
+  printf("seven-finished-opens visual=%u source=%u\n", static_cast<unsigned>(visualCount),
+         static_cast<unsigned>(sourceCount));
+  TEST_ASSERT_EQUAL(7u, sourceCount);
+  (void)visualCount;
+  for (uint8_t i = 0; i < 7; ++i) {
+    OverlapNoteIdSet a64;
+    OverlapNoteIdSet b64;
+    OverlapNoteIdSet ao64;
+    OverlapNoteIdSet bo64;
+    pinHoldSetsAfterWrap(0, loop, 64, static_cast<uint8_t>(60 + i), a64, b64, ao64, bo64);
+    TEST_ASSERT_TRUE(a64 == b64);
+    TEST_ASSERT_TRUE(a64.contains(static_cast<NoteId>(i + 1)));
+    TEST_ASSERT_EQUAL(0u, ao64.size());
+    TEST_ASSERT_EQUAL(0u, bo64.size());
+  }
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1955,7 +2080,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_stable_across_capture_appends_and_wraps);
   RUN_TEST(test_source_view_immutable_when_live_materialize_mutates);
   RUN_TEST(test_source_view_wrap_safe_high_then_low_capture_order);
-  RUN_TEST(test_source_view_prepared_window_omits_unpaired_open_tails);
+  RUN_TEST(test_source_view_prepared_window_includes_unpaired_open_tails);
   RUN_TEST(test_source_view_consumes_prepared_lcr_when_cache_dirty);
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_discard_and_commit_clear_source_view);
@@ -1982,6 +2107,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo);
   RUN_TEST(test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64);
   RUN_TEST(test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64);
+  RUN_TEST(test_prepared_hold_ids_pin_finished_open_covering_64);
+  RUN_TEST(test_prepared_hold_ids_pin_complete_wrap_pair_covering_64);
+  RUN_TEST(test_source_view_includes_seven_finished_opens_covering_64);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);

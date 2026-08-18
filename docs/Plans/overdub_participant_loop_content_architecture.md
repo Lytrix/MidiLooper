@@ -651,7 +651,7 @@ Phase 1 observation is in tree. Production participant ids still come from the R
 
 Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. [`013327`](../../captures/session_20260818_013327.log) wrap-crossing Adds at tick 64 (`10`, then `10`+`11`) are filled onto the source view by `appendOverdubPassWrapPairedNotes`. Do **not** start Phase 3 fill disable until hard identity and prepared HITL `eq=1` pass.
+Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. [`013327`](../../captures/session_20260818_013327.log) wrap-crossing Adds at tick 64 (`10`, then `10`+`11`) are filled onto the source view by `appendOverdubPassWrapPairedNotes` (unprepared / visual-cache path). Prepared source-view fill copies those same spans when LCR is ready ([`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md)). Do **not** start Phase 3 fill disable until hard identity and prepared HITL `eq=1` pass.
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -817,8 +817,9 @@ Both collects already call `displayNotePresentAtHold`. The disagreement is the *
 
 ```text
 A  overdubSourceViewNotes_
-   = tryResolvePreparedWindow(editPasses) + reconstruct
-   + appendOverdubPassWrapPairedNotes (per Active OverdubPass)
+   = prepared NoteSpans → DisplayNotes when ready
+   else tryResolvePreparedWindow / resolveWindow + reconstruct
+        + appendOverdubPassWrapPairedNotes (unprepared fallback)
    → displayNotePresentAtHold
 
 B  every checkpoint NoteSpan
@@ -871,11 +872,11 @@ These populations do **not** produce `a=0,b>0`.
 | wrap 1 | `10` | `10` | 1 |
 | wrap 2 | `10`,`11` | `10`,`11` | 1 |
 
-**Shipped:** `rebuildOverdubSourceView` still owns source-view population. After merged reconstruct (no wrap pairing), it calls `appendOverdubPassWrapPairedNotes` — one Active `OverdubPass` at a time, `overdubPassWrapPairing=true`. `rebuildVisualCacheFromPasses` / wrap-edge idle slice use the same primitive. `appendOverdubPassDisplayNotes` is the display-named wrapper. B and LCR collect are unchanged. Occupy still walks A.
+**Shipped:** `rebuildOverdubSourceView` still owns source-view population. When prepared is ready it copies checkpoint `NoteSpan`s (same membership B walks) via `tryCopyPreparedSpansToDisplayNotes`. MIDI reconstruct + `appendOverdubPassWrapPairedNotes` is the unprepared fallback only — one Active `OverdubPass` at a time, `overdubPassWrapPairing=true`. `rebuildVisualCacheFromPasses` / wrap-edge idle slice keep the wrap-paired primitive. `appendOverdubPassDisplayNotes` is the display-named wrapper. B and LCR collect are unchanged. Occupy still walks A.
 
 Do **not** wrap-pair merged record+overdub (015618). Do not feed consume from visual cache. Do not add a second consume list. First device extra (pitch 79 `a=1,b=2` at storage 576) is a separate occupied class.
 
-### Device [`021716`](../../captures/session_20260818_021716.log) — fill in tree, `eq=1` not reached
+### Device [`021716`](../../captures/session_20260818_021716.log) — pre-wrap A empty because MIDI reconstruct omits finished opens
 
 1-bar loop (`DISP` `OVERDUBBING,768`). 104 `lcr,part`, all `from=prep` (0 miss). 65 `eq=1`, 39 `eq=0`: 20 `a=0,b>0`, 19 `a≥1` with `bo>0`. Hold `merged=0` except 5 post-wrap `merged=1`. 14 debug wrap commits, 8 `why=wrap` rebuilds (empty wraps skip rebuild/publish).
 
@@ -885,7 +886,9 @@ Do **not** wrap-pair merged record+overdub (015618). Do not feed consume from vi
 | After wrap (`notes=16`) | storage 64 / 528 / 704 | 1 | 3…6 |
 | After undo | chromatic 81–86, 94–96 | 0 | 1…2 |
 
-Before the first wrap rebuild, `appendOverdubPassWrapPairedNotes` has no Active overdub wrap to fill. B extras at 64 are already in prepared spans. After wrap, A is no longer empty on those occupied pitches; B still has extras. Occupied class is not closed. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
+Wrap-paired overdub fill cannot create those pre-wrap extras: `appendOverdubPassWrapPairedNotes` has no Active overdub wrap yet, and live-pass reconstruct also `merged=0`. The extras exist only on prepared `NoteSpan`s that B walks (`finishCanonicalSpansFromMidi`). Occupy uses A → empty occupy → B extras stay Visible after wrap.
+
+**Native fill in tree:** [`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md). Prepared `NoteSpan`s → `overdubSourceViewNotes_` when ready. Unprepared MIDI reconstruct must not finish opens. Device gate: `eq=1` at storage 64 **before** first wrap on a 1-bar overdub like 021716. Occupied storage-576 stays a later class. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
 
 ---
 
