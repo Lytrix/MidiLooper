@@ -1,6 +1,6 @@
 # Source-view membership from prepared NoteSpans
 
-**Status:** Native span fill `b94bd2b`; empty-copy fallback `81ce13a`; window-noteId span copy (030219 stale RC12 flood). Device display wipe **PASS** [`025337`](../../captures/session_20260818_025337.log). 021716 storage-64 pin still open.
+**Status:** Native span fill `b94bd2b`; empty-copy fallback `81ce13a`; window-noteId span copy. Device RC12 flood **PASS** [`030958`](../../captures/session_20260818_030958.log). Hide/Shorten every span with occupied NoteId (030958 `eq=0`). 021716 storage-64 pin still open.
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)  
@@ -15,14 +15,16 @@
 … → prepared checkpoints (finishCanonicalSpansFromMidi + later publish)
       ← trust span membership unless prepared miss
  → rebuildOverdubSourceView fill of overdubSourceViewNotes_
-      ← this slice
+      ← shipped (span copy + window-NoteOn filter)
+ → projectSealedCompanionsOntoCheckpoints Hide/Shorten
+      ← this slice: every checkpoint span with targetNoteId
  → occupy / consume / notePresentAt / B collect
       ← do not reopen
 ```
 
 When prepared is ready, A consumes those `NoteSpan`s. MIDI reconstruct (`finishOpenNotes=false`) plus `appendOverdubPassWrapPairedNotes` is fallback only and must not imitate span finish semantics.
 
-Do **not** fold occupied storage-576 into this slice until pre-wrap `A==B` is proven on device.
+Do **not** fold occupied storage-576 into this slice until pre-wrap `A==B` is proven on device. Do **not** change B collect. Do **not** remove the window-NoteOn anti-flood filter.
 
 ---
 
@@ -92,6 +94,7 @@ Prepared fields used: `startTick`, `endTick`, `noteId`, pitch. One `DisplayNote`
 | Seven unpaired ONs covering 64 | pitches 60–66, ids 1–7 | source-view count 7; A==B per pitch |
 | Prepared vs unprepared open tail | `72@80` no OFF | prepared includes `endTick == loopLength-1`; unprepared still omits |
 | Window noteIds only | two record notes; copy with only id 1 in `windowEvents` | id 2 span dropped |
+| Wrap-pair Hide at 64 | `ON@720 OFF@96` id 1, 1-bar, Delete id 1 | A and B empty of 1 at tick 64 |
 | Existing wrap-crossing / occupy+publish | unchanged fixtures | A==B stays |
 
 ---
@@ -177,6 +180,22 @@ No `lcr,mat` in this capture — device gate did not rebuild for the 1-note loop
 
 **Fix:** `tryCopyPreparedSpansToDisplayNotes` keeps only spans whose `noteId` is a NoteOn in the gathered window, skips index orphans, and misses on loop-length mismatch. Finished opens that are in the window MIDI still copy (021716 native pins). Stale checkpoint / companion rows that are not in `ev` do not.
 
+### [`030958`](../../captures/session_20260818_030958.log) — RC12 flood PASS
+
+1-bar (768). Capture starts already OVERDUBBING (no `why=open`). STOPPED earlier `DISP` 6. Device gate did complete (`lcr,mat` at 11.97 s). Firmware `e86a2ce` window-noteId filter.
+
+| After | `lcr,src` | `lcr,vch` | `notes` delta |
+|-------|-----------|-----------|----------------|
+| wrap 1 | `from=span,ev=28,notes=14` | `ev=28,notes=14` | **0** |
+| wrap 2 | `from=span,ev=28,notes=15` | `ev=28,notes=15` | **0** |
+| later wrap/undo | 15–23 | 15–22 | 0 or **+1** |
+
+Not the 030219 34-vs-4 leftover dump. The occasional +1 is one extra finished-open span vs MIDI reconstruct, not a prior-run pile.
+
+`COORD` storage **64** count = **0**. Pre-wrap holds are storage 384/432/480, `from=prep`; one pre-wrap `eq=0` (pitch 72 `a=1,b=2`). Session: 77 `lcr,part`, all `from=prep`; 34 `eq=1`, **43 `eq=0`**. Always `a < b` with `ao=0` `bo>0`. 021716 pin stays open. Occupied storage-576 appears after wrap 1 (`abs,5184`) — later class. Do not start Phase 3.
+
+030958 `eq=0` is not leftover flood. On a 1-bar loop the source window is the full loop. Wrap head+tail share a `NoteId`; `projectSealedCompanionsOntoCheckpoints` used to Hide only the first matching span. The leftover tail stayed in B; window flatten dropped the NoteOn so A’s window-NoteOn filter dropped the id (`a=1,b=2,bo=1`). Hide/Shorten now walks every checkpoint span with `targetNoteId` and records one `PreparedCompanion` from the first original. B collect and the window-NoteOn filter stay unchanged. Device gate: re-run a 1-bar occupied overdub like 030958; after wrap 1+, occupied `eq=0` should drop toward 0 while `lcr,src notes` vs `vch notes` stay near-equal.
+
 ---
 
 ## Hard don'ts
@@ -184,6 +203,7 @@ No `lcr,mat` in this capture — device gate did not rebuild for the 1-note loop
 - Phase 3 consume-from-LCR / `tryCollectPreparedPresentNoteIdsAtTick` as consume
 - Wrap pairing on merged record+overdub (015618)
 - Changing B / `notePresentAt` / occupy membership
+- Removing the window-NoteOn anti-flood filter to chase A==B
 - Record-pass wrap fill as the 021716 pre-wrap fix
 - Teaching the unprepared MIDI path to finish opens or imitate `NoteSpan` rebuild
 - Finishing opens on a partial 16-bar window

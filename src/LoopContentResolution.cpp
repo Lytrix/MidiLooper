@@ -1218,19 +1218,6 @@ TRACK_COLD_MEM void mergeSortedSpanBoundaryEntries(
              });
 }
 
-TRACK_COLD_MEM size_t findSpanIndexByNoteId(
-    const LoopContentResolution::StateCheckpoints::NoteSpanVec& spans, NoteId noteId) {
-  if (noteId == kInvalidNoteId) {
-    return spans.size();
-  }
-  for (size_t i = 0; i < spans.size(); ++i) {
-    if (spans[i].note.noteId == noteId) {
-      return i;
-    }
-  }
-  return spans.size();
-}
-
 TRACK_COLD_MEM void removeSpanBoundaries(
     LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& entries, size_t spanIndex) {
   entries.erase(std::remove_if(entries.begin(), entries.end(),
@@ -1316,27 +1303,35 @@ TRACK_COLD_MEM void projectSealedCompanionsOntoCheckpoints(
     if (!hide && !shorten) {
       continue;
     }
-    const size_t spanIndex = findSpanIndexByNoteId(checkpoints.spans, row->targetNoteId);
-    if (spanIndex >= checkpoints.spans.size()) {
-      continue;
+    bool recordedCompanion = false;
+    // Wrap head+tail share a NoteId. First-match Hide left the tail sounding (030958).
+    for (size_t spanIndex = 0; spanIndex < checkpoints.spans.size(); ++spanIndex) {
+      LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
+      if (span.note.noteId != row->targetNoteId) {
+        continue;
+      }
+      if (!recordedCompanion) {
+        PreparedCompanion recordedRow{};
+        recordedRow.id = id;
+        recordedRow.state = EditPassState::Active;
+        recordedRow.note = span.note;
+        recordedRow.startTick = span.startTick;
+        recordedRow.endTick = span.endTick;
+        recorded.push_back(recordedRow);
+        recordedCompanion = true;
+      }
+      removeSpanBoundaries(checkpoints.spanBoundaries, spanIndex);
+      if (hide) {
+        span.endTick = span.startTick;
+      } else {
+        span.endTick = row->endTick;
+        if (span.endTick != span.startTick) {
+          insertSpanBoundarySorted(checkpoints.spanBoundaries, span.startTick, spanIndex);
+          insertSpanBoundarySorted(checkpoints.spanBoundaries, span.endTick, spanIndex);
+        }
+      }
+      refreshPresentAtForSpan(checkpoints, spanIndex);
     }
-    LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
-    PreparedCompanion recordedRow{};
-    recordedRow.id = id;
-    recordedRow.state = EditPassState::Active;
-    recordedRow.note = span.note;
-    recordedRow.startTick = span.startTick;
-    recordedRow.endTick = span.endTick;
-    recorded.push_back(recordedRow);
-    removeSpanBoundaries(checkpoints.spanBoundaries, spanIndex);
-    if (hide) {
-      span.endTick = span.startTick;
-    } else {
-      span.endTick = row->endTick;
-      insertSpanBoundarySorted(checkpoints.spanBoundaries, span.startTick, spanIndex);
-      insertSpanBoundarySorted(checkpoints.spanBoundaries, span.endTick, spanIndex);
-    }
-    refreshPresentAtForSpan(checkpoints, spanIndex);
   }
 }
 

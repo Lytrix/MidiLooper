@@ -843,14 +843,14 @@ Named extra at 64 is wrap-crossing Add `10` (then `11`). Do **not** choose “ap
 | wrap 2 (id 11 hides 10) | `11` | `11` | 1 | none |
 | wrap 3 (id 12 hides 11) | `12` | `12` | 1 | none |
 
-Source view drops the hidden wrap-N Add. Sealed Delete companions target those ids. B also drops them — `projectSealedCompanionsOntoCheckpoints` finds the wrap-local span (`findSpanIndexByNoteId` hit).
+Source view drops the hidden wrap-N Add. Sealed Delete companions target those ids. B also drops them — `projectSealedCompanionsOntoCheckpoints` Hides/Shortens **every** checkpoint span with that `NoteId` (wrap head+tail share an id; first-match left the tail sounding).
 
 ### Classification (this fixture)
 
 | Class | This fixture |
 |-------|----------------|
 | wrap-N Add still in spans after a later Hide/Length companion | **No.** Hide of 10 then 11 is baked; B does not keep them. |
-| source note whose Delete/Length was not baked (`findSpanIndexByNoteId` miss) | **No.** Record 1 and wrap Adds are found. |
+| source note whose Delete/Length was not baked (no span with that `NoteId`) | **No.** Record 1 and wrap Adds are found. |
 | wrap-local reconstruct row that prepared-window reconstruct never created | **No.** Same ids after each wrap. |
 | Disabled-companion restore vs disabled-capture skip | **Not exercised** (no undo). |
 | duplicate `NoteSpan` for one `NoteId` | **No.** Counts match; no second id. |
@@ -890,7 +890,7 @@ Wrap-paired overdub fill cannot create those pre-wrap extras: `appendOverdubPass
 
 **Native fill in tree:** [`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md). Prepared `NoteSpan`s → `overdubSourceViewNotes_` when ready. Unprepared MIDI reconstruct must not finish opens.
 
-**Device** [`024225`](../../captures/session_20260818_024225.log) — empty `from=span,notes=0` wiped RC12 display. **Device** [`025337`](../../captures/session_20260818_025337.log) — display wipe **PASS**: `why=open,from=win,ev=2,notes=1`; `DISP` `PLAYING` 1 → `OVERDUBBING` 1; 60 `from=prep` `eq=1`, `eq=0` = 0. **Device** [`025916`](../../captures/session_20260818_025916.log) / [`030219`](../../captures/session_20260818_030219.log) — `COORD` storage 64 **before** first wrap on a 1-note loop; those holds are `from=miss,a=0`, source `notes=1` (030219 pitches 86/60). After wrap, storage 64 is `eq=1`. **030219 wrap 1** `from=span,ev=8,notes=34` vs `vch notes=4` (no `lcr,mat`) — span copy now window-noteId only. This does not close the 021716 pin (`from=prep` `a=0,b=2` at storage 64, source `notes=10`, STOPPED `DISP` 14). Occupied storage-576 stays a later class. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
+**Device** [`024225`](../../captures/session_20260818_024225.log) — empty `from=span,notes=0` wiped RC12 display. **Device** [`025337`](../../captures/session_20260818_025337.log) — display wipe **PASS**: `why=open,from=win,ev=2,notes=1`; `DISP` `PLAYING` 1 → `OVERDUBBING` 1; 60 `from=prep` `eq=1`, `eq=0` = 0. **Device** [`025916`](../../captures/session_20260818_025916.log) / [`030219`](../../captures/session_20260818_030219.log) — `COORD` storage 64 **before** first wrap on a 1-note loop; those holds are `from=miss,a=0`, source `notes=1` (030219 pitches 86/60). After wrap, storage 64 is `eq=1`. **030219 wrap 1** `from=span,ev=8,notes=34` vs `vch notes=4` (no `lcr,mat`) — span copy now window-noteId only. **Device** [`030958`](../../captures/session_20260818_030958.log) — flood **PASS**: wrap 1 `ev=28,notes=14` = `vch 14`. No storage 64. Pre-wrap `eq=0` remains (`a=1,b=2` on wrap-pair Hide first-match). Hide/Shorten now walks every span with the occupied `NoteId`. This does not close the 021716 pin (`from=prep` `a=0,b=2` at storage 64, source `notes=10`, STOPPED `DISP` 14). Occupied storage-576 stays a later class. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
 
 ---
 
