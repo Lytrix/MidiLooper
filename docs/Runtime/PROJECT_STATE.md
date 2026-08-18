@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-18 (Phase 4 note-off fill skip when source view covers the loop; 64-bar occupy parked)
+Last updated: 2026-08-18 (Stage 1 source-view span copy past occupy-set cap 128)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — overdub participant Phase 4 **in tree** (note-off fill skip when source view covers the loop). Phase 3 1-bar occupy **PASS** ([`121933`](../../captures/session_20260818_121933.log)); 64-bar occupy identity **parked** ([`122848`](../../captures/session_20260818_122848.log)). Device HITL open. Native **1333/1333**. PR pending → `dev`.
+**`feature/overdub-participant-discovery`** — Stage 1 source-view span copy **in tree** (window NoteOn IDs past occupy-set cap 128). Phase 4 1-bar HITL **PASS** ([`123803`](../../captures/session_20260818_123803.log)). Do not start Stage 2 until 64-bar `from=span` / `ao=0` device gate. Native HITL open. PR pending → `dev`.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
@@ -62,7 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Overdub participant discovery:** `feature/overdub-participant-discovery` — Phase 4 **in tree** (device HITL open; 64-bar occupy parked) — [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Overdub participant discovery:** `feature/overdub-participant-discovery` — Stage 1 source-view identity **in tree** (device HITL open) — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Codebase consistency:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) **NOW** — Phase 4 TrackManager **shipped** PR #22; next extractions in [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)
 - **StorageManager TU remaining:** **Merged** PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08); closeout [#16](https://github.com/Lytrix/MidiLooper/issues/16)
 - **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor

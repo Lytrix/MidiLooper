@@ -2,13 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (Phase 4 note-off fill skip when source view covers the loop; 64-bar occupy parked)
+Last updated: 2026-08-18 (Stage 1 source-view span copy past occupy-set cap 128; device HITL open)
 
 ---
 
 ## Now implementing
 
-### Overdub participant discovery — notes present at S (Phase 4 in tree)
+### 64-bar source-view identity — Stage 1 (in tree)
+
+**Plan:** [`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)  
+**Parent:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
+**Evidence:** [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log)
+
+**Owner:** `LoopContentResolution::tryCopyPreparedSpansToDisplayNotes`. Not occupy. Not B collect.
+
+Window membership is a rebuild-local sorted vector of **unique window NoteOn IDs**. Not `OverlapNoteIdSet`. Do not raise `kOverlapNoteIdSetCapacity`. After copy succeeds, rebuild does not reconstruct.
+
+**Native:** `test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity`, `test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity`.
+
+**Device HITL open:** 64-bar enter `from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; `late_clk=0`. Remaining `eq=0` only `a=0,b>0`. Do **not** start Stage 2 until that gate passes.
+
+### Overdub participant discovery — notes present at S (Phase 4 1-bar PASS)
 
 **Plan:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
@@ -17,9 +31,9 @@ Last updated: 2026-08-18 (Phase 4 note-off fill skip when source view covers the
 
 **PresentNote** = present at S (`PresentNote` / `resolveState` / `presentAt` / `notePresentAt` / `presentAtHoldOnly`). **ActiveNote** = execution ledger, mute-decoupled. **Sounding** = MIDI output only.
 
-**Phase 4 in tree:** `collectConsumeWindow` skips `ensureOverdubSourceNotesForHold` when `loopLen <= overdubSourceWindowLengthTicks()`. The source-view overlap walk always runs. 64-bar ahead notes still JIT-fill. Native `test_note_off_skips_hold_fill_when_source_view_covers_loop`. Device HITL open: 1-bar note-off no `why=hold`; 64-bar ahead Hide/Shorten still works; `late_clk=0`.
+**Phase 4 1-bar HITL PASS** [`123803`](../../captures/session_20260818_123803.log): `collectConsumeWindow` skips `ensureOverdubSourceNotesForHold` when `loopLen <= overdubSourceWindowLengthTicks()`. Track 6 (768): **`why=hold` = 0**; occupy 102/130 `from=prep` `a=1,b=1` `eq=1`; consume still Hide (`hide` 3–11). Track 0 (50688): 36 `why=hold` remain (1 `merged=1`); consume still Add/Hide (`empty_sets=0`). `late_clk=0`. Native `test_note_off_skips_hold_fill_when_source_view_covers_loop`.
 
-**Parked — 64-bar occupy identity:** [`122848`](../../captures/session_20260818_122848.log) prepared occupy `from=prep` `a=1,b=0` (76 `eq=0`). Not Phase 4. Empty occupy is **not** “no participants” — consume still hides via the source-view walk. Do not fold a B-collect patch into this slice.
+**Parked until Stage 1 device PASS — 64-bar occupy identity:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0`; [`123803`](../../captures/session_20260818_123803.log) `a=1,b=1` `ao=1,bo=1`. Root cause is reconstruct A after span-copy cap abort, not occupy. Empty occupy is **not** “no participants.”
 
 **Phase 3 1-bar HITL PASS** [`121933`](../../captures/session_20260818_121933.log): occupied 48/74 `a=1,b=1`; no note-on `why=hold`. Production occupy is present-at-S.
 
