@@ -2,11 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (loop-head HITL PASS 203948)
+Last updated: 2026-08-18 (occupy n=0 a=1 off tick 0 display follow-up)
 
 ---
 
 ## Now implementing
+
+### Occupy `n=0 a=1` off tick 0 — display vs ledger
+
+**Investigation:** [`overdub_occupy_off_tick_display_investigation.md`](../Plans/overdub_occupy_off_tick_display_investigation.md)  
+**Bugfix:** [`overdub_occupy_after_wrap_s_interval_bugfix.md`](../Plans/overdub_occupy_after_wrap_s_interval_bugfix.md)  
+**Pin:** [`203948`](../../captures/session_20260818_203948.log) occupy 12 @ storage **96** `n=0 a=1 b=1` (`204277855`) after wrap 2 (S=**64**)
+
+**Display:** OVERDUBBING paint is `resolveDisplayNotesLiveCapture` from `overdubSourceViewNotes` + `capturePreview`. Occupy is not a paint input. Do not patch DisplayManager.
+
+**Named write:** wrap-committed On@96 is not in wrap-S `(prev, S]`. Occupy 32 ticks later needs `advancePlaybackCursor` `(S, occupyTick]` after wrap reanchor at S. `Track::noteOn` catch-up calls `playMidiEvents` when `lastTickInLoop < occupyPhase`. Occupy stays a reader.
+
+**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16 (HITL PASS below). No occupy fallback.
 
 ### Loop-head playback ledger after wrap — HITL PASS
 
@@ -19,7 +31,7 @@ Last updated: 2026-08-18 (loop-head HITL PASS 203948)
 
 **Owner:** `Loop::sealCapture` (`CommitReason::OverdubWrap` skips `removePairsShorterThanNoteMinLength`). Occupy stays a reader. Do not add a loop-head catch-up.
 
-**Native:** 1348/1348.
+**Native:** 1350/1350.
 
 **Does not reopen:** wrap-S `(prev, S]` (HITL PASS below). No occupy fallback. `n=0 a=1` off storage 0 in [`203948`](../../captures/session_20260818_203948.log) (12 @ 96 after wrap 2) is outside this invariant.
 
