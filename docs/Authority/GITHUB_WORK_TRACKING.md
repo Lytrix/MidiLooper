@@ -241,6 +241,28 @@ Use **one** Project: **[Work](https://github.com/users/Lytrix/projects/1)** (own
 
 The Work project is a **central capability overview**, not a development-task tracker. Each card is a **meaningful capability or architectural milestone** with a short body linking to the authoritative plan or architecture doc. Implementation detail stays in plans and [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md).
 
+### Card titles and descriptions
+
+**Titles** must read in plain language — what the capability **is**, not internal shorthand alone.
+
+| Put in **title** | Put in **description** (not title alone) |
+|------------------|--------------------------------------------|
+| Capability or outcome in words | `DEC-###`, Layer A–D, Stage N, Phase N, §4.8–4.10, OpenSpec change id |
+| Who/what is affected when helpful | Plan path; shipped vs remainder; authorized vs recorded-only |
+
+**Do not** use only a few words or codes as the title, for example:
+
+- `Layer B–C`, `Layer D`, `Stage 4–6`, `Stage 3b`, `Phase 5`, `DEC-040`, `§4.8–4.10`, `D13–D15`
+
+Those belong in the **description** under a **`Refs:`** line (or equivalent) for fast lookup, together with the plain-language summary.
+
+**Good title:** `Loop content history — clear-as-unlink and bounded replay`  
+**Description (excerpt):** `Refs: DEC-035 Layers B–C; Stages 4–6. Recorded in architecture; firmware not authorized.`
+
+**Bad title:** `Loop content history Layers B–C` or `DEC-035 Stages 4–6`
+
+Same rule for Issues when they represent a capability (Task/Feature), not only for draft project cards.
+
 ### Card types on the board
 
 | Card kind | When to use | GitHub object |
@@ -285,23 +307,23 @@ Do not create a large taxonomy before it is needed. Do not adopt Epic → Story 
 
 ### 6.1 Capability roadmap (maintain on Work)
 
-Keep these **draft milestone cards** on the board (titles may be shortened on the card; plan link is required in the body). Status reflects **capability** progress, not every RC or capture.
+Keep **draft milestone cards** on the board. **Title** = plain language (§ Card titles and descriptions). **Description** = `Refs:` line with DEC/Layer/Stage/Phase numbers, then shipped/remainder, then plan link. Status reflects **capability** progress, not every RC or capture.
 
-| Status | Capability | Plan / authority |
-|--------|------------|------------------|
-| **NOW** | Overdub participant discovery (present at S; Phase 3 fill disable next) | [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md) |
-| **NEXT** | NOTE_EDIT hydrate (LCR consume; overlap = selected/mover LinearSpan) | [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md) |
-| **NEXT** | Playback gather Stages 2–3 (Stage 1 hooks **shipped**) | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) |
-| **NEXT** | Loop length during overdub | [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md) |
-| **NEXT** | HITL CLI rebuild (layered `base` + `edit_full`) | [`hitl_cli_rebuild_enhancement.md`](../Plans/hitl_cli_rebuild_enhancement.md) |
-| **PARKED** | Streaming / range-first loop resolution (LCR Layer D) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) § Layer D |
-| **PARKED** | Undo architecture — derived editing state (Stage 3b; replace GUS) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) § Stage 3b |
-| **PARKED** | Loop content history Layers B–C (clear-as-unlink, checkpoint + tail) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) |
-| **PARKED** | Set-revision **loop picker** (§4.8–4.10 only; overlay §4.1–4.7 **shipped**) | `set-revision-persistence` §4.8–4.10; [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md) |
-| **PARKED** | Crash recovery / persistence Phase 5 (prefix load — **not started**) | [`continuous_runtime_persistence_phase5_recovery_handoff.md`](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
-| **PARKED** | Display unification remainder (Stages 1–2, 5–9 **shipped**; Stages 3–4 + paint gap open) | [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md) |
-| **PARKED** | Runtime scheduling — Owner-Boundary Gate follow-up (grooming / pressure slices **shipped**) | [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) |
-| **PARKED** | Jam **capture** (D13–D15; slot infrastructure **shipped** on `dev`) | [`phase-3-multi-loop.md`](../Plans/phase-3-multi-loop.md); [`ROADMAP.md`](../Runtime/ROADMAP.md) |
+| Status | Title (board) | Refs (description line) | Plan |
+|--------|---------------|-------------------------|------|
+| **NOW** | Overdub participant discovery — present at start tick | Phase 3 fill disable next; DEC-040 (skip PLAYING/STOPPED/MUTED HITL) | [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md) |
+| **NEXT** | NOTE_EDIT hydrate from prepared loop content | overlap = selected/mover LinearSpan; DEC-037 amendment | [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md) |
+| **NEXT** | Playback gather — horizon and LCR consume (remainder) | Stage 1 hooks **shipped**; Stages 2–3 open | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) |
+| **NEXT** | Loop length change during overdub | queued; no firmware until CURRENT_WORK | [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md) |
+| **NEXT** | Host HITL CLI rebuild | layered `base` + `edit_full`; OpenSpec `hitl-cli-rebuild` | [`hitl_cli_rebuild_enhancement.md`](../Plans/hitl_cli_rebuild_enhancement.md) |
+| **PARKED** | Streaming loop resolution — range-first load | DEC-035 **Layer D**; Stage 7; not started | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) |
+| **PARKED** | Derived editing state replaces in-session undo stack | DEC-035 **Stage 3b**; new DEC required; not started | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) |
+| **PARKED** | Loop content history — clear-as-unlink and bounded replay | DEC-035 **Layers B–C**; **Stages 4–6**; recorded, firmware not authorized | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) |
+| **PARKED** | Set-revision overlay loop picker | `set-revision-persistence` **§4.8–4.10**; overlay **§4.1–4.7 shipped** | [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md) |
+| **PARKED** | Crash recovery — longest valid prefix load | DEC-020 **Phase 5**; not started | [`continuous_runtime_persistence_phase5_recovery_handoff.md`](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
+| **PARKED** | Display unification — shared visual cache remainder | Stages **1–2, 5–9 shipped**; Stages **3–4** + paint gap open | [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md) |
+| **PARKED** | Runtime scheduling — owner-boundary gate follow-up | grooming / pressure slices **shipped**; interval reservation not authorized | [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) |
+| **PARKED** | Jam arrangement capture into slots | **D13–D15**; slot infrastructure **shipped** on `dev` | [`phase-3-multi-loop.md`](../Plans/phase-3-multi-loop.md); [`ROADMAP.md`](../Runtime/ROADMAP.md) |
 
 Update this table when a capability moves column or a new architectural milestone is decided. Do not duplicate stage checklists here.
 
@@ -321,7 +343,7 @@ These are **not** PARKED work. Remove the card from **Work** when the capability
 | Playback gather Stage 1 lateness hooks | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) | NEXT card (Stages 2–3 remain) |
 | DEC-036 Layer D 3b overdub entry (no full visual rebuild) | [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md) | No card (distinct from Layer D range-first load) |
 
-**Verified still PARKED (not shipped):** streaming / range-first load (history Layer D); Stage 3b derived undo; Layers B–C; Phase 5 crash recovery; loop picker §4.8–4.10; jam capture D13+; Owner-Boundary Gate firmware (roadmap only).
+**Verified still PARKED (not shipped):** range-first load (DEC-035 Layer D / Stage 7); derived undo stack (Stage 3b); clear-as-unlink + bounded replay (Layers B–C / Stages 4–6, recorded only); crash prefix load (DEC-020 Phase 5); loop picker (§4.8–4.10); jam capture (D13+); owner-boundary gate firmware.
 
 ---
 
