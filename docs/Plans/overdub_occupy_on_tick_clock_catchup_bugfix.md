@@ -31,7 +31,7 @@ USB occupy may advance the committed `ActiveNoteLedger` to the USB phase; it mus
  → equal-tick Off then On inside that interval ← successor
 ```
 
-Do not fold live capture into `mergedMidiEvents` again. Do not call `playMidiEvents` from occupy. Do not rebuild merged from USB. Do not set `lastTickInLoop` or `nextEventIndex` from USB. Park `rebuildPlaybackOrder` Off-before-On as a possible next RC — not the successor commit. Successor: [`overdub_occupy_same_tick_off_before_on_bugfix.md`](overdub_occupy_same_tick_off_before_on_bugfix.md).
+Do not fold live capture into `mergedMidiEvents` again. Do not call `playMidiEvents` from occupy. Do not rebuild merged from USB. Do not set `lastTickInLoop` or `nextEventIndex` from USB. Catch-up two-pass successor: [`overdub_occupy_same_tick_off_before_on_bugfix.md`](overdub_occupy_same_tick_off_before_on_bugfix.md). Clock equal-tick: [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md).
 
 ## Root cause
 

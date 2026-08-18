@@ -5,6 +5,7 @@
 
 #include <unity.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -215,6 +216,66 @@ void test_wrap_committed_note_at_s_crosses_when_reanchored_at_prev() {
   TEST_ASSERT_EQUAL_UINT32(5, ledger.noteId(1, 71));
 }
 
+void test_equal_phase_off_before_on_last_writes_new_on() {
+  // session_20260818_235314 L4899: Off@240 of 48–240 and On@240 of 240–336.
+  // Native cannot compile rebuildPlaybackOrder (TrackInternal.h → Track.h → Arduino.h).
+  // Index sort uses the same keys as rebuildPlaybackOrder (phase, tick, Off before On).
+  constexpr uint32_t kLoop = 768;
+  MidiEvent oldOn = MidiEvent::NoteOn(192, 1, 12, 100);
+  oldOn.noteId = 100;
+  MidiEvent oldOff = MidiEvent::NoteOff(240, 1, 12, 0);
+  MidiEvent newOn = MidiEvent::NoteOn(240, 1, 12, 100);
+  newOn.noteId = 200;
+  MidiEvent newOff = MidiEvent::NoteOff(288, 1, 12, 0);
+  std::vector<MidiEvent> merged{oldOn, newOn, oldOff, newOff};
+
+  std::vector<size_t> order(merged.size());
+  for (size_t i = 0; i < order.size(); ++i) {
+    order[i] = i;
+  }
+  std::vector<uint32_t> sortPhases(merged.size());
+  for (size_t i = 0; i < merged.size(); ++i) {
+    sortPhases[i] = IntervalProjection::playbackEventPhase(merged[i].tick, kLoop);
+  }
+  std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    if (sortPhases[a] != sortPhases[b]) {
+      return sortPhases[a] < sortPhases[b];
+    }
+    if (merged[a].tick != merged[b].tick) {
+      return merged[a].tick < merged[b].tick;
+    }
+    const int aOrd = merged[a].isNoteOff() ? 0 : (merged[a].isNoteOn() ? 1 : 2);
+    const int bOrd = merged[b].isNoteOff() ? 0 : (merged[b].isNoteOn() ? 1 : 2);
+    return aOrd < bOrd;
+  });
+
+  size_t offAt240 = SIZE_MAX;
+  size_t onAt240 = SIZE_MAX;
+  for (size_t i = 0; i < order.size(); ++i) {
+    const MidiEvent& evt = merged[order[i]];
+    if (evt.tick != 240) {
+      continue;
+    }
+    if (evt.isNoteOff()) {
+      offAt240 = i;
+    }
+    if (evt.isNoteOn()) {
+      onAt240 = i;
+    }
+  }
+  TEST_ASSERT_TRUE(offAt240 < onAt240);
+
+  ActiveNoteLedger ledger;
+  for (size_t idx : order) {
+    const MidiEvent& evt = merged[idx];
+    if (evt.tick > 240) {
+      continue;
+    }
+    (void)ledger.applyPlaybackEvent(1, evt);
+  }
+  TEST_ASSERT_EQUAL_UINT32(200, ledger.noteId(1, 12));
+}
+
 void test_wrap_advances_while_midi_send_suppressed() {
   DirectPlaybackStreamCtx streamCtx{{makePhaseEvent(5), makePhaseEvent(90)}};
   uint16_t cursor = 0;
@@ -250,6 +311,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);
   RUN_TEST(test_unmute_does_not_resend_crossed_events);
   RUN_TEST(test_wrap_committed_note_at_s_crosses_when_reanchored_at_prev);
+  RUN_TEST(test_equal_phase_off_before_on_last_writes_new_on);
   RUN_TEST(test_wrap_advances_while_midi_send_suppressed);
   return UNITY_END();
 }

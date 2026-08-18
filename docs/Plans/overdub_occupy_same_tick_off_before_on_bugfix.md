@@ -5,7 +5,7 @@
 **Kind:** bugfix  
 **Parent (interval catch-up shipped, gate not met):** [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md)  
 **Pin:** [`233247`](../../captures/session_20260818_233247.log)  
-**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; `playMidiEvents` from occupy ([`214856`](../../captures/session_20260818_214856.log)); folding capture into `mergedMidiEvents`; occupy fallback; DisplayManager; mutating `nextEventIndex` / `lastTickInLoop`; `n=1 a=2` as this gate; `rebuildPlaybackOrder` Off-before-On; changing `applyPlaybackLedgerEvent`
+**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; `playMidiEvents` from occupy ([`214856`](../../captures/session_20260818_214856.log)); folding capture into `mergedMidiEvents`; occupy fallback; DisplayManager; mutating `nextEventIndex` / `lastTickInLoop`; `n=1 a=2` as this gate; changing `applyPlaybackLedgerEvent`. Clock equal-tick Off-before-On is successor [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md).
 
 ---
 
@@ -26,11 +26,12 @@ When reconstructing committed ledger state over `(lastTickInLoop, occupyPhase]`,
 ## Debugging boundary
 
 ```
-… → USB occupy ledger catch-up (lastTick, occupyPhase] ← trust interval after Off-before-On
- → equal-tick Off then On inside that interval ← current investigation
+… → USB occupy ledger catch-up (lastTick, occupyPhase] ← trust two-pass when it runs
+ → clock equal-phase Off before On ← successor
+ → unmatched Off vs overlapping same-pitch / L4294 ← parked
 ```
 
-Do not rebuild ledger from tick 0 on USB. Do not call `playMidiEvents` from occupy. Park `rebuildPlaybackOrder` Off-before-On as a possible next RC — not this commit.
+Do not rebuild ledger from tick 0 on USB. Do not call `playMidiEvents` from occupy. Do not make occupy catch-up run when `occupyPhase == lastTick`. Successor: [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md).
 
 ## Root cause
 
@@ -94,4 +95,4 @@ Native in [`test_pending_note_change.cpp`](../../test/test_pending_note_change/t
 
 L4899: prior occupy 12 @ `hs=48` `as=48–240` `n=1 a=1` (L4897). Then occupy 12 @ `hs=240` `as=240–336` `n=0 a=1`. Same abut exclusive-end / inclusive-start shape as [`233247`](../../captures/session_20260818_233247.log) L2387.
 
-Closed pins this run: occupy 12 @ `hs=0` sounding `n=1 a=1` (L3964, L3997 `as=0–192`). L3888 / L4605 occupy 12 @ `hs=0` are `n=0 a=0` `as=ae=0` (empty source-view). Do not treat `n=1 a=2` as this FAIL. Do not call `playMidiEvents` from occupy. Do not fold capture into `mergedMidiEvents`. Do not change `rebuildPlaybackOrder` from this capture without a native/HITL fixture that shows clock last-writes Off after On at equal tick.
+Closed pins this run: occupy 12 @ `hs=0` sounding `n=1 a=1` (L3964, L3997 `as=0–192`). L3888 / L4605 occupy 12 @ `hs=0` are `n=0 a=0` `as=ae=0` (empty source-view). Do not treat `n=1 a=2` as this FAIL. Do not call `playMidiEvents` from occupy. Do not fold capture into `mergedMidiEvents`. Span-start L4811 / L4899 are clock equal-tick order ([`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md)). Interior L4750 / L4294 are parked (unmatched Off / not proven equal-tick).
