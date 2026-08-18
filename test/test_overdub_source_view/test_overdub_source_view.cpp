@@ -1871,6 +1871,77 @@ void test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 032228 wrap 5 a=0,b=1 after undo to record layer; wrap 6 a=1,b=2 after re-occupy.
+// B restored Disabled wrap-layer companion ids that A/vch already dropped.
+void test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 64, 176, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  constexpr uint32_t kHoldTick = 100;
+  constexpr uint8_t kPitch = 60;
+  OverlapNoteIdSet occupy;
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(1));
+  const EditPassIdList wrap1Companions =
+      commitSamePitchWrapAndPublish(loop, 10, 64, 240, occupy);
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), wrap1Companions);
+
+  occupy.clear();
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(10));
+  const EditPassIdList wrap2Companions =
+      commitSamePitchWrapAndPublish(loop, 11, 64, 288, occupy);
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), wrap2Companions);
+
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+
+  OverlapNoteIdSet aRecord;
+  OverlapNoteIdSet bRecord;
+  OverlapNoteIdSet aoRecord;
+  OverlapNoteIdSet boRecord;
+  pinHoldSetsAfterWrap(0, loop, kHoldTick, kPitch, aRecord, bRecord, aoRecord, boRecord);
+  TEST_ASSERT_TRUE(aRecord == bRecord);
+  TEST_ASSERT_TRUE(aRecord.contains(1));
+  TEST_ASSERT_FALSE(aRecord.contains(10));
+  TEST_ASSERT_FALSE(aRecord.contains(11));
+  TEST_ASSERT_FALSE(bRecord.contains(10));
+  TEST_ASSERT_FALSE(bRecord.contains(11));
+  TEST_ASSERT_EQUAL(0u, aoRecord.size());
+  TEST_ASSERT_EQUAL(0u, boRecord.size());
+
+  occupy.clear();
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(1));
+  TEST_ASSERT_FALSE(occupy.contains(10));
+  (void)commitSamePitchWrapAndPublish(loop, 12, 64, 240, occupy);
+
+  OverlapNoteIdSet aRewrap;
+  OverlapNoteIdSet bRewrap;
+  OverlapNoteIdSet aoRewrap;
+  OverlapNoteIdSet boRewrap;
+  pinHoldSetsAfterWrap(1, loop, kHoldTick, kPitch, aRewrap, bRewrap, aoRewrap, boRewrap);
+  TEST_ASSERT_TRUE(aRewrap == bRewrap);
+  TEST_ASSERT_TRUE(aRewrap.contains(12));
+  TEST_ASSERT_FALSE(aRewrap.contains(10));
+  TEST_ASSERT_FALSE(bRewrap.contains(10));
+  TEST_ASSERT_FALSE(bRewrap.contains(11));
+  TEST_ASSERT_EQUAL(0u, aoRewrap.size());
+  TEST_ASSERT_EQUAL(0u, boRewrap.size());
+  LoopContentResolution::deviceGateReset();
+}
+
 // 013327 a=0,b>0 at storage 64: two same-pitch notes cover 64; occupy only one
 // (device max_ids=1). Wrap same-start longer. Pin leftover B ids at 64.
 void test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64() {
@@ -2229,6 +2300,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo);
+  RUN_TEST(test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b);
   RUN_TEST(test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64);
   RUN_TEST(test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64);
   RUN_TEST(test_prepared_hold_ids_pin_finished_open_covering_64);
