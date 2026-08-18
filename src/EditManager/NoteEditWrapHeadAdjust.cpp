@@ -8,59 +8,6 @@
 #include "NoteEditGeometryApplyInternal.h"
 #include "Utils/NoteUtils.h"
 
-namespace {
-
-NOTE_EDIT_MEM MidiEvent& appendNoteOffForOpenTail(MidiEventVec& midiEvents, uint8_t channel,
-                                                  uint8_t pitch, uint32_t offTick,
-                                                  NoteId noteId) {
-    MidiEvent offEvent = MidiEvent::NoteOff(offTick, channel, pitch, 0);
-    offEvent.noteId = noteId;
-    midiEvents.push_back(offEvent);
-    NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, channel, pitch);
-    return midiEvents.back();
-}
-
-NOTE_EDIT_MEM uint32_t storageOffTickForSpanEnd(uint32_t startTick, uint32_t noteLen,
-                                                uint32_t loopLength) {
-    (void)loopLength;
-    return NoteEditGeometryApply::linearStorageOffTickForSpanEnd(startTick, noteLen);
-}
-
-NOTE_EDIT_MEM bool stillOpenTailAfterMove(uint32_t newStart, uint32_t noteLen,
-                                          uint32_t loopLength) {
-    if (loopLength == 0) {
-        return false;
-    }
-    return (newStart + noteLen) >= loopLength;
-}
-
-NOTE_EDIT_MEM bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
-                                          MidiEvent* noteOffEvent, uint8_t channel, uint8_t pitch,
-                                          uint32_t loopLength) {
-    if (!noteOnEvent || !noteOffEvent || loopLength == 0) {
-        return false;
-    }
-    const uint32_t headOffTick =
-        noteEditGeometryApplyStorageTickToDisplayPhase(noteOffEvent->tick, loopLength);
-    return NoteUtils::isPreferredWrapTailForHeadOff(noteOnEvent->tick, headOffTick, midiEvents,
-                                                    pitch, channel, loopLength);
-}
-
-}  // namespace
-
-NOTE_EDIT_MEM uint32_t noteEditGeometryApplyDisplayFocusEndTickForMove(uint32_t startTick,
-                                                                       uint32_t noteLen,
-                                                                       uint32_t loopLength) {
-    if (loopLength == 0) {
-        return startTick + noteLen;
-    }
-    const uint32_t rawEnd = startTick + noteLen;
-    if (rawEnd >= loopLength) {
-        return loopLength - 1;
-    }
-    return rawEnd;
-}
-
 NOTE_EDIT_MEM void noteEditGeometryApplyScrubStaleWrapHeadOffsForMovedNote(
     MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch, uint32_t tailOnTick,
     uint32_t linearOffTick, uint32_t loopLength, NoteId movingNoteId) {

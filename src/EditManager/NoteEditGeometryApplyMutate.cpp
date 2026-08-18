@@ -13,6 +13,9 @@
 #include "NoteEditGeometryApply.h"
 #include "NoteEditGeometryApplyInternal.h"
 #include "NoteGeometryResolver.h"
+#if defined(SESSION_CAPTURE)
+#include "EditManagerInternal.h"
+#endif
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
 #include <algorithm>
@@ -260,9 +263,15 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         const uint32_t bracketDisplay =
             noteEditGeometryApplyBracketDisplayTickFromStorage(noteStart, loopStartTick, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
+#if defined(SESSION_CAPTURE)
+        const uint32_t reconstructStartUs = micros();
+#endif
         finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                                   focus.last.endTick, loopLength, bracketDisplay,
                                   refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+        logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed via NoteGeometryResolver: %d -> %d",
                    currentNoteValue, newNoteValue);
         return true;
@@ -374,14 +383,26 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
             displayManager.requestNoteInfoRefresh(track);
 #endif
         } else {
+#if defined(SESSION_CAPTURE)
+            const uint32_t reconstructStartUs = micros();
+#endif
             finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                                       focus.last.endTick, loopLength, bracketDisplay,
                                       refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+            logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
         }
         return true;
     }
+#if defined(SESSION_CAPTURE)
+    const uint32_t reconstructStartUs = micros();
+#endif
     finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
                               focus.last.endTick, loopLength, noteStart, refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
     return true;
 }
 
@@ -419,18 +440,13 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
         currentStart = focus.last.startTick;
         currentEnd = focus.last.endTick;
     }
-    const uint32_t originalStart =
-        focus.active ? focus.commitBaseline.startTick : currentNote.startTick;
-    
     logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d, start=%lu, end=%lu", 
               movingNotePitch, currentStart, currentEnd);
     
-    uint32_t displayCurrentEnd = noteEditGeometryApplyStorageTickToDisplayPhase(currentEnd, loopLength);
     if (focus.active && focus.last.pitch == movingNotePitch &&
         focus.last.startTick == currentStart &&
         focus.last.endTick > currentEnd) {
         currentEnd = focus.last.endTick;
-        displayCurrentEnd = noteEditGeometryApplyStorageTickToDisplayPhase(currentEnd, loopLength);
     }
     const NoteId movingNoteId =
         focus.active ? focus.movingNoteId : kInvalidNoteId;
@@ -440,13 +456,11 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     // Prefer focus.last length during an active edit driver. Live-store pairing can briefly
     // mis-resolve same-pitch neighbor offs (noteId lives on note-on only) before Shorten
     // applies; session_20260804_210819 collapsed 190 → 4 at neighbor end 815.
+    // Wrap spans are end < start (192259: 2592–96). `currentEnd > currentStart` skipped
+    // those and resolve returned the head length 96 instead of calculateNoteLength 576.
     uint32_t noteLen = 0;
-    if (focus.active && currentEnd > currentStart) {
-        if (currentEnd <= currentStart + loopLength) {
-            noteLen = currentEnd - currentStart;
-        } else {
-            noteLen = calculateNoteLength(currentStart, currentEnd, loopLength);
-        }
+    if (focus.active && currentEnd != currentStart) {
+        noteLen = calculateNoteLength(currentStart, currentEnd, loopLength);
     } else {
         noteLen = noteEditGeometryApplyResolveMovingNoteLengthTicks(midiEvents, channel, movingNotePitch, currentStart,
                                                currentEnd, loopLength, movingNoteId);
@@ -461,7 +475,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     const uint32_t linearNewEnd =
         NoteEditGeometryApply::linearStorageOffTickForSpanEnd(newStart, noteLen);
     const uint32_t displayEndForBracket =
-        noteEditGeometryApplyDisplayFocusEndTickForMove(newStart, noteLen, loopLength);
+        noteEditGeometryApplyStorageTickToDisplayPhase(linearNewEnd, loopLength);
 
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
     // Overlap scope is the mover's own lane — a move never changes pitch (Q14).
@@ -492,9 +506,15 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
     }
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t reconstructStartUs = micros();
+#endif
     finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart,
                               displayEndForBracket, loopLength, bracketDisplay,
                               refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
     return movedNoteEvents;
 }
 
@@ -506,7 +526,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     uint32_t loopLength = track.getLoopLength();
     manager.ensureNoteEditFocusForLiveEdit(track, currentNote);
     manager.syncNoteEditFocusLastFromSessionStore(track);
-    const uint8_t channel = track.getMidiChannel();
     const NoteEditFocus& focus = noteEditGeometryApplyEditFocus(manager);
 
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
@@ -531,7 +550,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
         currentEnd %= loopLength;
         targetEndTick %= loopLength;
     }
-    uint32_t displayCurrentEnd = currentEnd;
 
     if (targetEndTick == currentEnd) {
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
@@ -550,12 +568,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     if (nonWrapMovingNote && newEnd < noteStart + minNoteDuration) {
         newEnd = noteStart + minNoteDuration;
     }
-
-    const int delta = (newEnd > currentEnd) ? 1 : -1;
-    const uint32_t baselineStart =
-        focus.active ? focus.commitBaseline.startTick : noteStart;
-
-    const uint32_t displayNewEnd = noteEditGeometryApplyStorageTickToDisplayPhase(newEnd, loopLength);
 
     logger.log(CAT_MIDI, LOG_DEBUG,
               "Length change with overlap: pitch=%d, start=%lu, end %lu->%lu",
@@ -587,8 +599,14 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
   }
   manager.setSelectedTick(lengthBracketDisplay);
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t reconstructStartUs = micros();
+#endif
     finalReconstructAndSelect(track, midiEvents, manager, notePitch, newStart, newEnd, loopLength,
                               lengthBracketDisplay, refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("reconstruct", micros() - reconstructStartUs, 0, 0);
+#endif
 
     NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
 }

@@ -3,15 +3,24 @@
 
 #include "Loop.h"
 
+#include "EditApply.h"
 #include "Globals.h"
+#include "LoopContentResolution.h"
+#include "LoopEventStore.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 
 #include <algorithm>
+#include <cstdio>
+
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
 
 namespace {
 
@@ -58,6 +67,17 @@ void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
     return;
   }
   cache.dirtyBars.assign(totalBars, 1);
+}
+
+bool displayNoteGeometryPresent(const NoteUtils::DisplayNoteVec& notes,
+                                const NoteUtils::DisplayNote& candidate) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == candidate.note && note.startTick == candidate.startTick &&
+        note.endTick == candidate.endTick) {
+      return true;
+    }
+  }
+  return false;
 }
 
 uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
@@ -153,7 +173,7 @@ LOOP_COLD_MEM void Loop::emitVisualCacheState(const char* phase, int32_t gathere
             visualCacheDirty ? 1 : 0);
 }
 
-void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
+LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
   adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
                                Config::TICKS_PER_BAR);
   emitVisualCacheState("adopt_partial", -1);
@@ -188,9 +208,12 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     return;
   }
 
-  const uint32_t barsThisSlice =
-      std::min<uint32_t>(maxBarsPerSlice, totalBars - startBar);
-  const uint32_t endBar = startBar + barsThisSlice - 1;
+  const uint32_t maxEnd =
+      startBar + std::min<uint32_t>(maxBarsPerSlice, totalBars - startBar) - 1;
+  uint32_t endBar = startBar;
+  while (endBar < maxEnd && visualCache.dirtyBars[endBar + 1] != 0) {
+    ++endBar;
+  }
 
   constexpr uint32_t kPadBars = 1;
   const uint32_t eventStartBar = startBar > kPadBars ? startBar - kPadBars : 0;
@@ -206,10 +229,76 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     return;
   }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
+  // Immediate Serial — ring SC_VCACHE is not flushed if this turn faults (152405).
+  Serial.print(F("VCACHE,slice_enter,bars,"));
+  Serial.println(totalBars);
+#endif
   SessionMidiEventVec flat;
-  gatherCommittedEventsInWindow(flat, windowStart, windowLength);
-  const NoteUtils::DisplayNoteVec sliceNotes =
-      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
+  ResolutionCostCounters windowCounters;
+  const bool usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
+      passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
+      &windowCounters);
+#if defined(SESSION_CAPTURE)
+  uint32_t gatherStartUs = 0;
+  if (!usedPrepared) {
+    gatherStartUs = micros();
+  }
+#endif
+  if (!usedPrepared) {
+    gatherCommittedEventsInWindow(flat, windowStart, windowLength);
+  }
+#if defined(SESSION_CAPTURE)
+  if (!usedPrepared) {
+    RuntimeTimingTelemetry::recordIdleMaintChildRem(0, gatherStartUs);
+  }
+#endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
+  Serial.print(F("VCACHE,slice_gathered,ev,"));
+  Serial.println(static_cast<unsigned>(flat.size()));
+#endif
+#if defined(SESSION_CAPTURE)
+  const uint32_t reconstructStartUs = micros();
+#endif
+  NoteUtils::DisplayNoteVec sliceNotes =
+      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+#if defined(SESSION_CAPTURE)
+  RuntimeTimingTelemetry::recordIdleMaintChildRem(1, reconstructStartUs);
+#endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
+  Serial.print(F("VCACHE,slice_recon,notes,"));
+  Serial.println(static_cast<unsigned>(sliceNotes.size()));
+#endif
+  // Wrap-held overdub heads/tails are omitted by merged reconstruct when a later
+  // same-pitch body exists (021218). Do not use wrap pairing on the merged flat
+  // (015618 stretches record). Fill that gap only on slices that keep bar 0 or
+  // the last bar. Interior slices — prepared or unprepared — use the window only.
+  const bool appendOverdub = startBar == 0 || endBar + 1 >= totalBars;
+#if defined(SESSION_CAPTURE)
+  const uint32_t appendStartUs = micros();
+#endif
+  if (appendOverdub && !usedPrepared) {
+    appendOverdubPassDisplayNotes(sliceNotes);
+  }
+#if defined(SESSION_CAPTURE)
+  if (appendOverdub) {
+    RuntimeTimingTelemetry::recordIdleMaintChildRem(2, appendStartUs);
+  }
+#endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructUs = micros() - reconstructStartUs;
+  if (usedPrepared) {
+    const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
+    char line[192];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
+             static_cast<unsigned long>(reconstructUs),
+             static_cast<unsigned long>(windowUs + reconstructUs),
+             static_cast<unsigned>(flat.size()), static_cast<unsigned>(sliceNotes.size()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
 
   removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar, loopLengthTicks);
   for (const NoteUtils::DisplayNote& note : sliceNotes) {
@@ -240,13 +329,43 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 }
 
+LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  EditPassVec activeEdits;
+  for (const EditPass& editPass : passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeEdits.push_back(editPass);
+    }
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+      continue;
+    }
+    SessionMidiEventVec overdubEvents;
+    LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, overdubEvents);
+    if (!activeEdits.empty()) {
+      applyNoteEditPassSequence(overdubEvents, activeEdits, loopLengthTicks);
+    }
+    const NoteUtils::DisplayNoteVec overdubNotes = NoteUtils::reconstructDisplayNotes(
+        overdubEvents, loopLengthTicks, false, false, true);
+    for (const NoteUtils::DisplayNote& note : overdubNotes) {
+      if (!displayNoteGeometryPresent(notes, note)) {
+        notes.push_back(note);
+      }
+    }
+  }
+}
+
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
   gatherCommittedEvents(flat);
   materializedEventCount_ = flat.size();
-  const NoteUtils::DisplayNoteVec rebuiltNotes =
-      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
+  NoteUtils::DisplayNoteVec rebuiltNotes =
+      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  appendOverdubPassDisplayNotes(rebuiltNotes);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
@@ -262,21 +381,212 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   emitVisualCacheState("full", static_cast<int32_t>(flat.size()));
 }
 
-void Loop::ensureVisualCacheBuilt() {
+LOOP_COLD_MEM void Loop::refreshVisualCacheAfterPassStateChange() {
+  markDisplayCachesStale();
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    return;
+  }
+  constexpr uint32_t kImmediateFillBarLimit = 16;
+  if (totalBars > kImmediateFillBarLimit) {
+    return;
+  }
+  constexpr uint8_t kBarsPerSlice = 4;
+  const uint32_t maxSlices = (totalBars + kBarsPerSlice - 1) / kBarsPerSlice + 1;
+  for (uint32_t slice = 0; slice < maxSlices && visualCacheDirty; ++slice) {
+    rebuildVisualCacheIdleSlice(kBarsPerSlice, 0);
+  }
+}
+
+LOOP_COLD_MEM void Loop::retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick,
+                                                          uint32_t /*endTick*/, uint8_t settledPitch,
+                                                          const uint32_t* retainedEndTicks,
+                                                          size_t retainedEndTickCount) {
+  if (previousPitch == settledPitch) {
+    return;
+  }
+  bool hasSettled = false;
+  for (const NoteUtils::DisplayNote& note : visualCache.notes) {
+    if (note.note == settledPitch && note.startTick == startTick) {
+      hasSettled = true;
+      break;
+    }
+  }
+  if (!hasSettled) {
+    return;
+  }
+  auto isRetainedEnd = [&](uint32_t candidateEnd) {
+    if (retainedEndTicks == nullptr) {
+      return false;
+    }
+    for (size_t i = 0; i < retainedEndTickCount; ++i) {
+      if (retainedEndTicks[i] == candidateEnd) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto newEnd = std::remove_if(visualCache.notes.begin(), visualCache.notes.end(),
+                               [&](const NoteUtils::DisplayNote& note) {
+                                 return note.note == previousPitch && note.startTick == startTick &&
+                                        !isRetainedEnd(note.endTick);
+                               });
+  visualCache.notes.erase(newEnd, visualCache.notes.end());
+}
+
+LOOP_COLD_MEM void Loop::ensureVisualCacheBuilt() {
   if (!visualCacheDirty) {
     return;
   }
   rebuildVisualCacheFromPasses();
 }
 
-void Loop::markDisplayCachesStale() {
+LOOP_COLD_MEM void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
   visualCacheDirty = true;
   markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   emitVisualCacheState("stale_all", -1);
 }
 
-void Loop::invalidateDisplayCaches() {
+namespace {
+
+LOOP_COLD_MEM void ensureVisualCacheDirtyBarCapacity(VisualCache& cache, uint32_t loopLengthTicks) {
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    return;
+  }
+  if (cache.dirtyBars.size() < totalBars) {
+    cache.dirtyBars.resize(totalBars, 0);
+  }
+}
+
+LOOP_COLD_MEM void markTickSpanDirty(VisualCache& cache, uint32_t startTick, uint32_t endTick,
+                       uint32_t loopLengthTicks) {
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    return;
+  }
+  ensureVisualCacheDirtyBarCapacity(cache, loopLengthTicks);
+  const uint32_t startBar = visualBarForTick(startTick, Config::TICKS_PER_BAR);
+  const uint32_t endBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
+  auto markInclusive = [&](uint32_t loBar, uint32_t hiBar) {
+    if (loBar >= totalBars) {
+      return;
+    }
+    const uint32_t hi = std::min(hiBar, totalBars - 1);
+    if (loBar > hi) {
+      return;
+    }
+    for (uint32_t bar = loBar; bar <= hi; ++bar) {
+      cache.markBarDirty(bar);
+    }
+  };
+  if (endTick < startTick) {
+    markInclusive(startBar, totalBars - 1);
+    markInclusive(0, endBar);
+    return;
+  }
+  markInclusive(startBar, endBar);
+}
+
+LOOP_COLD_MEM const CommittedChunkIdList* chunksForPassId(const LoopPasses& passes, PassId passId) {
+  if (passes.hasRecordPass() && passes.recordPass.id == passId) {
+    return &passes.recordPass.committedChunkIds;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.id == passId) {
+      return &pass.committedChunkIds;
+    }
+  }
+  return nullptr;
+}
+
+LOOP_COLD_MEM const EditPass* editPassById(const EditPassVec& editPasses, EditPassId id) {
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.id == id) {
+      return &editPass;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+LOOP_COLD_MEM void Loop::markAffectedDisplayCacheRanges(PassId committedPassId,
+                                                        const EditPassIdList& companionIds) {
+  invalidatePlaybackCaches();
+  visualCacheDirty = true;
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (loopLengthTicks == 0 || totalBars == 0) {
+    markDisplayCachesStale();
+    return;
+  }
+
+  const CommittedChunkIdList* chunks = chunksForPassId(passes, committedPassId);
+  if (chunks == nullptr && companionIds.empty()) {
+    markDisplayCachesStale();
+    return;
+  }
+
+  ensureVisualCacheDirtyBarCapacity(visualCache, loopLengthTicks);
+
+  struct OpenOn {
+    NoteId noteId = kInvalidNoteId;
+    uint32_t tick = 0;
+  };
+  OpenOn openOns[128];
+  uint8_t openCount = 0;
+  SessionMidiEventVec chunkEvents;
+  if (chunks != nullptr) {
+    for (uint16_t chunkId : *chunks) {
+      chunkEvents.clear();
+      LoopEventStore::appendChunkRefEvent(chunkId, chunkEvents);
+      for (const MidiEvent& event : chunkEvents) {
+        visualCache.markBarDirty(visualBarForTick(event.tick, Config::TICKS_PER_BAR));
+        if (event.isNoteOn()) {
+          if (openCount < 128) {
+            openOns[openCount].noteId = event.noteId;
+            openOns[openCount].tick = event.tick;
+            ++openCount;
+          }
+          continue;
+        }
+        if (!event.isNoteOff()) {
+          continue;
+        }
+        for (uint8_t i = openCount; i > 0; --i) {
+          const uint8_t idx = static_cast<uint8_t>(i - 1);
+          if (openOns[idx].noteId != event.noteId) {
+            continue;
+          }
+          markTickSpanDirty(visualCache, openOns[idx].tick, event.tick, loopLengthTicks);
+          openOns[idx] = openOns[openCount - 1];
+          --openCount;
+          break;
+        }
+      }
+    }
+  }
+
+  for (EditPassId companionId : companionIds) {
+    const EditPass* row = editPassById(passes.editPasses, companionId);
+    if (row == nullptr) {
+      continue;
+    }
+    markTickSpanDirty(visualCache, row->startTick, row->endTick, loopLengthTicks);
+    for (const NoteUtils::DisplayNote& note : visualCache.notes) {
+      if (note.noteId != row->targetNoteId) {
+        continue;
+      }
+      markTickSpanDirty(visualCache, note.startTick, note.endTick, loopLengthTicks);
+      break;
+    }
+  }
+
+  emitVisualCacheState("stale_range", -1);
+}
+
+LOOP_COLD_MEM void Loop::invalidateDisplayCaches() {
   if (noteCache_) {
     noteCache_->invalidate();
   }

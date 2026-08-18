@@ -142,6 +142,26 @@ void test_reclaim_retains_disabled_pass_referenced_by_undo() {
   TEST_ASSERT_EQUAL(7u, loop.passes.overdubPasses[0].id);
 }
 
+void test_collect_referenced_passes_pins_overdub_pass_ids() {
+  PassReferenceSet refs{};
+  GlobalUndoStack stack;
+  UndoEntry entry;
+  entry.kind = UndoEntryKind::OverdubPassAdded;
+  entry.slotIndex = 1;
+  entry.passId = 44;
+  entry.passIds.push_back(42);
+  entry.passIds.push_back(43);
+  entry.passIds.push_back(44);
+  entry.editPassIds.push_back(200);
+  stack.entries.push_back(entry);
+
+  collectReferencedPasses(stack, refs);
+  TEST_ASSERT_TRUE(refs.slots[1].referencesCapturePass(42));
+  TEST_ASSERT_TRUE(refs.slots[1].referencesCapturePass(43));
+  TEST_ASSERT_TRUE(refs.slots[1].referencesCapturePass(44));
+  TEST_ASSERT_TRUE(refs.slots[1].referencesEditPass(200));
+}
+
 void test_collect_referenced_passes_pins_clear_slot_snapshots() {
   PassReferenceSet refs{};
   GlobalUndoStack stack;
@@ -378,6 +398,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_seal_returns_pool_exhausted_when_reserve_violated);
   RUN_TEST(test_reclaim_disabled_overdub_when_unreferenced);
   RUN_TEST(test_reclaim_retains_disabled_pass_referenced_by_undo);
+  RUN_TEST(test_collect_referenced_passes_pins_overdub_pass_ids);
   RUN_TEST(test_collect_referenced_passes_pins_clear_slot_snapshots);
   RUN_TEST(test_ninety_undo_entries_not_under_pressure_by_default);
   RUN_TEST(test_save_note_edit_pass_rejected_when_heap_below_reserve);

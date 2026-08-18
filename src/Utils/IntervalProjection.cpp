@@ -225,6 +225,17 @@ bool isPlaybackCatchUpWindow(uint32_t prevTickInLoop, uint32_t tickInLoop) {
     return (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 }
 
+bool didPlayheadCrossPhase(uint32_t prevPhase, uint32_t currPhase, uint32_t phaseTick,
+                           uint32_t loopLength) {
+    if (loopLength == 0 || prevPhase == UINT32_MAX || currPhase == prevPhase) {
+        return false;
+    }
+    if (currPhase > prevPhase) {
+        return prevPhase < phaseTick && currPhase >= phaseTick;
+    }
+    return prevPhase < phaseTick || currPhase >= phaseTick;
+}
+
 bool didPlaybackEventCross(bool atLoopStart, uint32_t prevTickInLoop, uint32_t evTick,
                            uint32_t tickInLoop) {
     // Intentionally preserves playback semantics (<= at loop start). Not isPlaybackAtLoopStart().
@@ -439,19 +450,26 @@ uint32_t projectPlaybackEventPhase(uint32_t storageTick, const ProjectionContext
     return playbackEventPhase(storageTick, context.loopLength);
 }
 
-NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
-                                              const ProjectionContext& context,
-                                              uint32_t playheadTick) {
-    NoteUtils::DisplayNoteVec notes;
+void projectDisplayNotes(const CanonicalNoteSpanVec& spans, uint32_t beginSpan,
+                         uint32_t endSpanExclusive, const ProjectionContext& context,
+                         NoteUtils::DisplayNoteVec& notes, uint32_t playheadTick) {
     if (context.loopLength == 0) {
-        return notes;
+        return;
+    }
+    const uint32_t limit = static_cast<uint32_t>(spans.size());
+    if (beginSpan >= limit) {
+        return;
+    }
+    if (endSpanExclusive > limit) {
+        endSpanExclusive = limit;
     }
 
     ProjectionContext displayContext = context;
     displayContext.type = ProjectionType::Display;
 
     ProjectedIntervalVec candidates;
-    for (const CanonicalNoteSpan& span : spans) {
+    for (uint32_t spanIndex = beginSpan; spanIndex < endSpanExclusive; ++spanIndex) {
+        const CanonicalNoteSpan& span = spans[spanIndex];
         generateEquivalentIntervals(span, displayContext.loopLength, displayContext, candidates);
         const ProjectedNoteInterval selected =
             selectSingleDisplayProjectedInterval(candidates, span, displayContext);
@@ -461,6 +479,14 @@ NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
                                                   playheadTick, notes);
         }
     }
+}
+
+NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
+                                              const ProjectionContext& context,
+                                              uint32_t playheadTick) {
+    NoteUtils::DisplayNoteVec notes;
+    projectDisplayNotes(spans, 0, static_cast<uint32_t>(spans.size()), context, notes,
+                        playheadTick);
     return notes;
 }
 

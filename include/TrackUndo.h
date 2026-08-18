@@ -13,14 +13,19 @@ class TrackUndo {
 public:
     friend class Track;
     static void pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId);
-    static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId,
+    static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassIdList passIds,
                                      EditPassIdList companionEditPassIds = {});
+    /// Stop: one OverdubPassAdded for sealed session wraps plus the last wrap when committed.
+    static void pushOverdubSessionOnStop(Track& track, uint8_t slotIndex, PassId lastPassId,
+                                         EditPassIdList lastCompanionIds, bool includeLastPass);
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds);
     static void pushEditPassClosed(Track& track, uint8_t editPassIndex,
                                    EditPassIdList editPassIds, EditPassType editPassType,
                                    uint8_t slotIndex);
     static void beginOverdubSession(Track& track);
+    static bool undoOverdubSession(Track& track, Loop& loop);
+    static bool redoOverdubSession(Track& track, Loop& loop);
     static void undoOverdub(Track& track);
     static void redoOverdub(Track& track);
     static void undoForLoop(Track& track, Loop& loop);

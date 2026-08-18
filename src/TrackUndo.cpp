@@ -132,6 +132,15 @@ TRACK_COLD_MEM bool enableCapturePass(Loop& loop, PassId passId) {
     return loop.setCapturePassState(passId, CapturePassState::Active);
 }
 
+TRACK_COLD_MEM void refreshPlaybackAfterCapturePassStateChange(Track& track, uint8_t slotIndex) {
+    track.invalidateCaches();
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    track.silenceSlotMidiOutput(slotIndex);
+    track.invalidatePlaybackMergedMidiEvents(false);
+}
+
 TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
                       EditPassType passType) {
     if (ids.empty()) {
@@ -201,7 +210,6 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             applyGeometry(loop, entry.beforeGeometry);
             // Keep disabled capture passes on the timeline so redo can re-enable them.
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -210,12 +218,22 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
-        case UndoEntryKind::OverdubPassAdded:
-            if (!disableCapturePass(loop, entry.passId)) {
+        case UndoEntryKind::OverdubPassAdded: {
+            PassIdList overdubIds;
+            appendOverdubCapturePassIds(entry, overdubIds);
+            if (overdubIds.empty()) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
                            static_cast<unsigned long>(entry.passId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
+            }
+            for (const PassId id : overdubIds) {
+                if (!disableCapturePass(loop, id)) {
+                    logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
+                               static_cast<unsigned long>(id),
+                               static_cast<unsigned>(entry.slotIndex));
+                    return false;
+                }
             }
             if (!entry.editPassIds.empty() &&
                 !setEditPassState(loop, entry.editPassIds, EditPassState::Disabled,
@@ -225,8 +243,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromPasses();
-            loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -234,6 +252,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             entry.hasRedoPayload = true;
             return true;
+        }
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
             if (entry.editPassIds.empty()) {
@@ -252,8 +271,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            loop.rebuildVisualCacheFromPasses();
-            loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -325,7 +344,6 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             applyGeometry(loop, entry.afterGeometry);
-            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -334,17 +352,27 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
-        case UndoEntryKind::OverdubPassAdded:
+        case UndoEntryKind::OverdubPassAdded: {
             if (!entry.hasRedoPayload) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for overdub pass entry %lu",
                            static_cast<unsigned long>(entry.id));
                 return false;
             }
-            if (!enableCapturePass(loop, entry.passId)) {
+            PassIdList overdubIds;
+            appendOverdubCapturePassIds(entry, overdubIds);
+            if (overdubIds.empty()) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
                            static_cast<unsigned long>(entry.passId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
+            }
+            for (const PassId id : overdubIds) {
+                if (!enableCapturePass(loop, id)) {
+                    logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
+                               static_cast<unsigned long>(id),
+                               static_cast<unsigned>(entry.slotIndex));
+                    return false;
+                }
             }
             if (!entry.editPassIds.empty() &&
                 !setEditPassState(loop, entry.editPassIds, EditPassState::Active,
@@ -354,14 +382,15 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromPasses();
-            loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
+        }
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
             if (!entry.hasRedoPayload || entry.editPassIds.empty()) {
@@ -380,7 +409,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            loop.invalidateCaches();
+            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            loop.refreshVisualCacheAfterPassStateChange();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
                 editManager.getEditSession().store.discardEventsCache();
@@ -501,9 +531,20 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     pushUndoEntry(track, std::move(entry));
 }
 
-TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId,
+TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex,
+                                                    PassIdList passIds,
                                                     EditPassIdList companionEditPassIds) {
-    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passIds.empty()) {
+        return;
+    }
+    PassIdList validIds;
+    validIds.reserve(passIds.size());
+    for (const PassId id : passIds) {
+        if (id != kInvalidPassId) {
+            validIds.push_back(id);
+        }
+    }
+    if (validIds.empty()) {
         return;
     }
     const Loop& loop = track.getLoop(slotIndex);
@@ -511,11 +552,35 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     entry.kind = UndoEntryKind::OverdubPassAdded;
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
-    entry.passId = passId;
+    entry.passId = validIds.back();
+    if (validIds.size() > 1) {
+        entry.passIds = std::move(validIds);
+    }
     entry.editPassType = EditPassType::Note;
     entry.editPassIndex = kOverdubCompanionEditPassIndex;
     entry.editPassIds = std::move(companionEditPassIds);
     pushUndoEntry(track, std::move(entry));
+}
+
+TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t slotIndex,
+                                                        PassId lastPassId,
+                                                        EditPassIdList lastCompanionIds,
+                                                        bool includeLastPass) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    Loop& loop = track.getLoop(slotIndex);
+    PassIdList passIds;
+    EditPassIdList companionIds;
+    loop.collectOverdubSessionUndoPasses(passIds, companionIds);
+    if (includeLastPass && lastPassId != kInvalidPassId &&
+        (passIds.empty() || passIds.back() != lastPassId)) {
+        passIds.push_back(lastPassId);
+    }
+    for (const EditPassId id : lastCompanionIds) {
+        companionIds.push_back(id);
+    }
+    pushOverdubPassAdded(track, slotIndex, std::move(passIds), std::move(companionIds));
 }
 
 TRACK_COLD_MEM void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
@@ -550,12 +615,48 @@ TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
     (void)track;
 }
 
+TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
+    if (!loop.hasOverdubSession() || !loop.canUndoOverdubSession()) {
+        return false;
+    }
+    const uint32_t revisionBefore = loop.playbackRevision;
+    if (!loop.undoOverdubSession()) {
+        return false;
+    }
+    loop.invalidateCaches();
+    if (loop.playbackRevision != revisionBefore) {
+        refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+    }
+    logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
+    return true;
+}
+
+TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
+    if (!loop.hasOverdubSession() || !loop.canRedoOverdubSession()) {
+        return false;
+    }
+    const uint32_t revisionBefore = loop.playbackRevision;
+    if (!loop.redoOverdubSession()) {
+        return false;
+    }
+    loop.invalidateCaches();
+    if (loop.playbackRevision != revisionBefore) {
+        refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+    }
+    logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
+    return true;
+}
+
 TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
     if (loopEditManager.hasPendingGeometry()) {
         loopEditManager.flushAllPendingGeometry(track);
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return;
+    }
+    if (loop.hasOverdubSession()) {
+        (void)undoOverdubSession(track, loop);
         return;
     }
     if (loopHasLiveOverdubCapture(loop)) {
@@ -604,6 +705,7 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
             StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
+            track.armLoopPrefixMeasureAfterUndo();
             break;
         }
         logger.log(CAT_TRACK, LOG_WARNING,
@@ -626,6 +728,10 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
 TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
     if (loopEditManager.hasPendingGeometry()) {
         loopEditManager.cancelPendingGeometryPreview(track);
+    }
+    if (loop.hasOverdubSession()) {
+        (void)redoOverdubSession(track, loop);
+        return;
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
@@ -702,6 +808,9 @@ TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
     }
+    if (loop.hasOverdubSession()) {
+        return loop.overdubSessionUndoDepth();
+    }
     if (loopHasLiveOverdubCapture(loop)) {
         return 1u + countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
     }
@@ -717,6 +826,9 @@ TRACK_COLD_MEM size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
     }
+    if (loop.hasOverdubSession()) {
+        return loop.overdubSessionRedoDepth();
+    }
     return countRedoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
 }
 
@@ -724,6 +836,9 @@ TRACK_COLD_MEM bool TrackUndo::canUndoForLoop(const Track& track, const Loop& lo
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
+    }
+    if (loop.hasOverdubSession()) {
+        return loop.canUndoOverdubSession();
     }
     if (loopHasLiveOverdubCapture(loop)) {
         return true;
@@ -736,6 +851,9 @@ TRACK_COLD_MEM bool TrackUndo::canRedoForLoop(const Track& track, const Loop& lo
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
+    }
+    if (loop.hasOverdubSession()) {
+        return loop.canRedoOverdubSession();
     }
     const GlobalUndoStack& stack = track.getGlobalUndoStack();
     return stack.canRedo() && stack.entries[stack.cursor].slotIndex == slotIndex;

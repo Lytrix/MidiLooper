@@ -124,13 +124,15 @@ namespace {
 
 NOTE_EDIT_MEM bool isPlausibleMoverLinearSpan(uint32_t startTick, uint32_t endTick,
                                               uint32_t loopLength) {
-  if (endTick <= startTick) {
-    return false;
-  }
   if (loopLength == 0) {
     return false;
   }
-  return startTick < loopLength;
+  if (startTick >= loopLength) {
+    return false;
+  }
+  // Wrap (end < start) is valid storage. Rejecting it dropped 195050 wrap 2736–240
+  // and the deselect row became the display tail to loopLength-1.
+  return isPlausibleStorageSpan(startTick, endTick, loopLength);
 }
 
 NOTE_EDIT_MEM bool shouldRejectMoverPreCommitRow(const EditPass& row, const NoteEditFocus& focus,

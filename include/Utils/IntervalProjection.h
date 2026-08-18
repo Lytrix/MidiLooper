@@ -92,6 +92,11 @@ bool isPlaybackAtLoopStart(uint32_t prevTickInLoop, uint32_t tickInLoop,
 /// Fresh-origin catch-up or backward wrap for MIDI send (uses <=). Not isPlaybackAtLoopStart.
 bool isPlaybackCatchUpWindow(uint32_t prevTickInLoop, uint32_t tickInLoop);
 
+/// True when forward playhead motion crossed `phaseTick` (wrap-aware). First sample
+/// (`prevPhase == UINT32_MAX`) is not a crossing.
+bool didPlayheadCrossPhase(uint32_t prevPhase, uint32_t currPhase, uint32_t phaseTick,
+                           uint32_t loopLength);
+
 /// True when a playback-order event phase crossed the playhead this tick.
 bool didPlaybackEventCross(bool atLoopStart, uint32_t prevTickInLoop, uint32_t evTick,
                            uint32_t tickInLoop);
@@ -153,6 +158,11 @@ ProjectionContext buildDisplayProjectionContext(uint32_t loopLength, TickInterva
 NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
                                               const ProjectionContext& context,
                                               uint32_t playheadTick = UINT32_MAX);
+
+/// Same loop as `projectDisplayNotes`, one span range into a caller-owned buffer.
+void projectDisplayNotes(const CanonicalNoteSpanVec& spans, uint32_t beginSpan,
+                         uint32_t endSpanExclusive, const ProjectionContext& context,
+                         NoteUtils::DisplayNoteVec& out, uint32_t playheadTick = UINT32_MAX);
 
 /// v1 playback analysis frame — full loop `[0, loopLength)`.
 TickInterval makeFullLoopPlaybackProjectionInterval(uint32_t loopLength);

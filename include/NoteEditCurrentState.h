@@ -89,9 +89,11 @@ class NoteEditCurrentState {
 
   /// Insert Visible rows for committed display notes that have no current-state row.
   /// Unedited Existing Visible rows (`committedSpan == currentSpan`) take the display
-  /// span so rematerialize off-pairing cannot keep a longer end. Does not overwrite
-  /// Hidden / Deleted / Added / this-session geometry. Skips invalid NoteId and
-  /// zero-length display spans (`endTick == startTick`).
+  /// span so rematerialize off-pairing cannot keep a longer end. Same-`noteId`
+  /// splitHeadTail fragments merge into one wrap span (`endTick < startTick`) from
+  /// MIDI tail start + head end — the display head (length 96) must not lead.
+  /// Does not overwrite Hidden / Deleted / Added / this-session geometry. Skips
+  /// invalid NoteId and zero-length display spans (`endTick == startTick`).
   void ensureVisibleRowsForDisplayNotes(const NoteUtils::DisplayNoteVec& notes);
 
   /// Canonical lossy projection: Visible/Added rows only.
@@ -122,6 +124,8 @@ class NoteEditCurrentState {
   void markOverlapParticipationActive(NoteId noteId);
   void markRowDeleted(NoteId noteId);
   void removeRow(NoteId noteId);
+  /// Copy visible linear spans from the session store. Wrap currentSpan (`end < start`)
+  /// is kept when the store only has a linear tail — display/linear pairing must not lead.
   void syncProjectingRowsFromSessionStore(const MidiEventVec& store, uint8_t channel);
   /// After macro commit seals geometry to passes, align session committed baseline so
   /// leave-restore does not revert to a stale committed span (session_20260807_200656).

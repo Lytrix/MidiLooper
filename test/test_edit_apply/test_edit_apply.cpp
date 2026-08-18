@@ -21,6 +21,8 @@
 #include "LoopPasses.h"
 #include "LoopEventBuffer.h"
 #include "EditSession.h"
+#include "NoteEditCurrentState.h"
+#include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
@@ -89,6 +91,45 @@ static void appendFixtureNotePair(LoopEventStore& store, uint32_t onTick, uint32
                                   uint8_t channel, uint8_t pitch, NoteId noteId) {
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, channel, pitch, 100, noteId));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(offTick, channel, pitch, 0)));
+}
+
+RecordPass makeRecordPassWithUnidentifiedNote(PassId id, uint32_t start, uint32_t end, uint8_t pitch,
+                                             uint8_t channel = 5) {
+  LoopEventStore store;
+  MidiEvent on = MidiEvent::NoteOn(start, channel, pitch, 100);
+  on.noteId = kInvalidNoteId;
+  TEST_ASSERT_TRUE(store.append(on));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(end, channel, pitch, 0)));
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = CapturePassState::Active;
+  pass.committedChunkIds = std::move(committedChunkIds);
+  return pass;
+}
+
+NoteId noteIdAtPitchAndStart(const MidiEventVec& flat, uint8_t pitch, uint32_t startTick) {
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOn() && evt.data.noteData.note == pitch && evt.tick == startTick) {
+      return evt.noteId;
+    }
+  }
+  return kInvalidNoteId;
+}
+
+RecordPass makeRecordPassWithIdentifiedNote(PassId id, uint32_t start, uint32_t end, uint8_t pitch,
+                                           NoteId noteId, uint8_t channel = 5) {
+  resetNoteIdCounter();
+  LoopEventStore store;
+  appendFixtureNotePair(store, start, end, channel, pitch, noteId);
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = CapturePassState::Active;
+  pass.committedChunkIds = std::move(committedChunkIds);
+  return pass;
 }
 
 RecordPass makeEditRecordFixtureRecordPass(PassId id) {
@@ -456,6 +497,170 @@ void test_second_move_row_on_same_note_wins_over_earlier_span_210945() {
   TEST_ASSERT_TRUE(foundMover);
 }
 
+// session_20260816_145518 @23.402: deselect saved NoteRange 312-504 + Pitch 45 targeting
+// noteId 280. Replay still had M24 888-1032. Pin apply when the store NoteId matches.
+void test_145518_note_range_pitch_replay_moves_when_store_id_matches() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kMoverId = 280;
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 888, 1032, 24, kMoverId);
+
+  pushEditPassRows(passes, 1,
+                   {makeNoteRangeRow(kMoverId, 888, 1032, 312, 504),
+                    makePitchRow(kMoverId, 312, 504, 45)});
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+
+  bool foundMoved = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == 24 && note.startTick == 888);
+    if (note.noteId == kMoverId) {
+      foundMoved = true;
+      TEST_ASSERT_EQUAL_UINT8(45, note.note);
+      TEST_ASSERT_EQUAL_UINT32(312u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(504u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMoved);
+}
+
+// Same rows targeting 280 when the capture note at 888 is a different NoteId. Replay must
+// leave M24 888-1032 — the 145518 take_only / replay_flat match.
+void test_145518_note_range_pitch_replay_leaves_home_when_store_id_differs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kStoreId = 24;
+  constexpr NoteId kRowTargetId = 280;
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 888, 1032, 24, kStoreId);
+
+  pushEditPassRows(passes, 1,
+                   {makeNoteRangeRow(kRowTargetId, 888, 1032, 312, 504),
+                    makePitchRow(kRowTargetId, 312, 504, 45)});
+
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+
+  bool foundHome = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == 45 && note.startTick == 312);
+    if (note.noteId == kStoreId) {
+      foundHome = true;
+      TEST_ASSERT_EQUAL_UINT8(24, note.note);
+      TEST_ASSERT_EQUAL_UINT32(888u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1032u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundHome);
+}
+
+// session_20260816_145518: openNoteEditSession rematerializes, then
+// assignMissingNoteIdsInStore(editSession.store) — session copy only. commitEditAction
+// rematerializes from capture chunks, which never received that id. Rows target 280; home stays.
+void test_145518_open_assigned_note_id_missing_from_pass_rematerialize() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t kPitch = 24;
+  constexpr uint32_t kHomeStart = 888;
+  constexpr uint32_t kHomeEnd = 1032;
+  constexpr NoteId kAssignedId = 280;
+
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  loop.nextNoteId_ = kAssignedId;
+  loop.passes.recordPass = makeRecordPassWithUnidentifiedNote(1, kHomeStart, kHomeEnd, kPitch);
+
+  MidiEventVec passFlat;
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  TEST_ASSERT_EQUAL(kInvalidNoteId, noteIdAtPitchAndStart(passFlat, kPitch, kHomeStart));
+
+  LoopEventStore sessionStore;
+  loop.rematerializeEditView(sessionStore);
+  loop.assignMissingNoteIdsInStore(sessionStore);
+  MidiEventVec sessionFlat;
+  sessionStore.copyEventsTo(sessionFlat);
+  TEST_ASSERT_EQUAL(kAssignedId, noteIdAtPitchAndStart(sessionFlat, kPitch, kHomeStart));
+
+  passFlat.clear();
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  TEST_ASSERT_EQUAL(kInvalidNoteId, noteIdAtPitchAndStart(passFlat, kPitch, kHomeStart));
+  TEST_ASSERT_EQUAL(-1, findNoteOnById(passFlat, kAssignedId));
+
+  pushEditPassRows(loop.passes, 1,
+                   {makeNoteRangeRow(kAssignedId, kHomeStart, kHomeEnd, 312, 504),
+                    makePitchRow(kAssignedId, 312, 504, 45)});
+  passFlat.clear();
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(passFlat, kLoopLength, false);
+  bool foundHome = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == 45 && note.startTick == 312);
+    if (note.note == kPitch && note.startTick == kHomeStart) {
+      foundHome = true;
+      TEST_ASSERT_EQUAL_UINT32(kHomeEnd, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundHome);
+}
+
+// Same unidentified capture note, but assign on committed chunks before rematerialize.
+// Session and pass flats share 280; NoteRange+Pitch then moves the home (145518 Layer B fix).
+void test_145518_assign_on_committed_passes_makes_rematerialize_find_id() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t kPitch = 24;
+  constexpr uint32_t kHomeStart = 888;
+  constexpr uint32_t kHomeEnd = 1032;
+  constexpr NoteId kAssignedId = 280;
+
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  loop.nextNoteId_ = kAssignedId;
+  loop.passes.recordPass = makeRecordPassWithUnidentifiedNote(1, kHomeStart, kHomeEnd, kPitch);
+
+  loop.assignMissingNoteIdsInCommittedCapturePasses();
+
+  MidiEventVec passFlat;
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  TEST_ASSERT_EQUAL(kAssignedId, noteIdAtPitchAndStart(passFlat, kPitch, kHomeStart));
+
+  LoopEventStore sessionStore;
+  loop.rematerializeEditView(sessionStore);
+  MidiEventVec sessionFlat;
+  sessionStore.copyEventsTo(sessionFlat);
+  TEST_ASSERT_EQUAL(kAssignedId, noteIdAtPitchAndStart(sessionFlat, kPitch, kHomeStart));
+
+  pushEditPassRows(loop.passes, 1,
+                   {makeNoteRangeRow(kAssignedId, kHomeStart, kHomeEnd, 312, 504),
+                    makePitchRow(kAssignedId, 312, 504, 45)});
+  passFlat.clear();
+  loop.passes.materializeToEventVector(passFlat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(passFlat, kLoopLength, false);
+  bool foundMoved = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == kPitch && note.startTick == kHomeStart);
+    if (note.noteId == kAssignedId) {
+      foundMoved = true;
+      TEST_ASSERT_EQUAL_UINT8(45, note.note);
+      TEST_ASSERT_EQUAL_UINT32(312u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(504u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMoved);
+}
+
 MidiEvent noteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
                        NoteId noteId) {
   MidiEvent evt = MidiEvent::NoteOn(tick, channel, pitch, velocity);
@@ -533,6 +738,86 @@ void test_nested_same_pitch_outer_apply_helpers_use_lifo_off() {
     TEST_ASSERT_EQUAL(1, outerOffs);
     assertInnerNoteUnchanged(events);
   }
+}
+
+// session_20260816_195941: wrap home Off@96 then On@2592. NoteRange must move that wrap off.
+// Session storage is linear (2784+576=3360). A wrap row (2784–288) must keep length 576 too.
+void test_195941_wrap_home_move_keeps_length() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kId = 269;
+  constexpr uint32_t kHomeOn = 2592;
+  constexpr uint32_t kHomeWrapOff = 96;
+  constexpr uint32_t kNewStart = 2784;
+  constexpr uint32_t kNoteLen = 576;
+  constexpr uint32_t kLinearOff = kNewStart + kNoteLen;
+  constexpr uint32_t kWrapOff = kLinearOff % kLoopLength;
+
+  const auto makeWrapHome = [&]() {
+    MidiEventVec events;
+    events.push_back(MidiEvent::NoteOff(kHomeWrapOff, 1, kPitch, 0));
+    MidiEvent on = MidiEvent::NoteOn(kHomeOn, 1, kPitch, 100);
+    on.noteId = kId;
+    events.push_back(on);
+    return events;
+  };
+
+  {
+    MidiEventVec events = makeWrapHome();
+    applyNoteEditPass(events, makeNoteRangeRow(kId, kHomeOn, kHomeWrapOff, kNewStart, kLinearOff),
+                      kLoopLength);
+    const int onIndex = findNoteOnById(events, kId);
+    TEST_ASSERT_TRUE(onIndex >= 0);
+    TEST_ASSERT_EQUAL_UINT32(kNewStart, events[static_cast<size_t>(onIndex)].tick);
+    TEST_ASSERT_EQUAL(0, countMatching(events, true, kPitch, kHomeOn));
+    TEST_ASSERT_EQUAL(1, countMatching(events, true, kPitch, kNewStart));
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, kPitch, kHomeWrapOff));
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, kPitch, kLinearOff));
+  }
+
+  {
+    MidiEventVec events = makeWrapHome();
+    applyNoteEditPass(events, makeNoteRangeRow(kId, kHomeOn, kHomeWrapOff, kNewStart, kWrapOff),
+                      kLoopLength);
+    const int onIndex = findNoteOnById(events, kId);
+    TEST_ASSERT_TRUE(onIndex >= 0);
+    TEST_ASSERT_EQUAL_UINT32(kNewStart, events[static_cast<size_t>(onIndex)].tick);
+    TEST_ASSERT_EQUAL(0, countMatching(events, false, kPitch, kHomeWrapOff));
+    TEST_ASSERT_EQUAL(1, countMatching(events, false, kPitch, kWrapOff));
+  }
+}
+
+// session_20260816_201446: wrap home has Off@96 AND a false linear Off@2688. LIFO pairs the
+// linear off and leaves the wrap head; deselect reconstructs start wrap-to-96 (length 336).
+void test_201446_wrap_home_move_drops_false_linear_off() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kId = 269;
+  constexpr uint32_t kHomeOn = 2592;
+  constexpr uint32_t kHomeWrapOff = 96;
+  constexpr uint32_t kFalseLinearOff = 2688;
+  constexpr uint32_t kNewStart = 2832;
+  constexpr uint32_t kNoteLen = 576;
+  constexpr uint32_t kLinearOff = kNewStart + kNoteLen;
+
+  MidiEventVec events;
+  events.push_back(MidiEvent::NoteOff(kHomeWrapOff, 1, kPitch, 0));
+  MidiEvent on = MidiEvent::NoteOn(kHomeOn, 1, kPitch, 100);
+  on.noteId = kId;
+  events.push_back(on);
+  events.push_back(MidiEvent::NoteOff(kFalseLinearOff, 1, kPitch, 0));
+
+  applyNoteEditPass(events, makeNoteRangeRow(kId, kHomeOn, kFalseLinearOff, kNewStart, kLinearOff),
+                    kLoopLength);
+
+  const int onIndex = findNoteOnById(events, kId);
+  TEST_ASSERT_TRUE(onIndex >= 0);
+  TEST_ASSERT_EQUAL_UINT32(kNewStart, events[static_cast<size_t>(onIndex)].tick);
+  TEST_ASSERT_EQUAL(0, countMatching(events, true, kPitch, kHomeOn));
+  TEST_ASSERT_EQUAL(1, countMatching(events, true, kPitch, kNewStart));
+  TEST_ASSERT_EQUAL(0, countMatching(events, false, kPitch, kHomeWrapOff));
+  TEST_ASSERT_EQUAL(0, countMatching(events, false, kPitch, kFalseLinearOff));
+  TEST_ASSERT_EQUAL(1, countMatching(events, false, kPitch, kLinearOff));
 }
 
 // Regression for the HITL overlap round-trip: M0 lengthened to 681 overlaps P0 (585..682)
@@ -1117,6 +1402,383 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 496));
 }
 
+// B2 — committed display base must match materialize(active edit passes). Geometry from
+// session_20260816_161855 (home 888 → committed 1656). Do not treat "1656 visible" alone
+// as the pin — compare the full reconstructed base.
+
+constexpr uint32_t kB2LoopLength = 3072;
+constexpr uint8_t kB2Pitch = 24;
+constexpr uint8_t kB2Velocity = 100;
+constexpr uint8_t kB2Channel = 5;
+constexpr NoteId kB2MoverId = 280;
+constexpr uint32_t kB2HomeStart = 888;
+constexpr uint32_t kB2HomeEnd = 1032;
+constexpr uint32_t kB2CommittedStart = 1656;
+constexpr uint32_t kB2CommittedEnd = 1800;
+constexpr uint32_t kB2UncommittedStart = 648;
+constexpr uint32_t kB2UncommittedEnd = 792;
+
+EditPassIdList activeEditPassIds(const Loop& loop) {
+  EditPassIdList ids;
+  for (const EditPass& editPass : loop.passes.editPasses) {
+    if (editPass.state == EditPassState::Active) {
+      ids.push_back(editPass.id);
+    }
+  }
+  return ids;
+}
+
+NoteUtils::DisplayNoteVec committedBaseFromActivePasses(const Loop& loop) {
+  MidiEventVec flat;
+  loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
+  return NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+}
+
+const NoteUtils::DisplayNote* displayNoteById(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void assertDisplayNoteSpan(const NoteUtils::DisplayNoteVec& notes, NoteId noteId, uint8_t pitch,
+                           uint32_t startTick, uint32_t endTick, const char* message) {
+  const NoteUtils::DisplayNote* note = displayNoteById(notes, noteId);
+  TEST_ASSERT_NOT_NULL_MESSAGE(note, message);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(pitch, note->note, message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(startTick, note->startTick, message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(endTick, note->endTick, message);
+}
+
+void assertCommittedBaseEqualsMaterializeActive(const Loop& loop, const char* message) {
+  const NoteUtils::DisplayNoteVec committedBase = committedBaseFromActivePasses(loop);
+  MidiEventVec flat;
+  loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec fromFlat =
+      NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_EQUAL_MESSAGE(fromFlat.size(), committedBase.size(), message);
+  for (const NoteUtils::DisplayNote& expected : fromFlat) {
+    if (expected.noteId == kInvalidNoteId) {
+      continue;
+    }
+    assertDisplayNoteSpan(committedBase, expected.noteId, expected.note, expected.startTick,
+                          expected.endTick, message);
+  }
+}
+
+void seedB2HomeLoop(Loop& loop) {
+  loop.loopLengthTicks = kB2LoopLength;
+  loop.passes.recordPass =
+      makeRecordPassWithIdentifiedNote(1, kB2HomeStart, kB2HomeEnd, kB2Pitch, kB2MoverId, kB2Channel);
+}
+
+// commitEditAction appends saveNoteEditPass ids (Active). replaceNoteEditPass disables stale
+// ids and returns new Active ids. sessionUndo assigns editPassIds = editPassIdsAtPush after
+// disable — the session list does not retain Disabled ids. loop.passes still holds those rows.
+// B2a must filter EditPassState::Active (and must not treat "ever created" as the gate).
+void test_b2_edit_pass_ids_mean_active_committed_not_ever_created() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedB2HomeLoop(loop);
+  EditPassIdList sessionEditPassIds;
+
+  const EditPassId firstId =
+      loop.saveNoteEditPass(0, makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd,
+                                                kB2CommittedStart, kB2CommittedEnd));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, firstId);
+  sessionEditPassIds.push_back(firstId);
+  TEST_ASSERT_EQUAL(1u, sessionEditPassIds.size());
+  TEST_ASSERT_EQUAL(1u, activeEditPassIds(loop).size());
+  TEST_ASSERT_EQUAL(firstId, activeEditPassIds(loop)[0]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Active),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].state));
+
+  EditPassVec replacementRows;
+  replacementRows.push_back(makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd,
+                                             kB2CommittedStart, kB2CommittedEnd));
+  const EditPassIdList replacementIds =
+      loop.replaceNoteEditPass(0, sessionEditPassIds, std::move(replacementRows));
+  TEST_ASSERT_EQUAL(1u, replacementIds.size());
+  TEST_ASSERT_NOT_EQUAL(firstId, replacementIds[0]);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Disabled),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].state));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Active),
+                          static_cast<uint8_t>(loop.passes.editPasses[1].state));
+  sessionEditPassIds = replacementIds;
+  TEST_ASSERT_EQUAL(1u, sessionEditPassIds.size());
+  TEST_ASSERT_EQUAL(replacementIds[0], sessionEditPassIds[0]);
+  TEST_ASSERT_EQUAL(1u, activeEditPassIds(loop).size());
+  TEST_ASSERT_EQUAL(2u, loop.passes.editPasses.size());
+
+  const EditPassIdList editPassIdsAtPush;
+  loop.disableEditPasses(sessionEditPassIds);
+  sessionEditPassIds = editPassIdsAtPush;
+  TEST_ASSERT_TRUE(sessionEditPassIds.empty());
+  TEST_ASSERT_TRUE(activeEditPassIds(loop).empty());
+  TEST_ASSERT_EQUAL(2u, loop.passes.editPasses.size());
+  TEST_ASSERT_FALSE(loop.passes.editPasses.empty());
+}
+
+void test_b2_committed_base_matches_materialize_active_edit_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedB2HomeLoop(loop);
+  EditPassIdList sessionEditPassIds;
+
+  // 1. Open — no committed edit pass. Oracle is takes-only (home).
+  assertCommittedBaseEqualsMaterializeActive(loop, "1 open");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch, kB2HomeStart,
+                        kB2HomeEnd, "1 open home");
+  TEST_ASSERT_TRUE(sessionEditPassIds.empty());
+  TEST_ASSERT_TRUE(activeEditPassIds(loop).empty());
+
+  // 2. Commit NoteRange — session list holds the Active id. Oracle has the move.
+  const EditPassId committedId =
+      loop.saveNoteEditPass(0, makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd,
+                                                kB2CommittedStart, kB2CommittedEnd));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, committedId);
+  sessionEditPassIds.push_back(committedId);
+  TEST_ASSERT_EQUAL(committedId, activeEditPassIds(loop)[0]);
+  assertCommittedBaseEqualsMaterializeActive(loop, "2 commit");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch,
+                        kB2CommittedStart, kB2CommittedEnd, "2 commit moved");
+
+  // 3. Deselect — focus cleared. Materialized base still has the moved span (not home).
+  NoteEditFocus deselectedFocus;
+  NoteEditCurrentState committedState;
+  committedState.upsertRow(kB2MoverId,
+                           {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                           {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                           NoteEditPresenceType::Visible);
+  MidiEventVec committedStore;
+  committedState.projectToSessionStore(committedStore, kB2Channel);
+  const NoteUtils::DisplayNoteVec committedBase = committedBaseFromActivePasses(loop);
+  const NoteUtils::DisplayNoteVec deselectedPaint =
+      projectNoteEditDisplayNotes(committedBase, committedStore, deselectedFocus, kB2Channel,
+                                  kB2LoopLength, &committedState);
+  assertDisplayNoteSpan(deselectedPaint, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "3 deselect");
+
+  // Stale visualCache that still carries the mover NoteId overlays currentState (1656).
+  NoteUtils::DisplayNoteVec staleVisualCacheWithId;
+  staleVisualCacheWithId.push_back(
+      {kB2MoverId, kB2Pitch, kB2Velocity, kB2HomeStart, kB2HomeEnd});
+  const NoteUtils::DisplayNoteVec staleIdPaint =
+      projectNoteEditDisplayNotes(staleVisualCacheWithId, committedStore, deselectedFocus,
+                                  kB2Channel, kB2LoopLength, &committedState);
+  assertDisplayNoteSpan(staleIdPaint, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "3 stale base with id overlays currentState");
+
+  // visualCache rows can lack NoteId (161117). Cleared focus then keeps the home row —
+  // currentState 1656 is not bound. B2a materialized base carries the id and the move.
+  NoteUtils::DisplayNoteVec staleVisualCacheNoId;
+  staleVisualCacheNoId.push_back(
+      {kInvalidNoteId, kB2Pitch, kB2Velocity, kB2HomeStart, kB2HomeEnd});
+  const NoteUtils::DisplayNoteVec staleNoIdPaint =
+      projectNoteEditDisplayNotes(staleVisualCacheNoId, committedStore, deselectedFocus,
+                                  kB2Channel, kB2LoopLength, &committedState);
+  TEST_ASSERT_EQUAL(1u, staleNoIdPaint.size());
+  TEST_ASSERT_EQUAL(kInvalidNoteId, staleNoIdPaint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeStart, staleNoIdPaint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeEnd, staleNoIdPaint[0].endTick);
+
+  // 4. Uncommitted move — session overlay wins over committed base.
+  NoteEditFocus liveFocus;
+  liveFocus.active = true;
+  liveFocus.movingNoteId = kB2MoverId;
+  liveFocus.commitBaseline = {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd};
+  liveFocus.last = {kB2Pitch, kB2Velocity, kB2UncommittedStart, kB2UncommittedEnd};
+  NoteEditCurrentState liveState;
+  liveState.upsertRow(kB2MoverId, liveFocus.commitBaseline, liveFocus.last,
+                      NoteEditPresenceType::Visible);
+  MidiEventVec liveStore;
+  liveState.projectToSessionStore(liveStore, kB2Channel);
+  const NoteUtils::DisplayNoteVec livePaint =
+      projectNoteEditDisplayNotes(committedBase, liveStore, liveFocus, kB2Channel, kB2LoopLength,
+                                  &liveState);
+  assertDisplayNoteSpan(livePaint, kB2MoverId, kB2Pitch, kB2UncommittedStart, kB2UncommittedEnd,
+                        "4 uncommitted overlay");
+  assertDisplayNoteSpan(committedBase, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "4 committed base unchanged");
+
+  // 5. Deselect again — committed geometry still the moved span.
+  const NoteUtils::DisplayNoteVec deselectedAgain =
+      projectNoteEditDisplayNotes(committedBase, committedStore, deselectedFocus, kB2Channel,
+                                  kB2LoopLength, &committedState);
+  assertDisplayNoteSpan(deselectedAgain, kB2MoverId, kB2Pitch, kB2CommittedStart, kB2CommittedEnd,
+                        "5 deselect again");
+
+  // 6. Exit bake / replace — in-session committed view and rematerialize stay the same span.
+  EditPassVec exitRows;
+  exitRows.push_back(makeNoteRangeRow(kB2MoverId, kB2HomeStart, kB2HomeEnd, kB2CommittedStart,
+                                      kB2CommittedEnd));
+  const EditPassIdList exitIds =
+      loop.replaceNoteEditPass(0, sessionEditPassIds, std::move(exitRows));
+  TEST_ASSERT_EQUAL(1u, exitIds.size());
+  sessionEditPassIds = exitIds;
+  assertCommittedBaseEqualsMaterializeActive(loop, "6 exit");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch,
+                        kB2CommittedStart, kB2CommittedEnd, "6 exit moved");
+
+  // 7. Disable committed pass (E:/U: undo). Active filter empty; oracle returns home.
+  loop.disableEditPasses(sessionEditPassIds);
+  sessionEditPassIds.clear();
+  TEST_ASSERT_TRUE(activeEditPassIds(loop).empty());
+  TEST_ASSERT_FALSE(loop.passes.editPasses.empty());
+  assertCommittedBaseEqualsMaterializeActive(loop, "7 undo disable");
+  assertDisplayNoteSpan(committedBaseFromActivePasses(loop), kB2MoverId, kB2Pitch, kB2HomeStart,
+                        kB2HomeEnd, "7 undo home");
+}
+
+// Reselect calls ensureVisibleRowsForDisplayNotes(visualCache). When spans are already
+// sealed equal, a stale home cache overwrites the synced move. B2a projection owner does
+// not change that helper — pin the overwrite so the device reselect gate is not misread.
+void test_b2_stale_visual_cache_overwrites_synced_current_state_spans() {
+  NoteEditCurrentState state;
+  state.upsertRow(kB2MoverId, {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                  {kB2Pitch, kB2Velocity, kB2CommittedStart, kB2CommittedEnd},
+                  NoteEditPresenceType::Visible);
+  NoteUtils::DisplayNoteVec staleVisualCache;
+  staleVisualCache.push_back({kB2MoverId, kB2Pitch, kB2Velocity, kB2HomeStart, kB2HomeEnd});
+  state.ensureVisibleRowsForDisplayNotes(staleVisualCache);
+  NoteBaseline span{};
+  TEST_ASSERT_TRUE(state.readCurrentSpan(kB2MoverId, span));
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeStart, span.startTick);
+  TEST_ASSERT_EQUAL_UINT32(kB2HomeEnd, span.endTick);
+}
+
+// session_20260816_173806 exit: session/display id 999, rematerialize 280 at 24@888.
+// Commit-boundary reconcile retargets mover Update rows; overlap Delete stays.
+void test_173806_reconcile_unique_match_retargets_mover_not_overlap_delete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kPersistId = 280;
+  constexpr NoteId kSessionId = 999;
+  constexpr NoteId kOverlapId = 526;
+  constexpr uint8_t kHomePitch = 24;
+  constexpr uint32_t kHomeStart = 888;
+  constexpr uint32_t kHomeEnd = 1032;
+
+  LoopPasses passes;
+  passes.recordPass =
+      makeRecordPassWithIdentifiedNote(1, kHomeStart, kHomeEnd, kHomePitch, kPersistId);
+
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, kLoopLength);
+  TEST_ASSERT_EQUAL(kPersistId, noteIdAtPitchAndStart(rematerialize, kHomePitch, kHomeStart));
+  TEST_ASSERT_EQUAL(-1, findNoteOnById(rematerialize, kSessionId));
+
+  EditPassVec rows;
+  rows.push_back(makeDeleteRow(kOverlapId));
+  rows.push_back(makeNoteRangeRow(kSessionId, kHomeStart, kHomeEnd, 696, 888));
+  rows.push_back(makePitchRow(kSessionId, 696, 888, 60));
+
+  const PersistIdentityReconcileResult result = reconcileMoverPersistIdentity(
+      rematerialize, kSessionId, kHomePitch, kHomeStart, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Unique),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(kPersistId, result.persistNoteId);
+  TEST_ASSERT_EQUAL(kOverlapId, rows[0].targetNoteId);
+  TEST_ASSERT_EQUAL(kPersistId, rows[1].targetNoteId);
+  TEST_ASSERT_EQUAL(kPersistId, rows[2].targetNoteId);
+
+  pushEditPassRows(passes, 1, rows);
+  MidiEventVec flat;
+  passes.materializeToEventVector(flat, kLoopLength);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundMoved = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_FALSE(note.note == kHomePitch && note.startTick == kHomeStart);
+    if (note.noteId == kPersistId) {
+      foundMoved = true;
+      TEST_ASSERT_EQUAL_UINT8(60, note.note);
+      TEST_ASSERT_EQUAL_UINT32(696u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(888u, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMoved);
+}
+
+void test_reconcile_added_note_does_not_retarget() {
+  MidiEventVec rematerialize;
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(999, 0, 192, 48, 240));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 999, 60, 0, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Unresolved),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL_UINT32(0, result.matchCount);
+  TEST_ASSERT_EQUAL(999, rows[0].targetNoteId);
+}
+
+void test_reconcile_zero_match_at_commit_baseline_does_not_retarget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 1000, 1144, 24, 280);
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, 3072);
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(999, 888, 1032, 696, 888));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 999, 24, 888, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Unresolved),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(999, rows[0].targetNoteId);
+}
+
+void test_reconcile_ambiguous_geometry_does_not_retarget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  appendFixtureNotePair(store, 888, 1032, 5, 24, 280);
+  appendFixtureNotePair(store, 888, 1032, 5, 24, 281);
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, committedChunkIds));
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = std::move(committedChunkIds);
+
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, 3072);
+  const PersistIdentityResolve resolved =
+      resolvePersistIdentityForExistingNote(rematerialize, 24, 888);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityResolveStatus::Ambiguous),
+                    static_cast<int>(resolved.status));
+  TEST_ASSERT_EQUAL_UINT32(2, resolved.matchCount);
+
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(999, 888, 1032, 696, 888));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 999, 24, 888, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::Ambiguous),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(999, rows[0].targetNoteId);
+}
+
+void test_reconcile_already_present_session_id_does_not_retarget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithIdentifiedNote(1, 888, 1032, 24, 280);
+  MidiEventVec rematerialize;
+  passes.materializeToEventVector(rematerialize, 3072);
+  EditPassVec rows;
+  rows.push_back(makeNoteRangeRow(280, 888, 1032, 696, 888));
+  const PersistIdentityReconcileResult result =
+      reconcileMoverPersistIdentity(rematerialize, 280, 24, 888, rows);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistIdentityReconcileStatus::AlreadyPresent),
+                    static_cast<int>(result.status));
+  TEST_ASSERT_EQUAL(280, rows[0].targetNoteId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor);
@@ -1125,7 +1787,13 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_length_replay_loop_boundary_does_not_shorten_same_pitch_neighbors_203140);
   RUN_TEST(test_length_row_after_earlier_move_row_on_same_note_seals_210821);
   RUN_TEST(test_second_move_row_on_same_note_wins_over_earlier_span_210945);
+  RUN_TEST(test_145518_note_range_pitch_replay_moves_when_store_id_matches);
+  RUN_TEST(test_145518_note_range_pitch_replay_leaves_home_when_store_id_differs);
+  RUN_TEST(test_145518_open_assigned_note_id_missing_from_pass_rematerialize);
+  RUN_TEST(test_145518_assign_on_committed_passes_makes_rematerialize_find_id);
   RUN_TEST(test_nested_same_pitch_outer_apply_helpers_use_lifo_off);
+  RUN_TEST(test_195941_wrap_home_move_keeps_length);
+  RUN_TEST(test_201446_wrap_home_move_drops_false_linear_off);
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
   RUN_TEST(test_save_edit_appends_without_collapsing_takes);
@@ -1146,5 +1814,13 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_global_undo_note_edit_pass_closed_disables_edit_rows);
   RUN_TEST(test_global_undo_three_step_restores_record_baseline);
   RUN_TEST(test_session_undo_move_back_insert_before_save_note_edit_pass);
+  RUN_TEST(test_b2_edit_pass_ids_mean_active_committed_not_ever_created);
+  RUN_TEST(test_b2_committed_base_matches_materialize_active_edit_passes);
+  RUN_TEST(test_b2_stale_visual_cache_overwrites_synced_current_state_spans);
+  RUN_TEST(test_173806_reconcile_unique_match_retargets_mover_not_overlap_delete);
+  RUN_TEST(test_reconcile_added_note_does_not_retarget);
+  RUN_TEST(test_reconcile_zero_match_at_commit_baseline_does_not_retarget);
+  RUN_TEST(test_reconcile_ambiguous_geometry_does_not_retarget);
+  RUN_TEST(test_reconcile_already_present_session_id_does_not_retarget);
   return UNITY_END();
 }

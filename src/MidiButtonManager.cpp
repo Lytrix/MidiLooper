@@ -9,7 +9,11 @@
 #include "Utils/PressTiming.h"
 #include <functional>
 
+#if defined(__IMXRT1062__)
+DMAMEM MidiButtonManager midiButtonManager;
+#else
 MidiButtonManager midiButtonManager;
+#endif
 
 MidiButtonManager::MidiButtonManager() {
     // Set up the callback from processor to this manager

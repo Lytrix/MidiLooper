@@ -61,9 +61,22 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         return;
     }
 
-    // Shared committed display list with LOOP_EDIT (171219 / Stage 2). Do not rematerialize
-    // reconstruct. getVisualNotesForSlot ensures the cache only when STOPPED and short-loop.
-    const NoteUtils::DisplayNoteVec& committedBase = track.getVisualNotesForSlot(slot);
+    // B2a: when visualCache is stale, committed base is reconstruct(materialize(active
+    // passes)) — same oracle as commitEditAction. Do not call getVisualNotesForSlot while
+    // dirty (that is VCACHE,full / B2b). Reuse this projection cache until playbackRevision
+    // or the existing fingerprint changes. After E: undo, editPassIds is empty but dirty is
+    // set by disableEditPasses; materialize then drops Disabled rows.
+    NoteUtils::DisplayNoteVec materializedCommittedBase;
+    const NoteUtils::DisplayNoteVec* committedBase = nullptr;
+    if (loop.visualCacheDirty) {
+        MidiEventVec flat;
+        loop.passes.materializeToEventVector(flat, loopLength);
+        materializedCommittedBase =
+            NoteUtils::reconstructDisplayNotes(flat, loopLength, false, false);
+        committedBase = &materializedCommittedBase;
+    } else {
+        committedBase = &track.getVisualNotesForSlot(slot);
+    }
 
     noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
@@ -72,7 +85,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
     noteEditPaintDisplayCacheNotes_ =
-        projectNoteEditDisplayNotes(committedBase, track.editAwareMidiEvents(), focus,
+        projectNoteEditDisplayNotes(*committedBase, track.editAwareMidiEvents(), focus,
                                     track.getMidiChannel(), loopLength,
                                     &editSession.noteEditCurrentState);
     noteEditSelectableDisplayCacheNotes_ =

@@ -136,6 +136,7 @@ void test_preserved_overdub_stop_keeps_capture_suffix() {
 
 void test_committed_display_visual_cache_authoritative() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(false, true));
+  // Dirty + notes present: paint must consume stale/handoff, not ensureVisualCacheBuilt.
   TEST_ASSERT_FALSE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(true, true));
   TEST_ASSERT_FALSE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(false, false));
 }

@@ -128,6 +128,22 @@ STORAGE_PERSIST_MEM const char* deferredFooterWriteStageName(DeferredFooterWrite
     return "unknown";
 }
 
+STORAGE_PERSIST_MEM const char* deferredCompletionWriteStageName(DeferredCompletionWriteStage stage) {
+    switch (stage) {
+        case DeferredCompletionWriteStage::PatchLastActiveUnix:
+            return "patch_last_active_unix";
+        case DeferredCompletionWriteStage::EpochCrcBody:
+            return "epoch_crc_body";
+        case DeferredCompletionWriteStage::EpochCrcHeader:
+            return "epoch_crc_header";
+        case DeferredCompletionWriteStage::WriteWorkspaceMeta:
+            return "write_workspace_meta";
+        case DeferredCompletionWriteStage::QuarantineLegacy:
+            return "quarantine_legacy";
+    }
+    return "unknown";
+}
+
 STORAGE_PERSIST_MEM const char* deferredLoopWriteStageName(DeferredLoopWriteStage stage) {
     switch (stage) {
         case DeferredLoopWriteStage::Header:

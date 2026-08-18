@@ -14,6 +14,10 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
+| [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
+| [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; NOTE_EDIT hydrate and playback gather are separate work paths (amended 2026-08-16/17) | Accepted |
+| [DEC-036](#dec-036-runtime-effective-event-source-for-overdub) | 2026-08-14 | Runtime effective event source; overdub entry without display reconstruction | Accepted |
 | [DEC-035](#dec-035-loop-persists-content-only) | 2026-08-14 | Loop persists content only; undo/redo is derived and not persisted | Accepted |
 | [DEC-034](#dec-034-overlap-shorten-seals-at-the-user-triggered-commit) | 2026-08-13 | Overlap shorten seals at the user-triggered commit; closure defers leave-restore only | Accepted |
 | [DEC-033](#dec-033-overdub-overlap-ignores-per-note-channel) | 2026-08-12 | Overdub overlap uses loop-scoped notes; no per-note channel filter | Accepted |
@@ -50,7 +54,446 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-036 -->
+<!-- Append new entries below (newest first). Next ID: DEC-040 -->
+
+## DEC-039 — Persist NoteId reconciled at NOTE_EDIT commit boundary
+
+**Date:** 2026-08-16  
+**Status:** Accepted  
+**Plan:** [`note_edit_persist_noteid_identity_bugfix.md`](Plans/note_edit_persist_noteid_identity_bugfix.md)
+
+**Context:** [`173806`](../captures/session_20260816_173806.log) exit saved NoteRange+Pitch targeting session/display **256**; rematerialize still had M24@888. `applyNoteEditPass` is strictly `targetNoteId`-keyed. `DisplayNote.noteId` is not persist authority. B1 assign-at-open does not unify two different valid ids.
+
+**Decision:**
+
+1. Capture / rematerialized NoteOn is the authoritative persisted `NoteId`.
+2. NOTE_EDIT focus/session identity may temporarily differ.
+3. `EditManager::commitEditAction` reconciles at the commit boundary via `resolvePersistIdentityForExistingNote` / `reconcileMoverPersistIdentity` against `LoopPasses::materializeToEventVector` **before** `saveNoteEditPass`.
+4. Reconciliation succeeds only with **exactly one** rematerialize NoteOn at `commitBaseline` pitch+start. Zero = unresolved; more than one = ambiguous. Neither guesses. `findNoteOnById == -1` does not by itself imply geometry identity.
+5. `applyNoteEditPass` stays strictly NoteId-keyed. Added notes keep the session-allocated id until Create persists it.
+6. Stage 2 select-time bind is parked until Stage 1 is device-proven and a fresh select still mismatches.
+
+**Does not change:** DEC-029 current-state geometry ownership; Loop `saveNoteEditPass`; `applyNoteEditPass` lookup.
+
+**Validation:** Native `test_edit_apply` unique / added / zero / ambiguous / already-present; device 173806 gesture (`replay_flat` home missing).
+
+---
+
+## DEC-038 — Overdub wrap commit and session undo
+
+**Date:** 2026-08-15  
+**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.** Live +1 HITL PASS ([`011413`](../captures/session_20260816_011413.log)).  
+**Owner:** overdub lifecycle — `Track` trigger / `Loop` pass list + `capture.store`. LCR publish stays `publishPreparedOverdubPass`. GUS kind stays `OverdubPassAdded`.  
+**Plan:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)  
+**Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) (6E native PASS); [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) / [DEC-032](#dec-032-overdub-editpass-unification-reassessment) companions  
+**Does not supersede:** DEC-037 6.0 (no LCR construct on the button); DEC-036 3b for **display** idle visual cache; DEC-031 companion encode. Overdub **source view** does not copy visual cache (RC7).
+
+### Problem
+
+Overdub source view is frozen at session start. A wrap that returns to the start-overdub tick cannot overlap its own prior-wrap notes. Native 6E proved `resolveState` + publish can make wrap-1 the wrap-2 source. Production still treats one overdub session as one `OverdubPass` sealed only at stop, and undo while OVERDUBBING discards live capture without a session gate (`loopHasLiveOverdubCapture`).
+
+### Decision
+
+1. **Wrap persist.** **S** is the `playheadPhaseTick` already computed in `startOverdubbing` and passed to `beginCapture`. Store that first-session value on the overdub lifecycle owner (`Loop` / `Track`). Session-scoped: wrap `beginCapture` and `discardCapture` must not clear it. Clear S when the overdub session ends. When the playhead returns to S, seal the **current wrap** as an `OverdubPass` + DEC-031 companions, `publishPreparedOverdubPass`, push a session-stack entry, `beginCapture(Overdub)` again, stay OVERDUBBING. Stop seals the partial wrap the same way. Do not add a new domain noun for S.
+2. **Still an `OverdubPass`.** No new domain noun. No session-id on the pass in this DEC.
+3. **Held note at S.** Do not call `Track::finalizePendingNotes`. That closer is STOP only (6E.5). Publish completed ON/OFF pairs only. Add stays NoteOff-owned (`accumulatePendingNoteChangesForIncomingNote`).
+4. **Empty wrap.** No pass, no session-stack push, no revision bump, no LCR publish.
+5. **6.0 at wrap and enter.** Bounded 6D.4 publish (wrap), then a **bounded source-view window reconstruct** (`Loop::rebuildOverdubSourceView`: `tryResolvePreparedWindow` + `reconstructDisplayNotes`, else windowed `resolveWindow(passes)`). Session-start `establishOverdubSourceView` calls the same helper (`why=open`). Hold fill (`Loop::ensureOverdubSourceNotesForHold`) is a 16-bar `resolveWindow(passes)` for **this pitch** only — not a full-loop dump into the source view. Not visual cache. No LCR construct on the MIDI/button path, no full-loop materialize, no `resolveState` on note-off, no `VCACHE,full`, no SD. Clarified 2026-08-17 (RC6 wrap, RC7 enter, RC8 hold-window JIT).
+6. **Undo while OVERDUBBING.** Session-gate in `MidiButtonActions::handleUndo` / `handleRedo` (same routing as NOTE_EDIT **E:** — no **U:** fallthrough). Stack is a Loop-owned `PassId` list of this session’s sealed wraps plus live `capture.store`. Not `NoteEditSessionUndoStack`. Not `EditManager`. Undo: live wrap first (`discardCapture`), then `setPreparedCapturePassState(Disabled)` on the last sealed wrap. No GUS pop.
+7. **Undo after stop.** One **U:** `OverdubPassAdded` for the whole session. `passIds` = wrap 1..N. `editPassIds` = all companions. Extend that kind; do not add a new `UndoEntryKind`. GUS wire bump (STK2 → next token) for the `passIds` list.
+8. **Crash mid-session.** Out of this DEC. Reboot during OVERDUBBING is the same loss as today’s uncommitted overdub.
+
+### Implementation stages (firmware after approval)
+
+| Stage | Prove |
+|-------|--------|
+| **038.1** | Re-entry at S: completed-pair seal + publish + session-stack push + `beginCapture` + stay OVERDUBBING. Session undo/redo while OVERDUBBING. No GUS `passIds` yet. |
+| **038.2** | Stop: one `OverdubPassAdded` with `passIds` + companions. GUS wire. Session stack cleared. |
+
+### Rationale
+
+Persist grain is one wrap so wrap-2 can overlap wrap-1 via prepared `resolveState`. Undo grain is one session so GUS depth and sidebar **U:** do not grow with wrap count. NOTE_EDIT already session-gates `handleUndo`; overdub reuses that routing, not that payload.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| Path B (live capture in LCR) | LCR invents note-offs; forbidden by DEC-037 / OpenSpec 6.5 |
+| N **U:** entries (one per wrap) | N gestures after stop; GUS grows with wraps |
+| Reuse `NoteEditSessionUndoStack` | Wrong payload and owner |
+| Commit at loop tick 0 when S ≠ 0 | Wrong wrap origin (6E.1b) |
+| `finalizePendingNotes` at S | Seals an incomplete Add (6E.5) |
+| SD persist on wrap | Out of this DEC |
+
+### Affected modules
+
+`Track` overdub lifecycle / playhead wrap detect; `Loop::commitCapturePass` / `beginCapture`; `TrackUndo` session gate + `pushOverdubPassAdded`; `MidiButtonActions::handleUndo`; `LoopContentResolution::publishPreparedOverdubPass` (already 6E.4). `EditManager` unchanged.
+
+### Constraints created
+
+- Wrap commit must not call `finalizePendingNotes` or `LoopStopFinalize::finalizeWrapWindowOnStore` to invent an OFF at S.
+- `handleUndo` while OVERDUBBING must not fall through to GUS.
+- Do not add a new undo kind. Do not put wraps on `NoteEditSessionUndoStack`.
+- Keep display idle 3b (`DIAG,lcr,vch`) on `tryResolvePreparedState` miss. Overdub source-view enter/wrap uses `rebuildOverdubSourceView`, not a visual-cache copy.
+- No SD on wrap. No session-id on `OverdubPass` in this DEC.
+- S is session-scoped. Do not store it only on `Capture` if `discardCapture` would drop it mid-session.
+
+### Related OpenSpec
+
+`openspec/changes/loop-content-resolution/`. Preflight: `openspec/changes/loop-content-resolution/PREFLIGHT-WRAP-COMMIT.md`.
+
+### Migration notes
+
+038.2 GUS wire: persist `passIds` on `OverdubPassAdded`. Legacy STK2 rows keep a single `passId`. No loop-file format change.
+
+---
+
+## DEC-037 — LoopContentResolution parallel prototype
+
+**Date:** 2026-08-14  
+**Status:** Accepted  
+**Owner:** `LoopContentResolution` (new) — effective state/window queries; `LoopPasses` remains content authority; `StorageManager` remains persist owner  
+**Plan:** [`loop_event_sourced_resolution_architecture.md`](Plans/loop_event_sourced_resolution_architecture.md)  
+**OpenSpec:** `openspec/changes/loop-content-resolution/`  
+**Parent:** [DEC-036](#dec-036-runtime-effective-event-source-for-overdub) (overdub entry without display reconstruction still holds; D1 eager flatten stays withdrawn)  
+**Does not supersede:** DEC-016 four-layer model; DEC-035 content-only persist; DEC-036 overdub-entry contract; DEC-031/032 overlap semantics
+
+### Problem
+
+Layer D 3b made overdub **entry** cheap when `visualCache` is clean ([`045556`](../captures/session_20260814_045556.log) `begin_capture` 2214 µs). After a new overdub **commit**, `markDisplayCachesStale` still dirties every bar and idle/window gather still walks every active pass list (`CommittedEventRange::inWindow` + `collectActiveCommittedChunkLists`). Short loops still full-materialize on stop (`VCACHE,full`). D1 tried an eager full `passesMaterializedStore_` and `invalidateCaches` discarded it.
+
+A, B, C, and D (range-dirty cache, incremental bake, tick index, checkpoint+tail) each fit **part** of that remaining cost. Shipping them as separate caches repeats D1.
+
+### Decision
+
+1. Introduce **`LoopContentResolution`** as the derivation owner for effective musical state. Primary APIs: `resolveState()`, `resolveWindow()`. `resolveNotes()` is a derived consumer, not the architecture center.
+2. **G is the union of A+B+C+D**, not a different physics. Do not ship A then B then C as independent derived owners.
+3. Vocabulary: **`RawMidiEvent`**, **`EditAction`**, **`ResolvedEvent`**. Do not collapse them into `Event`. Do not name the owner `Resolver` or `LoopContentResolver` (`NoteGeometryResolver` already owns live NOTE_EDIT overlap Resolution).
+4. **Committed pass content is immutable; Active/Disabled is mutable history state.** Resolution uses the active pass set plus edit history.
+5. After indexing/checkpointing, cost is proportional to **candidate events and affected state**, not historical pass count. Finding candidates must not walk every pass list.
+6. **`resolveState(tick)` is a fundamental query.** Replay distance is bounded by checkpoints at `checkpointIntervalTicks`. Loop switch must not replay from tick 0.
+7. For a fixed active pass set and edit history, resolution is **deterministic** and independent of cache state, chunk boundaries, or previous resolution order.
+8. **Physical PSRAM chunks are not resolution boundaries.**
+9. Build a **parallel native prototype**. Do not delete `materializeToEventVector`. Do not put resolution on `handleMidiInput`. Do not cascade `invalidateCaches` onto the prototype store.
+10. Production consumers swap only after **three gates**: correctness vs materialize+reconstruct; complexity (`commit P(N)` does not traverse `P0…P(N-1)` except indexed affected regions); device worst-case latency on the `035414` class (no multi-second MIDI/OLED stall, no `VCACHE,full` on the normal path, no full materialization after commit).
+
+### Rationale
+
+DEC-016 already requires representation × interval. The missing owner is query-time resolution of active history, not another full flatten. D1 proved that an O(history) derived store plus global invalidation cannot survive. A parallel prototype with a hard scaling gate is safer than another cache on `passesMaterializedStore_`.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| A only (range-dirty `visualCache`) | Equal for display bars; idle slices still walk all pass lists |
+| B only (true incremental bake) | Equal for derived MIDI current; D1 implementation was full flatten + invalidate, not a disproof of bake — but bake alone does not give loop-switch `resolveState` |
+| C only (tick index on `CommittedEventRange`) | Equal for window find-cost; does not stop unrelated invalidation or boot-from-zero |
+| D only (DEC-035 Layer C checkpoint) | Equal for load/switch; does not stop per-commit derived rebuild during overdub |
+| F (stop at Layer D 3b) | Entry is already PASS; post-commit rebuild remains |
+| E (CoW derived note versions) | Overlaps G’s range cache; content undo is already O(1) chunk-ref; do not build both |
+| Keep optimizing `materializeToEventVector` | Explicit experimental boundary: prove whether resolution makes materialize unnecessary on the normal path |
+| Name owner `Resolver` / `LoopContentResolver` | Collides with `NoteGeometryResolver`; NAMING prefers domain-owner nouns |
+
+### Affected modules
+
+Native prototype first: new `LoopContentResolution` headers/tests. Production later: `LoopMaterialization`, `LoopVisualCache`, `TrackPlaybackWindowBuild`, `establishOverdubSourceView` fallback only. Editor consume (2026-08-16): `NoteGeometryResolver` candidate source, `SelectNavigation`, `openNoteEditSession`, `ensurePlaybackMergedMidiEventsBuilt` overlay. `LoopPasses`, `StorageManager`, `NoteGeometryResolver` unchanged as owners.
+
+### Amendment 2026-08-14 — Checkpoint is a jump point
+
+Device per-bar `soundingAt` on the 68-bar / 1847-note loop is another O(history) derived store ([`225351`](../captures/session_20260814_225351.log) heap Critical). Short-loop sliced `lcr` remains PASS ([`225744`](../captures/session_20260814_225744.log)).
+
+- A checkpoint MUST reduce historical replay work without becoming a proportional copy of the resolved loop.
+- Checkpoint density is a performance parameter, not a semantic property of the loop (native 1 bar, device 8/16 bars, later adaptive — identical answers).
+- `spans` plus a tick-ordered span-boundary index (start **and** exclusive-end) are sufficient for `resolveState` tail replay. The container need not be a PSRAM `std::multimap` (5.15).
+- Split `prepareRebuildSpans` before treating RAM as the only stall. 5.7 probe is a selected loop **>63 bars** ([`115750`](../captures/session_20260815_115750.log) 139 bars accepted). Arm cap stays off. [`143009`](../captures/session_20260815_143009.log) complete `hist=2394` `walk=0`; project PASS; `startsByTick` emplace still fails 5.7. Do not change batch size to chase `emplace`. Do not start 5.1/5.2 or Stage 6 until cold-build latency passes.
+
+### Amendment 2026-08-15 — 5.15b pick flat A
+
+Native A (`append` + `stable_sort` by tick only) matches C `resolveState` and the materialize oracle, including equal-tick end-then-start. `walk=0`. Host: A index 5 µs vs C emplace 29 µs; A resolve not worse. 5.15c swapped the device gate to `spanBoundaries`. Device [`151450`](../captures/session_20260815_151450.log): `app=5490706` `sort=10202` `reb=13851136` `st=13045` `walk=0` (was `reb=104359946`). **5.15 complete.** Do not build B or A2. Do not reopen the resolver query model. 5.16c slices `RebuildPrepare` materialize at `kDeviceGateEventsPerSlice`. Device [`153920`](../captures/session_20260815_153920.log) `prep` PASS — no `loop_rem`; `idle_maint` 22–25 ms.
+
+### Amendment 2026-08-15 — 5.17a–c pick flat A for TickIndex
+
+`TickIndex::byTick` query contract is `tick ∈ [begin, end)` → Active `(passId, eventIndex)`. Native A (`TickEventEntry[]`, C-order append + `stable_sort` by tick only) matches C walk, wrap, disabled-pass skip, and `resolveWindow` vs the materialize oracle. Equal-tick insertion order preserved (NOTE_OFF then NOTE_ON at 192). `walk=0`. Host (94 entries): C emplace 23 µs, A 26 µs, A query 144 vs C 151. Pick **A**. Device [`161355`](../captures/session_20260815_161355.log): `iapp=4819607` `isort=27415` `win=13971` `st=3108` `walk=0` vs C [`155953`](../captures/session_20260815_155953.log) `idx` 50→120.6 ms. **5.17d PASS.** Do not build B or A2. Do not fold `recon` or `pair`. `TickIndex` and `StateCheckpoints` stay separate owners. 5.17e dropped `byTick`: `indexCapturePassEventRange` appends `tickEvents`; `findRawWindow` reads that list only.
+
+### Amendment 2026-08-15 — 5.7a sliced append reserve
+
+[`162630`](../captures/session_20260815_162630.log): `spans` notes/s 565→125 and `DFRAME` 1.003→1.591 s while paint stayed 12 ms. `appendSpanBoundaryEntries` reserved this slice only (`size+16`); `spans` already reserved `notes.size()`. Same growth on `idx` `tickEvents` (`size+8`). 5.7 leftover is that realloc, not `channelForNoteId` (constant per 8-note slice). `appendSpansFromNotes` reserves `2 * notes.size()`; `appendTickEventEntries` reserves remaining events in the pass. Device [`163942`](../captures/session_20260815_163942.log): reserve **PASS** (`app=2349` `iapp=202981`; `idx` 1310→1212 events/s). 5.7 `DFRAME` not closed: `spans` 930→169 notes/s. 5.7b: `appendSpansFromNotes` fills `channelByNoteId` from every NOTE_ON in `resolved` (first wins). Open notes whose OFF is outside the current 8 events still pair (`activeNoteStacks` / `openOnByPitch`) and still get channel. Native `test_stage57_recon_*` / `test_stage57_pair_*` / `test_stage57_span_channel_*` PASS. Do not rewrite `pair` / `recon`. Do not start 5.1.
+
+### Amendment 2026-08-15 — 5.7b device FAIL
+
+Device [`164922`](../captures/session_20260815_164922.log): first `spans` slice `loop_rem,idle_maint,14744010` filling `channelByNoteId` (PSRAM `unordered_map` `emplace`). `DFRAME` 15.702 s with consecutive `frameIndex`. After fill, `spans` ~1000 notes/s flat. Open-note contract held. Do not keep this map on device.
+
+### Amendment 2026-08-15 — 5.7c flat channel lookup
+
+Lookup contract from code: `NoteId` → first NOTE_ON channel in resolved C-order. Channel is the value, not a key or partition. First-wins unique on `NoteId` only. `channelByNoteId` is now `{noteId, channel}[]`: C-order append, `stable_sort` by `noteId`, unique keep-first, `lower_bound`. Device sequences `chan` / `csort` before `spans`. Complete line adds `capp=` / `csort=`. Device [`170024`](../captures/session_20260815_170024.log) **PASS**: `capp=12373` `csort=1779`; `dedup`→`chan` 11.55 ms; `csort`→`spans` 22.63 ms; no `idle_maint` `loop_rem`; `chan`/`spans` `DFRAME` 0.933–0.965 s. Pair `DFRAME` 1.277 s remains (different owner). `walk=0`. Do not rewrite `pair` / `recon`. Do not start 5.1.
+
+### Amendment 2026-08-15 — Derived-index storage invariant
+
+Not a new DEC. Device evidence from three LoopContentResolution derived indexes:
+
+| Structure | Associative PSRAM | Flat A | Device |
+|-----------|-------------------|--------|--------|
+| `startsByTick` | `multimap` 224–413 ms / 8 inserts | `spanBoundaries` append+sort | 5.15 [`151450`](../captures/session_20260815_151450.log); after reserve [`170024`](../captures/session_20260815_170024.log) `app=1420` `sort=9439` |
+| `TickIndex::byTick` | `multimap` 50–121 ms / small batches | `tickEvents` (5.17e **removed** `byTick`) | [`170024`](../captures/session_20260815_170024.log) `iapp=201044` is **bulk append total**, not map insert (was `iapp=4.82 s` before 5.7a reserve) |
+| `channelByNoteId` | `unordered_map` 14.7 s [`164922`](../captures/session_20260815_164922.log) | `{noteId, channel}[]` append+sort+unique | [`170024`](../captures/session_20260815_170024.log) `capp=12373` `csort=1779` |
+| `TickIndex::byNoteId` | `unordered_map` 5.346 s [`172927`](../captures/session_20260815_172927.log) | `{noteId, loc}[]` append+sort+unique keep-last | [`173842`](../captures/session_20260815_173842.log) `bn=225` `nsort=10003` |
+
+**Invariant:** Derived indexes used by LoopContentResolution must use contiguous/bulk storage on the target device. Per-entry dynamic allocation into PSRAM associative containers (`std::map`, `std::multimap`, `std::unordered_map`) is prohibited on realtime-adjacent index construction paths. Where the query contract permits, indexes are flat PSRAM arrays built by append/bulk construction and ordered or uniqued in a bounded operation. The representation is selected from the query contract; flat storage is not an automatic replacement for every associative structure. Representation B (bucket/offset table) is not justified unless a measured flat query is too expensive.
+
+This is **derived indexes + PSRAM + per-entry construction**. It is not “never use maps anywhere.”
+
+**Still associative (not this invariant’s swap list):** pairing `openOnByPitch` (LIFO, retained after 5.18); `TickIndex::passById` (pass-count, not note-count). Do not fold `recon` into this rule. Do not flatten a LIFO stack.
+
+5.15–5.18 establish this invariant **empirically**, not as a style preference:
+
+| Contract | Representation |
+|----------|----------------|
+| ordered many-to-many range boundaries | flat + sort (`spanBoundaries`) |
+| ordered event window | flat/bulk (`tickEvents`) |
+| unique first/last-wins lookup | flat + sort/selection (`channelByNoteId` first-wins; `byNoteId` last-wins) |
+| LIFO pairing state | associative/container semantics retained (`openOnByPitch`) |
+
+The last row stops the rule from becoming “replace all maps with arrays.”
+
+### Amendment 2026-08-15 — 5.7c FROZEN; pair is 5.18
+
+Representation part of Stage 5.7 is **closed**. Do not reopen 5.7c.
+
+| Gate | Status |
+|------|--------|
+| correctness (`walk=0`) | PASS [`170024`](../captures/session_20260815_170024.log) |
+| complexity (no B) | PASS |
+| derived-index RAM / construction (flat/bulk) | PASS — `spanBoundaries`, `tickEvents`, channel lookup, `byNoteId` |
+| device latency on the whole idle gate | **5.1 PASS** [`173842`](../captures/session_20260815_173842.log) |
+
+Successor: [`loop_content_resolution_pair_index_refinement.md`](Plans/loop_content_resolution_pair_index_refinement.md). Flatten from the **query**, not the container type. `byNoteId` is last-wins `NoteId → {passId, on, off}`. `openOnByPitch` is a per-pass LIFO stack keyed by **pitch only**. Measure which produces the stall before picking a representation. No 5.1. No Stage 6. No B. Do not rewrite `recon`.
+
+### Amendment 2026-08-15 — Loop-internal channel is not a resolution key
+
+Not a new DEC. Restates [DEC-033](#dec-033-overdub-overlap-ignores-per-note-channel) for LoopContentResolution.
+
+A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiChannel` (`Track::sendMidiEvent` remaps recorded 1–16). `NoteUtils::DisplayNote` has no channel field. Pairing, overlap, and sounding identity use `NoteId` / pitch + tick, not `event.channel`.
+
+`openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `SoundingNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
+
+### Amendment 2026-08-15 — 5.18a pair instrument (no flatten)
+
+`pair` reports `tot` / `bn` (`byNoteId`) / `op` (`openOnByPitch`) / `lk` (`find`) / `oth` plus entries, inserts, overwrites, pushes, pops, peak depth, openOn heap bytes. Device complete line `DIAG,lcr,pair`. 1 Hz `phase,pair` lines add `bn=` `op=` `lk=` `pk=`. Native last-wins and peak-depth tests. No header allocator probe (ITCM). Do not flatten until the 139-bar remasure names the expensive owner. No 5.1. No B. No `recon`.
+
+### Amendment 2026-08-15 — 5.18a device: byNoteId owns pair
+
+[`172927`](../captures/session_20260815_172927.log): `tot=5356927` `bn=5345535` `op=2433` `lk=1424` `oth=7535` `pk=1` `ins=2396` `ow=0`. Pair `DFRAME` 390→420 is **1.273 s** (consecutive `frameIndex`). `openOnByPitch` is not the stall. Next representation experiment is **last-wins flat `byNoteId` only**. Retain the LIFO stack. No 5.1. No B. No `recon`.
+
+### Amendment 2026-08-15 — 5.18b last-wins flat byNoteId (native)
+
+`TickIndex::byNoteId` query is `NoteId` → last `{passId, on, off}`. Storage is now `{noteId, loc}[]`: C-order NOTE_ON append, reverse-scan OFF during the unsorted walk, one `stable_sort` by `noteId`, unique **keep-last** (opposite of 5.7c channel keep-first). `appendNoteEvents` uses `lower_bound` after unique. Device sequences one `nsort` slice after all pair ranges, before `isort`. Sliced pair ranges do not unique every 8 events. Native last-wins vs keep-first tests. `openOnByPitch` stays a per-pass LIFO stack. No 5.1. No B. No `recon`. Do not flatten `openOnByPitch`.
+
+### Amendment 2026-08-15 — 5.18b device PASS; 5.18 FROZEN
+
+[`173842`](../captures/session_20260815_173842.log): `tot=7950` `bn=225` `nsort=10003` `op=2256` `pk=1` `ins=2396` `ow=0` `walk=0` `hist=2394`. Pair `DFRAME` consecutive `frameIndex` **0.980–1.026 s** (was 1.273 s [`172927`](../captures/session_20260815_172927.log)). `idle_maint` during pair 25.2 ms, no `loop_rem`. `nsort` 10.0 ms and `isort` 28.1 ms under 50 ms. Do not flatten `openOnByPitch`. Do not reopen 5.18.
+
+### Amendment 2026-08-15 — 5.18 closed
+
+The remaining Stage 5.7 device-latency violation was traced to `byNoteId` PSRAM associative construction. Replacing that construction with the minimum representation matching its last-assignment-wins query contract reduced `bn` from 5.346 s to 225 µs and total pairing from 5.357 s to 7.95 ms. `openOnByPitch` remains a LIFO stack because its mutation contract is not equivalent to a sorted/unique index. No new >50 ms construction slice was observed. Pair is frozen. Do not clean up `recon`, `byNoteId` naming, or `openOnByPitch` before the device realtime gate.
+
+DEC-037 Stage 9 index work:
+
+```text
+correctness             PASS
+complexity              PASS
+derived-index RAM       PASS
+flat/bulk construction  PASS
+device latency
+  spanBoundaries        PASS
+  tickEvents            PASS
+  channel lookup        PASS
+  pair                  PASS
+```
+
+Next is the **whole-gate** 5.1 measurement, not another index. Production stays on materialize / 3b copy.
+
+### Amendment 2026-08-15 — 5.1 idle-path device latency PASS
+
+[`173842`](../captures/session_20260815_173842.log) complete LoopContentResolution idle gate on the 139-bar class (`hist=2394`, larger than `035414`). Production MIDI/display unchanged. The gate runs only from `processDeferredIdleMaintenance` when transport is not PLAYING / RECORDING / OVERDUBBING / STOPPED_RECORDING.
+
+| Check | Worst in LCR window (20.67–52.43 s) |
+|-------|--------------------------------------|
+| OLED | consecutive `DFRAME` **1.034 s** (`frameIndex` +30, paint 9.9 ms) vs healthy after-complete **0.968 s** |
+| MIDI | `midi_gap` **39.1 ms**; `idle_maint` **34.9 ms**; no `loop_rem`; `clockrate` 0 (transport idle) |
+| `VCACHE,full` during LCR | none |
+
+Not multi-second MIDI or OLED stall. **5.1 PASS.** 5.2 (overdub entry / `VCACHE,full` on the PLAYING path) is not this measurement. No Stage 6.
+
+### Amendment 2026-08-15 — Stage 6 overdub must not cold-build LCR
+
+Not a new DEC. Stage 9 device gates are complete. **5.2 PASS** [`180624`](../captures/session_20260815_180624.log) `begin_capture` **10050 µs** after restoring DEC-036 3b (copy authoritative `visualCache.notes`; no `markDisplayCachesStale` on `startOverdubbing`). Prior FAIL [`175544`](../captures/session_20260815_175544.log) **108979 µs**. Original 3b [`045556`](../captures/session_20260814_045556.log) **2214 µs**.
+
+**Invariant:** Overdub **start and stop** MUST NOT cold-build `LoopContentResolution`. LCR construction belongs to idle/background preparation. Overdub entry consumes already-prepared derived state (prepared window when ready). Clarified 2026-08-17 (RC7): source view is `rebuildOverdubSourceView` (prepared window, else bounded `resolveWindow(passes)`). Display idle may still copy visual cache (`vch`). Do not copy visual cache into `overdubSourceViewNotes_`.
+
+Content authority stays `LoopPasses`. Do not add a `LoopContent` type. Do not treat the 2214 µs 3b number as proof that LCR queries are faster — that number is a cache copy, not an LCR setup/query cost.
+
+**Forbidden on overdub start/stop:**
+
+```
+start/stop overdub
+  → create/rebuild LCR indexes
+  → resolveState / full-loop materialize
+```
+
+That recreates [`175544`](../captures/session_20260815_175544.log) (`markDisplayCachesStale` → discard → materialize → reconstruct) under a new owner. Bounded `rebuildOverdubSourceView` is allowed (DEC-038 RC6/RC7).
+
+**Acceptance (Stage 6 overdub path):**
+
+| Kind | Bar |
+|------|-----|
+| Architecture | no synchronous full-loop work; no materialize; no reconstruct; no `VCACHE,full`; no cache invalidation on entry |
+| Performance | `begin_capture` **< 3 ms** target; **< 50 ms** hard gate |
+
+A 4–10 ms landing still proves the invariant if those architecture bars hold. Do not optimize the old 2214 µs number at the expense of the invariant.
+
+Dirty-cache is **not** a license to cold-build LCR indexes from `startOverdubbing`. Idle slices (`6.2`) own LCR gather. Source-view miss uses bounded `LoopContentResolution::resolveWindow(passes)` (RC7), not a visual-cache copy and not `ensureLcrIndexCurrent()`.
+
+Firmware production swap (`6.1`+) does not start until an explicit implement request. This amendment pins the invariant only.
+
+### Amendment 2026-08-15 — Stage 6 consume-only; 6A / 6B / 6C experiment
+
+Not a new DEC. Strengthens the previous Stage 6 amendment. 5.18 is **FROZEN**; derived-index construction on device is tractable (flat/bulk/sliced). The remaining question is **not** whether the LCR representation is viable.
+
+**Question:** Does migrating remaining production consumers to the already-proven LCR owner recover original ~2–3 ms overdub start/stop, or is there another independent stop-path cost? Do **not** answer by wiring LCR into overdub.
+
+**Two dimensions:**
+
+1. **Entry is largely explained.** 3b [`045556`](../captures/session_20260814_045556.log) `begin_capture` **2214 µs** (copy prepared `visualCache.notes`). Restored production [`180624`](../captures/session_20260815_180624.log) **10050 µs** still under the 50 ms gate. The 3b architecture shows **< 3 ms is achievable when the committed visual/source representation is already prepared**. LCR does **not** yet show that it can improve on that copy. Do not claim “switching everything to LCR makes start < 3 ms.”
+2. **Stop is the interesting path:** `commitCapturePass` → `notifyCommittedContentChanged` → `markDisplayCachesStale` → dirty bars → idle rebuild. LCR restores responsiveness **indirectly**: idle prepares derived state; overdub start/stop consume it and return.
+
+**Invariant (strengthened):** Overdub start/stop MUST NOT synchronously construct, sort, checkpoint, or resolve LCR state. It may only consume already-prepared derived state. `ensureLcrIndexCurrent()` (or any other ensure/rebuild helper) on that path is still a violation.
+
+**Role:** `LoopContentResolution` is the **producer of prepared derived state**, not a replacement for `overdubSourceView`. `establishOverdubSourceView` stays the consumer via `rebuildOverdubSourceView`. Display idle may copy visual cache (`vch`). Source view does not.
+
+**Preparation is established architecture** (cooperative / bulk / sliced). Device complete-path [`173842`](../captures/session_20260815_173842.log) / channel [`170024`](../captures/session_20260815_170024.log): `spanBoundaries` `app=1420` `sort=9439`; `tickEvents` `iapp=197743` `isort=28116`; channel `capp=12373` `csort=1779`; pair `tot=7950` `nsort=10003`. Do not rediscover this in the migration.
+
+**Stage 6 experiment (no new DEC):**
+
+| Slice | What | Oracle / fallback |
+|-------|------|-------------------|
+| **6A** | One dirty display range: `resolveWindow` → display projection instead of `CommittedEventRange` → `reconstructDisplayNotes`. Idle only. | Keep old path as oracle. Measure `resolveWindow`, projection, total slice, worst slice, `midi_gap`, `DFRAME`. |
+| **6B** | Overdub stop: commit → mark **only affected ranges** → return. No materialize, no whole-loop reconstruct, no `VCACHE,full`. | Separate `stopOverdubbing` entry, `commitCapturePass`, bookkeeping, return-to-MIDI, first idle prep, display repaint, eventual consistency. |
+| **6C** | Prepared LCR range → `overdubSourceView`. **Only after 6A/6B.** | RC7: miss uses bounded `resolveWindow(passes)`, not visual-cache copy. Score `begin_capture` against 3b **2214 µs**, not against 5.2 **10050 µs**. |
+
+`< 3 ms` is a **regression target**, not an architectural promise. LCR’s job is to eliminate post-commit / full-rebuild machinery, not to make an already-cheap transition intrinsically faster.
+
+Firmware 6A+ waits for an explicit implement request.
+
+### Amendment 2026-08-15 — 6D incremental post-commit LCR maintenance (investigation)
+
+Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDeferredIdleMaintenance` runs LCR only when STOPPED; visual-cache slices run while PLAYING; `deviceGateComplete` is one-shot; `commitPendingCapturePass` bumps `playbackRevision` so `preparedWindowReady` is false. Evidence: [`loop_content_resolution_stage9_handoff.md`](Plans/loop_content_resolution_stage9_handoff.md) § Why LCR is not ready.
+
+**Pick:** investigate incremental maintenance of the **overdub-query index** after commit (**6D**). First experiment **6D.1**: one `OverdubPass` → `capturePasses` + `tickEvents` + stamp. Not all of LCR. Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](Plans/loop_content_resolution_incremental_commit_maintenance_refinement.md).
+
+**Rejected:**
+
+- **A** — re-arm the STOPPED cold-build on stamp mismatch. Repeats 30–60 s preparation. Does not meet PLAYING overdub-over-overdub.
+- **B** — slice the existing full-history LCR build during PLAYING. That is another continuously maintained O(history) cache on the perform path.
+
+**6C** stays consume-when-ready (`tryResolvePreparedWindow` when the stamp already matches). It does not address always-ready.
+
+**6D is not capability letter C** and is **not** “LCR is now always live.” It is DEC-037 capability **B** for the overdub query. `openOnByPitch` stays a pairing-time LIFO stack. Checkpoints, `byNoteId`, edits, and undo are later 6D slices, not 6D.1.
+
+**Gate before firmware:** native 6D.1 **FAIL** (one-vector sort/merge tracks H). **6D.2/6D.3 native PASS** (split history+delta; repeated overdubs track accumulated Δ, not H). **Production architecture gate posted 2026-08-15 — not approved.** Formal trigger: restamping `preparedWindowReady` after a PLAYING overdub commit. 6.0 vs commit-site sort is the approval pin. Preflight: `openspec/changes/loop-content-resolution/PREFLIGHT.md`. Production architecture stays untouched until that approval. `< 3 ms` is consume of already-prepared state ([`045556`](../captures/session_20260814_045556.log) 2214 µs copy), not a promise that switching to LCR is 2.2 ms.
+
+**6.0 approved reading 2026-08-15:** overdub **button / source-view open** must not construct, sort, checkpoint, or resolve LCR. Bounded delta sort + restamp may run at `finalizeCommitSideEffects` after a committed `OverdubPass` when a prepared index already exists. A prepared index may become valid through that commit-site update, not exclusively through STOPPED `deviceGateComplete`. **6D.4 landed** (`publishPreparedOverdubPass`, session `delta`). Not all of LCR incrementally live.
+
+### Amendment 2026-08-16 — Editor consumes prepared LCR around `selectedTick`
+
+Not a new DEC. Pins the Editor consumer already drawn in DEC-037. Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](Plans/note_edit_selectedtick_lcr_resolution_architecture.md). **Work identity:** [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md) — separate from remaining LCR 6.x firmware. Firmware not authorized. Wrap-move persist is **parked** (current rematerialize / session-store structure is part of the [`201446`](../captures/session_20260816_201446.log) defect); it is not a start gate.
+
+**Problem:** NOTE_EDIT analyze still rematerializes the loop (`rematerializeEditView`, `visualCache.notes`, `collectEvaluationScopeNoteIds` over `liveStore`). On a 16-bar / ~1000-note loop the 16-bar piano-roll window is the whole loop, so windowed reconstruct does not shrink the working set. Overdub already consumes prepared `resolveState(tick)` / identity lookup (6E Path A; 6.0 consume-only).
+
+**Decision:**
+
+1. **`selectedTick` is the Editor query origin**, the same role `currentTick` / `playheadPhaseTick` has for overdub.
+2. **Idle `visualCache` stays the piano-roll committed list.** LCR consume is select, overlap, and analyze only.
+3. **Select encoder is a neighborhood around `selectedTick`.** Not a full-loop onset list. Not `resolveState(selectedTick)` — that is sounding-at-tick (overlap at S). Select is a bounded onset/navigation query on `tickEvents` / `spanBoundaries`, then identity geometry only if needed.
+4. **Participating notes are found after the mover stops.** Last geometry input, then one completed `DisplayManager::update` as **trigger only**, then indexed overlap find vs the **current** mover span of this Move/Pitch action. Data source is prepared LCR ∪ `NoteEditCurrentState`, not the display frame’s `visualCache` rebuild and not playback refresh. Do not run that find on the fader stack. Do not reuse `kDeferredNoteEditPlaybackRefreshIdleMs`. Within that action, the overlap set **updates**: still intersecting → Active Shorten/Hide; no longer intersecting → `RestoreNote` to `committedSpan` and drop from the overlap delta (existing leave-restore). That is not DEC-030 sticky overlap end-of-participation (`Ended` after deselect). If the fader moves again before the action ends, repeat the find against the new span. Remaining Active rows after the action stay in the session delta.
+5. **Selected note(s) are the incoming hold.** Same DEC-031/032 `[S, E)` Shorten/Hide as overdub. `NoteGeometryResolver` stays live overlap Resolution. Empty candidate set does not gather (overdub Gate 3). Prepared-hit lookup is indexed query → bounded identities → `appendNoteEvents`. Cost of `appendNoteEvents(NoteId)` is O(events of that id), not O(loop)×candidates. `resolveWindow` must not return a reconstructed whole-loop `DisplayNote` vector.
+6. **Audition while the session is open:** `currentTick` sounds every settled this-session overlay row when the playhead crosses it — selected note, impacted overlaps, and earlier edits in this session (wrap-1-still-playing analog). Overlay those `NoteId`s onto the existing playback window. Do **not** full-replace `mergedEvents` from a whole-loop `sessionMidiEvents()`. Unrelated notes keep committed playback around `currentTick`.
+7. **Session is overlay state, not a second loop.** Paint follows overdub compose: committed `visualCache` + this-session overlay. Overlay is the mover plus **remaining Active** participants of the current/last action, not every note that was ever overlapped. After settle, that overlay is the session delta for the **next** select/overlap (6D.4 analog). Do not insert it into LCR indexes (Path B). `EditSession.store` is not a display or query layer and must not be a full-loop rematerialize. `saveNoteEditPass` remains the content record at deselect/close.
+8. **6.0 applies to NOTE_EDIT open and fader.** No LCR construct / sort / checkpoint / `ensure*` rebuild on those stacks. Prepared **hit** is the analysis authority. Prepared **miss** is a legacy compatibility path with today’s semantics — not a second analysis authority. Never Path B (live session geometry into LCR).
+9. **Implementation stages are split.** Select neighborhood (work-shape gate) → overlap identities (`appendNoteEvents` bounded) → resolver consume + legacy miss → 4a open without full-loop analysis → 4b first select → 4c playback overlay (not `sessionMidiEvents()` full-stream replace) → integrated device gate. Do not redesign `rematerializeEditView` / `materializeToEventVector` / `EditSession.store` during this consumer migration. Device gates measure work shape, not only function-call absence.
+
+**Rejected:**
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| New DEC | Editor was already a DEC-037 consumer; interval change is an amendment |
+| `EditSourceView` / second note map | 6E rejected premapped maps; NAMING forbids a new domain noun |
+| 16-bar `resolveWindow` then reconstruct all `DisplayNote`s | On a 16-bar loop that is the full cache cost under a new name |
+| Select defined as `resolveState(selectedTick)` | Sounding-state is overlap at S; Select is onset/navigation |
+| Full-loop select encoder via `tickEvents` | User pin: neighborhood only |
+| Overlap find on every geometry apply | User pin: after motion stops, one display frame |
+| Keep full session-store playback replace | `ensurePlaybackMergedMidiEventsBuilt` assigns all `sessionMidiEvents()`; audition only needs selected + participants |
+| Miss path as a second analysis authority | Prepared hit is authoritative; miss is temporary legacy compatibility |
+| Redesign `EditSession.store` / `rematerializeEditView` in this migration | Prove the consumer first; then ask which old machinery is unreachable |
+| New DEC to delete session store | Apply scratch can remain; deleting the store is a later ownership question |
+
+**Affected modules (when firmware is authorized):** `NoteGeometryResolver` candidate source; `SelectNavigation`; `openNoteEditSession`; `ensurePlaybackMergedMidiEventsBuilt` overlay. Owners unchanged.
+
+### Amendment 2026-08-17 — 6C/6D closeout; playback gather is a separate work path
+
+Not a new DEC. Closes the OpenSpec 6C recapture and 6D HITL rows on existing device evidence. Moves leftover 6.3 out of `loop-content-resolution` the same way 6.4 moved to hydrate.
+
+**6C closed** as consume-when-ready. Native landed. Device: [`205928`](../captures/session_20260815_205928.log) `DIAG,lcr,6c` `begin_capture` **37747 µs**; [`210508`](../captures/session_20260815_210508.log) restamp hit **31128 µs**, third consume **312636 µs**. [`194643`](../captures/session_20260815_194643.log) RING dropped the first `6c`. 3b copy stays the fast path ([`045556`](../captures/session_20260814_045556.log) **2214 µs**). LCR window reconstruct on the button is not a 3b replacement. Do not treat 6C as “LCR beat 3b.”
+
+**6D closed** as the overdub-query slice only. 6D.4 firmware + HITL: [`205928`](../captures/session_20260815_205928.log) PLAYING publish restamp (`6c` without a second `deviceGateComplete`); [`210508`](../captures/session_20260815_210508.log) undo miss → 3b `begin_capture` **120 µs**, then PLAYING publish `6c`. Not all of LCR live. A/B remain rejected.
+
+**6.3 moved.** Long-loop playback gather is not remaining firmware in this OpenSpec change. Work identity: [`playback_gather_lcr_consume_enhancement.md`](Plans/playback_gather_lcr_consume_enhancement.md). Same 6.0 rule: no construct on MIDI / `handleMidiInput`. Miss keeps today’s gather. Firmware not authorized until that file is in CURRENT_WORK § Now implementing.
+
+### Constraints created
+
+- Overdub button / source-view open must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included). Commit-site delta publish + restamp is the approved 6D.4 placement (**landed**; HITL PASS [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log)).
+- No second O(history) derived owner that `invalidateCaches` will discard.
+- A checkpoint must not be a proportional copy of the resolved loop (per-bar full `soundingAt` fails this).
+- Derived indexes must not per-entry-allocate into PSRAM associative containers on realtime-adjacent construction paths (5.15 / 5.17 / 5.7c). Representation follows the query contract; B only if a measured flat query is too expensive.
+- `resolveNotes` must not become the playback primitive.
+- Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
+- Always-ready for the **next overdub query** is **6D** (6D.1 one-vector mutation FAIL; 6D.2 split PASS; 6D.3 repeated overdub PASS native; **6D.4 HITL PASS** [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log)). Not all of LCR. Not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready **closed** (same captures; 3b stays the fast path).
+- NOTE_EDIT open / fader must not construct, sort, checkpoint, or resolve LCR (same 6.0 consume-only rule). Select is neighborhood `tickEvents` / `spanBoundaries`, not `resolveState`. Participating-note find runs after mover stop plus one `DisplayManager::update` as trigger; data source is LCR ∪ overlay, not `visualCache` rebuild. Intra-action leave restores (`RestoreNote`); it does not apply DEC-030 sticky overlap end-of-participation. Remaining Active overlay rows are the session delta for the next select/overlap/audition (prepared LCR ∪ overlay). Do not insert live geometry into LCR (Path B). Editor paint follows overdub compose: `visualCache` + neighborhood overlay. Audition overlays settled session `NoteId`s onto the playback window around `currentTick`. Do not full-replace `mergedEvents` from a whole-loop session store. Do not fill current-state from every visual-cache row. Prepared miss is legacy compatibility only. `appendNoteEvents(NoteId)` must not scan the whole loop per id.
+
+### Related OpenSpec
+
+`openspec/changes/loop-content-resolution/` (producer). Editor hydrate is a separate work path: [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md). Playback gather is a separate work path: [`playback_gather_lcr_consume_enhancement.md`](Plans/playback_gather_lcr_consume_enhancement.md). DEC-036 change `loop-effective-event-source` remains for Layer D 3b closeout; D3/D4 stay out of that change.
+
+### Migration notes
+
+No SD format change. Materialize remains the production path until all three gates pass. Persisted checkpoints (DEC-035 Stage 6) reuse the in-RAM checkpoint **shape** after Stage 7; persist owner stays `StorageManager`.
+
+---
+
+## DEC-036 — Runtime effective event source for overdub
+
+**Date:** 2026-08-14  
+**Status:** Accepted  
+**Owner:** `Loop` — incremental effective committed content; `establishOverdubSourceView` consumes range only  
+**Plan:** [`loop_layer_d_overdub_rebuild_architecture.md`](Plans/loop_layer_d_overdub_rebuild_architecture.md)  
+**OpenSpec:** `openspec/changes/loop-effective-event-source/` (D1 + D2)  
+**Evidence:** [`session_20260814_035414.log`](../captures/session_20260814_035414.log) — `begin_capture` 6.779 s; `set_state` 7 µs  
+**Parent:** [DEC-035](#dec-035-loop-persists-content-only) Layer D runtime track
+
+**Context:** Layer A closed the `UndoStacks` bundle walk. Overdub-open latency on a 68-bar / 3385-event loop is dominated by `establishOverdubSourceView` (`gatherCommittedEvents` + `reconstructDisplayNotes`). The overdub FSM transition is cheap; source-view acquisition is not. Display reconstruction must not gate overdub entry.
+
+**Decision:**
+
+1. Maintain an **incrementally updated** runtime effective representation of committed loop content, valid **before** `beginOverdubSession()` — updated on pass commit, undo/redo toggle, edit apply, and load complete; never built on overdub button press.
+2. **Overdub entry must not require display reconstruction.** Forbidden at overdub open: full-loop `gatherCommittedEvents()`, full-loop `reconstructDisplayNotes()`, full visual-cache rebuild as prerequisite.
+3. Effective store exposes **range query** (`range(window)`) for overdub source establishment (D2). Dependency: layered passes → effective store → tick range → overdub source — not effective store → entire `DisplayNote` vector → overdub.
+4. Display is **eventually consistent** during overdub; MIDI capture is **immediately** active. Idle `slice_clean` may lag; blocked MIDI may not.
+5. **Out of scope:** persisted checkpoint + tail (D3 / Layer C); range-first load publication (D4 / Layer D); post-stop `PlaybackFullMaterialize` cleanup (separate slice).
+
+**Consequences:** Evolve `passesMaterializedStore_` from lazy full rematerialize to eager incremental maintenance. `establishOverdubSourceView` rewritten for windowed effective range. Device gate: `ODUB,begin_capture` < 50 ms at `035414` scale.
+
+**Validation:** Native equivalence vs `passes.materialize`; overdub-entry counter guards; RC-K3 / overlap fixtures unchanged; device `035414` class.
+
+---
 
 ## DEC-035 — Loop persists content only
 

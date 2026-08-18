@@ -161,6 +161,30 @@ void notePersistSave(uint32_t durationUs);
 /** Emit a one-shot remainder line when a span exceeds this duration. */
 constexpr uint32_t kLoopRemainderOneShotUs = 50000u;
 
+/** SESSION_CAPTURE: emit loop_rem when measure is set and duration >= kLoopRemainderOneShotUs. */
+void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs);
+
+/**
+ * SESSION_CAPTURE: time one updateLeds helper.
+ * helper 0=lookup, 1=analyze, 2=bars, 3=gather.
+ * Implementation is FLASHMEM + noinline so span strings stay out of ITCM/DTCM.
+ */
+void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_t startUs);
+
+/**
+ * SESSION_CAPTURE: time one load_frame child.
+ * child 0=display_frame, 1=load_job, 2=first_commit, 3=boot_commit.
+ * FLASHMEM + PSTR so span strings stay out of DTCM.
+ */
+void recordLoadFrameChildRem(uint8_t child, uint32_t startUs);
+
+/**
+ * SESSION_CAPTURE: time one idle visual-cache slice child.
+ * child 0=idle_gather, 1=idle_reconstruct, 2=idle_append.
+ * FLASHMEM + PSTR so span strings stay out of DTCM.
+ */
+void recordIdleMaintChildRem(uint8_t child, uint32_t startUs);
+
 /**
  * Emit Tier-A DIAG lines if the emit interval has elapsed.
  * Returns true when a window was emitted and counters reset.

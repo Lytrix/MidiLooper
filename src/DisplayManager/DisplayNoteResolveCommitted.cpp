@@ -63,16 +63,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         !(track.isRecording() && !track.isPlaying());
     const bool avoidFullVisualRebuild = shouldAvoidFullVisualRebuild(loop, loopLength);
     const bool deferHeavyDisplayRebuild = shouldDeferHeavyDisplayRebuild();
-    // Architectural gate: never ensureVisualCacheBuilt when avoidFullVisualRebuild is true
-    // (long loops). Transient boot/undo/save pressure uses cached notes or windowed path.
-    if (!deferVisualRebuild && !avoidFullVisualRebuild && !deferHeavyDisplayRebuild) {
-        mutLoop.ensureVisualCacheBuilt();
-    } else if (!deferVisualRebuild && !avoidFullVisualRebuild && deferHeavyDisplayRebuild &&
-               loop.visualCacheDirty && loop.visualCache.notes.empty()) {
-        // Short loop + first paint under restore/undo pressure: still build once so frame1
-        // is not the only good frame (session_20260717_234050).
-        mutLoop.ensureVisualCacheBuilt();
-    }
+    // Do not ensureVisualCacheBuilt on this paint path. PLAYING already defers;
+    // STOPPED uses incremental/handoff. Idle rebuildVisualCacheIdleSlice /
+    // STOPPED idle ensure owns the rebuild. Last-resort gather below is a
+    // later slice.
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
@@ -189,6 +183,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         const NoteUtils::DisplayNoteVec reconstructed =
             NoteUtils::reconstructDisplayNotes(liveDisplayEventBuffer, loopLength, false);
         liveDisplayNotes.assign(reconstructed.begin(), reconstructed.end());
+        mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
     } else {
         liveDisplayNotes.clear();
     }

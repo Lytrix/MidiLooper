@@ -10,51 +10,27 @@
 #include "TrackManager.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
-#include "Utils/Diagnostics.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
-#include "Utils/NoteUtils.h"
-
 #if defined(SESSION_CAPTURE)
 #include <Arduino.h>
 #endif
 
 extern TrackManager trackManager;
 
-namespace {
-
-bool isSamePitchSoundingAtTick(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
-                               uint32_t tick) {
-  for (const NoteUtils::DisplayNote& displayNote : notes) {
-    if (displayNote.note != pitch) {
-      continue;
-    }
-    if (tick >= displayNote.startTick && tick < displayNote.endTick) {
-      return true;
-    }
-  }
-  return false;
-}
-
-}  // namespace
-
 TRACK_INTERNAL_MEM bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
                                                                    uint32_t pendingOnPhaseTick,
                                                                    uint32_t closePhaseTick) {
-  if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
-    return false;
-  }
-  SessionMidiEventVec committedEvents;
-  loop.passes.materializeToEventVector(committedEvents, loop.loopLengthTicks);
-  if (committedEvents.empty()) {
-    return false;
-  }
-  const NoteUtils::DisplayNoteVec reconstructed =
-      NoteUtils::reconstructDisplayNotes(committedEvents, loop.loopLengthTicks, false);
-  if (isSamePitchSoundingAtTick(reconstructed, note, pendingOnPhaseTick)) {
-    return true;
-  }
-  return isSamePitchSoundingAtTick(reconstructed, note, closePhaseTick);
+  (void)loop;
+  (void)note;
+  (void)pendingOnPhaseTick;
+  (void)closePhaseTick;
+  // DEC-031 G2: overdubSourceView owns overlap. beginCapture(Overdub) always
+  // establishes the view, so finalizePendingNotes never takes this branch.
+  // Do not materializeToEventVector here — that whole-loop flatten is the
+  // stalker this slice removes. A session without a view keeps the Add and
+  // synthesizes NoteOff.
+  return false;
 }
 
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
@@ -117,9 +93,6 @@ TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStart
                      stats.chunkRefCount, outcome);
   if (stage != nullptr && std::strcmp(stage, "seal") == 0) {
     loop.emitOverlapHoldTotals();
-  }
-  if (stage != nullptr && std::strcmp(stage, "display") == 0) {
-    Diagnostics::emitArchitectureMetricsSnapshot();
   }
 }
 

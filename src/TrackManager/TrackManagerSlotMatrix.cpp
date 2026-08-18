@@ -77,6 +77,9 @@ uint8_t TrackManager::countEnabledSlots(uint8_t trackIndex) const {
 
 void TrackManager::beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (!tracks[trackIndex].isPlaying()) {
+    return;
+  }
   if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
       pendingRecord[trackIndex]) {
     return;
@@ -247,6 +250,9 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
   }
   const uint8_t previousSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
   Track& track = tracks[trackIndex];
+  if (!track.isPlaying() && !track.isOverdubbing()) {
+    replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slotIndex, true);
+  }
   if (slotIndex == previousSlot) {
     if (trackIndex == selectedTrack) {
       const bool splitFocus =

@@ -28,6 +28,10 @@ TRACK_COLD_MEM void Track::clear() {
 
     reconcileTransportStateAfterSlotMutation();
     alignLoopOriginOnNextStop = false;
+    playingMidiDrainAfterOverdubStop_ = false;
+    playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+    loopPrefixMeasureAfterUndo_ = false;
+    loopPrefixMeasureAfterUndoNoted_ = false;
     invalidateCaches();
     editManager.revertNoteEditSessionForLoopClear(*this);
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());

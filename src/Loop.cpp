@@ -8,6 +8,10 @@ void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
   reclaimUnreferencedDisabledEditPasses(refs);
 }
 
+void Loop::notifyCommittedContentChanged() {
+  markPassDerivedStale();
+}
+
 void Loop::markPassDerivedStale() {
   passesMaterializedStoreStale_ = true;
   playbackOrderDirty = true;
@@ -49,6 +53,7 @@ void Loop::resetPassTimeline() {
   passesMaterializedStoreStale_ = true;
   clearOverdubSourceView();
   clearPendingNoteChanges();
+  closeOverdubSession();
 }
 
 void Loop::invalidateCaches() {

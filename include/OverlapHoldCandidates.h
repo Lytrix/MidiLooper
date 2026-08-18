@@ -13,7 +13,8 @@
 /// Selection stays geometry + [S, E). This only records ids.
 namespace OverlapHoldCandidates {
 
-/// Same-pitch notes already sounding at hold start S. Does not clear `out`.
+/// Same-pitch notes occupying hold start S (`[start, end)`). Includes a note
+/// that starts at S. Does not clear `out`.
 inline void snapshotSoundingAtHoldStart(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
                                         uint32_t holdStartTick, uint32_t loopLength,
                                         OverlapNoteIdSet& out) {
@@ -24,8 +25,16 @@ inline void snapshotSoundingAtHoldStart(const NoteUtils::DisplayNoteVec& notes, 
     if (note.note != pitch || note.noteId == kInvalidNoteId) {
       continue;
     }
-    if (OverlapNoteIdObservation::noteSoundingAtHoldStart(note.startTick, note.endTick,
-                                                          holdStartTick, loopLength)) {
+    uint32_t linearStart = 0;
+    uint32_t linearEnd = 0;
+    if (!OverlapNoteIdObservation::linearSoundingSpan(note.startTick, note.endTick, loopLength,
+                                                      linearStart, linearEnd)) {
+      continue;
+    }
+    const uint32_t s = IntervalProjection::tickPhaseInLoop(holdStartTick, 0, loopLength);
+    const bool direct = linearStart <= s && s < linearEnd;
+    const bool shifted = linearStart <= s + loopLength && s + loopLength < linearEnd;
+    if (direct || shifted) {
       (void)out.insert(note.noteId);
     }
   }

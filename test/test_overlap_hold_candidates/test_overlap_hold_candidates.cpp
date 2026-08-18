@@ -43,6 +43,18 @@ void test_snapshot_keeps_already_sounding_same_pitch() {
   TEST_ASSERT_FALSE(ids.contains(3));
 }
 
+void test_snapshot_includes_note_starting_at_hold_start() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 40, 80));
+  notes.push_back(makeNote(2, 10, 40));
+  notes.push_back(makeNote(3, 40, 80, 72));
+  OverlapNoteIdSet ids;
+  OverlapHoldCandidates::snapshotSoundingAtHoldStart(notes, kPitch, 40, kLoopLen, ids);
+  TEST_ASSERT_TRUE(ids.contains(1));
+  TEST_ASSERT_FALSE(ids.contains(2));
+  TEST_ASSERT_FALSE(ids.contains(3));
+}
+
 void test_playback_on_inserts_same_pitch_and_off_does_not_erase() {
   OverlapNoteIdSet ids;
   TEST_ASSERT_TRUE(OverlapHoldCandidates::considerPlaybackNoteOn(ids, 10, kPitch, kPitch));
@@ -69,6 +81,7 @@ void test_invalid_id_rejected_and_overflow_does_not_grow() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_snapshot_keeps_already_sounding_same_pitch);
+  RUN_TEST(test_snapshot_includes_note_starting_at_hold_start);
   RUN_TEST(test_playback_on_inserts_same_pitch_and_off_does_not_erase);
   RUN_TEST(test_invalid_id_rejected_and_overflow_does_not_grow);
   return UNITY_END();

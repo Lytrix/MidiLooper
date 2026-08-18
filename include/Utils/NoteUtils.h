@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <cstdint>
+#include <memory>
 #include "MidiEvent.h"
 #include "MidiEvent.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
@@ -143,17 +144,53 @@ std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32
 std::vector<DisplayNote> reconstructNotes(const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                                           bool verboseLog = true);
 
+/// `finishOpenNotes` (default true) runs `finishCanonicalSpansOpenNotes` so unpaired
+/// NoteOns become loop-end tails. Committed wrap/display passes false (6E.5).
+/// `overdubPassWrapPairing` (default false) keeps a wrap-held pair when later
+/// same-pitch body notes are already completed. Use only on one overdub pass's
+/// events — never on record or merged record+overdub (015618).
 DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
-                                       bool verboseLog = true);
+                                       bool verboseLog = true, bool finishOpenNotes = true,
+                                       bool overdubPassWrapPairing = false);
 
 template <typename Alloc>
 DisplayNoteVec reconstructDisplayNotes(const std::vector<MidiEvent, Alloc>& midiEvents,
-                                       uint32_t loopLength, bool verboseLog = true);
+                                       uint32_t loopLength, bool verboseLog = true,
+                                       bool finishOpenNotes = true,
+                                       bool overdubPassWrapPairing = false);
+
+/// Persistent stacks + spans for `buildCanonicalSpansFromMidi`. Not a new musical type.
+struct CanonicalSpanBuild {
+  CanonicalSpanBuild();
+  ~CanonicalSpanBuild();
+  CanonicalSpanBuild(CanonicalSpanBuild&&) noexcept;
+  CanonicalSpanBuild& operator=(CanonicalSpanBuild&&) noexcept;
+  CanonicalSpanBuild(const CanonicalSpanBuild&) = delete;
+  CanonicalSpanBuild& operator=(const CanonicalSpanBuild&) = delete;
+  void clear();
+  uint32_t spanCount() const;
+
+  struct Impl;
+  std::unique_ptr<Impl> impl;
+};
+
+void appendCanonicalSpansFromMidi(const SessionMidiEventVec& midiEvents, uint32_t loopLength,
+                                  uint32_t beginEvent, uint32_t endEventExclusive,
+                                  CanonicalSpanBuild& build);
+void finishCanonicalSpansFromMidi(uint32_t loopLength, CanonicalSpanBuild& build);
+void appendProjectedDisplayNotes(const CanonicalSpanBuild& build, uint32_t loopLength,
+                                 uint32_t beginSpan, uint32_t endSpanExclusive,
+                                 DisplayNoteVec& out);
+DisplayNoteVec dedupeProjectedDisplayNotes(const DisplayNoteVec& projected);
+DisplayNoteVec displayNotesFromCanonicalSpans(const CanonicalSpanBuild& build, uint32_t loopLength);
 
 struct OpenNoteOn {
     uint8_t note;
     uint8_t velocity;
     uint32_t tick;
+    /// Index in the event vector passed to findOpenNoteOns. Distinguishes two
+    /// NoteOns that share pitch and storage tick (same grid on a later wrap).
+    size_t eventIndex = 0;
 };
 
 /**

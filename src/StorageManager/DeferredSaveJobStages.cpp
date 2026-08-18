@@ -7,6 +7,8 @@
 #include "Globals.h"
 #include "Loop.h"
 #include "RtcTime.h"
+#include "CurrentWorkspaceStorage.h"
+#include "PersistenceSchema.h"
 #include "StorageManager.h"
 #include "TrackManager.h"
 #include <Arduino.h>
@@ -193,7 +195,8 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetLoopSlot() {
 
             const uint8_t trackIndex = storageSession.currentWorkspaceSave.trackCursor;
             const uint8_t slotIndex = storageSession.currentWorkspaceSave.poolCursor;
-            if (!shouldWriteCurrentSetLoopSlot(trackIndex, slotIndex)) {
+            if (!deferredLoopSlotFinalizeInProgress() &&
+                !shouldWriteCurrentSetLoopSlot(trackIndex, slotIndex)) {
                 ++storageSession.currentWorkspaceSave.loopSlotsSkipped;
                 storageSession.currentWorkspaceSave.poolCursor++;
                 if (storageSession.currentWorkspaceSave.poolCursor < Config::MAX_LOOPS_PER_TRACK) {
@@ -222,37 +225,45 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetLoopSlot() {
                 return true;
             }
 
-            if (!storageSession.currentWorkspaceSave.loopFileOpen &&
-                !openDeferredLoopSlotTemp(trackIndex, slotIndex)) {
-                return false;
-            }
-            Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.trackCursor);
-            bool loopDone = false;
-            const bool loopWriteOk = track.loopsAllocated()
-                                         ? stepDeferredLoopPersist(
-                                               storageSession.currentWorkspaceSave.loopFile,
-                                               track.getLoop(storageSession.currentWorkspaceSave.poolCursor), loopDone)
-                                         : stepDeferredEmptyLoopPersist(
-                                               storageSession.currentWorkspaceSave.loopFile,
-                                               static_cast<LoopId>(storageSession.currentWorkspaceSave.poolCursor),
-                                               loopDone);
-            if (!loopWriteOk) {
-                Serial.print("[StorageManager] ERROR: Deferred save failed writing loop pool entry track ");
-                Serial.print(storageSession.currentWorkspaceSave.trackCursor);
-                Serial.print(" pool ");
-                Serial.println(storageSession.currentWorkspaceSave.poolCursor);
-                return false;
-            }
-            if (!loopDone) {
+            if (!deferredLoopSlotFinalizeInProgress()) {
+                if (!storageSession.currentWorkspaceSave.loopFileOpen &&
+                    !openDeferredLoopSlotTemp(trackIndex, slotIndex)) {
+                    return false;
+                }
+                Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.trackCursor);
+                bool loopDone = false;
+                const bool loopWriteOk = track.loopsAllocated()
+                                             ? stepDeferredLoopPersist(
+                                                   storageSession.currentWorkspaceSave.loopFile,
+                                                   track.getLoop(storageSession.currentWorkspaceSave.poolCursor), loopDone)
+                                             : stepDeferredEmptyLoopPersist(
+                                                   storageSession.currentWorkspaceSave.loopFile,
+                                                   static_cast<LoopId>(storageSession.currentWorkspaceSave.poolCursor),
+                                                   loopDone);
+                if (!loopWriteOk) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing loop pool entry track ");
+                    Serial.print(storageSession.currentWorkspaceSave.trackCursor);
+                    Serial.print(" pool ");
+                    Serial.println(storageSession.currentWorkspaceSave.poolCursor);
+                    return false;
+                }
+                if (!loopDone) {
+                    return true;
+                }
+                beginDeferredLoopSlotFinalize();
                 return true;
             }
 
-            if (!finalizeDeferredLoopSlotTemp(trackIndex, slotIndex)) {
+            bool finalizeDone = false;
+            if (!stepFinalizeDeferredLoopSlotTemp(trackIndex, slotIndex, finalizeDone)) {
                 Serial.print("[StorageManager] ERROR: Deferred save failed finalizing loop slot track ");
                 Serial.print(trackIndex);
                 Serial.print(" slot ");
                 Serial.println(slotIndex);
                 return false;
+            }
+            if (!finalizeDone) {
+                return true;
             }
             ++storageSession.currentWorkspaceSave.loopSlotsWritten;
             clearCurrentSetLoopSlotDirty(trackIndex, slotIndex);
@@ -377,7 +388,7 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobFooter() {
                         storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
                         return true;
                     }
-                    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
+                    beginCurrentSetCompletion();
                     return true;
             }
             return false;
@@ -409,29 +420,95 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobUndoStacks() {
                 storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
                 return true;
             }
-            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
+            beginCurrentSetCompletion();
             return true;
         
 }
 
 STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetCompletion() {
-
+    CurrentWorkspaceSaveJob& job = storageSession.currentWorkspaceSave;
+    switch (job.completionWriteStage) {
+        case DeferredCompletionWriteStage::PatchLastActiveUnix: {
             const uint32_t lastActiveUnix = RtcTime::getUnixTime();
             if (!CurrentSetStorage::patchLastActiveUnix(CurrentSetStorage::kCurrentMetaPath,
                                                         lastActiveUnix)) {
                 Serial.println("[StorageManager] ERROR: Deferred save failed patching lastActiveUnix");
                 return false;
             }
-            if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(
-                    CurrentSetStorage::kCurrentMetaPath)) {
-                Serial.println("[StorageManager] ERROR: Deferred save failed refreshing runtime bundle epoch CRC");
+            currentSetLastActiveUnix = lastActiveUnix;
+            job.completionWriteStage = DeferredCompletionWriteStage::EpochCrcBody;
+            return true;
+        }
+
+        case DeferredCompletionWriteStage::EpochCrcBody: {
+            if (!job.file) {
+                job.file = SD.open(CurrentSetStorage::kCurrentMetaPath, FILE_READ);
+                if (!job.file) {
+                    Serial.println(
+                        "[StorageManager] ERROR: Deferred save failed opening runtime bundle for epoch CRC");
+                    return false;
+                }
+                const size_t fileSize = job.file.size();
+                if (fileSize < CurrentWorkspaceStorage::kEpochFileHeaderByteSize) {
+                    job.file.close();
+                    Serial.println("[StorageManager] ERROR: Deferred save runtime bundle shorter than epoch header");
+                    return false;
+                }
+                job.epochCrc = 0;
+                job.epochCrcBodyOffset = 0;
+                job.epochCrcBodySize =
+                    static_cast<uint32_t>(fileSize - CurrentWorkspaceStorage::kEpochFileHeaderByteSize);
+                if (!job.file.seek(CurrentWorkspaceStorage::kEpochFileHeaderByteSize)) {
+                    job.file.close();
+                    Serial.println("[StorageManager] ERROR: Deferred save failed seeking runtime bundle CRC body");
+                    return false;
+                }
+                if (job.epochCrcBodySize == 0) {
+                    job.file.close();
+                    job.completionWriteStage = DeferredCompletionWriteStage::EpochCrcHeader;
+                    return true;
+                }
+            }
+            uint8_t buffer[CurrentWorkspaceStorage::kEpochFileCrcSliceBytes];
+            const uint32_t remaining = job.epochCrcBodySize - job.epochCrcBodyOffset;
+            const size_t toRead = remaining < CurrentWorkspaceStorage::kEpochFileCrcSliceBytes
+                                      ? remaining
+                                      : CurrentWorkspaceStorage::kEpochFileCrcSliceBytes;
+            const int bytesRead = job.file.read(buffer, toRead);
+            if (bytesRead <= 0) {
+                job.file.close();
+                Serial.println("[StorageManager] ERROR: Deferred save failed reading runtime bundle CRC body");
                 return false;
             }
-            currentSetLastActiveUnix = lastActiveUnix;
+            job.epochCrc = PersistenceSchema::crc32Continue(job.epochCrc, buffer,
+                                                            static_cast<size_t>(bytesRead));
+            job.epochCrcBodyOffset += static_cast<uint32_t>(bytesRead);
+            if (job.epochCrcBodyOffset >= job.epochCrcBodySize) {
+                job.file.close();
+                job.completionWriteStage = DeferredCompletionWriteStage::EpochCrcHeader;
+            }
+            return true;
+        }
+
+        case DeferredCompletionWriteStage::EpochCrcHeader:
+            if (!CurrentWorkspaceStorage::writeEpochFileHeaderCrc(CurrentSetStorage::kCurrentMetaPath,
+                                                                  job.epochCrc)) {
+                Serial.println(
+                    "[StorageManager] ERROR: Deferred save failed refreshing runtime bundle epoch CRC");
+                return false;
+            }
+            job.completionWriteStage = DeferredCompletionWriteStage::WriteWorkspaceMeta;
+            return true;
+
+        case DeferredCompletionWriteStage::WriteWorkspaceMeta:
             if (!writeWorkspaceMetaAfterDeferredSave()) {
                 Serial.println("[StorageManager] ERROR: Deferred save failed writing workspace.bin");
                 return false;
             }
+            job.completionWriteStage = DeferredCompletionWriteStage::QuarantineLegacy;
+            return true;
+
+        case DeferredCompletionWriteStage::QuarantineLegacy:
             if (quarantineLegacyMonolithAfterSave) {
                 quarantineLegacyMonolithStorageFile();
                 quarantineLegacyMonolithAfterSave = false;
@@ -439,10 +516,11 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetCompletion() {
             }
             forceCurrentSetFullLoopWrite = false;
             Serial.println("[StorageManager] CurrentSet saved successfully (v6 deferred slices).");
-            storageSession.currentWorkspaceSave.inProgress = false;
-            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
+            job.inProgress = false;
+            job.stage = DeferredSaveStage::Idle;
             return true;
-        
+    }
+    return false;
 }
 
 }  // namespace StorageManagerInternal

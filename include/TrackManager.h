@@ -100,6 +100,10 @@ public:
   bool isTrackSoloed(uint8_t trackIndex) const;
   /// True when any track is RECORDING or OVERDUBBING (multi-track capture gating).
   bool anyTrackRecordingOrOverdubbing() const;
+  /// True when any track is in the post-overdub PLAYING MIDI-drain window.
+  bool anyPlayingMidiDrainAfterOverdubStop() const;
+  /// True when any track is in the post-undo PLAYING loop-prefix measure window.
+  bool anyLoopPrefixMeasureAfterUndo() const;
   /// True when @p track is the UI-selected track (slot focus / display owner).
   bool isSelectedTrack(const Track& track) const;
   /// Low+ advisory reclaim — background-first; owners may no-op when unsafe.

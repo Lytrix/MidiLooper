@@ -23,6 +23,22 @@
 
 #ifdef SESSION_CAPTURE
 
+// Compile-time tag gates. Default on so teensy41-capture-serial keeps the HITL #CAP
+// contract. Set a tag to 0 to drop that family at queue time (investigation builds).
+#ifndef SESSION_CAPTURE_LED
+#define SESSION_CAPTURE_LED 1
+#endif
+#ifndef SESSION_CAPTURE_MO
+#define SESSION_CAPTURE_MO 1
+#endif
+#ifndef SESSION_CAPTURE_DIAG
+#define SESSION_CAPTURE_DIAG 1
+#endif
+// Immediate Serial breadcrumbs in rebuildVisualCacheIdleSlice. Off by default.
+#ifndef SESSION_CAPTURE_VCACHE_SLICE
+#define SESSION_CAPTURE_VCACHE_SLICE 0
+#endif
+
 #include "MidiEvent.h"
 
 #if defined(__IMXRT1062__)
@@ -96,6 +112,8 @@ SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);
+/** Emit loopRemainder when duration is at least kLoopRemainderOneShotUs. */
+SC_MEM_ATTR void recordLoopRemainderSpan(const char* span, uint32_t durationUs);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,

@@ -16,6 +16,62 @@ It is **not** the same as a window or interval — one representation can be pro
 
 ---
 
+## Consumers — play, display, analyze, LEDs
+
+Hot-path work stays a **short window** of data, not the whole loop. Each consumer has its own origin tick, representation, and interval. They do not share one list.
+
+```mermaid
+flowchart TB
+  P[LoopPasses]
+  P --> Play
+  P --> Display
+  P --> Analyze
+  P --> LEDs
+
+  subgraph Play
+    CT["currentTick"]
+    ME["mergedEvents — 2-bar window on long loops"]
+    CT --> ME --> MIDI[MIDI out]
+  end
+
+  subgraph Display
+    VC["visualCache.notes"]
+    VW["16-bar piano-roll window"]
+    VC --> VW --> OLED[OLED]
+  end
+
+  subgraph Analyze
+    ST["selectedTick / currentTick"]
+    LCR["LoopContentResolution indexes"]
+    ST --> LCR --> Q["select / overlap identities"]
+  end
+
+  subgraph LEDs
+    BAR["currentTick → current bar"]
+    SRC["visualCache.notes + capture.store"]
+    BAR --> SRC --> PADS["16-step + 8 bar pads"]
+  end
+```
+
+| Consumer | Origin | Reads | Does not read |
+|----------|--------|-------|----------------|
+| **Play** | `currentTick` | `LoopPlaybackRuntime.mergedEvents` (MIDI events) | `visualCache` |
+| **Display** | paint window | `visualCache.notes` / `capturePreview.notes` (`DisplayNote`s) | `mergedEvents` |
+| **Analyze** | `selectedTick` (NOTE_EDIT) or `currentTick` (overdub overlap) | Prepared `LoopContentResolution` (`tickEvents`, `spanBoundaries`, `resolveState`, `resolveWindow`) | A reconstructed whole-loop `DisplayNote` list |
+| **LEDs** | current bar / 16th | `visualCache.notes` (committed presence) + `loop.capture.store` when capture is active | `mergedEvents`; LCR; a gather into a private LED list |
+
+**Play today:** `Track::playMidiEvents` phases `currentTick`, then walks `mergedEvents` in `playbackOrder`. `ensurePlaybackMergedMidiEventsBuilt` fills that list from pass gather (`gatherCommittedEventsInWindow` = 2 bars on long loops; full gather on short). Live overdub also walks `loop.capture.store`. NOTE_EDIT still full-replaces `mergedEvents` from `sessionMidiEvents()` — target is the play window plus settled overlay `NoteId`s (DEC-037 Editor amendment).
+
+**Display today:** OLED filters `visualCache.notes`. Idle `rebuildVisualCacheIdleSlice` fills dirty bars (2–4 bars). When `tryResolvePreparedWindow` matches `playbackRevision`, that slice comes from `resolveWindow`; otherwise gather + reconstruct. Paint is not playback.
+
+**Analyze target:** same window shape as play. Overdub overlap already aims at `resolveState(currentTick)`. NOTE_EDIT hydrate moves select / overlap onto the same indexes around `selectedTick` ([`note_edit_hydrate_enhancement.md`](../../Plans/note_edit_hydrate_enhancement.md)). Prepared miss stays legacy (`visualCache` / today’s gather). LCR is not a second `visualCache`; it does not store `DisplayNote`s. **Overdub overlap authority** (consume vs display across wrap): [`overdub_lifecycle_representation_authority.md`](../../Plans/overdub_lifecycle_representation_authority.md).
+
+**LEDs today:** `MidiLedManager::hasNoteOnInRangeForLed` is the content query. Sixteen-step pads (`analyzeAndUpdateBar`) and eight bar pads (`updateBarLeds`) ask “does a note start in this storage range?” They scan `visualCache.notes` (`DisplayNote` start ticks). While overdubbing they also scan `loop.capture.store`. Empty `visualCache.notes` means no committed presence — they do **not** flatten or gather. `prepareLedNoteLookup` does not fill a private list. Tick-row pads (notes 16–31) are clock only (`updateCurrentTick`). Track-select and loop-select pads are slot state (`updateTrackSelectLeds`: `trackHasData` / `slotVelocities`), not timeline content.
+
+`visualCache` stays the piano-roll list. Deleting it is not this model. LED pads reuse that list; they do not own a second copy.
+
+---
+
 ## Pipeline
 
 ```
@@ -24,12 +80,15 @@ Capture Storage
         ▼
 Derived Event Representation
         │
-        ├─────────────────┐
-        ▼                 ▼
-Playback Representation   Display Representation
-        │                 │
-        ▼                 ▼
-   (optional)          LED query
+        ├──────────────┬──────────────┬──────────────┐
+        ▼              ▼              ▼              ▼
+   Play window    Display list    Analyze indexes  LED pads
+   mergedEvents   visualCache     LoopContentResolution
+        │              │              │              │
+        ▼              ▼              ▼              ▼
+   playMidiEvents  DisplayManager  select / overlap  MidiLedManager
+                         │
+                         └─ LED pads also read visualCache.notes + capture.store
 ```
 
 ---
@@ -42,9 +101,10 @@ Playback Representation   Display Representation
 | **Event (NOTE_EDIT)** | `EditManager` | `NoteEditSession.store` | `sessionPreviewRevision_` | On geometry commit / store write | `sessionMidiEvents()`, overlap analyze |
 | **Display** | `Loop` | `visualCache.notes`, `capturePreview.notes` | `revision` fields | **Target:** idle-deferred when dirty; not every PLAYING frame | `DisplayManager` |
 | **Playback order** | `Track` / `LoopPlaybackRuntime` | `mergedEvents`, `playbackOrder` | Runtime rebuild flag | Prewarm off hot path; rebuild on transport / invalidation | `playMidiEvents` |
-| **LED bar hint** | `MidiLedManager` | Reads display or lightweight scan | Inherits display/event revision | **Target:** no full display rebuild on bar tick | Bar LEDs |
+| **LED bar hint** | `MidiLedManager` | Reads `visualCache.notes` + `capture.store`; no private gather list | Inherits display revision | Bar change / wrap only; do not flatten when cache empty | 16-step + 8 bar pads |
+| **Analyze indexes** | `Loop` / `LoopContentResolution` | Prepared `tickEvents` / `spanBoundaries` | `playbackRevision` stamp | Idle / STOPPED construct; consume when stamp matches | Overdub overlap today; NOTE_EDIT select / overlap (hydrate target) |
 
-**Exception:** `NoteEditSession.store` is a live **overlay** on passes during edit — not a pure derivative of `materialize()` alone. Tier-2 playback audition reads session store while transport plays.
+**Exception:** `NoteEditSession.store` is a live **overlay** on passes during edit — not a pure derivative of `materialize()` alone. Tier-2 playback audition **target** (DEC-037 Editor amendment 2026-08-16): overlay selected + participating overlap `NoteId`s onto the playback window around `currentTick`. Today’s firmware still full-replaces `mergedEvents` from `sessionMidiEvents()`; that replace is not the architecture.
 
 ---
 
@@ -58,10 +118,11 @@ Runtime Request = Derived Representation × Interval → Consumer result
 
 | Consumer | Representation | Interval example |
 |----------|----------------|------------------|
-| Playback | Event representation | Full loop phase window at `projectionCycleStartTick` |
+| Play | Event representation (`mergedEvents`) | 2-bar window on long loops; full gather on short; phase at `projectionCycleStartTick` |
 | Display | Display representation | Detailed 16-bar `TickInterval` on piano roll |
-| LED | Event or bar-presence summary | Single bar tick range |
-| NOTE_EDIT analyze | Event + Edit projection context | Analysis window (v1: `[0, loopLength)`) |
+| LED (16-step + bar pads) | `visualCache.notes` + `capture.store` | Current bar (16 sixteenths) and bars 0–7 |
+| NOTE_EDIT select | Prepared LCR `tickEvents` / `spanBoundaries` + Edit projection context | Bounded onset/navigation neighborhood around `selectedTick`. Not `resolveState` (DEC-037 Editor amendment 2026-08-16). v1 `[0, loopLength)` withdrawn |
+| NOTE_EDIT overlap | Prepared LCR indexed identities (`resolveState` at S; window identities in `[S, E)`) + `NoteGeometryResolver` | Selected span after mover stop + one display-update trigger. Identities then `appendNoteEvents`; not a reconstructed `DisplayNote` vector. Prepared miss is legacy compatibility only. |
 
 Same interval, different consumers:
 
@@ -82,9 +143,17 @@ TickInterval bars 8–24
 
 ---
 
-## Incremental build (direction)
+## Incremental build
 
-`VisualCache.dirtyBars` is the seed for **bar-granular** display rebuild. Target: rebuild only dirty bars into the display representation, then apply interval filter — not full-loop reconstruct per window move.
+`VisualCache.dirtyBars` is the seed for **bar-granular** idle rebuild. That path is shipped.
+
+`Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain. Paint does **not** rebuild on window move: when `visualCacheDirty` is false, `resolveWindowedDisplayNotes` filters `visualCache.notes` with `filterDisplayNotesByWindowInclusion`.
+
+What is **not** per-bar yet:
+
+- `visualCacheCoversWindow` ignores `dirtyBars` and returns only `!visualCacheDirty`. A partial clean neighborhood cannot authorize the filter path (sparse slices painted as gaps). While any bar is dirty, paint uses last frame or a window gather.
+- `rebuildVisualCacheFromPasses` still full-reconstructs (`ensureVisualCacheBuilt`, NOTE_EDIT open).
+- `markDisplayCachesStale` still marks every bar dirty.
 
 ---
 
@@ -92,4 +161,5 @@ TickInterval bars 8–24
 
 - [IntervalProjection.md](IntervalProjection.md) — interval math after representation exists
 - [Display.md](Display.md), [Playback.md](Playback.md) — consumer contracts
+- [note_edit_hydrate_enhancement.md](../../Plans/note_edit_hydrate_enhancement.md) — NOTE_EDIT analyze around `selectedTick`
 - [INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md](../../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) — allocator tier for cold representations

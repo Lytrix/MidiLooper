@@ -31,6 +31,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
+#include "Utils/MidiServiceDrain.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
@@ -45,20 +46,115 @@ FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSele
 }
 
 #if defined(SESSION_CAPTURE)
-FLASHMEM __attribute__((noinline)) static void recordLoopRemainderSpan(const char* span,
-                                                                      uint32_t durationUs) {
-  if (durationUs < RuntimeTimingTelemetry::kLoopRemainderOneShotUs) {
+FLASHMEM __attribute__((noinline)) static void maybeRecordLoopPrefixRemainder(uint32_t startUs) {
+  if (!trackManager.anyLoopPrefixMeasureAfterUndo()) {
     return;
   }
-  bool active = false;
-  uint8_t track = 255;
-  uint8_t slot = 255;
-  uint8_t phase = 255;
-  uint8_t isFocus = 0;
-  StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
-  DebugSessionCapture::loopRemainder(span, durationUs, track, slot, phase, isFocus);
+  DebugSessionCapture::recordLoopRemainderSpan("loop_prefix", micros() - startUs);
+}
+
+FLASHMEM __attribute__((noinline)) static void maybeRecordPrefixChild(bool measure,
+                                                                     const char* span,
+                                                                     uint32_t startUs) {
+  if (!measure) {
+    return;
+  }
+  DebugSessionCapture::recordLoopRemainderSpan(span, micros() - startUs);
+}
+
+FLASHMEM __attribute__((noinline)) static void notePostRemainderWindows() {
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
+    trackManager.getTrack(i).noteLoopPrefixMeasureAfterUndo();
+  }
 }
 #endif
+
+// BAR→LED prefix children. FLASHMEM so child rem does not cross the RAM1 32KB ITCM page.
+FLASHMEM __attribute__((noinline)) static void runLoopPrefixAfterBar(uint32_t now,
+                                                                     uint32_t& lastDisplayUpdate) {
+#if defined(SESSION_CAPTURE)
+  const bool measure = trackManager.anyLoopPrefixMeasureAfterUndo();
+  uint32_t childStartUs = 0;
+#endif
+
+#if defined(SESSION_CAPTURE)
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  looperState.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "looper_state", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  midiButtonManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "midi_buttons", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  midiFaderManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "midi_faders", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  barStepButtonHandler.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "bar_step", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  controlSurfaceManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "control_surface", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+  maybeUpdateDisplayForNoteEditSelection(now, lastDisplayUpdate);
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "note_edit_disp", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+#if defined(ENABLE_GPIO_BUTTONS)
+  gpioButtonManager.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "gpio_buttons", childStartUs);
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
+#endif
+  looper.update();
+#if defined(SESSION_CAPTURE)
+  maybeRecordPrefixChild(measure, "looper_update", childStartUs);
+#endif
+
+  static uint32_t lastLedUpdate = 0;
+  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
+  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
+    lastLedUpdate = now;
+#if defined(SESSION_CAPTURE)
+    if (measure) {
+      childStartUs = micros();
+    }
+#endif
+    trackManager.updateMidiLedsDeferred();
+    midiHandler.processDroidUsbHostOutbound();
+#if defined(SESSION_CAPTURE)
+    maybeRecordPrefixChild(measure, "midi_leds", childStartUs);
+#endif
+  }
+}
 
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -107,7 +203,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
                            now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
+#if defined(SESSION_CAPTURE)
+      const uint32_t displayStartUs = micros();
+#endif
       displayManager.update();
+#if defined(SESSION_CAPTURE)
+      RuntimeTimingTelemetry::recordLoadFrameChildRem(0, displayStartUs);
+#endif
     }
   }
 
@@ -119,14 +221,26 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
             ? LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
                   bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive)
             : LoadLoopBudget::FocusRestoreUs;
+#if defined(SESSION_CAPTURE)
+    const uint32_t loadJobStartUs = micros();
+#endif
     DeferredJobScheduler::runFrame(budgetUs);
+#if defined(SESSION_CAPTURE)
+    RuntimeTimingTelemetry::recordLoadFrameChildRem(1, loadJobStartUs);
+#endif
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       skipDisplayAfterFocusCommit = true;
       // Same-frame windowed prewarm — buffer already freed at commit_armed; trySlot is
       // fail-soft. Deferring to next frame raced save/reclaim (000659).
       Track& prewarmTrackRef = trackManager.getTrack(focusTrack);
+#if defined(SESSION_CAPTURE)
+      const uint32_t firstCommitStartUs = micros();
+#endif
       prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
+#if defined(SESSION_CAPTURE)
+      RuntimeTimingTelemetry::recordLoadFrameChildRem(2, firstCommitStartUs);
+#endif
       displayManager.invalidateLiveDisplayCache();
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
@@ -143,11 +257,20 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
                            now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
+#if defined(SESSION_CAPTURE)
+      const uint32_t displayStartUs = micros();
+#endif
       displayManager.update();
+#if defined(SESSION_CAPTURE)
+      RuntimeTimingTelemetry::recordLoadFrameChildRem(0, displayStartUs);
+#endif
     }
   }
 
   if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t bootCommitStartUs = micros();
+#endif
     bootSlotLoadRefreshPending = false;
     StorageManager::setBootTitleLoadDrain(false);
     StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
@@ -165,6 +288,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     midiHandler.processDroidUsbHostOutbound();
     displayManager.update();
     lastDisplayUpdate = now;
+#if defined(SESSION_CAPTURE)
+    RuntimeTimingTelemetry::recordLoadFrameChildRem(3, bootCommitStartUs);
+#endif
   }
 }
 
@@ -285,6 +411,9 @@ void loop() {
   uint32_t now = millis();
   // Poll MIDI input
   midiHandler.handleMidiInput();
+#if defined(SESSION_CAPTURE)
+  const uint32_t loopPrefixStartUs = micros();
+#endif
 
   midiHandler.processDroidUsbHostOutbound();
 
@@ -294,32 +423,7 @@ void loop() {
   // Session capture: bar boundary marker for tick<->micros alignment (no-op without SESSION_CAPTURE)
   SC_UPDATE(clockManager.getCurrentTick(), Config::TICKS_PER_BAR);
 
-  // Update looper state to set button logic
-  looperState.update();
-
-  // Update new V2 MIDI button manager for button handling
-  midiButtonManager.update();
-  
-  // Update new V2 MIDI fader manager for fader handling
-  midiFaderManager.update();
-  
-  barStepButtonHandler.update();
-  
-  controlSurfaceManager.update();
-  maybeUpdateDisplayForNoteEditSelection(now, lastDisplayUpdate);
-#if defined(ENABLE_GPIO_BUTTONS)
-  gpioButtonManager.update();
-#endif
-  looper.update();
-
-  // LED updates after transport tick / pending slot commit (same frame as loop boundary).
-  static uint32_t lastLedUpdate = 0;
-  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
-  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
-    lastLedUpdate = now;
-    trackManager.updateMidiLedsDeferred();
-    midiHandler.processDroidUsbHostOutbound();
-  }
+  runLoopPrefixAfterBar(now, lastDisplayUpdate);
 
   bool timingCriticalTrackActive = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
@@ -339,6 +443,23 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
+  bool captureActiveForMidiDrain = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isRecording() || t.isOverdubbing()) {
+      captureActiveForMidiDrain = true;
+      break;
+    }
+  }
+  const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
+#if defined(SESSION_CAPTURE)
+  maybeRecordLoopPrefixRemainder(loopPrefixStartUs);
+#endif
+
+  // Post-overdub PLAYING only: poll before idle so visual-cache work cannot start a stacked gap.
+  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
+    midiHandler.handleMidiInput();
+  }
 #if defined(SESSION_CAPTURE)
   uint32_t remainderStartUs = micros();
 #endif
@@ -348,7 +469,19 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
   RuntimeTimingTelemetry::noteIdleMaint(idleMaintUs);
-  recordLoopRemainderSpan("idle_maint", idleMaintUs);
+  DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
+#endif
+  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
+    midiHandler.handleMidiInput();
+  }
+#if defined(SESSION_CAPTURE)
+  notePostRemainderWindows();
+#else
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
+  }
+#endif
+#if defined(SESSION_CAPTURE)
   remainderStartUs = micros();
 #endif
 
@@ -358,20 +491,13 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t loadFrameUs = micros() - remainderStartUs;
   RuntimeTimingTelemetry::noteLoadFrame(loadFrameUs);
-  recordLoopRemainderSpan("load_frame", loadFrameUs);
+  DebugSessionCapture::recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
 
-  // RC-C C: safety MIDI drain after OLED work during RECORD/OVERDUB only. Not a substitute
-  // for bounded display — keeps clock/notes moving if resolve still ran long.
-  bool captureActiveForMidiDrain = false;
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing()) {
-      captureActiveForMidiDrain = true;
-      break;
-    }
-  }
-  if (captureActiveForMidiDrain) {
+  // RC-C C: RECORD/OVERDUB after OLED. Same site also covers the post-overdub PLAYING window
+  // so load_frame cannot stack with persist. Not all PLAYING.
+  if (MidiServiceDrain::afterDeferredDisplay(captureActiveForMidiDrain,
+                                             postOverdubPlayingMidiDrain)) {
     midiHandler.handleMidiInput();
   }
 
@@ -396,7 +522,7 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;
   RuntimeTimingTelemetry::notePersistSave(persistSaveUs);
-  recordLoopRemainderSpan("persist_save", persistSaveUs);
+  DebugSessionCapture::recordLoopRemainderSpan("persist_save", persistSaveUs);
 #endif
 
   // Poll USB host again after deferred SD/display work so DROID button note-ons are not

@@ -77,6 +77,8 @@ See [`note_edit_selection_index_stability_bugfix.md`](note_edit_selection_index_
 
 **Primary capture:** `captures/session_20260806_212810.log` — `M65@369 missing in recon`, `M65@1050 missing in recon`.
 
+**143144 (do not merge):** [`note_edit_undo_warm_missing_recon_investigation.md`](note_edit_undo_warm_missing_recon_investigation.md) — `M24@120 missing in recon` looks up pre-edit `commitBaseline`; pin the committed **new** span before treating it as this RC.
+
 **Entry condition:** RC6 projection ownership holds on native fixture; RC7 guards in place.
 
 **Owners:** `populateBaselineMapForEditClosure`, `applyOwnedEditPassRows`, `commitEditAction` recon trace.

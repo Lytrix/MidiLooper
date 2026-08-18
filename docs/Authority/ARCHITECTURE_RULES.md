@@ -196,5 +196,5 @@ Read before touching loop storage, stop paths, or undo: [Guides/LOOP_MIDI_STORAG
 Summary:
 
 - **Stop path:** `finalizeLoopAtStop` + wrap window only — not full `validateAndCleanupMidiEvents`.
-- **Undo routing:** While NOTE_EDIT active, `handleUndo` is session-gated (**E:** only — no **U:** fallthrough). After exit, **U:** via global stack (`RecordPassAdded` / `OverdubPassAdded` / `NoteEditPassClosed` / `LoopBoundaryChange` / `ClearSlot` at cursor). `NoteEditPassClosed` from `markCurrentEditBatchDurable` is **U:**-reachable only after NOTE_EDIT ends. Clear-slot undo uses `handleUndoClearTrack` when top entry is **ClearSlot**.
+- **Undo routing:** While NOTE_EDIT active, `handleUndo` is session-gated (**E:** only — no **U:** fallthrough). While OVERDUBBING, the same gate uses the overdub session stack (no **U:** fallthrough). After exit, **U:** via global stack (`RecordPassAdded` / `OverdubPassAdded` / `NoteEditPassClosed` / `LoopBoundaryChange` / `ClearSlot` at cursor). One `OverdubPassAdded` after stop carries session wrap `passIds` (DEC-038 038.2). `NoteEditPassClosed` from `markCurrentEditBatchDurable` is **U:**-reachable only after NOTE_EDIT ends. Clear-slot undo uses `handleUndoClearTrack` when top entry is **ClearSlot**.
 - **After flat edits:** `invalidateCaches()` on the owning `Track`.
