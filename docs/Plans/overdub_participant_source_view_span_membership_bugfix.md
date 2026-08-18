@@ -1,11 +1,11 @@
 # Source-view membership from prepared NoteSpans
 
-**Status:** Native span fill `b94bd2b`; empty-copy fallback `81ce13a`; window-noteId span copy; Hide-all-spans; B collect Active/window parity; span-copy Disabled restore matches B collect. Device RC12 flood **PASS**. Device B-collect **PASS** [`034455`](../../captures/session_20260818_034455.log) (`eq=0` = 0). Wrap 1-frame undo flash native-pinned; device gate after this firmware. 021716 storage-64-before-wrap is not a blocking gate.
+**Status:** **FROZEN** (2026-08-18). Native span fill `b94bd2b`; empty-copy fallback `81ce13a`; window-noteId span copy; Hide-all-spans; B collect Active/window parity; span-copy Disabled restore matches B collect (`f5a7864`). Device RC12 flood **PASS**. Device B-collect **PASS** [`034455`](../../captures/session_20260818_034455.log) (`eq=0` = 0). Wrap 1-frame undo flash **PASS** [`040236`](../../captures/session_20260818_040236.log). 021716 storage-64-before-wrap is not a blocking gate.
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)  
 **Evidence:** [`021716`](../../captures/session_20260818_021716.log) — 1-bar (`DISP` `OVERDUBBING,768`); before first `why=wrap`, `notes=10`, storage 64 pitch 86/60 `a=0,b=2`, hold `from=win` `merged=0`  
-**Does not start:** Phase 3 consume-from-LCR; wrap pairing on merged record+overdub; occupied storage-576; finishing opens on a partial 16-bar window
+**Does not start:** wrap pairing on merged record+overdub; occupied storage-576; finishing opens on a partial 16-bar window. Parent Phase 3 fill disable is unblocked ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)); this bugfix does not implement it.
 
 ---
 
@@ -245,11 +245,24 @@ Occupy A==B **PASS** in 034455 did not stop a 1-frame piano-roll flash of undone
 
 **Invariant:** span copy uses the same Disabled-companion restore guards as `tryCollectPreparedPresentNoteIdsAtTick`. Session undo/redo calls `invalidateLiveDisplayCache` (same as wrap RC-W1). Native: `test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b` now also pins source-view NoteIds (record id present after undo, absent after rewrap Hide).
 
+### [`040236`](../../captures/session_20260818_040236.log) — wrap 1-frame undo flash PASS
+
+Firmware `f5a7864`. User: flicker gone. 1-bar (`DISP` `OVERDUBBING,768`). 103 `lcr,part`, all `from=prep`, **`eq=0` = 0**. 10 wraps, 8 `why=undo`, 4 `sess_undo why=wrap`.
+
+| Gate | 034455 (FAIL) | 040236 |
+|------|----------------|--------|
+| Deep undo source vs slice | src 6, slice 8, `DISP` stayed **11** | src **4**, slice **4** (`1713`–`1715`) |
+| Undo then first `DISP` | frame stayed at pre-undo count | wrap `DISP` 32 → undo `DISP` **18** (`3075`→`3127`) while visual field still 30 until slice 14 |
+| Wrap after undo `lcr,src` vs `lcr,vch` | src 11 vs vch 12 | peel then wrap `1744` src **13** = vch **13**; later wraps 0 or +1 finished-open, not leftover Disabled restore |
+| First wrap `DISP` vs source | `11,8,11` before hold | wrap `3375` src 29, `DISP` **30** (src + live), visual 13 — paints source, not stale cache |
+
+Occupied identity and wrap display both PASS on this capture. PLAYING/STOPPED/MUTED HITL skipped (DEC-040). Parent Phase 3 is next.
+
 ---
 
 ## Hard don'ts
 
-- Phase 3 consume-from-LCR / `tryCollectPreparedPresentNoteIdsAtTick` as consume
+- This bugfix implementing Phase 3 consume-from-LCR / `tryCollectPreparedPresentNoteIdsAtTick` as consume (parent plan owns Phase 3)
 - Wrap pairing on merged record+overdub (015618)
 - Putting B extras into A / occupy membership / `notePresentAt`
 - Removing the window-NoteOn anti-flood filter to chase A==B

@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-040](#dec-040-skip-playingstoppedmuted-overdub-participant-hitl) | 2026-08-18 | Skip PLAYING/STOPPED/MUTED overdub participant HITL | Accepted |
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
 | [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
 | [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; NOTE_EDIT hydrate and playback gather are separate work paths (amended 2026-08-16/17) | Accepted |
@@ -54,7 +55,29 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-040 -->
+<!-- Append new entries below (newest first). Next ID: DEC-041 -->
+
+## DEC-040 — Skip PLAYING/STOPPED/MUTED overdub participant HITL
+
+**Date:** 2026-08-18  
+**Status:** Accepted  
+**Owner:** overdub participant discovery (`snapshotOverlapHoldCandidates` / prepared present-at-S)  
+**Plan:** [`overdub_participant_loop_content_architecture.md`](Plans/overdub_participant_loop_content_architecture.md)
+
+**Context:** Phase 2 required A vs B identity under PLAYING / STOPPED / MUTED / outside-gather before Phase 3 fill disable. Overdub participant `#CAP` (`lcr,part`) only fires on USB note-on while **OVERDUBBING**. PLAYING, STOPPED, and MUTED are not overdub states, so that HITL matrix cannot be run. Prepared HITL `eq=1` already passed [`040236`](../captures/session_20260818_040236.log).
+
+**Decision:**
+
+1. Do **not** require PLAYING / STOPPED / MUTED participant HITL. Those states cannot run overdub.
+2. Present-at-S must still not leak MIDI execution (send / `ActiveNoteLedger` / mute). That stays a definition, not a transport-state device matrix.
+3. Phase 3 may start after prepared OVERDUBBING `eq=1` (met: 040236). Production consume stays A until Phase 3 firmware.
+4. Does **not** skip: 64-bar OVERDUBBING; a note present at `S` whose NOTE ON is outside the 2-bar playback gather (still testable while OVERDUBBING). That is Phase 3 validation, not a PLAYING-state test.
+
+**Does not change:** DEC-037 6.0 (no cold LCR on the overdub button); RC8 occupy/consume; `overdubSourceView` remaining responsibilities; `notePresentAt`.
+
+**Validation:** none for the skipped states. Phase 3 device gate is OVERDUBBING prepared `eq=1` plus 64-bar / outside-gather cost after fill disable.
+
+---
 
 ## DEC-039 — Persist NoteId reconciled at NOTE_EDIT commit boundary
 
