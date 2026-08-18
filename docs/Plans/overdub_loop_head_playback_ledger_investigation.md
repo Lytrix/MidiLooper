@@ -1,6 +1,6 @@
 # Loop-head playback ledger after wrap
 
-**Status:** Investigation. No firmware.  
+**Status:** Closed — firmware in [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md). Native PASS. HITL open.  
 **Date:** 2026-08-18  
 **Kind:** investigation  
 **Parent:** [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md)  
@@ -96,7 +96,9 @@ wrap reanchor at S=696 → cursor past phase <= 696 (including 0)
   → then USB On occupy
 ```
 
-That path is already in `playCommittedLoopMidi`. The miss is that NoteOn @ 0 did not land on the ledger before occupy.
+That path is already in `playCommittedLoopMidi`. Native 0-clock cursor math **PASS** once On@0 is in the sealed pass.
+
+Production wrap seal ran Q16 min-length on OverdubWrap (span 8 < 12), so On@0 never entered `lastCommittedPassId()`. Q16 is hot stop only. Fix: [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md).
 
 ## Not in this capture
 
@@ -106,9 +108,7 @@ That path is already in `playCommittedLoopMidi`. The miss is that NoteOn @ 0 did
 
 ## Still open
 
-Not proven whether On@0 is missing from `PlaybackMergedMidiEvents`, skipped by the 0-clock advance, or applied then cleared (no sealed Off@0 in the MI trace; Off is @8).
-
-Next pin: native fixture — sealed 60 On@0 Off@8, reanchor at 696, reset cursor, `atLoopStart` `(760, 0]`, occupy at 0. Do **not** add a loop-head re-seed until that pin.
+HITL: first loop-head 60 @ 0 `n=1 a=1 b=1` after the wrap-seal fix. Native pin is closed.
 
 ---
 

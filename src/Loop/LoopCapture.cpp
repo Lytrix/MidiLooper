@@ -731,7 +731,7 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
 
   const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = traceMicros();
-  const SealOutcome seal = sealCapture(sealedAtTick);
+  const SealOutcome seal = sealCapture(sealedAtTick, reason);
   const uint32_t sealDurationUs = traceMicros() - sealStartUs;
   const uint32_t sealHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
@@ -782,7 +782,7 @@ LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsT
                                                      openTailCloseTick);
 }
 
-SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
+SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
   if (hasPendingCapturePass_) {
     return SealOutcome::AlreadyPending;
   }
@@ -804,9 +804,14 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
       (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
     const LoopStopFinalize::Result fin = finalizeCaptureWrapWindowAtStop(sealedAtTick);
     wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
-    minLenPairsRemoved = static_cast<uint32_t>(
-        CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
-            capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled));
+    // Q16 min-length is hot stop only — not OverdubWrap. Wrap must keep
+    // completed short pairs (185831: 60 On@0 Off@8) so loop-head playback
+    // can apply phase-0 NoteOns.
+    if (reason != CommitReason::OverdubWrap) {
+      minLenPairsRemoved = static_cast<uint32_t>(
+          CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
+              capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled));
+    }
     CaptureIncrementalSanity::verifyCaptureHotStop(capture.store, loopLengthTicks);
     if (capture.store.empty()) {
       return SealOutcome::FailedValidation;
