@@ -72,6 +72,17 @@ void seedRecordNote(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pitch
   loop.seedRecordPassFromStore(store);
 }
 
+void seedTwoRecordNotes(Loop& loop, uint32_t on1, uint32_t off1, NoteId id1, uint32_t on2,
+                        uint32_t off2, NoteId id2, uint8_t pitch) {
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, on1, 1, pitch, 100, id1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(off1, 1, pitch, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, on2, 1, pitch, 100, id2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(off2, 1, pitch, 0)));
+  loop.seedRecordPassFromStore(store);
+}
+
 EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t pitch) {
   EditPass row{};
   row.passType = EditPassType::Note;
@@ -134,8 +145,8 @@ void collectHoldParticipantSets(Loop& loop, uint32_t tick, uint8_t pitch, Overla
       tick, pitch, loop.playbackRevision, preparedIds));
 }
 
-void commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint32_t onTick, uint32_t offTick,
-                                   const OverlapNoteIdSet& occupyIds) {
+EditPassIdList commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint32_t onTick,
+                                             uint32_t offTick, const OverlapNoteIdSet& occupyIds) {
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, onTick, offTick,
                                                                    wrapNoteId, occupyIds));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(onTick, 1, 60, 90, wrapNoteId)));
@@ -148,6 +159,7 @@ void commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint32_t onTic
                                                     loop.passes.editPasses, companions);
   loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  return companions;
 }
 
 bool sourceViewHasNoteId(const Loop& loop, NoteId noteId) {
@@ -1694,6 +1706,142 @@ void test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 013327 majority extras are a=0,b>0 at storage tick 64 after wrap undo.
+// Same occupy geometry as the wrap-publish pin; collect at 64 after wrap 2 and
+// after session undo. Records the actual A/B NoteIds.
+void test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 64, 176, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  constexpr uint32_t kTick64 = 64;
+  constexpr uint32_t kTick100 = 100;
+  constexpr uint8_t kPitch = 60;
+  OverlapNoteIdSet occupy;
+  loop.collectOverdubSourceHoldParticipantIds(kTick64, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(1));
+  const EditPassIdList wrap1Companions =
+      commitSamePitchWrapAndPublish(loop, 10, 64, 240, occupy);
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), wrap1Companions);
+
+  OverlapNoteIdSet a64w1;
+  OverlapNoteIdSet b64w1;
+  OverlapNoteIdSet ao64w1;
+  OverlapNoteIdSet bo64w1;
+  pinHoldSetsAfterWrap(1, loop, kTick64, kPitch, a64w1, b64w1, ao64w1, bo64w1);
+  TEST_ASSERT_TRUE(a64w1 == b64w1);
+  TEST_ASSERT_TRUE(a64w1.contains(10));
+  TEST_ASSERT_EQUAL(0u, bo64w1.size());
+
+  occupy.clear();
+  loop.collectOverdubSourceHoldParticipantIds(kTick64, kPitch, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(10));
+  const EditPassIdList wrap2Companions =
+      commitSamePitchWrapAndPublish(loop, 11, 64, 288, occupy);
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), wrap2Companions);
+
+  OverlapNoteIdSet a64w2;
+  OverlapNoteIdSet b64w2;
+  OverlapNoteIdSet ao64w2;
+  OverlapNoteIdSet bo64w2;
+  pinHoldSetsAfterWrap(2, loop, kTick64, kPitch, a64w2, b64w2, ao64w2, bo64w2);
+  OverlapNoteIdSet a100w2;
+  OverlapNoteIdSet b100w2;
+  OverlapNoteIdSet ao100w2;
+  OverlapNoteIdSet bo100w2;
+  pinHoldSetsAfterWrap(2, loop, kTick100, kPitch, a100w2, b100w2, ao100w2, bo100w2);
+  TEST_ASSERT_TRUE(a64w2 == b64w2);
+  TEST_ASSERT_TRUE(a64w2.contains(11));
+  TEST_ASSERT_EQUAL(0u, bo64w2.size());
+  TEST_ASSERT_TRUE(a100w2 == b100w2);
+  TEST_ASSERT_EQUAL(0u, bo100w2.size());
+
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  OverlapNoteIdSet a64u;
+  OverlapNoteIdSet b64u;
+  OverlapNoteIdSet ao64u;
+  OverlapNoteIdSet bo64u;
+  pinHoldSetsAfterWrap(0, loop, kTick64, kPitch, a64u, b64u, ao64u, bo64u);
+  OverlapNoteIdSet a100u;
+  OverlapNoteIdSet b100u;
+  OverlapNoteIdSet ao100u;
+  OverlapNoteIdSet bo100u;
+  pinHoldSetsAfterWrap(0, loop, kTick100, kPitch, a100u, b100u, ao100u, bo100u);
+  printf("undo tick64 A=[");
+  char aBuf[64];
+  char bBuf[64];
+  formatNoteIds(a64u, aBuf, sizeof(aBuf));
+  formatNoteIds(b64u, bBuf, sizeof(bBuf));
+  printf("%s] B=[%s] ao=%u bo=%u\n", aBuf, bBuf, static_cast<unsigned>(ao64u.size()),
+         static_cast<unsigned>(bo64u.size()));
+  TEST_ASSERT_TRUE(a64u == b64u);
+  TEST_ASSERT_TRUE(a100u == b100u);
+  TEST_ASSERT_EQUAL(0u, ao64u.size());
+  TEST_ASSERT_EQUAL(0u, bo64u.size());
+  TEST_ASSERT_TRUE(a64u.contains(10));
+  TEST_ASSERT_FALSE(a64u.contains(11));
+  LoopContentResolution::deviceGateReset();
+}
+
+// 013327 a=0,b>0 at storage 64: two same-pitch notes cover 64; occupy only one
+// (device max_ids=1). Wrap same-start longer. Pin leftover B ids at 64.
+void test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedTwoRecordNotes(loop, 0, 80, 1, 64, 176, 2, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  OverlapNoteIdSet before;
+  loop.collectOverdubSourceHoldParticipantIds(64, 60, before);
+  printf("sibling-at-64 before occupy a=%u ids=", static_cast<unsigned>(before.size()));
+  char beforeBuf[64];
+  formatNoteIds(before, beforeBuf, sizeof(beforeBuf));
+  printf("%s\n", beforeBuf);
+
+  const OverlapNoteIdSet occupyOne = overlapIds({1});
+  (void)commitSamePitchWrapAndPublish(loop, 10, 64, 240, occupyOne);
+
+  OverlapNoteIdSet a64;
+  OverlapNoteIdSet b64;
+  OverlapNoteIdSet ao64;
+  OverlapNoteIdSet bo64;
+  pinHoldSetsAfterWrap(1, loop, 64, 60, a64, b64, ao64, bo64);
+  char aBuf[64];
+  char bBuf[64];
+  char boBuf[64];
+  formatNoteIds(a64, aBuf, sizeof(aBuf));
+  formatNoteIds(b64, bBuf, sizeof(bBuf));
+  formatNoteIds(bo64, boBuf, sizeof(boBuf));
+  printf("sibling-at-64 after wrap A=[%s] B=[%s] onlyB=[%s]\n", aBuf, bBuf, boBuf);
+
+  TEST_ASSERT_EQUAL_UINT(0, ao64.size());
+  TEST_ASSERT_EQUAL_UINT(1, a64.size());
+  TEST_ASSERT_EQUAL_UINT(1, b64.size());
+  TEST_ASSERT_TRUE(a64.contains(10));
+  TEST_ASSERT_TRUE(b64.contains(10));
+  TEST_ASSERT_EQUAL_UINT(0, bo64.size());
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1760,6 +1908,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);
   RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps);
+  RUN_TEST(test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo);
+  RUN_TEST(test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);

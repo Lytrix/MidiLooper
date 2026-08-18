@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (013327 B-superset; occupy fixture pin)
+Last updated: 2026-08-18 (013327 tick-64 / undo pin; still no B extra)
 
 ---
 
@@ -23,7 +23,7 @@ Phase 1 **device capture** [`002447`](../../captures/session_20260818_002447.log
 
 **Phase 2a** `76623cd` + **O:** `a384a47`. Device [`011009`](../../captures/session_20260818_011009.log) **PASS** for wrap-undo source-view refresh: `why=undo` on peel, post-undo A `a=1`, hold `merged=0`. **Phase 2 B collect** uses RC8 hold on prepared spans. Production consume still A.
 
-**013327** [`013327`](../../captures/session_20260818_013327.log): 53 `from=prep`, 31 `eq=0` all B extras. Majority `a=0,b>0` at a repeating phase; occupied `a=1` with `bo=1…6`. One boot `lcr,mat` only. First extra before `sess_undo`. CAP does not print NoteIds. Native occupy pin `test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps`: after wrap 1/2/3, A IDs == B IDs (`10` / `11` / `12`). Hide bake finds wrap-N Add. Next pin: wrap-local span covers S while source-view reconstruct does not. Do **not** pick a B-list fix until that fixture names the extra ids. Do **not** start Phase 3 fill disable until hard PLAYING/STOPPED/MUTED/outside-gather identity and prepared HITL `eq=1`. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
+**013327** [`013327`](../../captures/session_20260818_013327.log): 53 `from=prep`, 31 `eq=0` all B extras. Majority `a=0,b>0` at storage **64**. Native pins: occupy wrap `10`/`11`/`12` match; tick 64 after wrap and after undo match (`10`/`11` then undo `10`); occupy-one sibling at 64 still match (`10`). No named B extra yet. Next pin: wrap-local span covers 64 while source-view reconstruct does not. Do **not** pick a B-list fix until that fixture names the extra ids. Do **not** start Phase 3 fill disable until hard PLAYING/STOPPED/MUTED/outside-gather identity and prepared HITL `eq=1`. Do not start the Experiment 1 1/2/4/8/16 rebuild series as production policy. Do not delete `overdubSourceView`. NOTE_EDIT overlap is a sibling consumer.
 
 ### Consumer window budget — Experiment 1 (detach landed; series not next)
 
