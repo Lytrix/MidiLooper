@@ -95,21 +95,34 @@ void test_midi_send_requires_unmuted_track_and_slot() {
 
 void test_ledger_stays_active_after_note_on() {
   ActiveNoteLedger ledger;
-  ledger.noteOn(1, 60, 100, 90);
+  ledger.noteOn(1, 60, 42, 100, 90);
   TEST_ASSERT_TRUE(ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_UINT32(42, ledger.noteId(1, 60));
   uint8_t seen = 0;
   ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry& entry) {
     TEST_ASSERT_EQUAL_UINT8(1, channel);
     TEST_ASSERT_EQUAL_UINT8(60, note);
+    TEST_ASSERT_EQUAL_UINT32(42, entry.noteId);
     TEST_ASSERT_EQUAL_UINT32(100, entry.startTick);
     ++seen;
   });
   TEST_ASSERT_EQUAL_UINT8(1, seen);
 }
 
+void test_ledger_note_on_overwrites_note_id() {
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, 60, 42, 100, 90);
+  ledger.noteOn(1, 60, 99, 200, 80);
+  TEST_ASSERT_TRUE(ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_UINT32(99, ledger.noteId(1, 60));
+  ledger.noteOff(1, 60);
+  TEST_ASSERT_FALSE(ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 60));
+}
+
 void test_all_notes_off_clears_ledger_mute_does_not() {
   ActiveNoteLedger ledger;
-  ledger.noteOn(1, 60, 100, 90);
+  ledger.noteOn(1, 60, 42, 100, 90);
   TEST_ASSERT_TRUE(ledger.isActive(1, 60));
   ledger.clear();
   TEST_ASSERT_FALSE(ledger.isActive(1, 60));
@@ -174,6 +187,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_engine_runs_when_slot_enabled_even_if_muted);
   RUN_TEST(test_midi_send_requires_unmuted_track_and_slot);
   RUN_TEST(test_ledger_stays_active_after_note_on);
+  RUN_TEST(test_ledger_note_on_overwrites_note_id);
   RUN_TEST(test_all_notes_off_clears_ledger_mute_does_not);
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);
   RUN_TEST(test_unmute_does_not_resend_crossed_events);

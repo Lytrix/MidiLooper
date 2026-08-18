@@ -208,7 +208,7 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
     }
     runtime.ledger.noteOff(evtCopy.channel, note);
   } else if (evt.isNoteOn()) {
-    runtime.ledger.noteOn(evtCopy.channel, evtCopy.data.noteData.note, evt.tick,
+    runtime.ledger.noteOn(evtCopy.channel, evtCopy.data.noteData.note, evt.noteId, evt.tick,
                           evtCopy.data.noteData.velocity);
     if (trackState == TRACK_OVERDUBBING) {
       collectOverlapHoldPlaybackNoteOn(evt.noteId, evt.data.noteData.note);

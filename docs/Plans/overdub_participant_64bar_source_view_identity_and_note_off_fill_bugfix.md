@@ -24,7 +24,7 @@ from=span / wait-for-lcr,mat as occupy readiness
 rebuildOverdubSourceView reconstruct fallback
     ← opportunistic when a finished matching session exists
 occupy / B collect
-    ← length miss is honest from=miss; next occupy work is this-pitch present-at-S JIT
+    ← length miss is honest from=miss; next occupy work is `Entry.noteId` at `currentTick`
 collectConsumeWindow prepared-pitch merge
     ← Stage 2 parked
 ```

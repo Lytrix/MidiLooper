@@ -2,45 +2,47 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (occupy present-at-S JIT architecture pinned; Stage 1 `from=span` chase parked)
+Last updated: 2026-08-18 (`Entry.noteId` from `evt.noteId`; occupy lookup blocked)
 
 ---
 
 ## Now implementing
 
-### Occupy present-at-S JIT (architecture pinned; no firmware)
+### Occupy — `Entry.noteId` from `evt.noteId` (occupy lookup blocked)
 
-**Plan:** [`overdub_present_at_tick_jit_architecture.md`](../Plans/overdub_present_at_tick_jit_architecture.md)  
-**Parent:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
-**Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)  
-**Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`173842`](../../captures/session_20260815_173842.log)
+**Plan:** [`overdub_present_at_tick_jit_enhancement.md`](../Plans/overdub_present_at_tick_jit_enhancement.md)  
+**Architecture:** [`overdub_present_at_tick_jit_architecture.md`](../Plans/overdub_present_at_tick_jit_architecture.md)  
+**Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`; do **not** say occupy = ledger  
+**Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`152940`](../../captures/session_20260813_152940.log)
 
-**Owner:** `LoopContentResolution` + Track idle slices. Not occupy-set patches. Not Stage 2. Not PLAYING full-history LCR. Not cold LCR on the overdub button (DEC-037 6.0).
+**Owners:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger`. `sendMidiEvent` and `collectOverdubNoteOnParticipantIds` read `Entry`.
 
-Occupy is notes of pitch P present at `currentTick` (`displayNotePresentAtHold` on `NoteSpan`). Prepared hit stays `tryCollectPreparedPresentNoteIdsAtTick`. USB miss stays the source-view walk until native gold of a **this-pitch** present-at-S query (not checkpoint tail, not 16-bar `resolveWindow`). Full-loop `lcr,mat` is opportunistic source-view `from=span`, not occupy readiness.
+**Product:** at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at runtime. No `length` on `Entry`. `LoopPasses` may still overlap (`max_same_pitch=322`). `sendMidiEvent` does not create that `Entry`.
 
-**Parked:** Stage 1 wait-STOPPED-for-`lcr,mat` as product gate ([`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md) — membership / 1b / 1c **shipped**; `from=span` HITL **parked**). Do not start Stage 2. Do not raise `kOverlapNoteIdSetCapacity`.
+**Stage 0:** **Yes** — `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Not a 1:1 pitch lookup.
 
-**Next implementation (not this slice):** native this-pitch present-at-S vs prepared collect + RC8 + 64-bar outside-window fixture; architecture gate before USB. Device-gate **range** around playhead is the scheduled prepare (Stage 9 range tests). No firmware until that gold.
+**Now:** `Entry.noteId` written from `sendMidiEvent` (`evt.noteId`). Do not move `ledger.noteOn`. Do not change occupy. No `length`.
 
-[`132806`](../../captures/session_20260818_132806.log): Stage 1c **held** (`skip,save` = 0; 64-bar `idx` to `prep` during persist). 1-bar `from=span` occupy `from=prep` `ao=0`. 64-bar overdub during `prep`: `from=win,live=50688,prep=50688`; occupy `from=miss`. `late_clk=0`. That miss is honest. Do not wait tens of seconds STOPPED to unmiss it.
+**Parked:** `evaluateOccupyOverlap`; wait-STOPPED-for-`lcr,mat`; consume merge; “occupy = ledger” ownership transfer.
+
+[`132806`](../../captures/session_20260818_132806.log): Stage 1c **held**. Do not wait STOPPED for `lcr,mat`. Do not reconstruct on the note.
 
 ### 64-bar source-view identity — Stage 1c shipped; `from=span` HITL parked
 
-Membership, length identity, and dirty/save stall **shipped** ([`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)). [`132806`](../../captures/session_20260818_132806.log) Stage 1c held; 64-bar `from=span` not met (PLAYING during `prep`). That HITL is **parked** (DEC-041). Do not wait STOPPED for `lcr,mat`. Do not start Stage 2.
+Membership, length identity, and dirty/save stall **shipped** ([`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)). [`132806`](../../captures/session_20260818_132806.log) Stage 1c held; 64-bar `from=span` not met (PLAYING during `prep`). That HITL is **parked** (DEC-041). Do not wait STOPPED for `lcr,mat`. Do not start consume merge. Occupy next is `PresentNote.noteId` vs `evt.noteId` (no firmware).
 
 ### Overdub participant discovery — notes present at S (Phase 4 1-bar PASS)
 
 **Plan:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
-**Owner:** canonical notes **present** at tick `S` (`resolveState` / prepared spans). Not `sendMidiEvent`. Not `ActiveNoteLedger`. Not a smaller source window.
+**Owner (shipped occupy):** `Loop::collectOverdubNoteOnParticipantIds` (`tryCollectPreparedPresentNoteIdsAtTick` else `collectOverdubSourceHoldParticipantIds`). **Target (DEC-041):** that function reads `ActiveNoteLedger::Entry.noteId`. Not a smaller source window.
 
-**PresentNote** = present at S (`PresentNote` / `resolveState` / `presentAt` / `notePresentAt` / `presentAtHoldOnly`). **ActiveNote** = execution ledger, mute-decoupled. **Sounding** = MIDI output only.
+**PresentNote** = LCR query snapshot at S (many `NoteId`s; no `endTick`). **ActiveNote** = one `ActiveNoteLedger::Entry` per `(channel, pitch)`. MIDI out = `midiHandler.sendMidiEvent`. Identity field: `noteId` on `Entry`; do not copy `PresentNoteVec`.
 
 **Phase 4 1-bar HITL PASS** [`123803`](../../captures/session_20260818_123803.log): `collectConsumeWindow` skips `ensureOverdubSourceNotesForHold` when `loopLen <= overdubSourceWindowLengthTicks()`. Track 6 (768): **`why=hold` = 0**; occupy 102/130 `from=prep` `a=1,b=1` `eq=1`; consume still Hide (`hide` 3–11). Track 0 (50688): 36 `why=hold` remain (1 `merged=1`); consume still Add/Hide (`empty_sets=0`). `late_clk=0`. Native `test_note_off_skips_hold_fill_when_source_view_covers_loop`.
 
-**Parked — 64-bar occupy via full-loop `from=span`:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0` was RC1 (fixed). [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0. Wait-for-`lcr,mat` **parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)). Empty occupy is **not** “no participants.” Next occupy work is this-pitch present-at-S JIT, not Stage 2.
+**Parked — 64-bar occupy via full-loop `from=span`:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0` was RC1 (fixed). [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0. Wait-for-`lcr,mat` **parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)). Empty occupy is **not** “no participants.” Next occupy work is [`overdub_present_at_tick_jit_enhancement.md`](../Plans/overdub_present_at_tick_jit_enhancement.md) Stage 0, not consume merge.
 
 **Phase 3 1-bar HITL PASS** [`121933`](../../captures/session_20260818_121933.log): occupied 48/74 `a=1,b=1`; no note-on `why=hold`. Production occupy is present-at-S.
 
