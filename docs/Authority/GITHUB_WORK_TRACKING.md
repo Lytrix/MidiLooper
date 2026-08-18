@@ -291,21 +291,37 @@ Keep these **draft milestone cards** on the board (titles may be shortened on th
 |--------|------------|------------------|
 | **NOW** | Overdub participant discovery (present at S; Phase 3 fill disable next) | [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md) |
 | **NEXT** | NOTE_EDIT hydrate (LCR consume; overlap = selected/mover LinearSpan) | [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md) |
-| **NEXT** | Playback gather / playback horizon (LCR consume; JIT window) | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) |
+| **NEXT** | Playback gather Stages 2–3 (Stage 1 hooks **shipped**) | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) |
 | **NEXT** | Loop length during overdub | [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md) |
 | **NEXT** | HITL CLI rebuild (layered `base` + `edit_full`) | [`hitl_cli_rebuild_enhancement.md`](../Plans/hitl_cli_rebuild_enhancement.md) |
 | **PARKED** | Streaming / range-first loop resolution (LCR Layer D) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) § Layer D |
 | **PARKED** | Undo architecture — derived editing state (Stage 3b; replace GUS) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) § Stage 3b |
 | **PARKED** | Loop content history Layers B–C (clear-as-unlink, checkpoint + tail) | [`loop_layer_history_persistence_architecture.md`](../Plans/loop_layer_history_persistence_architecture.md) |
-| **PARKED** | Persistence overlay / set-revision loop picker | `set-revision-persistence` §4.8–4.10; [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md) |
-| **PARKED** | Crash recovery / persistence Phase 5 | [`continuous_runtime_persistence_phase5_recovery_handoff.md`](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
-| **PARKED** | Display / piano-roll architecture (visual cache, paint gap follow-ups) | [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md) |
-| **PARKED** | Memory / performance / runtime scheduling | [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md); [`memory_pressure_reclaim_refinement.md`](../Plans/memory_pressure_reclaim_refinement.md) |
-| **PARKED** | Jam / multi-loop capture (D13 deferred) | [`phase-3-multi-loop.md`](../Plans/phase-3-multi-loop.md); [`ROADMAP.md`](../Runtime/ROADMAP.md) |
+| **PARKED** | Set-revision **loop picker** (§4.8–4.10 only; overlay §4.1–4.7 **shipped**) | `set-revision-persistence` §4.8–4.10; [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md) |
+| **PARKED** | Crash recovery / persistence Phase 5 (prefix load — **not started**) | [`continuous_runtime_persistence_phase5_recovery_handoff.md`](../Plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
+| **PARKED** | Display unification remainder (Stages 1–2, 5–9 **shipped**; Stages 3–4 + paint gap open) | [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md) |
+| **PARKED** | Runtime scheduling — Owner-Boundary Gate follow-up (grooming / pressure slices **shipped**) | [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) |
+| **PARKED** | Jam **capture** (D13–D15; slot infrastructure **shipped** on `dev`) | [`phase-3-multi-loop.md`](../Plans/phase-3-multi-loop.md); [`ROADMAP.md`](../Runtime/ROADMAP.md) |
 
 Update this table when a capability moves column or a new architectural milestone is decided. Do not duplicate stage checklists here.
 
-**Shipped capabilities** (example): Loop content-only history (DEC-035 Layer A) — close or archive the card; normative spec in `openspec/specs/loop-content-history/`. LoopContentResolution prototype on `dev` (PR #35) — card optional; remaining LCR consumer work lives in the NEXT rows above.
+### 6.2 Shipped — archive or remove board cards
+
+These are **not** PARKED work. Remove the card from **Work** when the capability is fully delivered, or keep a one-line **SHIPPED** note in the card body until archived. Partial delivery stays on the board with **shipped / remainder** called out in §6.1 (Display, loop picker, jam capture, playback gather).
+
+| Capability | Evidence | Board |
+|------------|----------|-------|
+| Loop content history Layer A (DEC-035) | PR [#34](https://github.com/Lytrix/MidiLooper/pull/34); OpenSpec `loop-content-history/` | Archive |
+| LoopContentResolution prototype (DEC-037 core) | PR [#35](https://github.com/Lytrix/MidiLooper/pull/35); consumers remain in NEXT rows | Archive |
+| Set-revision overlay §4.1–4.7 | [`set_revision_persistence_handoff.md`](../Plans/set_revision_persistence_handoff.md) | No card (picker §4.8–4.10 only) |
+| Multi-loop slot infrastructure | [`phase-3-multi-loop.md`](../Plans/phase-3-multi-loop.md) | No card (jam capture only) |
+| StorageManager TU extraction | PR [#17](https://github.com/Lytrix/MidiLooper/pull/17); Issue [#16](https://github.com/Lytrix/MidiLooper/issues/16) | **Archive** stale Issue cards |
+| Codebase consistency Phase 4 / LR | PRs [#22](https://github.com/Lytrix/MidiLooper/pull/22)–[#26](https://github.com/Lytrix/MidiLooper/pull/26); Issue [#18](https://github.com/Lytrix/MidiLooper/issues/18) | **Archive** stale Issue cards |
+| Memory pressure 1A/1B/2B; consumer grooming 1b–2c | [`memory_pressure_reclaim_refinement.md`](../Plans/memory_pressure_reclaim_refinement.md); grooming plans | Covered by scheduling PARKED card body |
+| Playback gather Stage 1 lateness hooks | [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md) | NEXT card (Stages 2–3 remain) |
+| DEC-036 Layer D 3b overdub entry (no full visual rebuild) | [`loop_layer_d_overdub_rebuild_architecture.md`](../Plans/loop_layer_d_overdub_rebuild_architecture.md) | No card (distinct from Layer D range-first load) |
+
+**Verified still PARKED (not shipped):** streaming / range-first load (history Layer D); Stage 3b derived undo; Layers B–C; Phase 5 crash recovery; loop picker §4.8–4.10; jam capture D13+; Owner-Boundary Gate firmware (roadmap only).
 
 ---
 
@@ -488,6 +504,10 @@ A PR/commit does not need a mechanical `closes #123` in every case, but the work
 ## 12. Enforcement
 
 **Mode: both** — agent and human review apply the same gate.
+
+### Owner-Boundary Gate at maintenance time
+
+When touching **runtime scheduling**, **deferred idle maintenance**, **persistence save**, **display resolve**, or **overdub/playback hot paths** — even for small fixes or hygiene — skim [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) and the [scheduling investigation log](../Plans/archive/refinements/runtime_scheduling_timing_envelope_investigation.md). Ask whether the change adds or extends an unbounded owner before interval reservation is authorized. This is a **maintenance-run checkpoint**, not a NOW board card.
 
 Before substantial or behavior-changing implementation:
 
