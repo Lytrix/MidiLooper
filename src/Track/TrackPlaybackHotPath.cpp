@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "LoopEditManager.h"
+#include "LoopEventStore.h"
 #include "MidiConfig.h"
 #include "MidiHandler.h"
 #include "TickPhase.h"
@@ -65,6 +66,76 @@ bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick) {
   const auto* jam = static_cast<const PlaybackJamFilterCtx*>(ctx);
   return jam->track->isStorageTickInJamRegion(storageTick, *jam->loop);
 }
+
+namespace {
+
+/// Wrap-tick ledger catch-up: apply (prev, S] from lastCommittedPassId() only.
+TRACK_COLD_MEM __attribute__((noinline)) void applyCommittedOverdubPassPlaybackInterval(Track& track, Loop& loop,
+                                                              uint8_t slotIndex,
+                                                              const PlaybackTickFrame& frame,
+                                                              PlaybackJamFilterCtx& jamCtx) {
+  if (frame.playbackContext == nullptr) {
+    return;
+  }
+  const PassId passId = loop.lastCommittedPassId();
+  if (passId == kInvalidPassId) {
+    return;
+  }
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == passId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  if (wrapPass == nullptr || wrapPass->committedChunkIds.empty()) {
+    return;
+  }
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  const uint32_t loopLength = frame.playbackContext->loopLength;
+  for (const MidiEvent& evt : passEvents) {
+    const uint32_t evPhase = IntervalProjection::playbackEventPhase(evt.tick, loopLength);
+    if (!IntervalProjection::didPlaybackEventCross(frame.atLoopStart, frame.prevTickInLoop, evPhase,
+                                                   frame.tickInLoop)) {
+      continue;
+    }
+    if (!playbackCursorAdvanceJamFilter(&jamCtx, evt.tick)) {
+      continue;
+    }
+    playbackCursorAdvanceSend(&track, evt, slotIndex);
+  }
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
+    Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint8_t slotIndex, uint32_t currentTick,
+    PlaybackTickFrame& frame, ProjectionContext& playbackContext, MergedPlaybackStreamCtx& mergedCtx,
+    PlaybackCursorAdvanceState& mergedAdvance, PlaybackEmitPolicy mergedPolicy,
+    PlaybackJamFilterCtx& jamCtx, uint8_t midiChannel) {
+  loop.armOverdubWrapAfterLeavingStart(frame.tickInLoop);
+  bool mergedIntervalApplied = false;
+  if (loop.shouldCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
+    (void)advancePlaybackCursor(mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
+                                playbackCursorAdvanceSend, &track, slotIndex,
+                                playbackCursorAdvanceJamFilter, &jamCtx, midiChannel);
+    mergedIntervalApplied = true;
+  }
+  if (track.maybeCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
+    applyCommittedOverdubPassPlaybackInterval(track, loop, slotIndex, frame, jamCtx);
+    ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
+    playbackContext = makePlaybackContext(track, loop, currentTick);
+    frame.playbackContext = &playbackContext;
+    if (!runtime.mergedMidiEvents.mergedEvents.empty()) {
+      ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
+      loop.lastTickInLoop = frame.tickInLoop;
+      reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(),
+                            playbackContext);
+    }
+  }
+  return mergedIntervalApplied;
+}
+
+}  // namespace
 
 bool Track::isStorageTickInJamRegion(uint32_t evTick, const Loop& loop) const {
   if (!jamPlaybackActive || jamLength == 0) {
@@ -124,22 +195,6 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
 
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
-  if (isActive && trackState == TRACK_OVERDUBBING) {
-    if (maybeCommitOverdubWrap(prevTickInLoop, tickInLoop)) {
-      // Wrap committed a pass and bumped playbackRevision. Rebuild the merged stream
-      // and reanchor while lastTickInLoop is still prev so (prev, S] can apply the
-      // wrap-committed NoteOn at S before USB occupy. Do not reanchor after lastTick
-      // is already S — that skips evPhase <= S.
-      ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
-      playbackContext = makePlaybackContext(*this, loop, currentTick);
-      if (!runtime.mergedMidiEvents.mergedEvents.empty()) {
-        ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
-        reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(),
-                              playbackContext);
-      }
-    }
-  }
-  loop.lastTickInLoop = tickInLoop;
   const bool atLoopStart =
       IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
 
@@ -155,10 +210,24 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const PlaybackEmitPolicy mergedPolicy =
       isActive ? PlaybackEmitPolicy::ActiveCommitted : PlaybackEmitPolicy::LayeredSlot;
   PlaybackJamFilterCtx jamCtx{this, &loop};
-  (void)advancePlaybackCursor(
-      mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
-      playbackCursorAdvanceSend, this, slotIndex,
-      isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr, midiChannel);
+
+  // Wrap-tick ledger catch-up lives in FLASHMEM. Occupy reads Entry.noteId;
+  // this is not a special occupy path.
+  bool mergedIntervalApplied = false;
+  if (isActive && trackState == TRACK_OVERDUBBING) {
+    mergedIntervalApplied = catchUpOverdubWrapPlaybackLedger(
+        *this, loop, runtime, slotIndex, currentTick, frame, playbackContext, mergedCtx,
+        mergedAdvance, mergedPolicy, jamCtx, midiChannel);
+  }
+  loop.lastTickInLoop = tickInLoop;
+
+  if (!mergedIntervalApplied) {
+    (void)advancePlaybackCursor(
+        mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
+        playbackCursorAdvanceSend, this, slotIndex,
+        isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr,
+        midiChannel);
+  }
 
   if (isActive && loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
     if (loop.ensureCaptureEventsSorted()) {
