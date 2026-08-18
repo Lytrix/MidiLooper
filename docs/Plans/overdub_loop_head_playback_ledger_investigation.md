@@ -74,28 +74,41 @@ Later wraps’ 60-at-0 occupies are `a=0 b=0` (source-view no longer has 60 at 0
 3. By storage 64, a 60 `Entry` **is** active (`n=1 a=1 b=1`). The stream can apply 60; loop head 0 is the failing step.
 4. First-bar user 60 includes a committed-looking span **0–8** and On@**528** still open at wrap.
 
-## Not in this capture
+### Carry-528 ruled out for this capture
 
-- Wrap-pass chunk list / NoteOn–NoteOff order at 0
-- Cursor `nextEventIndex` at the 0 clock
-- Direct `applyPlaybackLedgerEvent` CAP (no ch-7 MO)
+`didPlaybackEventCross` is `prev < ev && ev <= current`. Clock stays FIFO with notes (`MidiDispatchOrder`).
 
-## Open (do not pick yet)
+On@528: clock at 528 runs **before** the MI On is appended. `lastTickInLoop` is already 528 when the event enters capture. Later clocks use `prev=528`, so `528 < 528` is false. Capture playback never applies that On@528.
 
-1. **Carry across wrap** — On@528 should still be on the ledger at 0. `n=0` means it was never applied, or an Off cleared it before this occupy.
-2. **Wrap-committed NoteOn at 0** — first-bar 0–8 should re-fire at loop head. `n=0` means that On was not applied before occupy.
-3. **Loop-head stream / cursor** — `didDisplayPlayheadWrapBackward` + `isPlaybackCatchUpWindow` + reanchor-at-S should still allow the 0-clock advance to apply phase-0 events. Not proven whether the cursor skipped them or an Off at 0 won last-writer.
+Wrap `(prev, S]` at 696 is `(~688, 696]`. 528 is outside it. `extractOpenCaptureNoteOns` removes the open On@528 before `commitCapturePass`. Sealed pass is the closed spans (**0–8**, **64–416**), not the hold.
 
-Trace path (no new owner):
+Source-view 60 at 0 is the wrap-committed **0–8** NoteOn. 64 works because `(56, 64]` is a normal forward interval.
+
+### Expected write at loop head
 
 ```text
-PlaybackMergedMidiEvents
-  → wrap cursor / reanchor at S / nextEventIndex on backward wrap
-  → playbackCursorAdvanceSend
-  → ActiveNoteLedger
+wrap reanchor at S=696 → cursor past phase <= 696 (including 0)
+  → clocks 704…760
+  → storage 0: didDisplayPlayheadWrapBackward resets nextEventIndex
+               (COORD projStart 768 → 1536 proves this wrap ran)
+  → atLoopStart (760, 0]: evTick <= 0
+  → wrap-committed NoteOn @ 0 → ledger
+  → then USB On occupy
 ```
 
-Include `lastCommittedPassId()` NoteOn/NoteOff for pitch 60.
+That path is already in `playCommittedLoopMidi`. The miss is that NoteOn @ 0 did not land on the ledger before occupy.
+
+## Not in this capture
+
+- Wrap-pass chunk dump (inferred from MI On/Off + extract-open, not read from `committedChunkIds`)
+- Cursor value at the 0 clock
+- Direct `applyPlaybackLedgerEvent` CAP (no ch-7 MO)
+
+## Still open
+
+Not proven whether On@0 is missing from `PlaybackMergedMidiEvents`, skipped by the 0-clock advance, or applied then cleared (no sealed Off@0 in the MI trace; Off is @8).
+
+Next pin: native fixture — sealed 60 On@0 Off@8, reanchor at 696, reset cursor, `atLoopStart` `(760, 0]`, occupy at 0. Do **not** add a loop-head re-seed until that pin.
 
 ---
 
