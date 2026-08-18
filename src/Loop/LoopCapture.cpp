@@ -387,9 +387,14 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructStartUs = micros();
 #endif
-  overdubSourceViewNotes_ =
-      NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
-  appendOverdubPassWrapPairedNotes(overdubSourceViewNotes_);
+  if (LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(playbackRevision,
+                                                                overdubSourceViewNotes_)) {
+    from = "span";
+  } else {
+    overdubSourceViewNotes_ =
+        NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
+    appendOverdubPassWrapPairedNotes(overdubSourceViewNotes_);
+  }
   overdubSourceViewEstablished_ = true;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;

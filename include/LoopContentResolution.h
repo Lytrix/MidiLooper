@@ -365,4 +365,9 @@ struct LoopContentResolution {
   static bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                                      uint32_t playbackRevision,
                                                      OverlapNoteIdSet& out);
+  /// Copy prepared `NoteSpan`s (Active passes + Disabled companions) to DisplayNotes.
+  /// Same membership B walks. Omits Hide rows (`endTick == startTick`).
+  /// Returns false on prepared miss. Does not reconstruct MIDI.
+  static bool tryCopyPreparedSpansToDisplayNotes(uint32_t playbackRevision,
+                                                 NoteUtils::DisplayNoteVec& out);
 };

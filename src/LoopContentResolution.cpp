@@ -2334,6 +2334,49 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTic
   return true;
 }
 
+TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+    uint32_t playbackRevision, NoteUtils::DisplayNoteVec& out) {
+  out.clear();
+  if (!preparedWindowReady(playbackRevision) ||
+      sDeviceGateSession.checkpoints.spans.empty() ||
+      sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
+    return false;
+  }
+  const TickIndex& index = sDeviceGateSession.index;
+  auto appendSpan = [&out](NoteId noteId, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+    if (noteId == kInvalidNoteId || startTick == endTick) {
+      return;
+    }
+    NoteUtils::DisplayNote note{};
+    note.noteId = noteId;
+    note.note = pitch;
+    note.velocity = 0;
+    note.startTick = startTick;
+    note.endTick = endTick;
+    out.push_back(note);
+  };
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(span.note.noteId);
+    if (found != nullptr) {
+      const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+      if (pass != nullptr && pass->state != CapturePassState::Active) {
+        continue;
+      }
+    }
+    appendSpan(span.note.noteId, span.note.pitch, span.startTick, span.endTick);
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);
+  }
+  return true;
+}
+
 void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) {
   if (line == nullptr || cap == 0) {
     return;
