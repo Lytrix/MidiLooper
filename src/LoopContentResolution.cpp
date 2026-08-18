@@ -2357,19 +2357,21 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
       loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks) {
     return false;
   }
-  OverlapNoteIdSet windowIds;
+  std::vector<NoteId> windowNoteOnIds;
   if (windowEvents != nullptr) {
+    windowNoteOnIds.reserve(windowEvents->size());
     for (const MidiEvent& evt : *windowEvents) {
       if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
         continue;
       }
-      if (!windowIds.insert(evt.noteId)) {
-        return false;
-      }
+      windowNoteOnIds.push_back(evt.noteId);
     }
-    if (windowIds.size() == 0) {
+    if (windowNoteOnIds.empty()) {
       return false;
     }
+    std::sort(windowNoteOnIds.begin(), windowNoteOnIds.end());
+    windowNoteOnIds.erase(std::unique(windowNoteOnIds.begin(), windowNoteOnIds.end()),
+                          windowNoteOnIds.end());
   }
   const TickIndex& index = sDeviceGateSession.index;
   auto capturePassIsActive = [&index](NoteId noteId) -> bool {
@@ -2389,7 +2391,10 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     return false;
   };
   auto inWindow = [&](NoteId noteId) {
-    return windowEvents == nullptr || windowIds.contains(noteId);
+    if (windowEvents == nullptr) {
+      return true;
+    }
+    return std::binary_search(windowNoteOnIds.begin(), windowNoteOnIds.end(), noteId);
   };
   auto appendSpan = [&out](NoteId noteId, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
     if (noteId == kInvalidNoteId || startTick == endTick) {

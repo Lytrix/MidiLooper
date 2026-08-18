@@ -1,6 +1,6 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1–2a **closed**. Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED participant HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 3** note-on fill disable **in tree**. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). 64-bar `from=prep` occupy identity **parked** [`122848`](../../captures/session_20260818_122848.log) (`a=1,b=0`). **Phase 4** note-off fill skip when the source view covers the loop **in tree** (device HITL open). NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1–2a **closed**. **Phase 3** note-on fill disable **in tree**. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). **Phase 4** note-off fill skip when the source view covers the loop **in tree**. 1-bar HITL **PASS** [`123803`](../../captures/session_20260818_123803.log). **Stage 1** 64-bar source-view identity (span copy past occupy-set cap 128) **in tree** — [`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md). Stage 2 not started. NOTE_EDIT overlap is a **sibling consumer**. Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
@@ -484,7 +484,7 @@ A note whose canonical span crosses the loop boundary is present on both sides o
 | **2** | B collect walks prepared `NoteSpan`s with `displayNotePresentAtHold` (same as A). **In tree.** PLAYING/STOPPED/MUTED HITL skipped (DEC-040). `notePresentAt` unchanged. | keep old path |
 | **2a** | Session-undo inverse of baked companions. After wrap undo, A and B both show the restored source note. **In tree.** Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). | keep old path |
 | **3** | Disable redundant source-window lookup for note-on discovery. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). 64-bar occupy identity **parked** [`122848`](../../captures/session_20260818_122848.log). | **in tree** |
-| **4** | Note-off: skip 16-bar fill when the source view already covers the loop. Keep fill for longer loops. Empty occupy still walks source-view notes. | **in tree** — device HITL open |
+| **4** | Note-off: skip 16-bar fill when the source view already covers the loop. Keep fill for longer loops. Empty occupy still walks source-view notes. | **in tree** — 1-bar HITL **PASS** [`123803`](../../captures/session_20260818_123803.log) |
 | **5** | Make present-at-S the owner of that one responsibility. Leave unrelated `overdubSourceView`. | narrow migration |
 
 ---
@@ -1010,7 +1010,7 @@ None that blocked Phase 1.
 
 ## Phase 4 — skip note-off fill when the source view covers the loop
 
-**Status:** firmware **in tree**. Device HITL open.
+**Status:** firmware **in tree**. 1-bar HITL **PASS** [`123803`](../../captures/session_20260818_123803.log). 64-bar occupy identity still **parked**.
 
 **Invariant:** Note-off does not call `ensureOverdubSourceNotesForHold` / `resolveWindow` when enter/wrap already gathered the whole loop (`loopLen <= overdubSourceWindowLengthTicks()`). Empty occupy still consumes via the source-view overlap walk. Loops longer than the source window still JIT-merge ahead notes.
 
@@ -1021,6 +1021,8 @@ None that blocked Phase 1.
 **Native:** `test_note_off_skips_hold_fill_when_source_view_covers_loop` (8-bar, empty occupy, source-view size unchanged, still Hide/Shorten). 64-bar ahead fill stays: `test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop`, `test_empty_ids_shorten_jit_ahead_after_sounding_snapshot`. Native 1333/1333.
 
 **Device gate:** 1-bar note-off no `lcr,src,why=hold` (enter already covers the loop); 64-bar ahead-note consume still Hide/Shorten; `late_clk=0`. Parked occupy identity is not a gate.
+
+**Device** [`123803`](../../captures/session_20260818_123803.log) — 1-bar **PASS**: track 6 (768) `why=hold` = 0; 102/130 occupied `from=prep` `eq=1`; consume Hide without fill. 64-bar: 36 `why=hold` (win 114–160 ms, 1 `merged=1`); consume `empty_sets=0` `looked_up` = all offs. `late_clk=0`. 64-bar occupy `eq=0` is `a=1,b=1` `ao=1,bo=1` (different ids) — parked, not this gate.
 
 ## Architecture gate (Phase 4)
 

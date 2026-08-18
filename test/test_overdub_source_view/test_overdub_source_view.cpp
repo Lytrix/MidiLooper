@@ -63,6 +63,29 @@ bool hasDisplayNote(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint3
   return false;
 }
 
+const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
+                                                  NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void seedDenseWindowNotes(Loop& loop, uint32_t noteCount, uint32_t loopLength) {
+  loop.loopLengthTicks = loopLength;
+  LoopEventStore store;
+  for (uint32_t i = 0; i < noteCount; ++i) {
+    const uint32_t onTick = i * 80u;
+    const NoteId id = static_cast<NoteId>(i + 1);
+    TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, 1, 60, 100, id));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(onTick + 40u, 1, 60, 0)));
+  }
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = static_cast<NoteId>(noteCount + 1);
+}
+
 void seedRecordNote(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pitch,
                     uint8_t channel = 1) {
   loop.loopLengthTicks = kLoopLen;
@@ -577,6 +600,101 @@ void test_source_view_span_copy_keeps_only_window_note_ids() {
       loop.playbackRevision, filtered, &window, loop.loopLengthTicks));
   TEST_ASSERT_TRUE(hasDisplayNote(filtered, 60, 10));
   TEST_ASSERT_FALSE(hasDisplayNote(filtered, 60, 80));
+  LoopContentResolution::deviceGateReset();
+}
+
+// 122848 / 123803: >128 window NoteOns must not abort span copy via OverlapNoteIdSet.
+void test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  constexpr uint32_t kNoteCount = kOverlapNoteIdSetCapacity + 1;
+  seedDenseWindowNotes(loop, kNoteCount, kLongLoop);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  NoteUtils::DisplayNoteVec prepared;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(loop.playbackRevision, prepared));
+  TEST_ASSERT_EQUAL(kNoteCount, prepared.size());
+
+  SessionMidiEventVec window;
+  for (uint32_t i = 0; i < kNoteCount; ++i) {
+    MidiEvent on = MidiEvent::NoteOn(i * 80u, 1, 60, 100);
+    on.noteId = static_cast<NoteId>(i + 1);
+    window.push_back(on);
+  }
+  TEST_ASSERT_TRUE(window.size() > kOverlapNoteIdSetCapacity);
+
+  NoteUtils::DisplayNoteVec copied;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      loop.playbackRevision, copied, &window, loop.loopLengthTicks));
+  TEST_ASSERT_EQUAL(kNoteCount, copied.size());
+  for (const NoteUtils::DisplayNote& row : copied) {
+    TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, row.noteId);
+    bool inWindow = false;
+    for (const MidiEvent& evt : window) {
+      if (evt.isNoteOn() && evt.noteId == row.noteId) {
+        inWindow = true;
+        break;
+      }
+    }
+    TEST_ASSERT_TRUE(inWindow);
+    const NoteUtils::DisplayNote* preparedRow = findDisplayNoteById(prepared, row.noteId);
+    TEST_ASSERT_NOT_NULL(preparedRow);
+    TEST_ASSERT_EQUAL(preparedRow->note, row.note);
+    TEST_ASSERT_EQUAL_UINT32(preparedRow->startTick, row.startTick);
+    TEST_ASSERT_EQUAL_UINT32(preparedRow->endTick, row.endTick);
+    TEST_ASSERT_EQUAL(0, row.velocity);
+  }
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  constexpr uint32_t kNoteCount = kOverlapNoteIdSetCapacity + 1;
+  seedDenseWindowNotes(loop, kNoteCount, kLongLoop);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_EQUAL(kNoteCount, loop.overdubSourceViewNotes().size());
+  for (const NoteUtils::DisplayNote& row : loop.overdubSourceViewNotes()) {
+    TEST_ASSERT_EQUAL(0, row.velocity);
+  }
+
+  NoteUtils::DisplayNoteVec copied;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      loop.playbackRevision, copied, &loop.overdubSourceViewEvents(), loop.loopLengthTicks));
+  TEST_ASSERT_EQUAL(copied.size(), loop.overdubSourceViewNotes().size());
+  for (const NoteUtils::DisplayNote& row : loop.overdubSourceViewNotes()) {
+    const NoteUtils::DisplayNote* copiedRow = findDisplayNoteById(copied, row.noteId);
+    TEST_ASSERT_NOT_NULL(copiedRow);
+    TEST_ASSERT_EQUAL(copiedRow->note, row.note);
+    TEST_ASSERT_EQUAL_UINT32(copiedRow->startTick, row.startTick);
+    TEST_ASSERT_EQUAL_UINT32(copiedRow->endTick, row.endTick);
+  }
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(20, 60, occupyIds);
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(20, 60, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+  TEST_ASSERT_TRUE(occupyIds == sourceIds);
   LoopContentResolution::deviceGateReset();
 }
 
@@ -2285,6 +2403,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_source_view_falls_back_when_prepared_span_copy_is_empty);
   RUN_TEST(test_source_view_span_copy_keeps_only_window_note_ids);
+  RUN_TEST(test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity);
+  RUN_TEST(test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
   RUN_TEST(test_extract_open_note_ons_keeps_same_tick_completed_pair);

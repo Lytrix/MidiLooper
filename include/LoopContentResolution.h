@@ -367,12 +367,14 @@ struct LoopContentResolution {
                                                      OverlapNoteIdSet& out);
   /// Copy prepared `NoteSpan`s (Active passes + Disabled companions) to DisplayNotes.
   /// Same membership B walks. Omits Hide rows (`endTick == startTick`).
-  /// When `windowEvents` is set, keep only spans whose `noteId` appears as a
-  /// NoteOn in that window (030219: restamped leftover checkpoints must not
-  /// replace the gathered MIDI). When `loopLengthTicks` is non-zero, miss if it
-  /// disagrees with the checkpoint length.
+  /// When `windowEvents` is set, keep only spans whose `noteId` is a **unique
+  /// window NoteOn ID** (030219: restamped leftover checkpoints must not replace
+  /// the gathered MIDI). Membership is a rebuild-local sorted id list — not
+  /// `OverlapNoteIdSet` (cap 128 is the USB occupy set). When `loopLengthTicks`
+  /// is non-zero, miss if it disagrees with the checkpoint length.
   /// Returns false on prepared miss or when every span is skipped (empty is not
-  /// authoritative). Does not reconstruct MIDI.
+  /// authoritative). Does not reconstruct MIDI. After this returns true, the
+  /// caller must not reconstruct.
   static bool tryCopyPreparedSpansToDisplayNotes(uint32_t playbackRevision,
                                                  NoteUtils::DisplayNoteVec& out,
                                                  const SessionMidiEventVec* windowEvents = nullptr,
