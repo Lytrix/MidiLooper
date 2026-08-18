@@ -1,6 +1,6 @@
 # Occupy after wrap S — `(S, occupyTick]` ledger catch-up
 
-**Status:** Native **PASS** 1350/1350. Device gate: 203948-shaped occupy 32 ticks after S=64.  
+**Status:** Device **FAIL** [`214856`](../../captures/session_20260818_214856.log). Production catch-up **reverted**. `as=`/`ae=` stay. Native `(S, occupy]` tests stay as cursor math only.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_occupy_off_tick_display_investigation.md`](overdub_occupy_off_tick_display_investigation.md)  
@@ -15,21 +15,23 @@ Before occupy at tick T after wrap S, `ActiveNoteLedger` contains every committe
 
 ---
 
-## Architecture checkpoint
+## Architecture checkpoint (revert)
+
+The production catch-up failed this checkpoint. `playMidiEvents` from occupy can run `maybeCommitOverdubWrap` when `(lastTick, occupyPhase]` crosses session start.
 
 | Question | Answer |
 |----------|--------|
 | **Ownership change?** | NO — occupy still reads `Entry.noteId`. Writer stays `playCommittedLoopMidi` → `applyPlaybackLedgerEvent`. |
-| **State transition change?** | NO — wrap still commits at S. Occupy still snapshots at NoteOn. Catch-up runs the existing playback walk when `lastTickInLoop < occupyPhase`. |
-| **Reuse** | YES — `Track::snapshotOverlapHoldCandidates` calls `playMidiEvents` when the playback cursor is behind occupy phase. Same `advancePlaybackCursor` `(prev, current]`. |
+| **State transition change?** | YES if occupy calls `playMidiEvents` — wrap can commit on USB NoteOn. **Reverted.** Occupy snapshots only. |
+| **Reuse** | YES — occupy CAP `as=`/`ae=` stays on `snapshotOverlapHoldCandidates`. No playback call. |
 
 ---
 
-## Fix
+## Fix (reverted production walk)
 
-`Track::snapshotOverlapHoldCandidates`: if overdubbing and `lastTickInLoop < occupyPhase`, call `playMidiEvents` so `(lastTick, occupyPhase]` writes the ledger before `collectOverdubNoteOnParticipantIds`.
+Do **not** call `playMidiEvents` from `snapshotOverlapHoldCandidates`.
 
-Occupy CAP adds `as=` / `ae=` (first source-view span present at hold).
+Occupy CAP keeps `as=` / `ae=` (first source-view span present at hold). Native `(S, occupy]` tests remain cursor math only.
 
 Do **not** hide in DisplayManager. Do not teach occupy about wrap or source-view.
 
@@ -41,6 +43,19 @@ Do **not** hide in DisplayManager. Do not teach occupy about wrap or source-view
 - `test_wrap_pass_spanning_on_at_0_occupies_at_96` — On@0 Off@200, loop-head then wrap at 64, occupy at 96 `n=1`.
 - `pio test -e native` 1350/1350
 
-## HITL
+## HITL FAIL [`214856`](../../captures/session_20260818_214856.log)
 
-1-bar overdub, session start storage 64. After wrap, occupy the wrap-committed pitch at 96. Expect `from=ledger,n=1,a=1,b=1` and `as=` matching the source-view start. Opposite of [`203948`](../../captures/session_20260818_203948.log) `204277855` `n=0`.
+Occupy CAP `as=`/`ae=` names the painted source-view span. The five `n=0 a=1` occupies are **not** wrap-committed On@96 after S:
+
+| CAP | Pitch | `as`–`ae` | Occupy |
+|-----|-------|-----------|--------|
+| `98573816` | 30 | **528–544** | `n=0 a=1` |
+| `107573372` | 12 | **0–192** | `n=0 a=1` |
+| `109577175` | 12 | **144–232** | `n=0 a=1` |
+| `111112659` | 12 | **720–767** | `n=0 a=1` |
+| `122149713` | 24 | **216–408** | `n=0 a=1` |
+
+`playMidiEvents` from `snapshotOverlapHoldCandidates` when `lastTickInLoop < occupyPhase` can cross session start (`shouldCommitOverdubWrap`) and seal a wrap on the USB occupy path. That is a transition change. Reverted.
+
+Do **not** call `playMidiEvents` from occupy. Writer stays clock `playCommittedLoopMidi`. Successor: [`overdub_occupy_capture_stream_ledger_bugfix.md`](overdub_occupy_capture_stream_ledger_bugfix.md).
+

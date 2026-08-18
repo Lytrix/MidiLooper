@@ -62,6 +62,13 @@ void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotInde
   track->sendMidiEvent(evt, slotIndex);
 }
 
+void playbackCursorAdvanceSendCapture(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
+  // Live capture echo only. Occupy reads committed playback Entries; capture
+  // Off/On must not last-write the same (channel, pitch) slot (221334).
+  Track* track = static_cast<Track*>(ctx);
+  track->sendMidiEvent(evt, slotIndex);
+}
+
 bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick) {
   const auto* jam = static_cast<const PlaybackJamFilterCtx*>(ctx);
   return jam->track->isStorageTickInJamRegion(storageTick, *jam->loop);
@@ -236,7 +243,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     PlaybackCursorAdvanceState captureAdvance{&loop.captureNextEventIndex, nullptr};
     (void)advancePlaybackCursor(
         captureAdvance, frame, PlaybackEmitPolicy::ActiveCaptureOverdub,
-        makeCapturePlaybackStream(loop), playbackCursorAdvanceSend, this, slotIndex,
+        makeCapturePlaybackStream(loop), playbackCursorAdvanceSendCapture, this, slotIndex,
         playbackCursorAdvanceJamFilter, &jamCtx, midiChannel);
   }
 

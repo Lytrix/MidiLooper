@@ -48,10 +48,8 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   }
   // Occupy is ledger lookup at currentTick. No 16-bar hold fill on note-on.
   // Ahead notes still merge at note-off (`ensureOverdubSourceNotesForHold`).
-  const uint32_t occupyPhase = capturePhaseTick(pending.startNoteTick);
-  if (loop.lastTickInLoop != UINT32_MAX && loop.lastTickInLoop < occupyPhase) {
-    playMidiEvents(pending.startNoteTick, playbackEmitMidiOutput_);
-  }
+  // Do not call playMidiEvents here: lastTick < occupyPhase can cross session
+  // start and commit a wrap on the USB occupy path (214856).
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   if (runtime == nullptr) {
     pending.overlapNoteIds.clear();
@@ -99,7 +97,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   char line[256];
   snprintf(line, sizeof(line),
            "#CAP,%lu,DIAG,lcr,part,why=on,from=ledger,pitch=%u,n=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,"
-           "as=%lu,ae=%lu,us=%lu",
+           "as=%lu,ae=%lu,hs=%lu,us=%lu",
            static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
            static_cast<unsigned>(pending.overlapNoteIds.size()),
            static_cast<unsigned>(sourceViewIds.size()),
@@ -107,6 +105,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
            (prepared && onlyA == 0 && onlyB == 0) ? 1u : 0u, onlyA, onlyB,
            static_cast<unsigned long>(sourceViewStart),
            static_cast<unsigned long>(sourceViewEnd),
+           static_cast<unsigned long>(holdStart),
            static_cast<unsigned long>(observeUs));
   DebugSessionCapture::appendCaptureTextLine(line);
 #endif

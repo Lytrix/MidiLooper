@@ -140,7 +140,7 @@ The ledger does not answer “which stored notes contain S?” (`PresentNoteVec`
 
 ## Formal trigger
 
-**Timing model:** when `ActiveNoteLedger` is written relative to `currentTick`. `playCommittedLoopMidi` → `playbackCursorAdvanceSend` calls `applyPlaybackLedgerEvent`, then `sendMidiEvent` may emit.
+**Timing model:** when `ActiveNoteLedger` is written relative to `currentTick`. `playCommittedLoopMidi` → `playbackCursorAdvanceSend` calls `applyPlaybackLedgerEvent`, then `sendMidiEvent` may emit. Capture overdub walk uses `playbackCursorAdvanceSendCapture` (emit only; does not write occupy’s ledger).
 
 **Owner:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger` from the playback event. `sendMidiEvent` and `collectOverdubNoteOnParticipantIds` read it. No `WindowManager`. No new Session.
 
