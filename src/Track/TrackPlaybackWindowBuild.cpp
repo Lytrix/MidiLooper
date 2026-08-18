@@ -86,10 +86,11 @@ void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, 
 void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
-  // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — full replace, no
-  // materialized underlay. Outside NOTE_EDIT and live capture, chunk-ref merge only (DEC-016).
-  // Long loops use windowed gather — full-loop gather after LoadLoopJob Commit hard-faults
-  // (session_20260718_210532 / 210001).
+  // playback order + MIDI send. Playback mergedMidiEvents is committed-only (224719):
+  // live capture must not fold into this representation. NOTE_EDIT uses session store
+  // (Tier 2) — full replace, no materialized underlay. Outside NOTE_EDIT, chunk-ref
+  // merge of committed passes only (DEC-016). Long loops use windowed gather — full-loop
+  // gather after LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
   static bool mergedMidiEventsBuildInProgress = false;
   if (mergedMidiEventsBuildInProgress) {
     return;
@@ -138,20 +139,11 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     if (winStart + winLen > loop.loopLengthTicks) {
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
-    if (loop.captureActive()) {
-      loop.gatherCommittedEventsInWindowWithCapture(runtime.mergedMidiEvents.mergedEvents, winStart,
-                                                    winLen);
-    } else {
-      loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
-    }
+    loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
-  } else if (!loop.captureActive()) {
-    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
-    runtime.mergedMidiEvents.windowStartTick = 0;
-    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else {
-    loop.gatherCommittedEventsWithCapture(runtime.mergedMidiEvents.mergedEvents);
+    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }

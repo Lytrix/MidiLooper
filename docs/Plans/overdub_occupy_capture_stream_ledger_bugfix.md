@@ -1,11 +1,14 @@
 # Occupy capture-stream ledger last-writer
 
-**Status:** Native **PASS** 1352/1352. HITL open.  
+**Status:** FROZEN — emit-only capture walk shipped; remaining writer was capture folded into committed-only `mergedMidiEvents`. Successor: [`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  
 **Pin:** [`221334`](../../captures/session_20260818_221334.log)  
+**HITL FAIL:** [`224719`](../../captures/session_20260818_224719.log)  
 **Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; USB occupy `playMidiEvents` catch-up (reverted [`214856`](../../captures/session_20260818_214856.log)); occupy fallback; DisplayManager consume
+
+**Misattribution guard:** A later `n=0 a=1` / `n=1 a=0` after this freeze is not a regression of `playbackCursorAdvanceSendCapture`. Investigate whether live capture was folded into `mergedMidiEvents` ([`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md)).
 
 ---
 
@@ -63,4 +66,20 @@ Occupy CAP adds `hs=` (phased `pending.startNoteTick`). Keep `as=` / `ae=`.
 
 ## HITL
 
-After flash: 1-bar overdub like 221334; occupy `n=0 a=1` = 0 and `n=1 a=0` = 0. Closed pins must still pass (wrap at 240; occupy 12 @ 0 and @ 96 `n=1 a=1`).
+**FAIL** [`224719`](../../captures/session_20260818_224719.log): 1-bar 768 OVERDUBBING; wrap storage **256** (not 221334’s 240). Occupy CAP `hs=` on all **109** lines; `hs=` equals COORD `storage` on every occupy that has a COORD (50/50). `RING,overflow` after the last occupy.
+
+| Kind | Count | Gate |
+|------|------:|------|
+| `n=1 a=1` | 62 | match |
+| `n=0 a=0` | 28 | empty lane |
+| **`n=0 a=1`** | **8** | **FAIL** (want 0) |
+| **`n=1 a=0`** | **6** | **FAIL** (want 0) |
+| `n=1 a=2` | 5 | one ledger slot vs two source-view ids (not this gate) |
+
+Closed pins this run: occupy 12 @ `hs=0` `n=1 a=1` (`9919`, `10020`). Occupy 12 @ `hs=96` is `n=0 a=0` (empty lane; 221334’s `as=96–192` is not in this take). Occupy 12 @ `hs=240` `n=1 a=1` (`9843`, `10378`).
+
+`n=0 a=1` interiors (not On@96 after S): 24 `as=264–359` `hs=288`; 24 `120–312` `hs=264`; 30 `672–767` `hs=720`; 30 `48–144` `hs=48`; 30 `336–432` `hs=336`; 12 `336–431` `hs=352`; 24 `552–744` `hs=576`; 24 `264–359` `hs=336`.
+
+`n=1 a=0` leftovers all `as=0 ae=0`: 24 @ `hs=72` twice (`9784`, `11967`); 12 @ `720` / `48` / `720` / `144`.
+
+Capture emit-only is on this firmware (`hs=` is the same occupy CAP as this commit). Device still disagrees `n` vs `a`. Do not reopen wrap-S `(prev, S]` or USB `playMidiEvents`. Do not treat `n=1 a=2` as this FAIL.
