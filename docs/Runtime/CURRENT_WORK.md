@@ -2,21 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (occupy capture-stream ledger; USB catch-up reverted)
+Last updated: 2026-08-18 (occupy merged-capture ledger — playback mergedMidiEvents committed-only)
 
 ---
 
 ## Now implementing
 
-### Occupy capture-stream ledger — native shipped; HITL open
+### Occupy merged-capture ledger — pin [`224719`](../../captures/session_20260818_224719.log)
 
-**Plan:** [`overdub_occupy_capture_stream_ledger_bugfix.md`](../Plans/overdub_occupy_capture_stream_ledger_bugfix.md)  
-**Pin:** [`221334`](../../captures/session_20260818_221334.log) — 10 `n=0 a=1` interiors; 5 `n=1 a=0` leftovers (`as=0 ae=0`)  
+**Plan:** [`overdub_occupy_merged_capture_ledger_bugfix.md`](../Plans/overdub_occupy_merged_capture_ledger_bugfix.md)  
+**Parent (FROZEN):** [`overdub_occupy_capture_stream_ledger_bugfix.md`](../Plans/overdub_occupy_capture_stream_ledger_bugfix.md) — emit-only capture walk shipped; remaining writer was capture folded into `mergedMidiEvents`  
+**Pin:** [`224719`](../../captures/session_20260818_224719.log) — 8 `n=0 a=1`; 6 `n=1 a=0`; `hs=` on 109/109 occupies  
 **USB catch-up:** **reverted** [`214856`](../../captures/session_20260818_214856.log) — do **not** call `playMidiEvents` from occupy
 
-**Invariant:** Occupy reads `ActiveNoteLedger` written from committed playback only. `ActiveCaptureOverdub` uses `playbackCursorAdvanceSendCapture` (`sendMidiEvent` only). CAP `hs=` is phased hold tick; `as=`/`ae=` stay.
+**Invariant:** Playback `runtime.mergedMidiEvents` is committed-only. Occupy reads `ActiveNoteLedger` written from that representation, wrap-pass, and loop-head. Live capture echo uses `playbackCursorAdvanceSendCapture` and must not last-write that ledger. CAP `hs=` is phased hold tick; `as=`/`ae=` stay.
 
-**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16 (HITL PASS below). No occupy fallback. No DisplayManager patch.
+**Firmware:** `ensurePlaybackMergedMidiEventsBuilt` gathers `gatherCommittedEventsForDerivedView` / `gatherCommittedEventsInWindow` even while capture is active. Display `WithCapture` stays paint.
+
+**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16 (HITL PASS below). No occupy fallback. No DisplayManager patch. Do not treat `n=1 a=2` as this FAIL.
+
+### Occupy capture-stream ledger — FROZEN
+
+**Plan:** [`overdub_occupy_capture_stream_ledger_bugfix.md`](../Plans/overdub_occupy_capture_stream_ledger_bugfix.md)  
+Emit-only `playbackCursorAdvanceSendCapture` shipped. Remaining writer was live capture folded into `mergedMidiEvents` — successor above. Pin [`221334`](../../captures/session_20260818_221334.log). HITL FAIL [`224719`](../../captures/session_20260818_224719.log).
 
 ### Occupy `n=0 a=1` off tick 0 — display vs ledger (USB catch-up reverted)
 
@@ -27,7 +35,7 @@ Last updated: 2026-08-18 (occupy capture-stream ledger; USB catch-up reverted)
 
 **Display:** OVERDUBBING paint is `resolveDisplayNotesLiveCapture` from `overdubSourceViewNotes` + `capturePreview`. Occupy is not a paint input. Do not patch DisplayManager.
 
-**Named write (native only):** wrap-committed On@96 is not in wrap-S `(prev, S]`. Clock `playCommittedLoopMidi` must walk `(S, occupyTick]` after wrap reanchor at S. Do **not** call `playMidiEvents` from occupy (wrap can commit on USB NoteOn). Occupy stays a reader. CAP `as=`/`ae=` stays. Successor is capture-stream ledger above.
+**Named write (native only):** wrap-committed On@96 is not in wrap-S `(prev, S]`. Clock `playCommittedLoopMidi` must walk `(S, occupyTick]` after wrap reanchor at S. Do **not** call `playMidiEvents` from occupy (wrap can commit on USB NoteOn). Occupy stays a reader. CAP `as=`/`ae=` stays. Successor is merged-capture ledger above.
 
 **214856 `n=0 a=1` spans (not On@96):** 30 `528–544`; 12 `0–192`; 12 `144–232`; 12 `720–767`; 24 `216–408`. Wraps at storage **8**.
 
@@ -60,7 +68,7 @@ Last updated: 2026-08-18 (occupy capture-stream ledger; USB catch-up reverted)
 **Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`; do **not** say occupy = ledger  
 **Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`152940`](../../captures/session_20260813_152940.log), [`152745`](../../captures/session_20260818_152745.log)
 
-**Owners:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger` via `applyPlaybackLedgerEvent` on merged / wrap-pass / loop-head. Capture emit does not write. `sendMidiEvent` emits. Occupy reads `Entry.noteId`.
+**Owners:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger` via `applyPlaybackLedgerEvent` on committed-only `mergedMidiEvents` / wrap-pass / loop-head. Capture emit does not write. `sendMidiEvent` emits. Occupy reads `Entry.noteId`.
 
 **Product:** at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at runtime. No `length` on `Entry`. `LoopPasses` may still overlap (`max_same_pitch=322`). `sendMidiEvent` does not create that `Entry`.
 

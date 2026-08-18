@@ -100,6 +100,16 @@ void prepareLoopContent(Loop& loop) {
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 }
 
+void applyGatheredThroughTick(ActiveNoteLedger& ledger, const MidiEventVec& events,
+                              uint32_t throughTick) {
+  for (const MidiEvent& evt : events) {
+    if (evt.tick > throughTick) {
+      continue;
+    }
+    (void)ledger.applyPlaybackEvent(1, evt);
+  }
+}
+
 }  // namespace
 
 void test_pending_requires_source_view() {
@@ -1429,8 +1439,8 @@ void test_note_on_occupy_last_writer_overwrites() {
 }
 
 void test_capture_off_does_not_clear_committed_occupy() {
-  // session_20260818_221334 n=0 a=1 interior: committed 23 On@384 Off@480;
-  // capture Off@400 same pitch; occupy at 420. Capture emit must not write ledger.
+  // session_20260818_221334 / 224719 n=0 a=1: capture Off in WithCapture gather
+  // last-writes occupy’s ledger. Playback mergedMidiEvents must use committed gather.
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -1445,24 +1455,25 @@ void test_capture_off_does_not_clear_committed_occupy() {
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   loop.rebuildOverdubSourceView(kOccupy);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kCaptureOff, 1, kPitch, 0)));
 
   OverlapNoteIdSet sourceViewIds;
   loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
   TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
 
-  ActiveNoteLedger ledger;
-  TEST_ASSERT_TRUE(
-      ledger.applyPlaybackEvent(1, noteOnWithNoteId(kOn, 1, kPitch, 90, kCommittedId)));
-  TEST_ASSERT_EQUAL_UINT32(kCommittedId, ledger.noteId(1, kPitch));
-
-  const MidiEvent captureOff = MidiEvent::NoteOff(kCaptureOff, 1, kPitch, 0);
-  ActiveNoteLedger bothStreams = ledger;
-  TEST_ASSERT_TRUE(bothStreams.applyPlaybackEvent(1, captureOff));
+  MidiEventVec withCapture;
+  loop.gatherCommittedEventsWithCapture(withCapture);
+  ActiveNoteLedger foldedCapture;
+  applyGatheredThroughTick(foldedCapture, withCapture, kOccupy);
   OverlapNoteIdSet clearedOccupy;
-  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, bothStreams, clearedOccupy);
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, foldedCapture, clearedOccupy);
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(clearedOccupy.size()));
 
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger ledger;
+  applyGatheredThroughTick(ledger, committedOnly, kOccupy);
   OverlapNoteIdSet occupyIds;
   loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
@@ -1470,8 +1481,8 @@ void test_capture_off_does_not_clear_committed_occupy() {
 }
 
 void test_capture_on_does_not_occupy_empty_source_view() {
-  // session_20260818_221334 n=1 a=0 leftover: 12 as=624-720, occupy at 45
-  // (as=0 ae=0). Capture On must not write the occupy ledger.
+  // session_20260818_221334 / 224719 n=1 a=0: capture On in WithCapture gather
+  // occupies when source-view has no pitch. Committed gather must not.
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -1486,20 +1497,25 @@ void test_capture_on_does_not_occupy_empty_source_view() {
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   loop.rebuildOverdubSourceView(kOccupy);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kOccupy, 1, kPitch, 90, kCaptureId)));
 
   OverlapNoteIdSet sourceViewIds;
   loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(sourceViewIds.size()));
 
-  const MidiEvent captureOn = noteOnWithNoteId(kOccupy, 1, kPitch, 90, kCaptureId);
-  ActiveNoteLedger bothStreams;
-  TEST_ASSERT_TRUE(bothStreams.applyPlaybackEvent(1, captureOn));
+  MidiEventVec withCapture;
+  loop.gatherCommittedEventsWithCapture(withCapture);
+  ActiveNoteLedger leftoverLedger;
+  applyGatheredThroughTick(leftoverLedger, withCapture, kOccupy);
   OverlapNoteIdSet leftoverOccupy;
-  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, bothStreams, leftoverOccupy);
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, leftoverLedger, leftoverOccupy);
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(leftoverOccupy.size()));
   TEST_ASSERT_TRUE(leftoverOccupy.contains(kCaptureId));
 
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
   ActiveNoteLedger ledger;
+  applyGatheredThroughTick(ledger, committedOnly, kOccupy);
   OverlapNoteIdSet occupyIds;
   loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
