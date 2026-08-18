@@ -233,6 +233,30 @@ void test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop() {
   TEST_ASSERT_EQUAL(notesAtEnter + 1, loop.overdubSourceViewNotes().size());
 }
 
+void test_note_off_skips_hold_fill_when_source_view_covers_loop() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 50));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+  TEST_ASSERT_TRUE(loop.loopLengthTicks <=
+                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({})));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_TRUE(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
+                       countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
+                   1);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lookedUp);
+}
+
 void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -875,6 +899,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_consumes_existing_source_view_overlap);
   RUN_TEST(test_overdub_consumes_source_view_when_hold_ids_incomplete);
   RUN_TEST(test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop);
+  RUN_TEST(test_note_off_skips_hold_fill_when_source_view_covers_loop);
   RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);

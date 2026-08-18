@@ -1,13 +1,13 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1–2a **in tree**. Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED participant HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 3** note-on fill disable **in tree** (device HITL open). NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1–2a **closed**. Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED participant HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 3** note-on fill disable **in tree**. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). 64-bar `from=prep` occupy identity **parked** [`122848`](../../captures/session_20260818_122848.log) (`a=1,b=0`). **Phase 4** note-off fill skip when the source view covers the loop **in tree** (device HITL open). NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill). Phase 3 16-bar note-on fill disable is authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree.
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill); folding the parked 64-bar occupy identity (`122848` `a=1,b=0`) into Phase 4. Phase 3 16-bar note-on fill disable and Phase 4 skip of note-off fill when the source view covers the loop are authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree.
 
 **Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
@@ -394,6 +394,17 @@ genuinely requires LCR interval resolution
 
 Only the last category retains an LCR window. Wrap-shaped consume `[S, L) ∪ [0, E)` stays the consume geometry ([`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md)). Present-at-S is not assumed to replace every source-view operation.
 
+**Phase 4 classification (in tree):**
+
+| Class | Path | Keep |
+|-------|------|------|
+| 1. occupy transaction | `appendNotesForIds` when occupy ids are non-empty | yes |
+| 2. overdub transaction | walk `overdubSourceViewNotes_` for pitch ∩ consume window ∩ overlap | **always** — empty occupy still consumes here ([`122848`](../../captures/session_20260818_122848.log) `looked_up=0` `hide>0`) |
+| 3. canonical note state at E | not this slice | not started |
+| 4. LCR interval | `ensureOverdubSourceNotesForHold` (16-bar `resolveWindow`) | **only** when `loopLen > overdubSourceWindowLengthTicks()` (ahead notes outside the enter window). Skip when enter/wrap already gathered the whole loop. |
+
+Parked: 64-bar prepared occupy `a=1,b=0` ([`122848`](../../captures/session_20260818_122848.log)). Do not treat empty B occupy as no participants.
+
 ---
 
 ## 12. `overdubSourceView`
@@ -472,8 +483,8 @@ A note whose canonical span crosses the loop boundary is present on both sides o
 | **1** | Prototype present-at-S query at overdub note-on **alongside** source-window fill. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). | observation only, **in tree** |
 | **2** | B collect walks prepared `NoteSpan`s with `displayNotePresentAtHold` (same as A). **In tree.** PLAYING/STOPPED/MUTED HITL skipped (DEC-040). `notePresentAt` unchanged. | keep old path |
 | **2a** | Session-undo inverse of baked companions. After wrap undo, A and B both show the restored source note. **In tree.** Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). | keep old path |
-| **3** | Disable redundant source-window lookup for note-on discovery. Measure cost. 64-bar / outside-gather is Phase 3 validation. | **in tree** — device HITL open |
-| **4** | Note-off classification. | after Phase 3 device gate |
+| **3** | Disable redundant source-window lookup for note-on discovery. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). 64-bar occupy identity **parked** [`122848`](../../captures/session_20260818_122848.log). | **in tree** |
+| **4** | Note-off: skip 16-bar fill when the source view already covers the loop. Keep fill for longer loops. Empty occupy still walks source-view notes. | **in tree** — device HITL open |
 | **5** | Make present-at-S the owner of that one responsibility. Leave unrelated `overdubSourceView`. | narrow migration |
 
 ---
@@ -656,7 +667,7 @@ Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../c
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
-Phase 4 next: classify remaining source-view / hold-fill work on note-off. Do not delete `overdubSourceView`.
+Phase 4 in tree: skip note-off `ensureOverdubSourceNotesForHold` when the source view covers the loop. Device gate: 1-bar note-off no `why=hold`; 64-bar ahead-note consume still Hide/Shorten; `late_clk=0`. Parked 64-bar occupy identity is not a Phase 4 gate. Do not delete `overdubSourceView`.
 
 ---
 
@@ -967,17 +978,17 @@ None that blocked Phase 1.
 
 ## Phase 3 — disable note-on source-window fill
 
-**Status:** firmware **in tree**. Device HITL open.
+**Status:** firmware **in tree**. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). 64-bar prepared occupy identity **parked** [`122848`](../../captures/session_20260818_122848.log) (`a=1,b=0`).
 
-**Invariant:** USB note-on occupy never calls `ensureOverdubSourceNotesForHold` / `resolveWindow`. When prepared, occupy ids are present-at-S (`tryCollectPreparedPresentNoteIdsAtTick`). On miss, occupy is the source-view walk already built at enter/wrap. Note-off consume still JIT-fills (Phase 4).
+**Invariant:** USB note-on occupy never calls `ensureOverdubSourceNotesForHold` / `resolveWindow`. When prepared, occupy ids are present-at-S (`tryCollectPreparedPresentNoteIdsAtTick`). On miss, occupy is the source-view walk already built at enter/wrap. Note-off consume is Phase 4 (fill only when the source view does not cover the loop).
 
 **Owner:** `Track::snapshotOverlapHoldCandidates` → `Loop::collectOverdubNoteOnParticipantIds`.
 
-**Not:** deleting `overdubSourceView`; changing `notePresentAt`; note-off fill; hydrate; shrinking `kOverdubSourceWindowBars`.
+**Not:** deleting `overdubSourceView`; changing `notePresentAt`; hydrate; shrinking `kOverdubSourceWindowBars`. Note-off fill is Phase 4.
 
 **CAP:** `a` = source-view walk without fill; `b` = prepared present-at-S; production occupy = `b` when `from=prep`. 1-bar window covers the loop so `eq=1` still holds. 64-bar outside-gather may be `a=0,b>0` — occupy still uses `b`. No `lcr,src,why=hold` on note-on.
 
-**Native:** `test_note_on_occupy_uses_prepared_present_without_source_window_fill` (64-bar, NOTE ON outside the 16-bar window, present at S); `test_note_on_occupy_miss_uses_source_view_without_window_fill`; `test_note_on_occupy_matches_source_view_when_note_is_in_window`. Native 1332/1332.
+**Native:** `test_note_on_occupy_uses_prepared_present_without_source_window_fill` (64-bar, NOTE ON outside the 16-bar window, present at S); `test_note_on_occupy_miss_uses_source_view_without_window_fill`; `test_note_on_occupy_matches_source_view_when_note_is_in_window`. Native 1333/1333.
 
 **Device gate:** 1-bar occupied `eq=1` and no `why=hold` on note-on; 64-bar / outside-gather occupy from `b` without USB `resolveWindow`; `late_clk=0`.
 
@@ -994,3 +1005,50 @@ None that blocked Phase 1.
 | **Behavior-preserving?** | NO for occupy source (A→B when prepared). Overdub FSM unchanged. |
 | **Reuse** | YES — extend `snapshotOverlapHoldCandidates`; compose existing A/B collects. Do not add `resolveWindow` on USB miss. |
 | **Phase scope** | Phase 3 note-on fill disable. Hydrate not authorized. Note-off is Phase 4. |
+
+---
+
+## Phase 4 — skip note-off fill when the source view covers the loop
+
+**Status:** firmware **in tree**. Device HITL open.
+
+**Invariant:** Note-off does not call `ensureOverdubSourceNotesForHold` / `resolveWindow` when enter/wrap already gathered the whole loop (`loopLen <= overdubSourceWindowLengthTicks()`). Empty occupy still consumes via the source-view overlap walk. Loops longer than the source window still JIT-merge ahead notes.
+
+**Owner:** `Loop::accumulatePendingNoteChangesForIncomingNote` → `collectConsumeWindow`.
+
+**Not:** deleting `overdubSourceView`; changing `notePresentAt`; hydrate; shrinking `kOverdubSourceWindowBars`; treating empty B occupy as no participants; folding [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0` into this slice.
+
+**Native:** `test_note_off_skips_hold_fill_when_source_view_covers_loop` (8-bar, empty occupy, source-view size unchanged, still Hide/Shorten). 64-bar ahead fill stays: `test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop`, `test_empty_ids_shorten_jit_ahead_after_sounding_snapshot`. Native 1333/1333.
+
+**Device gate:** 1-bar note-off no `lcr,src,why=hold` (enter already covers the loop); 64-bar ahead-note consume still Hide/Shorten; `late_clk=0`. Parked occupy identity is not a gate.
+
+## Architecture gate (Phase 4)
+
+| Question | Answer |
+|----------|--------|
+| **Owner module** | `Loop::accumulatePendingNoteChangesForIncomingNote` / `collectConsumeWindow`. |
+| **Primary invariant** | Note-off does not `resolveWindow` when the source view already covers the loop. Empty occupy still walks source-view notes. |
+| **Ownership change?** | NO |
+| **State transition change?** | NO |
+| **Behavior-preserving?** | NO for 1-bar/≤16-bar note-off cost (skip redundant fill). Consume geometry unchanged. 64-bar ahead fill unchanged. |
+| **Reuse** | YES — extend `collectConsumeWindow`. Keep `ensureOverdubSourceNotesForHold` for longer loops. |
+| **Phase scope** | Phase 4 note-off fill skip. Hydrate not authorized. 64-bar occupy identity parked. |
+
+## Pre-implementation review (Phase 4)
+
+### Ready
+- Note-off owner is `collectConsumeWindow`. Empty occupy already consumes via the source-view walk.
+- 1-bar holds are `merged=0` ([`121933`](../../captures/session_20260818_121933.log)). 64-bar ahead-note fill stays.
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| 64-bar `from=prep` `a=1,b=0` | Parked — not Phase 4 |
+| Empty occupy | Still walk source view |
+| Skip 16-bar fill | Only when `loopLen <= overdubSourceWindowLengthTicks()` |
+
+### Open before coding
+None.
+
+### Proceed?
+- YES

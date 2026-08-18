@@ -336,14 +336,19 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     if (windowStart >= windowEnd) {
       return;
     }
-    NoteUtils::DisplayNoteVec jitHoldPitchNotes;
-    ensureOverdubSourceNotesForHold(windowStart, pitch, &jitHoldPitchNotes);
-    for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
-      if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, windowStart, windowEnd,
-                                            loopLen)) {
-        continue;
+    // Phase 4: skip 16-bar resolveWindow when enter/wrap already gathered the
+    // whole loop. Empty occupy still walks source-view notes (122848 hide).
+    // Loops longer than the source window still JIT-merge ahead notes.
+    if (loopLen > overdubSourceWindowLengthTicks()) {
+      NoteUtils::DisplayNoteVec jitHoldPitchNotes;
+      ensureOverdubSourceNotesForHold(windowStart, pitch, &jitHoldPitchNotes);
+      for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
+        if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, windowStart, windowEnd,
+                                              loopLen)) {
+          continue;
+        }
+        unionSelectedNote(selected, note);
       }
-      unionSelectedNote(selected, note);
     }
     uint32_t sourceWindowStart = 0;
     uint32_t sourceWindowLength = 0;
