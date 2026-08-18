@@ -356,6 +356,7 @@ private:
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
   bool playbackEmitMidiOutput_ = false;
+  bool applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void snapshotOverlapHoldCandidates(PendingNote& pending);
   void collectOverlapHoldPlaybackNoteOn(NoteId noteId, uint8_t pitch);

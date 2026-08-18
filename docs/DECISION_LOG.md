@@ -61,8 +61,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-041 — Occupy present-at-S is JIT, not full-loop `lcr,mat`
 
 **Date:** 2026-08-18  
-**Status:** Accepted. Firmware **not authorized**. **Amended 2026-08-18:** `collectOverdubNoteOnParticipantIds` reads at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at `currentTick`. `LoopPlaybackRuntime::ledger` holds that state. `sendMidiEvent` and occupy **read** it. Do not say “occupy = ledger.”  
-**Owner:** `Loop` / `LoopContentResolution` = `LoopPasses`. `LoopPlaybackRuntime::ledger` = state at `currentTick`. `sendMidiEvent` and occupy = readers.  
+**Status:** Accepted. Occupy-lookup firmware **not authorized**. **Amended 2026-08-18:** `collectOverdubNoteOnParticipantIds` reads at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at `currentTick`. `LoopPlaybackRuntime::ledger` holds that state. `playCommittedLoopMidi` writes it via `applyPlaybackLedgerEvent` before `sendMidiEvent` may emit. Occupy **reads** it. Do not say “occupy = ledger.”  
+**Owner:** `Loop` / `LoopContentResolution` = `LoopPasses`. `LoopPlaybackRuntime::ledger` = state at `currentTick`. `playCommittedLoopMidi` writes. `sendMidiEvent` and occupy = readers.  
 **Plan:** [`overdub_present_at_tick_jit_architecture.md`](Plans/overdub_present_at_tick_jit_architecture.md)  
 **Implementation:** [`overdub_present_at_tick_jit_enhancement.md`](Plans/overdub_present_at_tick_jit_enhancement.md)  
 **Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype)  
@@ -95,7 +95,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 8. **Product contract.** `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`: at most one `Entry` per `(channel, pitch)`. `Track::sendMidiEvent` / `midiHandler.sendMidiEvent` use that `Entry`; they do not create it.
 9. **Runtime invariant.** `ActiveNoteLedger` has at most one active `Entry` per `(channel, pitch)`. After `Entry.noteId`, that slot holds at most one `noteId`. This is **not** a stored-content invariant. [`152940`](../captures/session_20260813_152940.log) `max_same_pitch=322` means `LoopPasses` may contain overlapping same-pitch notes. `playCommittedLoopMidi` applies `PlaybackMergedMidiEvents` to that one-slot ledger (last NoteOn overwrites). The ledger represents the resulting runtime owner; it does not resolve stored same-pitch overlap. The event stream does not guarantee one owner.
 10. **Content-commit owners.** Overdub Hide/Shorten (`Loop::accumulatePendingNoteChangesFromSourceNotes`) and NOTE_EDIT overlap (`NoteGeometryResolver`) remain owners for **new** overlap. They do not rewrite stored loops from this decision, and they do not currently guarantee every path that reaches playback is already one-owner. Not `ActiveNoteLedger`. Not `sendMidiEvent`.
-11. **Runtime.** `ActiveNoteLedger` holds state at `currentTick`. Move `ledger.noteOn` / `noteOff` from `sendMidiEvent` onto `playCommittedLoopMidi` **after** Stage 0 answers whether `PresentNote.noteId` is the same owner as `evt.noteId`. Completing `Entry` with that `noteId` is identity on the slot, not a new occupy owner.
+11. **Runtime.** `ActiveNoteLedger` holds state at `currentTick`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent` **before** `sendMidiEvent` may emit. Completing `Entry` with `evt.noteId` is identity on the slot, not a new occupy owner.
 12. **Do not say occupy = ledger.** `Loop` / `LoopContentResolution` keep `LoopPasses`. `LoopPlaybackRuntime` keeps `ledger`. Occupy reads `Entry.noteId`.
 13. **`PresentNote`.** Has `noteId`, but `PresentNoteVec` is **all** spans containing S (`upsertPresentNote` by `NoteId`) and has no `endTick`. Occupy already uses `NoteSpan`. Do not copy `PresentNoteVec` onto the ledger. Add `noteId` to `Entry`; keep `StateCheckpoints::presentAt` until a later decision. Do not add a third type.
 14. **`sendMidiEvent` lag.** Goes away if `playCommittedLoopMidi` writes `ledger.noteOn` at tick 32 **before** `midiHandler.sendMidiEvent`. USB at 32 reads `Entry.noteId` even if MIDI is not yet sent.
@@ -104,7 +104,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Does not change:** DEC-037 6.0 (no cold LCR on the overdub button); `overdubSourceView` for consume; `kOverdubSourceWindowBars` production size; `notePresentAt` as checkpoint fill.
 
-**Validation:** Stage 0 answered: `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Next firmware: `Entry.noteId` from `sendMidiEvent`. Occupy lookup and write-before-emit still blocked.
+**Validation:** Stage 0 answered: `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Write-before-emit: `applyPlaybackLedgerEvent` before `sendMidiEvent`. Occupy lookup still blocked.
 
 ---
 

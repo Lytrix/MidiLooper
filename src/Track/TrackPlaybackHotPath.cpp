@@ -54,7 +54,11 @@ struct PlaybackJamFilterCtx {
 };
 
 void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
-  static_cast<Track*>(ctx)->sendMidiEvent(evt, slotIndex);
+  Track* track = static_cast<Track*>(ctx);
+  if (!track->applyPlaybackLedgerEvent(evt, slotIndex)) {
+    return;
+  }
+  track->sendMidiEvent(evt, slotIndex);
 }
 
 bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick) {
@@ -185,34 +189,40 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
 }
 
+namespace {
+
+uint8_t remappedPlaybackChannel(const MidiEvent& evt, uint8_t trackMidiChannel) {
+  const bool isChannelMessage = evt.type == midi::NoteOn || evt.type == midi::NoteOff ||
+                                evt.type == midi::ControlChange || evt.type == midi::PitchBend ||
+                                evt.type == midi::AfterTouchChannel || evt.type == midi::ProgramChange;
+  if (isChannelMessage && (evt.channel == 0 || (evt.channel >= 1 && evt.channel <= 16))) {
+    return trackMidiChannel;
+  }
+  return evt.channel;
+}
+
+}  // namespace
+
+bool Track::applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
+  if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) {
+    return false;
+  }
+  if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return false;
+  }
+  const uint8_t channel = remappedPlaybackChannel(evt, midiChannel);
+  return playbackRuntime.slot(playbackSlotIndex).ledger.applyPlaybackEvent(channel, evt);
+}
+
 void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
   if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
   ignorePlaybackMidiInput = true;  // Suppress playback-echo MIDI during overdub capture
   MidiEvent evtCopy = evt;
-  // Per-event channel 1-16 is remapped to the track's output channel. Channel 0 is treated as
-  // unset (edit paths that default-construct MidiEvent and never set channel).
-  const bool isChannelMessage = evt.type == midi::NoteOn || evt.type == midi::NoteOff ||
-                                evt.type == midi::ControlChange || evt.type == midi::PitchBend ||
-                                evt.type == midi::AfterTouchChannel || evt.type == midi::ProgramChange;
-  if (isChannelMessage && (evt.channel == 0 || (evt.channel >= 1 && evt.channel <= 16))) {
-    evtCopy.channel = midiChannel;
-  }
+  evtCopy.channel = remappedPlaybackChannel(evt, midiChannel);
 
-  LoopPlaybackRuntime& runtime = playbackRuntime.slot(playbackSlotIndex);
-  if (evt.isNoteOff()) {
-    const uint8_t note = evtCopy.data.noteData.note;
-    if (!runtime.ledger.isActive(evtCopy.channel, note)) {
-      ignorePlaybackMidiInput = false;
-      return;
-    }
-    runtime.ledger.noteOff(evtCopy.channel, note);
-  } else if (evt.isNoteOn()) {
-    runtime.ledger.noteOn(evtCopy.channel, evtCopy.data.noteData.note, evt.noteId, evt.tick,
-                          evtCopy.data.noteData.velocity);
-    if (trackState == TRACK_OVERDUBBING) {
-      collectOverlapHoldPlaybackNoteOn(evt.noteId, evt.data.noteData.note);
-    }
+  if (evt.isNoteOn() && trackState == TRACK_OVERDUBBING) {
+    collectOverlapHoldPlaybackNoteOn(evt.noteId, evt.data.noteData.note);
   }
 
   // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.

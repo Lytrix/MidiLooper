@@ -54,6 +54,24 @@ class ActiveNoteLedger {
     entries_[indexFor(channel, note)] = Entry{};
   }
 
+  /// Apply a playback NoteOn/NoteOff to this slot. Returns false if the event
+  /// must not be emitted (orphan NoteOff: the slot was not active).
+  bool applyPlaybackEvent(uint8_t channel, const MidiEvent& evt) {
+    if (evt.isNoteOff()) {
+      const uint8_t note = evt.data.noteData.note;
+      if (!isActive(channel, note)) {
+        return false;
+      }
+      noteOff(channel, note);
+      return true;
+    }
+    if (evt.isNoteOn()) {
+      noteOn(channel, evt.data.noteData.note, evt.noteId, evt.tick, evt.data.noteData.velocity);
+      return true;
+    }
+    return true;
+  }
+
   template <typename Fn>
   void forEachActive(Fn&& fn) const {
     for (size_t i = 0; i < kLedgerSize; ++i) {
