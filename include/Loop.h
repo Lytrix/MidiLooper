@@ -28,6 +28,7 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "CaptureAppendResult.h"
+#include "ActiveNoteLedger.h"
 #include "OverlapNoteIdSet.h"
 #include "PassReclaim.h"
 #include "PendingNoteChange.h"
@@ -221,9 +222,10 @@ struct Loop {
   /// `resolveWindow` / cold `resolveState`. Clears `out`.
   bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
-  /// Note-on occupy (Phase 3): prepared present-at-S when ready, else source-view
-  /// walk. Never `ensureOverdubSourceNotesForHold` / `resolveWindow`. Clears `out`.
-  void collectOverdubNoteOnParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
+  /// Note-on occupy: `ledger.noteId(channel, pitch)` — at most one id.
+  /// Never `ensureOverdubSourceNotesForHold` / `resolveWindow`. Clears `out`.
+  void collectOverdubNoteOnParticipantIds(uint8_t pitch, uint8_t channel,
+                                          const ActiveNoteLedger& ledger,
                                           OverlapNoteIdSet& out) const;
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();

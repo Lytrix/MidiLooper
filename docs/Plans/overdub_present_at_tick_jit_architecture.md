@@ -1,6 +1,6 @@
 # Overdub occupy at `currentTick`
 
-**Status:** Architecture **pinned** 2026-08-18. Stage 0 identity **answered** (`MidiEvent.noteId`). `Entry.noteId` and write-before-emit **shipped**. Occupy lookup **not** authorized. `evaluateOccupyOverlap` parked. Do not say occupy = ledger.  
+**Status:** Architecture **pinned** 2026-08-18. Stage 0 identity **answered** (`MidiEvent.noteId`). `Entry.noteId`, write-before-emit, and occupy lookup **shipped**. `evaluateOccupyOverlap` parked. Do not say occupy = ledger.  
 **Date:** 2026-08-18  
 **Kind:** architecture  
 **Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)  
@@ -8,7 +8,7 @@
 **Related:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md), [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype), [`loop_content_resolution_stage9_handoff.md`](loop_content_resolution_stage9_handoff.md)  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log) (16-bar USB `resolveWindow`), [`173842`](../../captures/session_20260815_173842.log) / [`185931`](../../captures/session_20260815_185931.log) (full-loop STOPPED gate 31–40 s), [`132806`](../../captures/session_20260818_132806.log) (Stage 1c held; 64-bar `from=span` missed because PLAYING during `prep`), [`152940`](../../captures/session_20260813_152940.log) (`max_same_pitch=322`)
 
-**Does not authorize:** occupy reading `Entry.noteId`; adding `length` or `endTick` to `ActiveNoteLedger::Entry`; `resolveWindow` / cold `resolveState` / `ensureOverdubSourceNotesForHold` on occupy; `collectPitchPresentNoteIdsAtTick`; PLAYING full-history `deviceGateBegin`; wait-STOPPED-for-`lcr,mat`; consume merge; `WindowManager` / `WindowRequest`; a `LogicalPlaybackState` type (`ActiveNoteLedger` is that state); shrinking `kOverdubSourceWindowBars`; deleting `overdubSourceView`.
+**Does not authorize:** adding `length` or `endTick` to `ActiveNoteLedger::Entry`; `resolveWindow` / cold `resolveState` / `ensureOverdubSourceNotesForHold` on occupy; `collectPitchPresentNoteIdsAtTick`; PLAYING full-history `deviceGateBegin`; wait-STOPPED-for-`lcr,mat`; consume merge; `WindowManager` / `WindowRequest`; a `LogicalPlaybackState` type (`ActiveNoteLedger` is that state); shrinking `kOverdubSourceWindowBars`; deleting `overdubSourceView`.
 
 ---
 
@@ -94,19 +94,19 @@ Resolver checkpoint (PresentNote / StateCheckpoints::presentAt):
 
 **Do not add `length` (or `endTick`) to `Entry`.** Occupy does not need to know when the note ends. Adding `startTick`+`length` would make the ledger schedule geometry. The ledger represents the result of the playback schedule.
 
-**`Entry` today** (`include/ActiveNoteLedger.h`): `active`, `startTick`, `velocity`. No `NoteId`. No `length`.
+**`Entry` today** (`include/ActiveNoteLedger.h`): `active`, `noteId`, `startTick`, `velocity`. No `length`.
 
 | Field | Why it exists (proven) | Occupy |
 |-------|------------------------|--------|
 | `active` | Slot occupancy | Read after `noteId` |
 | `startTick` | Written for `longestActiveSpanBars` (header: “playback window sizing”). That method has **no call sites** in `.cpp` | Not required |
 | `velocity` | Written in `noteOn`; `silenceSlotMidiOutput` `forEachActive` ignores the `Entry` and sends NoteOff vel 0 | Not required |
-| `noteId` | Not present | Required after Stage 0 |
+| `noteId` | Written from playback `evt.noteId` in `applyPlaybackLedgerEvent` | Required |
 | `length` / `endTick` | Not present | **Do not add** |
 
 Do not delete `startTick` in this occupy plan. Do not add `length` to revive window sizing.
 
-**Occupy `noteId` write (shipped; occupy lookup still blocked):**
+**Occupy `noteId` write and lookup (shipped):**
 
 ```text
 NoteOn:  ledger.noteOn(channel, pitch, noteId, tick, velocity)
@@ -128,7 +128,7 @@ Introduced as LCR present-at-S (`resolveState` / `StateCheckpoints::presentAt`; 
 | Lifetime | `resolveState` / `StateCheckpoints::presentAt` | Runtime slot at `currentTick` |
 | Geometry | On `NoteSpan` / `DisplayNote`, not on `PresentNote` | Not required |
 | When written | LCR checkpoint fill | `applyPlaybackLedgerEvent` on the `playCommittedLoopMidi` cursor path |
-| Used by `collectOverdubNoteOnParticipantIds` today | No (`tryCollectPreparedPresentNoteIdsAtTick` / source-view walk) | No |
+| Used by `collectOverdubNoteOnParticipantIds` today | No (`tryCollectPreparedPresentNoteIdsAtTick` / source-view walk stay diagnostics) | Yes — `ledger.noteId(channel, pitch)` |
 
 The ledger does not answer “which stored notes contain S?” (`PresentNoteVec`). It answers which owner currently occupies `(channel, pitch)` at `currentTick`. Do **not** copy `PresentNoteVec` onto the ledger.
 
@@ -152,13 +152,13 @@ The ledger does not answer “which stored notes contain S?” (`PresentNoteVec`
 
 | Item | Pin |
 |------|-----|
-| Primitive | `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` for incoming pitch **P** (after occupy-lookup firmware) |
-| Today (until that firmware) | `tryCollectPreparedPresentNoteIdsAtTick` else `collectOverdubSourceHoldParticipantIds` |
+| Primitive | `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` for incoming pitch **P** |
+| Today | `ledger.noteId(midiChannel, pitch)` — at most one id. CAP `from=ledger` `n=` is production occupy. `a`/`b` stay source-view vs prepared diagnostics |
 | Must not mean | `PresentNoteVec`; `resolveWindow` on USB; occupy = ledger as an ownership transfer; `sendMidiEvent` as the writer of occupy identity |
 
 Consume / Hide stays on `overdubSourceView` / `accumulatePendingNoteChangesFromSourceNotes`. Do not fold consume into occupy.
 
-USB today (6.0): prepared helper or source-view walk. If both miss, occupy is empty — not “wait for `deviceGateComplete`”.
+USB today (6.0): occupy is `Entry.noteId`. If the slot is inactive, occupy is empty — not “wait for `deviceGateComplete`”. Prepared helper and source-view walk stay diagnostics (`a`/`b`).
 
 ---
 
@@ -180,7 +180,7 @@ playback event
 
 | Question | Answer |
 |----------|--------|
-| Ownership change? | **NO** new occupy owner. Ledger write moved from `sendMidiEvent` onto `applyPlaybackLedgerEvent` (DEC-041) |
+| Ownership change? | **NO** new occupy owner. Occupy **reads** `Entry.noteId` (DEC-041) |
 | Content vs runtime vs emit | `LoopPasses` may overlap; `playCommittedLoopMidi` writes the owner; `ActiveNoteLedger` represents it; `sendMidiEvent` and occupy read it |
 | 6.0 | Unchanged — no `resolveWindow` on the button |
 
@@ -205,4 +205,4 @@ playback event
 
 ## Next
 
-Occupy lookup: `collectOverdubNoteOnParticipantIds` reads `Entry.noteId`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`.
+Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. Do not add `length`.

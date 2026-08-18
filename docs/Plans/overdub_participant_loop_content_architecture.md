@@ -7,7 +7,7 @@
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill); wait-STOPPED-for-`lcr,mat` as occupy readiness (DEC-041). Phase 3 16-bar note-on fill disable and Phase 4 skip of note-off fill when the source view covers the loop are authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree. Occupy firmware that reads `ActiveNoteLedger` is **not** authorized until the occupy-lookup slice.
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill); wait-STOPPED-for-`lcr,mat` as occupy readiness (DEC-041). Phase 3 16-bar note-on fill disable and Phase 4 skip of note-off fill when the source view covers the loop are authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree. Occupy firmware that reads `ActiveNoteLedger` is **shipped**.
 
 **Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
@@ -40,10 +40,10 @@ midiHandler.sendMidiEvent
     = optional emit if playbackEmitMidiOutput_
 
 collectOverdubNoteOnParticipantIds
-    = lookup Entry.noteId for incoming pitch  (after Entry.noteId firmware)
+    = lookup Entry.noteId for incoming pitch
 ```
 
-Today (until that firmware) occupy is still `tryCollectPreparedPresentNoteIdsAtTick` else `collectOverdubSourceHoldParticipantIds`. See [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md).
+Today occupy is `ledger.noteId(midiChannel, pitch)`. Prepared present-at-S and the source-view walk stay diagnostics (`a`/`b`). See [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md).
 
 ---
 

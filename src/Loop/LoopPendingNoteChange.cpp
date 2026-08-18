@@ -204,12 +204,15 @@ LOOP_COLD_MEM bool Loop::tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, u
       tick, pitch, playbackRevision, loopLengthTicks, out);
 }
 
-LOOP_COLD_MEM void Loop::collectOverdubNoteOnParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
+LOOP_COLD_MEM void Loop::collectOverdubNoteOnParticipantIds(uint8_t pitch, uint8_t channel,
+                                                            const ActiveNoteLedger& ledger,
                                                             OverlapNoteIdSet& out) const {
-  if (tryCollectPreparedPresentNoteIdsAtTick(holdPhaseTick, pitch, out)) {
+  out.clear();
+  const NoteId id = ledger.noteId(channel, pitch);
+  if (id == kInvalidNoteId) {
     return;
   }
-  collectOverdubSourceHoldParticipantIds(holdPhaseTick, pitch, out);
+  (void)out.insert(id);
 }
 
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(

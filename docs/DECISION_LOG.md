@@ -61,7 +61,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-041 — Occupy present-at-S is JIT, not full-loop `lcr,mat`
 
 **Date:** 2026-08-18  
-**Status:** Accepted. Occupy-lookup firmware **not authorized**. **Amended 2026-08-18:** `collectOverdubNoteOnParticipantIds` reads at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at `currentTick`. `LoopPlaybackRuntime::ledger` holds that state. `playCommittedLoopMidi` writes it via `applyPlaybackLedgerEvent` before `sendMidiEvent` may emit. Occupy **reads** it. Do not say “occupy = ledger.”  
+**Status:** Accepted. Occupy-lookup firmware **shipped**. **Amended 2026-08-18:** `collectOverdubNoteOnParticipantIds` reads at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at `currentTick`. `LoopPlaybackRuntime::ledger` holds that state. `playCommittedLoopMidi` writes it via `applyPlaybackLedgerEvent` before `sendMidiEvent` may emit. Occupy **reads** it. Do not say “occupy = ledger.”  
 **Owner:** `Loop` / `LoopContentResolution` = `LoopPasses`. `LoopPlaybackRuntime::ledger` = state at `currentTick`. `playCommittedLoopMidi` writes. `sendMidiEvent` and occupy = readers.  
 **Plan:** [`overdub_present_at_tick_jit_architecture.md`](Plans/overdub_present_at_tick_jit_architecture.md)  
 **Implementation:** [`overdub_present_at_tick_jit_enhancement.md`](Plans/overdub_present_at_tick_jit_enhancement.md)  
@@ -104,7 +104,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Does not change:** DEC-037 6.0 (no cold LCR on the overdub button); `overdubSourceView` for consume; `kOverdubSourceWindowBars` production size; `notePresentAt` as checkpoint fill.
 
-**Validation:** Stage 0 answered: `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Write-before-emit: `applyPlaybackLedgerEvent` before `sendMidiEvent`. Occupy lookup still blocked.
+**Validation:** Stage 0 answered: `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Write-before-emit: `applyPlaybackLedgerEvent` before `sendMidiEvent`. Occupy lookup: `collectOverdubNoteOnParticipantIds` reads `ledger.noteId`.
 
 ---
 

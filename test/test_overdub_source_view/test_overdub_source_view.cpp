@@ -689,13 +689,10 @@ void test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity() {
     TEST_ASSERT_EQUAL_UINT32(copiedRow->endTick, row.endTick);
   }
 
-  OverlapNoteIdSet occupyIds;
-  loop.collectOverdubNoteOnParticipantIds(20, 60, occupyIds);
   OverlapNoteIdSet sourceIds;
   loop.collectOverdubSourceHoldParticipantIds(20, 60, sourceIds);
-  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
-  TEST_ASSERT_TRUE(occupyIds.contains(1));
-  TEST_ASSERT_TRUE(occupyIds == sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(1));
   LoopContentResolution::deviceGateReset();
 }
 
