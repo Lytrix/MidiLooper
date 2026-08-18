@@ -125,7 +125,19 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
   if (isActive && trackState == TRACK_OVERDUBBING) {
-    maybeCommitOverdubWrap(prevTickInLoop, tickInLoop);
+    if (maybeCommitOverdubWrap(prevTickInLoop, tickInLoop)) {
+      // Wrap committed a pass and bumped playbackRevision. Rebuild the merged stream
+      // and reanchor while lastTickInLoop is still prev so (prev, S] can apply the
+      // wrap-committed NoteOn at S before USB occupy. Do not reanchor after lastTick
+      // is already S — that skips evPhase <= S.
+      ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+      playbackContext = makePlaybackContext(*this, loop, currentTick);
+      if (!runtime.mergedMidiEvents.mergedEvents.empty()) {
+        ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
+        reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(),
+                              playbackContext);
+      }
+    }
   }
   loop.lastTickInLoop = tickInLoop;
   const bool atLoopStart =

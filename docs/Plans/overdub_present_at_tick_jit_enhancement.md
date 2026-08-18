@@ -161,3 +161,4 @@ Questions 1 (one `Entry` vs all `PresentNote`s) and 2 (`sendMidiEvent` lag) are 
 | `Entry.noteId` from `sendMidiEvent` (`evt.noteId`) | **Shipped** |
 | Split `playCommittedLoopMidi` vs `sendMidiEvent` | **Shipped** |
 | `collectOverdubNoteOnParticipantIds` reads `ledger` | **Shipped** |
+| Wrap rebuilds merged playback before occupy ([`152745`](../../captures/session_20260818_152745.log) `n=0 a=1 b=1`) | **In tree** — [`overdub_wrap_playback_rebuild_before_occupy_bugfix.md`](overdub_wrap_playback_rebuild_before_occupy_bugfix.md) |

@@ -205,4 +205,4 @@ playback event
 
 ## Next
 
-Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. Do not add `length`.
+Wrap-committed events at S must be on the merged stream and ledger **before** occupy ([`overdub_wrap_playback_rebuild_before_occupy_bugfix.md`](overdub_wrap_playback_rebuild_before_occupy_bugfix.md); pin [`152745`](../../captures/session_20260818_152745.log)). Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. Do not add `length`.

@@ -176,6 +176,45 @@ void test_unmute_does_not_resend_crossed_events() {
   TEST_ASSERT_EQUAL_UINT32(30, log.midiPhases[0]);
 }
 
+void test_wrap_committed_note_at_s_crosses_when_reanchored_at_prev() {
+  // session_20260818_152745: wrap-committed 71 @ 656. Reanchor at prev=655 then
+  // (655, 656] applies it. Reanchor after lastTick==S skips it; (656, 657] never crosses.
+  constexpr uint32_t kS = 656;
+  constexpr uint32_t kPrev = 655;
+  constexpr uint32_t kLoop = 768;
+  MidiEvent wrapOn = MidiEvent::NoteOn(kS, 1, 71, 100);
+  wrapOn.noteId = 5;
+  DirectPlaybackStreamCtx postWrap{{makePhaseEvent(528), wrapOn}};
+
+  auto skipThrough = [](DirectPlaybackStreamCtx& stream, uint32_t lastTick) -> uint16_t {
+    uint16_t cursor = 0;
+    while (static_cast<size_t>(cursor) < stream.events.size() &&
+           stream.events[cursor].tick <= lastTick) {
+      ++cursor;
+    }
+    return cursor;
+  };
+
+  uint16_t cursorAtS = skipThrough(postWrap, kS);
+  EngineAndMidiLog missLog;
+  missLog.sendMidi = true;
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advanceFrame(postWrap, cursorAtS, kS, kS + 1U, false, kLoop, missLog));
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(missLog.enginePhases.size()));
+
+  uint16_t cursorAtPrev = skipThrough(postWrap, kPrev);
+  EngineAndMidiLog wrapLog;
+  wrapLog.sendMidi = true;
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advanceFrame(postWrap, cursorAtPrev, kPrev, kS, false, kLoop, wrapLog));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(wrapLog.enginePhases.size()));
+  TEST_ASSERT_EQUAL_UINT32(kS, wrapLog.enginePhases[0]);
+
+  ActiveNoteLedger ledger;
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, wrapOn));
+  TEST_ASSERT_EQUAL_UINT32(5, ledger.noteId(1, 71));
+}
+
 void test_wrap_advances_while_midi_send_suppressed() {
   DirectPlaybackStreamCtx streamCtx{{makePhaseEvent(5), makePhaseEvent(90)}};
   uint16_t cursor = 0;
@@ -210,6 +249,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_all_notes_off_clears_ledger_mute_does_not);
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);
   RUN_TEST(test_unmute_does_not_resend_crossed_events);
+  RUN_TEST(test_wrap_committed_note_at_s_crosses_when_reanchored_at_prev);
   RUN_TEST(test_wrap_advances_while_midi_send_suppressed);
   return UNITY_END();
 }

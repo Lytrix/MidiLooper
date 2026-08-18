@@ -2,18 +2,32 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (occupy lookup of `Entry.noteId`)
+Last updated: 2026-08-18 (wrap rebuilds playback before occupy)
 
 ---
 
 ## Now implementing
+
+### Wrap rebuilds playback before occupy
+
+**Plan:** [`overdub_wrap_playback_rebuild_before_occupy_bugfix.md`](../Plans/overdub_wrap_playback_rebuild_before_occupy_bugfix.md)  
+**Parent:** [`overdub_present_at_tick_jit_enhancement.md`](../Plans/overdub_present_at_tick_jit_enhancement.md)  
+**Evidence:** [`152745`](../../captures/session_20260818_152745.log) wrap `n=0 a=1 b=1` pitch **71** @ **656** (`44831234`)
+
+**Invariant:** After overdub wrap commit, merged playback and `ActiveNoteLedger` at `currentTick` include wrap-committed events at S **before** `snapshotOverlapHoldCandidates` can run.
+
+**Owner:** `Track::playCommittedLoopMidi` wrap path. `commitOverdubWrapAtSessionStart` stays the sealer. Occupy stays a reader of `Entry.noteId`. Consume stays on `overdubSourceView`.
+
+**Pin:** wrap-committed same-start NoteOn was missing because wrap advanced the **old** merged stream; next tick `(656, 657]` never crosses `ev=656`. Firmware rebuilds merged+order and reanchors at **prev** on the wrap tick.
+
+**HITL after flash:** 1-bar overdub, note that **starts at S**, wrap, play that pitch again at S. Expect `from=ledger,n=1,a=1,b=1` not `44831234` `n=0 a=1 b=1`.
 
 ### Occupy — lookup `Entry.noteId`
 
 **Plan:** [`overdub_present_at_tick_jit_enhancement.md`](../Plans/overdub_present_at_tick_jit_enhancement.md)  
 **Architecture:** [`overdub_present_at_tick_jit_architecture.md`](../Plans/overdub_present_at_tick_jit_architecture.md)  
 **Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`; do **not** say occupy = ledger  
-**Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`152940`](../../captures/session_20260813_152940.log)
+**Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`152940`](../../captures/session_20260813_152940.log), [`152745`](../../captures/session_20260818_152745.log)
 
 **Owners:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger` via `applyPlaybackLedgerEvent`. `sendMidiEvent` emits. Occupy reads `Entry.noteId`.
 
@@ -21,7 +35,7 @@ Last updated: 2026-08-18 (occupy lookup of `Entry.noteId`)
 
 **Stage 0:** **Yes** — `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Not a 1:1 pitch lookup.
 
-**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`.
+**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-tick ledger miss is the wrap-rebuild bugfix above.
 
 **Parked:** `evaluateOccupyOverlap`; wait-STOPPED-for-`lcr,mat`; consume merge; “occupy = ledger” ownership transfer.
 
