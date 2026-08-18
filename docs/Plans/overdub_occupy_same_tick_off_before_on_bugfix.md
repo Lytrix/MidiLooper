@@ -1,6 +1,6 @@
 # Occupy same-tick Off before On (catch-up interval)
 
-**Status:** Native **PASS** 1357/1357. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL pending (same 1-bar overdub as [`233247`](../../captures/session_20260818_233247.log)).  
+**Status:** Native **PASS** 1357/1357. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **FAIL** [`235314`](../../captures/session_20260818_235314.log) — leftover `n=1 a=0` **met** (0); `n=0 a=1` **not met** (4). Pin [`233247`](../../captures/session_20260818_233247.log) was 11.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent (interval catch-up shipped, gate not met):** [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md)  
@@ -73,4 +73,25 @@ Native in [`test_pending_note_change.cpp`](../../test/test_pending_note_change/t
 
 ## HITL
 
-Same 1-bar overdub as 233247. Gates: `n=0 a=1` = 0 and `n=1 a=0` = 0. Keep occupy 12 @ `hs=0`. Do not treat `n=1 a=2` as this FAIL.
+**FAIL** [`235314`](../../captures/session_20260818_235314.log): 1-bar 768 OVERDUBBING; `hs=` on 133/133 occupies. `RING,overflow` three times. Firmware includes two-pass catch-up (`e723313`).
+
+| Kind | Count | Gate |
+|------|------:|------|
+| `n=1 a=1` | 43 | match |
+| `n=0 a=0` | 85 | empty lane |
+| **`n=0 a=1`** | **4** | **FAIL** (want 0; was 11 on [`233247`](../../captures/session_20260818_233247.log)) |
+| **`n=1 a=0`** | **0** | **met** (parent leftover) |
+| `n=1 a=2` | 1 | product; not this gate |
+
+`n=0 a=1` all pitch 12:
+
+| Line | us | `as`–`ae` | `hs` | Kind |
+|------|---:|-----------|------:|------|
+| L4294 | `75477461` | 240–384 | 352 | interior |
+| L4750 | `89187597` | 192–288 | 240 | interior |
+| L4811 | `92188216` | 624–720 | 624 | span start (`hs==as`) |
+| L4899 | `95191106` | 240–336 | 240 | span start (`hs==as`) |
+
+L4899: prior occupy 12 @ `hs=48` `as=48–240` `n=1 a=1` (L4897). Then occupy 12 @ `hs=240` `as=240–336` `n=0 a=1`. Same abut exclusive-end / inclusive-start shape as [`233247`](../../captures/session_20260818_233247.log) L2387.
+
+Closed pins this run: occupy 12 @ `hs=0` sounding `n=1 a=1` (L3964, L3997 `as=0–192`). L3888 / L4605 occupy 12 @ `hs=0` are `n=0 a=0` `as=ae=0` (empty source-view). Do not treat `n=1 a=2` as this FAIL. Do not call `playMidiEvents` from occupy. Do not fold capture into `mergedMidiEvents`. Do not change `rebuildPlaybackOrder` from this capture without a native/HITL fixture that shows clock last-writes Off after On at equal tick.
