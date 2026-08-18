@@ -119,6 +119,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
 
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
+  if (isActive && trackState == TRACK_OVERDUBBING) {
+    maybeCommitOverdubWrap(prevTickInLoop, tickInLoop);
+  }
   loop.lastTickInLoop = tickInLoop;
   const bool atLoopStart =
       IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);

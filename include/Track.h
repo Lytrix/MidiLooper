@@ -111,6 +111,17 @@ public:
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
+  /// Arm gated PLAYING MIDI polls after overdub→PLAYING. Not all PLAYING.
+  void armPlayingMidiDrainAfterOverdubStop();
+  bool playingMidiDrainAfterOverdubStopActive() const;
+  void notePlayingMidiDrainAfterOverdubStopIdle();
+  /// Measurement only: time loop() prefix after undo→PLAYING. Does not arm MIDI drain.
+  void armLoopPrefixMeasureAfterUndo();
+  bool loopPrefixMeasureAfterUndoActive() const;
+  void noteLoopPrefixMeasureAfterUndo();
+  /// DEC-038 038.1: seal completed pairs at S, publish, beginCapture, stay OVERDUBBING.
+  void commitOverdubWrapAtSessionStart();
+  void maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
 
   // Track management
   void clear();
@@ -133,6 +144,8 @@ public:
   /// One-shot `#CAP,DIAG,stored_notes` from a clean visual cache. SESSION_CAPTURE only.
   /// Gate 0 diagnosis; disable once later-stage overlap validation proofs exist.
   void maybeLogStoredNoteCount();
+  /// Arm sliced `#CAP,DIAG,lcr` on the selected track when idle (Stage 9 device gate). SESSION_CAPTURE only.
+  void maybeQueueContentResolutionDeviceGate();
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
@@ -357,6 +370,10 @@ private:
   volatile uint32_t jamTick;  // Position within jam region (0 to jamLength-1)
   bool jamPlaybackActive;     // True = track uses jamTick for playback
   bool alignLoopOriginOnNextStop;
+  bool playingMidiDrainAfterOverdubStop_ = false;
+  bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+  bool loopPrefixMeasureAfterUndo_ = false;
+  bool loopPrefixMeasureAfterUndoNoted_ = false;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredRecordRevtsPending = false;
   bool deferredRecordRevtChunkScan = false;
@@ -393,6 +410,7 @@ private:
 
   void resetDeferredStoredMidiVerification();
   void processDeferredStoredMidiVerification(size_t maxEventsPerSlice = 64);
+  void processDeferredContentResolutionDeviceGate();
 
   /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
   /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.

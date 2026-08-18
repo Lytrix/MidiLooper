@@ -29,10 +29,6 @@ NOTE_EDIT_MEM MidiEvent* noteEditGeometryApplyResolveMovingNoteOffForEdit(
     MidiEventVec& midiEvents, MidiEvent* noteOnEvent, NoteId movingNoteId, uint8_t channel,
     uint8_t pitch, uint32_t startTick, uint32_t displayEndTick, uint32_t loopLength);
 
-NOTE_EDIT_MEM uint32_t noteEditGeometryApplyDisplayFocusEndTickForMove(uint32_t startTick,
-                                                                       uint32_t noteLen,
-                                                                       uint32_t loopLength);
-
 NOTE_EDIT_MEM void noteEditGeometryApplyScrubStaleWrapHeadOffsForMovedNote(
     MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch, uint32_t tailOnTick,
     uint32_t linearOffTick, uint32_t loopLength, NoteId movingNoteId);

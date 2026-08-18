@@ -523,6 +523,25 @@ void test_did_playback_event_cross_mid_interval() {
         IntervalProjection::didPlaybackEventCross(false, 15U, 30U, 25U));
 }
 
+void test_did_playhead_cross_phase_session_start() {
+    constexpr uint32_t loopLength = 1920;
+    constexpr uint32_t sessionStart = 777;
+    TEST_ASSERT_FALSE(
+        IntervalProjection::didPlayheadCrossPhase(UINT32_MAX, sessionStart, sessionStart,
+                                                  loopLength));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::didPlayheadCrossPhase(sessionStart, sessionStart + 1, sessionStart,
+                                                  loopLength));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::didPlayheadCrossPhase(sessionStart - 1, sessionStart, sessionStart,
+                                                  loopLength));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::didPlayheadCrossPhase(770, 780, sessionStart, loopLength));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::didPlayheadCrossPhase(1919, 0, sessionStart, loopLength));
+    TEST_ASSERT_TRUE(IntervalProjection::didPlayheadCrossPhase(1919, 0, 0, loopLength));
+}
+
 void test_did_playback_event_cross_loop_start_catch_up() {
     TEST_ASSERT_TRUE(
         IntervalProjection::didPlaybackEventCross(true, 95U, 0U, 5U));
@@ -571,6 +590,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_at_loop_start_preserve_no_uint32_max_catchup);
     RUN_TEST(test_playback_catch_up_window_differs_from_at_loop_start);
     RUN_TEST(test_did_playback_event_cross_mid_interval);
+    RUN_TEST(test_did_playhead_cross_phase_session_start);
     RUN_TEST(test_did_playback_event_cross_loop_start_catch_up);
     return UNITY_END();
 }

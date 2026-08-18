@@ -5,18 +5,257 @@
 
 #include <Arduino.h>
 
+#include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "LoopContentResolution.h"
 #include "LoopEventStore.h"
 #include "SlotLoadSession.h"
 #include "StorageManager.h"
+#include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/TrackMem.h"
 #include "VisualCache.h"
+
+#include <cstdio>
+
+extern TrackManager trackManager;
+
+#if defined(SESSION_CAPTURE)
+namespace {
+
+#if defined(ARDUINO)
+void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
+  struct Seen {
+    const char* kind;
+    const char* reason;
+  };
+  static Seen seen[8]{};
+  static uint8_t seenCount = 0;
+  for (uint8_t i = 0; i < seenCount; ++i) {
+    if (seen[i].kind == kind && seen[i].reason == reason) {
+      return;
+    }
+  }
+  if (seenCount >= 8) {
+    return;
+  }
+  seen[seenCount].kind = kind;
+  seen[seenCount].reason = reason;
+  ++seenCount;
+  char line[96];
+  snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,%s,%s",
+           static_cast<unsigned long>(micros()), kind, reason);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+
+TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
+                                             const NoteUtils::DisplayNote& b) {
+  return a.noteId == b.noteId && a.note == b.note && a.startTick == b.startTick &&
+         a.endTick == b.endTick;
+}
+
+TRACK_COLD_MEM bool displayNotesMatch(const NoteUtils::DisplayNoteVec& expected,
+                                      const NoteUtils::DisplayNoteVec& actual) {
+  if (expected.size() != actual.size()) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& note : expected) {
+    bool found = false;
+    for (const NoteUtils::DisplayNote& other : actual) {
+      if (displayNoteIdentityMatch(note, other)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+TRACK_COLD_MEM uint32_t countDisplayNoteMatches(const NoteUtils::DisplayNoteVec& expected,
+                                                const NoteUtils::DisplayNoteVec& actual,
+                                                const NoteUtils::DisplayNote** firstMissing) {
+  if (firstMissing != nullptr) {
+    *firstMissing = nullptr;
+  }
+  uint32_t found = 0;
+  for (const NoteUtils::DisplayNote& note : expected) {
+    bool matched = false;
+    for (const NoteUtils::DisplayNote& other : actual) {
+      if (displayNoteIdentityMatch(note, other)) {
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      ++found;
+    } else if (firstMissing != nullptr && *firstMissing == nullptr) {
+      *firstMissing = &note;
+    }
+  }
+  return found;
+}
+
+TRACK_COLD_MEM const NoteUtils::DisplayNote* findDisplayNoteGeometry(
+    const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick && note.endTick == endTick) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+TRACK_COLD_MEM void logDisplayNoteDiffs(const char* tag, const NoteUtils::DisplayNoteVec& expected,
+                                        const NoteUtils::DisplayNoteVec& actual) {
+  uint32_t logged = 0;
+  for (const NoteUtils::DisplayNote& note : expected) {
+    bool matched = false;
+    for (const NoteUtils::DisplayNote& other : actual) {
+      if (displayNoteIdentityMatch(note, other)) {
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      continue;
+    }
+    const NoteUtils::DisplayNote* geom = findDisplayNoteGeometry(actual, note.note, note.startTick,
+                                                                 note.endTick);
+    char line[192];
+    if (geom != nullptr) {
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,lcr,vch,%s,id=%lu,n=%u,s=%lu,e=%lu,alt=%lu",
+               static_cast<unsigned long>(micros()), tag,
+               static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick),
+               static_cast<unsigned long>(geom->noteId));
+    } else {
+      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,vch,%s,id=%lu,n=%u,s=%lu,e=%lu",
+               static_cast<unsigned long>(micros()), tag,
+               static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick));
+    }
+    DebugSessionCapture::appendCaptureTextLine(line);
+    ++logged;
+    if (logged >= 8) {
+      break;
+    }
+  }
+}
+
+TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
+  const uint32_t padTicks = Config::TICKS_PER_BAR;
+  const uint32_t windowLength =
+      loop.loopLengthTicks > padTicks * 2u ? padTicks * 2u : loop.loopLengthTicks;
+  if (windowLength == 0) {
+    return;
+  }
+  SessionMidiEventVec prepared;
+  ResolutionCostCounters windowCounters;
+  const uint32_t windowStart = 0;
+  if (!LoopContentResolution::tryResolvePreparedWindow(
+          loop.passes.editPasses, loop.loopLengthTicks, windowStart, windowLength,
+          loop.playbackRevision, prepared, &windowCounters)) {
+    return;
+  }
+  const uint32_t reconstructStartUs = micros();
+  const NoteUtils::DisplayNoteVec preparedNotes =
+      NoteUtils::reconstructDisplayNotes(prepared, loop.loopLengthTicks, false, false);
+  const uint32_t reconstructUs = micros() - reconstructStartUs;
+  const uint32_t oracleStartUs = micros();
+  SessionMidiEventVec oracle;
+  loop.gatherCommittedEventsInWindow(oracle, windowStart, windowLength);
+  const NoteUtils::DisplayNoteVec oracleNotes =
+      NoteUtils::reconstructDisplayNotes(oracle, loop.loopLengthTicks, false, false);
+  const uint32_t oracleUs = micros() - oracleStartUs;
+  const uint32_t nativeStartUs = micros();
+  SessionMidiEventVec nativeFull;
+  loop.gatherCommittedEvents(nativeFull);
+  SessionMidiEventVec nativeWindow;
+  DisplayWindowUtils::filterMidiEventsToWindow(nativeFull, nativeWindow, windowStart, windowLength,
+                                               loop.loopLengthTicks);
+  const NoteUtils::DisplayNoteVec nativeNotes =
+      NoteUtils::reconstructDisplayNotes(nativeWindow, loop.loopLengthTicks, false, false);
+  const uint32_t nativeUs = micros() - nativeStartUs;
+  const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
+  const uint32_t foundInPrepared = countDisplayNoteMatches(nativeNotes, preparedNotes, nullptr);
+  const uint32_t foundInNative = countDisplayNoteMatches(preparedNotes, nativeNotes, nullptr);
+  const uint32_t miss = static_cast<uint32_t>(nativeNotes.size()) - foundInPrepared;
+  const uint32_t extra = static_cast<uint32_t>(preparedNotes.size()) - foundInNative;
+  const uint32_t nativeFoundPrepared = foundInPrepared;
+  const uint32_t nativeFoundGather = countDisplayNoteMatches(nativeNotes, oracleNotes, nullptr);
+  uint32_t editRows = 0;
+  char line[300];
+  for (const EditPass& editPass : loop.passes.editPasses) {
+    if (editPass.state != EditPassState::Active || editPass.passType != EditPassType::Note) {
+      continue;
+    }
+    ++editRows;
+    if (editRows > 4) {
+      continue;
+    }
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,vch,ed,id=%lu,act=%u,prop=%u,tid=%lu,s=%lu,e=%lu,p=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(editPass.id),
+             static_cast<unsigned>(editPass.actionType),
+             static_cast<unsigned>(editPass.propertyType),
+             static_cast<unsigned long>(editPass.targetNoteId),
+             static_cast<unsigned long>(editPass.startTick),
+             static_cast<unsigned long>(editPass.endTick),
+             static_cast<unsigned>(editPass.pitch));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,oracle=%lu,tot=%lu,ev=%u,notes=%u,"
+           "oev=%u,onotes=%u,found=%u,miss=%u,extra=%u,ed=%u,match=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
+           static_cast<unsigned long>(reconstructUs), static_cast<unsigned long>(oracleUs),
+           static_cast<unsigned long>(windowUs + reconstructUs),
+           static_cast<unsigned>(prepared.size()), static_cast<unsigned>(preparedNotes.size()),
+           static_cast<unsigned>(nativeWindow.size()), static_cast<unsigned>(nativeNotes.size()),
+           static_cast<unsigned>(foundInPrepared), static_cast<unsigned>(miss),
+           static_cast<unsigned>(extra), static_cast<unsigned>(editRows),
+           displayNotesMatch(nativeNotes, preparedNotes) ? 1u : 0u);
+  DebugSessionCapture::appendCaptureTextLine(line);
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,vch,nat,us=%lu,ev=%u,notes=%u,pfound=%u,gfound=%u,pmatch=%u,gmatch=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned long>(nativeUs),
+           static_cast<unsigned>(nativeWindow.size()), static_cast<unsigned>(nativeNotes.size()),
+           static_cast<unsigned>(nativeFoundPrepared), static_cast<unsigned>(nativeFoundGather),
+           displayNotesMatch(nativeNotes, preparedNotes) ? 1u : 0u,
+           displayNotesMatch(nativeNotes, oracleNotes) ? 1u : 0u);
+  DebugSessionCapture::appendCaptureTextLine(line);
+  logDisplayNoteDiffs("miss", nativeNotes, preparedNotes);
+  logDisplayNoteDiffs("extra", preparedNotes, nativeNotes);
+}
+#endif
+
+const char* contentResolutionDeviceGateDeferReason() {
+  if (StorageManager::hasPendingLoopSlotRestore()) {
+    return "restore";
+  }
+  if (StorageManager::hasPendingUndoSnapshotHydrate()) {
+    return "hydrate";
+  }
+  if (StorageManager::hasDeferredSaveWork()) {
+    return "save";
+  }
+  return nullptr;
+}
+
+}  // namespace
+#endif
 
 void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     (void)openTailCloseTick;
@@ -113,6 +352,95 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::maybeLogStoredNoteCount() {
   }
   SC_STORED_NOTES(resolveTrackIndexForPersistence(*this), slot, notes, uniqueNoteIds, maxSamePitch);
   storedNoteCountLoggedMask_ |= slotBit;
+#endif
+}
+
+TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  if (LoopContentResolution::deviceGateFinished() || LoopContentResolution::deviceGateActive()) {
+    return;
+  }
+  if (this != &trackManager.getSelectedTrack()) {
+    return;
+  }
+  Loop& loop = getActiveLoop();
+  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
+    return;
+  }
+  if (const char* deferReason = contentResolutionDeviceGateDeferReason()) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("skip", deferReason);
+#endif
+    return;
+  }
+#if defined(ARDUINO)
+  if (editManager.isNoteEditActive()) {
+    logContentResolutionDeviceGateOnce("skip", "edit");
+    return;
+  }
+#endif
+  LoopContentResolution::deviceGateBegin(loop.loopLengthTicks);
+#endif
+}
+
+TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  if (this != &trackManager.getSelectedTrack()) {
+    return;
+  }
+  if (LoopContentResolution::deviceGateFinished() || !LoopContentResolution::deviceGateActive()) {
+    return;
+  }
+  Loop& loop = getActiveLoop();
+#if defined(ARDUINO)
+  if (editManager.isNoteEditActive()) {
+    logContentResolutionDeviceGateOnce("reset", "edit");
+    LoopContentResolution::deviceGateReset();
+    return;
+  }
+#endif
+  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "dirty");
+#endif
+    LoopContentResolution::deviceGateReset();
+    return;
+  }
+  if (const char* deferReason = contentResolutionDeviceGateDeferReason()) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("skip", deferReason);
+#endif
+    return;
+  }
+  const LoopContentResolution::DeviceGateSliceResult result =
+      LoopContentResolution::deviceGateRunOneSlice(loop.passes, loop.loopLengthTicks);
+  if (result == LoopContentResolution::DeviceGateSliceResult::Inactive) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "abort");
+#endif
+    return;
+  }
+  char phaseLine[192];
+  if (LoopContentResolution::deviceGateFormatPhaseLine(phaseLine, sizeof(phaseLine))) {
+    DebugSessionCapture::appendCaptureTextLine(phaseLine);
+  }
+  if (result != LoopContentResolution::DeviceGateSliceResult::Complete) {
+    return;
+  }
+  char line[224];
+  LoopContentResolution::deviceGateFormatCaptureLine(line, sizeof(line));
+  DebugSessionCapture::appendCaptureTextLine(line);
+  char pairLine[320];
+  LoopContentResolution::deviceGateFormatPairLine(pairLine, sizeof(pairLine));
+  DebugSessionCapture::appendCaptureTextLine(pairLine);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+#if defined(ARDUINO)
+  logPreparedDisplayRangeSample(loop);
+#endif
 #endif
 }
 
@@ -255,6 +583,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
     }
     processDeferredRecordRevts(revtSlice);
     processDeferredStoredMidiVerification(verificationSlice);
+    processDeferredContentResolutionDeviceGate();
   }
 
   const bool deferredDerivedViewMaintenance =
@@ -320,15 +649,13 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
         loop.materializeEditViewFromPasses();
       }
       if (loop.visualCacheDirty) {
-        // Budget-driven: one idle slice per call (bars), never full ensure when avoidFullVisual.
-        uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
-        if (avoidFullVisual) {
-          loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
-        } else {
-          loop.ensureVisualCacheBuilt();
-        }
+        // One idle slice per call. Do not ensureVisualCacheBuilt here — short
+        // loops use the same resumable owner as long loops (Slice 4c).
+        const uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
+        loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
       }
       maybeLogStoredNoteCount();
+      maybeQueueContentResolutionDeviceGate();
     }
   }
 

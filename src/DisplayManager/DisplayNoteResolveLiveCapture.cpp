@@ -342,6 +342,39 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 
     auto rebuildCommittedLayer = [&]() {
         if (track.isOverdubbing()) {
+            if (loop.hasOverdubSourceView()) {
+                if (havePaintWindow) {
+                    const uint32_t marginTicks =
+                        static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
+                    const uint32_t gatherStart =
+                        paintWindowStart > marginTicks ? paintWindowStart - marginTicks : 0;
+                    uint32_t gatherEnd = paintWindowStart + paintWindowLength + marginTicks;
+                    if (gatherEnd > liveLoopLength) {
+                        gatherEnd = liveLoopLength;
+                    }
+                    const uint32_t gatherLength =
+                        gatherEnd > gatherStart ? gatherEnd - gatherStart : paintWindowLength;
+                    DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+                    liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+                        loop.overdubSourceViewNotes(), gatherStart, gatherLength, liveLoopLength);
+                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                    liveWindowGatherValid_ = true;
+                    liveWindowGatherStart_ = gatherStart;
+                    liveWindowGatherLength_ = gatherLength;
+                    liveWindowGatherLoopLength_ = liveLoopLength;
+                } else {
+                    DIAG_COUNTER_INC(DisplayCommittedFullAssign);
+                    liveDisplayNotes.assign(loop.overdubSourceViewNotes().begin(),
+                                            loop.overdubSourceViewNotes().end());
+                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                    liveWindowGatherValid_ = false;
+                }
+                liveDisplayCommittedFromWindowGather_ = false;
+                liveCommittedLayerHeldForDirtyCache_ = false;
+                liveOverdubSourceViewNoteCount_ = loop.overdubSourceViewNotes().size();
+                liveMergePlaybackRevision_ = loop.playbackRevision;
+                return;
+            }
             // Cache recovery belongs to idle work. Gathering the committed window here costs
             // ~27.9 ms per frame for the whole post-commit dirty window and starves the capture
             // layer, so played notes stop landing (172405: 30 gathers, 70 of 241 frames over
@@ -534,11 +567,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     // Idle finished recovering the cache while the committed layer was held — rebuild once now
     // that the clean branch is affordable.
     const bool committedLayerCleanCacheReady =
-        track.isOverdubbing() && liveCommittedLayerHeldForDirtyCache_ && !loop.visualCacheDirty &&
+        track.isOverdubbing() && !loop.hasOverdubSourceView() &&
+        liveCommittedLayerHeldForDirtyCache_ && !loop.visualCacheDirty &&
         !loop.visualCache.notes.empty();
 
     const bool committedLayerPromoteToFullVisualCache =
-        track.isOverdubbing() &&
+        track.isOverdubbing() && !loop.hasOverdubSourceView() &&
         DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(
             true, loop.visualCacheDirty, !loop.visualCache.notes.empty(),
             liveDisplayCommittedFromWindowGather_);
@@ -546,7 +580,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const bool committedLayerChanged =
         cacheCold || contextChanged || loopLengthChanged || committedWindowStale ||
         committedLayerPromoteToFullVisualCache || committedLayerCleanCacheReady ||
-        (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision);
+        (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision) ||
+        (track.isOverdubbing() && loop.hasOverdubSourceView() &&
+         liveOverdubSourceViewNoteCount_ != loop.overdubSourceViewNotes().size());
     const bool captureLayerChanged =
         cacheCold || contextChanged || eventsShrunk || captureRevisionChanged ||
         capturePreviewChanged;
@@ -619,14 +655,24 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             }
         }
         if (!loop.capturePreview.openNoteIndices.empty()) {
-            // Growing RECORD has no sealed loop length — never infer wrap-head to tick 0.
+            // Growing RECORD has no sealed loop wrap. Overdub session wrap jumps
+            // playhead to S; a held tail ON then extends to loop end until NoteOff
+            // (012925 note 30). Linear playhead close only — no wrap tail or head.
             const bool allowWrapContinuation =
+                !track.isOverdubbing() &&
                 !(track.isRecording() && !track.isPlaying());
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayNotes,
                                       allowWrapContinuation);
         }
         DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
+    }
+
+    const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
+    if (track.isOverdubbing() && loop.hasPendingNoteChanges()) {
+        liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_);
+        paintedNotes = &liveDisplayPendingPaintNotes_;
     }
 
     const uint32_t resolveElapsedUs = micros() - resolveStartUs;
@@ -650,5 +696,5 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 #endif
     }
 
-    return liveDisplayNotes;
+    return *paintedNotes;
 }

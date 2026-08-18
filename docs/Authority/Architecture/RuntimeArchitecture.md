@@ -38,7 +38,7 @@ flowchart TB
 | Capture storage | What is the authoritative timeline? | [Storage.md](Storage.md) |
 | Derived representations | How should data be shaped for consumers? | [DerivedViews.md](DerivedViews.md) |
 | Interval projection | Which part of the timeline matters? | [IntervalProjection.md](IntervalProjection.md) |
-| Consumers | Who reads the result? | [Playback.md](Playback.md), [Display.md](Display.md) |
+| Consumers | Who reads the result? | [Playback.md](Playback.md), [Display.md](Display.md); analyze and LEDs in [DerivedViews.md](DerivedViews.md) § Consumers |
 
 **Invariant:** changing the active **interval** must not require rebuilding the full **representation** unless the representation’s source revision changed.
 
@@ -56,10 +56,10 @@ Derived Representation  +  TickInterval  →  Consumer result
 
 | Consumer | Representation (today) | Interval (today) |
 |----------|------------------------|------------------|
-| Playback | Materialized MIDI events + playback order | Rolling phase window via `projectionCycleStartTick` |
-| Display | `DisplayNote` list (`projectDisplayNotes`) | Detailed window `TickInterval` + optional overview |
-| LEDs | Event presence / bar hints | Bar-range query interval |
-| NOTE_EDIT geometry | `NoteEditSession.store` (live overlay) | Edit analysis window (v1: full loop) |
+| Play | `mergedEvents` + `playbackOrder` — not `visualCache` | 2-bar gather on long loops; full gather on short; phase via `projectionCycleStartTick` |
+| Display | `visualCache.notes` / `capturePreview.notes` | Detailed 16-bar `TickInterval` + optional overview |
+| Analyze | Prepared `LoopContentResolution` when the stamp matches; NOTE_EDIT still rematerializes today | Neighborhood around `currentTick` (overdub) or `selectedTick` (NOTE_EDIT target) |
+| LEDs | `visualCache.notes` + `capture.store` (presence); tick row is `currentTick` only; track/loop select is slot state | Current bar (16 sixteenths) and bars 0–7 |
 
 Intervals are **consumer-agnostic** — one `TickInterval` (e.g. bars 8–24) can feed playback, display, or LED queries; the consumer interprets the projected slice.
 
@@ -75,14 +75,17 @@ Representations depend on storage; consumers depend on representations — not o
 Capture Storage (passes, capture, chunks)
         │
         ▼
-Derived Event Representation  (materialized MIDI / session store)
+Derived Event Representation  (materialized MIDI / session store / LCR indexes)
         │
-        ├──────────────────┐
-        ▼                  ▼
-Playback Representation   Display Representation
-        │                  │
-        ▼                  ▼
-   playMidiEvents       DisplayManager
+        ├──────────────────┬──────────────────┬──────────────────┐
+        ▼                  ▼                  ▼                  ▼
+   Play window        Display list       Analyze indexes    LED pads
+   mergedEvents       visualCache        LoopContentResolution
+        │                  │                  │                  │
+        ▼                  ▼                  ▼                  ▼
+   playMidiEvents     DisplayManager     select / overlap   MidiLedManager
+                             │
+                             └─ 16-step + bar pads read visualCache.notes + capture.store
 ```
 
 **Rule:** consumers **request** a representation at an interval; they do **not** call peer rebuild APIs (`ensureVisualCacheBuilt` from `MidiLedManager`, etc.).
@@ -99,9 +102,9 @@ Storage revision (passes / capture / session store mutation)
         ▼
 Event representation revision
         │
-        ├─────────────┐
-        ▼             ▼
-Playback repr.    Display repr.
+        ├─────────────┬─────────────┐
+        ▼             ▼             ▼
+Playback repr.   Display repr.  Analyze indexes
 ```
 
 **Brownfield identifiers** (until rename migration):

@@ -27,8 +27,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditFocusForLiveEdit(Track& tr
     if (!editSession.active) {
         return;
     }
-    const uint8_t channel = track.getMidiChannel();
-    const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const bool driverValid =
         editSession.focus.active &&
         isLiveEditDriverValidForTrack(track);
@@ -321,7 +319,6 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isMacroCommitAlignedWithSelectTargetForT
     if (loopLength == 0) {
         return true;
     }
-    const NoteEditFocus& focus = editSession.focus;
     const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
     return isMacroCommitAlignedWithSelectTarget(selectNoteId, selectBracketTick, editSession.focus,
                                                 noteEditLoopStartTick(track), loopLength,

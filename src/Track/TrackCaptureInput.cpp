@@ -44,9 +44,12 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   if (loopLength == 0) {
     return;
   }
-  // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart. Keep the
-  // walk in this FLASHMEM function — do not call the observation header (ITCM).
+  // Same rule as OverlapNoteIdObservation::noteSoundingAtHoldStart, with
+  // same-start included (`<=` on start). Keep the walk in this FLASHMEM
+  // function — do not call the observation header (ITCM). Ahead notes in the
+  // hold window are merged at note-off, not here.
   const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
+  loop.ensureOverdubSourceNotesForHold(holdStart, pending.note, nullptr, true);
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
     if (note.note != pending.note || note.noteId == kInvalidNoteId) {
       continue;
@@ -62,9 +65,11 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
     if (linearStart >= linearEnd) {
       continue;
     }
-    const bool direct = linearStart < holdStart && holdStart < linearEnd;
+    // Half-open [start, end) at S. Same-start grid overdubs must be included;
+    // playback collect cannot recover them (pendingNotes still empty at that tick).
+    const bool direct = linearStart <= holdStart && holdStart < linearEnd;
     const bool shifted =
-        linearStart < holdStart + loopLength && holdStart + loopLength < linearEnd;
+        linearStart <= holdStart + loopLength && holdStart + loopLength < linearEnd;
     if (direct || shifted) {
       (void)pending.overlapNoteIds.insert(note.noteId);
     }
@@ -217,6 +222,8 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
         continue;
       }
       // G2: when overdubSourceView owns overlap resolution, do not drop the Add.
+      // shouldRestoreCommittedOverlapOnOverdubStop never materializes; it stays
+      // false so a missing-view session synthesizes NoteOff instead.
       if (!loop.hasOverdubSourceView() &&
           shouldRestoreCommittedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
         if (loop.removeOpenCaptureNoteOn(channel, note)) {
@@ -235,6 +242,26 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
       }
       logOverdubCaptureCoordinate(*this, offAbsTick, storageTick, channel, note);
 #endif
+      if (isOverdubbing() && loop.hasOverdubSourceView()) {
+        const auto overlapIt = pendingNotes.find(key);
+        static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
+        const OverlapNoteIdSet& overlapNoteIds = (overlapIt != pendingNotes.end())
+                                                     ? overlapIt->second.overlapNoteIds
+                                                     : kEmptyOverlapNoteIds;
+        const uint8_t velocity =
+            (overlapIt != pendingNotes.end()) ? overlapIt->second.velocity : 0;
+        const LoopEventStore& capture = loop.capture.store;
+        for (size_t i = capture.size(); i > 0; --i) {
+          const MidiEvent& prior = capture.at(i - 1);
+          if (!prior.isNoteOn() || prior.channel != channel ||
+              prior.data.noteData.note != note) {
+            continue;
+          }
+          (void)loop.accumulatePendingNoteChangesForIncomingNote(
+              channel, note, velocity, prior.tick, phaseTick, prior.noteId, overlapNoteIds);
+          break;
+        }
+      }
       pendingNotes.erase(key);
       ++captureNoteOffsAppended;
     } else {

@@ -10,6 +10,7 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "LoopContentResolution.h"
 #include "LooperState.h"
 #include "StorageManager.h"
 #include "TrackManager.h"
@@ -28,8 +29,9 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   deferredValidateQueuedAtMs = scheduleDeferredFullValidate ? millis() : 0;
 }
 
-CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason,
-                                              uint32_t closeTick) {
+TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result,
+                                                             CommitReason reason,
+                                                             uint32_t closeTick) {
   Loop& loop = getActiveLoop();
   const bool recordStop = reason == CommitReason::RecordStop ||
                           reason == CommitReason::RecordStopToStopped;
@@ -56,6 +58,10 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       }
       if (overdubStop) {
         finalizeLoopAtStop(closeTick, false);
+        if (!editManager.isNoteEditActive()) {
+          TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), kInvalidPassId, {},
+                                              false);
+        }
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
         const uint8_t persistSlotIndex = getActiveLoopIndex();
         StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
@@ -75,16 +81,33 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         // Record stop already finalizes wrap-window at seal; defer full validate only.
         scheduleDeferredValidateOnly();
       }
-      loop.markDisplayCachesStale();
       const bool isRecordPass =
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        loop.markDisplayCachesStale();
       } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
         EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
-        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId,
-                                        std::move(companionIds));
+        TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
+                                            true);
+        if (overdubStop) {
+          loop.markAffectedDisplayCacheRanges(undoPassId, companionIds);
+        } else {
+          loop.markDisplayCachesStale();
+        }
+      } else if (overdubStop) {
+        loop.markAffectedDisplayCacheRanges(undoPassId, EditPassIdList{});
+      } else {
+        loop.markDisplayCachesStale();
+      }
+      if (!isRecordPass) {
+        for (const OverdubPass& pass : loop.passes.overdubPasses) {
+          if (pass.id == undoPassId) {
+            LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision);
+            break;
+          }
+        }
       }
       if (overdubStop) {
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
@@ -125,8 +148,8 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
   return result;
 }
 
-CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
-                                         uint32_t closeTick) {
+TRACK_COLD_MEM CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
+                                                         uint32_t closeTick) {
   Loop& loop = getActiveLoop();
   const CommitResult commitResult = loop.commitCapturePass(reason, commitTick);
   return finalizeCommitSideEffects(commitResult, reason, closeTick);

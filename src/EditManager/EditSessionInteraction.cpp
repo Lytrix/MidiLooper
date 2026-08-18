@@ -366,12 +366,50 @@ NOTE_EDIT_MEM InteractionType classifyEditSessionInteraction(uint32_t causingSta
 NOTE_EDIT_MEM BaselineMap overlayAnalysisBaselineForSessionMovedOverlaps(
     const BaselineMap& storageBaseline, NoteId movingNoteId, const MidiEventVec& liveStore,
     uint8_t channel, uint32_t loopLength, const NoteEditCurrentState* currentState,
-    const NoteBaseline* causingSpan, const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
-  BaselineMap analysis = storageBaseline;
-  for (const auto& [noteId, baseline] : storageBaseline) {
-    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+    const NoteBaseline* causingSpan, const NoteUtils::DisplayNoteVec* committedDisplayNotes,
+    const NoteIdList* pairTargetNoteIds) {
+  BaselineMap analysis;
+  NoteIdList walkIds;
+  if (pairTargetNoteIds != nullptr) {
+    walkIds.reserve(pairTargetNoteIds->size());
+    for (const NoteId noteId : *pairTargetNoteIds) {
+      if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+        continue;
+      }
+      const auto storageIt = storageBaseline.find(noteId);
+      if (storageIt == storageBaseline.end()) {
+        continue;
+      }
+      bool alreadyQueued = false;
+      for (const NoteId queued : walkIds) {
+        if (queued == noteId) {
+          alreadyQueued = true;
+          break;
+        }
+      }
+      if (alreadyQueued) {
+        continue;
+      }
+      analysis[noteId] = storageIt->second;
+      walkIds.push_back(noteId);
+    }
+  } else {
+    analysis = storageBaseline;
+    walkIds.reserve(storageBaseline.size());
+    for (const auto& [noteId, unusedBaseline] : storageBaseline) {
+      (void)unusedBaseline;
+      if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+        continue;
+      }
+      walkIds.push_back(noteId);
+    }
+  }
+  for (const NoteId noteId : walkIds) {
+    const auto analysisIt = analysis.find(noteId);
+    if (analysisIt == analysis.end()) {
       continue;
     }
+    const NoteBaseline baseline = analysisIt->second;
     if (currentState != nullptr) {
       NoteBaseline current{};
       if (!currentState->readCurrentSpan(noteId, current)) {

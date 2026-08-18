@@ -2,6 +2,7 @@
 #include "Loop.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "TickPhase.h"
 
 MidiLedManager::MidiLedManager(MidiHandler& midiHandler) 
@@ -86,9 +87,35 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
 
     if (!hasInitialized || currentBar != lastUpdateBar || singleBarWrapped) {
         Loop& mutableLoop = const_cast<Loop&>(displayLoop);
+#if defined(SESSION_CAPTURE)
+        const bool measure = track.loopPrefixMeasureAfterUndoActive();
+        uint32_t childStartUs = 0;
+        if (measure) {
+            childStartUs = micros();
+        }
+#endif
+#if defined(SESSION_CAPTURE)
+        prepareLedNoteLookup(mutableLoop, measure);
+#else
         prepareLedNoteLookup(mutableLoop);
+#endif
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 0, childStartUs);
+        if (measure) {
+            childStartUs = micros();
+        }
+#endif
         analyzeAndUpdateBar(mutableLoop, barStartTickDisplay);
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 1, childStartUs);
+        if (measure) {
+            childStartUs = micros();
+        }
+#endif
         updateBarLeds(mutableLoop, currentBar);
+#if defined(SESSION_CAPTURE)
+        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 2, childStartUs);
+#endif
         
         lastUpdateBar = currentBar;
         hasInitialized = true;
@@ -267,16 +294,16 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
 
 }  // namespace
 
-void MidiLedManager::prepareLedNoteLookup(Loop& loop) {
-    ledNoteLookupEvents_.clear();
-    ledNoteLookupUsesMerge_ = loop.hasCommittedPasses() && loop.visualCacheDirty;
-    if (ledNoteLookupUsesMerge_) {
-        loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_);
-    }
+void MidiLedManager::prepareLedNoteLookup(Loop& loop, bool measure) {
+    (void)loop;
+    (void)measure;
 }
 
 bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStart,
                                             uint32_t rangeEnd) const {
+    // updateLeds must never gather committed content because visualCacheDirty.
+    // Stale visualCache.notes are the Layer D display contract; idle slice_clean
+    // resumes the rebuild. Empty notes → no presence (do not flatten).
     if (loop.captureActive()) {
         const size_t captureCount = loop.capture.store.size();
         for (size_t i = 0; i < captureCount; ++i) {
@@ -286,20 +313,12 @@ bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStar
             }
         }
     }
-    if (!loop.hasCommittedPasses()) {
+    if (loop.visualCache.notes.empty()) {
         return false;
     }
-    if (!loop.visualCacheDirty) {
-        const uint32_t loopLength = loop.loopLengthTicks;
-        for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
-            if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    for (const MidiEvent& event : ledNoteLookupEvents_) {
-        if (noteOnInRange(event, rangeStart, rangeEnd)) {
+    const uint32_t loopLength = loop.loopLengthTicks;
+    for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+        if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
             return true;
         }
     }

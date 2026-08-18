@@ -18,6 +18,8 @@
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
+#include "Arduino.h"
+#include "EditManagerInternal.h"
 #include "Logger.h"
 #endif
 
@@ -47,6 +49,9 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         return false;
     }
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t setupStartUs = micros();
+#endif
     // noteIds are assigned once in openNoteEditSession — never mint mid-edit (Delete rows
     // must resolve against capture-pass materialize). Stamp offs only.
     stampNoteIdsOntoPairedNoteOffs(liveStore);
@@ -89,6 +94,12 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
 
     ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel,
                                                currentStateReader, &committedDisplayNotes);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("setup", micros() - setupStartUs,
+                      static_cast<uint32_t>(evaluationScope.size()),
+                      static_cast<uint32_t>(focus.baselineMap.size()));
+    const uint32_t analyzeStartUs = micros();
+#endif
     const BaselineMap& transactionBaselineAfterEnsure = focus.baselineMap;
 
     const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
@@ -107,18 +118,61 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         break;
       }
     }
-
-    const BaselineMap analysisBaseline =
-        overlayAnalysisBaselineForSessionMovedOverlaps(transactionBaselineAfterEnsure,
-                                                       focus.movingNoteId, liveStore, channel,
-                                                       loopLength, currentStateReader,
-                                                       causingSpan, &committedDisplayNotes);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("pairs", micros() - analyzeStartUs,
+                      static_cast<uint32_t>(eligiblePairs.size()),
+                      static_cast<uint32_t>(evaluationScope.size()));
+    const uint32_t overlayStartUs = micros();
+#endif
+    // C2a: interact / constrain / build only find() pair targets (or use storage for
+    // leave-restore). Empty pairs never read the overlaid map — skip the copy.
+    // Non-empty pairs overlay only those target ids (C4).
+    BaselineMap overlaidAnalysisBaseline;
+    const BaselineMap* analysisBaselinePtr = &transactionBaselineAfterEnsure;
+    if (!eligiblePairs.empty()) {
+        NoteIdList pairTargetNoteIds;
+        pairTargetNoteIds.reserve(eligiblePairs.size());
+        for (const CausingTargetPair& pair : eligiblePairs) {
+            if (pair.targetNoteId == kInvalidNoteId ||
+                pair.targetNoteId == focus.movingNoteId) {
+                continue;
+            }
+            bool alreadyQueued = false;
+            for (const NoteId queued : pairTargetNoteIds) {
+                if (queued == pair.targetNoteId) {
+                    alreadyQueued = true;
+                    break;
+                }
+            }
+            if (alreadyQueued) {
+                continue;
+            }
+            pairTargetNoteIds.push_back(pair.targetNoteId);
+        }
+        overlaidAnalysisBaseline = overlayAnalysisBaselineForSessionMovedOverlaps(
+            transactionBaselineAfterEnsure, focus.movingNoteId, liveStore, channel, loopLength,
+            currentStateReader, causingSpan, &committedDisplayNotes, &pairTargetNoteIds);
+        analysisBaselinePtr = &overlaidAnalysisBaseline;
+    }
+    const BaselineMap& analysisBaseline = *analysisBaselinePtr;
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("overlay", micros() - overlayStartUs,
+                      static_cast<uint32_t>(analysisBaseline.size()),
+                      eligiblePairs.empty() ? 0u : 1u);
+    const uint32_t interactStartUs = micros();
+#endif
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
         interactions =
             analyzeEditSessionInteractions(overlapPairs, editedGeometry, analysisBaseline);
 
     const EditSessionInteractionsByTarget grouped =
         groupEditSessionInteractionsByTarget(interactions);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("interact", micros() - interactStartUs,
+                      static_cast<uint32_t>(interactions.size()),
+                      static_cast<uint32_t>(overlapPairs.size()));
+    const uint32_t constrainStartUs = micros();
+#endif
 
     NoteIdList leaveRestoreTargetNoteIds;
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
@@ -127,11 +181,24 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
             channel, loopLength, noteMinLengthTicks, noteMinLengthRemoveEnabled, selection,
             editedGeometry, focus, leaveRestoreTargetNoteIds, currentStateReader,
             &committedDisplayNotes);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("constrain", micros() - constrainStartUs,
+                      static_cast<uint32_t>(constrained.size()),
+                      static_cast<uint32_t>(leaveRestoreTargetNoteIds.size()));
+    const uint32_t buildStartUs = micros();
+#endif
 
     const EditSessionActions actions =
         buildEditSessionActions(constrained, editedGeometry, analysisBaseline,
                                 transactionBaselineAfterEnsure, leaveRestoreTargetNoteIds, liveStore,
                                 channel, focus, loopLength, currentStateReader);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("build", micros() - buildStartUs,
+                      static_cast<uint32_t>(actions.size()), 0);
+    logGeomApplyPhase("analyze", micros() - analyzeStartUs,
+                      static_cast<uint32_t>(actions.size()),
+                      static_cast<uint32_t>(interactions.size()));
+#endif
 
     if (actions.empty()) {
         return false;
@@ -160,9 +227,16 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     logEditSessionActions(actions);
 #endif
 
+#if defined(SESSION_CAPTURE)
+    const uint32_t applyStartUs = micros();
+#endif
     applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
                             &manager.getEditSession().applyOwnedEditPassRows,
                             &currentState);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPhase("apply", micros() - applyStartUs,
+                      static_cast<uint32_t>(actions.size()), 0);
+#endif
     manager.bumpSessionPreviewRevision();
     track.invalidateCaches(refreshPlaybackPreview);
     return true;

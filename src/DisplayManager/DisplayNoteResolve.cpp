@@ -51,7 +51,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             if (loop.hasCommittedPasses() || loop.captureActive()) {
                 Loop& mutLoop = const_cast<Loop&>(loop);
                 if (!shouldAvoidFullVisualRebuild(loop, loopLength)) {
-                    mutLoop.ensureVisualCacheBuilt();
+                    // Slice 4d: do not ensureVisualCacheBuilt. Session type can be
+                    // Note before openNoteEditSession sets active (overdub-stop paint).
+                    // Idle owns rebuild. Consume existing notes (stale or empty).
                     liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                             loop.visualCache.notes.end());
                 } else {

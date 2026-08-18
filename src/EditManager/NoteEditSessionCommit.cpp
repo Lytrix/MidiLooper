@@ -47,11 +47,21 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     resolveOverlapNotesForPreCommit(sessionStoreEvents, editSession.focus, channel, loopLength);
 
     normalizeNoteEditSessionProjectionForCommit(track);
-    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
-                                            loopLength);
-
-    if (!isLiveEditDriverValid(sessionState.selection, editSession.focus, sessionStoreEvents,
-                               channel, loopLength)) {
+    bool driverValid = false;
+    if (!editSession.noteEditCurrentState.empty()) {
+        // 195050: linear store pairing cannot see wrap offs and normalize closeOpenTails
+        // writes loopLength-1. Current-state wrap is the commit source.
+        syncNoteEditFocusLastFromCurrentState(editSession.focus, sessionState.selection.primaryNote,
+                                              editSession.noteEditCurrentState);
+        driverValid = isLiveEditDriverValidFromCurrentState(
+            sessionState.selection, editSession.focus, editSession.noteEditCurrentState);
+    } else {
+        syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
+                                                loopLength);
+        driverValid = isLiveEditDriverValid(sessionState.selection, editSession.focus,
+                                            sessionStoreEvents, channel, loopLength);
+    }
+    if (!driverValid) {
 #if defined(SESSION_CAPTURE)
         logger.log(CAT_TRACK, LOG_WARNING,
                    "NOTE_EDIT macro commit skipped: driver invalid (moving=%lu primary=%lu "
@@ -115,9 +125,26 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     }
     lastPushedGeometryKind_ = NoteEditKind::Select;
 
+    const NoteBaseline previousHome = editSession.focus.commitBaseline;
+    const NoteBaseline settled = editSession.focus.last;
+    Loop& loop = trackManager.getSelectedLoop(track);
+    uint32_t retainedEndTicks[16];
+    size_t retainedEndTickCount = 0;
+    for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+      if (note.note == previousHome.pitch && note.startTick == previousHome.startTick &&
+          note.endTick != previousHome.endTick &&
+          retainedEndTickCount < (sizeof(retainedEndTicks) / sizeof(retainedEndTicks[0]))) {
+        retainedEndTicks[retainedEndTickCount++] = note.endTick;
+      }
+    }
+    loop.rebuildVisualCacheFromPasses();
+    loop.retireSupersededPitchDisplayNote(previousHome.pitch, previousHome.startTick,
+                                          previousHome.endTick, settled.pitch, retainedEndTicks,
+                                          retainedEndTickCount);
+
     track.invalidateCaches();
 
-    editSession.focus.commitBaseline = editSession.focus.last;
+    editSession.focus.commitBaseline = settled;
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
     if (!editSession.noteEditCurrentState.empty()) {
@@ -165,6 +192,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitPendingOverlapNoteEdits(Track& tra
 
 EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track& track) {
     if (!editSession.active) {
+        return 0;
+    }
+    // DEC-037: committed EditActions are the persist history. A DisplayNote
+    // session-store diff must not disable them (190822: 3 working rows → 4-row replace).
+    if (!editSession.editPassIds.empty()) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "NoteEditPass close keep committed editPass=%u rows=%u (no display-diff replace)",
+                   static_cast<unsigned>(editSession.editPassIndex),
+                   static_cast<unsigned>(editSession.editPassIds.size()));
         return 0;
     }
     Loop& loop = trackManager.getSelectedLoop(track);
@@ -259,6 +295,41 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     const uint8_t homePitch = editSession.focus.commitBaseline.pitch;
     const uint32_t homeStart = editSession.focus.commitBaseline.startTick;
     const uint32_t loopLength = loop.loopLengthTicks;
+
+    MidiEventVec persistIdentityFlat;
+    loop.passes.materializeToEventVector(persistIdentityFlat, loopLength);
+    const PersistIdentityReconcileResult persistIdentity = reconcileMoverPersistIdentity(
+        persistIdentityFlat, editSession.focus.movingNoteId, homePitch, homeStart, rows);
+    bool hasMoverUpdateRow = false;
+    for (const EditPass& row : rows) {
+        if (row.actionType == EditActionType::Update &&
+            row.targetNoteId == editSession.focus.movingNoteId) {
+            hasMoverUpdateRow = true;
+            break;
+        }
+    }
+    if (persistIdentity.status == PersistIdentityReconcileStatus::Unique) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "commitEditAction persist identity: retarget from=%lu to=%lu pitch=%u start=%lu",
+                   static_cast<unsigned long>(editSession.focus.movingNoteId),
+                   static_cast<unsigned long>(persistIdentity.persistNoteId),
+                   static_cast<unsigned>(homePitch), static_cast<unsigned long>(homeStart));
+    } else if (persistIdentity.status == PersistIdentityReconcileStatus::Unresolved &&
+               hasMoverUpdateRow) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "commitEditAction persist identity: unresolved pitch=%u start=%lu "
+                   "sessionNoteId=%lu matchCount=%lu",
+                   static_cast<unsigned>(homePitch), static_cast<unsigned long>(homeStart),
+                   static_cast<unsigned long>(editSession.focus.movingNoteId),
+                   static_cast<unsigned long>(persistIdentity.matchCount));
+    } else if (persistIdentity.status == PersistIdentityReconcileStatus::Ambiguous) {
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "commitEditAction persist identity: ambiguous count=%lu pitch=%u start=%lu "
+                   "sessionNoteId=%lu",
+                   static_cast<unsigned long>(persistIdentity.matchCount),
+                   static_cast<unsigned>(homePitch), static_cast<unsigned long>(homeStart),
+                   static_cast<unsigned long>(editSession.focus.movingNoteId));
+    }
 
     for (const EditPass& row : rows) {
         if (row.actionType == EditActionType::Update &&

@@ -89,7 +89,7 @@ bool ensureLastRecordSlot() {
   if (sLastRecordSlot == nullptr) {
     return false;
   }
-  std::memset(sLastRecordSlot, 0, sizeof(DiagLastRecordSlot));
+  *sLastRecordSlot = DiagLastRecordSlot{};
   return true;
 #else
   static DiagLastRecordSlot fallback{};

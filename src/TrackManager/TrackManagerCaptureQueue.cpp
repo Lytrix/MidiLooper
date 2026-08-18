@@ -25,8 +25,11 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   }
 
   // Captures write into the active slot; ensure the target slot is enabled/unmuted.
+  // Stopped record collapses a leftover layered set so only this slot plays after stop.
   {
-    replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slot);
+    const bool replaceLayeredSet = !tr.isPlaying() && !tr.isOverdubbing();
+    replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slot,
+                                       replaceLayeredSet);
     slotEnabled[trackIndex][slot] = true;
     slotMuted[trackIndex][slot] = false;
   }

@@ -405,7 +405,7 @@ STORAGE_PERSIST_MEM bool copyRevisionCommitChunk(File& dest, File& src, uint32_t
         return false;
     }
     const auto written = static_cast<size_t>(bytesRead);
-    if (dest.write(storageSession.revisionCommit.copyBuffer.data(), written) != bytesRead) {
+    if (dest.write(storageSession.revisionCommit.copyBuffer.data(), written) != written) {
         return false;
     }
     readPos += written;

@@ -3684,6 +3684,63 @@ void test_mover_wrap_length_jump_names_first_writer_193838() {
   TEST_ASSERT_EQUAL_UINT32(671u, focus.last.endTick);
 }
 
+void test_project_pitch_move_hides_persist_twin_at_commit_baseline() {
+  // 144703: session noteId=358 vs persist noteId=352 at the same start. Committed home
+  // pitch must not stay next to the overlay pitch after a pitch-only move.
+  constexpr uint32_t kLoopLength = 768;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kPersistId = 352;
+  constexpr NoteId kSessionId = 358;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kSessionId;
+  focus.commitBaseline = {62, 100, 296, 416};
+  focus.last = {79, 100, 296, 416};
+  focus.baselineMap[kSessionId] = focus.commitBaseline;
+
+  MidiEventVec committedEvents;
+  committedEvents.push_back(noteOnWithNoteId(296, channel, 62, 100, kPersistId));
+  MidiEvent persistOff = MidiEvent::NoteOff(416, channel, 62, 0);
+  persistOff.noteId = kPersistId;
+  committedEvents.push_back(persistOff);
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(committedEvents, kLoopLength, false);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(296, channel, 79, 100, kSessionId));
+  MidiEvent sessionOff = MidiEvent::NoteOff(416, channel, 79, 0);
+  sessionOff.noteId = kSessionId;
+  store.push_back(sessionOff);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kSessionId, focus.commitBaseline, focus.last,
+                         NoteEditPresenceType::Visible);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength,
+                                  &currentState);
+
+  int atStart = 0;
+  bool hasSettled = false;
+  bool hasHome = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.startTick != 296) {
+      continue;
+    }
+    ++atStart;
+    if (dn.note == 79) {
+      hasSettled = true;
+    }
+    if (dn.note == 62) {
+      hasHome = true;
+    }
+  }
+  TEST_ASSERT_EQUAL(1, atStart);
+  TEST_ASSERT_TRUE(hasSettled);
+  TEST_ASSERT_FALSE(hasHome);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -3798,5 +3855,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pitch_pre_commit_requires_active_focus);
   RUN_TEST(test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114);
   RUN_TEST(test_mover_wrap_length_jump_names_first_writer_193838);
+  RUN_TEST(test_project_pitch_move_hides_persist_twin_at_commit_baseline);
   return UNITY_END();
 }

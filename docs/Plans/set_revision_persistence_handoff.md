@@ -3,7 +3,7 @@
 **Date:** 2026-06-27 (updated 2026-08-10 — overlay shipped; remaining scoped)  
 **OpenSpec:** [`set-revision-persistence`](../../openspec/changes/set-revision-persistence/)  
 **Architecture plan:** [`set_revision_persistence_architecture_enhancement.md`](set_revision_persistence_architecture_enhancement.md)  
-**Status:** Core + overlay **4.1–4.7 shipped** on `dev`. **Remaining:** OpenSpec §4.8–4.10 (loop picker HITL), §3.9 parked.  
+**Status:** Core + overlay **4.1–4.7 shipped** on `dev`. **§4.8–4.10 parked** (2026-08-14) — active work is DEC-035 Layer D overdub rebuild; WIP stashed on `feature/set-revision-loop-picker`. §3.9 parked.  
 **Apply:** `/opsx:apply` on [`tasks.md`](../../openspec/changes/set-revision-persistence/tasks.md) for §4.8+ only.
 
 ---

@@ -5,6 +5,12 @@
 
 #include "Utils/DebugSessionCapture.h"
 
+#if defined(__IMXRT1062__)
+#define RT_FLASHMEM_FN __attribute__((noinline, section(".flashmem")))
+#else
+#define RT_FLASHMEM_FN
+#endif
+
 namespace RuntimeTimingTelemetry {
 namespace {
 
@@ -97,7 +103,7 @@ void clearWindow(State& s) {
   s.clockPulses = 0;
 }
 
-void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
+RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::runtimeTimingTelemetry("midi_gap", s.midiGap.maxUs, s.midiGap.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
@@ -294,19 +300,113 @@ void noteClockPulse() {
   ++s.clockPulses;
 }
 
-void noteIdleMaint(uint32_t durationUs) {
+RT_FLASHMEM_FN void noteIdleMaint(uint32_t durationUs) {
   recordSample(state().idleMaint, durationUs);
 }
 
-void noteLoadFrame(uint32_t durationUs) {
+RT_FLASHMEM_FN void noteLoadFrame(uint32_t durationUs) {
   recordSample(state().loadFrame, durationUs);
 }
 
-void notePersistSave(uint32_t durationUs) {
+RT_FLASHMEM_FN void notePersistSave(uint32_t durationUs) {
   recordSample(state().persistSave, durationUs);
 }
 
-bool maybeEmit(uint32_t nowUs) {
+RT_FLASHMEM_FN void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs) {
+#if defined(SESSION_CAPTURE)
+  if (!measure) {
+    return;
+  }
+  DebugSessionCapture::recordLoopRemainderSpan(span, micros() - startUs);
+#else
+  (void)measure;
+  (void)span;
+  (void)startUs;
+#endif
+}
+
+RT_FLASHMEM_FN void recordMidiLedHelperRem(bool measure, uint8_t helper, uint32_t startUs) {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  // PROGMEM (.progmem) stays in flash. Ordinary string literals become .rodata
+  // and the Teensy 4 linker places all .rodata* in DTCM, which sits on the
+  // _VectorsRam 1 KB align edge (+4 KB RAM1).
+  const char* span = PSTR("midi_led_lookup");
+  if (helper == 1) {
+    span = PSTR("midi_led_analyze");
+  } else if (helper == 2) {
+    span = PSTR("midi_led_bars");
+  } else if (helper == 3) {
+    span = PSTR("midi_led_gather");
+  }
+  recordLoopRemainderIfMeasuring(measure, span, startUs);
+#elif defined(SESSION_CAPTURE)
+  const char* span = "midi_led_lookup";
+  if (helper == 1) {
+    span = "midi_led_analyze";
+  } else if (helper == 2) {
+    span = "midi_led_bars";
+  } else if (helper == 3) {
+    span = "midi_led_gather";
+  }
+  recordLoopRemainderIfMeasuring(measure, span, startUs);
+#else
+  (void)measure;
+  (void)helper;
+  (void)startUs;
+#endif
+}
+
+RT_FLASHMEM_FN void recordLoadFrameChildRem(uint8_t child, uint32_t startUs) {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  const char* span = PSTR("display_frame");
+  if (child == 1) {
+    span = PSTR("load_job");
+  } else if (child == 2) {
+    span = PSTR("first_commit");
+  } else if (child == 3) {
+    span = PSTR("boot_commit");
+  }
+  recordLoopRemainderIfMeasuring(true, span, startUs);
+#elif defined(SESSION_CAPTURE)
+  const char* span = "display_frame";
+  if (child == 1) {
+    span = "load_job";
+  } else if (child == 2) {
+    span = "first_commit";
+  } else if (child == 3) {
+    span = "boot_commit";
+  }
+  recordLoopRemainderIfMeasuring(true, span, startUs);
+#else
+  (void)child;
+  (void)startUs;
+#endif
+}
+
+RT_FLASHMEM_FN void recordIdleMaintChildRem(uint8_t child, uint32_t startUs) {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  const char* span = PSTR("idle_gather");
+  if (child == 1) {
+    span = PSTR("idle_reconstruct");
+  } else if (child == 2) {
+    span = PSTR("idle_append");
+  }
+  recordLoopRemainderIfMeasuring(true, span, startUs);
+#elif defined(SESSION_CAPTURE)
+  const char* span = "idle_gather";
+  if (child == 1) {
+    span = "idle_reconstruct";
+  } else if (child == 2) {
+    span = "idle_append";
+  }
+  recordLoopRemainderIfMeasuring(true, span, startUs);
+#else
+  (void)child;
+  (void)startUs;
+#endif
+}
+
+RT_FLASHMEM_FN bool maybeEmit(uint32_t nowUs) {
   State& s = state();
   if (s.windowStartUs == 0) {
     s.windowStartUs = nowUs;

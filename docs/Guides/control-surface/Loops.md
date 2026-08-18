@@ -32,18 +32,18 @@ Immediate record sets **`activeLoopIndex`** to the target slot before capture st
   - Departure commits pending edit work (NOTE_EDIT / LOOP_EDIT) before the UI focus index changes.
   - While transport is running (`clockManager.shouldQuantizeRecordStart()`): `setSelectedSlotIndex(..., SyncPlayback::No)` updates **preview** immediately; **playing** slot switches at **loop boundary** via `requestSlotSwitch(LoopEnd)`.
   - Piano roll and edit commit follow preview immediately; bar/16th LEDs and phase grid stay on the **playing** slot until commit.
-  - In multi-slot mode: keep the enabled set; queue playing-slot switch at loop end.
-  - In **LOOP_EDIT** or **NOTE_EDIT**: queue active switch with **single-slot** enabled set replacement so only the selected loop is audible for comparison.
-  - In single-slot mode (non-edit): queue switch at the grid; when committed, enabled set can be replaced with that single slot.
+  - At LoopEnd commit the enabled set becomes **only the queued slot**. Previously playing slots stop. A leftover layered set does not keep sounding.
+  - Adding more slots to the same queued start (hold the current playing slot, short-press others) is not this gesture.
   - On grid commit: **`projectionCycleStartTick`** resets and **`queuedStartTick`** applies once (target slot's **`loopStartTick`**).
   - When transport is not running: immediate `SyncPlayback::Yes` sync.
 - **Pressed slot is empty**: use queued/immediate record flow (bar/phase quantized when configured).
 
 ### While not playing
 
-- **Pressed slot is empty**: start recording.
-- **Pressed slot has data, LOOP_EDIT or NOTE_EDIT, different slot than selected**: change **selected** focus only (no play/stop toggle).
-- **Pressed slot has data** (otherwise): toggle play/stop on that slot; if global transport is stopped, it starts automatically so the clock advances. `toggleTransport()` may already start the track — play start is not double-toggled off.
+- **Pressed slot is empty**: start recording. Enabled set becomes **only that slot** (a leftover layered set from a previous play does not come back after record-stop).
+- **Pressed slot has data, LOOP_EDIT or NOTE_EDIT, different slot than selected**: change **selected** focus only (no play/stop toggle). Enabled set becomes **only that slot**.
+- **Pressed slot has data** (otherwise): toggle play/stop on that slot; if global transport is stopped, it starts automatically so the clock advances. `toggleTransport()` may already start the track — play start is not double-toggled off. Enabled set becomes **only that slot**.
+- Slot-switch and record **queues** are playing-only. Transport stop and track stop discard pending slot switch, pending record, pending multi-hold commit, and queued playback start. The committed enabled set is not a queue; selecting a slot while stopped replaces it.
 
 ## Long press
 
@@ -62,12 +62,13 @@ Sidebar **`U:nn`** shows applied pass-undo depth for the **selected loop**, not 
 
 ## Hold (multi-slot selection)
 
-Use hold to build a pending enabled-slot set:
+Use hold **while playing** to build a pending enabled-slot set:
 
 - Hold one or more slot buttons to mark target slots.
 - Release the last held slot to queue commit.
 - Commit occurs on next 16th boundary.
 - At commit, enabled set is replaced by held selection, playback indices are realigned for enabled audible slots, and LEDs are refreshed.
+- Hold is ignored while stopped, recording, or overdubbing. Transport/track stop discards an in-progress hold.
 
 ## Capture safety
 

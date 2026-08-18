@@ -140,6 +140,22 @@ void test_reconstruct_open_note_to_loop_end() {
     assert_has_note(notes, 60, 90, 99, 100);
 }
 
+void test_reconstruct_display_omits_open_tails_when_finish_open_notes_false() {
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(10, 1, 60, 100));
+    ev.push_back(MidiEvent::NoteOff(58, 1, 60, 0));
+    ev.push_back(MidiEvent::NoteOn(80, 1, 72, 90));
+    const NoteUtils::DisplayNoteVec withTails =
+        NoteUtils::reconstructDisplayNotes(ev, 100, false, true);
+    TEST_ASSERT_EQUAL(2u, withTails.size());
+    const NoteUtils::DisplayNoteVec committed =
+        NoteUtils::reconstructDisplayNotes(ev, 100, false, false);
+    TEST_ASSERT_EQUAL(1u, committed.size());
+    TEST_ASSERT_EQUAL(60, committed[0].note);
+    TEST_ASSERT_EQUAL_UINT32(10u, committed[0].startTick);
+    TEST_ASSERT_EQUAL_UINT32(58u, committed[0].endTick);
+}
+
 void test_reconstruct_dedupes_identical_segments() {
     MidiEventVec ev;
     ev.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
@@ -219,6 +235,43 @@ void test_reconstruct_wrap_with_synthetic_loop_end_before_head_off() {
     assert_has_note(notes, 48, 1487, 1535, 100);
     assert_has_note(notes, 48, 1535, loopLength - 1, 90);
     assert_has_note(notes, 48, 0, 55, 90);
+}
+
+void test_reconstruct_merged_pairing_blocks_completed_body_on() {
+    constexpr uint32_t loopLength = 3072;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(2976, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(96, 4, 12, 0));
+    ev.push_back(MidiEvent::NoteOn(288, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(384, 4, 12, 0));
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false);
+    for (const auto& n : notes) {
+        TEST_ASSERT_FALSE(n.note == 12 && n.startTick == 2976u && n.endTick == loopLength - 1);
+        TEST_ASSERT_FALSE(n.note == 12 && n.startTick == 0u && n.endTick == 96u);
+    }
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 288, 384,
+                    100);
+}
+
+void test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body() {
+    constexpr uint32_t loopLength = 3072;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(2976, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(96, 4, 12, 0));
+    ev.push_back(MidiEvent::NoteOn(288, 4, 12, 100));
+    ev.push_back(MidiEvent::NoteOff(384, 4, 12, 0));
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, true);
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 2976,
+                    loopLength - 1, 100);
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 0, 96, 100);
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 12, 288, 384,
+                    100);
 }
 
 void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
@@ -370,6 +423,17 @@ void test_is_live_wrap_head_continuation_display_tail_open_playhead_zero() {
         NoteUtils::isLiveWrapHeadContinuationDisplay(100, 0, loopLength, true));
 }
 
+void test_held_tail_on_after_session_wrap_matches_loop_end_continuation() {
+    // 012925 wrap 66.604: note 30 ON storage 2880, then playhead returns to S.
+    // closeTick behind that ON paints a tail to loop end until NoteOff.
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint32_t tailOnTick = 2880;
+    TEST_ASSERT_TRUE(
+        NoteUtils::isLiveWrapHeadContinuationDisplay(tailOnTick, 0, loopLength, true));
+    TEST_ASSERT_FALSE(
+        NoteUtils::isLiveWrapHeadContinuationDisplay(tailOnTick, 2904, loopLength, true));
+}
+
 void test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window() {
     // Growing live-record lengths under the wrap window must not treat playhead-behind-note
     // as wrap continuation (false head from tick 0).
@@ -413,6 +477,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_wraps_note_off_past_boundary);
     RUN_TEST(test_reconstruct_lifo_same_pitch);
     RUN_TEST(test_reconstruct_open_note_to_loop_end);
+    RUN_TEST(test_reconstruct_display_omits_open_tails_when_finish_open_notes_false);
     RUN_TEST(test_reconstruct_dedupes_identical_segments);
     RUN_TEST(test_reconstruct_dedupes_many_identical_geometry_notes);
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off);
@@ -420,6 +485,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_note_off_at_wrap_zero_is_boundary_end);
     RUN_TEST(test_is_wrap_held_open_note_accepts_head_off_at_zero);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
+    RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
+    RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
@@ -428,6 +495,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_resolve_wrap_head_segment_live_playhead_at_zero);
     RUN_TEST(test_resolve_wrap_head_segment_live_playhead_hidden_before_tail_on);
     RUN_TEST(test_is_live_wrap_head_continuation_display_tail_open_playhead_zero);
+    RUN_TEST(test_held_tail_on_after_session_wrap_matches_loop_end_continuation);
     RUN_TEST(test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_at_zero);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_mid_loop);

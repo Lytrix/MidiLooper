@@ -171,6 +171,11 @@ class LoopEventStore {
   template <typename AssignNoteIdFn>
   void assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId);
 
+  using NoteIdSupplier = NoteId (*)(void* ctx);
+  /// In-place fill on a chunk-id list. Chunk ids unchanged. Cold path (NOTE_EDIT open).
+  static void assignMissingNoteIdsToNoteOnsInChunkIds(const uint16_t* chunkIds, size_t count,
+                                                      NoteIdSupplier supplier, void* ctx);
+
  private:
   static bool hasHeadroomForCommittedChunkIdList(size_t count);
   static bool tryAssignCommittedChunkIds(CommittedChunkIdList& dest, const uint16_t* ids,

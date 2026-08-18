@@ -9,6 +9,7 @@
 #include "Globals.h"
 #include "Loop.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
 
 #if defined(SESSION_CAPTURE)
@@ -66,21 +67,25 @@ EditPass makeSessionStoreRow(EditActionType actionType, EditPropertyType propert
 
 }  // namespace
 
-NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
-  NoteEditFocus snap = focus;
+NOTE_EDIT_MEM NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
+  NoteEditFocus snap;
+  snap.active = focus.active;
+  snap.movingNoteId = focus.movingNoteId;
+  snap.commitBaseline = focus.commitBaseline;
+  snap.movingNoteRange = focus.movingNoteRange;
+  snap.last = focus.last;
+  snap.overlapNotes = focus.overlapNotes;
   if (!focus.active) {
-    snap.baselineMap.clear();
     return snap;
   }
 
-  BaselineMap trimmed;
   const auto keepBaseline = [&](NoteId noteId) {
     if (noteId == kInvalidNoteId) {
       return;
     }
     const auto it = focus.baselineMap.find(noteId);
     if (it != focus.baselineMap.end()) {
-      trimmed[noteId] = it->second;
+      snap.baselineMap[noteId] = it->second;
     }
   };
 
@@ -88,12 +93,11 @@ NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus) {
   for (const auto& [noteId, overlap] : focus.overlapNotes) {
     const auto it = focus.baselineMap.find(noteId);
     if (it != focus.baselineMap.end()) {
-      trimmed[noteId] = it->second;
+      snap.baselineMap[noteId] = it->second;
     } else if (noteId != kInvalidNoteId) {
-      trimmed[noteId] = overlap.baseline;
+      snap.baselineMap[noteId] = overlap.baseline;
     }
   }
-  snap.baselineMap = std::move(trimmed);
   return snap;
 }
 
@@ -154,7 +158,8 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
 }
 
 template <typename Alloc>
-SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
+NOTE_EDIT_MEM SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus,
+                                                     EditorSelection selection,
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,
                                        uint8_t channel, uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush,
@@ -198,17 +203,29 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
                    needsBaselineMapDiff ? 1U : 0U);
 #endif
 
-  std::vector<MidiEvent, Alloc> resolvedFlat = sessionFlat;
-  NoteEditFocus focusCopy = focus;
+  // A0: resolvedFlat / focusCopy are build intermediates, not SessionUndoEntry payload.
+  // Simple select (both flags false) has no consumer — do not copy PSRAM flats or the
+  // full focus. currentState->clone() above is the restore representation; keep it.
+  const NoteEditFocus* focusForRows = &focus;
+  std::vector<MidiEvent, Alloc> resolvedFlat;
+  NoteEditFocus focusCopy;
   if (needsOverlapResolve) {
 #if defined(SESSION_CAPTURE)
     phaseStartUs = micros();
 #endif
+    resolvedFlat = sessionFlat;
+    focusCopy = focus;
     resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
+    focusForRows = &focusCopy;
 #if defined(SESSION_CAPTURE)
     logUndoWarmPhase("overlap_resolve", phaseStartUs, baselineCount, sessionEventCount);
 #endif
   }
+#if defined(SESSION_CAPTURE)
+  if (!needsOverlapResolve && !needsBaselineMapDiff) {
+    logUndoWarmPhase("intermediates", micros(), baselineCount, sessionEventCount, 0);
+  }
+#endif
 
   const MidiEventVec* baselineDiffSource = nullptr;
   MidiEventVec flatForBaselineDiff;
@@ -216,7 +233,11 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
     phaseStartUs = micros();
 #endif
-    flatForBaselineDiff.assign(resolvedFlat.begin(), resolvedFlat.end());
+    if (needsOverlapResolve) {
+      flatForBaselineDiff.assign(resolvedFlat.begin(), resolvedFlat.end());
+    } else {
+      flatForBaselineDiff.assign(sessionFlat.begin(), sessionFlat.end());
+    }
 #if defined(SESSION_CAPTURE)
     logUndoWarmPhase("flat_copy", phaseStartUs, baselineCount, sessionEventCount);
 #endif
@@ -225,7 +246,7 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
 #if defined(SESSION_CAPTURE)
   phaseStartUs = micros();
 #endif
-  entry.editRows = buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength,
+  entry.editRows = buildPreCommitEditPasses(*focusForRows, channel, baselineDiffSource, loopLength,
                                             currentStateAtPush);
 #if defined(SESSION_CAPTURE)
   logUndoWarmPhase("edit_rows", phaseStartUs, baselineCount, sessionEventCount);

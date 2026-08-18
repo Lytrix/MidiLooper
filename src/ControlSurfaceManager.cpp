@@ -43,7 +43,11 @@
 #include <Arduino.h>
 #endif
 
+#if defined(__IMXRT1062__)
+DMAMEM ControlSurfaceManager controlSurfaceManager;
+#else
 ControlSurfaceManager controlSurfaceManager;
+#endif
 
 #if defined(SWAP_FADER1_FADER2_TEST)
 namespace {

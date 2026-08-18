@@ -4,12 +4,14 @@
 #include "Loop.h"
 
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "LoopInternal.h"
 #include "Logger.h"
 #include "LoopPasses.h"
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
@@ -17,6 +19,7 @@
 #include "Utils/NoteUtils.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 bool Loop::hasCommittedPasses() const {
@@ -132,7 +135,7 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
     passes.recordPass.committedChunkIds.clear();
     passes.recordPass.id = kInvalidPassId;
     ++playbackRevision;
-    markPassDerivedStale();
+    notifyCommittedContentChanged();
     return true;
   }
   for (auto it = passes.overdubPasses.begin(); it != passes.overdubPasses.end(); ++it) {
@@ -142,7 +145,7 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
     LoopEventStore::releaseChunkRefs(it->committedChunkIds);
     passes.overdubPasses.erase(it);
     ++playbackRevision;
-    markPassDerivedStale();
+    notifyCommittedContentChanged();
     return true;
   }
   return false;
@@ -173,8 +176,10 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
       return true;
     }
     passes.recordPass.state = state;
+    LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
-    markPassDerivedStale();
+    LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
+    notifyCommittedContentChanged();
     return true;
   }
   for (OverdubPass& pass : passes.overdubPasses) {
@@ -185,8 +190,10 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
       return true;
     }
     pass.state = state;
+    LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
-    markPassDerivedStale();
+    LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
+    notifyCommittedContentChanged();
     return true;
   }
   return false;
@@ -207,6 +214,48 @@ size_t Loop::activeCapturePassCount() const {
 
 void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
   store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
+}
+
+namespace {
+
+struct AssignCommittedPassNoteIdCtx {
+  Loop* loop;
+  uint32_t* assigned;
+};
+
+NoteId assignCommittedPassNoteId(void* ctx) {
+  auto* assignCtx = static_cast<AssignCommittedPassNoteIdCtx*>(ctx);
+  ++*assignCtx->assigned;
+  return assignCtx->loop->allocateNoteId();
+}
+
+}  // namespace
+
+LOOP_COLD_MEM void Loop::assignMissingNoteIdsInCommittedCapturePasses() {
+  if (!hasCommittedPasses()) {
+    return;
+  }
+  uint32_t assigned = 0;
+  AssignCommittedPassNoteIdCtx assignCtx{this, &assigned};
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    const CommittedChunkIdList& chunkIds = passes.recordPass.committedChunkIds;
+    LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+        chunkIds.data(), chunkIds.size(), assignCommittedPassNoteId, &assignCtx);
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+      continue;
+    }
+    const CommittedChunkIdList& chunkIds = pass.committedChunkIds;
+    LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+        chunkIds.data(), chunkIds.size(), assignCommittedPassNoteId, &assignCtx);
+  }
+  if (assigned > 0) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "assignMissingNoteIdsInCommittedCapturePasses: assigned %lu",
+               static_cast<unsigned long>(assigned));
+  }
 }
 
 void Loop::shiftActiveCapturePassTicks(int64_t delta) {
@@ -267,18 +316,96 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     }
   }
   ++playbackRevision;
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
 }
 
-LOOP_COLD_MEM void Loop::establishOverdubSourceView() {
+uint32_t Loop::overdubSourceWindowLengthTicks() const {
+  return DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+}
+
+void Loop::resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
+                                      uint32_t& windowLength) const {
+  const uint32_t loopLen = loopLengthTicks;
+  windowLength = overdubSourceWindowLengthTicks();
+  if (loopLen == 0 || windowLength >= loopLen) {
+    windowStart = 0;
+    windowLength = loopLen;
+    return;
+  }
+  windowStart =
+      DisplayWindowUtils::resolveCenteredWindowStart(centerPhaseTick, windowLength, loopLen);
+}
+
+void Loop::mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates) {
+  for (const NoteUtils::DisplayNote& candidate : candidates) {
+    if (candidate.noteId == kInvalidNoteId) {
+      continue;
+    }
+    bool found = false;
+    for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
+      if (existing.noteId == candidate.noteId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      overdubSourceViewNotes_.push_back(candidate);
+    }
+  }
+}
+
+LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) {
   overlapHoldTotals_ = {};
-  overdubSourceViewEvents_.clear();
-  gatherCommittedEvents(overdubSourceViewEvents_);
-  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
-  overdubSourceViewNotes_ = NoteUtils::reconstructDisplayNotes(
-      overdubSourceViewEvents_, overdubSourceViewLoopLengthTicks_, false);
-  overdubSourceViewEstablished_ = true;
+  rebuildOverdubSourceView(playheadPhaseTick, "open");
   clearPendingNoteChanges();
+}
+
+LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why) {
+  if (why == nullptr || why[0] == '\0') {
+    why = "wrap";
+  }
+  overdubSourceViewEvents_.clear();
+  overdubSourceViewNotes_.clear();
+  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  if (loopLengthTicks == 0) {
+    overdubSourceViewEstablished_ = true;
+    return;
+  }
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
+  ResolutionCostCounters windowCounters;
+  const char* from = "win";
+  if (LoopContentResolution::tryResolvePreparedWindow(
+          passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision,
+          overdubSourceViewEvents_, &windowCounters)) {
+    from = "prep";
+  } else {
+    LoopContentResolution::resolveWindow(passes, loopLengthTicks, windowStart, windowLength,
+                                         overdubSourceViewEvents_, &windowCounters);
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructStartUs = micros();
+#endif
+  overdubSourceViewNotes_ =
+      NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
+  overdubSourceViewEstablished_ = true;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t reconstructUs = micros() - reconstructStartUs;
+  const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
+  char line[192];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+           static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
+           static_cast<unsigned long>(reconstructUs),
+           static_cast<unsigned long>(windowUs + reconstructUs),
+           static_cast<unsigned>(overdubSourceViewEvents_.size()),
+           static_cast<unsigned>(overdubSourceViewNotes_.size()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)from;
+  (void)why;
+#endif
 }
 
 LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
@@ -292,7 +419,7 @@ void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
 }
 
-void Loop::beginCapture(CapturePhase phase) {
+void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   discardPendingCapturePass();
   capture.phase = phase;
   capture.store.clear();
@@ -302,7 +429,11 @@ void Loop::beginCapture(CapturePhase phase) {
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
   if (phase == CapturePhase::Overdub) {
-    establishOverdubSourceView();
+    // Wrap beginCapture must keep the session source view. Re-establish after
+    // invalidateCaches drops this-session notes (235407 inner / same-start-longer).
+    if (!overdubSourceViewEstablished_) {
+      establishOverdubSourceView(playheadPhaseTick);
+    }
   } else {
     clearOverdubSourceView();
   }
@@ -347,6 +478,7 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
   captureEventsSortDirty = true;
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR, loopLengthTicks);
   ++captureDisplayRevision;
+  overdubSessionLiveUndoEvents_.clear();
   result.accepted = true;
   result.reason = CaptureAppendDenyReason::Accepted;
   return result;
@@ -511,26 +643,25 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
   }
 
   ++playbackRevision;
-  discardPassesMaterializedCache();
-  markDisplayCachesStale();
+  notifyCommittedContentChanged();
 }
 
 void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   resetPassTimeline();
   if (store.empty()) {
-    discardPassesMaterializedCache();
+    notifyCommittedContentChanged();
     return;
   }
   CaptureChunkIdList captureIds;
   store.detachChunksTo(captureIds);
   if (captureIds.empty()) {
-    discardPassesMaterializedCache();
+    notifyCommittedContentChanged();
     return;
   }
   CommittedChunkIdList committedChunkIds;
   if (!LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(committedChunkIds, captureIds)) {
     LoopEventStore::releaseChunkRefs(captureIds);
-    discardPassesMaterializedCache();
+    notifyCommittedContentChanged();
     return;
   }
   RecordPass record{};
@@ -540,9 +671,10 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   passes.recordPass = std::move(record);
   lastCommittedPassId_ = passes.recordPass.id;
   ++playbackRevision;
-  markPassDerivedStale();
-  discardPassesMaterializedCache();
-  rebuildVisualCacheFromPasses();
+  notifyCommittedContentChanged();
+  if (loopLengthTicks > 0) {
+    rebuildVisualCacheFromPasses();
+  }
 }
 
 CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {
@@ -596,7 +728,7 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
 
-  markPassDerivedStale();
+  notifyCommittedContentChanged();
   return CommitResult::Committed;
 }
 
@@ -725,7 +857,13 @@ bool Loop::commitPendingCapturePass() {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   capturePreview.clear();
-  clearOverdubSourceView();
+  // Wrap and stop commit keep the session source view. Clearing here makes
+  // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
+  // re-establishes from a dirty cache (000417 src,why=open every wrap).
+  // closeOverdubSession / discardCapture clear the view.
+  if (!hasOverdubSession()) {
+    clearOverdubSourceView();
+  }
 
   return true;
 }

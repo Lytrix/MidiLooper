@@ -2,11 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-14 (DEC-035 Layer A archived)
+Last updated: 2026-08-17 (6C/6D closed on [`205928`]/[`210508`]; playback gather moved)
 
 ---
 
 ## Current branch
+
+**Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
 **NOTE_EDIT entry while overdubbing:** `openNoteEditSession` calls `stopOverdubbing()` first — live capture commits before rematerialize (quick fix).
 
@@ -34,7 +36,7 @@ Last updated: 2026-08-14 (DEC-035 Layer A archived)
 
 **NOTE_EDIT display unification:** Stages 1–2 and 5–9 shipped — [`note_edit_visual_cache_display_unification_refinement.md`](../Plans/note_edit_visual_cache_display_unification_refinement.md). Device [`192007`](../../captures/session_20260813_192007.log): 45 Hide/Restore `1440–1511` (not 2160); 76 as target still `840–2160`; first NOTE_EDIT `DISP` 59/60; resolve 16.8–52.3 ms. Paint gap and undo-warm stay open.
 
-**Active work:** **Overdub overlap geometry selection** on `feature/overdub-playback-observation-overlap`. DEC-035 Layer A archived on `feature/loop-content-history`. Do not start interval reservation or patch RC-J. Scheduling: [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
+**Active work:** Display undo/wrap/pitch-move — RC-W1/U1 HITL PASS [`152627`](../captures/session_20260817_152627.log); [`155450`](../captures/session_20260817_155450.log) NOTE_EDIT exit notes **5** — [`note_edit_display_undo_overdub_wrap_bugfix.md`](../Plans/note_edit_display_undo_overdub_wrap_bugfix.md). **Shipped on device:** wrap-crossing overdub consume `e1f57c5`, HITL **PASS** [`155450`](../captures/session_20260817_155450.log) — [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](../Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md). Overdub occupied-lane RC11/RC12 **FROZEN** HITL PASS [`140355`](../captures/session_20260817_140355.log) — [`overdub_overlap_hold_display_cache_bugfix.md`](../Plans/overdub_overlap_hold_display_cache_bugfix.md). Queued (no firmware): [`overdub_loop_length_during_overdub_enhancement.md`](../Plans/overdub_loop_length_during_overdub_enhancement.md). Parent [`overdub_overlap_hold_same_start_bugfix.md`](../Plans/overdub_overlap_hold_same_start_bugfix.md). RC10 live Hide paint; RC9 transport-stop pending; RC8 hold-window JIT; RC7 enter rebuild; RC6 wrap rebuild. RC1/RC3 device-confirmed. NOTE_EDIT persist close-keep **PASS** [`191411`](../captures/session_20260816_191411.log). Open wrap select **PASS** [`195050`](../captures/session_20260816_195050.log). **Wrap-move persist parked** [`201446`](../captures/session_20260816_201446.log): live linear `2832–3408` / `DNTE` **576**; deselect shortened to **336**. That RC is partly the current rematerialize / session-store structure — do not add more LIFO/wrap-off persist patches. Re-evaluate after hydrate. **LoopPersist finalize CRC relanded**. Stage 2 parked. Parent [`note_edit_undo_warm_missing_recon_investigation.md`](../Plans/note_edit_undo_warm_missing_recon_investigation.md). **C1–C4 device PASS**; **C5 parked**. **B2a device PASS** [`171228`](../captures/session_20260816_171228.log). A intermediates PASS. Boot title RAM1 **closed**. LED lookup Stage 1 PASS [`114736`](../captures/session_20260816_114736.log). Consumer grooming Slice 1–4c device PASS; 4e parked. **Slice 1b device PASS [`225626`](../captures/session_20260816_225626.log)** — `idle_append` owns dirty `idle_maint`. **Slice 2b device PASS [`232423`](../captures/session_20260816_232423.log).** **Slice 2c device PASS [`233323`](../captures/session_20260816_233323.log).** **038.2 landed.** **6C/6D closed** [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log) (3b stays; not all of LCR live). **NOTE_EDIT hydrate** queued ([`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md)); **playback gather** queued ([`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md)); wrap-move is not a hydrate start gate.
 
 **Merged to `dev`:** PR [#30](https://github.com/Lytrix/MidiLooper/pull/30) overdub overlap; PR [#29](https://github.com/Lytrix/MidiLooper/pull/29) Stage 5a-1/5a-2 + display RC4–RC5.
 
@@ -103,6 +105,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`loop-content-resolution`** | **DEC-037 prototype** — 6C/6D closed [`205928`](../captures/session_20260815_205928.log)/[`210508`](../captures/session_20260815_210508.log); 6.3 moved to [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md); 6.4 Editor consume moved to [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md) |
+| **`loop-effective-event-source`** | DEC-036 D1+D2+3b **closeout done** — overdub entry PASS; successor is `loop-content-resolution` |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |

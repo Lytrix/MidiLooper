@@ -13,8 +13,18 @@
 
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/IntervalProjection.h"
 
 namespace {
+
+void applyDisplayWrapPhaseToPaintNote(NoteUtils::DisplayNote& dn, uint32_t loopLength) {
+  // Session storage is linear (start+len, DEC-013 / 200952). Piano roll wrap paint is
+  // end < start only; end past loopLength is clamped to loop end (no head).
+  if (loopLength == 0 || dn.endTick < loopLength) {
+    return;
+  }
+  dn.endTick = IntervalProjection::tickPhaseInLoop(dn.endTick, 0, loopLength);
+}
 
 template <typename Alloc>
 bool resolveParticipantDisplaySpan(const NoteEditFocus& focus, NoteId noteId,
@@ -150,6 +160,50 @@ bool nonVisibleParticipantSuppressedFromProjection(const NoteEditCurrentState& c
                                                    NoteId noteId) {
   // Missing row is not Hidden — keep the committed display note (171219 / Stage 1).
   return noteId != kInvalidNoteId && currentState.isRowHiddenOrDeleted(noteId);
+}
+
+bool displaySpanIsWrap(uint32_t startTick, uint32_t endTick) {
+  return endTick < startTick;
+}
+
+bool committedBaseHasSplitHeadTail(const NoteUtils::DisplayNoteVec& committedBaseNotes,
+                                   NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  bool hasHead = false;
+  bool hasTail = false;
+  uint32_t headEnd = 0;
+  uint32_t tailStart = 0;
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != noteId) {
+      continue;
+    }
+    if (displaySpanIsWrap(dn.startTick, dn.endTick)) {
+      return true;
+    }
+    if (dn.startTick == 0 && dn.endTick > dn.startTick) {
+      hasHead = true;
+      headEnd = dn.endTick;
+    } else if (dn.endTick > dn.startTick && (!hasTail || dn.startTick > tailStart)) {
+      hasTail = true;
+      tailStart = dn.startTick;
+    }
+  }
+  return hasHead && hasTail && headEnd < tailStart;
+}
+
+bool participantSpanReplacesSplitCache(const NoteBaseline& current,
+                                       const NoteUtils::DisplayNoteVec& committedBaseNotes,
+                                       NoteId noteId) {
+  if (displaySpanIsWrap(current.startTick, current.endTick)) {
+    return true;
+  }
+  if (!committedBaseHasSplitHeadTail(committedBaseNotes, noteId)) {
+    return true;
+  }
+  // 193525: head-only currentSpan (0–96) must not drop the loop-end tail.
+  return current.startTick != 0;
 }
 
 bool noteEditCurrentStateHasOverlapDisplayMask(const NoteEditCurrentState& currentState,
@@ -303,8 +357,21 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     if (dn.noteId != kInvalidNoteId && hiddenParticipants.count(dn.noteId) > 0) {
       continue;
     }
+    // RC-N1: persist twin at the mover home (session id ≠ capture id) must not stay next to
+    // the overlay pitch. Chord notes at the same start with a different pitch are kept.
+    if (focus.active && focus.movingNoteId != kInvalidNoteId &&
+        dn.noteId != focus.movingNoteId && dn.note == focus.commitBaseline.pitch &&
+        dn.startTick == focus.commitBaseline.startTick) {
+      continue;
+    }
     if (dn.noteId != kInvalidNoteId &&
         std::find(participants.begin(), participants.end(), dn.noteId) != participants.end()) {
+      NoteBaseline current{};
+      if (currentState != nullptr && currentState->readCurrentSpan(dn.noteId, current) &&
+          currentState->rowIsVisible(dn.noteId) &&
+          !participantSpanReplacesSplitCache(current, committedBaseNotes, dn.noteId)) {
+        result.push_back(dn);
+      }
       continue;
     }
     if (invalidCommittedRowSupersededByParticipant(dn, participants, hiddenParticipants, focus,
@@ -346,6 +413,14 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
                                        participantDn.note, participantDn.velocity,
                                        participantDn.startTick, participantDn.endTick,
                                        currentState)) {
+      continue;
+    }
+    applyDisplayWrapPhaseToPaintNote(participantDn, loopLength);
+
+    NoteBaseline current{};
+    if (currentState != nullptr && currentState->readCurrentSpan(noteId, current) &&
+        currentState->rowIsVisible(noteId) &&
+        !participantSpanReplacesSplitCache(current, committedBaseNotes, noteId)) {
       continue;
     }
 

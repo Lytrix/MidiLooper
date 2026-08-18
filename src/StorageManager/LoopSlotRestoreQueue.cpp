@@ -45,28 +45,6 @@ bool probeLoopSlotPayloadOnSdFromSd(uint8_t trackIndex, uint8_t slotIndex) {
     return SD.exists(loopPath) && CurrentSetStorage::verifySaveFileTokenAtPath(loopPath);
 }
 
-bool loopSlotManifestExistsOnSd(uint8_t trackIndex, uint8_t slotIndex) {
-    char loopPath[64];
-    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
-        return false;
-    }
-    return SD.exists(loopPath);
-}
-
-void removeDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
-    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count;) {
-        if (pendingLoopSlotRestores_.entries[i].track == trackIndex &&
-            pendingLoopSlotRestores_.entries[i].slot == slotIndex) {
-            for (uint16_t j = i + 1; j < pendingLoopSlotRestores_.count; ++j) {
-                pendingLoopSlotRestores_.entries[j - 1] = pendingLoopSlotRestores_.entries[j];
-            }
-            --pendingLoopSlotRestores_.count;
-        } else {
-            ++i;
-        }
-    }
-}
-
 void sortPendingLoopSlotRestoresByPriority() {
     for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
         const DeferredLoopSlotRestore item = pendingLoopSlotRestores_.entries[i];

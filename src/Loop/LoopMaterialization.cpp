@@ -4,6 +4,7 @@
 #include "Loop.h"
 
 #include "CommittedEventRange.h"
+#include "EditApply.h"
 #include "Globals.h"
 #include "LoopInternal.h"
 #include "Utils/Diagnostics.h"
@@ -91,15 +92,6 @@ void mergeCaptureStoreIntoMaterializedEvents(const Loop& loop, MidiEventVector& 
   out = std::move(merged);
 }
 
-bool hasActiveEditPasses(const LoopPasses& passes) {
-  for (const EditPass& editPass : passes.editPasses) {
-    if (editPass.state == EditPassState::Active) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void collectActiveCommittedChunkLists(const LoopPasses& passes,
                                       std::vector<const CommittedChunkIdList*>& lists) {
   lists.clear();
@@ -122,12 +114,6 @@ void collectActiveCommittedChunkLists(const LoopPasses& passes,
   }
 }
 
-template <typename MidiEventVector>
-void sortMidiEventsByTick(MidiEventVector& events) {
-  std::sort(events.begin(), events.end(),
-            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-}
-
 }  // namespace
 
 void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
@@ -139,18 +125,72 @@ void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
 }
 
 void Loop::materializeEditViewFromPasses() const {
+  ensureEffectiveEventStoreCurrent();
+}
+
+void Loop::rebuildEffectiveEventStore() const {
   Loop* self = const_cast<Loop*>(this);
-  const bool storeEmptyMaterialized =
-      self->hasCommittedPasses() && self->passesMaterializedStore_.readStore().empty() &&
-      self->passes.editPasses.empty();
-  if (!passesMaterializedStoreStale_ && !storeEmptyMaterialized) {
+  SessionMidiEventVec flat;
+  passes.materializeToEventVector(flat, self->loopLengthTicks);
+  self->passesMaterializedStore_.mutStore().clear();
+  self->passesMaterializedStore_.discardEventsCache();
+  SessionMidiEventVec& events = self->passesMaterializedStore_.mutEvents();
+  events = std::move(flat);
+  self->passesMaterializedStoreStale_ = false;
+  ++self->effectiveEventStoreRevision_;
+}
+
+void Loop::ensureEffectiveEventStoreCurrent() const {
+  if (!passesMaterializedStoreStale_) {
+    if (!hasCommittedPasses()) {
+      return;
+    }
+    if (!passesMaterializedStore_.readEvents().empty()) {
+      return;
+    }
+  }
+  rebuildEffectiveEventStore();
+}
+
+void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
+  ensureEffectiveEventStoreCurrent();
+  const SessionMidiEventVec& events = passesMaterializedStore_.readEvents();
+  out.assign(events.begin(), events.end());
+}
+
+LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out,
+                                                             uint32_t windowStart,
+                                                             uint32_t windowLength) const {
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    out.clear();
     return;
   }
-  LoopEventStore::enterEphemeralSeal();
-  passes.materialize(self->passesMaterializedStore_.mutStore(), self->loopLengthTicks);
-  LoopEventStore::leaveEphemeralSeal();
-  self->passesMaterializedStore_.discardEventsCache();
-  self->passesMaterializedStoreStale_ = false;
+  if (windowLength >= loopLengthTicks) {
+    windowStart = 0;
+    windowLength = loopLengthTicks;
+  }
+
+  std::vector<const CommittedChunkIdList*> lists;
+  collectActiveCommittedChunkLists(passes, lists);
+  out.clear();
+  if (lists.empty()) {
+    return;
+  }
+  CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,
+                                windowLength)
+      .appendTo(out);
+  std::sort(out.begin(), out.end(),
+            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+
+  EditPassVec activeRows;
+  for (const EditPass& editPass : passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+    }
+  }
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(out, activeRows, loopLengthTicks);
+  }
 }
 
 void Loop::rematerializeEditView(LoopEventStore& store) const {
@@ -196,26 +236,7 @@ void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
 }
 
 LOOP_COLD_MEM void Loop::gatherCommittedEvents(SessionMidiEventVec& out) const {
-  if (hasActiveEditPasses(passes)) {
-    DIAG_COUNTER_INC(LegacyMidiEvents);
-    DIAG_COUNTER_INC(PlaybackFullMaterialize);
-    ++g_committedPitchQueryWork.fullMaterializeCount;
-    const SessionMidiEventVec& materialized = midiEvents();
-    out.assign(materialized.begin(), materialized.end());
-    return;
-  }
-  if (isPassesMaterializedStoreFresh()) {
-    passes.materializeToEventVector(out, loopLengthTicks);
-    return;
-  }
-  std::vector<const CommittedChunkIdList*> lists;
-  collectActiveCommittedChunkLists(passes, lists);
-  if (lists.empty()) {
-    out.clear();
-    return;
-  }
-  CommittedEventRange::full(lists.data(), lists.size(), loopLengthTicks).appendTo(out);
-  sortMidiEventsByTick(out);
+  copyEffectiveCommittedEvents(out);
 }
 
 LOOP_COLD_MEM void Loop::resetCommittedPitchQueryWork() {
@@ -234,27 +255,7 @@ LOOP_COLD_MEM void Loop::gatherCommittedEvents(MidiEventVec& out) const {
 
 LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                        uint32_t windowLength) const {
-  if (loopLengthTicks == 0 || windowLength == 0) {
-    out.clear();
-    return;
-  }
-  if (hasActiveEditPasses(passes) && !shouldAvoidFullVisualRebuild(loopLengthTicks)) {
-    SessionMidiEventVec full;
-    gatherCommittedEvents(full);
-    DisplayWindowUtils::filterMidiEventsToWindow(full, out, windowStart, windowLength,
-                                                 loopLengthTicks);
-    return;
-  }
-  std::vector<const CommittedChunkIdList*> lists;
-  collectActiveCommittedChunkLists(passes, lists);
-  if (lists.empty()) {
-    out.clear();
-    return;
-  }
-  CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,
-                                windowLength)
-      .appendTo(out);
-  sortMidiEventsByTick(out);
+  copyEffectiveCommittedEventsInRange(out, windowStart, windowLength);
 }
 
 LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindow(MidiEventVec& out, uint32_t windowStart,

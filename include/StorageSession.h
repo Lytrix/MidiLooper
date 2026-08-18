@@ -58,11 +58,27 @@ enum class DeferredFooterWriteStage : uint8_t {
   GlobalUndoStackToken,
 };
 
+enum class DeferredCompletionWriteStage : uint8_t {
+  PatchLastActiveUnix = 0,
+  EpochCrcBody,
+  EpochCrcHeader,
+  WriteWorkspaceMeta,
+  QuarantineLegacy,
+};
+
 enum class DeferredLoopWriteStage : uint8_t {
   Header = 0,
   CapturePassHeader,
   CapturePassChunk,
   EditTail,
+};
+
+enum class DeferredLoopFinalizeStage : uint8_t {
+  Idle = 0,
+  WriteToken,
+  EpochCrcBody,
+  EpochCrcHeader,
+  VerifyAndRename,
 };
 
 enum class LoopPersistPayloadCrc : uint8_t {
@@ -136,7 +152,13 @@ struct CurrentWorkspaceSaveJob {
   DeferredTrackWriteStage trackWriteStage = DeferredTrackWriteStage::TrackState;
   DeferredSlotWriteStage slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
   DeferredFooterWriteStage footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+  DeferredCompletionWriteStage completionWriteStage =
+      DeferredCompletionWriteStage::PatchLastActiveUnix;
+  uint32_t epochCrc = 0;
+  uint32_t epochCrcBodyOffset = 0;
+  uint32_t epochCrcBodySize = 0;
   DeferredLoopWriteStage loopWriteStage = DeferredLoopWriteStage::Header;
+  DeferredLoopFinalizeStage loopFinalizeStage = DeferredLoopFinalizeStage::Idle;
   DeferredUndoWriteStage undoWriteStage = DeferredUndoWriteStage::Header;
   LooperState stateSnapshot = LOOPER_IDLE;
   File file;

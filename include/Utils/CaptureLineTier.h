@@ -23,6 +23,14 @@ inline const char* tagOf(const char* line) {
   return separator == nullptr ? nullptr : separator + 1;
 }
 
+inline bool tagStartsWith(const char* line, const char* prefix) {
+  const char* tag = tagOf(line);
+  if (tag == nullptr || prefix == nullptr) {
+    return false;
+  }
+  return strncmp(tag, prefix, strlen(prefix)) == 0;
+}
+
 /**
  * Transport state, persistence, record stage, session header, visual cache coverage, and
  * timing telemetry lines.
@@ -51,6 +59,8 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,idle_maint,", 16) == 0 || strncmp(tag, "DIAG,load_frame,", 16) == 0 ||
          strncmp(tag, "DIAG,persist_save,", 18) == 0 || strncmp(tag, "DIAG,loop_rem,", 14) == 0 ||
          strncmp(tag, "DIAG,stored_notes,", 18) == 0 ||
+         strncmp(tag, "DIAG,lcr,", 9) == 0 ||
+         strncmp(tag, "DIAG,lcr,skip,", 14) == 0 ||
          strncmp(tag, "DIAG,overlap_hold,", 18) == 0;
 }
 

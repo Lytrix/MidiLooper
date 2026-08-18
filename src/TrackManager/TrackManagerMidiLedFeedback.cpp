@@ -5,6 +5,7 @@
 
 #include "ClockManager.h"
 #include "Globals.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/SlotFocusDisplay.h"
 
 uint8_t TrackManager::getMidiLedPhaseSlotIndex(uint8_t trackIndex) const {
@@ -99,7 +100,7 @@ void TrackManager::refreshTrackAndLoopSelectMidiLeds() {
   ledManager->updateTrackSelectLeds(selectedTrack, trackHasData, previewSlot, slotVelocities);
 }
 
-void TrackManager::updateMidiLedsDeferred() {
+FLASHMEM void TrackManager::updateMidiLedsDeferred() {
   if (!ledManager) return;
   Track& selTrack = getSelectedTrack();
   const uint8_t phaseSlot = getMidiLedPhaseSlotIndex(selectedTrack);
@@ -108,11 +109,43 @@ void TrackManager::updateMidiLedsDeferred() {
   if (selTrack.isJamPlaybackActive() && selTrack.isJamming()) {
     ledPhaseTick = selTrack.getEffectivePlaybackTick(currentTick);
   }
-  ledManager->updateLeds(selTrack, ledPhaseTick, phaseSlot);
-  if (selTrack.getLoopLengthForSlot(phaseSlot) > 0) {
-    ledManager->updateCurrentTick(selTrack, ledPhaseTick, phaseSlot);
+#if defined(SESSION_CAPTURE)
+  const bool measure = anyLoopPrefixMeasureAfterUndo();
+  uint32_t childStartUs = 0;
+  if (measure) {
+    childStartUs = micros();
   }
+#endif
+  ledManager->updateLeds(selTrack, ledPhaseTick, phaseSlot);
+#if defined(SESSION_CAPTURE)
+  if (measure) {
+    DebugSessionCapture::recordLoopRemainderSpan("midi_led_phase", micros() - childStartUs);
+  }
+#endif
+  if (selTrack.getLoopLengthForSlot(phaseSlot) > 0) {
+#if defined(SESSION_CAPTURE)
+    if (measure) {
+      childStartUs = micros();
+    }
+#endif
+    ledManager->updateCurrentTick(selTrack, ledPhaseTick, phaseSlot);
+#if defined(SESSION_CAPTURE)
+    if (measure) {
+      DebugSessionCapture::recordLoopRemainderSpan("midi_led_tick", micros() - childStartUs);
+    }
+#endif
+  }
+#if defined(SESSION_CAPTURE)
+  if (measure) {
+    childStartUs = micros();
+  }
+#endif
   refreshTrackAndLoopSelectMidiLeds();
+#if defined(SESSION_CAPTURE)
+  if (measure) {
+    DebugSessionCapture::recordLoopRemainderSpan("midi_led_select", micros() - childStartUs);
+  }
+#endif
 }
 
 void TrackManager::updateMidiLeds(uint32_t currentTick) {

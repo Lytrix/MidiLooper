@@ -20,6 +20,7 @@
 #include "BootRecoveryPolicy.h"
 #include "CurrentWorkspaceStorage.h"
 #include "PersistenceBudget.h"
+#include "PersistenceSchema.h"
 #include "PersistenceFailurePolicy.h"
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
@@ -405,6 +406,49 @@ void test_epoch_file_bytes_legacy_without_header() {
   const uint8_t legacy[] = {0x06, 0x00, 0x00, 0x00, 0x01, 0x02};
   TEST_ASSERT_TRUE(
       CurrentWorkspaceStorage::validateEpochFileBytes(legacy, sizeof(legacy), 0, false));
+}
+
+void test_epoch_file_body_crc_slice_matches_one_shot() {
+  // Device finalizeEpochFileHeaderCrc folds crc32Continue per 256-byte grain.
+  // A single crc32Continue over the whole body is a different value.
+  std::vector<uint8_t> body(CurrentWorkspaceStorage::kEpochFileCrcSliceBytes * 2 + 17);
+  for (size_t i = 0; i < body.size(); ++i) {
+    body[i] = static_cast<uint8_t>(i * 3u + 1u);
+  }
+  uint32_t expected = 0;
+  for (size_t i = 0; i < body.size();) {
+    const size_t n = (body.size() - i) < CurrentWorkspaceStorage::kEpochFileCrcSliceBytes
+                         ? (body.size() - i)
+                         : CurrentWorkspaceStorage::kEpochFileCrcSliceBytes;
+    expected = PersistenceSchema::crc32Continue(expected, body.data() + i, n);
+    i += n;
+  }
+
+  uint32_t sliced = 0;
+  size_t offset = 0;
+  uint32_t grains = 0;
+  while (offset < body.size()) {
+    bool done = false;
+    TEST_ASSERT_TRUE(CurrentWorkspaceStorage::continueEpochFileBodyCrc(
+        body.data(), body.size(), sliced, offset, CurrentWorkspaceStorage::kEpochFileCrcSliceBytes,
+        done));
+    ++grains;
+    if (done) {
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(expected, sliced);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(body.size()), static_cast<uint32_t>(offset));
+  TEST_ASSERT_EQUAL_UINT32(3u, grains);
+
+  uint32_t emptyCrc = 7;
+  size_t emptyOffset = 0;
+  bool emptyDone = false;
+  TEST_ASSERT_TRUE(CurrentWorkspaceStorage::continueEpochFileBodyCrc(
+      nullptr, 0, emptyCrc, emptyOffset, CurrentWorkspaceStorage::kEpochFileCrcSliceBytes,
+      emptyDone));
+  TEST_ASSERT_TRUE(emptyDone);
+  TEST_ASSERT_EQUAL_UINT32(7u, emptyCrc);
 }
 
 void test_workspace_dirty_matches_epoch_divergence() {
@@ -942,6 +986,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_revision_header_rejects_bad_magic);
   RUN_TEST(test_epoch_file_bytes_validate_with_header);
   RUN_TEST(test_epoch_file_bytes_legacy_without_header);
+  RUN_TEST(test_epoch_file_body_crc_slice_matches_one_shot);
   RUN_TEST(test_workspace_dirty_matches_epoch_divergence);
   RUN_TEST(test_revision_snapshot_source_epoch_idle);
   RUN_TEST(test_revision_snapshot_source_epoch_during_deferred_save);
