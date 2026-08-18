@@ -1920,6 +1920,9 @@ void test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b() {
   TEST_ASSERT_FALSE(bRecord.contains(11));
   TEST_ASSERT_EQUAL(0u, aoRecord.size());
   TEST_ASSERT_EQUAL(0u, boRecord.size());
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 10));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 11));
 
   occupy.clear();
   loop.collectOverdubSourceHoldParticipantIds(kHoldTick, kPitch, occupy);
@@ -1939,6 +1942,10 @@ void test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b() {
   TEST_ASSERT_FALSE(bRewrap.contains(11));
   TEST_ASSERT_EQUAL(0u, aoRewrap.size());
   TEST_ASSERT_EQUAL(0u, boRewrap.size());
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 12));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 10));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 11));
   LoopContentResolution::deviceGateReset();
 }
 

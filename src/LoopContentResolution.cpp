@@ -2372,6 +2372,22 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     }
   }
   const TickIndex& index = sDeviceGateSession.index;
+  auto capturePassIsActive = [&index](NoteId noteId) -> bool {
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(noteId);
+    if (found == nullptr) {
+      return false;
+    }
+    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    return pass == nullptr || pass->state == CapturePassState::Active;
+  };
+  auto hasActiveCompanion = [](NoteId noteId) -> bool {
+    for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+      if (row.state == EditPassState::Active && row.note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
   auto inWindow = [&](NoteId noteId) {
     return windowEvents == nullptr || windowIds.contains(noteId);
   };
@@ -2391,12 +2407,7 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     if (span.note.noteId == kInvalidNoteId || !inWindow(span.note.noteId)) {
       continue;
     }
-    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(span.note.noteId);
-    if (found == nullptr) {
-      continue;
-    }
-    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
-    if (pass != nullptr && pass->state != CapturePassState::Active) {
+    if (!capturePassIsActive(span.note.noteId)) {
       continue;
     }
     appendSpan(span.note.noteId, span.note.pitch, span.startTick, span.endTick);
@@ -2404,6 +2415,10 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
   for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
     if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId ||
         !inWindow(row.note.noteId)) {
+      continue;
+    }
+    // Same guards as tryCollectPreparedPresentNoteIdsAtTick (034455 wrap flash).
+    if (!capturePassIsActive(row.note.noteId) || hasActiveCompanion(row.note.noteId)) {
       continue;
     }
     appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);

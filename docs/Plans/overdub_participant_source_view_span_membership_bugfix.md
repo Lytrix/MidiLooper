@@ -1,6 +1,6 @@
 # Source-view membership from prepared NoteSpans
 
-**Status:** Native span fill `b94bd2b`; empty-copy fallback `81ce13a`; window-noteId span copy; Hide-all-spans; B collect Active/window parity (032228 wrap 6–7). Device RC12 flood **PASS**. 021716 storage-64-before-wrap is not a blocking gate.
+**Status:** Native span fill `b94bd2b`; empty-copy fallback `81ce13a`; window-noteId span copy; Hide-all-spans; B collect Active/window parity; span-copy Disabled restore matches B collect. Device RC12 flood **PASS**. Device B-collect **PASS** [`034455`](../../captures/session_20260818_034455.log) (`eq=0` = 0). Wrap 1-frame undo flash native-pinned; device gate after this firmware. 021716 storage-64-before-wrap is not a blocking gate.
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)  
@@ -222,6 +222,28 @@ Not the 030219 34-vs-4 leftover dump. The occasional +1 is one extra finished-op
 Every `eq=0` is `ao=0` `bo=1`. Wrap 6–7 extras sit on the same storage ticks that were `eq=1` on wrap 4 (528, 576, 0, 96, 192, 240, 384, 432, 480), including occupied **576**. Storage **64** appears twice after wrap 1 (pitch 86 and 60) and both are `a=1,b=1`. STOPPED `DISP` 15.
 
 A matches `lcr,vch`. Occupy is not missing window-visible ids. B restored Disabled wrap-layer companion originals (and index orphans) that A already omitted. `tryCollectPreparedPresentNoteIdsAtTick` now skips `found==nullptr` spans, skips Disabled-pass companion restore, and skips Disabled companion restore when an Active companion already targets that `NoteId`. Native: `test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b`. Phase 2a undo still restores an Active wrap id (`10`). Do not start Phase 3. Do not consume B.
+
+### [`034455`](../../captures/session_20260818_034455.log) — B-collect gate PASS
+
+1-bar (`DISP` `OVERDUBBING,768`). Two `why=open` (`from=win,notes=1`). 73 `lcr,part`: 9 `from=miss` (enter, `a=0`), **64 `from=prep` all `eq=1`**. **`eq=0` = 0**, including wrap 7–11 after session undo (`sess_undo` depth 5→4). 032228 wrap 6–7 `bo=1` is gone.
+
+11 wrap rebuilds: `lcr,src notes` vs next `lcr,vch notes` is 0 or **−1/−2** (src 6–11, vch 7–13). Not 030219 34-vs-4. Storage **64** after wrap is `eq=1`. STOPPED `DISP` 12. Do not start Phase 3.
+
+### Wrap display flicker — Disabled companion restore in span copy
+
+Occupy A==B **PASS** in 034455 did not stop a 1-frame piano-roll flash of undone notes at every wrap.
+
+| Fact | Value |
+|------|-------|
+| Wrap `lcr,src` | `from=span` (RC12 paints this) |
+| After `sess_undo` | `why=undo` `notes=6`; `VCACHE,slice_clean notes=8` |
+| Next `DISP` | still **11** frame notes (`4272`, `4473`) — live cache not invalidated on session undo |
+| Next wrap | `why=wrap` `notes=11` then `DISP` `11,8,11` **before** `why=hold` |
+| Holds | always after first post-wrap `DISP` (wrap 1: `2789` then `2800`) |
+
+`tryCopyPreparedSpansToDisplayNotes` restored every Disabled companion original in the window. B collect already skipped that restore when the capture pass is Disabled or an Active companion still targets the `NoteId`. Wrap rebuild put those originals back into `overdubSourceViewNotes_`; `sealPendingNoteChangesToEditPasses` had already cleared the paint overlay. First OLED frame after wrap showed them; the next occupy hide dropped them.
+
+**Invariant:** span copy uses the same Disabled-companion restore guards as `tryCollectPreparedPresentNoteIdsAtTick`. Session undo/redo calls `invalidateLiveDisplayCache` (same as wrap RC-W1). Native: `test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b` now also pins source-view NoteIds (record id present after undo, absent after rewrap Hide).
 
 ---
 
