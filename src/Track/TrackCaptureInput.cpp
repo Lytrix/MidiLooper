@@ -15,6 +15,7 @@
 #include "TickPhase.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/IntervalProjection.h"
+#include "OverlapNoteIdObservation.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPressurePolicy.h"
 #include "Utils/RecordStopLength.h"
@@ -47,6 +48,10 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   }
   // Occupy is ledger lookup at currentTick. No 16-bar hold fill on note-on.
   // Ahead notes still merge at note-off (`ensureOverdubSourceNotesForHold`).
+  const uint32_t occupyPhase = capturePhaseTick(pending.startNoteTick);
+  if (loop.lastTickInLoop != UINT32_MAX && loop.lastTickInLoop < occupyPhase) {
+    playMidiEvents(pending.startNoteTick, playbackEmitMidiOutput_);
+  }
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   if (runtime == nullptr) {
     pending.overlapNoteIds.clear();
@@ -65,6 +70,20 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   const uint32_t observeUs = micros() - observeStartUs;
   unsigned onlyA = 0;
   unsigned onlyB = 0;
+  uint32_t sourceViewStart = 0;
+  uint32_t sourceViewEnd = 0;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.note != pending.note || note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!OverlapNoteIdObservation::displayNotePresentAtHold(note.startTick, note.endTick,
+                                                            holdStart, loopLength)) {
+      continue;
+    }
+    sourceViewStart = note.startTick;
+    sourceViewEnd = note.endTick;
+    break;
+  }
   if (prepared) {
     for (size_t i = 0; i < sourceViewIds.size(); ++i) {
       if (!preparedIds.contains(sourceViewIds.at(i))) {
@@ -77,14 +96,17 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
       }
     }
   }
-  char line[224];
+  char line[256];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,part,why=on,from=ledger,pitch=%u,n=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,us=%lu",
+           "#CAP,%lu,DIAG,lcr,part,why=on,from=ledger,pitch=%u,n=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,"
+           "as=%lu,ae=%lu,us=%lu",
            static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
            static_cast<unsigned>(pending.overlapNoteIds.size()),
            static_cast<unsigned>(sourceViewIds.size()),
            static_cast<unsigned>(prepared ? preparedIds.size() : 0u),
            (prepared && onlyA == 0 && onlyB == 0) ? 1u : 0u, onlyA, onlyB,
+           static_cast<unsigned long>(sourceViewStart),
+           static_cast<unsigned long>(sourceViewEnd),
            static_cast<unsigned long>(observeUs));
   DebugSessionCapture::appendCaptureTextLine(line);
 #endif
