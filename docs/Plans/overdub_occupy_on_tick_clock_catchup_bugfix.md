@@ -1,6 +1,6 @@
 # Occupy on-tick before clock interval (ledger catch-up)
 
-**Status:** Native **PASS** 1355/1355. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **FAIL** [`233247`](../../captures/session_20260818_233247.log) — `n=0 a=1` **not met** (11); leftover `n=1 a=0` still **met** (0).  
+**Status:** Native **PASS** 1355/1355. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **FAIL** [`233247`](../../captures/session_20260818_233247.log) — interval catch-up in tree; leftover `n=1 a=0` **met** (0); `n=0 a=1` **not met** (11) is successor [`overdub_occupy_same_tick_off_before_on_bugfix.md`](overdub_occupy_same_tick_off_before_on_bugfix.md).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent (frozen leftover met):** [`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md)  
@@ -27,10 +27,11 @@ USB occupy may advance the committed `ActiveNoteLedger` to the USB phase; it mus
 
 ```
 … → ensurePlaybackMergedMidiEventsBuilt committed-only gather ← trust
- → USB occupy ledger catch-up (lastTick, occupyPhase] ← current investigation
+ → USB occupy ledger catch-up (lastTick, occupyPhase] ← trust interval after Off-before-On
+ → equal-tick Off then On inside that interval ← successor
 ```
 
-Do not fold live capture into `mergedMidiEvents` again. Do not call `playMidiEvents` from occupy. Do not rebuild merged from USB. Do not set `lastTickInLoop` or `nextEventIndex` from USB.
+Do not fold live capture into `mergedMidiEvents` again. Do not call `playMidiEvents` from occupy. Do not rebuild merged from USB. Do not set `lastTickInLoop` or `nextEventIndex` from USB. Park `rebuildPlaybackOrder` Off-before-On as a possible next RC — not the successor commit. Successor: [`overdub_occupy_same_tick_off_before_on_bugfix.md`](overdub_occupy_same_tick_off_before_on_bugfix.md).
 
 ## Root cause
 
