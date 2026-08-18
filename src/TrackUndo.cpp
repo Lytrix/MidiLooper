@@ -19,6 +19,7 @@
 #include "UndoLoopGeometry.h"
 #include "LoopContentHistory.h"
 #include "Utils/DebugSessionCapture.h"
+#include "DisplayManager.h"
 
 #include <cstdio>
 
@@ -630,6 +631,7 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
         return false;
     }
     loop.invalidateCaches();
+    displayManager.invalidateLiveDisplayCache();
     if (loop.playbackRevision != revisionBefore) {
         refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     }
@@ -655,6 +657,7 @@ TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
         return false;
     }
     loop.invalidateCaches();
+    displayManager.invalidateLiveDisplayCache();
     if (loop.playbackRevision != revisionBefore) {
         refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     }
