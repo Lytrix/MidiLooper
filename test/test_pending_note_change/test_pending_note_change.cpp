@@ -970,6 +970,83 @@ void test_wrap_committed_note_at_s_occupies_ledger_same_tick() {
   TEST_ASSERT_TRUE(occupyIds.contains(kWrapNoteId));
 }
 
+void test_wrap_pass_events_at_s_occupy_without_merged_rebuild() {
+  // session_20260818_180844 wrap 15: wrap-committed 60 @ 416, 1-bar 768.
+  // Ledger catch-up uses lastCommittedPassId() chunks only — no full-loop gather.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 416;
+  constexpr uint32_t kPrev = 408;
+  constexpr uint32_t kOff = 480;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kWrapNoteId = 9;
+  seedLongSourceNote(loop, 1, 0, 48, 72, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrapPass);
+
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  TEST_ASSERT_FALSE(passEvents.empty());
+  NoteId wrapIdFound = kInvalidNoteId;
+  for (const MidiEvent& evt : passEvents) {
+    if (evt.isNoteOn() && evt.data.noteData.note == kPitch && evt.tick == kS) {
+      wrapIdFound = evt.noteId;
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapIdFound);
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = passEvents;
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    static_cast<ActiveNoteLedger*>(ctx)->applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+  uint16_t cursor = 0;
+  ActiveNoteLedger wrapLedger;
+  PlaybackTickFrame wrapFrame{&playbackContext, kS, kPrev, false};
+  PlaybackCursorAdvanceState wrapAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(wrapAdvance, wrapFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &wrapLedger, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapLedger.noteId(1, kPitch));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, wrapLedger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kWrapNoteId));
+}
+
 void test_note_on_occupy_last_writer_overwrites() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1026,6 +1103,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_on_occupy_reads_ledger_note_id);
   RUN_TEST(test_note_on_occupy_empty_when_ledger_inactive);
   RUN_TEST(test_wrap_committed_note_at_s_occupies_ledger_same_tick);
+  RUN_TEST(test_wrap_pass_events_at_s_occupy_without_merged_rebuild);
   RUN_TEST(test_note_on_occupy_last_writer_overwrites);
   return UNITY_END();
 }

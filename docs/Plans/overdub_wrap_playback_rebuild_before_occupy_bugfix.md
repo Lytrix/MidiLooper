@@ -1,6 +1,6 @@
 # Wrap rebuilds playback before occupy
 
-**Status:** Native **PASS** 1345/1345. HITL open after flash.  
+**Status:** **FROZEN** — native PASS; HITL failed [`180844`](../../captures/session_20260818_180844.log) wrap 15. Wrong prerequisite: full-loop merged rebuild is not how wrap-tick ledger state is established. Superseded for this RC by [`overdub_wrap_committed_pass_playback_bugfix.md`](overdub_wrap_committed_pass_playback_bugfix.md).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  
