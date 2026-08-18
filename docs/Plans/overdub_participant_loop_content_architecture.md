@@ -875,6 +875,18 @@ These populations do **not** produce `a=0,b>0`.
 
 Do **not** wrap-pair merged record+overdub (015618). Do not feed consume from visual cache. Do not add a second consume list. First device extra (pitch 79 `a=1,b=2` at storage 576) is a separate occupied class.
 
+### Device [`021716`](../../captures/session_20260818_021716.log) — fill in tree, `eq=1` not reached
+
+1-bar loop (`DISP` `OVERDUBBING,768`). 104 `lcr,part`, all `from=prep` (0 miss). 65 `eq=1`, 39 `eq=0`: 20 `a=0,b>0`, 19 `a≥1` with `bo>0`. Hold `merged=0` except 5 post-wrap `merged=1`. 14 debug wrap commits, 8 `why=wrap` rebuilds (empty wraps skip rebuild/publish).
+
+| When | Example | A | B |
+|------|---------|---|---|
+| Before first `why=wrap` (`notes=10`) | storage **64** pitch 86 / 60 | 0 | 2 |
+| After wrap (`notes=16`) | storage 64 / 528 / 704 | 1 | 3…6 |
+| After undo | chromatic 81–86, 94–96 | 0 | 1…2 |
+
+Before the first wrap rebuild, `appendOverdubPassWrapPairedNotes` has no Active overdub wrap to fill. B extras at 64 are already in prepared spans. After wrap, A is no longer empty on those occupied pitches; B still has extras. Occupied class is not closed. Do not wrap-pair merged record+overdub. Do not change B collect. Do not start Phase 3.
+
 ---
 
 ## Pre-implementation review (wrap-paired source-view fill)
