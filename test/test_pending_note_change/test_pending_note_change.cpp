@@ -798,6 +798,75 @@ void test_prepared_present_note_ids_filters_pitch_and_exclusive_end() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_note_on_occupy_uses_prepared_present_without_source_window_fill() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  constexpr uint32_t kHoldTick = 20000;
+  seedLongSourceNote(loop, 1, 10, 25000, 60, kLongLoop);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, kHoldTick);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(kHoldTick, 60, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(sourceIds.size()));
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kHoldTick, 60, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_note_on_occupy_miss_uses_source_view_without_window_fill() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  constexpr uint32_t kHoldTick = 20000;
+  seedLongSourceNote(loop, 1, 10, 25000, 60, kLongLoop);
+  loop.beginCapture(CapturePhase::Overdub, kHoldTick);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+
+  OverlapNoteIdSet occupyIds;
+  occupyIds.insert(99);
+  loop.collectOverdubNoteOnParticipantIds(kHoldTick, 60, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+}
+
+void test_note_on_occupy_matches_source_view_when_note_is_in_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(100, 60, occupyIds);
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(100, 60, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+  TEST_ASSERT_TRUE(occupyIds == sourceIds);
+  LoopContentResolution::deviceGateReset();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -829,5 +898,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_prepared_present_note_ids_match_source_hold_participants);
   RUN_TEST(test_prepared_present_note_ids_miss_does_not_fill_source_window);
   RUN_TEST(test_prepared_present_note_ids_filters_pitch_and_exclusive_end);
+  RUN_TEST(test_note_on_occupy_uses_prepared_present_without_source_window_fill);
+  RUN_TEST(test_note_on_occupy_miss_uses_source_view_without_window_fill);
+  RUN_TEST(test_note_on_occupy_matches_source_view_when_note_is_in_window);
   return UNITY_END();
 }

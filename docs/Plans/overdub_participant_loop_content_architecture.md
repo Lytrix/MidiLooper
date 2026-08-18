@@ -1,13 +1,13 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1–2a **in tree**. Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED participant HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 3** fill disable is next (firmware not started). NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1–2a **in tree**. Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED participant HITL **skipped** ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)). **Phase 3** note-on fill disable **in tree** (device HITL open). NOTE_EDIT overlap is a **sibling consumer** (selected/mover LinearSpan). Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill). Phase 3 16-bar fill disable is authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)); firmware not started.
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill). Phase 3 16-bar note-on fill disable is authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree.
 
 **Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
@@ -310,7 +310,7 @@ Secondary: USB latency closer to 1-bar behavior; source/hold JIT no longer inher
 * treating `ActiveNoteLedger` as the participant store;
 * treating LCR present-at-S (`PresentNote`) as MIDI execution state;
 * copying present-at-S at every bar as a new derived owner (DEC-037 `presentAt` heap fail [`225351`](../../captures/session_20260814_225351.log));
-* Phase 3 disable of the source-window lookup before OVERDUBBING A vs B parity (`eq=1`) including wrap predicates and Phase 2a session-undo inverse (met: [`040236`](../../captures/session_20260818_040236.log)). PLAYING/STOPPED/MUTED HITL is not a start gate ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)).
+* Phase 3 disable of the source-window lookup before OVERDUBBING A vs B parity (`eq=1`) including wrap predicates and Phase 2a session-undo inverse (met: [`040236`](../../captures/session_20260818_040236.log); Phase 3 in tree). PLAYING/STOPPED/MUTED HITL is not a start gate ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)).
 
 ---
 
@@ -334,7 +334,7 @@ capture new note
 
 Not `resolveWindow(16 bars)` as the normal discovery mechanism.
 
-Today `Track::snapshotOverlapHoldCandidates` calls `ensureOverdubSourceNotesForHold` then walks `overdubSourceViewNotes()`. That walk is the RC8 rule. The fill path is the 16-bar window. Replace the fill, not the RC8 rule, and only after parity.
+Today `Track::snapshotOverlapHoldCandidates` calls `Loop::collectOverdubNoteOnParticipantIds` (prepared present-at-S when ready, else the source-view walk). The RC8 hold predicate is unchanged. The 16-bar fill (`ensureOverdubSourceNotesForHold`) is note-off consume only.
 
 ---
 
@@ -472,8 +472,8 @@ A note whose canonical span crosses the loop boundary is present on both sides o
 | **1** | Prototype present-at-S query at overdub note-on **alongside** source-window fill. Companion publish HITL [`002447`](../../captures/session_20260818_002447.log). | observation only, **in tree** |
 | **2** | B collect walks prepared `NoteSpan`s with `displayNotePresentAtHold` (same as A). **In tree.** PLAYING/STOPPED/MUTED HITL skipped (DEC-040). `notePresentAt` unchanged. | keep old path |
 | **2a** | Session-undo inverse of baked companions. After wrap undo, A and B both show the restored source note. **In tree.** Prepared OVERDUBBING `eq=1` HITL [`040236`](../../captures/session_20260818_040236.log). | keep old path |
-| **3** | Disable redundant source-window lookup for note-on discovery. Measure cost. 64-bar / outside-gather is Phase 3 validation. | **next** — after Phase 2 + 2a |
-| **4** | Note-off classification. | after Phase 3 |
+| **3** | Disable redundant source-window lookup for note-on discovery. Measure cost. 64-bar / outside-gather is Phase 3 validation. | **in tree** — device HITL open |
+| **4** | Note-off classification. | after Phase 3 device gate |
 | **5** | Make present-at-S the owner of that one responsibility. Leave unrelated `overdubSourceView`. | narrow migration |
 
 ---
@@ -648,23 +648,21 @@ One **definition** of notes present at a tick. Overdub does not reconstruct a 16
 
 ## 22. Next action
 
-Phase 1 observation is in tree. Production participant ids still come from the RC8 source-view walk.
+Phase 1 observation is in tree. Production note-on occupy uses prepared present-at-S when ready (`collectOverdubNoteOnParticipantIds`).
 
-Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
+Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). CAP `a` is the source-view walk **without** fill; `b` is prepared present-at-S; `eq=1` means those sets match. Production occupy is `b` when `from=prep`. Note-on must not emit `lcr,src,why=hold`. 64-bar / outside-gather: `a` may be 0 while `b>0` — occupy still uses `b`.
 
-Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. [`013327`](../../captures/session_20260818_013327.log) wrap-crossing Adds at tick 64 (`10`, then `10`+`11`) are filled onto the source view by `appendOverdubPassWrapPairedNotes` (unprepared / visual-cache path). Prepared source-view fill copies those same spans when LCR is ready ([`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md)). Phase 3 fill disable is next: prepared OVERDUBBING `eq=1` passed [`040236`](../../captures/session_20260818_040236.log). PLAYING/STOPPED/MUTED HITL skipped (DEC-040). 64-bar / outside-gather is Phase 3 validation.
+Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. Prepared source-view fill copies window NoteOn spans when LCR is ready ([`overdub_participant_source_view_span_membership_bugfix.md`](overdub_participant_source_view_span_membership_bugfix.md)). Phase 3 fill disable is in tree. Device gate: no `why=hold` on note-on; 1-bar occupied `eq=1`; 64-bar outside-gather occupy from `b` without USB `resolveWindow`. PLAYING/STOPPED/MUTED HITL skipped (DEC-040).
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
-If present-at-S parity succeeds after wrap-predicate proof, the likely change is:
-
-> Replace the 16-bar discovery fill with the existing exact-tick canonical query (`tryResolvePreparedState` / `resolveState`), while leaving RC8 consume/transaction machinery intact — and obtaining LinearSpan from `NoteSpan` or source-view lookup, not from the emitted `PresentNote` alone.
+Phase 4 next: classify remaining source-view / hold-fill work on note-off. Do not delete `overdubSourceView`.
 
 ---
 
 ## Phase 1 observation (landed)
 
-**Owner:** `Track::snapshotOverlapHoldCandidates`. Production A remains `ensureOverdubSourceNotesForHold` + `collectOverdubSourceHoldParticipantIds`. Observation B is `tryCollectPreparedPresentNoteIdsAtTick` → prepared `NoteSpan` walk with `displayNotePresentAtHold`.
+**Owner:** `Track::snapshotOverlapHoldCandidates`. Production occupy is `Loop::collectOverdubNoteOnParticipantIds` (prepared present-at-S when ready, else source-view walk). Observation CAP `a` is the source-view walk without fill; `b` is `tryCollectPreparedPresentNoteIdsAtTick`.
 
 **CAP** (`SESSION_CAPTURE` only):
 
@@ -752,7 +750,7 @@ Still required before PresentNote can own discovery:
 
 1. **Prepared kept before first wrap.** `publishPreparedOverdubPass` no-ops unless `deviceGateFinished` and `preparedIndexKept`. Session 1 enter was `from=miss` / open `from=win` until wrap 1. Idle gate (DEC-037 6.0), not a button cold-build.
 2. **Fold sealed companions into checkpoints** — **in tree** (`b9b9336`, [`002447`](../../captures/session_20260818_002447.log)).
-3. **Phase 2a — session-undo inverse of baked companions.** **In tree.** Publish records the original span. `disableEditPasses` / `enableEditPasses` call `setPreparedEditPassState`. `tryResolvePreparedState` restores Disabled companion originals after `eraseDisabledSounding`. Native: `test_stage6e4_disabled_companion_restores_*`, `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Do not call `StateCheckpoints::rebuild` on undo. Production stays A until Phase 3.
+3. **Phase 2a — session-undo inverse of baked companions.** **In tree.** Publish records the original span. `disableEditPasses` / `enableEditPasses` call `setPreparedEditPassState`. `tryResolvePreparedState` restores Disabled companion originals after `eraseDisabledSounding`. Native: `test_stage6e4_disabled_companion_restores_*`, `test_overdub_session_undo_restores_companion_source_on_prepared_lcr`. Do not call `StateCheckpoints::rebuild` on undo. Production occupy is Phase 3 present-at-S.
 4. **LinearSpan from `NoteSpan`**, not emitted `PresentNote` (no `endTick`). Consume still needs start and end.
 5. **Leave live capture out of LCR.** Path B remains forbidden. `extractOpenCaptureNoteOns` removes held ons **before** seal and re-appends them to the next wrap’s `capture.store`. Those notes are not in the published pass until a later wrap or stop completes them.
 
@@ -964,3 +962,35 @@ None that blocked Phase 1.
 | **Behavior-preserving?** | YES — observation alongside fill. |
 | **Reuse** | YES — extend `snapshotOverlapHoldCandidates`; reuse `tryResolvePreparedState`. Do not overload `ActiveNoteLedger`. Do not add `resolveWindow` on USB miss. |
 | **Phase scope** | Phase 1 observation in tree. Hydrate not authorized. |
+
+---
+
+## Phase 3 — disable note-on source-window fill
+
+**Status:** firmware **in tree**. Device HITL open.
+
+**Invariant:** USB note-on occupy never calls `ensureOverdubSourceNotesForHold` / `resolveWindow`. When prepared, occupy ids are present-at-S (`tryCollectPreparedPresentNoteIdsAtTick`). On miss, occupy is the source-view walk already built at enter/wrap. Note-off consume still JIT-fills (Phase 4).
+
+**Owner:** `Track::snapshotOverlapHoldCandidates` → `Loop::collectOverdubNoteOnParticipantIds`.
+
+**Not:** deleting `overdubSourceView`; changing `notePresentAt`; note-off fill; hydrate; shrinking `kOverdubSourceWindowBars`.
+
+**CAP:** `a` = source-view walk without fill; `b` = prepared present-at-S; production occupy = `b` when `from=prep`. 1-bar window covers the loop so `eq=1` still holds. 64-bar outside-gather may be `a=0,b>0` — occupy still uses `b`. No `lcr,src,why=hold` on note-on.
+
+**Native:** `test_note_on_occupy_uses_prepared_present_without_source_window_fill` (64-bar, NOTE ON outside the 16-bar window, present at S); `test_note_on_occupy_miss_uses_source_view_without_window_fill`; `test_note_on_occupy_matches_source_view_when_note_is_in_window`. Native 1332/1332.
+
+**Device gate:** 1-bar occupied `eq=1` and no `why=hold` on note-on; 64-bar / outside-gather occupy from `b` without USB `resolveWindow`; `late_clk=0`.
+
+---
+
+## Architecture gate (Phase 3)
+
+| Question | Answer |
+|----------|--------|
+| **Owner module** | `Track::snapshotOverlapHoldCandidates`. Occupy: `Loop::collectOverdubNoteOnParticipantIds`. Query: `tryCollectPreparedPresentNoteIdsAtTick`. Fill stays on note-off only. |
+| **Primary invariant** | Note-on occupy uses notes present at `S` when prepared; never 16-bar `resolveWindow` on USB note-on. |
+| **Ownership change?** | NO |
+| **State transition change?** | NO |
+| **Behavior-preserving?** | NO for occupy source (A→B when prepared). Overdub FSM unchanged. |
+| **Reuse** | YES — extend `snapshotOverlapHoldCandidates`; compose existing A/B collects. Do not add `resolveWindow` on USB miss. |
+| **Phase scope** | Phase 3 note-on fill disable. Hydrate not authorized. Note-off is Phase 4. |

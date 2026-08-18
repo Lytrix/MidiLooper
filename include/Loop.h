@@ -202,11 +202,12 @@ struct Loop {
   /// reconstruct + wrap-paired overdub fill. Not visual cache.
   /// `why` is CAP `open` / `wrap` / `undo` / `redo`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
-  /// D2: just-in-time merge of this pitch's notes from the source/hold window
-  /// (`kOverdubSourceWindowBars`) into the session source view. Not the full loop. Skips noteIds already
-  /// present. Optional `newlyMergedPitchNotes` receives only those new rows.
-  /// `presentAtHoldOnly` is the note-on snapshot path: merge notes present at
-  /// the hold tick, not ahead notes in the same window.
+  /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
+  /// window (`kOverdubSourceWindowBars`) into the session source view. Not the
+  /// full loop. Skips noteIds already present. Optional `newlyMergedPitchNotes`
+  /// receives only those new rows. `presentAtHoldOnly` keeps notes present at
+  /// the hold tick (not ahead notes in the same window). Note-on occupy does
+  /// not call this (Phase 3).
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
                                        NoteUtils::DisplayNoteVec* newlyMergedPitchNotes = nullptr,
                                        bool presentAtHoldOnly = false);
@@ -218,6 +219,10 @@ struct Loop {
   /// Returns false on prepared miss. Never `resolveWindow` / cold `resolveState`. Clears `out`.
   bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
+  /// Note-on occupy (Phase 3): prepared present-at-S when ready, else source-view
+  /// walk. Never `ensureOverdubSourceNotesForHold` / `resolveWindow`. Clears `out`.
+  void collectOverdubNoteOnParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
+                                          OverlapNoteIdSet& out) const;
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
