@@ -1594,6 +1594,89 @@ void test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick() {
   TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
 }
 
+void test_occupy_ledger_catchup_same_tick_off_before_on_replaces() {
+  // session_20260818_233247 L2387: occupy 240 includes Off@240 of 192–240 and
+  // On@240 of 240–288. Merged vector can list On then Off at the same tick.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 232;
+  constexpr uint32_t kOccupy = 240;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOldId = 100;
+  constexpr NoteId kNewId = 200;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent oldOn = MidiEvent::NoteOn(192, 1, kPitch, 100);
+  oldOn.noteId = kOldId;
+  MidiEvent oldOff = MidiEvent::NoteOff(240, 1, kPitch, 0);
+  MidiEvent newOn = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  newOn.noteId = kNewId;
+  MidiEvent newOff = MidiEvent::NoteOff(288, 1, kPitch, 0);
+  MidiEventVec events;
+  events.push_back(oldOn);
+  events.push_back(newOn);
+  events.push_back(oldOff);
+  events.push_back(newOff);
+
+  ActiveNoteLedger ledger;
+  applyGatheredThroughTick(ledger, events, kLastTick);
+  TEST_ASSERT_EQUAL_UINT32(kOldId, ledger.noteId(1, kPitch));
+
+  TEST_ASSERT_TRUE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kNewId));
+  TEST_ASSERT_FALSE(occupyIds.contains(kOldId));
+  TEST_ASSERT_EQUAL_UINT32(kNewId, ledger.noteId(1, kPitch));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 240;
+  constexpr uint32_t kOccupy = 240;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOldId = 100;
+  constexpr NoteId kNewId = 200;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent oldOn = MidiEvent::NoteOn(192, 1, kPitch, 100);
+  oldOn.noteId = kOldId;
+  MidiEvent oldOff = MidiEvent::NoteOff(240, 1, kPitch, 0);
+  MidiEvent newOn = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  newOn.noteId = kNewId;
+  MidiEvent newOff = MidiEvent::NoteOff(288, 1, kPitch, 0);
+  MidiEventVec events;
+  events.push_back(oldOn);
+  events.push_back(newOn);
+  events.push_back(oldOff);
+  events.push_back(newOff);
+
+  TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  ActiveNoteLedger ledger;
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, kPitch));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
 void test_occupy_ledger_catchup_skips_wrap_crossing() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1668,6 +1751,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_capture_on_does_not_occupy_empty_source_view);
   RUN_TEST(test_occupy_ledger_catchup_on_at_192_after_last_tick_184);
   RUN_TEST(test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick);
+  RUN_TEST(test_occupy_ledger_catchup_same_tick_off_before_on_replaces);
+  RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();
 }

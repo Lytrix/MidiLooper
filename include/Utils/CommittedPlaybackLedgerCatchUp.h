@@ -30,8 +30,10 @@ inline TRACK_COLD_MEM bool shouldApply(const Loop& loop, uint32_t occupyPhase) {
   return true;
 }
 
-/// Apply committed events in (lastTickInLoop, occupyPhase]. Does not send MIDI,
-/// rebuild merged events, or mutate cursor / nextEventIndex / lastTickInLoop.
+/// Apply committed events in (lastTickInLoop, occupyPhase]. Equal-tick Off then
+/// On (same rule as NoteUtils::sortMidiEventsChronologically). Two walks; no
+/// scratch. Does not send MIDI, rebuild merged events, or mutate cursor /
+/// nextEventIndex / lastTickInLoop.
 template <typename EventVec>
 inline TRACK_COLD_MEM void applyOpenClosedInterval(ActiveNoteLedger& ledger, uint8_t channel,
                                                     const EventVec& events, uint32_t lastTickInLoop,
@@ -40,6 +42,19 @@ inline TRACK_COLD_MEM void applyOpenClosedInterval(ActiveNoteLedger& ledger, uin
     return;
   }
   for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOff()) {
+      continue;
+    }
+    const uint32_t evPhase = IntervalProjection::playbackEventPhase(evt.tick, loopLength);
+    if (!IntervalProjection::didPlaybackEventCross(false, lastTickInLoop, evPhase, occupyPhase)) {
+      continue;
+    }
+    (void)ledger.applyPlaybackEvent(channel, evt);
+  }
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOff()) {
+      continue;
+    }
     const uint32_t evPhase = IntervalProjection::playbackEventPhase(evt.tick, loopLength);
     if (!IntervalProjection::didPlaybackEventCross(false, lastTickInLoop, evPhase, occupyPhase)) {
       continue;
