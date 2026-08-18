@@ -45,12 +45,14 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   if (loopLength == 0) {
     return;
   }
-  // Same-start included (`<=` on start). RC8 walk is
-  // `collectOverdubSourceHoldParticipantIds`. Ahead notes merge at note-off.
+  // Same-start included (`<=` on start). Phase 3 occupy is present-at-S when
+  // prepared, else the source-view walk. No 16-bar hold fill on note-on.
+  // Ahead notes still merge at note-off (`ensureOverdubSourceNotesForHold`).
   const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
-  loop.ensureOverdubSourceNotesForHold(holdStart, pending.note, nullptr, true);
-  loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, pending.overlapNoteIds);
+  loop.collectOverdubNoteOnParticipantIds(holdStart, pending.note, pending.overlapNoteIds);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, sourceViewIds);
   OverlapNoteIdSet preparedIds;
   const uint32_t observeStartUs = micros();
   const bool prepared =
@@ -66,20 +68,20 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   } else {
     unsigned onlyA = 0;
     unsigned onlyB = 0;
-    for (size_t i = 0; i < pending.overlapNoteIds.size(); ++i) {
-      if (!preparedIds.contains(pending.overlapNoteIds.at(i))) {
+    for (size_t i = 0; i < sourceViewIds.size(); ++i) {
+      if (!preparedIds.contains(sourceViewIds.at(i))) {
         ++onlyA;
       }
     }
     for (size_t i = 0; i < preparedIds.size(); ++i) {
-      if (!pending.overlapNoteIds.contains(preparedIds.at(i))) {
+      if (!sourceViewIds.contains(preparedIds.at(i))) {
         ++onlyB;
       }
     }
     snprintf(line, sizeof(line),
              "#CAP,%lu,DIAG,lcr,part,why=on,from=prep,pitch=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,us=%lu",
              static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
-             static_cast<unsigned>(pending.overlapNoteIds.size()),
+             static_cast<unsigned>(sourceViewIds.size()),
              static_cast<unsigned>(preparedIds.size()),
              (onlyA == 0 && onlyB == 0) ? 1u : 0u, onlyA, onlyB,
              static_cast<unsigned long>(observeUs));

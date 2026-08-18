@@ -204,6 +204,14 @@ LOOP_COLD_MEM bool Loop::tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, u
                                                                        out);
 }
 
+LOOP_COLD_MEM void Loop::collectOverdubNoteOnParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
+                                                            OverlapNoteIdSet& out) const {
+  if (tryCollectPreparedPresentNoteIdsAtTick(holdPhaseTick, pitch, out)) {
+    return;
+  }
+  collectOverdubSourceHoldParticipantIds(holdPhaseTick, pitch, out);
+}
+
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
     const NoteUtils::DisplayNoteVec& sourceNotes,
                                                        uint8_t channel, uint8_t pitch,

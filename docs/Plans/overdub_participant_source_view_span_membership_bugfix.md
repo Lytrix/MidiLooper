@@ -256,7 +256,7 @@ Firmware `f5a7864`. User: flicker gone. 1-bar (`DISP` `OVERDUBBING,768`). 103 `l
 | Wrap after undo `lcr,src` vs `lcr,vch` | src 11 vs vch 12 | peel then wrap `1744` src **13** = vch **13**; later wraps 0 or +1 finished-open, not leftover Disabled restore |
 | First wrap `DISP` vs source | `11,8,11` before hold | wrap `3375` src 29, `DISP` **30** (src + live), visual 13 — paints source, not stale cache |
 
-Occupied identity and wrap display both PASS on this capture. PLAYING/STOPPED/MUTED HITL skipped (DEC-040). Parent Phase 3 is next.
+Occupied identity and wrap display both PASS on this capture. PLAYING/STOPPED/MUTED HITL skipped (DEC-040). Parent Phase 3 note-on fill disable is in tree (device HITL open).
 
 ---
 
