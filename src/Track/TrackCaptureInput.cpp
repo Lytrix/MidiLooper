@@ -45,12 +45,17 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   if (loopLength == 0) {
     return;
   }
-  // Same-start included (`<=` on start). Phase 3 occupy is present-at-S when
-  // prepared, else the source-view walk. No 16-bar hold fill on note-on.
+  // Occupy is ledger lookup at currentTick. No 16-bar hold fill on note-on.
   // Ahead notes still merge at note-off (`ensureOverdubSourceNotesForHold`).
-  const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
-  loop.collectOverdubNoteOnParticipantIds(holdStart, pending.note, pending.overlapNoteIds);
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (runtime == nullptr) {
+    pending.overlapNoteIds.clear();
+    return;
+  }
+  loop.collectOverdubNoteOnParticipantIds(pending.note, midiChannel, runtime->ledger,
+                                          pending.overlapNoteIds);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
   OverlapNoteIdSet sourceViewIds;
   loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, sourceViewIds);
   OverlapNoteIdSet preparedIds;
@@ -58,16 +63,9 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   const bool prepared =
       loop.tryCollectPreparedPresentNoteIdsAtTick(holdStart, pending.note, preparedIds);
   const uint32_t observeUs = micros() - observeStartUs;
-  char line[224];
-  if (!prepared) {
-    snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,part,why=on,from=miss,pitch=%u,a=%u,us=%lu",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
-             static_cast<unsigned>(pending.overlapNoteIds.size()),
-             static_cast<unsigned long>(observeUs));
-  } else {
-    unsigned onlyA = 0;
-    unsigned onlyB = 0;
+  unsigned onlyA = 0;
+  unsigned onlyB = 0;
+  if (prepared) {
     for (size_t i = 0; i < sourceViewIds.size(); ++i) {
       if (!preparedIds.contains(sourceViewIds.at(i))) {
         ++onlyA;
@@ -78,14 +76,16 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
         ++onlyB;
       }
     }
-    snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,part,why=on,from=prep,pitch=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,us=%lu",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
-             static_cast<unsigned>(sourceViewIds.size()),
-             static_cast<unsigned>(preparedIds.size()),
-             (onlyA == 0 && onlyB == 0) ? 1u : 0u, onlyA, onlyB,
-             static_cast<unsigned long>(observeUs));
   }
+  char line[224];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,part,why=on,from=ledger,pitch=%u,n=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,us=%lu",
+           static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
+           static_cast<unsigned>(pending.overlapNoteIds.size()),
+           static_cast<unsigned>(sourceViewIds.size()),
+           static_cast<unsigned>(prepared ? preparedIds.size() : 0u),
+           (prepared && onlyA == 0 && onlyB == 0) ? 1u : 0u, onlyA, onlyB,
+           static_cast<unsigned long>(observeUs));
   DebugSessionCapture::appendCaptureTextLine(line);
 #endif
 }
