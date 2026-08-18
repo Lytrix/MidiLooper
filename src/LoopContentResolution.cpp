@@ -2135,6 +2135,29 @@ uint32_t LoopContentResolution::deviceGateLoopLengthTicks() {
   return sDeviceGateSession.loopLengthTicks;
 }
 
+LoopContentResolution::DeviceGateDirtyPolicy LoopContentResolution::deviceGateDirtyPolicy(
+    bool visualCacheDirty, uint32_t liveLoopLengthTicks) {
+  if (!visualCacheDirty) {
+    return DeviceGateDirtyPolicy::Run;
+  }
+  const uint32_t sessionLength = deviceGateLoopLengthTicks();
+  if (sessionLength != 0 && liveLoopLengthTicks == sessionLength) {
+    return DeviceGateDirtyPolicy::Skip;
+  }
+  return DeviceGateDirtyPolicy::Reset;
+}
+
+const char* LoopContentResolution::deviceGateContentDeferReason(bool pendingRestore,
+                                                                bool pendingHydrate) {
+  if (pendingRestore) {
+    return "restore";
+  }
+  if (pendingHydrate) {
+    return "hydrate";
+  }
+  return nullptr;
+}
+
 TRACK_COLD_MEM void LoopContentResolution::deviceGateComplete(uint32_t playbackRevision) {
   sDeviceGateSession.keepPreparedIndex(playbackRevision);
   sDeviceGateFinished = true;

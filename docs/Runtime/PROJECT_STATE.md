@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-18 (Stage 1b prepared-session length identity)
+Last updated: 2026-08-18 (Stage 1c LCR dirty/save stall)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — Stage 1b prepared-session length identity **in tree**. Stage 1 membership (window NoteOn IDs past occupy-set cap 128) shipped; [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0. Do not start Stage 2 until 64-bar `from=span` / `ao=0` after STOPPED `lcr,mat` on the 64-bar loop. Phase 4 1-bar HITL **PASS** ([`123803`](../../captures/session_20260818_123803.log)). Native 1338/1338. PR pending → `dev`.
+**`feature/overdub-participant-discovery`** — Stage 1c LCR dirty/save stall **in tree**. Stage 1b length identity shipped; Stage 1 membership shipped; [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0. [`131207`](../../captures/session_20260818_131207.log) never reached `lcr,mat` (dirty reset + save defer). Do not start Stage 2 until 64-bar `from=span` / `ao=0` after STOPPED `lcr,mat` on the 64-bar loop. Phase 4 1-bar HITL **PASS** ([`123803`](../../captures/session_20260818_123803.log)). Native 1341/1341. PR pending → `dev`.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
@@ -62,7 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Overdub participant discovery:** `feature/overdub-participant-discovery` — Stage 1 source-view identity **in tree** (device HITL open) — [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Overdub participant discovery:** `feature/overdub-participant-discovery` — Stage 1c dirty/save stall **in tree** (device HITL: STOPPED until 64-bar `lcr,mat`) — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Codebase consistency:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) **NOW** — Phase 4 TrackManager **shipped** PR #22; next extractions in [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)
 - **StorageManager TU remaining:** **Merged** PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08); closeout [#16](https://github.com/Lytrix/MidiLooper/issues/16)
 - **Firmware ownership lifetime review:** **Closed** 2026-08-06 — [`firmware_ownership_lifetime_review.md`](../Plans/firmware_ownership_lifetime_review.md); layered **`base`** HITL **parked** for dedicated refactor

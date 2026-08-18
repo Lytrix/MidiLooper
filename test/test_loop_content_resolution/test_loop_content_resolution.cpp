@@ -1919,6 +1919,43 @@ void test_stage9_phase_line_on_change_not_every_slice() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_device_gate_dirty_matching_length_skips_without_reset() {
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(768u);
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateActive());
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(LoopContentResolution::DeviceGateDirtyPolicy::Run),
+      static_cast<int>(LoopContentResolution::deviceGateDirtyPolicy(false, 768u)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(LoopContentResolution::DeviceGateDirtyPolicy::Skip),
+      static_cast<int>(LoopContentResolution::deviceGateDirtyPolicy(true, 768u)));
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateActive());
+  TEST_ASSERT_EQUAL_UINT32(768u, LoopContentResolution::deviceGateLoopLengthTicks());
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_device_gate_dirty_length_mismatch_resets() {
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(768u);
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateActive());
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(LoopContentResolution::DeviceGateDirtyPolicy::Reset),
+      static_cast<int>(LoopContentResolution::deviceGateDirtyPolicy(true, 50688u)));
+  LoopContentResolution::deviceGateReset();
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateActive());
+  TEST_ASSERT_EQUAL_UINT32(0u, LoopContentResolution::deviceGateLoopLengthTicks());
+}
+
+void test_device_gate_save_is_not_a_content_defer() {
+  TEST_ASSERT_NULL(LoopContentResolution::deviceGateContentDeferReason(false, false));
+  TEST_ASSERT_EQUAL_STRING("restore",
+                           LoopContentResolution::deviceGateContentDeferReason(true, false));
+  TEST_ASSERT_EQUAL_STRING("hydrate",
+                           LoopContentResolution::deviceGateContentDeferReason(false, true));
+  TEST_ASSERT_EQUAL_STRING("restore",
+                           LoopContentResolution::deviceGateContentDeferReason(true, true));
+}
+
 void test_stage9_native_worst_case_micros() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4105,6 +4142,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);
+  RUN_TEST(test_device_gate_dirty_matching_length_skips_without_reset);
+  RUN_TEST(test_device_gate_dirty_length_mismatch_resets);
+  RUN_TEST(test_device_gate_save_is_not_a_content_defer);
   RUN_TEST(test_stage9_native_worst_case_micros);
   RUN_TEST(test_stage515b_equal_tick_boundary_order);
   RUN_TEST(test_stage515b_flat_span_boundaries_match_map);
