@@ -1,6 +1,6 @@
 # Occupy merged-capture ledger last-writer
 
-**Status:** Native **PASS** 1352/1352. HITL open.  
+**Status:** Native **PASS** 1352/1352. HITL **FAIL** [`231038`](../../captures/session_20260818_231038.log) — leftover `n=1 a=0` **met** (0); `n=0 a=1` **not met** (6).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent (frozen):** [`overdub_occupy_capture_stream_ledger_bugfix.md`](overdub_occupy_capture_stream_ledger_bugfix.md)  
@@ -69,4 +69,27 @@ Do **not**: call `playMidiEvents` from occupy; teach occupy about wrap/source-vi
 
 ## HITL
 
-Same 1-bar overdub shape as 224719. Gates: `n=0 a=1` = 0 and `n=1 a=0` = 0. Keep wrap-S / loop-head / occupy 12 @ `hs=0` pins. Do not treat `n=1 a=2` as this FAIL.
+**FAIL** [`231038`](../../captures/session_20260818_231038.log): 1-bar 768 OVERDUBBING; `hs=` on 86/86 occupies. `RING,overflow` twice. Firmware includes this gather (leftover gate is 0).
+
+| Kind | Count | Gate |
+|------|------:|------|
+| `n=1 a=1` | 30 | match |
+| `n=0 a=0` | 49 | empty lane |
+| **`n=0 a=1`** | **6** | **FAIL** (want 0) |
+| **`n=1 a=0`** | **0** | **met** |
+| `n=1 a=2` | 1 | not this gate |
+
+This RC’s leftover (`n=1 a=0`) is gone. Remaining `n=0 a=1` are all pitch **12**, `b=1`:
+
+| Line | hs | as–ae | vs span start |
+|------|---:|---------|----------------|
+| 4200 | 240 | 240–336 | occupy at start |
+| 4273 | 432 | 432–528 | occupy at start |
+| 4390 | 240 | 240–336 | occupy at start |
+| 4721 | 384 | 336–432 | interior |
+| 5241 | 192 | 192–280 | occupy at start |
+| 5399 | 96 | 96–192 | occupy at start |
+
+L5241: occupy us `65168812`; playback `MO,144,4,12,100` is later at us `65234756`. USB NoteOn at the committed On tick, ledger still empty. Do **not** call `playMidiEvents` from occupy.
+
+Closed pins this run: occupy 12 @ `hs=0` `n=1 a=1` (`6561`, `6785`, `6969`). Do not reopen wrap-S `(prev, S]` or USB catch-up. Do not treat `n=1 a=2` as this FAIL. Do not fold capture into `mergedMidiEvents` again.
