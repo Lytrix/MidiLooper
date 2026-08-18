@@ -2,27 +2,32 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (Stage 1c LCR dirty/save stall; device HITL open)
+Last updated: 2026-08-18 (occupy present-at-S JIT architecture pinned; Stage 1 `from=span` chase parked)
 
 ---
 
 ## Now implementing
 
-### 64-bar source-view identity — Stage 1c (in tree)
+### Occupy present-at-S JIT (architecture pinned; no firmware)
 
-**Plan:** [`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)  
+**Plan:** [`overdub_present_at_tick_jit_architecture.md`](../Plans/overdub_present_at_tick_jit_architecture.md)  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
-**Evidence:** [`131207`](../../captures/session_20260818_131207.log) (RC1c), [`125542`](../../captures/session_20260818_125542.log) (RC1b), [`123803`](../../captures/session_20260818_123803.log)
+**Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)  
+**Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`173842`](../../captures/session_20260815_173842.log)
 
-**Owner:** `Track::processDeferredContentResolutionDeviceGate`, `Track::maybeQueueContentResolutionDeviceGate`, `LoopContentResolution::deviceGateDirtyPolicy`. Not occupy identity patches. Not Stage 2. Not PLAYING LCR.
+**Owner:** `LoopContentResolution` + Track idle slices. Not occupy-set patches. Not Stage 2. Not PLAYING full-history LCR. Not cold LCR on the overdub button (DEC-037 6.0).
 
-Stage 1 membership **shipped**. Stage 1b length identity **shipped** (collect/publish miss on live ≠ session). [`125542`](../../captures/session_20260818_125542.log) **`a=1,b=0` = 0**. [`131207`](../../captures/session_20260818_131207.log) Stage 1b honesty held: occupy 105/105 `from=miss`, all `lcr,src` `from=win` with `prep=0`, **no `lcr,mat`**. The 64-bar session never finished: slot switch `reset,dirty` (768 → 50688), then deferred save blocked re-begin until PLAYING froze STOPPED-only slices.
+Occupy is notes of pitch P present at `currentTick` (`displayNotePresentAtHold` on `NoteSpan`). Prepared hit stays `tryCollectPreparedPresentNoteIdsAtTick`. USB miss stays the source-view walk until native gold of a **this-pitch** present-at-S query (not checkpoint tail, not 16-bar `resolveWindow`). Full-loop `lcr,mat` is opportunistic source-view `from=span`, not occupy readiness.
 
-Matching dirty now **skips** the slice (`skip,dirty`) and does not reset. Length mismatch still `reset,dirty`. Restore/hydrate still defer. **Save is not a defer.** `maybeQueue` still requires a clean visual cache before begin. Do not raise `kOverlapNoteIdSetCapacity`.
+**Parked:** Stage 1 wait-STOPPED-for-`lcr,mat` as product gate ([`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md) — membership / 1b / 1c **shipped**; `from=span` HITL **parked**). Do not start Stage 2. Do not raise `kOverlapNoteIdSetCapacity`.
 
-**Native:** `test_device_gate_dirty_matching_length_skips_without_reset`, `test_device_gate_dirty_length_mismatch_resets`, `test_device_gate_save_is_not_a_content_defer`. Native 1341/1341.
+**Next implementation (not this slice):** native this-pitch present-at-S vs prepared collect + RC8 + 64-bar outside-window fixture; architecture gate before USB. Device-gate **range** around playhead is the scheduled prepare (Stage 9 range tests). No firmware until that gold.
 
-**Device HITL open:** after 1-bar, select 64-bar, stay **STOPPED until `lcr,mat`** (`vch` notes in the 64-bar class, not 32). Do not press PLAY. 64-bar prepare is tens of seconds. Then overdub. Pass: 64-bar enter `from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; `late_clk=0`. Remaining `eq=0` only `a=0,b>0`. Unprepared enter remains `from=win`. Do **not** start Stage 2 until that gate passes.
+[`132806`](../../captures/session_20260818_132806.log): Stage 1c **held** (`skip,save` = 0; 64-bar `idx` to `prep` during persist). 1-bar `from=span` occupy `from=prep` `ao=0`. 64-bar overdub during `prep`: `from=win,live=50688,prep=50688`; occupy `from=miss`. `late_clk=0`. That miss is honest. Do not wait tens of seconds STOPPED to unmiss it.
+
+### 64-bar source-view identity — Stage 1c shipped; `from=span` HITL parked
+
+Membership, length identity, and dirty/save stall **shipped** ([`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)). [`132806`](../../captures/session_20260818_132806.log) Stage 1c held; 64-bar `from=span` not met (PLAYING during `prep`). That HITL is **parked** (DEC-041). Do not wait STOPPED for `lcr,mat`. Do not start Stage 2.
 
 ### Overdub participant discovery — notes present at S (Phase 4 1-bar PASS)
 
@@ -35,7 +40,7 @@ Matching dirty now **skips** the slice (`skip,dirty`) and does not reset. Length
 
 **Phase 4 1-bar HITL PASS** [`123803`](../../captures/session_20260818_123803.log): `collectConsumeWindow` skips `ensureOverdubSourceNotesForHold` when `loopLen <= overdubSourceWindowLengthTicks()`. Track 6 (768): **`why=hold` = 0**; occupy 102/130 `from=prep` `a=1,b=1` `eq=1`; consume still Hide (`hide` 3–11). Track 0 (50688): 36 `why=hold` remain (1 `merged=1`); consume still Add/Hide (`empty_sets=0`). `late_clk=0`. Native `test_note_off_skips_hold_fill_when_source_view_covers_loop`.
 
-**Parked until Stage 1 device PASS — 64-bar occupy identity:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0` was RC1 cap-128 (fixed). [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0; remaining `from=win` is RC1b (1-bar prepared session vs 64-bar live length). Empty occupy is **not** “no participants.”
+**Parked — 64-bar occupy via full-loop `from=span`:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0` was RC1 (fixed). [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0. Wait-for-`lcr,mat` **parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)). Empty occupy is **not** “no participants.” Next occupy work is this-pitch present-at-S JIT, not Stage 2.
 
 **Phase 3 1-bar HITL PASS** [`121933`](../../captures/session_20260818_121933.log): occupied 48/74 `a=1,b=1`; no note-on `why=hold`. Production occupy is present-at-S.
 

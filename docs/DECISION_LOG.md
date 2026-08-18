@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
 | [DEC-040](#dec-040-skip-playingstoppedmuted-overdub-participant-hitl) | 2026-08-18 | Skip PLAYING/STOPPED/MUTED overdub participant HITL | Accepted |
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
 | [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
@@ -55,7 +56,32 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-041 -->
+<!-- Append new entries below (newest first). Next ID: DEC-042 -->
+
+## DEC-041 — Occupy present-at-S is JIT, not full-loop `lcr,mat`
+
+**Date:** 2026-08-18  
+**Status:** Accepted. Firmware **not authorized**.  
+**Owner:** `LoopContentResolution` (query) + `Track::processDeferredIdleMaintenance` (slice schedule)  
+**Plan:** [`overdub_present_at_tick_jit_architecture.md`](Plans/overdub_present_at_tick_jit_architecture.md)  
+**Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype)  
+**Does not supersede:** DEC-037 6.0 (no cold LCR on the overdub button); DEC-040; Phase 3 note-on fill disable; Phase 4 note-off fill skip when the source view covers the loop.
+
+**Context:** Stage 1 `from=span` HITL treated STOPPED full-loop `deviceGateComplete` as occupy readiness. A 64-bar gate is 31–40 s STOPPED ([`173842`](../captures/session_20260815_173842.log) / [`185931`](../captures/session_20260815_185931.log)). That is rejected option A (always-ready). [`132806`](../captures/session_20260818_132806.log) Stage 1c held; 64-bar `from=span` missed because PLAYING started during `prep`. Occupy needs notes of pitch P present at `currentTick`, not a finished source-view copy.
+
+**Decision:**
+
+1. **Occupy contract** is present(S, P) via `displayNotePresentAtHold` on `NoteSpan`. Prepared hit stays `tryCollectPreparedPresentNoteIdsAtTick`. USB miss stays the source-view walk until a bounded query has native gold. Note-on still must not `resolveWindow` / `ensureOverdubSourceNotesForHold`.
+2. **`from=span` / wait-for-`lcr,mat`** is opportunistic source-view quality, not occupy or product readiness. Stage 1 membership, length identity, and dirty/save stall stay shipped. Stage 2 consume merge stays parked.
+3. **Bounded miss (next implementation, native first):** this-pitch pass events whose LinearSpan can contain S, then `displayNotePresentAtHold`. Not checkpoint tail on USB (`tryResolvePreparedState` requires `deviceGateComplete` products). Not 16-bar all-pitch `resolveWindow`. Gold: match prepared collect and RC8 when notes are in view; occupy a 64-bar NOTE ON outside the 16-bar source window that is present at S.
+4. **Scheduled prepare** may extend the existing device gate as a **range** around the playhead (Stage 9 range tests). Name: `deviceGate` range / `deviceGateBeginRange`. Not a new Session or Manager. PLAYING-admitted only for bounded range work. Full-loop LCR stays STOPPED-only and is not occupy readiness. Option B (PLAYING full-history LCR) stays rejected.
+5. **Consume / Hide** stays on `overdubSourceView`. Do not fold consume into occupy JIT.
+
+**Does not change:** DEC-037 6.0; `notePresentAt`; `overdubSourceView`; `kOverdubSourceWindowBars` production size.
+
+**Validation:** none this slice (docs). Next: native this-pitch present-at-S vs prepared collect + RC8 + outside-window fixture; architecture gate before USB.
+
+---
 
 ## DEC-040 — Skip PLAYING/STOPPED/MUTED overdub participant HITL
 
