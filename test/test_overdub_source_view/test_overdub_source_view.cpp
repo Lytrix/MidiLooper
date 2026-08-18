@@ -516,6 +516,39 @@ void test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 024225: why=open from=span notes=0 while window ev=2. RC12 paints source view, so
+// display dropped the record layer until STOPPED used visual cache. Empty span copy
+// is a miss — rebuild falls back to MIDI reconstruct of the gathered window.
+void test_source_view_falls_back_when_prepared_span_copy_is_empty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  NoteUtils::DisplayNoteVec copied;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(loop.playbackRevision, copied));
+  TEST_ASSERT_TRUE(hasDisplayNote(copied, 60, 10));
+
+  const PassId recordId = loop.lastCommittedPassId();
+  TEST_ASSERT_TRUE(loop.setCapturePassState(recordId, CapturePassState::Disabled));
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  copied.clear();
+  TEST_ASSERT_FALSE(
+      LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(loop.playbackRevision, copied));
+  TEST_ASSERT_EQUAL(0u, copied.size());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_discard_and_commit_clear_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2083,6 +2116,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_prepared_window_includes_unpaired_open_tails);
   RUN_TEST(test_source_view_consumes_prepared_lcr_when_cache_dirty);
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
+  RUN_TEST(test_source_view_falls_back_when_prepared_span_copy_is_empty);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
   RUN_TEST(test_extract_open_note_ons_keeps_same_tick_completed_pair);

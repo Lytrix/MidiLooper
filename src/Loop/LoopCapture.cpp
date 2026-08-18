@@ -387,6 +387,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructStartUs = micros();
 #endif
+  // Empty copy is a miss (024225: from=span notes=0 wiped RC12 display).
   if (LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(playbackRevision,
                                                                 overdubSourceViewNotes_)) {
     from = "span";

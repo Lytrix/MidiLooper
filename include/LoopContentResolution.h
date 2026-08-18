@@ -367,7 +367,8 @@ struct LoopContentResolution {
                                                      OverlapNoteIdSet& out);
   /// Copy prepared `NoteSpan`s (Active passes + Disabled companions) to DisplayNotes.
   /// Same membership B walks. Omits Hide rows (`endTick == startTick`).
-  /// Returns false on prepared miss. Does not reconstruct MIDI.
+  /// Returns false on prepared miss or when every span is skipped (empty is not
+  /// authoritative). Does not reconstruct MIDI.
   static bool tryCopyPreparedSpansToDisplayNotes(uint32_t playbackRevision,
                                                  NoteUtils::DisplayNoteVec& out);
 };

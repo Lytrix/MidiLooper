@@ -2374,7 +2374,7 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     }
     appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);
   }
-  return true;
+  return !out.empty();
 }
 
 void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) {
