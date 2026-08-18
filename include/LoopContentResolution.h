@@ -335,6 +335,8 @@ struct LoopContentResolution {
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
+  /// Prepared session loop length. 0 when the gate has not begun or was reset.
+  static uint32_t deviceGateLoopLengthTicks();
   /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `presentAt`.
   /// Drop rebuild working buffers. Does not construct or sort. Stamp is `playbackRevision`.
   static void deviceGateComplete(uint32_t playbackRevision);
@@ -342,8 +344,10 @@ struct LoopContentResolution {
   /// 6D.4 / 6E.4: append one committed overdub into the session `delta`, pair it, append
   /// its spans, and restamp. Projects this wrap's sealed companion Delete/Length rows onto
   /// existing `spans` / `spanBoundaries` / `presentAt`. Does not call `applyNoteEditPass`.
-  /// No-op when no prepared index is kept. Does not write `tickEvents`.
+  /// No-op when no prepared index is kept, or when `loopLengthTicks` disagrees with the
+  /// prepared session length. Does not write `tickEvents`.
   static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision,
+                                         uint32_t loopLengthTicks,
                                          const EditPassVec& editPasses = EditPassVec(),
                                          const EditPassIdList& companionIds = EditPassIdList());
   /// Session-disable / re-enable a prepared capture pass. Does not restamp.
@@ -361,9 +365,11 @@ struct LoopContentResolution {
   static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, PresentNoteVec& out,
                                       ResolutionCostCounters* counters = nullptr);
   /// Prepared present-at-S NoteIds for pitch using RC8 `displayNotePresentAtHold` on
-  /// `NoteSpan`s. Does not call `resolveState`. Returns false on prepared miss.
+  /// `NoteSpan`s. Does not call `resolveState`. Returns false on prepared miss or
+  /// when live `loopLengthTicks` disagrees with the prepared session length.
   static bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                                      uint32_t playbackRevision,
+                                                     uint32_t loopLengthTicks,
                                                      OverlapNoteIdSet& out);
   /// Copy prepared `NoteSpan`s (Active passes + Disabled companions) to DisplayNotes.
   /// Same membership B walks. Omits Hide rows (`endTick == startTick`).

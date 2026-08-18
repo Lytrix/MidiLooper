@@ -1,12 +1,12 @@
 # 64-bar source-view identity and note-off fill
 
-**Status:** Stage 1 **in tree** (device HITL open). Stage 2 **not started**.  
+**Status:** Stage 1 membership **shipped**. Stage 1b prepared-session identity **in tree**. Device HITL open (wait STOPPED for 64-bar `lcr,mat` after track switch). Stage 2 **not started**.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)  
-**Evidence:** [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log)
+**Evidence:** [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log), [`125542`](../../captures/session_20260818_125542.log)
 
-**Does not authorize:** raising `kOverlapNoteIdSetCapacity`; patching occupy/B collect; deleting `overdubSourceView`; changing `notePresentAt`; shrinking `kOverdubSourceWindowBars`; hydrate; Stage 2 consume merge until Stage 1 device PASS.
+**Does not authorize:** raising `kOverlapNoteIdSetCapacity`; patching occupy/B collect; deleting `overdubSourceView`; changing `notePresentAt`; shrinking `kOverdubSourceWindowBars`; hydrate; LCR slices while PLAYING; cold LCR on the overdub button; Stage 2 consume merge until Stage 1 device PASS.
 
 ---
 
@@ -14,16 +14,18 @@
 
 ```text
 tryCopyPreparedSpansToDisplayNotes window NoteOn membership
-    ← Stage 1 (this slice)
+    ← Stage 1 (shipped)
+prepared session length identity (tryCollect / publish / idle re-queue)
+    ← Stage 1b (this slice)
 rebuildOverdubSourceView reconstruct fallback
-    ← must not run after span copy succeeds
+    ← must not run after span copy succeeds on the matching loop
 occupy / B collect
-    ← do not patch; B already owns participant ids
+    ← length miss is honest from=miss; do not patch B
 collectConsumeWindow prepared-pitch merge
     ← Stage 2 after Stage 1 device PASS
 ```
 
-RC1 is **source-view identity divergence**, not occupy identity. Occupy exposes it because B owns participant ids.
+RC1 is **source-view identity divergence** from cap-128 span-copy abort. RC1b is **prepared-session identity**: the one-shot LCR session was the 1-bar loop. Occupy exposed it because collect did not check live length.
 
 ---
 
@@ -43,9 +45,28 @@ RC1 is **source-view identity divergence**, not occupy identity. Occupy exposes 
 
 `ao=0` for in-window present notes follows from that. Remaining `eq=0` after Stage 1 is only `a=0,b>0` (present at S, NoteOn outside the 16-bar window). `a=1,b=0` must be gone.
 
-**Native:** `test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity`, `test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity`. Native 1335/1335. 030219 filter test unchanged.
+**Native:** `test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity`, `test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity`. Native 1335/1335 at ship. 030219 filter test unchanged.
 
-**Device gate:** 64-bar enter `from=span`. Occupied `from=prep`: `ao=0` in-window. `a=1,b=0` = 0. `late_clk=0`. Then stop — do not start Stage 2.
+**Device** [`125542`](../../captures/session_20260818_125542.log): **`a=1,b=0` = 0** (membership fix held). 64-bar enter still `from=win` — RC1b.
+
+---
+
+## RC1b — prepared session is one loop; occupy collect skipped length
+
+[`125542`](../../captures/session_20260818_125542.log): one `lcr,mat` at 15.2 s, `lcr,vch notes=32` (1-bar). `deviceGateFinished` is one-shot; slices are STOPPED-only. 64-bar session 2: `why=open,from=win,ev=997,notes=1019` then occupy `from=prep` `ao=1` 34 ms later.
+
+`tryResolvePreparedWindow` / `tryCopyPreparedSpansToDisplayNotes` miss when live `loopLengthTicks` ≠ prepared session (50688 ≠ 768). `tryCollectPreparedPresentNoteIdsAtTick` did not. `publishPreparedOverdubPass` restamped the 64-bar revision onto the 1-bar session.
+
+**Fix:**
+
+- Collect requires live `loopLengthTicks` == session and checkpoint length (same miss as resolve/copy).
+- Publish no-ops on length mismatch (no append, no restamp).
+- `maybeQueueContentResolutionDeviceGate` resets and begins when finished session length ≠ selected loop. STOPPED-only slices unchanged.
+- `lcr,src` includes `live=` / `prep=` when `from` is not `span`.
+
+**Native:** `test_prepared_session_length_mismatch_misses_resolve_copy_collect`, `test_publish_prepared_overdub_pass_ignores_loop_length_mismatch`, `test_prepared_session_remeasure_after_reset_copies_long_loop`. Native 1338/1338.
+
+**Device gate (unchanged criteria):** 64-bar `why=open,from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; remaining `eq=0` only `a=0,b>0`; `late_clk=0`. After 1-bar, select 64-bar, stay **STOPPED until `lcr,mat`** for that loop (`vch` notes in the 64-bar class, not 32), then overdub. Unprepared enter is still `from=win`. Do not start Stage 2.
 
 ---
 
@@ -61,4 +82,4 @@ Prepared-ready consume merges **this pitch** into the source view; `resolveWindo
 |----------|--------|
 | Ownership change? | NO |
 | State transition change? | NO |
-| Reuse | YES — extend `tryCopyPreparedSpansToDisplayNotes` |
+| Reuse | YES — extend `tryCollectPreparedPresentNoteIdsAtTick`, `publishPreparedOverdubPass`, `maybeQueueContentResolutionDeviceGate` |

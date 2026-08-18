@@ -165,7 +165,7 @@ void collectHoldParticipantSets(Loop& loop, uint32_t tick, uint8_t pitch, Overla
                                 OverlapNoteIdSet& preparedIds) {
   loop.collectOverdubSourceHoldParticipantIds(tick, pitch, sourceIds);
   TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-      tick, pitch, loop.playbackRevision, preparedIds));
+      tick, pitch, loop.playbackRevision, loop.loopLengthTicks, preparedIds));
 }
 
 EditPassIdList commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint32_t onTick,
@@ -179,7 +179,8 @@ EditPassIdList commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint
   TEST_ASSERT_NOT_NULL(wrap);
   const EditPassIdList companions = loop.sealPendingNoteChangesToEditPasses();
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
-                                                    loop.passes.editPasses, companions);
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    companions);
   loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   return companions;
@@ -698,6 +699,120 @@ void test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_prepared_session_length_mismatch_misses_resolve_copy_collect() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kShortLoop = kBar;
+  constexpr uint32_t kLongLoop = kBar * 66;
+
+  Loop shortLoop;
+  seedDenseWindowNotes(shortLoop, 4, kShortLoop);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(shortLoop.passes, shortLoop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(shortLoop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(shortLoop.playbackRevision));
+  TEST_ASSERT_EQUAL_UINT32(kShortLoop, LoopContentResolution::deviceGateLoopLengthTicks());
+
+  Loop longLoop;
+  seedDenseWindowNotes(longLoop, 8, kLongLoop);
+  LoopContentResolution::restampPreparedPlaybackRevision(longLoop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(longLoop.playbackRevision));
+
+  SessionMidiEventVec window;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryResolvePreparedWindow(
+      longLoop.passes.editPasses, longLoop.loopLengthTicks, 0, longLoop.loopLengthTicks,
+      longLoop.playbackRevision, window, nullptr));
+  NoteUtils::DisplayNoteVec copied;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      longLoop.playbackRevision, copied, nullptr, longLoop.loopLengthTicks));
+  OverlapNoteIdSet preparedIds;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+      20, 60, longLoop.playbackRevision, longLoop.loopLengthTicks, preparedIds));
+
+  longLoop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_FALSE(longLoop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_EQUAL(100, longLoop.overdubSourceViewNotes().front().velocity);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_publish_prepared_overdub_pass_ignores_loop_length_mismatch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kShortLoop = kBar;
+  constexpr uint32_t kLongLoop = kBar * 66;
+
+  Loop shortLoop;
+  seedDenseWindowNotes(shortLoop, 4, kShortLoop);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(shortLoop.passes, shortLoop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(shortLoop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(shortLoop.playbackRevision));
+
+  Loop longLoop;
+  seedDenseWindowNotes(longLoop, 8, kLongLoop);
+  LoopContentResolution::restampPreparedPlaybackRevision(longLoop.playbackRevision);
+  const uint32_t restampedRevision = longLoop.playbackRevision;
+
+  longLoop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(longLoop.appendCaptureEvent(noteOnWithNoteId(200, 1, 72, 90, 9001)));
+  TEST_ASSERT_TRUE(longLoop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    longLoop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(longLoop, longLoop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  TEST_ASSERT_NOT_EQUAL(restampedRevision, longLoop.playbackRevision);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, longLoop.playbackRevision,
+                                                    longLoop.loopLengthTicks);
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(longLoop.playbackRevision));
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(restampedRevision));
+  OverlapNoteIdSet afterPublish;
+  TEST_ASSERT_FALSE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+      20, 60, longLoop.playbackRevision, longLoop.loopLengthTicks, afterPublish));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_prepared_session_remeasure_after_reset_copies_long_loop() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kShortLoop = kBar;
+  constexpr uint32_t kLongLoop = kBar * 66;
+  constexpr uint32_t kNoteCount = kOverlapNoteIdSetCapacity + 1;
+
+  Loop shortLoop;
+  seedDenseWindowNotes(shortLoop, 4, kShortLoop);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(shortLoop.passes, shortLoop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(shortLoop.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(kShortLoop, LoopContentResolution::deviceGateLoopLengthTicks());
+
+  Loop longLoop;
+  seedDenseWindowNotes(longLoop, kNoteCount, kLongLoop);
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::measureDeviceGate(longLoop.passes, longLoop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(longLoop.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(kLongLoop, LoopContentResolution::deviceGateLoopLengthTicks());
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(longLoop.playbackRevision));
+
+  longLoop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(longLoop.hasOverdubSourceView());
+  TEST_ASSERT_EQUAL(kNoteCount, longLoop.overdubSourceViewNotes().size());
+  for (const NoteUtils::DisplayNote& row : longLoop.overdubSourceViewNotes()) {
+    TEST_ASSERT_EQUAL(0, row.velocity);
+  }
+  NoteUtils::DisplayNoteVec copied;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      longLoop.playbackRevision, copied, &longLoop.overdubSourceViewEvents(),
+      longLoop.loopLengthTicks));
+  TEST_ASSERT_EQUAL(copied.size(), longLoop.overdubSourceViewNotes().size());
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_discard_and_commit_clear_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -983,7 +1098,8 @@ void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
     }
   }
   TEST_ASSERT_NOT_NULL(wrap);
-  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.loopLengthTicks);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
   PresentNoteVec presentNotes;
@@ -1050,7 +1166,8 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
       loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
-                                                    loop.passes.editPasses, EditPassIdList{hideId});
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    EditPassIdList{hideId});
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
   PresentNoteVec published;
@@ -1070,7 +1187,7 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
   TEST_ASSERT_TRUE(sawWrap);
   OverlapNoteIdSet publishedIds;
   TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-      300, 60, loop.playbackRevision, publishedIds));
+      300, 60, loop.playbackRevision, loop.loopLengthTicks, publishedIds));
   TEST_ASSERT_FALSE(publishedIds.contains(1));
   TEST_ASSERT_TRUE(publishedIds.contains(10));
 
@@ -1095,7 +1212,7 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
   TEST_ASSERT_FALSE(sawWrap);
   OverlapNoteIdSet undoneIds;
   TEST_ASSERT_TRUE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-      300, 60, loop.playbackRevision, undoneIds));
+      300, 60, loop.playbackRevision, loop.loopLengthTicks, undoneIds));
   TEST_ASSERT_TRUE(undoneIds.contains(1));
   TEST_ASSERT_FALSE(undoneIds.contains(10));
 
@@ -1153,7 +1270,8 @@ void test_rebuild_overdub_source_view_after_publish_includes_wrap_add() {
     }
   }
   TEST_ASSERT_NOT_NULL(wrap);
-  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.loopLengthTicks);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
   loop.rebuildOverdubSourceView(0);
@@ -1202,7 +1320,8 @@ void test_overdub_session_undo_rebuilds_source_view_to_match_prepared() {
       loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
-                                                    loop.passes.editPasses, EditPassIdList{hideId});
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    EditPassIdList{hideId});
   loop.rebuildOverdubSourceView(0);
   loop.pushOverdubSessionPass(wrapId, EditPassIdList{hideId});
   loop.beginCapture(CapturePhase::Overdub, 0);
@@ -2149,7 +2268,8 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
   TEST_ASSERT_NOT_NULL(wrap);
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
-                                                    loop.passes.editPasses, EditPassIdList{});
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    EditPassIdList{});
   loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet a64;
@@ -2171,7 +2291,8 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   const OverdubPass* wrap2 = findOverdubPass(loop, loop.lastCommittedPassId());
   TEST_ASSERT_NOT_NULL(wrap2);
   LoopContentResolution::publishPreparedOverdubPass(*wrap2, loop.playbackRevision,
-                                                    loop.passes.editPasses, EditPassIdList{});
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    EditPassIdList{});
   loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet a64w2;
@@ -2298,7 +2419,8 @@ void test_prepared_hold_ids_pin_wrap_pair_hide_drops_tail_at_64() {
       loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
-                                                    loop.passes.editPasses, EditPassIdList{hideId});
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    EditPassIdList{hideId});
   loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet a64;
@@ -2405,6 +2527,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_span_copy_keeps_only_window_note_ids);
   RUN_TEST(test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity);
   RUN_TEST(test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity);
+  RUN_TEST(test_prepared_session_length_mismatch_misses_resolve_copy_collect);
+  RUN_TEST(test_publish_prepared_overdub_pass_ignores_loop_length_mismatch);
+  RUN_TEST(test_prepared_session_remeasure_after_reset_copies_long_loop);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
   RUN_TEST(test_extract_open_note_ons_keeps_same_tick_completed_pair);

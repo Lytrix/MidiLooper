@@ -47,6 +47,7 @@ TRACK_COLD_MEM void Track::commitOverdubWrapAtSessionStart() {
     for (const OverdubPass& pass : loop.passes.overdubPasses) {
       if (pass.id == passId) {
         LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision,
+                                                          loop.loopLengthTicks,
                                                           loop.passes.editPasses, companionIds);
         break;
       }

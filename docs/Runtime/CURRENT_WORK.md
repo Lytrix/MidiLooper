@@ -2,25 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (Stage 1 source-view span copy past occupy-set cap 128; device HITL open)
+Last updated: 2026-08-18 (Stage 1b prepared-session length identity; device HITL open)
 
 ---
 
 ## Now implementing
 
-### 64-bar source-view identity — Stage 1 (in tree)
+### 64-bar source-view identity — Stage 1b (in tree)
 
 **Plan:** [`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
-**Evidence:** [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log)
+**Evidence:** [`125542`](../../captures/session_20260818_125542.log) (RC1b), [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log)
 
-**Owner:** `LoopContentResolution::tryCopyPreparedSpansToDisplayNotes`. Not occupy. Not B collect.
+**Owner:** `LoopContentResolution` prepared session. `tryCollectPreparedPresentNoteIdsAtTick`, `publishPreparedOverdubPass`, `Track::maybeQueueContentResolutionDeviceGate`. Not occupy identity patches. Not Stage 2.
 
-Window membership is a rebuild-local sorted vector of **unique window NoteOn IDs**. Not `OverlapNoteIdSet`. Do not raise `kOverlapNoteIdSetCapacity`. After copy succeeds, rebuild does not reconstruct.
+Stage 1 membership (window NoteOn vector, not occupy-set cap 128) **shipped**. [`125542`](../../captures/session_20260818_125542.log) **`a=1,b=0` = 0**. 64-bar enter stayed `from=win` because the one-shot LCR session was the 1-bar loop (`lcr,vch notes=32`, length 768). Occupy `from=prep` after revision restamp without a live-length check.
 
-**Native:** `test_source_view_span_copy_keeps_window_note_on_ids_past_occupy_set_capacity`, `test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity`.
+Collect and publish now miss when live `loopLengthTicks` ≠ prepared session. STOPPED idle re-queues the gate on length mismatch. `lcr,src` adds `live=` / `prep=` when `from` is not `span`. Do not raise `kOverlapNoteIdSetCapacity`. After copy succeeds on the matching loop, rebuild does not reconstruct.
 
-**Device HITL open:** 64-bar enter `from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; `late_clk=0`. Remaining `eq=0` only `a=0,b>0`. Do **not** start Stage 2 until that gate passes.
+**Native:** `test_prepared_session_length_mismatch_misses_resolve_copy_collect`, `test_publish_prepared_overdub_pass_ignores_loop_length_mismatch`, `test_prepared_session_remeasure_after_reset_copies_long_loop`. Native 1338/1338.
+
+**Device HITL open:** after 1-bar, select 64-bar, stay **STOPPED until `lcr,mat`** (`vch` notes in the 64-bar class, not 32), then overdub. Pass: 64-bar enter `from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; `late_clk=0`. Remaining `eq=0` only `a=0,b>0`. Do **not** start Stage 2 until that gate passes.
 
 ### Overdub participant discovery — notes present at S (Phase 4 1-bar PASS)
 
@@ -33,7 +35,7 @@ Window membership is a rebuild-local sorted vector of **unique window NoteOn IDs
 
 **Phase 4 1-bar HITL PASS** [`123803`](../../captures/session_20260818_123803.log): `collectConsumeWindow` skips `ensureOverdubSourceNotesForHold` when `loopLen <= overdubSourceWindowLengthTicks()`. Track 6 (768): **`why=hold` = 0**; occupy 102/130 `from=prep` `a=1,b=1` `eq=1`; consume still Hide (`hide` 3–11). Track 0 (50688): 36 `why=hold` remain (1 `merged=1`); consume still Add/Hide (`empty_sets=0`). `late_clk=0`. Native `test_note_off_skips_hold_fill_when_source_view_covers_loop`.
 
-**Parked until Stage 1 device PASS — 64-bar occupy identity:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0`; [`123803`](../../captures/session_20260818_123803.log) `a=1,b=1` `ao=1,bo=1`. Root cause is reconstruct A after span-copy cap abort, not occupy. Empty occupy is **not** “no participants.”
+**Parked until Stage 1 device PASS — 64-bar occupy identity:** [`122848`](../../captures/session_20260818_122848.log) `a=1,b=0` was RC1 cap-128 (fixed). [`125542`](../../captures/session_20260818_125542.log) `a=1,b=0` = 0; remaining `from=win` is RC1b (1-bar prepared session vs 64-bar live length). Empty occupy is **not** “no participants.”
 
 **Phase 3 1-bar HITL PASS** [`121933`](../../captures/session_20260818_121933.log): occupied 48/74 `a=1,b=1`; no note-on `why=hold`. Production occupy is present-at-S.
 

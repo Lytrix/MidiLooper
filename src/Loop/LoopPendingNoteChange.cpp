@@ -200,8 +200,8 @@ LOOP_COLD_MEM void Loop::collectOverdubSourceHoldParticipantIds(uint32_t holdPha
 
 LOOP_COLD_MEM bool Loop::tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                                                OverlapNoteIdSet& out) const {
-  return LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(tick, pitch, playbackRevision,
-                                                                       out);
+  return LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+      tick, pitch, playbackRevision, loopLengthTicks, out);
 }
 
 LOOP_COLD_MEM void Loop::collectOverdubNoteOnParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
