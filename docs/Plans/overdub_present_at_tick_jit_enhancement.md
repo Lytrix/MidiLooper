@@ -89,7 +89,7 @@ NoteOff: ledger.noteOff(channel, pitch)
 
 **Not 1:1 at a pitch.** `PresentNoteVec` can have many same-pitch ids at S. The ledger slot is last NoteOn overwrite. Occupy (later) reads that last writer, not a PresentNote row.
 
-**Capture stream (emit only).** During OVERDUBBING, `playCommittedLoopMidi` advances `PlaybackEmitPolicy::ActiveCaptureOverdub` through `playbackCursorAdvanceSendCapture` (`sendMidiEvent` only). Playback `mergedMidiEvents` is committed-only. Last-writer on occupy’s ledger is committed-only `mergedMidiEvents`, wrap-pass, and loop-head. Live capture must not fold into `mergedMidiEvents`. [`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md).
+**Capture stream (emit only).** During OVERDUBBING, `playCommittedLoopMidi` advances `PlaybackEmitPolicy::ActiveCaptureOverdub` through `playbackCursorAdvanceSendCapture` (`sendMidiEvent` only). Playback `mergedMidiEvents` is committed-only. Last-writer on occupy’s ledger is committed-only `mergedMidiEvents`, wrap-pass, loop-head, and USB occupy ledger catch-up (`catchUpCommittedPlaybackLedgerToPhase`). Live capture must not fold into `mergedMidiEvents`. Do not call `playMidiEvents` from occupy. [`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md), [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md).
 
 `Entry` while active: `active`, `noteId` (plus existing `startTick` / `velocity`). No `length`. `PresentNote` stays LCR / checkpoint.
 

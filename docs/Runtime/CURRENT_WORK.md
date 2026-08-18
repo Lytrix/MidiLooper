@@ -2,25 +2,33 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (occupy merged-capture ledger HITL FAIL 231038 — n=1 a=0 met)
+Last updated: 2026-08-18 (occupy on-tick ledger catch-up — native shipped, HITL pending)
 
 ---
 
 ## Now implementing
 
-### Occupy merged-capture ledger — HITL FAIL [`231038`](../../captures/session_20260818_231038.log)
+### Occupy on-tick before clock interval — ledger catch-up
+
+**Plan:** [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](../Plans/overdub_occupy_on_tick_clock_catchup_bugfix.md)  
+**Parent (FROZEN leftover met):** [`overdub_occupy_merged_capture_ledger_bugfix.md`](../Plans/overdub_occupy_merged_capture_ledger_bugfix.md)  
+**Pin:** [`231038`](../../captures/session_20260818_231038.log) — 6 `n=0 a=1` pitch 12; `n=1 a=0` = 0  
+**USB `playMidiEvents` catch-up:** **reverted** [`214856`](../../captures/session_20260818_214856.log) — do **not** call `playMidiEvents` from occupy
+
+**Invariant:** USB occupy may advance the committed ledger to the USB phase; it must **not** advance playback. Clock owns cursor, `nextEventIndex`, `lastTickInLoop`, send, wrap, and capture. Occupy consumes existing committed-only `mergedMidiEvents` via `catchUpCommittedPlaybackLedgerToPhase` (`(lastTickInLoop, occupyPhase]`). Skip wrap-crossing (`shouldCommitOverdubWrap`) and `occupyPhase <= lastTickInLoop`.
+
+**HITL gate:** `n=0 a=1` = 0 and `n=1 a=0` = 0. Keep occupy 12 @ `hs=0`. Do not treat `n=1 a=2` as this FAIL.
+
+**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; folding capture into `mergedMidiEvents`; occupy fallback; DisplayManager patch; setting `lastTickInLoop` or `nextEventIndex` from USB.
+
+### Occupy merged-capture ledger — FROZEN
 
 **Plan:** [`overdub_occupy_merged_capture_ledger_bugfix.md`](../Plans/overdub_occupy_merged_capture_ledger_bugfix.md)  
 **Parent (FROZEN):** [`overdub_occupy_capture_stream_ledger_bugfix.md`](../Plans/overdub_occupy_capture_stream_ledger_bugfix.md)  
 **Pin (pre-fix):** [`224719`](../../captures/session_20260818_224719.log) — 8 `n=0 a=1`; 6 `n=1 a=0`  
-**HITL FAIL:** [`231038`](../../captures/session_20260818_231038.log) — **6 `n=0 a=1`**; **0 `n=1 a=0`**; `hs=` on 86/86 occupies  
-**USB catch-up:** **reverted** [`214856`](../../captures/session_20260818_214856.log) — do **not** call `playMidiEvents` from occupy
+**HITL leftover met:** [`231038`](../../captures/session_20260818_231038.log) — **0 `n=1 a=0`**. Remaining 6 `n=0 a=1` are successor above.
 
-**Invariant:** Playback `runtime.mergedMidiEvents` is committed-only. Occupy reads `ActiveNoteLedger` written from that representation, wrap-pass, and loop-head. Live capture echo uses `playbackCursorAdvanceSendCapture` and must not last-write that ledger.
-
-**This RC leftover gate met:** `n=1 a=0` = 0 (capture On no longer occupies empty source-view). Remaining `n=0 a=1` are pitch 12; five occupy at span start (`hs==as`); L5241 playback `MO` On 12 is after occupy. Do not fold capture into `mergedMidiEvents` again.
-
-**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16 (HITL PASS below). No occupy fallback. No DisplayManager patch. Do not treat `n=1 a=2` as this FAIL.
+**Invariant:** Playback `runtime.mergedMidiEvents` is committed-only. Occupy reads `ActiveNoteLedger` written from that representation, wrap-pass, and loop-head. Live capture echo uses `playbackCursorAdvanceSendCapture` and must not last-write that ledger. Do not fold capture into `mergedMidiEvents` again.
 
 ### Occupy capture-stream ledger — FROZEN
 
@@ -36,7 +44,7 @@ Emit-only `playbackCursorAdvanceSendCapture` shipped. Remaining writer was live 
 
 **Display:** OVERDUBBING paint is `resolveDisplayNotesLiveCapture` from `overdubSourceViewNotes` + `capturePreview`. Occupy is not a paint input. Do not patch DisplayManager.
 
-**Named write (native only):** wrap-committed On@96 is not in wrap-S `(prev, S]`. Clock `playCommittedLoopMidi` must walk `(S, occupyTick]` after wrap reanchor at S. Do **not** call `playMidiEvents` from occupy (wrap can commit on USB NoteOn). Occupy stays a reader. CAP `as=`/`ae=` stays. Successor is merged-capture ledger above.
+**Named write (native only):** wrap-committed On@96 is not in wrap-S `(prev, S]`. Clock `playCommittedLoopMidi` must walk `(S, occupyTick]` after wrap reanchor at S. Do **not** call `playMidiEvents` from occupy (wrap can commit on USB NoteOn). Occupy stays a reader. CAP `as=`/`ae=` stays. Successor for USB-before-clock occupy is ledger catch-up above.
 
 **214856 `n=0 a=1` spans (not On@96):** 30 `528–544`; 12 `0–192`; 12 `144–232`; 12 `720–767`; 24 `216–408`. Wraps at storage **8**.
 
@@ -75,7 +83,7 @@ Emit-only `playbackCursorAdvanceSendCapture` shipped. Remaining writer was live 
 
 **Stage 0:** **Yes** — `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Not a 1:1 pitch lookup.
 
-**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-S ledger catch-up **HITL PASS** [`185831`](../../captures/session_20260818_185831.log). Loop-head storage-0 **HITL PASS** [`203948`](../../captures/session_20260818_203948.log).
+**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-S ledger catch-up **HITL PASS** [`185831`](../../captures/session_20260818_185831.log). Loop-head storage-0 **HITL PASS** [`203948`](../../captures/session_20260818_203948.log). USB occupy ledger catch-up native shipped ([`overdub_occupy_on_tick_clock_catchup_bugfix.md`](../Plans/overdub_occupy_on_tick_clock_catchup_bugfix.md)); HITL pending.
 
 **Parked:** `evaluateOccupyOverlap`; wait-STOPPED-for-`lcr,mat`; consume merge; “occupy = ledger” ownership transfer.
 

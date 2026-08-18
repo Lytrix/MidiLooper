@@ -13,6 +13,7 @@
 #include "CaptureAppendResult.h"
 #include "LoopEventStore.h"
 #include "TickPhase.h"
+#include "Utils/CommittedPlaybackLedgerCatchUp.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/IntervalProjection.h"
 #include "OverlapNoteIdObservation.h"
@@ -33,6 +34,23 @@ static void logCaptureAppendDeny(const Loop& loop, const CaptureAppendResult& re
 
 const uint32_t Track::TICKS_PER_BAR = Config::TICKS_PER_BAR;
 
+TRACK_COLD_MEM __attribute__((noinline)) void Track::catchUpCommittedPlaybackLedgerToPhase(
+    uint32_t occupyPhase) {
+  // Ledger catch-up only. Clock owns lastTickInLoop, nextEventIndex, send, wrap.
+  // FLASHMEM: same RAM1 rule as wrap-tick catch-up — occupy must not consume ITCM.
+  Loop& loop = getActiveLoop();
+  if (!CommittedPlaybackLedgerCatchUp::shouldApply(loop, occupyPhase)) {
+    return;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (runtime == nullptr) {
+    return;
+  }
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(
+      runtime->ledger, midiChannel, runtime->mergedMidiEvents.mergedEvents, loop.lastTickInLoop,
+      occupyPhase, loop.loopLengthTicks);
+}
+
 TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidates(
     PendingNote& pending) {
   if (!isOverdubbing()) {
@@ -49,7 +67,11 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   // Occupy is ledger lookup at currentTick. No 16-bar hold fill on note-on.
   // Ahead notes still merge at note-off (`ensureOverdubSourceNotesForHold`).
   // Do not call playMidiEvents here: lastTick < occupyPhase can cross session
-  // start and commit a wrap on the USB occupy path (214856).
+  // start and commit a wrap on the USB occupy path (214856). Ledger catch-up
+  // only: (lastTickInLoop, occupyPhase] via catchUpCommittedPlaybackLedgerToPhase.
+  const uint32_t holdStart =
+      IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
+  catchUpCommittedPlaybackLedgerToPhase(holdStart);
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   if (runtime == nullptr) {
     pending.overlapNoteIds.clear();
@@ -58,7 +80,6 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   loop.collectOverdubNoteOnParticipantIds(pending.note, midiChannel, runtime->ledger,
                                           pending.overlapNoteIds);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-  const uint32_t holdStart = IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
   OverlapNoteIdSet sourceViewIds;
   loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, sourceViewIds);
   OverlapNoteIdSet preparedIds;

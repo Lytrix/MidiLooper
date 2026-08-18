@@ -29,6 +29,7 @@
 #include "EditPass.h"
 #include "OverlapNoteIdSet.h"
 #include "ActiveNoteLedger.h"
+#include "Utils/CommittedPlaybackLedgerCatchUp.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/PlaybackCursorAdvance.h"
@@ -1521,6 +1522,107 @@ void test_capture_on_does_not_occupy_empty_source_view() {
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
 }
 
+void test_occupy_ledger_catchup_on_at_192_after_last_tick_184() {
+  // session_20260818_231038 L5241: lastTick 184, On@192, occupy 192. USB reads
+  // ledger before clock (prev, current] applies the On.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 184;
+  constexpr uint32_t kOn = 192;
+  constexpr uint32_t kOff = 280;
+  constexpr uint32_t kOccupy = 192;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCommittedId = 12;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  loop.rebuildOverdubSourceView(kOccupy);
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
+  TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger behindClock;
+  applyGatheredThroughTick(behindClock, committedOnly, kLastTick);
+  OverlapNoteIdSet behindIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, behindClock, behindIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(behindIds.size()));
+
+  TEST_ASSERT_TRUE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(behindClock, 1, committedOnly, kLastTick,
+                                                          kOccupy, kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, behindClock, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCommittedId));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kOn = 192;
+  constexpr uint32_t kOff = 280;
+  constexpr uint32_t kOccupy = 192;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCommittedId = 12;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.lastTickInLoop = kOccupy;
+  loop.nextEventIndex = 7;
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  ActiveNoteLedger ledger;
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, committedOnly, kOccupy, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL_UINT32(kOccupy, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_skips_wrap_crossing() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 760;
+  constexpr uint32_t kOccupy = 10;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOnAtZeroId = 12;
+  seedLongSourceNote(loop, kOnAtZeroId, 0, 200, kPitch, kLoopLenTicks);
+  loop.openOverdubSession(0);
+  loop.armOverdubWrapAfterLeavingStart(1);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kLastTick, kOccupy));
+  TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger ledger;
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(loop.captureActive());
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -1564,5 +1666,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_on_occupy_last_writer_overwrites);
   RUN_TEST(test_capture_off_does_not_clear_committed_occupy);
   RUN_TEST(test_capture_on_does_not_occupy_empty_source_view);
+  RUN_TEST(test_occupy_ledger_catchup_on_at_192_after_last_tick_184);
+  RUN_TEST(test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick);
+  RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();
 }
