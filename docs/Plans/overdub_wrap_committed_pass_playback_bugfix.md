@@ -1,6 +1,6 @@
 # Wrap-tick ledger catch-up from committed pass
 
-**Status:** Native **PASS** 1346/1346. HITL **PASS** [`185831`](../../captures/session_20260818_185831.log) wrap-S occupy 71 @ 704 `n=1`. Remaining `n=0` at storage 0 is **outside** this invariant — [`overdub_loop_head_playback_ledger_investigation.md`](overdub_loop_head_playback_ledger_investigation.md).  
+**Status:** Native **PASS** 1346/1346. HITL **PASS** [`185831`](../../captures/session_20260818_185831.log) wrap-S occupy 71 @ 704 `n=1`. Remaining `n=0` at storage 0 is **outside** this invariant — [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  
@@ -87,4 +87,4 @@ In `Track::playCommittedLoopMidi`:
 
 **PASS** [`185831`](../../captures/session_20260818_185831.log): track 6, 1-bar 768, wrap at storage **696**. Occupy 71 at storage **704** (next clock) is `n=1 a=1 b=1` (and later wraps `n=1 a=2 b=2` last-writer). Opposite of [`180844`](../../captures/session_20260818_180844.log) wrap 15 `n=0 a=1 b=1` at S.
 
-Do **not** reopen this RC for occupy 60 at storage **0** (`54243271` `n=0 a=1 b=1`). That is loop-head ledger state after wrap, not `(prev, S]`.
+Do **not** reopen this RC for occupy 60 at storage **0** (`54243271` `n=0 a=1 b=1`). That is [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md), not `(prev, S]`.

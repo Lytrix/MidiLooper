@@ -164,7 +164,7 @@ Runs on **every** record and overdub stop (after `loopLengthTicks` is known):
 - **`sealCapture`** on `capture.store` for **record and overdub** (before detach):
   - `finalizePendingNotes(currentTick)` before commit on record and overdub stop.
   - `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** with playhead `closeTick`.
-  - **`removePairsShorterThanNoteMinLength`** when **`noteMinLengthRemoveEnabled`**.
+  - **`removePairsShorterThanNoteMinLength`** when **`noteMinLengthRemoveEnabled`** — **hot stop only**. `CommitReason::OverdubWrap` skips Q16 so completed short pairs (e.g. On@0 Off@8) remain in the sealed pass ([`overdub_loop_head_playback_ledger_bugfix.md`](../Plans/overdub_loop_head_playback_ledger_bugfix.md)).
   - **`verifyCaptureHotStop`** — log warning only.
 - **`finalizeLoopAtStop`** — schedules deferred full validate on record stop only; **no write-back** on overdub stop (pass rows stay separate for undo).
 - Does **not** run full-loop `validateAndCleanupMidiEvents` on stop.
@@ -183,7 +183,7 @@ Full-loop pass over merged active capture passes (materialized flat):
 
 - Uses **`LoopEventValidation::repairOrphanNoteEvents`** (wrap-aware) on a probe copy.
 - **v1 log-only:** reports orphan count; does **not** write back or call **`commitStopFinalizeFromStore`** (undo-safe).
-- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture`** hot stop — see [`capture_pass_note_min_length_refinement.md`](../Plans/capture_pass_note_min_length_refinement.md).
+- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture` hot stop** (not OverdubWrap) — see [`capture_pass_note_min_length_refinement.md`](../Plans/capture_pass_note_min_length_refinement.md).
 
 **When it runs:**
 

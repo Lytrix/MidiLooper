@@ -318,7 +318,8 @@ struct Loop {
   void discardPassesMaterializedEventsCache() { passesMaterializedStore_.discardEventsCache(); }
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
-  SealOutcome sealCapture(uint32_t sealedAtTick);
+  SealOutcome sealCapture(uint32_t sealedAtTick,
+                          CommitReason reason = CommitReason::RecordStop);
   /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
   LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
   bool commitPendingCapturePass();
