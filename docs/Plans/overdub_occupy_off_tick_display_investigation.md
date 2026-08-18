@@ -1,6 +1,6 @@
 # Occupy `n=0 a=1` off tick 0 — display vs ledger
 
-**Status:** Investigation + native pin **PASS** 1350/1350. Display owner named; occupy CAP logs source-view span. Isolated `(S, occupy]` On@96 and spanning On@0 walks are native tests. Firmware catch-up when `lastTickInLoop < occupyPhase`.  
+**Status:** Investigation + native pin **PASS**. Device catch-up **FAIL** [`214856`](../../captures/session_20260818_214856.log) — production `playMidiEvents` from occupy **reverted**. `as=`/`ae=` stay.  
 **Date:** 2026-08-18  
 **Kind:** investigation  
 **Parent:** [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md)  
@@ -57,7 +57,7 @@ Occupy DIAG in 203948 has no DisplayNote `startTick`/`endTick`. Span is not name
 
 ## Observability
 
-`Track::snapshotOverlapHoldCandidates` occupy line adds `as=` / `ae=` (first source-view note of that pitch present at hold, else 0). Same `lcr,part` line. No new occupy owner.
+`Track::snapshotOverlapHoldCandidates` occupy line adds `as=` / `ae=` (first source-view note of that pitch present at hold, else 0) and `hs=` (phased `pending.startNoteTick`). Same `lcr,part` line. No new occupy owner.
 
 ---
 
@@ -79,8 +79,29 @@ Tests: `test_wrap_pass_on_at_96_occupies_after_s_interval`, `test_wrap_pass_span
 
 ---
 
+## HITL FAIL [`214856`](../../captures/session_20260818_214856.log)
+
+`as=`/`ae=` names the painted source-view span. Five occupies are `n=0 a=1` and **not** wrap-committed On@96 after S:
+
+| CAP | Pitch | `as`–`ae` |
+|-----|-------|-----------|
+| `98573816` | 30 | 528–544 |
+| `107573372` | 12 | 0–192 |
+| `109577175` | 12 | 144–232 |
+| `111112659` | 12 | 720–767 |
+| `122149713` | 24 | 216–408 |
+
+Wraps this run are at storage **8** (`1544 % 768`). Occupy totals: 82; `n=1 a=1` = 48; `n=0 a=0` = 22; `n=0 a=1` = 5; `n=1 a=0` = 5.
+
+Calling `playMidiEvents` from occupy when `lastTickInLoop < occupyPhase` can cross session start and seal a wrap on USB NoteOn. Reverted. Writer stays clock `playCommittedLoopMidi`.
+
+Successor: [`overdub_occupy_capture_stream_ledger_bugfix.md`](overdub_occupy_capture_stream_ledger_bugfix.md) (pin [`221334`](../../captures/session_20260818_221334.log)) — capture emit does not write occupy’s ledger.
+
+---
+
 ## Hard don'ts
 
+- Do not call `playMidiEvents` from `snapshotOverlapHoldCandidates`.
 - Do not teach `collectOverdubNoteOnParticipantIds` about loop heads, wrap, or source-view.
 - Do not apply pending Hide at NoteOn from occupy IDs.
 - Do not treat full-loop `playback_build` as an occupy prerequisite.

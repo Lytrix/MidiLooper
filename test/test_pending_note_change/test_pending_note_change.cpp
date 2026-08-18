@@ -1428,6 +1428,83 @@ void test_note_on_occupy_last_writer_overwrites() {
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
 }
 
+void test_capture_off_does_not_clear_committed_occupy() {
+  // session_20260818_221334 n=0 a=1 interior: committed 23 On@384 Off@480;
+  // capture Off@400 same pitch; occupy at 420. Capture emit must not write ledger.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kOn = 384;
+  constexpr uint32_t kOff = 480;
+  constexpr uint32_t kCaptureOff = 400;
+  constexpr uint32_t kOccupy = 420;
+  constexpr uint8_t kPitch = 23;
+  constexpr NoteId kCommittedId = 23;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  loop.rebuildOverdubSourceView(kOccupy);
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
+  TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
+
+  ActiveNoteLedger ledger;
+  TEST_ASSERT_TRUE(
+      ledger.applyPlaybackEvent(1, noteOnWithNoteId(kOn, 1, kPitch, 90, kCommittedId)));
+  TEST_ASSERT_EQUAL_UINT32(kCommittedId, ledger.noteId(1, kPitch));
+
+  const MidiEvent captureOff = MidiEvent::NoteOff(kCaptureOff, 1, kPitch, 0);
+  ActiveNoteLedger bothStreams = ledger;
+  TEST_ASSERT_TRUE(bothStreams.applyPlaybackEvent(1, captureOff));
+  OverlapNoteIdSet clearedOccupy;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, bothStreams, clearedOccupy);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(clearedOccupy.size()));
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCommittedId));
+}
+
+void test_capture_on_does_not_occupy_empty_source_view() {
+  // session_20260818_221334 n=1 a=0 leftover: 12 as=624-720, occupy at 45
+  // (as=0 ae=0). Capture On must not write the occupy ledger.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kOn = 624;
+  constexpr uint32_t kOff = 720;
+  constexpr uint32_t kOccupy = 45;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCommittedId = 12;
+  constexpr NoteId kCaptureId = 99;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  loop.rebuildOverdubSourceView(kOccupy);
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(sourceViewIds.size()));
+
+  const MidiEvent captureOn = noteOnWithNoteId(kOccupy, 1, kPitch, 90, kCaptureId);
+  ActiveNoteLedger bothStreams;
+  TEST_ASSERT_TRUE(bothStreams.applyPlaybackEvent(1, captureOn));
+  OverlapNoteIdSet leftoverOccupy;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, bothStreams, leftoverOccupy);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(leftoverOccupy.size()));
+  TEST_ASSERT_TRUE(leftoverOccupy.contains(kCaptureId));
+
+  ActiveNoteLedger ledger;
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -1469,5 +1546,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_pass_spanning_on_at_0_occupies_at_96);
   RUN_TEST(test_overdub_stop_still_removes_pairs_shorter_than_min_length);
   RUN_TEST(test_note_on_occupy_last_writer_overwrites);
+  RUN_TEST(test_capture_off_does_not_clear_committed_occupy);
+  RUN_TEST(test_capture_on_does_not_occupy_empty_source_view);
   return UNITY_END();
 }

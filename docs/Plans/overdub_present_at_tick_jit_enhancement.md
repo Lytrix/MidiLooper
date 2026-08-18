@@ -89,7 +89,7 @@ NoteOff: ledger.noteOff(channel, pitch)
 
 **Not 1:1 at a pitch.** `PresentNoteVec` can have many same-pitch ids at S. The ledger slot is last NoteOn overwrite. Occupy (later) reads that last writer, not a PresentNote row.
 
-**Capture stream (proven, not a different identity).** During OVERDUBBING, `playCommittedLoopMidi` also advances `PlaybackEmitPolicy::ActiveCaptureOverdub` through `applyPlaybackLedgerEvent` then `sendMidiEvent`. Live capture NoteOns use the same `MidiEvent.noteId` field (`assignMissingNoteIds`). They can overwrite the slot. `PresentNote` is committed `LoopPasses` only. That is last-writer behavior, not a second identity type. Occupy lookup reads that last writer.
+**Capture stream (emit only).** During OVERDUBBING, `playCommittedLoopMidi` advances `PlaybackEmitPolicy::ActiveCaptureOverdub` through `playbackCursorAdvanceSendCapture` (`sendMidiEvent` only). Capture does not write occupy’s ledger. Last-writer on that slot is committed merged / wrap-pass / loop-head only. Live capture NoteOns still use `MidiEvent.noteId` (`assignMissingNoteIds`) for echo. [`overdub_occupy_capture_stream_ledger_bugfix.md`](overdub_occupy_capture_stream_ledger_bugfix.md).
 
 `Entry` while active: `active`, `noteId` (plus existing `startTick` / `velocity`). No `length`. `PresentNote` stays LCR / checkpoint.
 
@@ -161,4 +161,4 @@ Questions 1 (one `Entry` vs all `PresentNote`s) and 2 (`sendMidiEvent` lag) are 
 | `Entry.noteId` from `sendMidiEvent` (`evt.noteId`) | **Shipped** |
 | Split `playCommittedLoopMidi` vs `sendMidiEvent` | **Shipped** |
 | `collectOverdubNoteOnParticipantIds` reads `ledger` | **Shipped** |
-| Wrap rebuilds merged playback before occupy ([`152745`](../../captures/session_20260818_152745.log) `n=0 a=1 b=1`) | **In tree** — [`overdub_wrap_playback_rebuild_before_occupy_bugfix.md`](overdub_wrap_playback_rebuild_before_occupy_bugfix.md) |
+| Capture emit does not write occupy ledger ([`221334`](../../captures/session_20260818_221334.log)) | **Native shipped** — [`overdub_occupy_capture_stream_ledger_bugfix.md`](overdub_occupy_capture_stream_ledger_bugfix.md) |
