@@ -1842,9 +1842,9 @@ void test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64() {
   LoopContentResolution::deviceGateReset();
 }
 
-// 013327 a=0 at storage 64. Wrap-local reconstruct of a wrap-crossing pair
-// (on@2976 off@96) can cover 64; prepared-window reconstruct of record+wrap
-// omits that pair (015618). Empty occupy — record does not cover 64.
+// 013327 a=0 at storage 64. Wrap-crossing on@2976 off@96 (id 10) then
+// on@3000 off@80 (id 11). Merged reconstruct omits the pair (015618).
+// Source-view rebuild fills via appendOverdubPassWrapPairedNotes so A==B.
 void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1884,11 +1884,11 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   OverlapNoteIdSet bo64;
   pinHoldSetsAfterWrap(1, loop, 64, 60, a64, b64, ao64, bo64);
 
-  TEST_ASSERT_EQUAL(0u, a64.size());
+  TEST_ASSERT_TRUE(a64 == b64);
+  TEST_ASSERT_TRUE(a64.contains(10));
   TEST_ASSERT_EQUAL(0u, ao64.size());
-  TEST_ASSERT_TRUE(a64 != b64);
-  TEST_ASSERT_TRUE(bo64.contains(10));
-  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 10));
+  TEST_ASSERT_EQUAL(0u, bo64.size());
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
 
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(3000, 1, 60, 90, 11)));
@@ -1905,11 +1905,11 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   OverlapNoteIdSet ao64w2;
   OverlapNoteIdSet bo64w2;
   pinHoldSetsAfterWrap(2, loop, 64, 60, a64w2, b64w2, ao64w2, bo64w2);
-  TEST_ASSERT_EQUAL(0u, a64w2.size());
+  TEST_ASSERT_TRUE(a64w2 == b64w2);
+  TEST_ASSERT_TRUE(a64w2.contains(10));
+  TEST_ASSERT_TRUE(a64w2.contains(11));
   TEST_ASSERT_EQUAL(0u, ao64w2.size());
-  TEST_ASSERT_TRUE(bo64w2.contains(10));
-  TEST_ASSERT_TRUE(bo64w2.contains(11));
-  TEST_ASSERT_TRUE(bo64w2.size() > bo64.size());
+  TEST_ASSERT_EQUAL(0u, bo64w2.size());
   LoopContentResolution::deviceGateReset();
 }
 

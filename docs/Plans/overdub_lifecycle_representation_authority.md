@@ -146,7 +146,7 @@ new source view
 | Note-off | source view + hold IDs → **complete consume set** (wrap-shaped off: `[S, L) ∪ [0, E)`, one Add) | `resolveConstrainedGeometry` → `pendingNoteChanges_` | `visualCache`, stale cache; head as a second hold |
 | In-bar (before seal) | `pendingNoteChanges_` on top of source view | live paint copy (`applyPendingNoteChangesToDisplayNotes`) | persist, next hold consume |
 | After wrap / stop seal | `editPasses` (companions) + committed overdub pass | LCR prepare, persistence, source rebuild | independent display reconstruct |
-| After `rebuildOverdubSourceView` | `overdubSourceViewNotes_` | **next** hold, **next** consume, display (RC12) | `appendOverdubPassDisplayNotes` beside LCR picture |
+| After `rebuildOverdubSourceView` | `overdubSourceViewNotes_` (merged reconstruct + per-pass wrap-paired fill) | **next** hold, **next** consume, display (RC12) | `appendOverdubPassDisplayNotes` beside LCR picture; visual cache as consume input |
 | Visual cache | **derived** | OLED / LED paint, idle slice output | consume, source view fill, overlap selection |
 
 **Hold IDs ≠ source view.** IDs answer “what was sounding at hold start S”. Source view answers “what is the current resolved geometry in the overdub window”. Consume must union both (RC11).

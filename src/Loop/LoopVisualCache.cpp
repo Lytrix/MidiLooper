@@ -278,7 +278,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const uint32_t appendStartUs = micros();
 #endif
   if (appendOverdub && !usedPrepared) {
-    appendOverdubPassDisplayNotes(sliceNotes);
+    appendOverdubPassWrapPairedNotes(sliceNotes);
   }
 #if defined(SESSION_CAPTURE)
   if (appendOverdub) {
@@ -329,7 +329,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 }
 
-LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
+LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes) const {
   if (loopLengthTicks == 0) {
     return;
   }
@@ -358,6 +358,10 @@ LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec
   }
 }
 
+LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
+  appendOverdubPassWrapPairedNotes(notes);
+}
+
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
@@ -365,7 +369,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   materializedEventCount_ = flat.size();
   NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
-  appendOverdubPassDisplayNotes(rebuiltNotes);
+  appendOverdubPassWrapPairedNotes(rebuiltNotes);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {

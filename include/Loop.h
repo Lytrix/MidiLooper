@@ -271,8 +271,11 @@ struct Loop {
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
-  /// Reconstruct each active overdub pass with overdub wrap pairing and append
-  /// display notes that merged reconstruct omitted.
+  /// Reconstruct each active overdub pass with `overdubPassWrapPairing` and
+  /// append notes that merged record+overdub reconstruct omitted (015618).
+  /// One pass at a time. Used by source-view rebuild and visual-cache fill.
+  void appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes) const;
+  /// Visual-cache entry: wrap-paired overdub notes that merged reconstruct omitted.
   void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
