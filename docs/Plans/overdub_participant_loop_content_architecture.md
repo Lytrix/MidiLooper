@@ -1,13 +1,13 @@
 # Overdub participant discovery from loop content
 
-**Status:** Phase 1–2a **closed**. **Phase 3** note-on fill disable **in tree**. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). **Phase 4** note-off fill skip when the source view covers the loop **in tree**. 1-bar HITL **PASS** [`123803`](../../captures/session_20260818_123803.log). **Stage 1** membership **shipped**. **Stage 1b** **shipped**. **Stage 1c** **shipped**. Stage 1 `from=span` HITL **parked** — occupy JIT: [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md) ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)). Stage 2 not started. NOTE_EDIT overlap is a **sibling consumer**. Hydrate Stages 1–5 **not authorized**.  
+**Status:** Phase 1–2a **closed**. **Phase 3** note-on fill disable **in tree**. 1-bar occupy HITL **PASS** [`121933`](../../captures/session_20260818_121933.log). **Phase 4** note-off fill skip when the source view covers the loop **in tree**. 1-bar HITL **PASS** [`123803`](../../captures/session_20260818_123803.log). **Stage 1** membership **shipped**. **Stage 1b** **shipped**. **Stage 1c** **shipped**. Stage 1 `from=span` HITL **parked** — occupy at `currentTick`: [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md) ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)). Stage 2 not started. NOTE_EDIT overlap is a **sibling consumer**. Hydrate Stages 1–5 **not authorized**.  
 **Date:** 2026-08-17  
 **Kind:** architecture + implementation  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](consumer_window_budget_ownership_architecture.md)  
 **Related:** [`overdub_lifecycle_representation_authority.md`](overdub_lifecycle_representation_authority.md), [`playback_gather_lcr_consume_enhancement.md`](playback_gather_lcr_consume_enhancement.md), [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md), DEC-037 LoopContentResolution  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
 **Supersedes:** `playback_sounding_state_overdub_participant_architecture.md` (MIDI-execution hypothesis)  
-**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill); wait-STOPPED-for-`lcr,mat` as occupy readiness (DEC-041). Phase 3 16-bar note-on fill disable and Phase 4 skip of note-off fill when the source view covers the loop are authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree. Occupy JIT firmware is **not** authorized until native gold.
+**Does not authorize:** shrinking `kOverdubSourceWindowBars`; tying overdub to `Track::sendMidiEvent` / `ActiveNoteLedger`; a `WindowManager` / `WindowRequest`; replacing `overdubSourceView` in the first change; hydrate Stages 1–5; changing `notePresentAt` (playback / checkpoint fill); wait-STOPPED-for-`lcr,mat` as occupy readiness (DEC-041). Phase 3 16-bar note-on fill disable and Phase 4 skip of note-off fill when the source view covers the loop are authorized ([DEC-040](../DECISION_LOG.md#dec-040-skip-playingstoppedmuted-overdub-participant-hitl)) and in tree. Occupy firmware that reads `ActiveNoteLedger` is **not** authorized until `Entry.noteId` is restated in the implementing session.
 
 **Approved type name:** `PresentNote` = which loop notes are present at tick S. C++: `PresentNote` / `PresentNoteVec`. Not a new Manager.
 
@@ -25,20 +25,25 @@ Shorter: overdub needs to know which loop notes are **present** at the current l
 
 | Question | Name | Use |
 |----------|------|-----|
-| Which loop notes are present at tick S? | **PresentNote** | Overdub participant discovery. LCR `PresentNote` / `resolveState` / `presentAt` / `notePresentAt` / `presentAtHoldOnly`. Independent of send and mute. |
-| Has this note been sent to MIDI output? | **Sounding** (MIDI output only) | Coupled to `sendMidiEvent` / audible output. Not the LCR type. |
-| Is this note ON in playback execution, including when muted? | **ActiveNote** | [`ActiveNoteLedger`](../../include/ActiveNoteLedger.h). Mute suppresses send; the ledger still runs. Do not call this sounding (that couples to mute). Do not use it for overdub. |
+| Which loop notes are present at tick S? | **PresentNote** | LCR query snapshot (`resolveState` / `StateCheckpoints::presentAt`). Many `NoteId`s at one tick; no `endTick`. Consume still uses `NoteSpan`. |
+| Has `midiHandler.sendMidiEvent` been called? | MIDI emit | `Track::sendMidiEvent` only if `playbackEmitMidiOutput_`. Does not create occupy identity. |
+| Which `NoteId` is ON at `currentTick` for `(channel, pitch)`? | **ActiveNote** / `ActiveNoteLedger::Entry` | One slot per `(channel, pitch)`. Mute still calls `ledger.noteOn`. After DEC-041, `collectOverdubNoteOnParticipantIds` **reads** `Entry.noteId`. |
 
 ```text
-ActiveNoteLedger
-    = what playback execution currently considers ON (mute-decoupled)
+LoopPasses / LoopContentResolution
+    = stored content (Hide/Shorten before two Entries can exist)
 
-PresentNote / canonical note state
-    = which loop notes are present at loop tick S
+ActiveNoteLedger::Entry
+    = runtime slot at currentTick  (channel, pitch) → noteId
 
-Overdub
-    = must use PresentNote / canonical note state
+midiHandler.sendMidiEvent
+    = optional emit if playbackEmitMidiOutput_
+
+collectOverdubNoteOnParticipantIds
+    = lookup Entry.noteId for incoming pitch  (after Entry.noteId firmware)
 ```
+
+Today (until that firmware) occupy is still `tryCollectPreparedPresentNoteIdsAtTick` else `collectOverdubSourceHoldParticipantIds`. See [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md).
 
 ---
 

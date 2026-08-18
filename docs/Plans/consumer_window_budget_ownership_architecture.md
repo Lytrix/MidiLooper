@@ -187,7 +187,7 @@ For `hold`: not merely `[S, E)`. Occupied-lane already showed **history matters*
 
 ## Later (not Experiment 1)
 
-Prepared miss → this-pitch present-at-S (native gold first), not unlimited `from=win` and not wait-for-`lcr,mat`. JIT horizon is a **consumer property**; LCR stays the resolver. Pin: [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md) ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)).
+Prepared miss → `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick` (after `Entry.noteId`), not unlimited `from=win`, not wait-for-`lcr,mat`, and not this-pitch reconstruct on occupy. Keep `playCommittedLoopMidi` writing the ledger; `LoopContentResolution` stays the content query. Pin: [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md) ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)).
 
 ---
 

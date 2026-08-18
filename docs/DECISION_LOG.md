@@ -61,9 +61,10 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-041 — Occupy present-at-S is JIT, not full-loop `lcr,mat`
 
 **Date:** 2026-08-18  
-**Status:** Accepted. Firmware **not authorized**.  
-**Owner:** `LoopContentResolution` (query) + `Track::processDeferredIdleMaintenance` (slice schedule)  
+**Status:** Accepted. Firmware **not authorized**. **Amended 2026-08-18:** `collectOverdubNoteOnParticipantIds` reads at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at `currentTick`. `LoopPlaybackRuntime::ledger` holds that state. `sendMidiEvent` and occupy **read** it. Do not say “occupy = ledger.”  
+**Owner:** `Loop` / `LoopContentResolution` = `LoopPasses`. `LoopPlaybackRuntime::ledger` = state at `currentTick`. `sendMidiEvent` and occupy = readers.  
 **Plan:** [`overdub_present_at_tick_jit_architecture.md`](Plans/overdub_present_at_tick_jit_architecture.md)  
+**Implementation:** [`overdub_present_at_tick_jit_enhancement.md`](Plans/overdub_present_at_tick_jit_enhancement.md)  
 **Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype)  
 **Does not supersede:** DEC-037 6.0 (no cold LCR on the overdub button); DEC-040; Phase 3 note-on fill disable; Phase 4 note-off fill skip when the source view covers the loop.
 
@@ -71,15 +72,39 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Decision:**
 
-1. **Occupy contract** is present(S, P) via `displayNotePresentAtHold` on `NoteSpan`. Prepared hit stays `tryCollectPreparedPresentNoteIdsAtTick`. USB miss stays the source-view walk until a bounded query has native gold. Note-on still must not `resolveWindow` / `ensureOverdubSourceNotesForHold`.
+1. **Occupy contract** is present(S, P) via `displayNotePresentAtHold` on `NoteSpan`. Prepared hit stays `tryCollectPreparedPresentNoteIdsAtTick`. USB miss stays the source-view walk until resolved state at S exists. Note-on still must not `resolveWindow` / `ensureOverdubSourceNotesForHold`.
 2. **`from=span` / wait-for-`lcr,mat`** is opportunistic source-view quality, not occupy or product readiness. Stage 1 membership, length identity, and dirty/save stall stay shipped. Stage 2 consume merge stays parked.
-3. **Bounded miss (next implementation, native first):** this-pitch pass events whose LinearSpan can contain S, then `displayNotePresentAtHold`. Not checkpoint tail on USB (`tryResolvePreparedState` requires `deviceGateComplete` products). Not 16-bar all-pitch `resolveWindow`. Gold: match prepared collect and RC8 when notes are in view; occupy a 64-bar NOTE ON outside the 16-bar source window that is present at S.
-4. **Scheduled prepare** may extend the existing device gate as a **range** around the playhead (Stage 9 range tests). Name: `deviceGate` range / `deviceGateBeginRange`. Not a new Session or Manager. PLAYING-admitted only for bounded range work. Full-loop LCR stays STOPPED-only and is not occupy readiness. Option B (PLAYING full-history LCR) stays rejected.
-5. **Consume / Hide** stays on `overdubSourceView`. Do not fold consume into occupy JIT.
+3. **Resolved state + overlap (amended).** At every resolved tick the resolver has enough state to determine which notes are present. Occupy evaluates that state **only** when a NoteOn/NoteOff for the recorded pitch occurs. It does not maintain or reconstruct a list of all notes present at the current tick. Time advancing does not make occupy revisit notes; the resolver advances state.
+4. **Not a collection primitive.** Do not add `collectPitchPresentNoteIdsAtTick` as the architectural API. `tryCollectPreparedPresentNoteIdsAtTick` is the prepared-path helper (evaluate P against prepared spans). Occupied ids are the overlap result, not a stored `vector<NoteId> presentAtTick`.
+5. **USB must not reconstruct pass history** to build a present list (`resolveWindow`, cold `resolveState(passes)`, this-pitch gather-then-reconstruct on note-on). Checkpoint tail / `tryResolvePreparedState` stays **rejected as a cold USB miss** (needs `deviceGateComplete` products). It is **accepted as consume of already-resolved state** when the resolver has advanced to S. Occupy then evaluates P against that state; it does not return the full `PresentNoteVec` as the occupy set.
+6. **Scheduled prepare** may extend the existing device gate as a **range** around the playhead (Stage 9 range tests) so resolved state exists at `currentTick` while PLAYING. Name: `deviceGate` range / `deviceGateBeginRange`. Not a new Session or Manager. PLAYING-admitted only for bounded range work. Full-loop LCR stays STOPPED-only and is not occupy readiness. Option B (PLAYING full-history LCR) stays rejected.
+7. **Consume / Hide** stays on `overdubSourceView`. Do not fold consume into occupy.
 
-**Does not change:** DEC-037 6.0; `notePresentAt`; `overdubSourceView`; `kOverdubSourceWindowBars` production size.
+**Does not change (pre-amendment):** DEC-037 6.0; `notePresentAt`; `overdubSourceView`; `kOverdubSourceWindowBars` production size.
 
-**Validation:** none this slice (docs). Next: native this-pitch present-at-S vs prepared collect + RC8 + outside-window fixture; architecture gate before USB.
+**Superseded by amendment 8–15:** occupy as present(S,P) span-collection (point 1); “occupy = ledger” investigation framing. Points 2, 4, 5 (no USB reconstruct), 7 (consume on source view) still hold. Point 6 (`deviceGateBeginRange` as occupy prepare) is **not** the path; keep `ActiveNoteLedger` at `currentTick` via `playCommittedLoopMidi`.
+
+**Validation:** none this architecture slice (docs). Implementation **paused** pending `PresentNote.noteId` vs `evt.noteId` — see amendment below.
+
+**Superseded (same day):** “this-pitch pass events whose LinearSpan can contain S” as the **production USB miss**. That path reconstructs notes from pass history on occupy. It is not the architecture.
+
+**Paused (same day):** `evaluateOccupyOverlap` / span-collect native tests.
+
+**Amendment 2026-08-18 — `ActiveNoteLedger` at `currentTick` (not “occupy = ledger”):**
+
+8. **Product contract.** `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`: at most one `Entry` per `(channel, pitch)`. `Track::sendMidiEvent` / `midiHandler.sendMidiEvent` use that `Entry`; they do not create it.
+9. **Runtime invariant.** `ActiveNoteLedger` has at most one active `Entry` per `(channel, pitch)`. After `Entry.noteId`, that slot holds at most one `noteId`. This is **not** a stored-content invariant. [`152940`](../captures/session_20260813_152940.log) `max_same_pitch=322` means `LoopPasses` may contain overlapping same-pitch notes. `playCommittedLoopMidi` applies `PlaybackMergedMidiEvents` to that one-slot ledger (last NoteOn overwrites). The ledger represents the resulting runtime owner; it does not resolve stored same-pitch overlap. The event stream does not guarantee one owner.
+10. **Content-commit owners.** Overdub Hide/Shorten (`Loop::accumulatePendingNoteChangesFromSourceNotes`) and NOTE_EDIT overlap (`NoteGeometryResolver`) remain owners for **new** overlap. They do not rewrite stored loops from this decision, and they do not currently guarantee every path that reaches playback is already one-owner. Not `ActiveNoteLedger`. Not `sendMidiEvent`.
+11. **Runtime.** `ActiveNoteLedger` holds state at `currentTick`. Move `ledger.noteOn` / `noteOff` from `sendMidiEvent` onto `playCommittedLoopMidi` **after** Stage 0 answers whether `PresentNote.noteId` is the same owner as `evt.noteId`. Completing `Entry` with that `noteId` is identity on the slot, not a new occupy owner.
+12. **Do not say occupy = ledger.** `Loop` / `LoopContentResolution` keep `LoopPasses`. `LoopPlaybackRuntime` keeps `ledger`. Occupy reads `Entry.noteId`.
+13. **`PresentNote`.** Has `noteId`, but `PresentNoteVec` is **all** spans containing S (`upsertPresentNote` by `NoteId`) and has no `endTick`. Occupy already uses `NoteSpan`. Do not copy `PresentNoteVec` onto the ledger. Add `noteId` to `Entry`; keep `StateCheckpoints::presentAt` until a later decision. Do not add a third type.
+14. **`sendMidiEvent` lag.** Goes away if `playCommittedLoopMidi` writes `ledger.noteOn` at tick 32 **before** `midiHandler.sendMidiEvent`. USB at 32 reads `Entry.noteId` even if MIDI is not yet sent.
+15. **Keep ledger at `currentTick`.** Split write vs emit on `playCommittedLoopMidi` / `PlaybackMergedMidiEvents`. Not a second occupy resolver. Not full-loop `deviceGateBegin`. Not `resolveWindow` on USB.
+16. **No `length` on `Entry`.** The ledger is state at `currentTick` until NoteOff. Occupy does not need end geometry. `Entry.startTick` exists for `longestActiveSpanBars` (no `.cpp` call sites). Do not add `length` or `endTick`. Do not delete `startTick` in this occupy work. After Stage 0: `noteOn(channel, pitch, noteId, tick, velocity)` / `noteOff(channel, pitch)`.
+
+**Does not change:** DEC-037 6.0 (no cold LCR on the overdub button); `overdubSourceView` for consume; `kOverdubSourceWindowBars` production size; `notePresentAt` as checkpoint fill.
+
+**Validation:** Stage 0 answered: `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Next firmware: `Entry.noteId` from `sendMidiEvent`. Occupy lookup and write-before-emit still blocked.
 
 ---
 

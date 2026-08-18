@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MidiEvent.h"
+
 #include <array>
 #include <cstdint>
 
@@ -8,6 +10,7 @@ class ActiveNoteLedger {
  public:
   struct Entry {
     bool active = false;
+    NoteId noteId = kInvalidNoteId;
     uint32_t startTick = 0;
     uint8_t velocity = 0;
   };
@@ -18,12 +21,13 @@ class ActiveNoteLedger {
     }
   }
 
-  void noteOn(uint8_t channel, uint8_t note, uint32_t tick, uint8_t velocity) {
+  void noteOn(uint8_t channel, uint8_t note, NoteId noteId, uint32_t tick, uint8_t velocity) {
     if (channel == 0 || channel > 16 || note > 127) {
       return;
     }
     Entry& e = entries_[indexFor(channel, note)];
     e.active = true;
+    e.noteId = noteId;
     e.startTick = tick;
     e.velocity = velocity;
   }
@@ -33,6 +37,14 @@ class ActiveNoteLedger {
       return false;
     }
     return entries_[indexFor(channel, note)].active;
+  }
+
+  NoteId noteId(uint8_t channel, uint8_t note) const {
+    if (channel == 0 || channel > 16 || note > 127) {
+      return kInvalidNoteId;
+    }
+    const Entry& e = entries_[indexFor(channel, note)];
+    return e.active ? e.noteId : kInvalidNoteId;
   }
 
   void noteOff(uint8_t channel, uint8_t note) {
