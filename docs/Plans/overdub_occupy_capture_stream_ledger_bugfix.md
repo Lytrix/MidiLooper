@@ -8,7 +8,7 @@
 **HITL FAIL:** [`224719`](../../captures/session_20260818_224719.log)  
 **Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; USB occupy `playMidiEvents` catch-up (reverted [`214856`](../../captures/session_20260818_214856.log)); occupy fallback; DisplayManager consume
 
-**Misattribution guard:** A later `n=0 a=1` / `n=1 a=0` after this freeze is not a regression of `playbackCursorAdvanceSendCapture`. Investigate whether live capture was folded into `mergedMidiEvents` ([`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md)).
+**Misattribution guard:** A later `n=1 a=0` after this freeze is not a regression of `playbackCursorAdvanceSendCapture`. Investigate whether live capture was folded into `mergedMidiEvents` ([`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md)). A later `n=0 a=1` with committed-only gather is USB occupy vs clock interval ([`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md)).
 
 ---
 

@@ -1,11 +1,13 @@
 # Occupy merged-capture ledger last-writer
 
-**Status:** Native **PASS** 1352/1352. HITL **FAIL** [`231038`](../../captures/session_20260818_231038.log) — leftover `n=1 a=0` **met** (0); `n=0 a=1` **not met** (6).  
+**Status:** FROZEN — leftover `n=1 a=0` **met** on [`231038`](../../captures/session_20260818_231038.log). Remaining `n=0 a=1` is USB occupy before the clock interval. Successor: [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent (frozen):** [`overdub_occupy_capture_stream_ledger_bugfix.md`](overdub_occupy_capture_stream_ledger_bugfix.md)  
 **Pin:** [`224719`](../../captures/session_20260818_224719.log)  
-**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; USB occupy `playMidiEvents` catch-up (reverted [`214856`](../../captures/session_20260818_214856.log)); occupy fallback; DisplayManager consume; `n=1 a=2`
+**Does not reopen:** wrap-S `(prev, S]`; loop-head Q16; USB occupy `playMidiEvents` catch-up (reverted [`214856`](../../captures/session_20260818_214856.log)); occupy fallback; DisplayManager consume; folding capture into `mergedMidiEvents`; `n=1 a=2`
+
+**Misattribution guard:** A later `n=0 a=1` after this freeze is not a regression of committed-only `mergedMidiEvents`. Investigate USB occupy vs clock `(prevTickInLoop, tickInLoop]` ([`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md)). A later `n=1 a=0` with capture folded into `mergedMidiEvents` is this gather RC.
 
 ---
 
@@ -27,10 +29,10 @@ Playback `runtime.mergedMidiEvents` is **committed-only**. Occupy reads `ActiveN
 
 ```
 … → playbackCursorAdvanceSendCapture ← trust emit-only capture walk
- → ensurePlaybackMergedMidiEventsBuilt gather ← current investigation
+ → ensurePlaybackMergedMidiEventsBuilt gather ← closed (committed-only)
 ```
 
-Do not reopen the capture-stream emit-only walk. Do not fold live capture into `mergedMidiEvents` again.
+Do not reopen the capture-stream emit-only walk. Do not fold live capture into `mergedMidiEvents` again. Remaining `n=0 a=1` on [`231038`](../../captures/session_20260818_231038.log) is the successor ledger catch-up.
 
 ## Root cause
 
@@ -90,6 +92,6 @@ This RC’s leftover (`n=1 a=0`) is gone. Remaining `n=0 a=1` are all pitch **12
 | 5241 | 192 | 192–280 | occupy at start |
 | 5399 | 96 | 96–192 | occupy at start |
 
-L5241: occupy us `65168812`; playback `MO,144,4,12,100` is later at us `65234756`. USB NoteOn at the committed On tick, ledger still empty. Do **not** call `playMidiEvents` from occupy.
+L5241: occupy us `65168812`; playback `MO,144,4,12,100` is later at us `65234756`. USB NoteOn at the committed On tick, ledger still empty. That leftover is [`overdub_occupy_on_tick_clock_catchup_bugfix.md`](overdub_occupy_on_tick_clock_catchup_bugfix.md) — ledger catch-up, not `playMidiEvents` from occupy.
 
-Closed pins this run: occupy 12 @ `hs=0` `n=1 a=1` (`6561`, `6785`, `6969`). Do not reopen wrap-S `(prev, S]` or USB catch-up. Do not treat `n=1 a=2` as this FAIL. Do not fold capture into `mergedMidiEvents` again.
+Closed pins this run: occupy 12 @ `hs=0` `n=1 a=1` (`6561`, `6785`, `6969`). Do not reopen wrap-S `(prev, S]` or USB `playMidiEvents` catch-up. Do not treat `n=1 a=2` as this FAIL. Do not fold capture into `mergedMidiEvents` again.

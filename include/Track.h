@@ -358,6 +358,7 @@ private:
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
   bool playbackEmitMidiOutput_ = false;
   bool applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
+  void catchUpCommittedPlaybackLedgerToPhase(uint32_t occupyPhase);
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void snapshotOverlapHoldCandidates(PendingNote& pending);
   void collectOverlapHoldPlaybackNoteOn(NoteId noteId, uint8_t pitch);
