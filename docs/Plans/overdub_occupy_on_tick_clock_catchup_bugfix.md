@@ -1,6 +1,6 @@
 # Occupy on-tick before clock interval (ledger catch-up)
 
-**Status:** Native **PASS** 1355/1355. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL pending same 1-bar overdub as [`231038`](../../captures/session_20260818_231038.log).  
+**Status:** Native **PASS** 1355/1355. `teensy41-capture-serial` links (RAM1 code 425852, locals 4768). HITL **FAIL** [`233247`](../../captures/session_20260818_233247.log) — `n=0 a=1` **not met** (11); leftover `n=1 a=0` still **met** (0).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent (frozen leftover met):** [`overdub_occupy_merged_capture_ledger_bugfix.md`](overdub_occupy_merged_capture_ledger_bugfix.md)  
@@ -91,4 +91,17 @@ Keep existing wrap-S / loop-head / merged-capture gather fixtures.
 
 ## HITL
 
-Same 1-bar overdub as 231038. Gates: `n=0 a=1` = 0 and `n=1 a=0` = 0. Keep occupy 12 @ `hs=0`. Do not treat `n=1 a=2` as this FAIL.
+**FAIL** [`233247`](../../captures/session_20260818_233247.log): 1-bar 768 OVERDUBBING; `hs=` on 100/100 occupies. `RING,overflow` once. Firmware includes ledger catch-up (`205b6c8`).
+
+| Kind | Count | Gate |
+|------|------:|------|
+| `n=1 a=1` | 35 | match |
+| `n=0 a=0` | 49 | empty lane |
+| **`n=0 a=1`** | **11** | **FAIL** (want 0) |
+| **`n=1 a=0`** | **0** | **met** (parent leftover) |
+| `n=1 a=2` | 3 | product; not this gate |
+| `n=0 a=2` | 2 | not this gate |
+
+`n=0 a=1` pitches: 12 × 8, 30, 24, 23. Four occupy at span start (`hs==as`): 12 @ 240, 144, 336, 144. Named span-start miss L2387: USB `MI,U,144,4,12,100` then occupy 12 @ `hs=240` `as=240–288` `n=0 a=1` (`48709221`). `overlap_hold` `empty_sets=17`.
+
+Closed pins this run: occupy 12 @ `hs=0` sounding `n=1 a=1` (`3830` `as=0–184`, `3996` `as=0–192`). L3008 occupy 12 @ `hs=0` is `n=0 a=0` `as=ae=0` (empty source-view). Do not treat `n=1 a=2` as this FAIL. Do not call `playMidiEvents` from occupy. Do not fold capture into `mergedMidiEvents`.
