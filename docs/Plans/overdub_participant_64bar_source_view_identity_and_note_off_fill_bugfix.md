@@ -1,12 +1,12 @@
 # 64-bar source-view identity and note-off fill
 
-**Status:** Stage 1 membership **shipped**. Stage 1b prepared-session identity **shipped**. Stage 1c dirty/save stall **in tree**. Device HITL open (wait STOPPED for 64-bar `lcr,mat` after loop select). Stage 2 **not started**.  
+**Status:** Stage 1 membership **shipped**. Stage 1b prepared-session identity **shipped**. Stage 1c dirty/save stall **shipped** ([`132806`](../../captures/session_20260818_132806.log) held). Stage 1 `from=span` / wait-STOPPED-for-`lcr,mat` HITL **parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — occupy is present-at-S JIT, not full-loop `lcr,mat`). Stage 2 **not started**.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)  
 **Evidence:** [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log), [`125542`](../../captures/session_20260818_125542.log), [`131207`](../../captures/session_20260818_131207.log)
 
-**Does not authorize:** raising `kOverlapNoteIdSetCapacity`; patching occupy/B collect; deleting `overdubSourceView`; changing `notePresentAt`; shrinking `kOverdubSourceWindowBars`; hydrate; LCR slices while PLAYING; cold LCR on the overdub button; Stage 2 consume merge until Stage 1 device PASS.
+**Does not authorize:** raising `kOverlapNoteIdSetCapacity`; patching occupy/B collect; deleting `overdubSourceView`; changing `notePresentAt`; shrinking `kOverdubSourceWindowBars`; hydrate; LCR slices while PLAYING; cold LCR on the overdub button; Stage 2 consume merge; treating wait-for-`lcr,mat` as occupy readiness.
 
 ---
 
@@ -18,13 +18,15 @@ tryCopyPreparedSpansToDisplayNotes window NoteOn membership
 prepared session length identity (tryCollect / publish / idle re-queue)
     ← Stage 1b (shipped)
 STOPPED LCR dirty/save stall (skip matching dirty; save is not a defer)
-    ← Stage 1c (this slice)
+    ← Stage 1c (shipped)
+from=span / wait-for-lcr,mat as occupy readiness
+    ← parked (DEC-041)
 rebuildOverdubSourceView reconstruct fallback
-    ← must not run after span copy succeeds on the matching loop
+    ← opportunistic when a finished matching session exists
 occupy / B collect
-    ← length miss is honest from=miss; do not patch B
+    ← length miss is honest from=miss; next occupy work is this-pitch present-at-S JIT
 collectConsumeWindow prepared-pitch merge
-    ← Stage 2 after Stage 1 device PASS
+    ← Stage 2 parked
 ```
 
 RC1 is **source-view identity divergence** from cap-128 span-copy abort. RC1b is **prepared-session identity**: the one-shot LCR session was the 1-bar loop. Occupy exposed it because collect did not check live length.
@@ -70,7 +72,7 @@ RC1 is **source-view identity divergence** from cap-128 span-copy abort. RC1b is
 
 **Device** [`131207`](../../captures/session_20260818_131207.log) **Stage 1b honesty held, gate not met.** No `lcr,mat`. All `lcr,src` `from=win,prep=0`. Occupy 105 `from=miss`. Collect miss with `prep=0` is the Stage 1b check; this capture never had a finished 64-bar session. RC1c is why.
 
-**Device gate (unchanged criteria):** 64-bar `why=open,from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; remaining `eq=0` only `a=0,b>0`; `late_clk=0`. After 1-bar, select 64-bar, stay **STOPPED until `lcr,mat`** for that loop (`vch` notes in the 64-bar class, not 32), then overdub. Do not press PLAY. Unprepared enter remains `from=win`. Do not start Stage 2.
+**Device gate (parked as occupy readiness):** 64-bar `why=open,from=span` remains opportunistic source-view quality when a finished matching session exists. Unprepared enter remains `from=win`. Occupy `from=miss` is honest. Do not wait STOPPED for `lcr,mat`. Next occupy work: [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md). Do not start Stage 2.
 
 ---
 
@@ -84,7 +86,7 @@ RC1 is **source-view identity divergence** from cap-128 span-copy abort. RC1b is
 4. Re-begin blocked: `contentResolutionDeviceGateDeferReason` returned `"save"` while `StorageManager::hasDeferredSaveWork()`. Second save is `in_progress` at 47.629 s and 48.804 s (after PLAYING at 48.417 s). `logContentResolutionDeviceGateOnce` already logged `skip,save` at 44.285 s, so the second stall is silent.
 5. PLAYING freezes STOPPED-only LCR. After later stop 86.925 s: 64-bar `idx` at 89.385 s (`PERS,result` 89.376 s). Capture ends still on pass 11.
 
-A 1.1 s STOPPED window after `slice_clean` cannot finish a 64-bar gate even if save did not block. HITL must still wait STOPPED until `lcr,mat`. Firmware must make that wait actually progress.
+A 1.1 s STOPPED window after `slice_clean` cannot finish a 64-bar gate even if save did not block. That wait is **not** occupy readiness ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)).
 
 **Fix:**
 
@@ -94,7 +96,7 @@ A 1.1 s STOPPED window after `slice_clean` cannot finish a 64-bar gate even if s
 
 **Native:** `test_device_gate_dirty_matching_length_skips_without_reset`, `test_device_gate_dirty_length_mismatch_resets`, `test_device_gate_save_is_not_a_content_defer`. Native 1341/1341.
 
-**Device HITL:** same criteria as Stage 1b. Stay **STOPPED until `lcr,mat`**. Do not start Stage 2.
+**Device** [`132806`](../../captures/session_20260818_132806.log) — Stage 1c **held**. `skip,save` = 0. Loop 7 `reset,dirty` then 1-bar `idx` at 21.372 s with `SAVE,in_progress`. Loop 1 `reset,length` at 35.193 s then 64-bar `idx` pass 0–47 to `prep` at 45.358 s during persist. 1-bar overdub `from=span` occupy `from=prep` `ao=0`. 64-bar `from=span` **not met**: PLAYING at 46.373 s during `prep`; overdub `from=win,live=50688,prep=50688`; occupy `from=miss`. No 64-bar `lcr,mat`. `late_clk=0`. **HITL wait-for-`lcr,mat` parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat)). Do not start Stage 2.
 
 ---
 

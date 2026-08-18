@@ -324,7 +324,7 @@ The 3b `visualCache.notes` copy is the path that is ready on a PLAYING overdub. 
 
 Also: arm/begin requires `!visualCacheDirty`. An **active** matching session skips the slice on display dirty (`DIAG,lcr,skip,dirty`) and does not `deviceGateReset`. Length mismatch (slot switch) still `reset,dirty`. Restore/hydrate defer: `skip,restore` / `skip,hydrate`. **Save is not a defer** (Stage 1c; [`131207`](../../captures/session_20260818_131207.log)). Historical: [`194015`](../../captures/session_20260815_194015.log) discarded in-progress LCR on dirty; [`131207`](../../captures/session_20260818_131207.log) then stalled re-begin on `skip,save`.
 
-**Always-ready before overdub is not 6C.** 6.0 forbids construct/sort/checkpoint/resolve on start/stop. Pick (2026-08-15): **C as 6D investigation**, not 6C firmware. **A rejected. B rejected.** Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md).
+**Always-ready before overdub is not 6C** and is **not** wait-STOPPED-for-`lcr,mat`. Occupy present-at-S is a JIT consumer query ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat); [`overdub_present_at_tick_jit_architecture.md`](overdub_present_at_tick_jit_architecture.md)). 6.0 forbids construct/sort/checkpoint/resolve on start/stop. Pick (2026-08-15): **C as 6D investigation**, not 6C firmware. **A rejected. B rejected.** Plan: [`loop_content_resolution_incremental_commit_maintenance_refinement.md`](loop_content_resolution_incremental_commit_maintenance_refinement.md).
 
 | Option | Status |
 |--------|--------|
