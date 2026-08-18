@@ -2060,6 +2060,64 @@ void test_prepared_hold_ids_pin_complete_wrap_pair_covering_64() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 030958: wrap head+tail share NoteId 1. Hide must collapse both so B at 64
+// does not keep the 0–96 tail after the window-NoteOn filter drops A.
+void test_prepared_hold_ids_pin_wrap_pair_hide_drops_tail_at_64() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 720, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(96, 1, 60, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  OverlapNoteIdSet aBefore;
+  OverlapNoteIdSet bBefore;
+  OverlapNoteIdSet aoBefore;
+  OverlapNoteIdSet boBefore;
+  pinHoldSetsAfterWrap(0, loop, 64, 60, aBefore, bBefore, aoBefore, boBefore);
+  TEST_ASSERT_TRUE(aBefore.contains(1));
+  TEST_ASSERT_TRUE(bBefore.contains(1));
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(200, 1, 72, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 1;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.passes.editPasses, EditPassIdList{hideId});
+  loop.rebuildOverdubSourceView(0);
+
+  OverlapNoteIdSet a64;
+  OverlapNoteIdSet b64;
+  OverlapNoteIdSet ao64;
+  OverlapNoteIdSet bo64;
+  pinHoldSetsAfterWrap(1, loop, 64, 60, a64, b64, ao64, bo64);
+  TEST_ASSERT_TRUE(a64 == b64);
+  TEST_ASSERT_FALSE(a64.contains(1));
+  TEST_ASSERT_FALSE(b64.contains(1));
+  TEST_ASSERT_EQUAL(0u, ao64.size());
+  TEST_ASSERT_EQUAL(0u, bo64.size());
+  LoopContentResolution::deviceGateReset();
+}
+
 // Seven unpaired ONs covering 64 when checkpoints finish them. Not one open note.
 void test_source_view_includes_seven_finished_opens_covering_64() {
   LoopEventStore::resetPoolForTests();
@@ -2175,6 +2233,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64);
   RUN_TEST(test_prepared_hold_ids_pin_finished_open_covering_64);
   RUN_TEST(test_prepared_hold_ids_pin_complete_wrap_pair_covering_64);
+  RUN_TEST(test_prepared_hold_ids_pin_wrap_pair_hide_drops_tail_at_64);
   RUN_TEST(test_source_view_includes_seven_finished_opens_covering_64);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
