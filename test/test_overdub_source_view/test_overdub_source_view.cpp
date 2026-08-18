@@ -1842,6 +1842,77 @@ void test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 013327 a=0 at storage 64. Wrap-local reconstruct of a wrap-crossing pair
+// (on@2976 off@96) can cover 64; prepared-window reconstruct of record+wrap
+// omits that pair (015618). Empty occupy — record does not cover 64.
+void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 672, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(768, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2400, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2500, 1, 60, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+  OverlapNoteIdSet occupy;
+  loop.collectOverdubSourceHoldParticipantIds(64, 60, occupy);
+  TEST_ASSERT_EQUAL(0u, occupy.size());
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(2976, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.passes.editPasses, EditPassIdList{});
+  loop.rebuildOverdubSourceView(0);
+
+  OverlapNoteIdSet a64;
+  OverlapNoteIdSet b64;
+  OverlapNoteIdSet ao64;
+  OverlapNoteIdSet bo64;
+  pinHoldSetsAfterWrap(1, loop, 64, 60, a64, b64, ao64, bo64);
+
+  TEST_ASSERT_EQUAL(0u, a64.size());
+  TEST_ASSERT_EQUAL(0u, ao64.size());
+  TEST_ASSERT_TRUE(a64 != b64);
+  TEST_ASSERT_TRUE(bo64.contains(10));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 10));
+
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(3000, 1, 60, 90, 11)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(80, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap2 = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap2);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap2, loop.playbackRevision,
+                                                    loop.passes.editPasses, EditPassIdList{});
+  loop.rebuildOverdubSourceView(0);
+
+  OverlapNoteIdSet a64w2;
+  OverlapNoteIdSet b64w2;
+  OverlapNoteIdSet ao64w2;
+  OverlapNoteIdSet bo64w2;
+  pinHoldSetsAfterWrap(2, loop, 64, 60, a64w2, b64w2, ao64w2, bo64w2);
+  TEST_ASSERT_EQUAL(0u, a64w2.size());
+  TEST_ASSERT_EQUAL(0u, ao64w2.size());
+  TEST_ASSERT_TRUE(bo64w2.contains(10));
+  TEST_ASSERT_TRUE(bo64w2.contains(11));
+  TEST_ASSERT_TRUE(bo64w2.size() > bo64.size());
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1910,6 +1981,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo);
   RUN_TEST(test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64);
+  RUN_TEST(test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64);
   RUN_TEST(test_prepared_linear_overdub_matches_lcr_plus_append);
   RUN_TEST(test_prepared_wrap_held_overdub_lcr_append_delta);
   RUN_TEST(test_idle_slice_prepared_linear_matches_lcr_only);
