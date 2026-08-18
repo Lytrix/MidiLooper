@@ -2335,14 +2335,36 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTic
 }
 
 TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
-    uint32_t playbackRevision, NoteUtils::DisplayNoteVec& out) {
+    uint32_t playbackRevision, NoteUtils::DisplayNoteVec& out,
+    const SessionMidiEventVec* windowEvents, uint32_t loopLengthTicks) {
   out.clear();
   if (!preparedWindowReady(playbackRevision) ||
       sDeviceGateSession.checkpoints.spans.empty() ||
       sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
     return false;
   }
+  if (loopLengthTicks != 0 &&
+      loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks) {
+    return false;
+  }
+  OverlapNoteIdSet windowIds;
+  if (windowEvents != nullptr) {
+    for (const MidiEvent& evt : *windowEvents) {
+      if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
+        continue;
+      }
+      if (!windowIds.insert(evt.noteId)) {
+        return false;
+      }
+    }
+    if (windowIds.size() == 0) {
+      return false;
+    }
+  }
   const TickIndex& index = sDeviceGateSession.index;
+  auto inWindow = [&](NoteId noteId) {
+    return windowEvents == nullptr || windowIds.contains(noteId);
+  };
   auto appendSpan = [&out](NoteId noteId, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
     if (noteId == kInvalidNoteId || startTick == endTick) {
       return;
@@ -2356,20 +2378,22 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     out.push_back(note);
   };
   for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
-    if (span.note.noteId == kInvalidNoteId) {
+    if (span.note.noteId == kInvalidNoteId || !inWindow(span.note.noteId)) {
       continue;
     }
     const TickIndex::ByNoteIdEntry* found = index.findByNoteId(span.note.noteId);
-    if (found != nullptr) {
-      const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
-      if (pass != nullptr && pass->state != CapturePassState::Active) {
-        continue;
-      }
+    if (found == nullptr) {
+      continue;
+    }
+    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    if (pass != nullptr && pass->state != CapturePassState::Active) {
+      continue;
     }
     appendSpan(span.note.noteId, span.note.pitch, span.startTick, span.endTick);
   }
   for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
-    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId) {
+    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId ||
+        !inWindow(row.note.noteId)) {
       continue;
     }
     appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);

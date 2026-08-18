@@ -549,6 +549,37 @@ void test_source_view_falls_back_when_prepared_span_copy_is_empty() {
   LoopContentResolution::deviceGateReset();
 }
 
+// 030219: wrap from=span notes=34 while window ev=8 reconstructs 4. Leftover
+// checkpoint spans whose noteIds are not in the gathered window must not copy.
+void test_source_view_span_copy_keeps_only_window_note_ids() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedTwoRecordNotes(loop, 10, 58, 1, 80, 120, 2, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  NoteUtils::DisplayNoteVec all;
+  TEST_ASSERT_TRUE(
+      LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(loop.playbackRevision, all));
+  TEST_ASSERT_TRUE(hasDisplayNote(all, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(all, 60, 80));
+
+  SessionMidiEventVec window;
+  MidiEvent keep = MidiEvent::NoteOn(10, 1, 60, 100);
+  keep.noteId = 1;
+  window.push_back(keep);
+  NoteUtils::DisplayNoteVec filtered;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      loop.playbackRevision, filtered, &window, loop.loopLengthTicks));
+  TEST_ASSERT_TRUE(hasDisplayNote(filtered, 60, 10));
+  TEST_ASSERT_FALSE(hasDisplayNote(filtered, 60, 80));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_discard_and_commit_clear_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2117,6 +2148,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_consumes_prepared_lcr_when_cache_dirty);
   RUN_TEST(test_source_view_skips_stale_prepared_lcr_on_stamp_mismatch);
   RUN_TEST(test_source_view_falls_back_when_prepared_span_copy_is_empty);
+  RUN_TEST(test_source_view_span_copy_keeps_only_window_note_ids);
   RUN_TEST(test_discard_and_commit_clear_source_view);
   RUN_TEST(test_extract_open_note_ons_leaves_completed_pairs);
   RUN_TEST(test_extract_open_note_ons_keeps_same_tick_completed_pair);
