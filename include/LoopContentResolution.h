@@ -322,6 +322,9 @@ struct LoopContentResolution {
                                 DeviceGateSample& out);
 
   enum class DeviceGateSliceResult : uint8_t { Inactive, Continue, Complete };
+  /// Active-gate dirty policy for STOPPED idle. Display dirty is not an identity break
+  /// when the selected loop still matches the session.
+  enum class DeviceGateDirtyPolicy : uint8_t { Run, Skip, Reset };
 
   /// Sliced device gate for idle maintenance — one heavy step per `deviceGateRunOneSlice`.
   static bool deviceGateFinished();
@@ -337,6 +340,12 @@ struct LoopContentResolution {
   static void deviceGateReset();
   /// Prepared session loop length. 0 when the gate has not begun or was reset.
   static uint32_t deviceGateLoopLengthTicks();
+  /// Skip the slice when dirty and live length matches the session. Reset when
+  /// length disagrees. Not dirty → Run. Does not itself reset the session.
+  static DeviceGateDirtyPolicy deviceGateDirtyPolicy(bool visualCacheDirty,
+                                                     uint32_t liveLoopLengthTicks);
+  /// Restore/hydrate defer LCR (those mutate passes). Deferred save is not a defer.
+  static const char* deviceGateContentDeferReason(bool pendingRestore, bool pendingHydrate);
   /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `presentAt`.
   /// Drop rebuild working buffers. Does not construct or sort. Stamp is `playbackRevision`.
   static void deviceGateComplete(uint32_t playbackRevision);

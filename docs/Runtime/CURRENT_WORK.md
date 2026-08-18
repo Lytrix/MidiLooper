@@ -2,27 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-18 (Stage 1b prepared-session length identity; device HITL open)
+Last updated: 2026-08-18 (Stage 1c LCR dirty/save stall; device HITL open)
 
 ---
 
 ## Now implementing
 
-### 64-bar source-view identity — Stage 1b (in tree)
+### 64-bar source-view identity — Stage 1c (in tree)
 
 **Plan:** [`overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md`](../Plans/overdub_participant_64bar_source_view_identity_and_note_off_fill_bugfix.md)  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
-**Evidence:** [`125542`](../../captures/session_20260818_125542.log) (RC1b), [`122848`](../../captures/session_20260818_122848.log), [`123803`](../../captures/session_20260818_123803.log)
+**Evidence:** [`131207`](../../captures/session_20260818_131207.log) (RC1c), [`125542`](../../captures/session_20260818_125542.log) (RC1b), [`123803`](../../captures/session_20260818_123803.log)
 
-**Owner:** `LoopContentResolution` prepared session. `tryCollectPreparedPresentNoteIdsAtTick`, `publishPreparedOverdubPass`, `Track::maybeQueueContentResolutionDeviceGate`. Not occupy identity patches. Not Stage 2.
+**Owner:** `Track::processDeferredContentResolutionDeviceGate`, `Track::maybeQueueContentResolutionDeviceGate`, `LoopContentResolution::deviceGateDirtyPolicy`. Not occupy identity patches. Not Stage 2. Not PLAYING LCR.
 
-Stage 1 membership (window NoteOn vector, not occupy-set cap 128) **shipped**. [`125542`](../../captures/session_20260818_125542.log) **`a=1,b=0` = 0**. 64-bar enter stayed `from=win` because the one-shot LCR session was the 1-bar loop (`lcr,vch notes=32`, length 768). Occupy `from=prep` after revision restamp without a live-length check.
+Stage 1 membership **shipped**. Stage 1b length identity **shipped** (collect/publish miss on live ≠ session). [`125542`](../../captures/session_20260818_125542.log) **`a=1,b=0` = 0**. [`131207`](../../captures/session_20260818_131207.log) Stage 1b honesty held: occupy 105/105 `from=miss`, all `lcr,src` `from=win` with `prep=0`, **no `lcr,mat`**. The 64-bar session never finished: slot switch `reset,dirty` (768 → 50688), then deferred save blocked re-begin until PLAYING froze STOPPED-only slices.
 
-Collect and publish now miss when live `loopLengthTicks` ≠ prepared session. STOPPED idle re-queues the gate on length mismatch. `lcr,src` adds `live=` / `prep=` when `from` is not `span`. Do not raise `kOverlapNoteIdSetCapacity`. After copy succeeds on the matching loop, rebuild does not reconstruct.
+Matching dirty now **skips** the slice (`skip,dirty`) and does not reset. Length mismatch still `reset,dirty`. Restore/hydrate still defer. **Save is not a defer.** `maybeQueue` still requires a clean visual cache before begin. Do not raise `kOverlapNoteIdSetCapacity`.
 
-**Native:** `test_prepared_session_length_mismatch_misses_resolve_copy_collect`, `test_publish_prepared_overdub_pass_ignores_loop_length_mismatch`, `test_prepared_session_remeasure_after_reset_copies_long_loop`. Native 1338/1338.
+**Native:** `test_device_gate_dirty_matching_length_skips_without_reset`, `test_device_gate_dirty_length_mismatch_resets`, `test_device_gate_save_is_not_a_content_defer`. Native 1341/1341.
 
-**Device HITL open:** after 1-bar, select 64-bar, stay **STOPPED until `lcr,mat`** (`vch` notes in the 64-bar class, not 32), then overdub. Pass: 64-bar enter `from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; `late_clk=0`. Remaining `eq=0` only `a=0,b>0`. Do **not** start Stage 2 until that gate passes.
+**Device HITL open:** after 1-bar, select 64-bar, stay **STOPPED until `lcr,mat`** (`vch` notes in the 64-bar class, not 32). Do not press PLAY. 64-bar prepare is tens of seconds. Then overdub. Pass: 64-bar enter `from=span`; in-window occupy `ao=0`; `a=1,b=0` = 0; `late_clk=0`. Remaining `eq=0` only `a=0,b>0`. Unprepared enter remains `from=win`. Do **not** start Stage 2 until that gate passes.
 
 ### Overdub participant discovery — notes present at S (Phase 4 1-bar PASS)
 
