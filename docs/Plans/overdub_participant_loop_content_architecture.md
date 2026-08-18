@@ -651,7 +651,7 @@ Phase 1 observation is in tree. Production participant ids still come from the R
 
 Device: overdub note-on on `teensy41-capture-serial` should emit `#CAP,DIAG,lcr,part,why=on,from=prep|miss`. `from=miss` is PARTICIPANT_MISS (no 16-bar fallback). `eq=1` means A identities == B identities.
 
-Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. [`013327`](../../captures/session_20260818_013327.log) mismatches are B extras; occupy+publish native pin has no extras. Do **not** pick a B-list fix until a fixture names those extra ids. Do **not** start Phase 3 fill disable until hard identity and prepared HITL `eq=1` pass.
+Companion Hide/Shorten is folded into prepared `PresentNote` ([`002447`](../../captures/session_20260818_002447.log)). Phase 2a session-undo inverse is in tree. Phase 2 B collect uses RC8 hold on `NoteSpan`s. [`013327`](../../captures/session_20260818_013327.log) `a=0` extras at tick 64 are wrap-crossing Adds (`10`, then `10`+`11`). Do **not** start Phase 3 fill disable until hard identity and prepared HITL `eq=1` pass.
 
 Do **not** start hydrate Stages 1–5 from “LCR × interval around `selectedTick`.” Overlap participants are the selected/mover LinearSpan query (this file §5 NOTE_EDIT sibling). Select neighborhood around `selectedTick` stays.
 
@@ -829,7 +829,7 @@ B  every checkpoint NoteSpan
 
 Owners: A `Loop::collectOverdubSourceHoldParticipantIds`; B `LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick`; wrap publish `Track::commitOverdubWrapAtSessionStart` → `publishPreparedOverdubPass`.
 
-Do **not** choose “apply all EditPasses at collect” vs “B = prepared window + reconstruct + RC8” until extra NoteIds are named. Do not change `notePresentAt`. Do not start Phase 3 fill disable. Idle-gate miss / `from=miss` (013327 session-2 open burst) is a separate class.
+Named extra at 64 is wrap-crossing Add `10` (then `11`). Do **not** choose “apply all EditPasses at collect” from that pin — the extra is a wrap-local reconstruct row, not a missed Delete. Do not change `notePresentAt`. Do not start Phase 3 fill disable. Idle-gate miss / `from=miss` (013327 session-2 open burst) is a separate class.
 
 ### Native pin (occupy + wrap publish)
 
@@ -859,7 +859,20 @@ Source view drops the hidden wrap-N Add. Sealed Delete companions target those i
 
 013327 `a=0,b>0` holds are `COORD` storage **64** (also 296 / 528). `test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo`: after wrap 1/2 at 64, A IDs == B IDs (`10` / `11`). After session undo at 64 and 100, both are `10`. `test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64`: two record notes cover 64; occupy `{1}` still consumes the sibling via source-view overlap; after wrap, A=`10` B=`10`.
 
-These populations do **not** produce `a=0,b>0`. Next pin must put a wrap-local `NoteSpan` over 64 while source-view reconstruct has no covering DisplayNote. Not rematerialize-between-wraps. First device extra (pitch 79 `a=1,b=2` at storage 576) is before `sess_undo`; the `a=0` majority is after undo.
+These populations do **not** produce `a=0,b>0`.
+
+### Native pin (wrap-crossing covers 64)
+
+`test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64` — loop 3072, record 672–768 / 2400–2500, wrap-crossing on@2976 off@96 (id 10) then on@3000 off@80 (id 11). Empty occupy at 64.
+
+| After | A NoteIds | B NoteIds | B extras |
+|-------|-----------|-----------|----------|
+| wrap 1 | none | `10` | `10` |
+| wrap 2 | none | `10`,`11` | `10`,`11` |
+
+Source view has no DisplayNote 10. Class: **wrap-local reconstruct row that prepared-window reconstruct never created** (015618: `overdubPassWrapPairing` is wrap-pass only; publish reconstructs `entry->events` in isolation; A reconstructs merged record+wrap). Not unbaked hide (no companions). Not undo restore. Not rematerialize-between-wraps.
+
+Do **not** pick “apply all EditPasses at collect” from this pin. The named extra is the wrap-crossing Add, not a missed Delete. First device extra (pitch 79 `a=1,b=2` at storage 576) is a separate occupied class.
 
 ---
 
