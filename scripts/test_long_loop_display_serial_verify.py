@@ -12,7 +12,10 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from hitl.verify.display_window import verify_long_loop_display_window
+from hitl.verify.display_window import (
+    verify_follow_window_readiness,
+    verify_long_loop_display_window,
+)
 
 TICKS_PER_BAR = 768
 LOOP_LEN = 24 * TICKS_PER_BAR
@@ -115,6 +118,33 @@ class LongLoopDisplaySerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("play_stop_hold_did_not_track_playhead" in issue for issue in result["issues"])
         )
+
+
+class FollowWindowReadinessVerifyTests(unittest.TestCase):
+    def test_detects_232337_stale_hold_then_heal(self) -> None:
+        lines = [
+            _disp_window(10, window_start=0, state="PLAYING"),
+            (
+                "#CAP,54599014,DISP,0,PLAYING,50688,619,2106,619,619,1,5656,16,523"
+            ),
+            (
+                "#CAP,55137543,DISP,0,PLAYING,50688,703,2116,703,703,1,5904,16,703"
+            ),
+        ]
+        result = verify_follow_window_readiness(lines)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("stale_follow_window_hold" in issue for issue in result["issues"]))
+        self.assertGreaterEqual(result["stale_holds"][0]["hold_ms"], 500.0)
+
+    def test_ok_when_moved_window_stays_aligned(self) -> None:
+        lines = [
+            "#CAP,1000,DISP,0,PLAYING,50688,756,2105,756,756,1,0,16,756",
+            "#CAP,2000,DISP,0,PLAYING,50688,703,2116,703,703,1,5904,16,703",
+            "#CAP,3000,DISP,0,PLAYING,50688,704,2116,704,704,1,5920,16,704",
+        ]
+        result = verify_follow_window_readiness(lines)
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertEqual(result["stale_holds"], [])
 
 
 if __name__ == "__main__":

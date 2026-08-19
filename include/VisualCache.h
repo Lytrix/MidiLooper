@@ -37,16 +37,40 @@ inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
   return tick / ticksPerBar;
 }
 
-/// True when `visualCache` is fully built and may authorize window paint by filter.
-/// Partial dirtyBars==0 neighborhoods must not count — that painted sparse slices as gaps
-/// (session_20260811_032235 user report after RC4).
-inline bool visualCacheCoversWindow(bool visualCacheDirty, const VisualBarVec& /*dirtyBars*/,
+/// True when every bar in `[windowStart, windowStart + windowLength + lookahead)` is clean.
+/// A fully clean cache (`!visualCacheDirty`) covers any valid window. While dirty, only the
+/// requested neighborhood authorizes filter paint — the next auto-follow bar uses
+/// `lookaheadBars` (typically `kFollowReadyLookaheadBars`).
+inline bool visualCacheCoversWindow(bool visualCacheDirty, const VisualBarVec& dirtyBars,
                                     uint32_t windowStart, uint32_t windowLength,
-                                    uint32_t loopLength, uint32_t /*ticksPerBar*/) {
+                                    uint32_t loopLength, uint32_t ticksPerBar,
+                                    uint32_t lookaheadBars = 0) {
   if (loopLength == 0 || windowLength == 0 || windowStart >= loopLength) {
     return false;
   }
-  return !visualCacheDirty;
+  if (!visualCacheDirty) {
+    return true;
+  }
+  if (ticksPerBar == 0 || dirtyBars.empty()) {
+    return false;
+  }
+  const uint32_t extraTicks = lookaheadBars * ticksPerBar;
+  uint32_t checkEnd = windowStart + windowLength + extraTicks;
+  if (checkEnd > loopLength) {
+    checkEnd = loopLength;
+  }
+  if (checkEnd <= windowStart) {
+    return false;
+  }
+  const uint32_t startBar = visualBarForTick(windowStart, ticksPerBar);
+  const uint32_t lastBar = visualBarForTick(checkEnd - 1u, ticksPerBar);
+  const uint32_t totalBars = static_cast<uint32_t>(dirtyBars.size());
+  for (uint32_t bar = startBar; bar <= lastBar; ++bar) {
+    if (bar >= totalBars || dirtyBars[bar] != 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 struct VisualCache {

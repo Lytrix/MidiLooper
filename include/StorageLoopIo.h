@@ -26,7 +26,7 @@ struct StorageIo {
   std::function<bool(void*, size_t)> peek;
 };
 
-/// v6 loop slot file body in RAM (capture passes + editPasses + loopGeometries tails).
+/// v6 loop slot file body in RAM (capture passes + editPasses + loopGeometries + OSI1 tails).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;
@@ -56,7 +56,8 @@ bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeade
                                   CommittedChunkIdList& committedChunkIds, uint32_t loopLengthTicks);
 bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
                              const EditPassVec& editPasses,
-                             const LoopGeometryVec& loopGeometries);
+                             const LoopGeometryVec& loopGeometries,
+                             const CommittedOverdubPassVec& overdubPasses);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t getLastPersistedCapturePassWriteMaxBatchEvents();

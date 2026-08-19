@@ -8,11 +8,32 @@
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 
+LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
+  uint8_t maxIndex = kUngroupedOverdubSessionIndex;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.overdubSessionIndex > maxIndex) {
+      maxIndex = pass.overdubSessionIndex;
+    }
+  }
+  if (maxIndex == kUngroupedOverdubSessionIndex || maxIndex == 255) {
+    nextOverdubSessionIndex_ = 1;
+  } else {
+    nextOverdubSessionIndex_ = static_cast<uint8_t>(maxIndex + 1);
+  }
+  currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
+}
+
 LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
   if (hasOverdubSession()) {
     return;
   }
   playheadPhaseTick = sessionPlayheadPhaseTick;
+  currentOverdubSessionIndex_ = nextOverdubSessionIndex_;
+  if (nextOverdubSessionIndex_ == 255) {
+    nextOverdubSessionIndex_ = 1;
+  } else {
+    ++nextOverdubSessionIndex_;
+  }
   overdubWrapArmed_ = false;
   overdubWrapSuppressNext_ = false;
   overdubSessionPassIds_.clear();
@@ -23,6 +44,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
 
 LOOP_COLD_MEM void Loop::closeOverdubSession() {
   playheadPhaseTick = UINT32_MAX;
+  currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   overdubWrapArmed_ = false;
   overdubWrapSuppressNext_ = false;
   overdubSessionPassIds_.clear();

@@ -40,6 +40,9 @@ enum class CommitReason : uint8_t {
   OverdubWrap,
 };
 
+/// `OverdubPass.overdubSessionIndex` 0: legacy / missing OSI1 — do not group wraps.
+constexpr uint8_t kUngroupedOverdubSessionIndex = 0;
+
 namespace PassConfig {
 /// Chunks held back so playback and admission retain headroom.
 constexpr uint16_t CHUNK_RESERVE = 16;
@@ -58,6 +61,7 @@ struct OverdubPass {
   CommittedChunkIdList committedChunkIds;
   CapturePassState state = CapturePassState::Active;
   uint32_t sealedAtTick = 0;
+  uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
 };
 
 struct PendingCapturePass {
@@ -66,6 +70,7 @@ struct PendingCapturePass {
   uint32_t mergeSequence = 0;
   CommittedChunkIdList committedChunkIds;
   uint32_t sealedAtTick = 0;
+  uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
 };
 
 /// Mutable pre-commit MIDI writer (sole capture buffer for record/overdub).

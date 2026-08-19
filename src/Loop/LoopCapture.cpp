@@ -877,12 +877,14 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
   const PassId preserveId = lastCommittedPassId_;
   CapturePassPhase preservePhase = CapturePassPhase::Overdub;
   uint32_t preserveMergeSeq = 0;
+  uint8_t preserveOverdubSessionIndex = kUngroupedOverdubSessionIndex;
   if (passes.hasRecordPass() && passes.recordPass.id == preserveId) {
     preservePhase = CapturePassPhase::Record;
   } else {
     for (const OverdubPass& pass : passes.overdubPasses) {
       if (pass.state == CapturePassState::Active && pass.id == preserveId) {
         preserveMergeSeq = pass.mergeSequence;
+        preserveOverdubSessionIndex = pass.overdubSessionIndex;
         break;
       }
     }
@@ -919,6 +921,7 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
       nextPassId_ = rebuilt.id + 1;
     }
     rebuilt.mergeSequence = preserveMergeSeq;
+    rebuilt.overdubSessionIndex = preserveOverdubSessionIndex;
     rebuilt.state = CapturePassState::Active;
     rebuilt.committedChunkIds = std::move(committedChunkIds);
     passes.overdubPasses.push_back(rebuilt);
@@ -1095,6 +1098,10 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
   pendingCapturePass_.mergeSequence = nextMergeSequence_++;
   pendingCapturePass_.phase = phase;
   pendingCapturePass_.sealedAtTick = sealedAtTick;
+  pendingCapturePass_.overdubSessionIndex =
+      (phase == CapturePassPhase::Overdub && hasOverdubSession())
+          ? currentOverdubSessionIndex_
+          : kUngroupedOverdubSessionIndex;
   if (!capture.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
     pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
@@ -1129,6 +1136,7 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass() {
     overdub.mergeSequence = pendingPass.mergeSequence;
     overdub.state = CapturePassState::Active;
     overdub.sealedAtTick = pendingPass.sealedAtTick;
+    overdub.overdubSessionIndex = pendingPass.overdubSessionIndex;
     overdub.committedChunkIds = std::move(pendingPass.committedChunkIds);
     passes.overdubPasses.push_back(std::move(overdub));
   }

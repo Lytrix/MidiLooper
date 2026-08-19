@@ -124,7 +124,7 @@ Native fixtures: `test/test_loop_content_history/`. Derivation: `deriveContentUn
 | `UndoEntryKind` | Persisted content | Boundary from content? |
 |-----------------|-------------------|------------------------|
 | `RecordPassAdded` | `recordPass.id` | Yes |
-| `OverdubPassAdded` | overdub id + following `editPassIndex == 255` companions | Yes |
+| `OverdubPassAdded` | overdub ids sharing `overdubSessionIndex` (!= 0) + following `editPassIndex == 255` companions | Yes — index `0` is one unit per pass (legacy) |
 | `NoteEditPassClosed` | consecutive rows with the same `editPassIndex` | Yes — persist unit is the committed noteEditPass batch (`primaryPassId` = first row id) |
 | `ControlChangeEditPassClosed` | same, `EditPassType::ControlChange` | Yes — same batch rule |
 | `LoopBoundaryChange` | `LoopGeometry.id` + ticks on `passes.loopGeometries` | Yes — Stage 1b |

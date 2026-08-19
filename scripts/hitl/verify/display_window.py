@@ -100,6 +100,68 @@ def _find_play_stop_hold_release(
     return None, None
 
 
+def verify_follow_window_readiness(
+    lines: list[str], *, max_stale_hold_ms: int = 120
+) -> dict[str, object]:
+    """Fail when a moved long-loop window holds frameNotes >> windowNotes until idle heal.
+
+    session_20260819_232337: after overdub stop, PLAYING frames stayed 619/523, 667/552,
+    671/577 for 141–514 ms, then snapped to equal counts after slice_clean.
+    """
+    issues: list[str] = []
+    holds: list[dict[str, object]] = []
+    rows = [
+        row
+        for row in extract_disp_window_rows(lines)
+        if int(row["loop_len"]) > BOUNDED_WINDOW_MIN_BARS * TICKS_PER_BAR
+        and str(row["state"]) == "PLAYING"
+        and int(row["window_start"]) > 0
+    ]
+    for index, row in enumerate(rows):
+        frame_notes = int(row["frame_notes"])
+        window_notes = int(row["window_note_count"])
+        split = frame_notes - window_notes
+        if split < 50:
+            continue
+        start_us = int(row["timestamp"])
+        healed = None
+        for later in rows[index + 1 :]:
+            later_us = int(later["timestamp"])
+            if later_us - start_us > 800_000:
+                break
+            later_split = int(later["frame_notes"]) - int(later["window_note_count"])
+            if later_split <= 5 and int(later["window_start"]) >= int(row["window_start"]):
+                healed = later
+                break
+        if healed is None:
+            continue
+        hold_ms = (int(healed["timestamp"]) - start_us) / 1000.0
+        holds.append(
+            {
+                "start_us": start_us,
+                "hold_ms": hold_ms,
+                "frame_notes": frame_notes,
+                "window_notes": window_notes,
+                "window_start": int(row["window_start"]),
+                "healed_frame_notes": int(healed["frame_notes"]),
+                "healed_window_notes": int(healed["window_note_count"]),
+            }
+        )
+        if hold_ms >= max_stale_hold_ms:
+            issues.append(
+                "stale_follow_window_hold "
+                f"window_start={row['window_start']} "
+                f"frame={frame_notes} window={window_notes} "
+                f"hold_ms={hold_ms:.0f}"
+            )
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "stale_holds": holds,
+        "playing_moved_window_rows": len(rows),
+    }
+
+
 def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str, object]:
     issues: list[str] = []
     warnings: list[str] = []

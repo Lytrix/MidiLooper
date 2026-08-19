@@ -15,6 +15,10 @@ namespace DisplayWindowUtils {
 
 constexpr uint32_t kMaxDetailedWindowBars = 16;
 
+/// Extra bar past the paint window that must already be in the committed filter
+/// so auto-follow can advance `currentTick` without painting an empty next bar.
+constexpr uint32_t kFollowReadyLookaheadBars = 1;
+
 uint32_t chooseBarsPerSegment(uint32_t loopBars, uint32_t segmentCount);
 
 bool noteIntersectsWindow(const TickInterval& noteSpan, const TickInterval& viewport,
@@ -61,6 +65,15 @@ inline size_t preservedOverdubStopDisplayNoteCount(size_t liveNoteCount, size_t 
         return liveNoteCount;
     }
     return composeBaseCount < liveNoteCount ? composeBaseCount : liveNoteCount;
+}
+
+/// RC5a: while visualCache is dirty after overdub stop, the revision-matched composed
+/// frame (committed + capture suffix) stays paint authority. A nonempty dirty cache
+/// does not yet include those just-committed notes (`000553`: 655 → 583 at same vis=2166).
+inline bool preferPreservedOverdubStopHandoff(bool incrementalCommittedDisplay,
+                                             bool preservedHandoffAuthority,
+                                             bool visualCacheDirty) {
+    return incrementalCommittedDisplay && preservedHandoffAuthority && visualCacheDirty;
 }
 
 /// Clean visualCache may authorize committed display; dirty/stale cache must not (RC5b).
@@ -140,6 +153,10 @@ inline bool paintWindowInsideGather(uint32_t windowStart, uint32_t windowLength,
     }
     return (windowStart - gatherStart) + windowLength <= gatherLength;
 }
+
+/// Widen a paint window by `marginTicks` on each side, clamped to `[0, loopLength)`.
+void expandWindowWithMargin(uint32_t windowStart, uint32_t windowLength, uint32_t loopLength,
+                            uint32_t marginTicks, uint32_t& outStart, uint32_t& outLength);
 
 TickInterval makeViewportInterval(uint32_t windowStart, uint32_t windowLength);
 
