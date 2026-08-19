@@ -1,7 +1,7 @@
 # Occupy source view keeps resolver geometry
 
 **Status:** Gates 1–4 pinned. Coordinate conversion **pinned**. **Investigation approved.**  
-**Gate 5A** (EditApply pairing): **shipped** — `findNoteOffForOnIndex` equal-tick Off-before-On. Native `test_edit_apply` PASS. HITL not run.  
+**Gate 5A** (EditApply pairing): **shipped** — `findNoteOffForOnIndex` equal-tick Off-before-On (`NOTE_EDIT_MEM`). Native `pio test -e native` **1379/1379**. `teensy41-capture-serial` links.  
 **Gate 5B** (Length `6073` 551 provenance): effect proven, source **not** proven — **no implementation permitted**.  
 Do not land 5B with 5A. Native Gate 4: Off@168 disappeared only when Length targeted `6073` (pre-5A). After 5A, On-then-Off dump order no longer steals Off@168.  
 **Date:** 2026-08-19  
