@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (occupy source-view RC + wrap display D2-D **FROZEN**)
+Last updated: 2026-08-19 (consume id-resolution Stages 1–2 shipped; occupy source-view RC + wrap display **FROZEN**)
 
 ---
 
@@ -12,15 +12,15 @@ Last updated: 2026-08-19 (occupy source-view RC + wrap display D2-D **FROZEN**)
 
 Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)) and wrap display D2-D ([`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)) are **FROZEN** — HITL [`174246`](../../captures/session_20260819_174246.log). Native **1384/1384**. Next on this branch: 64-bar `from=span` HITL **parked** (DEC-041); see § Parked below.
 
-### Consume id-resolution completeness — Stage 1 shipped (native)
+### Consume id-resolution completeness — shipped (Stages 1–2)
 
 **Plan:** [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md)
 
-**Owner:** `Loop::accumulatePendingNoteChangesForIncomingNote`. Non-empty `overlapNoteIds` → complete `effectiveOverlapNoteIds` (geometric union + hold fill), id lookup only; window scan **decommissioned** for non-empty holds. Empty-id fallback unchanged.
+**Owner:** `Loop::accumulatePendingNoteChangesForIncomingNote`. All holds → `effectiveOverlapNoteIds` (incoming ids + geometric union + long-loop hold fill), then `appendNotesForIds` only. `collectConsumeWindow` **removed**.
 
-**Invariant:** Every geometric consume participant on a non-empty hold resolves via `appendNotesForIds` without `collectConsumeWindow`.
+**Invariant:** Every geometric consume participant resolves via `appendNotesForIds`; no window scan.
 
-**Status:** Native **1387/1387**. HITL [`195016`](../../captures/session_20260819_195016.log): zero `DIAG,consume` attribution lines (gate met). RAM1 code **425964** / locals **4768**.
+**Status:** Native **1387/1387**. Stage 1 HITL [`195016`](../../captures/session_20260819_195016.log): zero `DIAG,consume` attribution lines (gate met). RAM1 code **425964** / locals **4768**.
 
 **Closed predecessor:** [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md) Stage 1A/1B attribution — selection-change rejected on [`191133`](../../captures/session_20260819_191133.log).
 
