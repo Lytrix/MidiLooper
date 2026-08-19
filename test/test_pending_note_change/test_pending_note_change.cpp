@@ -343,14 +343,14 @@ void test_consume_attribution_counts_late_note_for_jit_ahead_candidate() {
 
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lateNoteCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lateNoteCandidates);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
 }
 
 // Consume attribution: incoming hold covers a second note that starts after S and
-// is absent from the occupy set. The window scan is the only path that selects it.
+// is absent from the occupy set. Geometric id completion selects it without window scan.
 void test_consume_attribution_counts_scan_only_for_id_absent_candidate() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -372,11 +372,29 @@ void test_consume_attribution_counts_scan_only_for_id_absent_candidate() {
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 100, 350, 10,
                                                                    overlapIds({1})));
 
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lateNoteCandidates);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 2));
+}
+
+// Ledger id with no source-view row at lookup is repaired by hold fill before id lookup.
+void test_consume_id_resolution_norow_repaired_by_hold_fill() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLongLoop = Config::TICKS_PER_BAR * 64;
+  seedLongSourceNote(loop, 1, 224, 288, 60, kLongLoop);
+  loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
 }
 
 void test_pending_shorten_long_source_on_overlap() {
@@ -2248,6 +2266,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
   RUN_TEST(test_consume_attribution_counts_late_note_for_jit_ahead_candidate);
   RUN_TEST(test_consume_attribution_counts_scan_only_for_id_absent_candidate);
+  RUN_TEST(test_consume_id_resolution_norow_repaired_by_hold_fill);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);

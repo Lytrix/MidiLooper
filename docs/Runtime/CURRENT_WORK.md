@@ -12,7 +12,19 @@ Last updated: 2026-08-19 (occupy source-view RC + wrap display D2-D **FROZEN**)
 
 Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)) and wrap display D2-D ([`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)) are **FROZEN** — HITL [`174246`](../../captures/session_20260819_174246.log). Native **1384/1384**. Next on this branch: 64-bar `from=span` HITL **parked** (DEC-041); see § Parked below.
 
-### Consume candidate attribution — Stage 1A/1B COMPLETE (observability only)
+### Consume id-resolution completeness — Stage 1 shipped (native)
+
+**Plan:** [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md)
+
+**Owner:** `Loop::accumulatePendingNoteChangesForIncomingNote`. Non-empty `overlapNoteIds` → complete `effectiveOverlapNoteIds` (geometric union + hold fill), id lookup only; window scan **decommissioned** for non-empty holds. Empty-id fallback unchanged.
+
+**Invariant:** Every geometric consume participant on a non-empty hold resolves via `appendNotesForIds` without `collectConsumeWindow`.
+
+**Status:** Native **1387/1387**. RAM1 code **425964** / locals **4768**. HITL gate open (device capture after flash).
+
+**Closed predecessor:** [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md) Stage 1A/1B attribution — selection-change rejected on [`191133`](../../captures/session_20260819_191133.log).
+
+### Consume candidate attribution — Stage 1A/1B COMPLETE (observability only, superseded)
 
 **Plan:** [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md)
 
@@ -811,15 +823,9 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 
 ## Parked
 
-### Tagged for investigation — occupy id resolves to no source-view note (`norow`)
+### Tagged for investigation — occupy id resolves to no source-view note (`norow`) — superseded
 
-**No plan opened.** Evidence only: HITL [`191133`](../../captures/session_20260819_191133.log) `DIAG,consume,select,pitch=96,ids=1,idsel=0,scan=1,late=0,norow=1,s=0,e=48,jit=0` at `81310668`. One occupy identity had no matching `overdubSourceViewNotes_` row, so `appendNotesForIds` returned nothing and the window scan supplied the only consume participant.
-
-**Follow-up:** HITL [`193024`](../../captures/session_20260819_193024.log) did not reproduce `norow` (`norow=0`, `norowid=0`) but still showed scan additions (`scanadd` 18, all `in_ids=0`). Keep this item tagged and low-priority unless `norow` reappears.
-
-**Question when picked up:** identity assignment is already single-owner and loop-length independent (`snapshotOverlapHoldCandidates` + `collectOverlapHoldPlaybackNoteOn`); row availability is a separate `Loop` concern. Should every id in `overlapNoteIds` be guaranteed to resolve to a note, or is `norow` legitimate for identities the source view intentionally dropped?
-
-**Detector already in tree:** `OverlapHoldTotals::idsWithoutNotes` + `norow=` on `DIAG,consume,select`. No new telemetry needed to reproduce. Context: [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md).
+**Superseded by:** [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md) Stage 1 — hold fill before id lookup. Native fixture `test_consume_id_resolution_norow_repaired_by_hold_fill`. HITL gate open post-flash.
 
 ### OpenSpec: [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/) (DEC-023)
 
