@@ -135,6 +135,15 @@ void test_preserved_overdub_stop_keeps_capture_suffix() {
   TEST_ASSERT_EQUAL_UINT32(64u, DisplayWindowUtils::preservedOverdubStopDisplayNoteCount(64u, 128u));
 }
 
+void test_prefer_preserved_overdub_stop_handoff_while_cache_dirty() {
+  // session_20260820_000553: first PLAYING after overdub stop must keep the composed
+  // frame while visualCache is dirty (655 → 583 flash when cache notes were used).
+  TEST_ASSERT_TRUE(DisplayWindowUtils::preferPreservedOverdubStopHandoff(true, true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::preferPreservedOverdubStopHandoff(true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::preferPreservedOverdubStopHandoff(true, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::preferPreservedOverdubStopHandoff(false, true, true));
+}
+
 void test_committed_display_visual_cache_authoritative() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(false, true));
   // Dirty + notes present: paint must consume stale/handoff, not ensureVisualCacheBuilt.
@@ -480,6 +489,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_centered_window_start);
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
+  RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
   RUN_TEST(test_prefer_incremental_committed_display_includes_stopped);
   RUN_TEST(test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow);

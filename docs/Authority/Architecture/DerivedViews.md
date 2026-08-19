@@ -149,7 +149,7 @@ TickInterval bars 8–24
 
 `Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain. Paint does **not** rebuild on window move: `resolveWindowedDisplayNotes` filters a non-empty `visualCache.notes` with `filterDisplayNotesByWindowInclusion` over the paint window plus follow margin (`kWindowedGatherMarginBars`, at least `kFollowReadyLookaheadBars`).
 
-`visualCacheCoversWindow` authorizes a neighborhood when every bar in the window (plus optional lookahead) is clean, even if the rest of the loop is dirty. Incremental committed / overdub paint still filters a non-empty cache while globally dirty so auto-follow can show the next bar; `overdubSourceViewNotes` is consume ownership, not display authority.
+`visualCacheCoversWindow` authorizes a neighborhood when every bar in the window (plus optional lookahead) is clean, even if the rest of the loop is dirty. Incremental committed paint filters a non-empty cache while globally dirty so auto-follow can show the next bar, except after overdub stop: a dirty cache must not replace the RC5a composed handoff frame (committed + capture suffix). `overdubSourceViewNotes` is consume ownership, not display authority.
 
 What is **not** per-bar yet:
 
