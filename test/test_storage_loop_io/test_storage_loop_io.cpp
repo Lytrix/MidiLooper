@@ -886,6 +886,79 @@ void test_step_persisted_loop_snapshot_parse_resumes() {
   releasePersistedLoopSnapshotChunks(staged);
 }
 
+void test_write_read_overdub_session_index_tail_roundtrip() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 8;
+  original.loopLengthTicks = 768;
+  original.nextPassId = 4;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
+  OverdubPass wrap1 = makeOverdubPassWithEvents(2, 1, CapturePassState::Active, 20);
+  wrap1.overdubSessionIndex = 1;
+  original.passes.overdubPasses.push_back(wrap1);
+  OverdubPass wrap2 = makeOverdubPassWithEvents(3, 2, CapturePassState::Active, 40);
+  wrap2.overdubSessionIndex = 1;
+  original.passes.overdubPasses.push_back(wrap2);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_EQUAL(2u, restored.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(1, restored.passes.overdubPasses[0].overdubSessionIndex);
+  TEST_ASSERT_EQUAL_UINT8(1, restored.passes.overdubPasses[1].overdubSessionIndex);
+
+  std::vector<ContentUndoUnit> units;
+  deriveEffectiveContentUndoUnits(restored.passes, units);
+  TEST_ASSERT_EQUAL(2u, units.size());
+  TEST_ASSERT_EQUAL(2u, units[1].passIds.size());
+  releasePersistedLoopSnapshotChunks(restored);
+}
+
+void test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 9;
+  original.loopLengthTicks = 768;
+  original.nextPassId = 4;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
+  OverdubPass wrap1 = makeOverdubPassWithEvents(2, 1, CapturePassState::Active, 20);
+  wrap1.overdubSessionIndex = 1;
+  original.passes.overdubPasses.push_back(wrap1);
+  OverdubPass wrap2 = makeOverdubPassWithEvents(3, 2, CapturePassState::Active, 40);
+  wrap2.overdubSessionIndex = 1;
+  original.passes.overdubPasses.push_back(wrap2);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+  const size_t tailBytes = sizeof(uint32_t) + sizeof(uint32_t) +
+                           (2u * (sizeof(PassId) + sizeof(uint8_t)));
+  TEST_ASSERT_TRUE(buffer.size() >= tailBytes);
+  buffer.resize(buffer.size() - tailBytes);
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_EQUAL(2u, restored.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(kUngroupedOverdubSessionIndex,
+                          restored.passes.overdubPasses[0].overdubSessionIndex);
+  TEST_ASSERT_EQUAL_UINT8(kUngroupedOverdubSessionIndex,
+                          restored.passes.overdubPasses[1].overdubSessionIndex);
+
+  std::vector<ContentUndoUnit> units;
+  deriveEffectiveContentUndoUnits(restored.passes, units);
+  TEST_ASSERT_EQUAL(3u, units.size());
+  releasePersistedLoopSnapshotChunks(restored);
+}
+
 void test_serialize_reload_content_undo_units_match() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -964,5 +1037,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_apply_loop_slot_metadata_without_passes);
   RUN_TEST(test_step_persisted_loop_snapshot_parse_resumes);
   RUN_TEST(test_serialize_reload_content_undo_units_match);
+  RUN_TEST(test_write_read_overdub_session_index_tail_roundtrip);
+  RUN_TEST(test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped);
   return UNITY_END();
 }

@@ -215,7 +215,7 @@ point 1. RAM1 unchanged (code 425852 / locals 4768).
 ## DEC-038 — Overdub wrap commit and session undo
 
 **Date:** 2026-08-15  
-**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.** Live +1 HITL PASS ([`011413`](../captures/session_20260816_011413.log)).  
+**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.** Live +1 HITL PASS ([`011413`](../captures/session_20260816_011413.log)). **Amended 2026-08-20:** `OverdubPass.overdubSessionIndex` is content metadata so reboot derivation matches 038.2 grain. Not a `session-id` noun.  
 **Owner:** overdub lifecycle — `Track` trigger / `Loop` pass list + `capture.store`. LCR publish stays `publishPreparedOverdubPass`. GUS kind stays `OverdubPassAdded`.  
 **Plan:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)  
 **Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) (6E native PASS); [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) / [DEC-032](#dec-032-overdub-editpass-unification-reassessment) companions  
@@ -268,7 +268,7 @@ Persist grain is one wrap so wrap-2 can overlap wrap-1 via prepared `resolveStat
 - `handleUndo` while OVERDUBBING must not fall through to GUS.
 - Do not add a new undo kind. Do not put wraps on `NoteEditSessionUndoStack`.
 - Keep display idle 3b (`DIAG,lcr,vch`) on `tryResolvePreparedState` miss. Overdub source-view enter/wrap uses `rebuildOverdubSourceView`, not a visual-cache copy.
-- No SD on wrap. No session-id on `OverdubPass` in this DEC.
+- No SD on wrap. **Amended 2026-08-20:** stamp `overdubSessionIndex` on each wrap `OverdubPass` (same grouping role as `editPassIndex`). Do not name it session-id. `0` is ungrouped (legacy / missing `OSI1`).
 - S is session-scoped. Do not store it only on `Capture` if `discardCapture` would drop it mid-session.
 
 ### Related OpenSpec
@@ -277,7 +277,7 @@ Persist grain is one wrap so wrap-2 can overlap wrap-1 via prepared `resolveStat
 
 ### Migration notes
 
-038.2 GUS wire: persist `passIds` on `OverdubPassAdded`. Legacy STK2 rows keep a single `passId`. No loop-file format change.
+038.2 GUS wire: persist `passIds` on `OverdubPassAdded`. Legacy STK2 rows keep a single `passId`. **Amended 2026-08-20:** loop file adds additive `OSI1` after `GEO1` (`passId` + `overdubSessionIndex` per overdub). Cards without the tail load index `0` (one unit per pass). `deriveContentUndoUnits` groups wraps that share a non-zero index into one `OverdubPassAdded` with `passIds`.
 
 ---
 

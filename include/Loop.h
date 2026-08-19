@@ -84,6 +84,8 @@ struct Loop {
   bool visualCacheDirty = true;
   size_t materializedEventCount_ = 0;
   uint32_t nextMergeSequence_ = 0;
+  uint8_t nextOverdubSessionIndex_ = 1;
+  uint8_t currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   PassId lastCommittedPassId_ = kInvalidPassId;
 
   uint32_t startLoopTick = 0;
@@ -180,6 +182,7 @@ struct Loop {
   uint32_t playheadPhaseTick = UINT32_MAX;
   void openOverdubSession(uint32_t sessionPlayheadPhaseTick);
   void closeOverdubSession();
+  void syncNextOverdubSessionIndexFromPasses();
   bool hasOverdubSession() const { return playheadPhaseTick != UINT32_MAX; }
   void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
   bool shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) const;

@@ -34,7 +34,7 @@ After loading a Loop from disk, the runtime SHALL derive: the current content ti
 
 #### Scenario: Grouped records are one undo unit
 
-- **WHEN** one user operation produced multiple content records (companions, `noteEditPassIndex` batch, or equivalent content metadata)
+- **WHEN** one user operation produced multiple content records (companions, `noteEditPassIndex` batch, `overdubSessionIndex` wraps, or equivalent content metadata)
 - **THEN** load derives those records as one undo unit
 - **AND** one undo step disables or excludes that whole unit
 

@@ -45,7 +45,9 @@ constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
     LoopEventStoreConfig::CHUNK_CAPACITY;
 constexpr uint32_t PERSISTED_EDITS_TAIL_MARKER = 0x45505433u;  // "EPT3"
 constexpr uint32_t PERSISTED_GEOMETRY_TAIL_MARKER = 0x314F4547u;  // "GEO1"
+constexpr uint32_t PERSISTED_OVERDUB_SESSION_INDEX_TAIL_MARKER = 0x3149534Fu;  // "OSI1"
 constexpr uint32_t MAX_PERSISTED_LOOP_GEOMETRIES = 4096;
+constexpr uint32_t MAX_PERSISTED_OVERDUB_SESSION_INDEXES = 4096;
 
 uint32_t maxPersistedEventTick(uint32_t loopLengthTicks) {
   if (loopLengthTicks >= 0x80000000u) {
@@ -424,9 +426,114 @@ bool STORAGE_LOOP_IO_MEM skipPersistedGeometryTail(const StorageIo& io) {
   return true;
 }
 
+bool STORAGE_LOOP_IO_MEM writePersistedOverdubSessionIndexTail(
+    const StorageIo& io, const CommittedOverdubPassVec& overdubPasses) {
+  const uint32_t marker = PERSISTED_OVERDUB_SESSION_INDEX_TAIL_MARKER;
+  if (!ioWrite(io, &marker, sizeof(marker))) return false;
+  const uint32_t count = static_cast<uint32_t>(overdubPasses.size());
+  if (!ioWrite(io, &count, sizeof(count))) return false;
+  for (const OverdubPass& pass : overdubPasses) {
+    if (!ioWrite(io, &pass.id, sizeof(pass.id))) return false;
+    if (!ioWrite(io, &pass.overdubSessionIndex, sizeof(pass.overdubSessionIndex))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM probePersistedOverdubSessionIndexTail(const StorageIo& io, bool& present) {
+  present = false;
+  uint32_t marker = 0;
+  if (io.peek) {
+    if (!ioPeek(io, &marker, sizeof(marker))) {
+      return true;
+    }
+    if (marker != PERSISTED_OVERDUB_SESSION_INDEX_TAIL_MARKER) {
+      return true;
+    }
+    if (!ioRead(io, &marker, sizeof(marker))) {
+      return false;
+    }
+    present = true;
+    return true;
+  }
+  if (!ioRead(io, &marker, sizeof(marker))) {
+    return true;
+  }
+  if (marker != PERSISTED_OVERDUB_SESSION_INDEX_TAIL_MARKER) {
+    return false;
+  }
+  present = true;
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM applyPersistedOverdubSessionIndexTail(const StorageIo& io,
+                                                              CommittedOverdubPassVec& overdubPasses) {
+  bool present = false;
+  if (!probePersistedOverdubSessionIndexTail(io, present)) {
+    return false;
+  }
+  if (!present) {
+    return true;
+  }
+  uint32_t count = 0;
+  if (!ioRead(io, &count, sizeof(count))) {
+    return false;
+  }
+  if (count > MAX_PERSISTED_OVERDUB_SESSION_INDEXES) {
+    return false;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    PassId passId = kInvalidPassId;
+    uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
+    if (!ioRead(io, &passId, sizeof(passId))) {
+      return false;
+    }
+    if (!ioRead(io, &overdubSessionIndex, sizeof(overdubSessionIndex))) {
+      return false;
+    }
+    for (OverdubPass& pass : overdubPasses) {
+      if (pass.id == passId) {
+        pass.overdubSessionIndex = overdubSessionIndex;
+        break;
+      }
+    }
+  }
+  return true;
+}
+
+bool STORAGE_LOOP_IO_MEM skipPersistedOverdubSessionIndexTail(const StorageIo& io) {
+  bool present = false;
+  if (!probePersistedOverdubSessionIndexTail(io, present)) {
+    return false;
+  }
+  if (!present) {
+    return true;
+  }
+  uint32_t count = 0;
+  if (!ioRead(io, &count, sizeof(count))) {
+    return false;
+  }
+  if (count > MAX_PERSISTED_OVERDUB_SESSION_INDEXES) {
+    return false;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    PassId passId = kInvalidPassId;
+    uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
+    if (!ioRead(io, &passId, sizeof(passId))) {
+      return false;
+    }
+    if (!ioRead(io, &overdubSessionIndex, sizeof(overdubSessionIndex))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool STORAGE_LOOP_IO_MEM writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
                              const EditPassVec& editPasses,
-                             const LoopGeometryVec& loopGeometries) {
+                             const LoopGeometryVec& loopGeometries,
+                             const CommittedOverdubPassVec& overdubPasses) {
   if (!ioWrite(io, &nextPassId, sizeof(nextPassId))) return false;
   const uint32_t marker = PERSISTED_EDITS_TAIL_MARKER;
   if (!ioWrite(io, &marker, sizeof(marker))) return false;
@@ -435,7 +542,10 @@ bool STORAGE_LOOP_IO_MEM writePersistedEditsTail(const StorageIo& io, PassId nex
   for (const EditPass& editPass : editPasses) {
     if (!writePersistedEditPass(io, editPass)) return false;
   }
-  return writePersistedGeometryTail(io, loopGeometries);
+  if (!writePersistedGeometryTail(io, loopGeometries)) {
+    return false;
+  }
+  return writePersistedOverdubSessionIndexTail(io, overdubPasses);
 }
 
 bool STORAGE_LOOP_IO_MEM readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
@@ -463,7 +573,10 @@ bool STORAGE_LOOP_IO_MEM readPersistedEditsTail(const StorageIo& io, PersistedLo
   if (snapshot.nextPassId == 0) {
     snapshot.nextPassId = 1;
   }
-  return readPersistedGeometryTail(io, snapshot.passes.loopGeometries);
+  if (!readPersistedGeometryTail(io, snapshot.passes.loopGeometries)) {
+    return false;
+  }
+  return applyPersistedOverdubSessionIndexTail(io, snapshot.passes.overdubPasses);
 }
 
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot) {
@@ -508,7 +621,7 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
     }
   }
   return writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses,
-                                snapshot.passes.loopGeometries);
+                                snapshot.passes.loopGeometries, snapshot.passes.overdubPasses);
 }
 
 size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot) {
@@ -973,6 +1086,12 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
   if (snapshot.nextNoteId == 0) {
     snapshot.nextNoteId = 1;
   }
+  if (state.pos < size) {
+    StorageIo io = bufferIoFromParseState(data, size, state);
+    if (!applyPersistedOverdubSessionIndexTail(io, snapshot.passes.overdubPasses)) {
+      return failAndReset();
+    }
+  }
   return PersistedLoopParseStepResult::Completed;
 }
 
@@ -1036,7 +1155,10 @@ bool skipPersistedEditsTailPayload(const StorageIo& io) {
   for (uint32_t i = 0; i < editCount; ++i) {
     if (!skipPersistedEditPassPayload(io)) return false;
   }
-  return skipPersistedGeometryTail(io);
+  if (!skipPersistedGeometryTail(io)) {
+    return false;
+  }
+  return skipPersistedOverdubSessionIndexTail(io);
 }
 
 bool skipCapturePassSlotFilePayload(const StorageIo& io, uint32_t loopLengthTicks) {
@@ -1164,7 +1286,7 @@ bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
   }
 
   return writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses,
-                                loop.passes.loopGeometries);
+                                loop.passes.loopGeometries, loop.passes.overdubPasses);
 }
 
 size_t measureLoopSlotFileBytes(const Loop& loop) {
