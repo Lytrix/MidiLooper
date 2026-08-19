@@ -111,12 +111,18 @@ void test_ledger_stays_active_after_note_on() {
   TEST_ASSERT_EQUAL_UINT8(1, seen);
 }
 
-void test_ledger_note_on_overwrites_note_id() {
+void test_ledger_note_on_pushes_untagged_off_pops_lifo() {
   ActiveNoteLedger ledger;
   ledger.noteOn(1, 60, 42, 100, 90);
   ledger.noteOn(1, 60, 99, 200, 80);
   TEST_ASSERT_TRUE(ledger.isActive(1, 60));
   TEST_ASSERT_EQUAL_UINT32(99, ledger.noteId(1, 60));
+  uint8_t seen = 0;
+  ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++seen; });
+  TEST_ASSERT_EQUAL_UINT8(2, seen);
+  ledger.noteOff(1, 60);
+  TEST_ASSERT_TRUE(ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_UINT32(42, ledger.noteId(1, 60));
   ledger.noteOff(1, 60);
   TEST_ASSERT_FALSE(ledger.isActive(1, 60));
   TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 60));
@@ -277,14 +283,8 @@ void test_equal_phase_off_before_on_last_writes_new_on() {
   TEST_ASSERT_EQUAL_UINT32(200, ledger.noteId(1, 12));
 }
 
-void test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12() {
-  // Proven occupy n=0 a=1 geometry from session_20260819_090050 (DIAG,lcr,mismatch pitch=12
-  // hs=336 led=0, spans 240-480 id 4819 covering and 288-336 id 4814 nested inside it).
-  // The lane carries one ActiveNoteLedger::Entry per (channel, pitch), so the inner note's
-  // NoteOn overwrites the outer note's identity before any Off arrives. That is why stamping
-  // identity onto Offs cannot repair this geometry: at Off@336 the entry already belongs to
-  // the inner note, so an identity-matched clear still empties a lane the source view shows
-  // as occupied. See overdub_occupy_unmatched_off_ledger_investigation.md.
+void test_nested_open_note_survives_inner_untagged_off() {
+  // 090050 / 092336: On A, On B, untagged Off → A remains. Occupy {A}.
   constexpr uint32_t kLoop = 768;
   constexpr uint32_t kHold = 336;
   constexpr NoteId kOuterId = 4819;
@@ -294,25 +294,73 @@ void test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12() {
   MidiEvent innerOn = MidiEvent::NoteOn(288, 1, 12, 100);
   innerOn.noteId = kInnerId;
   MidiEvent innerOff = MidiEvent::NoteOff(336, 1, 12, 0);
-  MidiEvent outerOff = MidiEvent::NoteOff(480, 1, 12, 0);
 
   ActiveNoteLedger ledger;
-  (void)ledger.applyPlaybackEvent(1, outerOn);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, outerOn));
   TEST_ASSERT_EQUAL_UINT32(kOuterId, ledger.noteId(1, 12));
 
-  // The outer note's identity is already gone here — before any Off is applied.
-  (void)ledger.applyPlaybackEvent(1, innerOn);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, innerOn));
   TEST_ASSERT_EQUAL_UINT32(kInnerId, ledger.noteId(1, 12));
+  uint8_t openCount = 0;
+  ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    if (channel == 1 && note == 12) {
+      ++openCount;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT8(2, openCount);
 
-  // The inner Off's LIFO identity is the inner note, so matching identity would still clear.
-  (void)ledger.applyPlaybackEvent(1, innerOff);
-  TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 12));
-
-  // Source view still shows the outer note covering the hold: n=0 against a=1.
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, innerOff));
+  TEST_ASSERT_EQUAL_UINT32(kOuterId, ledger.noteId(1, 12));
+  TEST_ASSERT_TRUE(ledger.isActive(1, 12));
   TEST_ASSERT_TRUE(
       OverlapNoteIdObservation::displayNotePresentAtHold(240, 480, kHold, kLoop));
-  TEST_ASSERT_FALSE(ledger.isActive(1, 12));
-  (void)outerOff;
+}
+
+void test_identified_off_pops_exact_entry() {
+  ActiveNoteLedger ledger;
+  MidiEvent outerOn = MidiEvent::NoteOn(96, 1, 12, 100);
+  outerOn.noteId = 5052;
+  MidiEvent innerOn = MidiEvent::NoteOn(144, 1, 12, 100);
+  innerOn.noteId = 5047;
+  MidiEvent innerOff = MidiEvent::NoteOff(192, 1, 12, 0);
+  innerOff.noteId = 5047;
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, outerOn));
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, innerOn));
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, innerOff));
+  TEST_ASSERT_EQUAL_UINT32(5052, ledger.noteId(1, 12));
+  TEST_ASSERT_TRUE(ledger.isActive(1, 12));
+}
+
+void test_identified_off_not_found_does_not_mutate() {
+  ActiveNoteLedger ledger;
+  MidiEvent outerOn = MidiEvent::NoteOn(96, 1, 12, 100);
+  outerOn.noteId = 5052;
+  MidiEvent innerOn = MidiEvent::NoteOn(144, 1, 12, 100);
+  innerOn.noteId = 5047;
+  MidiEvent staleOff = MidiEvent::NoteOff(192, 1, 12, 0);
+  staleOff.noteId = 9999;
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, outerOn));
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, innerOn));
+  TEST_ASSERT_FALSE(ledger.applyPlaybackEvent(1, staleOff));
+  TEST_ASSERT_EQUAL_UINT32(5047, ledger.noteId(1, 12));
+  uint8_t openCount = 0;
+  ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    if (channel == 1 && note == 12) {
+      ++openCount;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT8(2, openCount);
+}
+
+void test_open_note_overflow_refuses_without_evicting() {
+  ActiveNoteLedger ledger;
+  for (size_t i = 0; i < ActiveNoteLedger::kMaxOpenNotes; ++i) {
+    ledger.noteOn(1, static_cast<uint8_t>(i % 128), static_cast<NoteId>(i + 1), 0, 100);
+  }
+  TEST_ASSERT_FALSE(ledger.overflowed());
+  ledger.noteOn(1, 0, 999, 10, 100);
+  TEST_ASSERT_TRUE(ledger.overflowed());
+  TEST_ASSERT_EQUAL_UINT32(1, ledger.noteId(1, 0));
 }
 
 void test_wrap_advances_while_midi_send_suppressed() {
@@ -344,14 +392,17 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_engine_runs_when_slot_enabled_even_if_muted);
   RUN_TEST(test_midi_send_requires_unmuted_track_and_slot);
   RUN_TEST(test_ledger_stays_active_after_note_on);
-  RUN_TEST(test_ledger_note_on_overwrites_note_id);
+  RUN_TEST(test_ledger_note_on_pushes_untagged_off_pops_lifo);
   RUN_TEST(test_ledger_apply_playback_event_before_emit);
   RUN_TEST(test_all_notes_off_clears_ledger_mute_does_not);
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);
   RUN_TEST(test_unmute_does_not_resend_crossed_events);
   RUN_TEST(test_wrap_committed_note_at_s_crosses_when_reanchored_at_prev);
   RUN_TEST(test_equal_phase_off_before_on_last_writes_new_on);
-  RUN_TEST(test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12);
+  RUN_TEST(test_nested_open_note_survives_inner_untagged_off);
+  RUN_TEST(test_identified_off_pops_exact_entry);
+  RUN_TEST(test_identified_off_not_found_does_not_mutate);
+  RUN_TEST(test_open_note_overflow_refuses_without_evicting);
   RUN_TEST(test_wrap_advances_while_midi_send_suppressed);
   return UNITY_END();
 }

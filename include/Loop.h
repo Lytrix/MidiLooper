@@ -222,8 +222,9 @@ struct Loop {
   /// `resolveWindow` / cold `resolveState`. Clears `out`.
   bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                               OverlapNoteIdSet& out) const;
-  /// Note-on occupy: `ledger.noteId(channel, pitch)` — at most one id.
-  /// Never `ensureOverdubSourceNotesForHold` / `resolveWindow`. Clears `out`.
+  /// Note-on occupy: every open NoteId on `(channel, pitch)` via `forEachActive`.
+  /// Never `ledger.noteId()` (compatibility newest-only). Never
+  /// `ensureOverdubSourceNotesForHold` / `resolveWindow`. Clears `out`.
   void collectOverdubNoteOnParticipantIds(uint8_t pitch, uint8_t channel,
                                           const ActiveNoteLedger& ledger,
                                           OverlapNoteIdSet& out) const;

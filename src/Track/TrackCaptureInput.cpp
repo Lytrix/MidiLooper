@@ -63,7 +63,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void logOccupyLedgerMismatch(
         if (entryChannel != channel || entryNote != pitch) {
           return;
         }
-        ledgerActive = 1;
+        ++ledgerActive;
         ledgerNoteId = entry.noteId;
         ledgerStartTick = entry.startTick;
       });

@@ -1418,7 +1418,7 @@ void test_overdub_stop_still_removes_pairs_shorter_than_min_length() {
   TEST_ASSERT_TRUE(hasKeptOn);
 }
 
-void test_note_on_occupy_last_writer_overwrites() {
+void test_note_on_occupy_collects_every_open_identity() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -1431,9 +1431,15 @@ void test_note_on_occupy_last_writer_overwrites() {
   ledger.noteOn(1, 60, 7, 80, 90);
   OverlapNoteIdSet occupyIds;
   loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
-  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(occupyIds.size()));
   TEST_ASSERT_TRUE(occupyIds.contains(7));
-  TEST_ASSERT_FALSE(occupyIds.contains(1));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+
+  ledger.noteOff(1, 60);
+  loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+  TEST_ASSERT_FALSE(occupyIds.contains(7));
 
   loop.collectOverdubNoteOnParticipantIds(72, 1, ledger, occupyIds);
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
@@ -1746,7 +1752,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_pass_on_at_96_occupies_after_s_interval);
   RUN_TEST(test_wrap_pass_spanning_on_at_0_occupies_at_96);
   RUN_TEST(test_overdub_stop_still_removes_pairs_shorter_than_min_length);
-  RUN_TEST(test_note_on_occupy_last_writer_overwrites);
+  RUN_TEST(test_note_on_occupy_collects_every_open_identity);
   RUN_TEST(test_capture_off_does_not_clear_committed_occupy);
   RUN_TEST(test_capture_on_does_not_occupy_empty_source_view);
   RUN_TEST(test_occupy_ledger_catchup_on_at_192_after_last_tick_184);

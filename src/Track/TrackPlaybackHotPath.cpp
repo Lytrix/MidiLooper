@@ -347,8 +347,20 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceSlotMidiOutput(uint8
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
+  uint16_t uniqueCount = 0;
+  uint16_t uniqueKeys[ActiveNoteLedger::kMaxOpenNotes];
   playbackRuntime.slot(slotIndex).ledger.forEachActive(
-      [](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+      [&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+        const uint16_t key =
+            (static_cast<uint16_t>(channel) << 8) | static_cast<uint16_t>(note);
+        for (uint16_t i = 0; i < uniqueCount; ++i) {
+          if (uniqueKeys[i] == key) {
+            return;
+          }
+        }
+        if (uniqueCount < ActiveNoteLedger::kMaxOpenNotes) {
+          uniqueKeys[uniqueCount++] = key;
+        }
         midiHandler.sendMidiEvent(MidiEvent::NoteOff(0, channel, note, 0));
       });
 }
