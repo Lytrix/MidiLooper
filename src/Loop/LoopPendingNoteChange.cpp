@@ -12,7 +12,6 @@
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
-#include "Utils/DisplayWindowUtils.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
@@ -63,18 +62,6 @@ bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingE
   const bool incomingShifted = existingLinearStart < incomingLinearEnd + loopLength &&
                                existingLinearEnd > incomingLinearStart + loopLength;
   return direct || existingShifted || incomingShifted;
-}
-
-void unionSelectedNote(NoteUtils::DisplayNoteVec& selected, const NoteUtils::DisplayNote& note) {
-  if (note.noteId == kInvalidNoteId) {
-    return;
-  }
-  for (const NoteUtils::DisplayNote& picked : selected) {
-    if (picked.noteId == note.noteId) {
-      return;
-    }
-  }
-  selected.push_back(note);
 }
 
 void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChange& change) {
@@ -365,34 +352,44 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   };
 
-  const bool useLedgerIdConsumePath = effectiveOverlapNoteIds.size() > 0;
-  if (useLedgerIdConsumePath) {
+  const bool longLoop = loopLen > overdubSourceWindowLengthTicks();
+  auto maybeEnsureHoldSegmentInSourceView = [&](uint32_t holdPhaseTick) {
+    if (longLoop) {
+      ensureHoldSegmentInSourceView(holdPhaseTick);
+    }
+  };
+  auto completeConsumeParticipantIds = [&]() {
     if (wrapCrossing) {
-      ensureHoldSegmentInSourceView(startTick);
+      maybeEnsureHoldSegmentInSourceView(startTick);
       if (endTick > 0) {
-        ensureHoldSegmentInSourceView(0);
+        maybeEnsureHoldSegmentInSourceView(0);
       }
       collectGeometricIdsForSegment(startTick, loopLen);
       if (endTick > 0) {
         collectGeometricIdsForSegment(0, endTick);
       }
-    } else {
-      ensureHoldSegmentInSourceView(startTick);
-      collectGeometricIdsForSegment(startTick, endTick);
-    }
-    if (loopLen > overdubSourceWindowLengthTicks()) {
-      if (wrapCrossing) {
-        ensureHoldSegmentInSourceView(startTick);
+      if (longLoop) {
+        maybeEnsureHoldSegmentInSourceView(startTick);
         if (endTick > 0) {
-          ensureHoldSegmentInSourceView(0);
+          maybeEnsureHoldSegmentInSourceView(0);
         }
-      } else {
-        ensureHoldSegmentInSourceView(startTick);
+        collectGeometricIdsForSegment(startTick, loopLen);
+        if (endTick > 0) {
+          collectGeometricIdsForSegment(0, endTick);
+        }
+      }
+    } else {
+      maybeEnsureHoldSegmentInSourceView(startTick);
+      collectGeometricIdsForSegment(startTick, endTick);
+      if (longLoop) {
+        maybeEnsureHoldSegmentInSourceView(startTick);
+        collectGeometricIdsForSegment(startTick, endTick);
       }
     }
-    if (effectiveOverlapNoteIds.overflowed()) {
-      ++overlapHoldTotals_.overflows;
-    }
+  };
+  completeConsumeParticipantIds();
+  if (effectiveOverlapNoteIds.overflowed()) {
+    ++overlapHoldTotals_.overflows;
   }
 
   NoteUtils::DisplayNoteVec selected;
@@ -417,52 +414,6 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   }
   const size_t idSelectedCount = selected.size();
 
-  auto collectConsumeWindow = [&](uint32_t windowStart, uint32_t windowEnd) {
-    if (windowStart >= windowEnd) {
-      return;
-    }
-    // Phase 4: skip 16-bar resolveWindow when enter/wrap already gathered the
-    // whole loop. Empty occupy still walks source-view notes (122848 hide).
-    // Loops longer than the source window still JIT-merge ahead notes.
-    if (loopLen > overdubSourceWindowLengthTicks()) {
-      NoteUtils::DisplayNoteVec jitHoldPitchNotes;
-      ensureOverdubSourceNotesForHold(windowStart, pitch, &jitHoldPitchNotes);
-      for (const NoteUtils::DisplayNote& note : jitHoldPitchNotes) {
-        if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, windowStart, windowEnd,
-                                              loopLen)) {
-          continue;
-        }
-        unionSelectedNote(selected, note);
-      }
-    }
-    uint32_t sourceWindowStart = 0;
-    uint32_t sourceWindowLength = 0;
-    resolveOverdubSourceWindow(windowStart, sourceWindowStart, sourceWindowLength);
-    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
-      if (note.note != pitch || note.noteId == kInvalidNoteId) {
-        continue;
-      }
-      if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, sourceWindowStart,
-                                                    sourceWindowLength, loopLen)) {
-        continue;
-      }
-      if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, windowStart, windowEnd,
-                                            loopLen)) {
-        continue;
-      }
-      unionSelectedNote(selected, note);
-    }
-  };
-
-  if (!useLedgerIdConsumePath) {
-    if (wrapCrossing) {
-      collectConsumeWindow(startTick, loopLen);
-      collectConsumeWindow(0, endTick);
-    } else {
-      collectConsumeWindow(startTick, endTick);
-    }
-  }
-
   uint32_t scanOnly = 0;
   uint32_t lateNotes = 0;
   for (size_t i = idSelectedCount; i < selected.size(); ++i) {
@@ -473,10 +424,8 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   }
   uint32_t idsWithoutNotes = 0;
-  const OverlapNoteIdSet& idsForRowCheck =
-      useLedgerIdConsumePath ? effectiveOverlapNoteIds : overlapNoteIds;
-  for (size_t i = 0; i < idsForRowCheck.size(); ++i) {
-    const NoteId id = idsForRowCheck.at(i);
+  for (size_t i = 0; i < effectiveOverlapNoteIds.size(); ++i) {
+    const NoteId id = effectiveOverlapNoteIds.at(i);
     bool selectedHasId = false;
     for (const NoteUtils::DisplayNote& note : selected) {
       if (note.noteId == id) {

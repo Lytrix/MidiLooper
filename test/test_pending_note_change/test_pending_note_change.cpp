@@ -212,8 +212,8 @@ void test_overdub_consumes_existing_source_view_overlap() {
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().noteOffs);
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().emptySets);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lookedUp);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
 }
 
 void test_overdub_consumes_source_view_when_hold_ids_incomplete() {
@@ -300,8 +300,8 @@ void test_note_off_skips_hold_fill_when_source_view_covers_loop() {
                        countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
                    1);
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().emptySets);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lookedUp);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
 }
 
 void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
