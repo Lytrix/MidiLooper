@@ -1,6 +1,6 @@
 # Occupy missing open identity (`n=1 a=2` extra covering span)
 
-**Status:** Native **PASS** 1374/1374. RAM1 **425948** / locals **4768**. HITL gate open.  
+**Status:** Native **PASS** 1374/1374. RAM1 **425948** / locals **4768**. HITL [`121141`](../../captures/session_20260819_121141.log): **5893-class MET** (no `5893`; identity-without-NoteOn gone). Remaining `n=1 a=2` **FAIL** — extra covering ids have `on=1`. This RC’s root cause does not explain them. **STOP.** Do not widen the identity filter.  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (leftover identity HITL PASS, remaining mismatch):** [`overdub_occupy_leftover_identity_bugfix.md`](overdub_occupy_leftover_identity_bugfix.md)  
@@ -155,17 +155,39 @@ Do not add A to the ledger from the span. If HITL still shows `n=1 a=2` after th
 
 ---
 
-## HITL gates (next `teensy41-capture-serial` overdub occupy)
+## HITL [`121141`](../../captures/session_20260819_121141.log)
 
-Keep leftover gates. Add this FAIL.
+73 `DIAG,lcr,part`. **40** mismatches. All `cu=0`. `led == n` **40/40**. Two-Off dumps **0**. `5893` **0**. `5701` **0**. Wrap committed **25** (first `@ 1232`).
 
-| Gate | Pass |
-|------|------|
-| `n=1 a=0` | **0** (leftover) |
-| `n=0 a=1` | **0** |
-| `n=1 a=2` | **0** (this RC) |
-| `led == n` | all mismatches (none expected) |
-| `eq=1` | do not regress |
+| Gate | 111819 | 121141 |
+|------|------:|-------:|
+| `n=0 a=1` | **0** | **0 MET** |
+| `n=1 a=0` | **0** | **10** |
+| `n=1 a=2` | **1** | **2 FAIL** |
+| `led == n` | 1/1 | **40/40 MET** |
+| n>a | 0 | 37 |
+| `eq=1` | 99/99 | **0/73** (`b=0`; `tryCollectPreparedPresentNoteIdsAtTick` miss — `src` lines `prep=0`) |
+
+### This RC (identity without a playback NoteOn)
+
+Pin 5893 is gone. The identity-existence predicate did not leave a covering span with `on=0`.
+
+### Remaining `n=1 a=2` — stop condition hit
+
+Both extras **have** a NoteOn in the full merged stream (`mmspan on=1` and `mmevt` On). This RC’s root cause is **invalid** for these FAILs. Do not widen the identity filter. Do not reconstruct spans from `mergedMidiEvents`. Do not write the ledger from spans.
+
+| Line | Pitch | `hs` | Ledger | Covering (`p=1`) | Extra On in merged | Off before occupy |
+|------|------:|-----:|--------|------------------|--------------------|-------------------|
+| L2924 | 30 | 144 | 6019 `lst=48` | 6019 `48–192` `on=1`; **6031 `96–192` `on=1`** | On@96 `6031` | Off@144 |
+| L3298 | 24 | 312 | 6079 `lst=144` | 6079 `144–360` `on=1`; **6073 `168–360` `on=1`** | On@168 `6073` | Off@264 |
+
+`ltick == hs`, `cu=0` — clock has already walked those Offs. Source-view geometry still lists the extra id as covering.
+
+### Not this FAIL
+
+- `n=1 a=0` / other `n>a`: extra-open; e.g. L3344 lid **6117** span `192–288` `p=0` `on=1` at occupy **480**. On exists; span does not cover. Not a missing-On identity.
+- Nested `n=2 a=2` (4 parts) — cardinality, not this gate.
+- `eq=0`: prepared collect returned false this session (`b=0`). Not `a` vs `b` filter divergence (`ao=0`, `bo=0`).
 
 ---
 
@@ -173,7 +195,7 @@ Keep leftover gates. Add this FAIL.
 
 - Native **PASS** 1374/1374: drop span A when merged has no NoteOn for A; retain A+B when both Ons exist; partial window does not prune.
 - Do not change `isPlaybackCatchUpWindow(88,88)==true`.
-- Firmware `teensy41-capture-serial` RAM1 **425948** / locals **4768**. HITL still required.
+- Firmware `teensy41-capture-serial` RAM1 **425948** / locals **4768**. HITL [`121141`](../../captures/session_20260819_121141.log): 5893-class MET; remaining `n=1 a=2` has `on=1`.
 
 ---
 
