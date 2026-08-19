@@ -325,6 +325,60 @@ void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
+// Consume attribution: occupy id present, but no source-view note exists at lookup
+// time. Only the long-loop JIT branch can reach that candidate.
+void test_consume_attribution_counts_late_note_for_jit_ahead_candidate() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLongLoop = Config::TICKS_PER_BAR * 64;
+  seedLongSourceNote(loop, 1, 224, 288, 60, kLongLoop);
+  loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  TEST_ASSERT_TRUE(loop.loopLengthTicks >
+                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({1})));
+
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lateNoteCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+}
+
+// Consume attribution: incoming hold covers a second note that starts after S and
+// is absent from the occupy set. The window scan is the only path that selects it.
+void test_consume_attribution_counts_scan_only_for_id_absent_candidate() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 50, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 300, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(400, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 3;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.loopLengthTicks <=
+                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 50));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 300));
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 100, 350, 10,
+                                                                   overlapIds({1})));
+
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lateNoteCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 2));
+}
+
 void test_pending_shorten_long_source_on_overlap() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2192,6 +2246,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop);
   RUN_TEST(test_note_off_skips_hold_fill_when_source_view_covers_loop);
   RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
+  RUN_TEST(test_consume_attribution_counts_late_note_for_jit_ahead_candidate);
+  RUN_TEST(test_consume_attribution_counts_scan_only_for_id_absent_candidate);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);
