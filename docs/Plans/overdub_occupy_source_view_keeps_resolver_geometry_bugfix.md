@@ -1,7 +1,7 @@
 # Occupy source view keeps resolver geometry
 
 **Status:** Gates 1–4 pinned. Coordinate conversion **pinned**. **Investigation approved.**  
-**Gate 5A** (EditApply pairing): **shipped** — `findNoteOffForOnIndex` equal-tick Off-before-On (`NOTE_EDIT_MEM`). Native `pio test -e native` **1379/1379**. `teensy41-capture-serial` links.  
+**Gate 5A** (EditApply pairing): **shipped** — `findNoteOffForOnIndex` equal-tick Off-before-On (`NOTE_EDIT_MEM`). Native **1379/1379**. `teensy41-capture-serial` RAM1 code **425836** / locals **4768**. HITL [`161349`](../../captures/session_20260819_161349.log): extra covering **`a>n` = 0** (`n=1 a=2` **0**; `s=144,e=360` **0**; `led==n` **32/32**). Remaining mismatches are `n>a` only.  
 **Gate 5B** (Length `6073` 551 provenance): effect proven, source **not** proven — **no implementation permitted**.  
 Do not land 5B with 5A. Native Gate 4: Off@168 disappeared only when Length targeted `6073` (pre-5A). After 5A, On-then-Off dump order no longer steals Off@168.  
 **Date:** 2026-08-19  
@@ -545,6 +545,29 @@ This slice is **global**: NOTE_EDIT Length/Delete also call `findNoteOffForOnInd
 
 5A does not finish hold-312 `a=0` if Length `6073` 551 still applies, and it does not produce A `144–167` unless Point 2 sealed `Length(6079, 167)`. When that row is present, 5A applies it to Off@168 on On-then-Off dump order.
 
+#### HITL after 5A — [`161349`](../../captures/session_20260819_161349.log)
+
+Live overdub after 5A flash (`DISP OVERDUBBING`; 13 wrap `lcr,src` rebuilds). Note ids are 62xx, not the pin 60xx. This session is **not** a mechanical replay of `6079`.
+
+| Check | Pin [`121141`](../../captures/session_20260819_121141.log) | [`161349`](../../captures/session_20260819_161349.log) |
+|---|---|---|
+| mismatches | 40 | 32 |
+| `led==n` | 40/40 | **32/32** |
+| extra covering `a>n` | **3** | **0** |
+| `n=1 a=2` | **2** (pitch 30 `hs=144` `lid=6019`; pitch 24 `hs=312` `lid=6079`) | **0** |
+| `n=2 a=3` | 1 | **0** |
+| `n=0 a=1` | 0 | **0** |
+| `s=144,e=360` / `as=144,ae=360` | 3 | **0** |
+| pitch 24 `hs=312` | 1 (`n=1 a=2`) | **0** |
+
+Remaining 32 mismatches are **`n>a` only**: `n=1 a=0` **15**, `n=2 a=1` **15**, `n=2 a=0` **2**. By pitch: 12 (21), 24 (5), 23 (3), 30 (3).
+
+Equal-tick On+Off at t=144 pitch 30 is present (L2477–2478). Reconstruct dumps adjacent `6238 48–144` and `6226 144–192` (L2467 / L2469). That is **not** the pin double-cover of `6019 48–192` plus `6031 96–192`. Pitch 30 `hs=144` is **not** a mismatch in this session.
+
+Pitch 24 leftover example L3096: `n=1 a=0` `lid=6280` `lst=744` at `hs=648`. Source-view pieces `744–767` + `0–168` (L3098–3099) do not cover hold 648. That is more open ledger identities than covering spans, not extra covering.
+
+**Extra covering `a>n` MET.** Do not treat remaining `n>a` as 5A failure, leftover-identity reopen (`111819` already PASS), or occupy-collect patch. **Do not implement 5B from this capture.**
+
 #### Gate 5B — Length `6073` 551 provenance (no implementation)
 
 Effect proven: after 5A pairing, Length `6073` 551 still applies; B reconstructs `168–360` and `displayNotePresentAtHold(168, 360, 312, 768)` is true. Intended occupy at 312 is `a=0`.
@@ -682,7 +705,7 @@ What already exists:
 - **Gate 5A shipped:** `findNoteOffForOnIndex` equal-tick Off-before-On. Not a full tick sort. On-then-Off Length `6079` 167 reconstructs A `144–167`.
 - **Gate 5B:** effect proven (B `168–360` covers 312 after 5A + Length `6073` 551). Provenance not proven. **No implementation.**
 - **Coordinate conversion pinned:** Length/Off/`DisplayNote.endTick`/`ae=` = 167; canonical `[144,168)` only inside reconstruct; occupy covering `s < 167`.
-- **5B / HITL still open.** 5A native shipped; device HITL not run.
+- **HITL [`161349`](../../captures/session_20260819_161349.log):** extra covering `a>n` **MET** (`0`). Remaining 32 mismatches are `n>a` only. **5B** still investigation; no implementation.
 - Existing overlay: `applyPendingHideAndShortenToNotes` on **display paint** (`applyPendingNoteChangesToDisplayNotes`). Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView`.
 - Evaluation catalogs written (overlap-resolve + ledger).
 
@@ -707,7 +730,7 @@ What already exists:
 | Geometry vs event survival | `resolveConstrainedGeometry` remains the sole overlap-geometry **decision** authority. That does not guarantee the event/EditPass carrying the decision survives replay (this bug) |
 | Single-owner audit question | **Superseded.** Gate 4 is: which EditPass made committed `Off@168` disappear from **per-layer** gather output. Do not investigate “which edit caused A `144–360`” |
 | Gate 4 | **Pinned** — Length `6073` moves Off@168 (`168` → dump-consistent `551`). `Length(6079, 167)` / `6040` / `6033` do not. Delete `6073` excluded (On@168 remains). Device row index not dumped |
-| Gate 5 | **Split.** **5A shipped** — equal-tick Off-before-On in `findNoteOffForOnIndex` (`midiEventChronologicalLess`); not a full tick sort. **5B** Length `6073` 551: effect proven, provenance **not** proven, **no implementation**. Rebuild cannot manufacture Length-167; Point 3 requires sealed `Length(6079, 167)` |
+| Gate 5 | **Split.** **5A shipped** — equal-tick Off-before-On; HITL [`161349`](../../captures/session_20260819_161349.log) extra covering `a>n` **0**. **5B** Length `6073` 551: effect proven, provenance **not** proven, **no implementation**. Rebuild cannot manufacture Length-167; Point 3 requires sealed `Length(6079, 167)` |
 | B's end at the pin (264 vs 360) | **Pinned** — committed Off@264. L3298 `168–360` is wrap-pair add |
 | Gate 3 | **Pinned** — On@168 + Off@264; wrap-pair is not B's end |
 | Occupy `as=`/`ae=` | Source-view **cache**, no pending overlay. L2324 `ae=168` is Off@168 pairing, not Length payload 167 |
@@ -719,9 +742,9 @@ What already exists:
 ### Open after 5A
 
 1. **5B remains investigation.** Device EditPass index is still not dumped. Do not skip/filter Length by identity.
-2. Native three-point fixture with identity remains a later firmware-gate artifact. Point 3 requires Point 2. Hold-312 fixture must not expect B covering 312.
-3. HITL after 5A flash: A `144–360` should stop if Length `6079` 167 is sealed; hold-312 `a=2` can remain from Length `6073` 551 / wrap-pair (5B).
+2. Native three-point fixture with identity remains a later firmware-gate artifact. Point 3 requires Point 2.
+3. HITL [`161349`](../../captures/session_20260819_161349.log) extra covering **MET** (`a>n` **0**). Remaining **32** mismatches are `n>a` (`n=1 a=0` **15**, `n=2 a=1` **15**, `n=2 a=0` **2**) — more open ledger identities than covering spans. That is not the 5A extra-covering FAIL. Do not reopen leftover identity or patch occupy collect.
 
 ### Proceed?
 
-**5A: done (native).** **5B: NO.** Do not implement a Length skip. HITL is a device gate, not a 5B patch.
+**5A: HITL extra covering MET.** **5B: NO.** Do not implement a Length skip.

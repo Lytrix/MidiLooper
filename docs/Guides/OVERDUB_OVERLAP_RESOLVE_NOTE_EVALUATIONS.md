@@ -15,7 +15,7 @@ ledger owns open identities
 source-view covering identities answer present-at-hold
 ```
 
-Do not converge those three because a mismatch between open ledger identities and source-view covering identities looks suspicious. **Gate 5A shipped:** `findNoteOffForOnIndex` equal-tick Off-before-On (`midiEventChronologicalLess`); not a full tick sort. **Gate 5B** (Length `6073` 551 provenance) has effect proven and source not proven — **no implementation**. Rebuild cannot manufacture Length-167. Do not “fix” this RC by changing the resolver, `OverlapCandidateLookup`, or ledger ownership.
+Do not converge those three because a mismatch between open ledger identities and source-view covering identities looks suspicious. **Gate 5A shipped:** `findNoteOffForOnIndex` equal-tick Off-before-On (`midiEventChronologicalLess`); not a full tick sort. HITL [`161349`](../../captures/session_20260819_161349.log) extra covering `a>n` **0**. **Gate 5B** (Length `6073` 551 provenance) has effect proven and source not proven — **no implementation**. Rebuild cannot manufacture Length-167. Do not “fix” this RC by changing the resolver, `OverlapCandidateLookup`, or ledger ownership.
 
 **Update this catalog in the same change** if any of these moved: `resolveConstrainedGeometry`, `classifyEditSessionInteraction`, `computeShortenedEndTick`, `accumulatePendingNoteChangesForIncomingNote`, `sealPendingNoteChangesToEditPasses`, `applyChangeLengthById` shorten/lengthen, `rebuildOverdubSourceView`, `collectOverdubSourceHoldParticipantIds`, pending overlay vs cache.
 
