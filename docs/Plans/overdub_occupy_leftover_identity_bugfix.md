@@ -1,6 +1,6 @@
 # Occupy leftover identity after rematerialize
 
-**Status:** Native **PASS** 1371/1371. RAM1 **425932** / locals **4768**. HITL gate open.  
+**Status:** Native **PASS** 1371/1371. RAM1 **425932** / locals **4768**. HITL **PASS** leftover [`111819`](../../captures/session_20260819_111819.log).  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (duplicate Off apply shipped, leftover FAIL):** [`overdub_occupy_clock_duplicate_off_ledger_bugfix.md`](overdub_occupy_clock_duplicate_off_ledger_bugfix.md)  
@@ -147,6 +147,24 @@ Keep `test_occupy_clock_duplicate_off_closes_both_pre_abut_103234`. Do not chang
 Want `n=1 a=0` down vs 19 on a new capture. Leftover `lid=5701` gone at `hs=96` and at interiors. Keep `led == n` and `n=0 a=1` = 0.
 
 Do not FAIL this RC on nested `n=2 a=2` / `n=3 a=2` same-start pairs (L3910 On@240). Do not FAIL on parked span-start `n=0 a=1` or prepared `eq=0`/`b=0`.
+
+## HITL [`111819`](../../captures/session_20260819_111819.log)
+
+99 `DIAG,lcr,part`. **1** mismatch, `cu=0`. `led == n` **1/1**. `n=0 a=1` **0**. `n=1 a=0` **0**. `eq=1` on 99/99. `ledger,overflow` **0**. 11 `DIAG,ledger,erase`. Two-Off dumps **0**. `5701` is not a leftover `lid` (only BPM timestamps). One `RING,overflow`.
+
+| n,a | 104654 | 111819 |
+|-----|------:|-------:|
+| 1,1 | 25 | (matches not dumped) |
+| **0,1** | **0** | **0** |
+| **1,0** | **19** | **0 MET** |
+| **2,1** | **10** | **0** |
+| 2,0 | 4 | 0 |
+| 3,1 | 6 | 0 |
+| 3,2 | 2 | 0 |
+| **1,2** | 0 | **1** |
+| n>a | 41 | 0 |
+
+Leftover gate **MET**. Remaining L949 pitch 24 `hs=72` `n=1 a=2` covering **5893 `0–743`** and **5901 `0–168`**; ledger holds only 5901 `lst=744`. Two covering spans, one Entry — not a ghost On missing from merged. Not this FAIL.
 
 ---
 
