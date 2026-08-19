@@ -20,7 +20,7 @@ Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolve
 
 **Invariant:** consume candidate selection is measured, not changed: every candidate is attributed to the occupy-id lookup, the window scan, or late JIT materialization.
 
-**Status:** Counters + `DIAG,consume,select` shipped. **1B detail diagnostics shipped:** `DIAG,consume,norowid` (ids that failed to resolve to a source-view row) and `DIAG,consume,scanadd` (scan-added candidate ids with `in_ids=0|1`). **Consume merge selection change REJECTED** — HITL [`191133`](../../captures/session_20260819_191133.log): 3 of 5 attributed holds had a **non-empty** occupy set where the window scan was the only path to a participant (2× `idsel=1`, 1× `norow=1`). Empty-ids fallback confirmed load-bearing (201 of ~347 note-offs). Native **1386/1386**. RAM1 code **425964** / locals **4768**.
+**Status:** Counters + `DIAG,consume,select` shipped. **1B detail diagnostics shipped:** `DIAG,consume,norowid` (ids that failed to resolve to a source-view row) and `DIAG,consume,scanadd` (scan-added candidate ids with `in_ids=0|1`). **Consume merge selection change REJECTED** — HITL [`191133`](../../captures/session_20260819_191133.log): 3 of 5 attributed holds had a **non-empty** occupy set where the window scan was the only path to a participant (2× `idsel=1`, 1× `norow=1`). Follow-up HITL [`193024`](../../captures/session_20260819_193024.log): `norow` did not reproduce (`norow=0`, `norowid=0`), while `scanadd` persisted (18 lines, all `in_ids=0`). Empty-ids fallback remains load-bearing. Native **1386/1386**. RAM1 code **425964** / locals **4768**.
 
 **Stage 1A guard check:** `overlapNoteIds` is written by `snapshotOverlapHoldCandidates` (open at `holdStart`) **and** `collectOverlapHoldPlaybackNoteOn` (NoteOns during the hold, from `sendMidiEvent` before the `playbackEmitMidiOutput_` gate). `appendNotesForIds` cannot reach a note absent from `overdubSourceViewNotes_`, so the long-loop JIT branch is the only path to a JIT-merged ahead note — proven by `test_consume_attribution_counts_late_note_for_jit_ahead_candidate`. Blocking additive candidates on non-empty ids therefore changes long-loop consume, which a 1-bar gate cannot observe.
 
@@ -814,6 +814,8 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 ### Tagged for investigation — occupy id resolves to no source-view note (`norow`)
 
 **No plan opened.** Evidence only: HITL [`191133`](../../captures/session_20260819_191133.log) `DIAG,consume,select,pitch=96,ids=1,idsel=0,scan=1,late=0,norow=1,s=0,e=48,jit=0` at `81310668`. One occupy identity had no matching `overdubSourceViewNotes_` row, so `appendNotesForIds` returned nothing and the window scan supplied the only consume participant.
+
+**Follow-up:** HITL [`193024`](../../captures/session_20260819_193024.log) did not reproduce `norow` (`norow=0`, `norowid=0`) but still showed scan additions (`scanadd` 18, all `in_ids=0`). Keep this item tagged and low-priority unless `norow` reappears.
 
 **Question when picked up:** identity assignment is already single-owner and loop-length independent (`snapshotOverlapHoldCandidates` + `collectOverlapHoldPlaybackNoteOn`); row availability is a separate `Loop` concern. Should every id in `overlapNoteIds` be guaranteed to resolve to a note, or is `norow` legitimate for identities the source view intentionally dropped?
 
