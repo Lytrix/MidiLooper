@@ -35,6 +35,7 @@
 #include "Utils/LoopStopFinalize.h"
 
 class Track;
+struct PlaybackMergedMidiEvents;
 
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
 
@@ -234,6 +235,15 @@ struct Loop {
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
   const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
   const NoteUtils::DisplayNoteVec& overdubSourceViewNotes() const { return overdubSourceViewNotes_; }
+  /// Bind the identity-existence predicate to a complete full-loop committed
+  /// playback stream. A partial window unbinds so the filter cannot declare
+  /// identities nonexistent. Span geometry stays; identified source-view notes
+  /// whose NoteOn is absent are dropped from the source-view copy only.
+  void replaceCommittedPlaybackNoteOnIdentities(const PlaybackMergedMidiEvents& merged);
+  void clearCommittedPlaybackNoteOnIdentities();
+#if defined(PIO_UNIT_TEST_NATIVE)
+  void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
+#endif
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
   void clearPendingNoteChanges();
@@ -388,10 +398,15 @@ struct Loop {
   void resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
                                   uint32_t& windowLength) const;
   void mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates);
+  bool committedPlaybackNoteOnIdentityValid(NoteId noteId) const;
+  void retainValidOverdubSourceViewIdentities();
   SessionMidiEventVec overdubSourceViewEvents_;
   NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
+  /// Non-owning. Null means the identity filter is inactive. Points at
+  /// `LoopPlaybackRuntime::mergedMidiEvents` after a full-loop rebuild.
+  const PlaybackMergedMidiEvents* committedPlaybackMergedForIdentity_ = nullptr;
   PendingNoteChangeVec pendingNoteChanges_;
   OverlapHoldTotals overlapHoldTotals_;
   bool overdubWrapArmed_ = false;

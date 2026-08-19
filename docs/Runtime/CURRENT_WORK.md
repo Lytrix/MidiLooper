@@ -2,11 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (leftover identity HITL PASS [`111819`](../../captures/session_20260819_111819.log))
+Last updated: 2026-08-19 (missing open identity validity filter native shipped; HITL open)
 
 ---
 
 ## Now implementing
+
+### Occupy missing open identity (`n=1 a=2` extra covering span)
+
+**Plan:** [`overdub_occupy_missing_open_identity_bugfix.md`](../Plans/overdub_occupy_missing_open_identity_bugfix.md)  
+**Parent:** [`overdub_occupy_leftover_identity_bugfix.md`](../Plans/overdub_occupy_leftover_identity_bugfix.md) — leftover HITL **PASS** [`111819`](../../captures/session_20260819_111819.log)  
+**Pin:** [`111819`](../../captures/session_20260819_111819.log) L948 pitch 24 `hs=72` `n=1 a=2` covering 5893 `0–743` + 5901 `0–168`
+
+**Invariant:** A source-view / prepared identity counts as present-at-hold only if that `noteId` has a NoteOn in the complete committed playback stream.
+
+**Status:** Native **PASS** 1374/1374. RAM1 **425948** / **4768**. Full-loop playback NoteOn identity is an existence predicate over existing span geometry — not a span rebuild, not ledger synthesis. HITL still required (`n=1 a=2` → 0; leftover `n=1 a=0` stays 0; nested `n=2 a=2` is not a fail).
+
+**Does not reopen:** occupy catching up when `occupyPhase <= lastTick`; `playMidiEvents` from occupy; advancing `lastTick` from USB; Off stamping; FIFO; option B; leftover ledger erase; `isPlaybackCatchUpWindow` equal-tick contract.
 
 ### Occupy leftover identity after rematerialize
 

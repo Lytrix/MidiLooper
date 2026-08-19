@@ -104,11 +104,19 @@ TRACK_COLD_MEM __attribute__((noinline)) void logOccupyLedgerMismatch(
       if (presentAtHold != (pass == 0 ? 1u : 0u)) {
         continue;
       }
-      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,mmspan,pitch=%u,i=%u,s=%lu,e=%lu,id=%lu,p=%u",
+      unsigned noteOnInMerged = 0;
+      for (const MidiEvent& evt : merged.mergedEvents) {
+        if (evt.isNoteOn() && evt.noteId == note.noteId) {
+          noteOnInMerged = 1;
+          break;
+        }
+      }
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,lcr,mmspan,pitch=%u,i=%u,s=%lu,e=%lu,id=%lu,p=%u,on=%u",
                static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
                static_cast<unsigned>(spansLogged), static_cast<unsigned long>(note.startTick),
                static_cast<unsigned long>(note.endTick), static_cast<unsigned long>(note.noteId),
-               presentAtHold);
+               presentAtHold, noteOnInMerged);
       DebugSessionCapture::appendCaptureTextLine(line);
       ++spansLogged;
     }

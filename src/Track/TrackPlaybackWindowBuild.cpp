@@ -160,8 +160,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 }
 
 TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFullLoopRebuild(
-    LoopPlaybackRuntime& runtime, uint32_t loopLengthTicks) {
-  if (!isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loopLengthTicks)) {
+    Loop& loop, LoopPlaybackRuntime& runtime) {
+  loop.replaceCommittedPlaybackNoteOnIdentities(runtime.mergedMidiEvents);
+  if (!isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loop.loopLengthTicks)) {
     return;
   }
   runtime.ledger.eraseOpenNotesMissingFromCommittedNoteOns(
@@ -297,7 +298,7 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
     const bool rebuilt =
         ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
     if (rebuilt) {
-      reconcilePlaybackLedgerAfterFullLoopRebuild(*runtime, loop.loopLengthTicks);
+      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime);
     }
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);

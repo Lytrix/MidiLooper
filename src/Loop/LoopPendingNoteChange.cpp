@@ -150,6 +150,9 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
         !displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
       continue;
     }
+    if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
+      continue;
+    }
     bool already = false;
     for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
       if (existing.noteId == note.noteId) {
@@ -194,14 +197,31 @@ LOOP_COLD_MEM void Loop::collectOverdubSourceHoldParticipantIds(uint32_t holdPha
     if (!displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
       continue;
     }
+    if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
+      continue;
+    }
     (void)out.insert(note.noteId);
   }
 }
 
 LOOP_COLD_MEM bool Loop::tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
                                                                OverlapNoteIdSet& out) const {
-  return LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
-      tick, pitch, playbackRevision, loopLengthTicks, out);
+  if (!LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+          tick, pitch, playbackRevision, loopLengthTicks, out)) {
+    return false;
+  }
+  if (committedPlaybackMergedForIdentity_ == nullptr) {
+    return true;
+  }
+  OverlapNoteIdSet filtered;
+  for (size_t i = 0; i < out.size(); ++i) {
+    const NoteId id = out.at(i);
+    if (committedPlaybackNoteOnIdentityValid(id)) {
+      (void)filtered.insert(id);
+    }
+  }
+  out = filtered;
+  return true;
 }
 
 LOOP_COLD_MEM void Loop::collectOverdubNoteOnParticipantIds(uint8_t pitch, uint8_t channel,

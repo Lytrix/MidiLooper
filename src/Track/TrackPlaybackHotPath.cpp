@@ -49,7 +49,7 @@ void Track::rebuildPlaybackOrder() {
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, true, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(runtime, loop.loopLengthTicks);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime);
   }
   const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
   ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
@@ -151,6 +151,9 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
           runtime.mergedMidiEvents.mergedEvents.data(),
           runtime.mergedMidiEvents.mergedEvents.size());
     }
+    if (rebuilt) {
+      loop.replaceCommittedPlaybackNoteOnIdentities(runtime.mergedMidiEvents);
+    }
     applyCommittedOverdubPassPlaybackInterval(track, loop, slotIndex, frame, jamCtx);
     if (!runtime.mergedMidiEvents.mergedEvents.empty()) {
       ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
@@ -196,7 +199,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(runtime, loop.loopLengthTicks);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime);
   }
   const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
   if (mergedEvents.empty()) {
