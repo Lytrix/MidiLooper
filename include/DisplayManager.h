@@ -190,6 +190,10 @@ private:
                                               uint32_t currentTick);
     const DisplayNoteVec& resolveDisplayNotesLiveCapture(const Track& track, uint8_t displaySlot,
                                                          uint32_t currentTick);
+    void rebuildOverdubCommittedDisplayLayer(const Track& track, Loop& mutLoop, const Loop& loop,
+                                             uint8_t displaySlot, uint32_t currentTick,
+                                             uint32_t liveLoopLength, bool havePaintWindow,
+                                             uint32_t paintWindowStart, uint32_t paintWindowLength);
     const DisplayNoteVec& resolveDisplayNotesCommitted(const Track& track, uint8_t displaySlot,
                                                          uint32_t currentTick);
     /// Match `drawPianoRoll` detailed-window geometry (auto-follow + clamp).

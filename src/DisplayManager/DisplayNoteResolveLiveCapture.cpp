@@ -255,6 +255,187 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
 
 }  // namespace DisplayManagerInternal
 
+namespace {
+
+DISP_CAPTURE_MEM bool gatherWindowHasDirtyBar(const Loop& loop, uint32_t liveLoopLength,
+                                              uint32_t gatherStart, uint32_t gatherLength) {
+    if (!loop.visualCacheDirty) {
+        return false;
+    }
+    if (loop.visualCache.dirtyBars.empty() || liveLoopLength == 0 || gatherLength == 0) {
+        return true;
+    }
+    const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+    const uint32_t totalBars = static_cast<uint32_t>(loop.visualCache.dirtyBars.size());
+    if (gatherLength >= liveLoopLength) {
+        for (uint8_t flag : loop.visualCache.dirtyBars) {
+            if (flag != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    const uint32_t start = IntervalProjection::tickPhaseInLoop(gatherStart, 0, liveLoopLength);
+    for (uint32_t offset = 0; offset < gatherLength; offset += ticksPerBar) {
+        const uint32_t tick =
+            IntervalProjection::tickPhaseInLoop(start + offset, 0, liveLoopLength);
+        const uint32_t bar = visualBarForTick(tick, ticksPerBar);
+        if (bar < totalBars && loop.visualCache.dirtyBars[bar] != 0) {
+            return true;
+        }
+    }
+    const uint32_t lastTick =
+        IntervalProjection::tickPhaseInLoop(start + gatherLength - 1, 0, liveLoopLength);
+    const uint32_t lastBar = visualBarForTick(lastTick, ticksPerBar);
+    return lastBar < totalBars && loop.visualCache.dirtyBars[lastBar] != 0;
+}
+
+}  // namespace
+
+DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
+    const Track& track, Loop& mutLoop, const Loop& loop, uint8_t displaySlot, uint32_t currentTick,
+    uint32_t liveLoopLength, bool havePaintWindow, uint32_t paintWindowStart,
+    uint32_t paintWindowLength) {
+    const uint32_t maxCommittedGatherLength =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+
+    if (track.isOverdubbing()) {
+        // Display authority is visualCache when notes exist. Source-view stays consume
+        // ownership and is only a committed-layer fallback when the cache is empty.
+        if (havePaintWindow && !loop.visualCache.notes.empty()) {
+            uint32_t gatherStart = 0;
+            uint32_t gatherLength = 0;
+            DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+            filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart, paintWindowLength,
+                                      liveLoopLength, liveDisplayNotes, gatherStart, gatherLength);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            liveWindowGatherValid_ = true;
+            liveWindowGatherStart_ = gatherStart;
+            liveWindowGatherLength_ = gatherLength;
+            liveWindowGatherLoopLength_ = liveLoopLength;
+            liveDisplayCommittedFromWindowGather_ = false;
+            liveCommittedLayerHeldForDirtyCache_ = false;
+            liveOverdubSourceViewNoteCount_ =
+                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (loop.hasOverdubSourceView()) {
+            if (havePaintWindow) {
+                uint32_t gatherStart = 0;
+                uint32_t gatherLength = 0;
+                DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+                filterNotesToFollowWindow(loop.overdubSourceViewNotes(), paintWindowStart,
+                                          paintWindowLength, liveLoopLength, liveDisplayNotes,
+                                          gatherStart, gatherLength);
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = true;
+                liveWindowGatherStart_ = gatherStart;
+                liveWindowGatherLength_ = gatherLength;
+                liveWindowGatherLoopLength_ = liveLoopLength;
+            } else {
+                DIAG_COUNTER_INC(DisplayCommittedFullAssign);
+                liveDisplayNotes.assign(loop.overdubSourceViewNotes().begin(),
+                                        loop.overdubSourceViewNotes().end());
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = false;
+            }
+            liveDisplayCommittedFromWindowGather_ = false;
+            liveCommittedLayerHeldForDirtyCache_ = false;
+            liveOverdubSourceViewNoteCount_ = loop.overdubSourceViewNotes().size();
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        // Cache recovery belongs to idle work. Gathering the committed window here costs
+        // ~27.9 ms per frame for the whole post-commit dirty window and starves the capture
+        // layer, so played notes stop landing (172405: 30 gathers, 70 of 241 frames over
+        // budget). Hold the layer we already have; processDeferredIdleMaintenance makes the
+        // cache clean in ~0.6-2.3 s and the clean branch then rebuilds it.
+        const bool canHoldCommittedLayer =
+            liveDisplayCacheCommittedNoteCount_ > 0 &&
+            liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
+        if (loop.visualCacheDirty && canHoldCommittedLayer) {
+            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            liveCommittedLayerHeldForDirtyCache_ = true;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
+            if (havePaintWindow) {
+                uint32_t gatherStart = 0;
+                uint32_t gatherLength = 0;
+                DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+                filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart,
+                                          paintWindowLength, liveLoopLength, liveDisplayNotes,
+                                          gatherStart, gatherLength);
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = true;
+                liveWindowGatherStart_ = gatherStart;
+                liveWindowGatherLength_ = gatherLength;
+                liveWindowGatherLoopLength_ = liveLoopLength;
+                liveDisplayCommittedFromWindowGather_ = false;
+                liveCommittedLayerHeldForDirtyCache_ = false;
+            } else {
+                DIAG_COUNTER_INC(DisplayCommittedFullAssign);
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = false;
+                liveDisplayCommittedFromWindowGather_ = false;
+                liveCommittedLayerHeldForDirtyCache_ = false;
+            }
+        } else if (loop.hasCommittedPasses()) {
+            uint32_t gatherStart = 0;
+            uint32_t gatherLength = liveLoopLength;
+            if (havePaintWindow) {
+                gatherStart = paintWindowStart;
+                gatherLength = paintWindowLength;
+            } else if (liveLoopLength > maxCommittedGatherLength) {
+                const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
+                gatherLength = maxCommittedGatherLength;
+                gatherStart = DisplayWindowUtils::resolveCenteredWindowStart(playhead, gatherLength,
+                                                                             liveLoopLength);
+            }
+            if (!loop.visualCache.notes.empty() &&
+                !gatherWindowHasDirtyBar(loop, liveLoopLength, gatherStart, gatherLength)) {
+                DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+                liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+                    loop.visualCache.notes, gatherStart, gatherLength, liveLoopLength);
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = true;
+                liveWindowGatherStart_ = gatherStart;
+                liveWindowGatherLength_ = gatherLength;
+                liveWindowGatherLoopLength_ = liveLoopLength;
+                liveDisplayCommittedFromWindowGather_ = false;
+            } else {
+                DIAG_COUNTER_INC(DisplayCaptureFullGather);
+                const uint32_t gatherStartUs = micros();
+                rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, gatherStart, gatherLength,
+                                            liveDisplayEventBuffer, liveDisplayNotes, false);
+                DIAG_TIMING_RECORD(DisplayCaptureGather, micros() - gatherStartUs);
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = true;
+                liveWindowGatherStart_ = gatherStart;
+                liveWindowGatherLength_ = gatherLength;
+                liveWindowGatherLoopLength_ = liveLoopLength;
+                liveDisplayCommittedFromWindowGather_ = true;
+            }
+        } else {
+            liveDisplayNotes.clear();
+            liveDisplayCacheCommittedNoteCount_ = 0;
+            liveWindowGatherValid_ = false;
+            liveDisplayCommittedFromWindowGather_ = false;
+        }
+        liveCommittedLayerHeldForDirtyCache_ = false;
+        liveMergePlaybackRevision_ = loop.playbackRevision;
+        return;
+    }
+
+    liveDisplayNotes.clear();
+    liveDisplayCacheCommittedNoteCount_ = 0;
+    liveWindowGatherValid_ = false;
+    liveDisplayCommittedFromWindowGather_ = false;
+}
+
 DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCapture(
     const Track& track, uint8_t displaySlot, uint32_t currentTick) {
     const Loop& loop = track.getLoop(displaySlot);
@@ -297,187 +478,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength, paintWindowStart,
                                 paintWindowLength, paintWindowBars);
 
-    // Bounded neighborhood when long-loop paint window is not ready yet (still O(window)).
-    const uint32_t kMaxCaptureCommittedBars = DisplayWindowUtils::kMaxDetailedWindowBars;
-    const uint32_t maxCommittedGatherLength = kMaxCaptureCommittedBars * Config::TICKS_PER_BAR;
-
     auto budgetExceeded = [&]() {
         return (micros() - resolveStartUs) > Diagnostics::kDisplayResolveBudgetMicros;
-    };
-
-    // RC-C B + post follow-up: never reconstruct 0..loopLength on the hot path.
-    // Prefer clean visualCache; when dirty, reuse already-sliced cache notes for clean bars
-    // inside the paint/gather window and gather only when that window still has dirty bars.
-    // Out-of-window progressive material stays in visualCache (idle + overview).
-    auto gatherWindowHasDirtyBar = [&](uint32_t gatherStart, uint32_t gatherLength) -> bool {
-        if (!loop.visualCacheDirty) {
-            return false;
-        }
-        if (loop.visualCache.dirtyBars.empty() || liveLoopLength == 0 || gatherLength == 0) {
-            return true;
-        }
-        const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
-        const uint32_t totalBars = static_cast<uint32_t>(loop.visualCache.dirtyBars.size());
-        if (gatherLength >= liveLoopLength) {
-            for (uint8_t flag : loop.visualCache.dirtyBars) {
-                if (flag != 0) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        const uint32_t start = IntervalProjection::tickPhaseInLoop(gatherStart, 0, liveLoopLength);
-        for (uint32_t offset = 0; offset < gatherLength; offset += ticksPerBar) {
-            const uint32_t tick = IntervalProjection::tickPhaseInLoop(start + offset, 0, liveLoopLength);
-            const uint32_t bar = visualBarForTick(tick, ticksPerBar);
-            if (bar < totalBars && loop.visualCache.dirtyBars[bar] != 0) {
-                return true;
-            }
-        }
-        const uint32_t lastTick =
-            IntervalProjection::tickPhaseInLoop(start + gatherLength - 1, 0, liveLoopLength);
-        const uint32_t lastBar = visualBarForTick(lastTick, ticksPerBar);
-        return lastBar < totalBars && loop.visualCache.dirtyBars[lastBar] != 0;
-    };
-
-    auto rebuildCommittedLayer = [&]() {
-        if (track.isOverdubbing()) {
-            if (loop.hasOverdubSourceView()) {
-                if (havePaintWindow) {
-                    const uint32_t marginTicks =
-                        static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
-                    const uint32_t gatherStart =
-                        paintWindowStart > marginTicks ? paintWindowStart - marginTicks : 0;
-                    uint32_t gatherEnd = paintWindowStart + paintWindowLength + marginTicks;
-                    if (gatherEnd > liveLoopLength) {
-                        gatherEnd = liveLoopLength;
-                    }
-                    const uint32_t gatherLength =
-                        gatherEnd > gatherStart ? gatherEnd - gatherStart : paintWindowLength;
-                    DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
-                    liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                        loop.overdubSourceViewNotes(), gatherStart, gatherLength, liveLoopLength);
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = true;
-                    liveWindowGatherStart_ = gatherStart;
-                    liveWindowGatherLength_ = gatherLength;
-                    liveWindowGatherLoopLength_ = liveLoopLength;
-                } else {
-                    DIAG_COUNTER_INC(DisplayCommittedFullAssign);
-                    liveDisplayNotes.assign(loop.overdubSourceViewNotes().begin(),
-                                            loop.overdubSourceViewNotes().end());
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = false;
-                }
-                liveDisplayCommittedFromWindowGather_ = false;
-                liveCommittedLayerHeldForDirtyCache_ = false;
-                liveOverdubSourceViewNoteCount_ = loop.overdubSourceViewNotes().size();
-                liveMergePlaybackRevision_ = loop.playbackRevision;
-                return;
-            }
-            // Cache recovery belongs to idle work. Gathering the committed window here costs
-            // ~27.9 ms per frame for the whole post-commit dirty window and starves the capture
-            // layer, so played notes stop landing (172405: 30 gathers, 70 of 241 frames over
-            // budget). Hold the layer we already have; processDeferredIdleMaintenance makes the
-            // cache clean in ~0.6-2.3 s and the clean branch then rebuilds it.
-            const bool canHoldCommittedLayer =
-                liveDisplayCacheCommittedNoteCount_ > 0 &&
-                liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
-            if (loop.visualCacheDirty && canHoldCommittedLayer) {
-                liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
-                liveCommittedLayerHeldForDirtyCache_ = true;
-                liveMergePlaybackRevision_ = loop.playbackRevision;
-                return;
-            }
-            if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
-                if (havePaintWindow) {
-                    // RC-F: filter a window wider than the paint window and record it, so
-                    // auto-follow slides inside the gather instead of leaving the committed
-                    // prefix pinned to a stale position (165636: wNotes 295 -> 213).
-                    const uint32_t marginTicks =
-                        static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
-                    const uint32_t gatherStart =
-                        paintWindowStart > marginTicks ? paintWindowStart - marginTicks : 0;
-                    uint32_t gatherEnd = paintWindowStart + paintWindowLength + marginTicks;
-                    if (gatherEnd > liveLoopLength) {
-                        gatherEnd = liveLoopLength;
-                    }
-                    const uint32_t gatherLength =
-                        gatherEnd > gatherStart ? gatherEnd - gatherStart : paintWindowLength;
-                    DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
-                    liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                        loop.visualCache.notes, gatherStart, gatherLength, liveLoopLength);
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = true;
-                    liveWindowGatherStart_ = gatherStart;
-                    liveWindowGatherLength_ = gatherLength;
-                    liveWindowGatherLoopLength_ = liveLoopLength;
-                    liveDisplayCommittedFromWindowGather_ = false;
-                    liveCommittedLayerHeldForDirtyCache_ = false;
-                } else {
-                    DIAG_COUNTER_INC(DisplayCommittedFullAssign);
-                    liveDisplayNotes.assign(loop.visualCache.notes.begin(),
-                                            loop.visualCache.notes.end());
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = false;
-                    liveDisplayCommittedFromWindowGather_ = false;
-                    liveCommittedLayerHeldForDirtyCache_ = false;
-                }
-            } else if (loop.hasCommittedPasses()) {
-                uint32_t gatherStart = 0;
-                uint32_t gatherLength = liveLoopLength;
-                if (havePaintWindow) {
-                    gatherStart = paintWindowStart;
-                    gatherLength = paintWindowLength;
-                } else if (liveLoopLength > maxCommittedGatherLength) {
-                    const uint32_t playhead =
-                        resolvePlayheadInLoop(track, displaySlot, currentTick);
-                    gatherLength = maxCommittedGatherLength;
-                    gatherStart = DisplayWindowUtils::resolveCenteredWindowStart(
-                        playhead, gatherLength, liveLoopLength);
-                }
-                if (!loop.visualCache.notes.empty() &&
-                    !gatherWindowHasDirtyBar(gatherStart, gatherLength)) {
-                    // Idle already sliced this window — reuse progressive cache (no gather).
-                    DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
-                    liveDisplayNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                        loop.visualCache.notes, gatherStart, gatherLength, liveLoopLength);
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = true;
-                    liveWindowGatherStart_ = gatherStart;
-                    liveWindowGatherLength_ = gatherLength;
-                    liveWindowGatherLoopLength_ = liveLoopLength;
-                    liveDisplayCommittedFromWindowGather_ = false;
-                } else {
-                    // Short loops: gatherLength == liveLoopLength ≤ 16 bars (work quantum).
-                    DIAG_COUNTER_INC(DisplayCaptureFullGather);
-                    const uint32_t gatherStartUs = micros();
-                    rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, gatherStart,
-                                                gatherLength, liveDisplayEventBuffer,
-                                                liveDisplayNotes, false);
-                    DIAG_TIMING_RECORD(DisplayCaptureGather, micros() - gatherStartUs);
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = true;
-                    liveWindowGatherStart_ = gatherStart;
-                    liveWindowGatherLength_ = gatherLength;
-                    liveWindowGatherLoopLength_ = liveLoopLength;
-                    liveDisplayCommittedFromWindowGather_ = true;
-                }
-            } else {
-                liveDisplayNotes.clear();
-                liveDisplayCacheCommittedNoteCount_ = 0;
-                liveWindowGatherValid_ = false;
-                liveDisplayCommittedFromWindowGather_ = false;
-            }
-            liveCommittedLayerHeldForDirtyCache_ = false;
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            return;
-        }
-
-        liveDisplayNotes.clear();
-        liveDisplayCacheCommittedNoteCount_ = 0;
-        liveWindowGatherValid_ = false;
-        liveDisplayCommittedFromWindowGather_ = false;
     };
 
     auto replaceCaptureLayer = [&]() {
@@ -551,18 +553,16 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         DIAG_TIMING_RECORD(DisplayCaptureSync, micros() - syncStartUs);
     };
 
-    // Dirty visualCache uses window gather for the committed layer. Auto-follow moves the paint
-    // window without bumping playbackRevision — rebuild when the gather no longer covers it
-    // (session_20260811_034230: notes stuck in first ~18 bars until overdub stop).
-    // RC-F: not gated on visualCacheDirty being true. Once the RC-E fix lets the cache go clean
-    // during overdub, a dirty-only predicate can never fire and the committed layer freezes.
-    // It is gated on the cache being clean, because a dirty-cache rebuild would gather.
+    // Auto-follow moves the paint window without bumping playbackRevision. Rebuild the
+    // committed layer when the recorded gather no longer covers the paint window. A non-empty
+    // visualCache can refresh by filter even while globally dirty — do not freeze on the
+    // previous 16-bar source-view frame.
     const bool committedWindowStale =
-        track.isOverdubbing() && havePaintWindow && !loop.visualCacheDirty &&
-        liveWindowGatherValid_ &&
+        track.isOverdubbing() && havePaintWindow && liveWindowGatherValid_ &&
         !DisplayWindowUtils::paintWindowInsideGather(paintWindowStart, paintWindowLength,
                                                      liveWindowGatherStart_,
-                                                     liveWindowGatherLength_);
+                                                     liveWindowGatherLength_) &&
+        !loop.visualCache.notes.empty();
 
     // Idle finished recovering the cache while the committed layer was held — rebuild once now
     // that the clean branch is affordable.
@@ -595,14 +595,29 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                                                   liveDisplayCacheCaptureNoteCount_ >
                                               0;
 
-    if (reuseLastValidFrame) {
-        // Keep liveDisplayNotes as last valid frame; unfinished committed/capture work stays
-        // pending via visualCacheDirty / capturePreview.revision.
+    if (reuseLastValidFrame && committedWindowStale) {
+        // Over-budget compose must still advance the committed window. Drop only the
+        // capture-layer suffix work below.
+        rebuildOverdubCommittedDisplayLayer(track, mutLoop, loop, displaySlot, currentTick,
+                                            liveLoopLength, havePaintWindow, paintWindowStart,
+                                            paintWindowLength);
+        if (liveDisplayCacheCommittedNoteCount_ + liveDisplayCacheCaptureNoteCount_ <=
+            liveDisplayNotes.size()) {
+            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_ +
+                                    liveDisplayCacheCaptureNoteCount_);
+            liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
+        }
+        DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
+    } else if (reuseLastValidFrame) {
+        // Keep liveDisplayNotes as last valid frame; unfinished capture work stays
+        // pending via capturePreview.revision.
     } else if (committedLayerChanged) {
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-        // Timed here rather than inside the lambda: it returns early on the overdub path.
-        rebuildCommittedLayer();
+        // Timed here rather than inside the member: it returns early on the overdub path.
+        rebuildOverdubCommittedDisplayLayer(track, mutLoop, loop, displaySlot, currentTick,
+                                            liveLoopLength, havePaintWindow, paintWindowStart,
+                                            paintWindowLength);
         DIAG_TIMING_RECORD(DisplayCommittedRebuild, micros() - displayBuildStartUs);
         if (!budgetExceeded()) {
             replaceCaptureLayer();

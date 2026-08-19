@@ -31,6 +31,12 @@ void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopL
                                  SessionMidiEventVec& eventBuffer,
                                  NoteUtils::DisplayNoteVec& outNotes, bool includeActiveCapture);
 
+/// Filter `source` to the paint window plus follow margin. Writes gather bounds.
+void filterNotesToFollowWindow(const NoteUtils::DisplayNoteVec& source, uint32_t windowStart,
+                               uint32_t windowLength, uint32_t loopLength,
+                               NoteUtils::DisplayNoteVec& outNotes, uint32_t& gatherStart,
+                               uint32_t& gatherLength);
+
 uint8_t resolveTrackIndex(const Track& track);
 
 /// `allowWrapContinuation`: false during growing live record and overdub

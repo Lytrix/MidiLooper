@@ -147,11 +147,12 @@ TickInterval bars 8–24
 
 `VisualCache.dirtyBars` is the seed for **bar-granular** idle rebuild. That path is shipped.
 
-`Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain. Paint does **not** rebuild on window move: when `visualCacheDirty` is false, `resolveWindowedDisplayNotes` filters `visualCache.notes` with `filterDisplayNotesByWindowInclusion`.
+`Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain. Paint does **not** rebuild on window move: `resolveWindowedDisplayNotes` filters a non-empty `visualCache.notes` with `filterDisplayNotesByWindowInclusion` over the paint window plus follow margin (`kWindowedGatherMarginBars`, at least `kFollowReadyLookaheadBars`).
+
+`visualCacheCoversWindow` authorizes a neighborhood when every bar in the window (plus optional lookahead) is clean, even if the rest of the loop is dirty. Incremental committed / overdub paint still filters a non-empty cache while globally dirty so auto-follow can show the next bar; `overdubSourceViewNotes` is consume ownership, not display authority.
 
 What is **not** per-bar yet:
 
-- `visualCacheCoversWindow` ignores `dirtyBars` and returns only `!visualCacheDirty`. A partial clean neighborhood cannot authorize the filter path (sparse slices painted as gaps). While any bar is dirty, paint uses last frame or a window gather.
 - `rebuildVisualCacheFromPasses` still full-reconstructs (`ensureVisualCacheBuilt`, NOTE_EDIT open).
 - `markDisplayCachesStale` still marks every bar dirty.
 

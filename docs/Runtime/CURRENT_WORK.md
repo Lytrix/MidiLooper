@@ -2,11 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (overdub ledger completion span-cache hold hydration shipped; consume id-resolution **FROZEN**)
+Last updated: 2026-08-19 (display window follow readiness implemented; HITL gate open)
 
 ---
 
 ## Now implementing
+
+### Display window follow readiness
+
+**Plan:** [`display_window_follow_readiness_bugfix.md`](../Plans/display_window_follow_readiness_bugfix.md)  
+**Evidence:** [`232337`](../../captures/session_20260819_232337.log)
+
+**Owner:** `DisplayManager::resolveDisplayNotesCommitted`, `resolveDisplayNotesLiveCapture`, `resolveWindowedDisplayNotes`, `visualCacheCoversWindow`.
+
+**Invariant:** Long-loop committed paint filters `visualCache.notes` for the paint window plus follow margin/lookahead. A dirty cache does not keep a 16-bar `overdubSourceViewNotes` frame as display authority.
+
+**Status:** Firmware landed (`teensy41-capture-serial` RAM1 code **425276** / locals **4768**). Native **1390/1390**. Evidence [`232337`](../../captures/session_20260819_232337.log) fails `verify_follow_window_readiness` (539 / 386 / 153 ms holds). Device HITL after upload: same 66-bar overdub-past-bar-16 path must pass that check.
 
 ### Overdub participant discovery (occupy / source-view RC closed)
 

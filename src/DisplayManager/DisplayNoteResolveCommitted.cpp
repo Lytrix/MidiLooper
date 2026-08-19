@@ -92,9 +92,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // Clean cache: prefer window filter (RC5d/RC5f) over full-vector assign every frame.
-        // Dirty cache falls through to preserved handoff.
-        if (incrementalCommittedDisplay && visualCacheAuthoritative) {
+        // Window filter is allowed from a non-empty visualCache even while globally dirty, so
+        // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes
+        // on short loops.
+        if (incrementalCommittedDisplay && !loop.visualCache.notes.empty()) {
             if (avoidFullVisualRebuild ||
                 loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
                 uint32_t windowStart = 0;
@@ -106,16 +107,20 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                                                        windowStart, windowLength);
                 }
             }
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            liveWindowGatherValid_ = false;
-            livePlaybackDisplaySlot_ = displaySlot;
-            livePlaybackDisplayTrack_ = trackIndex;
-            return liveDisplayNotes;
+            if (visualCacheAuthoritative) {
+                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+                liveMergePlaybackRevision_ = loop.playbackRevision;
+                liveWindowGatherValid_ = false;
+                livePlaybackDisplaySlot_ = displaySlot;
+                livePlaybackDisplayTrack_ = trackIndex;
+                return liveDisplayNotes;
+            }
         }
-        // RC5a/RC5b/RC5f: revision-matched preserved frame stays authority while visualCache is dirty.
-        if (incrementalCommittedDisplay && preservedHandoffAuthority) {
+        // RC5a/RC5b/RC5f: revision-matched preserved frame stays authority only when the
+        // visualCache cannot supply a window filter (empty notes).
+        if (incrementalCommittedDisplay && preservedHandoffAuthority &&
+            loop.visualCache.notes.empty()) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             return liveDisplayNotes;
         }
