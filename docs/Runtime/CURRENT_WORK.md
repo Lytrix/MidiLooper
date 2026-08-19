@@ -20,7 +20,7 @@ Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolve
 
 **Invariant:** Every geometric consume participant on a non-empty hold resolves via `appendNotesForIds` without `collectConsumeWindow`.
 
-**Status:** Native **1387/1387**. RAM1 code **425964** / locals **4768**. HITL gate open (device capture after flash).
+**Status:** Native **1387/1387**. HITL [`195016`](../../captures/session_20260819_195016.log): zero `DIAG,consume` attribution lines (gate met). RAM1 code **425964** / locals **4768**.
 
 **Closed predecessor:** [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md) Stage 1A/1B attribution — selection-change rejected on [`191133`](../../captures/session_20260819_191133.log).
 

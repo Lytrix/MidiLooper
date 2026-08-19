@@ -8,7 +8,7 @@ Last updated: 2026-08-19 (occupy source-view RC + wrap display **FROZEN**; consu
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — Consume id-resolution completeness **Stage 1 shipped** (native 1387/1387). Non-empty holds use geometric id completion + `appendNotesForIds` only; window scan decommissioned for non-empty. HITL gate open. Plan: [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md). Occupy source-view RC **FROZEN**. RAM1 code **425964** / locals **4768**.
+**`feature/overdub-participant-discovery`** — Consume id-resolution completeness **shipped** (native 1387/1387; HITL [`195016`](../../captures/session_20260819_195016.log)). Plan: [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md). Occupy source-view RC **FROZEN**. RAM1 code **425964** / locals **4768**.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
