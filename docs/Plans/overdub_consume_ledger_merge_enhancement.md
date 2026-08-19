@@ -1,6 +1,6 @@
 # Overdub consume ledger merge
 
-**Status:** **Stage 1A observability shipped** — consume candidate attribution counters + `DIAG,consume,select`. Selection behavior **unchanged**. Native **1386/1386**. `teensy41-capture-serial` links (RAM1 code **425964** / locals **4768**). Selection change (decision 2) **blocked** pending device evidence.  
+**Status:** **Stage 1A observability shipped**; **consume merge selection change REJECTED** on device evidence HITL [`191133`](../../captures/session_20260819_191133.log). Attribution counters + `DIAG,consume,select` in tree; selection behavior **unchanged and staying**. Native **1386/1386**. RAM1 code **425964** / locals **4768**. Successor: occupy id that resolves to no source-view note (`norow=1`).  
 **Date:** 2026-08-19  
 **Kind:** enhancement  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  
@@ -85,6 +85,26 @@ Device marker, emitted only when one of those is non-zero:
 **Native proof:** `test_consume_attribution_counts_late_note_for_jit_ahead_candidate` (long loop, `ids={1}`, `late=1`, `scan=0`) and `test_consume_attribution_counts_scan_only_for_id_absent_candidate` (short loop, `ids={1}`, second note selected by scan, `scan=1`). The first fixture is the code-level proof of Stage 1A finding 2.
 
 **Reading the next capture:** if `scan` and `late` are `0` across a session, non-empty ids are already sufficient and decision 2 can proceed as approved. Any non-zero `late` with `jit=1` confirms the long-loop dependency; any non-zero `scan` names holds where identity alone would drop a participant.
+
+### Stage 1A device evidence — HITL [`191133`](../../captures/session_20260819_191133.log)
+
+Eight `overlap_hold` summaries: `note_offs` 0, 0, 99, 64, 16, 21, 108, 39 with `empty_sets` 0, 0, 31, 20, 2, 21, 108, 19 — **201 of ~347 note-offs had an empty occupy set**, so the empty-ids fallback (decision 1) is heavily load-bearing. `overflows` **0** throughout.
+
+Five holds emitted `DIAG,consume,select`:
+
+| `pitch` | `ids` | `idsel` | `scan` | `late` | `norow` | `s`–`e` | Reading |
+|--------:|------:|--------:|-------:|-------:|--------:|---------|---------|
+| 12 | 1 | 1 | 1 | 0 | 0 | 384–96 | Non-empty ids; scan added a second participant. Wrap-crossing |
+| 23 | 0 | 0 | 1 | 0 | 0 | 240–144 | Empty-ids fallback. Wrap-crossing |
+| 12 | 1 | 1 | 1 | 0 | 0 | 192–288 | Non-empty ids; scan added a second participant |
+| 72 | 0 | 0 | 1 | 0 | 0 | 240–288 | Empty-ids fallback |
+| 96 | 1 | 0 | 1 | 0 | 1 | 0–48 | Occupy id resolved to **no** source-view note; scan found the only participant |
+
+**Decision 2 is falsified.** Three of five attributed holds had a **non-empty** occupy set where the window scan was the only path to a participant — two with `idsel=1` (scan added a second note) and one with `norow=1` (the id resolved to nothing, so blocking extras would have produced zero candidates). Do not block additive scan candidates on non-empty ids.
+
+**Long-loop JIT class did not reproduce.** `why=hold` fired **140** times and the session contained long loops (`live=18432`, `live=52224`, both above the 16-bar window), yet every emitted line is `jit=0` and `late=0`. Stage 1A finding 2 stays reachable in native (`test_consume_attribution_counts_late_note_for_jit_ahead_candidate`) but is **not** the observed device problem. The observed problem is the plain short-loop window scan.
+
+**Successor question (identity vs geometry).** `pitch=96` `ids=1 idsel=0 norow=1` is the ownership split named in the Stage 1A guard check: identity assignment is already single-owner, but an id in the set had no note to resolve against. That — not candidate blocking — is the next thing worth fixing.
 
 ### Stage 1 — ledger-routed consume candidates
 
@@ -176,11 +196,9 @@ Recommended defaults above are all code- and evidence-backed from the current sh
 
 | Topic | Approved decision |
 |-------|-------------------|
-| Empty `overlapNoteIds` fallback | Keep source-view scan fallback when ids are empty. |
-| Non-empty ids + source-view extras | Block additive source-view extras when id lookup is non-empty; ids are authoritative for candidate identity in Stage 1. |
-| Stage-1 acceptance gate | Native + 1-bar HITL only. |
-
-With these outcomes, Stage 1 can proceed without introducing a new overlap owner.
+| Empty `overlapNoteIds` fallback | Keep source-view scan fallback when ids are empty. **Confirmed by [`191133`](../../captures/session_20260819_191133.log)** — 201 of ~347 note-offs had an empty set. |
+| Non-empty ids + source-view extras | ~~Block additive source-view extras when id lookup is non-empty~~ — **REJECTED 2026-08-19** on device evidence; see Stage 1A device evidence. Dual authority stays. |
+| Stage-1 acceptance gate | Native + 1-bar HITL only. Sufficient because the selection change is not being made. |
 
 ### Stage 1A guard check findings (2026-08-19, before first firmware edit)
 
@@ -197,4 +215,6 @@ Consequences: blocking additive candidates whenever ids are non-empty changes lo
 
 ### Proceed?
 
-- **NO** — decision 2 (block additive extras when ids are non-empty) is blocked on the Stage 1A findings above. Decisions 1 and 3 stand.
+- **NO for decision 2** — rejected on device evidence [`191133`](../../captures/session_20260819_191133.log). Consume keeps both candidate paths.
+- **Stage 1A observability: shipped.** Decision 1 confirmed; decision 3 moot for this stage.
+- **Next work is the successor question**, not Stage 1 selection: an occupy id that resolves to no source-view note (`norow=1`). That needs its own plan and architecture checkpoint.
