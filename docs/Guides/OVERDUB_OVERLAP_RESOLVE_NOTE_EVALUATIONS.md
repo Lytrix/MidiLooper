@@ -96,7 +96,7 @@ persistent note event geometry (Off tick via shortenNoteEndById)
 
 `overdubSourceViewNotes_` is a cache. Source-view covering identities are read from it **without** applying pending. Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView` (that function is used from native tests; wrap path seals then rebuilds). Display paint overlays pending Hide/Shorten onto a paint vector only.
 
-**Candidate selection.** `accumulatePendingNoteChangesForIncomingNote` builds `effectiveOverlapNoteIds`: occupy/playback ids plus geometric participants from `overdubSourceViewNotes_` that `existingNoteOverlapsIncomingHold` with each hold segment. Long loops call `ensureOverdubSourceNotesForHold` only when occupy ids lack source-view rows or empty ids need ahead-note materialization; prepared-ready path uses `tryCopyPreparedSpansToDisplayNotes` plus hold-window pitch filtering (`from=span`), miss logs `hold,miss` then `from=win`. Candidates come from `appendNotesForIds` only. Plans: [`../Plans/overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md), [`../Plans/overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md).
+**Candidate selection.** `accumulatePendingNoteChangesForIncomingNote` builds `effectiveOverlapNoteIds`: occupy/playback ids plus geometric participants from `overdubSourceViewNotes_` that `existingNoteOverlapsIncomingHold` with each hold segment. Long loops call `ensureOverdubSourceNotesForHold` only when occupy ids lack source-view rows or empty ids need ahead-note materialization; hold hydration now reads `overdubSourceSpanCacheNotes_` (prepared spans when available, else full-loop resolved-note rebuild) and filters by pitch/hold window before merge (`from=cache`). The cache is prewarmed from idle STOPPED maintenance (`Loop::prewarmOverdubSourceSpanCache`) so first overdub entry does not pay the cold rebuild cost in `why=open`. Candidates come from `appendNotesForIds` only. Plans: [`../Plans/overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md), [`../Plans/overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md).
 
 **Candidate attribution (observability).** Counters `scanOnlyCandidates`, `lateNoteCandidates`, and `idsWithoutNotes` remain on `OverlapHoldTotals`. After id-resolution completeness, attributed holds should show `scan=0`, `late=0`, `norow=0` on `DIAG,consume,select`. Prior attribution-only plan: [`../Plans/overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md) (FROZEN).
 
@@ -248,7 +248,7 @@ Gate 4 pinned: on L2324 tick-sorted order, **before 5A**, `findNoteOffForOnIndex
 
 ## JIT merge is not a second geometry authority
 
-`ensureOverdubSourceNotesForHold` (loops longer than the source window): reconstructs a window, keeps same-pitch notes, identity-filters, **merges by `noteId`**. `mergeDisplayNotesIntoOverdubSourceView` skips if that `noteId` already exists — it does **not** replace geometry.
+`ensureOverdubSourceNotesForHold` (loops longer than the source window): hydrates from the full-loop `overdubSourceSpanCacheNotes_`, keeps same-pitch notes, identity-filters, **merges by `noteId`**. `mergeDisplayNotesIntoOverdubSourceView` skips if that `noteId` already exists — it does **not** replace geometry.
 
 JIT may supply **missing candidates**. The `PendingNoteChange` is still `resolveConstrainedGeometry` output. Duplicate candidate discovery (`unionSelectedNote` also skips existing `noteId`) must not become a second exclusive-end owner. The 768-tick pin never takes JIT (`why=hold` absent).
 
@@ -274,7 +274,7 @@ JIT may supply **missing candidates**. The `PendingNoteChange` is still `resolve
 | Window intersect | `DisplayWindowUtils::noteIntersectsWindow` | Intersects source window | Outside window |
 | Consume overlap | `existingNoteOverlapsIncomingHold` | Half-open linearized overlap (`existingEnd > incomingStart`) | Abut; `start == end`. Applied again at pairing, so occupy-id rows that only abut never reach the classifier |
 | Same pitch, not causing | `accumulatePendingNoteChangesFromSourceNotes` | `note == pitch`, valid id ≠ causing | Other pitch / self |
-| Long-loop JIT | `ensureOverdubSourceNotesForHold` | Missing same-pitch window notes (see JIT authority) | 768-tick pin |
+| Long-loop JIT | `ensureOverdubSourceNotesForHold` | Missing same-pitch source rows from span cache (see JIT authority) | 768-tick pin |
 
 `OverlapNoteIdObservation::collectObservedOverlapNoteIds` / `collectGeometryOverlapNoteIds` are diagnostic Gate 1 helpers, not production selection.
 

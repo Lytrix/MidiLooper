@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (overdub ledger completion Stages 2–4 shipped; consume id-resolution **FROZEN**)
+Last updated: 2026-08-19 (overdub ledger completion span-cache hold hydration shipped; consume id-resolution **FROZEN**)
 
 ---
 
@@ -18,9 +18,9 @@ Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolve
 
 **Owner:** `Loop::ensureOverdubSourceNotesForHold`, `Loop::accumulatePendingNoteChangesForIncomingNote`.
 
-**Invariant:** Long-loop note-off uses prepared pitch-span merge (`from=span`) when LCR is ready; explicit `hold,miss` + `from=win` only on prepared miss; skip hold fill when non-empty occupy ids already have source-view rows.
+**Invariant:** Source-view rebuild and long-loop note-off hold hydration both read the source span cache (`from=cache`) with prepared spans when available and full-loop resolved spans otherwise; source-view path no longer calls `resolveWindow`.
 
-**Status:** Native **1387/1387**. Baseline cost anchor [`202256`](../../captures/session_20260819_202256.log) (32× `from=win`, `merged=0`). HITL gate open post-flash.
+**Status:** Native **1387/1387**. Baseline cost anchor [`202256`](../../captures/session_20260819_202256.log) (32× `from=win`, `merged=0`). Device check [`221834`](../../captures/session_20260819_221834.log): hold path `from=cache` with no `hold,miss`. Overdub-entry stall RC: companion sealing now restamps source-span cache revision only for active overdub sessions with full companion seal success, preventing stale-stamp rebuilds on the next overdub entry while preserving non-session rebuild behavior. Cold-start mitigation landed: STOPPED idle maintenance now calls `Loop::prewarmOverdubSourceSpanCache` after visual cache cleanup, and prewarm defers while the prepared gate is still active for the same loop length to avoid forcing a fallback full rebuild in that turn.
 
 ### Consume id-resolution completeness — FROZEN (Stages 1–2)
 

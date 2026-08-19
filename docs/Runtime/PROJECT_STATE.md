@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-19 (overdub ledger completion Stages 2–4 shipped)
+Last updated: 2026-08-19 (overdub ledger completion span-cache hold hydration shipped)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — Overdub ledger completion **shipped** Stages 2–4 (native 1387/1387; RC2 prepared hold + skip unnecessary win). Consume id-resolution **FROZEN**. Plan: [`overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md). RAM1 code **425964** / locals **4768**.
+**`feature/overdub-participant-discovery`** — Overdub ledger completion **shipped** Stages 2–4 plus span-cache source-view/hold hydration updates (native 1387/1387; long-loop hold path `from=cache`, no hold `resolveWindow`). Overdub-entry stall RC landed: companion sealing now restamps the source-span cache revision only for active overdub sessions when all companion rows seal, avoiding stale-stamp rebuilds on next entry and preserving non-session fallback rebuild behavior. Cold-start mitigation landed: STOPPED idle maintenance calls `Loop::prewarmOverdubSourceSpanCache` after visual cache cleanup, with prewarm deferring while the prepared gate is active for the current loop length. Consume id-resolution **FROZEN**. Plan: [`overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md). RAM1 code **425964** / locals **4768**.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 

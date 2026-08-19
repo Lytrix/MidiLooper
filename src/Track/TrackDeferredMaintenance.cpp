@@ -673,6 +673,9 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       }
       maybeLogStoredNoteCount();
       maybeQueueContentResolutionDeviceGate();
+      if (!loop.visualCacheDirty) {
+        loop.prewarmOverdubSourceSpanCache();
+      }
     }
   }
 
