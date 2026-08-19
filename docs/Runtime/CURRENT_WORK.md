@@ -12,7 +12,7 @@ Last updated: 2026-08-19 (occupy source-view RC + wrap display D2-D **FROZEN**)
 
 Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)) and wrap display D2-D ([`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)) are **FROZEN** — HITL [`174246`](../../captures/session_20260819_174246.log). Native **1384/1384**. Next on this branch: 64-bar `from=span` HITL **parked** (DEC-041); see § Parked below.
 
-### Consume candidate attribution — Stage 1A shipped (observability only)
+### Consume candidate attribution — Stage 1A COMPLETE (observability only)
 
 **Plan:** [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md)
 
@@ -26,7 +26,7 @@ Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolve
 
 **Long-loop JIT class did not reproduce:** `why=hold` **140** with long loops present (`live=18432`, `live=52224`), yet every line is `jit=0` / `late=0`. Reachable in native, not the device problem.
 
-**Next:** occupy id that resolves to no source-view note (`pitch=96` `ids=1 idsel=0 norow=1`). Needs its own plan + architecture checkpoint. **Do not** block additive scan candidates on non-empty ids.
+**Closed 2026-08-19.** Stage 1A delivered its purpose: the attribution evidence decided the selection question. Stages 1 and 2 (selection change) are **rejected** — do **not** block additive scan candidates on non-empty ids. The `norow` class is **tagged for investigation** in § Parked, no plan opened.
 
 ### Occupy source view keeps resolver geometry — FROZEN
 
@@ -810,6 +810,14 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 ---
 
 ## Parked
+
+### Tagged for investigation — occupy id resolves to no source-view note (`norow`)
+
+**No plan opened.** Evidence only: HITL [`191133`](../../captures/session_20260819_191133.log) `DIAG,consume,select,pitch=96,ids=1,idsel=0,scan=1,late=0,norow=1,s=0,e=48,jit=0` at `81310668`. One occupy identity had no matching `overdubSourceViewNotes_` row, so `appendNotesForIds` returned nothing and the window scan supplied the only consume participant.
+
+**Question when picked up:** identity assignment is already single-owner and loop-length independent (`snapshotOverlapHoldCandidates` + `collectOverlapHoldPlaybackNoteOn`); row availability is a separate `Loop` concern. Should every id in `overlapNoteIds` be guaranteed to resolve to a note, or is `norow` legitimate for identities the source view intentionally dropped?
+
+**Detector already in tree:** `OverlapHoldTotals::idsWithoutNotes` + `norow=` on `DIAG,consume,select`. No new telemetry needed to reproduce. Context: [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md).
 
 ### OpenSpec: [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/) (DEC-023)
 
