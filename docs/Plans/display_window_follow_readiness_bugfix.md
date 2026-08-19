@@ -1,6 +1,6 @@
 # Display window follow readiness
 
-**Status:** Implemented — native **1390/1390**; firmware RAM1 code **425276** / locals **4768**; HITL gate open  
+**Status:** Implemented — native **1390/1390**; firmware RAM1 code **425276** / locals **4768**; HITL **PASS** [`000553`](../../captures/session_20260820_000553.log)
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Evidence:** [`session_20260819_232337.log`](../../captures/session_20260819_232337.log)
@@ -51,4 +51,4 @@ Committed paint for a long-loop detailed window filters `visualCache.notes` for 
 
 - Native: `test_display_window_utils` neighborhood / lookahead / margin / newly-exposed-bar fixtures; `pio test -e native` **1390/1390**.
 - Firmware: `teensy41-capture-serial` links (RAM1 code **425276**, locals **4768**).
-- Capture check: `verify_follow_window_readiness` in `scripts/hitl/verify/display_window.py`. Evidence [`232337`](../../captures/session_20260819_232337.log) **fails** (holds 539 / 386 / 153 ms at window starts 5656, 10024, 12400). A post-fix 66-bar overdub-past-bar-16 capture must pass (no ≥120 ms stale hold).
+- Capture check: `verify_follow_window_readiness` in `scripts/hitl/verify/display_window.py`. Evidence [`232337`](../../captures/session_20260819_232337.log) **fails** (holds 539 / 386 / 153 ms at window starts 5656, 10024, 12400). Post-fix [`000553`](../../captures/session_20260820_000553.log) **passes** (0 stale holds). After `OVERDUBBING -> PLAYING` past bar 16, `windowStart` advances on the next `DISP` (20768 → 20816 in 22 ms) and does not snap `frameNotes==windowNotes` after `slice_clean`.
