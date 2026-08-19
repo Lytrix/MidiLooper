@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub-stop handoff flash RC)
+Last updated: 2026-08-20 (overdub-stop handoff flash HITL PASS 001925)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-20 (overdub-stop handoff flash RC)
 
 **Invariant:** While `visualCacheDirty` after overdub stop, the revision-matched composed frame stays paint authority. Follow re-filters that frame; it does not replace it with pre-commit `visualCache.notes`.
 
-**Status:** Implemented. Native **1391/1391**. RAM1 code **425276** / locals **4768**. HITL: first PLAYING `DISP` after overdub stop must keep the composed frame while `visual` is unchanged.
+**Status:** **HITL PASS** [`001925`](../../captures/session_20260820_001925.log). Native **1391/1391**. RAM1 code **425276** / locals **4768**. Evidence [`000553`](../../captures/session_20260820_000553.log) remains the failing baseline (655→583 at `vis=2166`).
 
 ### Display window follow readiness
 

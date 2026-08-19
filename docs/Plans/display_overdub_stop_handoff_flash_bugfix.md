@@ -1,6 +1,6 @@
 # Display overdub-stop handoff flash
 
-**Status:** Implemented — native **1391/1391**; RAM1 code **425276** / locals **4768**; HITL gate open  
+**Status:** Implemented — native **1391/1391**; RAM1 code **425276** / locals **4768**; HITL **PASS** [`001925`](../../captures/session_20260820_001925.log)
 **Date:** 2026-08-20  
 **Kind:** bugfix  
 **Evidence:** [`session_20260820_000553.log`](../../captures/session_20260820_000553.log)
@@ -52,4 +52,4 @@ While `visualCacheDirty` after overdub stop, the revision-matched composed frame
 
 - Native: `test_prefer_preserved_overdub_stop_handoff_while_cache_dirty`; `pio test -e native` **1391/1391**.
 - Firmware: `teensy41-capture-serial` RAM1 code **425276** / locals **4768**.
-- HITL: after overdub stop, first PLAYING `DISP` `frameNotes` must not drop while `visual` stays unchanged, then recover after `slice_clean`.
+- HITL: [`001925`](../../captures/session_20260820_001925.log) **PASS**. Six `OVERDUBBING -> PLAYING` stops: first PLAYING `frameNotes` stays at or above the last overdub frame while `visual` is unchanged (e.g. 864→874, 885→887, 891→894). No `000553`-style 72-note drop at same `vis` then recover after `slice_clean`. Follow-readiness still 0 stale holds.
