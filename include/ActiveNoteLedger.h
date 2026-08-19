@@ -34,9 +34,13 @@ class ActiveNoteLedger {
 
   bool overflowed() const { return overflowed_; }
 
-  /// Push an open NoteOn. Refuses when full — never evicts an existing identity.
+  /// Push an open NoteOn. Same identity already open → no-op (catch-up then clock
+  /// must not stack a second Entry). Refuses when full — never evicts.
   void noteOn(uint8_t channel, uint8_t note, NoteId noteId, uint32_t tick, uint8_t velocity) {
     if (channel == 0 || channel > 16 || note > 127) {
+      return;
+    }
+    if (noteId != kInvalidNoteId && findIndexByNoteId(channel, note, noteId) >= 0) {
       return;
     }
     if (count_ >= kMaxOpenNotes) {

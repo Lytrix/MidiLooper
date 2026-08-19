@@ -77,7 +77,7 @@ Want extra-open (`n>a`, including `n=2 a=0`) down vs [`095902`](../../captures/s
 
 One `n=0 a=1`: pitch 23 `hs=384` `as=384–432` (5395), `led=0` `ltick=384` `cu=0`. Span-start empty ledger. First eight `mmevt` do not include `On@384`.
 
-Do not widen catch-up. Do not make occupy catch-up when `occupyPhase <= lastTick`. Remaining extra-open / span-start empty ledger is a clock-path RC.
+Do not widen catch-up. Do not make occupy catch-up when `occupyPhase <= lastTick`. Remaining extra-open / span-start empty ledger is successor [`overdub_occupy_duplicate_open_identity_bugfix.md`](overdub_occupy_duplicate_open_identity_bugfix.md).
 
 ## Pre-implementation review
 

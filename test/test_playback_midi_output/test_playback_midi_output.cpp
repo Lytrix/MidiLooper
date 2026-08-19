@@ -128,6 +128,25 @@ void test_ledger_note_on_pushes_untagged_off_pops_lifo() {
   TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 60));
 }
 
+void test_ledger_note_on_same_identity_does_not_push_second_entry() {
+  ActiveNoteLedger ledger;
+  MidiEvent on = MidiEvent::NoteOn(100, 1, 60, 90);
+  on.noteId = 42;
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, on));
+  on.tick = 200;
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, on));
+  uint8_t seen = 0;
+  uint32_t startTick = 0;
+  ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry& entry) {
+    TEST_ASSERT_EQUAL_UINT32(42, entry.noteId);
+    startTick = entry.startTick;
+    ++seen;
+  });
+  TEST_ASSERT_EQUAL_UINT8(1, seen);
+  TEST_ASSERT_EQUAL_UINT32(100, startTick);
+  TEST_ASSERT_EQUAL_UINT32(42, ledger.noteId(1, 60));
+}
+
 void test_ledger_apply_playback_event_before_emit() {
   ActiveNoteLedger ledger;
   MidiEvent on = MidiEvent::NoteOn(1000, 1, 60, 90);
@@ -393,6 +412,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_midi_send_requires_unmuted_track_and_slot);
   RUN_TEST(test_ledger_stays_active_after_note_on);
   RUN_TEST(test_ledger_note_on_pushes_untagged_off_pops_lifo);
+  RUN_TEST(test_ledger_note_on_same_identity_does_not_push_second_entry);
   RUN_TEST(test_ledger_apply_playback_event_before_emit);
   RUN_TEST(test_all_notes_off_clears_ledger_mute_does_not);
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);
