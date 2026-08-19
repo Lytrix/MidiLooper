@@ -1,6 +1,6 @@
 # Occupy clock duplicate Off skips ledger
 
-**Status:** Native **PASS** 1367/1367. RAM1 **425868** / **4768**. HITL pending (same 1-bar overdub as [`103234`](../../captures/session_20260819_103234.log)).  
+**Status:** Native **PASS** 1367/1367. RAM1 **425868** / **4768**. HITL **FAIL** leftover counts [`104654`](../../captures/session_20260819_104654.log). Pin two-Off dumps **0** this capture.  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (duplicate-identity MET):** [`overdub_occupy_duplicate_open_identity_bugfix.md`](overdub_occupy_duplicate_open_identity_bugfix.md)  
@@ -72,6 +72,31 @@ When the ActiveCommitted walk detects a duplicate NoteOn/NoteOff, call `playback
 Want `n=3 a=2` = 0 vs [`103234`](../../captures/session_20260819_103234.log) (1). `n=1 a=0` down vs 18. `n=2 a=1` down vs 20. Keep `led == n` and `n=0 a=1` = 0.
 
 Do not FAIL this RC on parked span-start `n=0 a=1` or prepared `eq=0`/`b=0`. Nested `n=2 a=2` may remain.
+
+## HITL [`104654`](../../captures/session_20260819_104654.log)
+
+72 `DIAG,lcr,part`. **41** mismatches, all `cu=0`. `led == n` **41/41**. `n=0 a=1` **0**. `eq=1` on 72/72. `ledger,overflow` **0**. One `RING,overflow` (after these occupies).
+
+| n,a | 103234 | 104654 |
+|-----|------:|-------:|
+| 1,1 | 36 | 25 |
+| 0,0 | 23 | 5 |
+| **0,1** | **0** | **0** |
+| 2,2 | 2 | 1 |
+| **1,0** | **18** | **19** |
+| **2,1** | **20** | **10** |
+| 2,0 | 0 | 4 |
+| **3,2** | **1** | **2** |
+| 3,1 | 0 | 6 |
+| n>a | 39 | 41 |
+
+**Pin two-Off:** **0** consecutive same-tick `k=off,k=off` in this capture's `mmevt` dumps (103234 L6683–L6684 is not here).
+
+**Remaining `n=3 a=2` is not that pin.** L3910 pitch 12 `hs=240`: covering 5805 `240–288` and 5799 `240–336` (`a=2`); `mmevt` two **On@240** (5799, 5805); `n=3` `lid=5805`. Nested same-start pair is on the ledger; one extra identity is not those Ons.
+
+**`n=1 a=0` is one stuck identity:** all 19 are pitch 12 `lid=5701` `lst=96`, including occupy at `hs=96` (start tick, `a=0`) and wrap-head `hs=0`. Not exclusive-end at an Off tick. Same leftover also produces `n=2 a=1` / `n=3 a=1` when other spans cover.
+
+`n=2 a=1` **down** 20→10. Do not reopen duplicate-Off ledger apply. Leftover `5701` is a new RC.
 
 ## Pre-implementation review
 
