@@ -1,6 +1,6 @@
 # Overdub consume ledger merge
 
-**Status:** **Stage 1A observability shipped**; **consume merge selection change REJECTED** on device evidence HITL [`191133`](../../captures/session_20260819_191133.log). Attribution counters + `DIAG,consume,select` in tree; selection behavior **unchanged and staying**. Native **1386/1386**. RAM1 code **425964** / locals **4768**. Successor: occupy id that resolves to no source-view note (`norow=1`).  
+**Status:** **FROZEN** — closed 2026-08-19. **Stage 1A observability COMPLETE**; **consume merge selection change (Stages 1–2) REJECTED** on device evidence HITL [`191133`](../../captures/session_20260819_191133.log). Attribution counters + `DIAG,consume,select` in tree; selection behavior **unchanged and staying**. Native **1386/1386**. RAM1 code **425964** / locals **4768**. `norow=1` successor **tagged for investigation** in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Parked — no plan opened.  
 **Date:** 2026-08-19  
 **Kind:** enhancement  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  
@@ -106,7 +106,9 @@ Five holds emitted `DIAG,consume,select`:
 
 **Successor question (identity vs geometry).** `pitch=96` `ids=1 idsel=0 norow=1` is the ownership split named in the Stage 1A guard check: identity assignment is already single-owner, but an id in the set had no note to resolve against. That — not candidate blocking — is the next thing worth fixing.
 
-### Stage 1 — ledger-routed consume candidates
+### Stage 1 — ledger-routed consume candidates (REJECTED 2026-08-19)
+
+Not implemented. HITL [`191133`](../../captures/session_20260819_191133.log) showed a non-empty occupy set still depends on the window scan. Kept for the record:
 
 Use `pending.overlapNoteIds` as the primary consume candidate identity set for note-off overlap resolution:
 
@@ -114,7 +116,7 @@ Use `pending.overlapNoteIds` as the primary consume candidate identity set for n
 - Keep `accumulatePendingNoteChangesFromSourceNotes` and `resolveConstrainedGeometry` unchanged.
 - Gate source-view window scan fallback behind explicit conditions defined in Stage 1 decisions.
 
-### Stage 2 — fallback contract hardening
+### Stage 2 — fallback contract hardening (REJECTED with Stage 1)
 
 After Stage 1 behavior is stable, tighten fallback policy:
 
@@ -217,4 +219,4 @@ Consequences: blocking additive candidates whenever ids are non-empty changes lo
 
 - **NO for decision 2** — rejected on device evidence [`191133`](../../captures/session_20260819_191133.log). Consume keeps both candidate paths.
 - **Stage 1A observability: shipped.** Decision 1 confirmed; decision 3 moot for this stage.
-- **Next work is the successor question**, not Stage 1 selection: an occupy id that resolves to no source-view note (`norow=1`). That needs its own plan and architecture checkpoint.
+- **Successor tagged, not planned:** an occupy id that resolves to no source-view note (`norow=1`) is recorded in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Parked. The detector is already in tree; it needs an architecture checkpoint before any firmware.
