@@ -336,12 +336,71 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (overlapNoteIds.overflowed()) {
     ++overlapHoldTotals_.overflows;
   }
+
+  OverlapNoteIdSet effectiveOverlapNoteIds;
+  for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
+    (void)effectiveOverlapNoteIds.insert(overlapNoteIds.at(i));
+  }
+
+  auto ensureHoldSegmentInSourceView = [&](uint32_t holdPhaseTick) {
+    ensureOverdubSourceNotesForHold(holdPhaseTick, pitch, nullptr, false);
+  };
+
+  auto collectGeometricIdsForSegment = [&](uint32_t segStart, uint32_t segEnd) {
+    if (segStart >= segEnd) {
+      return;
+    }
+    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+      if (note.note != pitch || note.noteId == kInvalidNoteId) {
+        continue;
+      }
+      if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
+        continue;
+      }
+      if (!existingNoteOverlapsIncomingHold(note.startTick, note.endTick, segStart, segEnd,
+                                            loopLen)) {
+        continue;
+      }
+      (void)effectiveOverlapNoteIds.insert(note.noteId);
+    }
+  };
+
+  const bool useLedgerIdConsumePath = effectiveOverlapNoteIds.size() > 0;
+  if (useLedgerIdConsumePath) {
+    if (wrapCrossing) {
+      ensureHoldSegmentInSourceView(startTick);
+      if (endTick > 0) {
+        ensureHoldSegmentInSourceView(0);
+      }
+      collectGeometricIdsForSegment(startTick, loopLen);
+      if (endTick > 0) {
+        collectGeometricIdsForSegment(0, endTick);
+      }
+    } else {
+      ensureHoldSegmentInSourceView(startTick);
+      collectGeometricIdsForSegment(startTick, endTick);
+    }
+    if (loopLen > overdubSourceWindowLengthTicks()) {
+      if (wrapCrossing) {
+        ensureHoldSegmentInSourceView(startTick);
+        if (endTick > 0) {
+          ensureHoldSegmentInSourceView(0);
+        }
+      } else {
+        ensureHoldSegmentInSourceView(startTick);
+      }
+    }
+    if (effectiveOverlapNoteIds.overflowed()) {
+      ++overlapHoldTotals_.overflows;
+    }
+  }
+
   NoteUtils::DisplayNoteVec selected;
-  if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
+  if (OverlapCandidateLookup::shouldLookupSpans(effectiveOverlapNoteIds)) {
     size_t notesExamined = 0;
     const uint32_t lookupStartUs = micros();
-    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
-                                              &notesExamined);
+    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, effectiveOverlapNoteIds,
+                                              selected, &notesExamined);
     const uint32_t lookupUs = micros() - lookupStartUs;
     ++overlapHoldTotals_.lookedUp;
     const uint32_t examined = static_cast<uint32_t>(notesExamined);
@@ -395,11 +454,13 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   };
 
-  if (wrapCrossing) {
-    collectConsumeWindow(startTick, loopLen);
-    collectConsumeWindow(0, endTick);
-  } else {
-    collectConsumeWindow(startTick, endTick);
+  if (!useLedgerIdConsumePath) {
+    if (wrapCrossing) {
+      collectConsumeWindow(startTick, loopLen);
+      collectConsumeWindow(0, endTick);
+    } else {
+      collectConsumeWindow(startTick, endTick);
+    }
   }
 
   uint32_t scanOnly = 0;
@@ -412,8 +473,10 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   }
   uint32_t idsWithoutNotes = 0;
-  for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
-    const NoteId id = overlapNoteIds.at(i);
+  const OverlapNoteIdSet& idsForRowCheck =
+      useLedgerIdConsumePath ? effectiveOverlapNoteIds : overlapNoteIds;
+  for (size_t i = 0; i < idsForRowCheck.size(); ++i) {
+    const NoteId id = idsForRowCheck.at(i);
     bool selectedHasId = false;
     for (const NoteUtils::DisplayNote& note : selected) {
       if (note.noteId == id) {
