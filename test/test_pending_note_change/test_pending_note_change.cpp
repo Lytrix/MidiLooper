@@ -23,13 +23,22 @@
 #include "../../src/Utils/RuntimeTimingTelemetry.cpp"
 
 #include "Loop.h"
+#include "LoopContentResolution.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
 #include "OverlapNoteIdSet.h"
+#include "ActiveNoteLedger.h"
+#include "Utils/CommittedPlaybackLedgerCatchUp.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/PlaybackCursorAdvance.h"
+#include "PlaybackMergedMidiEvents.h"
 
+#include "../../src/Utils/PlaybackCursorAdvance.cpp"
+#include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"
+
+#include <algorithm>
 #include <initializer_list>
 
 namespace {
@@ -57,12 +66,41 @@ bool hasDisplayNote(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint3
   return false;
 }
 
+NoteUtils::DisplayNote testSourceSpan(NoteId id, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  NoteUtils::DisplayNote note{};
+  note.noteId = id;
+  note.note = pitch;
+  note.velocity = 100;
+  note.startTick = startTick;
+  note.endTick = endTick;
+  return note;
+}
+
 const PendingNoteChange* findTransform(const PendingNoteChangeVec& pending, NoteId noteId) {
   for (const PendingNoteChange& change : pending) {
     if ((change.kind == PendingNoteChangeKind::Shorten ||
          change.kind == PendingNoteChangeKind::Hide) &&
         change.noteId == noteId) {
       return &change;
+    }
+  }
+  return nullptr;
+}
+
+const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
+                                                  NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+const EditPass* findEditPassByTarget(const Loop& loop, NoteId targetNoteId) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.targetNoteId == targetNoteId) {
+      return &row;
     }
   }
   return nullptr;
@@ -84,6 +122,24 @@ OverlapNoteIdSet overlapIds(std::initializer_list<NoteId> ids) {
     (void)out.insert(id);
   }
   return out;
+}
+
+void prepareLoopContent(Loop& loop) {
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+}
+
+void applyGatheredThroughTick(ActiveNoteLedger& ledger, const MidiEventVec& events,
+                              uint32_t throughTick) {
+  for (const MidiEvent& evt : events) {
+    if (evt.tick > throughTick) {
+      continue;
+    }
+    (void)ledger.applyPlaybackEvent(1, evt);
+  }
 }
 
 }  // namespace
@@ -156,8 +212,8 @@ void test_overdub_consumes_existing_source_view_overlap() {
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().noteOffs);
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().emptySets);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lookedUp);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
 }
 
 void test_overdub_consumes_source_view_when_hold_ids_incomplete() {
@@ -224,6 +280,30 @@ void test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop() {
   TEST_ASSERT_EQUAL(notesAtEnter + 1, loop.overdubSourceViewNotes().size());
 }
 
+void test_note_off_skips_hold_fill_when_source_view_covers_loop() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 50));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+  TEST_ASSERT_TRUE(loop.loopLengthTicks <=
+                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, 10,
+                                                                   overlapIds({})));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_TRUE(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
+                       countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
+                   1);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
+}
+
 void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -243,6 +323,78 @@ void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
                        countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
                    1);
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
+}
+
+// Consume attribution: occupy id present, but no source-view note exists at lookup
+// time. Only the long-loop JIT branch can reach that candidate.
+void test_consume_attribution_counts_late_note_for_jit_ahead_candidate() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLongLoop = Config::TICKS_PER_BAR * 64;
+  seedLongSourceNote(loop, 1, 224, 288, 60, kLongLoop);
+  loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  TEST_ASSERT_TRUE(loop.loopLengthTicks >
+                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({1})));
+
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lateNoteCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+}
+
+// Consume attribution: incoming hold covers a second note that starts after S and
+// is absent from the occupy set. Geometric id completion selects it without window scan.
+void test_consume_attribution_counts_scan_only_for_id_absent_candidate() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 50, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 300, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(400, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 3;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.loopLengthTicks <=
+                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 50));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 300));
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 100, 350, 10,
+                                                                   overlapIds({1})));
+
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lateNoteCandidates);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 2));
+}
+
+// Ledger id with no source-view row at lookup is repaired by hold fill before id lookup.
+void test_consume_id_resolution_norow_repaired_by_hold_fill() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLongLoop = Config::TICKS_PER_BAR * 64;
+  seedLongSourceNote(loop, 1, 224, 288, 60, kLongLoop);
+  loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
 }
 
 void test_pending_shorten_long_source_on_overlap() {
@@ -692,6 +844,65 @@ void test_pending_wrap_crossing_incoming_consumes_head_occupied_lane() {
                            countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
 }
 
+// Pin 121141 three-point proof: resolver Shorten(6079,167) → seal → rebuild source view.
+void test_121141_three_point_resolver_seal_rebuild_handoff() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kOneBar = Config::TICKS_PER_BAR;
+  constexpr uint8_t kPitch = 24;
+  constexpr NoteId kIdA = 6079;
+  constexpr NoteId kIdB = 6073;
+
+  Loop loop;
+  loop.loopLengthTicks = kOneBar;
+  loop.nextNoteId_ = kIdB;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 144, 1, kPitch, 100, kIdA));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(360, 1, kPitch, 0)));
+  loop.seedRecordPassFromStore(store);
+
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  Loop::resetCommittedPitchQueryWork();
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(168, 1, kPitch, 100, kIdB)));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, kPitch, 100, 168, 264, kIdB,
+                                                                   overlapIds({kIdA})));
+
+  const PendingNoteChange* shortenA = findTransform(loop.pendingNoteChanges(), kIdA);
+  TEST_ASSERT_NOT_NULL(shortenA);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten),
+                    static_cast<int>(shortenA->kind));
+  TEST_ASSERT_EQUAL_UINT32(kIdA, shortenA->noteId);
+  TEST_ASSERT_EQUAL_UINT32(167u, shortenA->endTick);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(264, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, companionIds.size());
+  TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  const EditPass* sealedA = findEditPassByTarget(loop, kIdA);
+  TEST_ASSERT_NOT_NULL(sealedA);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(sealedA->actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(sealedA->propertyType));
+  TEST_ASSERT_EQUAL_UINT32(167u, sealedA->endTick);
+
+  loop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  const NoteUtils::DisplayNote* viewA = findDisplayNoteById(loop.overdubSourceViewNotes(), kIdA);
+  const NoteUtils::DisplayNote* viewB = findDisplayNoteById(loop.overdubSourceViewNotes(), kIdB);
+  TEST_ASSERT_NOT_NULL(viewA);
+  TEST_ASSERT_NOT_NULL(viewB);
+  TEST_ASSERT_EQUAL_UINT8(kPitch, viewA->note);
+  TEST_ASSERT_EQUAL_UINT32(144u, viewA->startTick);
+  TEST_ASSERT_EQUAL_UINT32(167u, viewA->endTick);
+  TEST_ASSERT_EQUAL_UINT8(kPitch, viewB->note);
+  TEST_ASSERT_EQUAL_UINT32(168u, viewB->startTick);
+  TEST_ASSERT_EQUAL_UINT32(264u, viewB->endTick);
+}
+
 void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -729,6 +940,1320 @@ void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   TEST_ASSERT_TRUE(foundShortenedOff);
 }
 
+void test_prepared_present_note_ids_match_source_hold_participants() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(100, 60, sourceIds);
+  OverlapNoteIdSet preparedIds;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(100, 60, preparedIds));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(1));
+  TEST_ASSERT_TRUE(sourceIds == preparedIds);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_prepared_present_note_ids_miss_does_not_fill_source_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  const size_t notesBefore = loop.overdubSourceViewNotes().size();
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  OverlapNoteIdSet preparedIds;
+  preparedIds.insert(99);
+  TEST_ASSERT_FALSE(loop.tryCollectPreparedPresentNoteIdsAtTick(100, 60, preparedIds));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(preparedIds.size()));
+  TEST_ASSERT_EQUAL(notesBefore, loop.overdubSourceViewNotes().size());
+}
+
+void test_prepared_present_note_ids_filters_pitch_and_exclusive_end() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  OverlapNoteIdSet atStart;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(50, 60, atStart));
+  TEST_ASSERT_TRUE(atStart.contains(1));
+
+  OverlapNoteIdSet atEnd;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(200, 60, atEnd));
+  TEST_ASSERT_FALSE(atEnd.contains(1));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(atEnd.size()));
+
+  OverlapNoteIdSet otherPitch;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(100, 72, otherPitch));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(otherPitch.size()));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_note_on_occupy_reads_ledger_note_id() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  constexpr uint32_t kHoldTick = 20000;
+  seedLongSourceNote(loop, 1, 10, 25000, 60, kLongLoop);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, kHoldTick);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, 60, 1, 10, 100);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_note_on_occupy_empty_when_ledger_inactive() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 64;
+  constexpr uint32_t kHoldTick = 20000;
+  seedLongSourceNote(loop, 1, 10, 25000, 60, kLongLoop);
+  prepareLoopContent(loop);
+  loop.beginCapture(CapturePhase::Overdub, kHoldTick);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
+
+  OverlapNoteIdSet preparedIds;
+  TEST_ASSERT_TRUE(loop.tryCollectPreparedPresentNoteIdsAtTick(kHoldTick, 60, preparedIds));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(preparedIds.size()));
+
+  ActiveNoteLedger ledger;
+  OverlapNoteIdSet occupyIds;
+  occupyIds.insert(99);
+  loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_wrap_committed_note_at_s_occupies_ledger_same_tick() {
+  // session_20260818_152745: wrap-committed 71 @ 656–720, 1-bar 768, occupy at S.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 656;
+  constexpr uint32_t kPrev = 655;
+  constexpr uint32_t kOff = 720;
+  constexpr uint8_t kPitch = 71;
+  constexpr NoteId kWrapNoteId = 5;
+  seedLongSourceNote(loop, 1, 0, 48, 60, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  loop.rebuildOverdubSourceView(kS);
+
+  SessionMidiEventVec merged;
+  loop.gatherCommittedEvents(merged);
+  std::sort(merged.begin(), merged.end(),
+            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  NoteId wrapId = kInvalidNoteId;
+  for (const MidiEvent& evt : merged) {
+    if (evt.isNoteOn() && evt.data.noteData.note == kPitch && evt.tick == kS) {
+      wrapId = evt.noteId;
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapId);
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = merged;
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    static_cast<ActiveNoteLedger*>(ctx)->applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+
+  // Miss path from 152745: lastTick already S, then (S, S+1] never crosses the NoteOn at S.
+  uint16_t cursorAtS = 0;
+  while (static_cast<size_t>(cursorAtS) < streamCtx.events.size() &&
+         streamCtx.events[cursorAtS].tick <= kS) {
+    ++cursorAtS;
+  }
+  ActiveNoteLedger missLedger;
+  PlaybackTickFrame missFrame{&playbackContext, kS + 1U, kS, false};
+  PlaybackCursorAdvanceState missAdvance{&cursorAtS, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(missAdvance, missFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &missLedger, 0, nullptr, nullptr, 1));
+  OverlapNoteIdSet missOccupy;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, missLedger, missOccupy);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(missOccupy.size()));
+
+  // Wrap tick: reanchor while lastTick is still prev, then apply (prev, S] on the new stream.
+  uint16_t cursorAtPrev = 0;
+  while (static_cast<size_t>(cursorAtPrev) < streamCtx.events.size() &&
+         streamCtx.events[cursorAtPrev].tick <= kPrev) {
+    ++cursorAtPrev;
+  }
+  ActiveNoteLedger wrapLedger;
+  PlaybackTickFrame wrapFrame{&playbackContext, kS, kPrev, false};
+  PlaybackCursorAdvanceState wrapAdvance{&cursorAtPrev, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(wrapAdvance, wrapFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &wrapLedger, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapLedger.noteId(1, kPitch));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, wrapLedger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kWrapNoteId));
+}
+
+void test_wrap_pass_events_at_s_occupy_without_merged_rebuild() {
+  // session_20260818_180844 wrap 15: wrap-committed 60 @ 416, 1-bar 768.
+  // Ledger catch-up uses lastCommittedPassId() chunks only — no full-loop gather.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 416;
+  constexpr uint32_t kPrev = 408;
+  constexpr uint32_t kOff = 480;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kWrapNoteId = 9;
+  seedLongSourceNote(loop, 1, 0, 48, 72, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrapPass);
+
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  TEST_ASSERT_FALSE(passEvents.empty());
+  NoteId wrapIdFound = kInvalidNoteId;
+  for (const MidiEvent& evt : passEvents) {
+    if (evt.isNoteOn() && evt.data.noteData.note == kPitch && evt.tick == kS) {
+      wrapIdFound = evt.noteId;
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapIdFound);
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = passEvents;
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    static_cast<ActiveNoteLedger*>(ctx)->applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+  uint16_t cursor = 0;
+  ActiveNoteLedger wrapLedger;
+  PlaybackTickFrame wrapFrame{&playbackContext, kS, kPrev, false};
+  PlaybackCursorAdvanceState wrapAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(wrapAdvance, wrapFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &wrapLedger, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapLedger.noteId(1, kPitch));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, wrapLedger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kWrapNoteId));
+}
+
+void test_wrap_pass_events_at_loop_head_occupy_without_merged_rebuild() {
+  // session_20260818_185831 wrap 1: wrap-committed 60 On@0 Off@8, reanchor at 696,
+  // then atLoopStart (760, 0]. OverdubWrap keeps the 8-tick pair (Q16 is stop-only).
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 696;
+  constexpr uint32_t kPrevAtHead = 760;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kOnAtZeroId = 11;
+  constexpr NoteId kOnAt64Id = 12;
+  seedLongSourceNote(loop, 1, 48, 72, 72, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(0, 1, kPitch, 90, kOnAtZeroId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(8, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, kPitch, 90, kOnAt64Id)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(416, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrapPass);
+
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  TEST_ASSERT_FALSE(passEvents.empty());
+  NoteId onAtZeroFound = kInvalidNoteId;
+  for (const MidiEvent& evt : passEvents) {
+    if (evt.isNoteOn() && evt.data.noteData.note == kPitch && evt.tick == 0) {
+      onAtZeroFound = evt.noteId;
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(kOnAtZeroId, onAtZeroFound);
+  TEST_ASSERT_EQUAL_UINT32(0, IntervalProjection::playbackEventPhase(0, kLoopLenTicks));
+  uint32_t offAtZeroCount = 0;
+  for (const MidiEvent& evt : passEvents) {
+    if (evt.isNoteOff() && evt.data.noteData.note == kPitch && evt.tick == 0) {
+      ++offAtZeroCount;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, offAtZeroCount);
+
+  std::sort(passEvents.begin(), passEvents.end(),
+            [&](const MidiEvent& a, const MidiEvent& b) {
+              const uint32_t phaseA = IntervalProjection::playbackEventPhase(a.tick, kLoopLenTicks);
+              const uint32_t phaseB = IntervalProjection::playbackEventPhase(b.tick, kLoopLenTicks);
+              if (phaseA != phaseB) {
+                return phaseA < phaseB;
+              }
+              return a.tick < b.tick;
+            });
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = passEvents;
+  TEST_ASSERT_FALSE(streamCtx.events.empty());
+  TEST_ASSERT_TRUE(streamCtx.events.front().isNoteOn());
+  TEST_ASSERT_EQUAL_UINT32(0, streamCtx.events.front().tick);
+  TEST_ASSERT_EQUAL_UINT32(
+      0, IntervalProjection::playbackEventPhase(streamCtx.events.front().tick, kLoopLenTicks));
+
+  struct AppliedLog {
+    ActiveNoteLedger* ledger = nullptr;
+    uint32_t appliedOn = 0;
+    uint32_t appliedOff = 0;
+    uint32_t lastAppliedTick = UINT32_MAX;
+  };
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext& playbackContext) -> uint32_t {
+    return IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    AppliedLog* log = static_cast<AppliedLog*>(ctx);
+    log->ledger->applyPlaybackEvent(1, evt);
+    if (evt.isNoteOn()) {
+      ++log->appliedOn;
+    } else if (evt.isNoteOff()) {
+      ++log->appliedOff;
+    }
+    log->lastAppliedTick = evt.tick;
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+
+  uint16_t cursor = 0;
+  while (static_cast<size_t>(cursor) < streamCtx.events.size()) {
+    const uint32_t evPhase =
+        IntervalProjection::playbackEventPhase(streamCtx.events[cursor].tick, kLoopLenTicks);
+    if (evPhase > kS) {
+      break;
+    }
+    ++cursor;
+  }
+  TEST_ASSERT_TRUE(cursor > 0);
+
+  cursor = 0;
+  ActiveNoteLedger headLedger;
+  AppliedLog applied{&headLedger, 0, 0, UINT32_MAX};
+  const bool atLoopStart =
+      IntervalProjection::isPlaybackCatchUpWindow(kPrevAtHead, 0);
+  TEST_ASSERT_TRUE(atLoopStart);
+  PlaybackTickFrame headFrame{&playbackContext, 0, kPrevAtHead, atLoopStart};
+  PlaybackCursorAdvanceState headAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(headAdvance, headFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &applied, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(1, applied.appliedOn);
+  TEST_ASSERT_EQUAL_UINT32(0, applied.appliedOff);
+  TEST_ASSERT_EQUAL_UINT32(0, applied.lastAppliedTick);
+  TEST_ASSERT_EQUAL_UINT32(kOnAtZeroId, headLedger.noteId(1, kPitch));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, headLedger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kOnAtZeroId));
+}
+
+void test_wrap_pass_on_at_96_occupies_after_s_interval() {
+  // session_20260818_203948 wrap 2: S=64, occupy 12 @ 96. Wrap-S (prev, S] does not
+  // apply On@96. Named write: advancePlaybackCursor (64, 96] after reanchor at S.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 64;
+  constexpr uint32_t kPrev = 56;
+  constexpr uint32_t kOccupy = 96;
+  constexpr uint32_t kOff = 200;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOnAt96Id = 21;
+  seedLongSourceNote(loop, 1, 48, 72, 72, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kOccupy, 1, kPitch, 90, kOnAt96Id)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  loop.rebuildOverdubSourceView(kOccupy);
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
+  TEST_ASSERT_TRUE(sourceViewIds.contains(kOnAt96Id));
+
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrapPass);
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  TEST_ASSERT_FALSE(passEvents.empty());
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = passEvents;
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    static_cast<ActiveNoteLedger*>(ctx)->applyPlaybackEvent(1, evt);
+  };
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+
+  uint16_t cursor = 0;
+  while (static_cast<size_t>(cursor) < streamCtx.events.size() &&
+         streamCtx.events[cursor].tick <= kS) {
+    ++cursor;
+  }
+  ActiveNoteLedger missLedger;
+  PlaybackTickFrame wrapFrame{&playbackContext, kS, kPrev, false};
+  PlaybackCursorAdvanceState wrapAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(wrapAdvance, wrapFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &missLedger, 0, nullptr, nullptr, 1));
+  OverlapNoteIdSet missOccupy;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, missLedger, missOccupy);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(missOccupy.size()));
+
+  cursor = 0;
+  while (static_cast<size_t>(cursor) < streamCtx.events.size() &&
+         streamCtx.events[cursor].tick <= kS) {
+    ++cursor;
+  }
+  ActiveNoteLedger hitLedger;
+  PlaybackTickFrame occupyFrame{&playbackContext, kOccupy, kS, false};
+  PlaybackCursorAdvanceState occupyAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(occupyAdvance, occupyFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &hitLedger, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(kOnAt96Id, hitLedger.noteId(1, kPitch));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, hitLedger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kOnAt96Id));
+}
+
+void test_wrap_pass_spanning_on_at_0_occupies_at_96() {
+  // On@0 Off@200 still present at 96 after wrap at 64. Loop-head (760, 0] writes
+  // the Entry; wrap (56, 64] does not NoteOff it.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 64;
+  constexpr uint32_t kPrevWrap = 56;
+  constexpr uint32_t kPrevHead = 760;
+  constexpr uint32_t kOccupy = 96;
+  constexpr uint32_t kOff = 200;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOnAtZeroId = 22;
+  seedLongSourceNote(loop, 1, 48, 72, 72, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(0, 1, kPitch, 90, kOnAtZeroId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  loop.rebuildOverdubSourceView(kOccupy);
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
+  TEST_ASSERT_TRUE(sourceViewIds.contains(kOnAtZeroId));
+
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrapPass);
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = passEvents;
+  std::sort(streamCtx.events.begin(), streamCtx.events.end(),
+            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext& playbackContext) -> uint32_t {
+    return IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    static_cast<ActiveNoteLedger*>(ctx)->applyPlaybackEvent(1, evt);
+  };
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+
+  uint16_t cursor = 0;
+  ActiveNoteLedger ledger;
+  const bool atLoopStart = IntervalProjection::isPlaybackCatchUpWindow(kPrevHead, 0);
+  TEST_ASSERT_TRUE(atLoopStart);
+  PlaybackTickFrame headFrame{&playbackContext, 0, kPrevHead, atLoopStart};
+  PlaybackCursorAdvanceState headAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(headAdvance, headFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &ledger, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(kOnAtZeroId, ledger.noteId(1, kPitch));
+
+  PlaybackTickFrame wrapFrame{&playbackContext, kS, kPrevWrap, false};
+  PlaybackCursorAdvanceState wrapAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(wrapAdvance, wrapFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &ledger, 0, nullptr, nullptr, 1));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kOnAtZeroId));
+}
+
+void test_overdub_stop_still_removes_pairs_shorter_than_min_length() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  TEST_ASSERT_TRUE(noteMinLengthRemoveEnabled);
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kShortId = 11;
+  constexpr NoteId kKeptId = 12;
+  seedLongSourceNote(loop, 1, 48, 72, 72, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(0, 1, kPitch, 90, kShortId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(8, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, kPitch, 90, kKeptId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(416, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 0));
+
+  const PassId stopId = loop.lastCommittedPassId();
+  const OverdubPass* stopPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == stopId) {
+      stopPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(stopPass);
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(stopPass->committedChunkIds, passEvents);
+  bool hasShortOn = false;
+  bool hasKeptOn = false;
+  for (const MidiEvent& evt : passEvents) {
+    if (!evt.isNoteOn() || evt.data.noteData.note != kPitch) {
+      continue;
+    }
+    if (evt.tick == 0 && evt.noteId == kShortId) {
+      hasShortOn = true;
+    }
+    if (evt.tick == 64 && evt.noteId == kKeptId) {
+      hasKeptOn = true;
+    }
+  }
+  TEST_ASSERT_FALSE(hasShortOn);
+  TEST_ASSERT_TRUE(hasKeptOn);
+}
+
+void test_note_on_occupy_collects_every_open_identity() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 50, 200, 60);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, 60, 1, 50, 100);
+  ledger.noteOn(1, 60, 7, 80, 90);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(7));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+
+  ledger.noteOff(1, 60);
+  loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(1));
+  TEST_ASSERT_FALSE(occupyIds.contains(7));
+
+  loop.collectOverdubNoteOnParticipantIds(72, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+}
+
+void test_capture_off_does_not_clear_committed_occupy() {
+  // session_20260818_221334 / 224719 n=0 a=1: capture Off in WithCapture gather
+  // last-writes occupy’s ledger. Playback mergedMidiEvents must use committed gather.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kOn = 384;
+  constexpr uint32_t kOff = 480;
+  constexpr uint32_t kCaptureOff = 400;
+  constexpr uint32_t kOccupy = 420;
+  constexpr uint8_t kPitch = 23;
+  constexpr NoteId kCommittedId = 23;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  loop.rebuildOverdubSourceView(kOccupy);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kCaptureOff, 1, kPitch, 0)));
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
+  TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
+
+  MidiEventVec withCapture;
+  loop.gatherCommittedEventsWithCapture(withCapture);
+  ActiveNoteLedger foldedCapture;
+  applyGatheredThroughTick(foldedCapture, withCapture, kOccupy);
+  OverlapNoteIdSet clearedOccupy;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, foldedCapture, clearedOccupy);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(clearedOccupy.size()));
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger ledger;
+  applyGatheredThroughTick(ledger, committedOnly, kOccupy);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCommittedId));
+}
+
+void test_capture_on_does_not_occupy_empty_source_view() {
+  // session_20260818_221334 / 224719 n=1 a=0: capture On in WithCapture gather
+  // occupies when source-view has no pitch. Committed gather must not.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kOn = 624;
+  constexpr uint32_t kOff = 720;
+  constexpr uint32_t kOccupy = 45;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCommittedId = 12;
+  constexpr NoteId kCaptureId = 99;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  loop.rebuildOverdubSourceView(kOccupy);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kOccupy, 1, kPitch, 90, kCaptureId)));
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(sourceViewIds.size()));
+
+  MidiEventVec withCapture;
+  loop.gatherCommittedEventsWithCapture(withCapture);
+  ActiveNoteLedger leftoverLedger;
+  applyGatheredThroughTick(leftoverLedger, withCapture, kOccupy);
+  OverlapNoteIdSet leftoverOccupy;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, leftoverLedger, leftoverOccupy);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(leftoverOccupy.size()));
+  TEST_ASSERT_TRUE(leftoverOccupy.contains(kCaptureId));
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger ledger;
+  applyGatheredThroughTick(ledger, committedOnly, kOccupy);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+}
+
+void test_occupy_ledger_catchup_on_at_192_after_last_tick_184() {
+  // session_20260818_231038 L5241: lastTick 184, On@192, occupy 192. USB reads
+  // ledger before clock (prev, current] applies the On.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 184;
+  constexpr uint32_t kOn = 192;
+  constexpr uint32_t kOff = 280;
+  constexpr uint32_t kOccupy = 192;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCommittedId = 12;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  loop.rebuildOverdubSourceView(kOccupy);
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  OverlapNoteIdSet sourceViewIds;
+  loop.collectOverdubSourceHoldParticipantIds(kOccupy, kPitch, sourceViewIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceViewIds.size()));
+  TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger behindClock;
+  applyGatheredThroughTick(behindClock, committedOnly, kLastTick);
+  OverlapNoteIdSet behindIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, behindClock, behindIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(behindIds.size()));
+
+  TEST_ASSERT_TRUE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(behindClock, 1, committedOnly, kLastTick,
+                                                          kOccupy, kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, behindClock, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCommittedId));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kOn = 192;
+  constexpr uint32_t kOff = 280;
+  constexpr uint32_t kOccupy = 192;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kCommittedId = 12;
+  seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.lastTickInLoop = kOccupy;
+  loop.nextEventIndex = 7;
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  ActiveNoteLedger ledger;
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, committedOnly, kOccupy, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL_UINT32(kOccupy, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_same_tick_off_before_on_replaces() {
+  // session_20260818_233247 L2387: occupy 240 includes Off@240 of 192–240 and
+  // On@240 of 240–288. Merged vector can list On then Off at the same tick.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 232;
+  constexpr uint32_t kOccupy = 240;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOldId = 100;
+  constexpr NoteId kNewId = 200;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent oldOn = MidiEvent::NoteOn(192, 1, kPitch, 100);
+  oldOn.noteId = kOldId;
+  MidiEvent oldOff = MidiEvent::NoteOff(240, 1, kPitch, 0);
+  MidiEvent newOn = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  newOn.noteId = kNewId;
+  MidiEvent newOff = MidiEvent::NoteOff(288, 1, kPitch, 0);
+  MidiEventVec events;
+  events.push_back(oldOn);
+  events.push_back(newOn);
+  events.push_back(oldOff);
+  events.push_back(newOff);
+
+  ActiveNoteLedger ledger;
+  applyGatheredThroughTick(ledger, events, kLastTick);
+  TEST_ASSERT_EQUAL_UINT32(kOldId, ledger.noteId(1, kPitch));
+
+  TEST_ASSERT_TRUE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kNewId));
+  TEST_ASSERT_FALSE(occupyIds.contains(kOldId));
+  TEST_ASSERT_EQUAL_UINT32(kNewId, ledger.noteId(1, kPitch));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_closes_ons_started_in_same_interval_095902() {
+  // session_20260819_095902 pitch 12 hs=336 n=3 a=1: covering 328-432 (5242);
+  // ended 240-287 (5218) and 288-327 (5224). mmevt lists On@328 before Off@327.
+  // Global two-pass applies Off@287/@327 first (orphan) then leaves all three Ons.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 232;
+  constexpr uint32_t kOccupy = 336;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kEndedFirst = 5218;
+  constexpr NoteId kEndedSecond = 5224;
+  constexpr NoteId kCovering = 5242;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent on240 = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  on240.noteId = kEndedFirst;
+  MidiEvent off287 = MidiEvent::NoteOff(287, 1, kPitch, 0);
+  MidiEvent on288 = MidiEvent::NoteOn(288, 1, kPitch, 100);
+  on288.noteId = kEndedSecond;
+  MidiEvent on328 = MidiEvent::NoteOn(328, 1, kPitch, 100);
+  on328.noteId = kCovering;
+  MidiEvent off327 = MidiEvent::NoteOff(327, 1, kPitch, 0);
+  MidiEvent off432 = MidiEvent::NoteOff(432, 1, kPitch, 0);
+  MidiEvent on480 = MidiEvent::NoteOn(480, 1, kPitch, 100);
+  on480.noteId = 5226;
+  MidiEventVec events;
+  events.push_back(on240);
+  events.push_back(off287);
+  events.push_back(on288);
+  events.push_back(on328);
+  events.push_back(off327);
+  events.push_back(off432);
+  events.push_back(on480);
+
+  ActiveNoteLedger ledger;
+  TEST_ASSERT_TRUE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCovering));
+  TEST_ASSERT_FALSE(occupyIds.contains(kEndedFirst));
+  TEST_ASSERT_FALSE(occupyIds.contains(kEndedSecond));
+  TEST_ASSERT_EQUAL_UINT32(kCovering, ledger.noteId(1, kPitch));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902() {
+  // Catch-up does not advance lastTick; clock walks the same (lastTick, occupy].
+  // Duplicate On of 5242 must not stack a second Entry (101319 led > n).
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 232;
+  constexpr uint32_t kOccupy = 336;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kEndedFirst = 5218;
+  constexpr NoteId kEndedSecond = 5224;
+  constexpr NoteId kCovering = 5242;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent on240 = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  on240.noteId = kEndedFirst;
+  MidiEvent off287 = MidiEvent::NoteOff(287, 1, kPitch, 0);
+  MidiEvent on288 = MidiEvent::NoteOn(288, 1, kPitch, 100);
+  on288.noteId = kEndedSecond;
+  MidiEvent off327 = MidiEvent::NoteOff(327, 1, kPitch, 0);
+  MidiEvent on328 = MidiEvent::NoteOn(328, 1, kPitch, 100);
+  on328.noteId = kCovering;
+  MidiEventVec events;
+  events.push_back(on240);
+  events.push_back(on288);
+  events.push_back(on328);
+  events.push_back(off287);
+  events.push_back(off327);
+
+  ActiveNoteLedger ledger;
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  const MidiEvent clockOrder[] = {on240, off287, on288, off327, on328};
+  for (const MidiEvent& evt : clockOrder) {
+    TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, evt));
+  }
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCovering));
+  TEST_ASSERT_FALSE(occupyIds.contains(kEndedFirst));
+  TEST_ASSERT_FALSE(occupyIds.contains(kEndedSecond));
+  uint8_t seen = 0;
+  ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    if (channel == 1 && note == kPitch) {
+      ++seen;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT8(1, seen);
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_clock_duplicate_off_closes_both_pre_abut_103234() {
+  // session_20260819_103234 L6674 pitch 24 hs=120 n=3 a=2: two Off@71, second skipped.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 24;
+  constexpr NoteId kLeftOpen = 5568;
+  constexpr NoteId kNewerPreOff = 5570;
+  constexpr NoteId kAbut = 5575;
+  constexpr NoteId kNested = 5583;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+
+  MidiEvent on24 = MidiEvent::NoteOn(24, 1, kPitch, 100);
+  on24.noteId = kLeftOpen;
+  MidiEvent on48 = MidiEvent::NoteOn(48, 1, kPitch, 100);
+  on48.noteId = kNewerPreOff;
+  MidiEvent off71a = MidiEvent::NoteOff(71, 1, kPitch, 0);
+  MidiEvent off71b = MidiEvent::NoteOff(71, 1, kPitch, 0);
+  MidiEvent on72 = MidiEvent::NoteOn(72, 1, kPitch, 100);
+  on72.noteId = kAbut;
+  MidiEvent on120 = MidiEvent::NoteOn(120, 1, kPitch, 100);
+  on120.noteId = kNested;
+
+  struct DirectPlaybackStreamCtx {
+    MidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events.push_back(on24);
+  streamCtx.events.push_back(on48);
+  streamCtx.events.push_back(off71a);
+  streamCtx.events.push_back(off71b);
+  streamCtx.events.push_back(on72);
+  streamCtx.events.push_back(on120);
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+
+  struct LedgerSendLog {
+    ActiveNoteLedger ledger;
+    unsigned midiOffs = 0;
+  };
+  LedgerSendLog log;
+  auto send = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+    if (evt.isNoteOff()) {
+      ++state->midiOffs;
+    }
+  };
+  auto applyLedgerOnly = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+  uint16_t cursor = 0;
+  PlaybackTickFrame frame{&playbackContext, 120U, 0U, false};
+  PlaybackCursorAdvanceState advance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                          send, &log, 0, nullptr, nullptr, 1, applyLedgerOnly));
+  TEST_ASSERT_EQUAL_UINT32(1, log.midiOffs);
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, log.ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kAbut));
+  TEST_ASSERT_TRUE(occupyIds.contains(kNested));
+  TEST_ASSERT_FALSE(occupyIds.contains(kLeftOpen));
+  TEST_ASSERT_FALSE(occupyIds.contains(kNewerPreOff));
+}
+
+void test_occupy_leftover_off_at_exclusive_end_closes_wrap_head_not_ghost_104654() {
+  // session_20260819_104654 L2668: Off@96 LIFO-closes wrap-head 5772; 5701 stays.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kGhost = 5701;
+  constexpr NoteId kWrapHead = 5772;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, kPitch, kGhost, 96, 100);
+  ledger.noteOn(1, kPitch, kWrapHead, 0, 100);
+  MidiEvent off96 = MidiEvent::NoteOff(96, 1, kPitch, 0);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, off96));
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kGhost));
+  TEST_ASSERT_FALSE(occupyIds.contains(kWrapHead));
+}
+
+void test_erase_open_notes_missing_from_committed_note_ons_drops_5701_keeps_5772() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kGhost = 5701;
+  constexpr NoteId kWrapHead = 5772;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, kPitch, kGhost, 96, 100);
+  ledger.noteOn(1, kPitch, kWrapHead, 0, 100);
+
+  MidiEvent onWrap = MidiEvent::NoteOn(0, 1, kPitch, 100);
+  onWrap.noteId = kWrapHead;
+  MidiEvent off96 = MidiEvent::NoteOff(96, 1, kPitch, 0);
+  MidiEvent committed[2] = {onWrap, off96};
+  ledger.eraseOpenNotesMissingFromCommittedNoteOns(committed, 2);
+
+  OverlapNoteIdSet afterErase;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, afterErase);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(afterErase.size()));
+  TEST_ASSERT_TRUE(afterErase.contains(kWrapHead));
+  TEST_ASSERT_FALSE(afterErase.contains(kGhost));
+
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, off96));
+  OverlapNoteIdSet afterOff;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, afterOff);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(afterOff.size()));
+}
+
+void test_occupy_source_hold_drops_span_without_merged_note_on() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = kLoopLenTicks;
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  MidiEvent offB = MidiEvent::NoteOff(168, 1, kPitch, 0);
+  merged.mergedEvents.push_back(onB);
+  merged.mergedEvents.push_back(offB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+  TEST_ASSERT_FALSE(sourceIds.contains(kIdA));
+}
+
+void test_occupy_source_hold_retains_span_with_merged_note_on() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = kLoopLenTicks;
+  MidiEvent onA = MidiEvent::NoteOn(0, 1, kPitch, 100);
+  onA.noteId = kIdA;
+  MidiEvent offA = MidiEvent::NoteOff(743, 1, kPitch, 0);
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  MidiEvent offB = MidiEvent::NoteOff(168, 1, kPitch, 0);
+  merged.mergedEvents.push_back(onA);
+  merged.mergedEvents.push_back(offA);
+  merged.mergedEvents.push_back(onB);
+  merged.mergedEvents.push_back(offB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdA));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+}
+
+void test_occupy_source_hold_partial_window_does_not_drop_span() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.windowStartTick = 6912;
+  merged.windowLengthTicks = 1536;
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  merged.mergedEvents.push_back(onB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdA));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+}
+
+void test_occupy_source_hold_stale_revision_does_not_drop_span() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.playbackRevision = 9;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.builtFromRevision = 8;  // stale w.r.t. loop.playbackRevision
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = kLoopLenTicks;
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  merged.mergedEvents.push_back(onB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdA));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+}
+
+void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 240;
+  constexpr uint32_t kOccupy = 240;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOldId = 100;
+  constexpr NoteId kNewId = 200;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent oldOn = MidiEvent::NoteOn(192, 1, kPitch, 100);
+  oldOn.noteId = kOldId;
+  MidiEvent oldOff = MidiEvent::NoteOff(240, 1, kPitch, 0);
+  MidiEvent newOn = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  newOn.noteId = kNewId;
+  MidiEvent newOff = MidiEvent::NoteOff(288, 1, kPitch, 0);
+  MidiEventVec events;
+  events.push_back(oldOn);
+  events.push_back(newOn);
+  events.push_back(oldOff);
+  events.push_back(newOff);
+
+  TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+  ActiveNoteLedger ledger;
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, kPitch));
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
+void test_occupy_ledger_catchup_skips_wrap_crossing() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 760;
+  constexpr uint32_t kOccupy = 10;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kOnAtZeroId = 12;
+  seedLongSourceNote(loop, kOnAtZeroId, 0, 200, kPitch, kLoopLenTicks);
+  loop.openOverdubSession(0);
+  loop.armOverdubWrapAfterLeavingStart(1);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kLastTick, kOccupy));
+  TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
+
+  MidiEventVec committedOnly;
+  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  ActiveNoteLedger ledger;
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(loop.captureActive());
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -737,7 +2262,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_consumes_existing_source_view_overlap);
   RUN_TEST(test_overdub_consumes_source_view_when_hold_ids_incomplete);
   RUN_TEST(test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop);
+  RUN_TEST(test_note_off_skips_hold_fill_when_source_view_covers_loop);
   RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
+  RUN_TEST(test_consume_attribution_counts_late_note_for_jit_ahead_candidate);
+  RUN_TEST(test_consume_attribution_counts_scan_only_for_id_absent_candidate);
+  RUN_TEST(test_consume_id_resolution_norow_repaired_by_hold_fill);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);
@@ -756,6 +2285,35 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_long_source_wrap_loop_4000);
   RUN_TEST(test_pending_hide_long_source_wrap_loop_4100);
   RUN_TEST(test_pending_wrap_crossing_incoming_consumes_head_occupied_lane);
+  RUN_TEST(test_121141_three_point_resolver_seal_rebuild_handoff);
   RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
+  RUN_TEST(test_prepared_present_note_ids_match_source_hold_participants);
+  RUN_TEST(test_prepared_present_note_ids_miss_does_not_fill_source_window);
+  RUN_TEST(test_prepared_present_note_ids_filters_pitch_and_exclusive_end);
+  RUN_TEST(test_note_on_occupy_reads_ledger_note_id);
+  RUN_TEST(test_note_on_occupy_empty_when_ledger_inactive);
+  RUN_TEST(test_wrap_committed_note_at_s_occupies_ledger_same_tick);
+  RUN_TEST(test_wrap_pass_events_at_s_occupy_without_merged_rebuild);
+  RUN_TEST(test_wrap_pass_events_at_loop_head_occupy_without_merged_rebuild);
+  RUN_TEST(test_wrap_pass_on_at_96_occupies_after_s_interval);
+  RUN_TEST(test_wrap_pass_spanning_on_at_0_occupies_at_96);
+  RUN_TEST(test_overdub_stop_still_removes_pairs_shorter_than_min_length);
+  RUN_TEST(test_note_on_occupy_collects_every_open_identity);
+  RUN_TEST(test_capture_off_does_not_clear_committed_occupy);
+  RUN_TEST(test_capture_on_does_not_occupy_empty_source_view);
+  RUN_TEST(test_occupy_ledger_catchup_on_at_192_after_last_tick_184);
+  RUN_TEST(test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick);
+  RUN_TEST(test_occupy_ledger_catchup_same_tick_off_before_on_replaces);
+  RUN_TEST(test_occupy_ledger_catchup_closes_ons_started_in_same_interval_095902);
+  RUN_TEST(test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902);
+  RUN_TEST(test_occupy_clock_duplicate_off_closes_both_pre_abut_103234);
+  RUN_TEST(test_occupy_leftover_off_at_exclusive_end_closes_wrap_head_not_ghost_104654);
+  RUN_TEST(test_erase_open_notes_missing_from_committed_note_ons_drops_5701_keeps_5772);
+  RUN_TEST(test_occupy_source_hold_drops_span_without_merged_note_on);
+  RUN_TEST(test_occupy_source_hold_retains_span_with_merged_note_on);
+  RUN_TEST(test_occupy_source_hold_partial_window_does_not_drop_span);
+  RUN_TEST(test_occupy_source_hold_stale_revision_does_not_drop_span);
+  RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
+  RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();
 }

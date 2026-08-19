@@ -78,6 +78,8 @@ Use the artifact that owns the resulting truth.
 | Accepted normative requirement                            | `openspec/specs/`                                                                  |
 | Architecture / ownership                                  | [`docs/Authority/`](README.md) + [DECISION_LOG.md](../DECISION_LOG.md)             |
 | Current behavior / how-to                                 | [`docs/Guides/`](../Guides/)                                                       |
+| Overdub overlap-resolve evaluations                       | [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — update in the same change as resolver / pending / seal / source-view covering identities |
+| Overdub ledger evaluations                                | [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — update in the same change as ledger / occupy catch-up / playback-order |
 | Implementation transition                                 | OpenSpec design/tasks or [`docs/Plans/`](../Plans/)                                |
 | Small behavioral change without a dedicated authority doc | Appropriate existing guide/authority document, or a concise retained change record |
 | Explicit future decision                                  | [DECISION_LOG.md](../DECISION_LOG.md), plan, or GitHub PARKED item ([GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md)) |
@@ -237,6 +239,7 @@ Before closing a logic/functionality task:
 [ ] PROJECT_STATE updated
 [ ] CURRENT_WORK updated
 [ ] DELIVERABLE_TRACKING updated if shipped/scope changed
+[ ] Overdub overlap-resolve / ledger evaluation catalogs updated if those owners changed
 [ ] GitHub issue/sub-issues ready to close
 ```
 

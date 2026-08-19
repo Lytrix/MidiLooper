@@ -32,7 +32,7 @@ Hold fill merges **this pitch** from the **16-bar hold window** (`resolveWindow(
 
 `ensureOverdubSourceNotesForHold` always resolves the 16-bar window around `holdPhaseTick` with `resolveWindow(passes)` (not prepared — a 1-note idle slice must not block 224), reconstructs, and merges **this pitch** only. Skips noteIds already in the view.
 
-- **Note-on** (`snapshotOverlapHoldCandidates`): `soundingAtHoldOnly=true` so same-start / sounding notes outside the enter window are collected, without merging ahead notes into the view.
+- **Note-on** (`snapshotOverlapHoldCandidates`): `presentAtHoldOnly=true` so same-start / sounding notes outside the enter window are collected, without merging ahead notes into the view.
 - **Note-off:** full pitch merge. Newly merged overlapping notes are unioned into `selected` even when hold IDs are empty. That is hold-window JIT, not a full-view scan.
 
 Do **not** merge all pitches. Do **not** dump a 64-bar loop into `overdubSourceViewNotes_`.

@@ -13,7 +13,7 @@
 | **Setting** | **`noteMinLengthTicks`** (threshold) + **`noteMinLengthRemoveEnabled`** (on/off) |
 | **Defaults** | **12 ticks** + **enabled** |
 | **Disable** | Set **`noteMinLengthRemoveEnabled = false`** — hot stop skips short-pair removal (flams/grace preserved) |
-| **When** | **Hot stop** (`sealCapture` on record and overdub) |
+| **When** | **Hot stop** (`sealCapture` on record and overdub **stop**; not `CommitReason::OverdubWrap`) |
 | **What** | Remove **completed pairs** (on+off) with linear span **&lt; `noteMinLengthTicks`** |
 | **Not** | NOTE_EDIT overlap floor (32nd D16); not macro **`noteEditPass`**; not idle-only v1 |
 
@@ -67,6 +67,10 @@ flushPendingNotesIntoCapture (before commit)
 ```
 
 Each overdub pass is sealed independently; record and earlier overdub passes are untouched (undo-safe).
+
+### Overdub wrap (`sealCapture` on `capture.store`)
+
+`CommitReason::OverdubWrap` still runs `finalizeWrapWindowOnStore` + `verifyCaptureHotStop`. It does **not** run `removePairsShorterThanNoteMinLength` — Q16 is hot stop only ([`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md)).
 
 ---
 

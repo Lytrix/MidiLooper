@@ -188,6 +188,13 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.persistSaveMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateOnMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateOnCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateOffMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateOffCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateClkCount);
+  TEST_ASSERT_TRUE(after.lateOneShotArmed);
 }
 
 void test_loop_remainder_spans_accumulate_independently() {
@@ -212,6 +219,90 @@ void test_idle_maint_child_rem_is_callable() {
   RuntimeTimingTelemetry::recordIdleMaintChildRem(2, 0);
 }
 
+void test_note_send_within_tick_is_on_time() {
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 2604);
+  RuntimeTimingTelemetry::recordNoteSendLateness(true, 1100, 8);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOnMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOnCount);
+  TEST_ASSERT_FALSE(snap.pendingLateEvent);
+  TEST_ASSERT_TRUE(snap.lateOneShotArmed);
+}
+
+void test_note_send_after_next_tick_is_late_and_queues_one_shot() {
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 2604);
+  RuntimeTimingTelemetry::recordNoteSendLateness(true, 1000 + 2604 + 5000, 16);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(5000, snap.lateOnMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.lateOnCount);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOffCount);
+  TEST_ASSERT_TRUE(snap.pendingLateEvent);
+  TEST_ASSERT_FALSE(snap.lateOneShotArmed);
+}
+
+void test_first_late_one_shot_does_not_repeat_until_window_emit() {
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 2604);
+  RuntimeTimingTelemetry::recordNoteSendLateness(false, 1000 + 2604 + 100, 24);
+  TEST_ASSERT_TRUE(RuntimeTimingTelemetry::peek().pendingLateEvent);
+  RuntimeTimingTelemetry::emitPendingDeadlineOneShots();
+  TEST_ASSERT_FALSE(RuntimeTimingTelemetry::peek().pendingLateEvent);
+
+  RuntimeTimingTelemetry::recordNoteSendLateness(false, 1000 + 2604 + 200, 32);
+  TEST_ASSERT_FALSE(RuntimeTimingTelemetry::peek().pendingLateEvent);
+  TEST_ASSERT_EQUAL_UINT32(2, RuntimeTimingTelemetry::peek().lateOffCount);
+  TEST_ASSERT_EQUAL_UINT32(200, RuntimeTimingTelemetry::peek().lateOffMaxUs);
+
+  TEST_ASSERT_FALSE(RuntimeTimingTelemetry::maybeEmit(1));
+  TEST_ASSERT_TRUE(RuntimeTimingTelemetry::maybeEmit(1 + RuntimeTimingTelemetry::kEmitIntervalUs));
+  const auto after = RuntimeTimingTelemetry::peek(1 + RuntimeTimingTelemetry::kEmitIntervalUs);
+  TEST_ASSERT_TRUE(after.lateOneShotArmed);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateOffCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.lateOffMaxUs);
+}
+
+void test_outgoing_clock_late_only_past_one_tick_window() {
+  RuntimeTimingTelemetry::recordOutgoingClockSend(1000, 20833, 2604, 0);
+  RuntimeTimingTelemetry::recordOutgoingClockSend(1000 + 20833 + 100, 20833, 2604, 8);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().lateClkCount);
+
+  RuntimeTimingTelemetry::recordOutgoingClockSend(1000 + 2 * 20833 + 5000, 20833, 2604, 16);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(5000 - 2604, snap.lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.lateClkCount);
+  TEST_ASSERT_TRUE(snap.pendingLateEvent);
+}
+
+void test_on_off_clock_lateness_are_independent() {
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(0, 2604);
+  RuntimeTimingTelemetry::recordNoteSendLateness(true, 2604 + 10, 1);
+  RuntimeTimingTelemetry::recordNoteSendLateness(false, 100, 2);
+  RuntimeTimingTelemetry::recordOutgoingClockSend(0, 20833, 2604, 0);
+  RuntimeTimingTelemetry::recordOutgoingClockSend(20833 + 2604 + 7, 20833, 2604, 8);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(10, snap.lateOnMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.lateOnCount);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOffMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOffCount);
+  TEST_ASSERT_EQUAL_UINT32(7, snap.lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.lateClkCount);
+}
+
+void test_playback_rebuild_queues_one_shot_without_lateness() {
+  RuntimeTimingTelemetry::recordPlaybackRebuild(12345, 192, 384, 9);
+  TEST_ASSERT_TRUE(RuntimeTimingTelemetry::peek().pendingPlaybackRebuild);
+  RuntimeTimingTelemetry::emitPendingDeadlineOneShots();
+  TEST_ASSERT_FALSE(RuntimeTimingTelemetry::peek().pendingPlaybackRebuild);
+}
+
+void test_reset_playback_deadline_cadence_clears_late_clock_baseline() {
+  RuntimeTimingTelemetry::recordOutgoingClockSend(1000, 20833, 2604, 0);
+  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
+  RuntimeTimingTelemetry::recordOutgoingClockSend(100000, 20833, 2604, 0);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().lateClkCount);
+}
+
 void test_emit_interval_constant() {
   TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingTelemetry::kEmitIntervalUs);
   TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingTelemetry::kObservationalSoftCeilingUs);
@@ -233,5 +324,12 @@ int main(int argc, char** argv) {
   RUN_TEST(test_loop_remainder_spans_accumulate_independently);
   RUN_TEST(test_idle_maint_child_rem_is_callable);
   RUN_TEST(test_emit_interval_constant);
+  RUN_TEST(test_note_send_within_tick_is_on_time);
+  RUN_TEST(test_note_send_after_next_tick_is_late_and_queues_one_shot);
+  RUN_TEST(test_first_late_one_shot_does_not_repeat_until_window_emit);
+  RUN_TEST(test_outgoing_clock_late_only_past_one_tick_window);
+  RUN_TEST(test_on_off_clock_lateness_are_independent);
+  RUN_TEST(test_playback_rebuild_queues_one_shot_without_lateness);
+  RUN_TEST(test_reset_playback_deadline_cadence_clears_late_clock_baseline);
   return UNITY_END();
 }

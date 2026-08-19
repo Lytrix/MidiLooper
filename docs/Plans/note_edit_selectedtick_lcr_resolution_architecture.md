@@ -1,11 +1,12 @@
 # NOTE_EDIT around `selectedTick` — LoopContentResolution consume
 
-**Status:** Architecture **PASS** — DEC-037 amendment 2026-08-16. Implementation stages **PASS WITH AMENDMENTS** (this revision); firmware not authorized.  
-**Date:** 2026-08-16  
+**Status:** Architecture **PASS** — DEC-037 amendment 2026-08-16. Overlap retarget **2026-08-17**: participants vs selected/mover LinearSpan (overdub sibling), not a window around `selectedTick`. Implementation stages **PASS WITH AMENDMENTS**; firmware not authorized.  
+**Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** architecture  
 **Work identity:** [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md) — separate from LCR 6.x and wrap-move persist  
+**Sibling (overlap participants):** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling  
 **Parent:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) Editor consumer; [6E](loop_content_resolution_overdub_state_evaluation_refinement.md) overdub `resolveState(tick)` consume  
-**Does not authorize:** firmware; deleting `visualCache`; deleting `rematerializeEditView`; putting LCR construct on NOTE_EDIT open or fader; a new `*View` / `*Manager`; replacing `NoteGeometryResolver`; redesigning `EditSession.store` during this consumer migration
+**Does not authorize:** firmware; deleting `visualCache`; deleting `rematerializeEditView`; putting LCR construct on NOTE_EDIT open or fader; a new `*View` / `*Manager`; replacing `NoteGeometryResolver`; redesigning `EditSession.store` during this consumer migration; hydrate Stages 1–5 from “LCR × interval around `selectedTick`”
 
 ---
 
@@ -18,7 +19,7 @@
 | **visualCache on analyze miss** | Legacy compatibility path with today’s semantics. Not a second analysis authority. |
 | **Participating notes** | After mover stop + one `DisplayManager::update`, find overlaps vs the **current** mover span. Within one Move/Pitch action, that set updates: leavers `RestoreNote` (non-participant); new intersections join Active. Not DEC-030 sticky overlap end-of-participation (`Ended` on deselect). |
 | **Audition** | All settled this-session overlay rows sound when `currentTick` passes them — not only the currently highlighted note. Same as wrap-1 notes still playing during wrap 2. |
-| **Next select / overlap** | Settled overlay is the session delta. Next query is prepared LCR ∪ overlay, the same consume shape as overdub `resolveState` after 6D.4 publish. Do not insert live geometry into LCR (Path B). |
+| **Next select / overlap** | Settled overlay is the session delta. Next overlap query is the same participant class as overdub (selected/mover LinearSpan vs canonical present notes), union overlay after 6D.4-style publish. Do not insert live geometry into LCR (Path B). Select stays a `selectedTick` neighborhood. |
 | **Session store** | Not required for that audition. Overlay those NoteIds onto the existing playback window. Keep the store only as neighborhood apply scratch until identity apply is proven. |
 | **Display compose** | Same as overdub: committed `visualCache` + this-session overlay. Session is overlay state (`NoteEditCurrentState` neighborhood rows), not a second copy of the loop. |
 | **Decision vehicle** | DEC-037 amendment. No new DEC. |
@@ -143,20 +144,21 @@ openNoteEditSession
 
 On a **16-bar loop with ~1000 notes**, that list is the whole loop. Piano-roll window size (`kMaxDetailedWindowBars` = 16) does not shrink it. Every select, move, length, and overlap analyze pays O(notes) reconstruct and O(notes) pairwise scope.
 
-Overdub already left that model. Entry copies a prepared window or a clean cache (DEC-036 3b). Overlap does **not** rematerialize: `PendingNote.overlapNoteIds` + `appendNotesForIds`, geometry `[S, E)`, Shorten/Hide. 6E pins the next step: consume prepared `resolveState(tick)` (pitch-filtered), not a premapped note map.
+Overdub already left that model. Entry copies a prepared window or a clean cache (DEC-036 3b). Overlap does **not** rematerialize: `PendingNote.overlapNoteIds` + `appendNotesForIds`, geometry `[S, E)`, Shorten/Hide. Participant discovery’s next step is notes present vs that hold interval (sibling: [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)), not a premapped note map and not a 16-bar reconstruct.
 
-NOTE_EDIT needs the same query shape. The editor origin is `selectedTick`, not `currentTick`.
+NOTE_EDIT overlap uses that **same participant query**. The query interval is the **selected / mover LinearSpan**, not a window around `selectedTick`. `selectedTick` remains the Select-encoder origin only.
 
 ---
 
 ## Mapping (no new domain nouns)
 
-| Overdub (shipped / 6E pin) | NOTE_EDIT (this proposal) |
-|----------------------------|---------------------------|
-| `currentTick` / `playheadPhaseTick` | `selectedTick` (bracket) |
-| Incoming MIDI note `[S, E)` | Selected note(s) span `[start, end)` |
-| Prepared `resolveState(tick)` | Overlap sounding-at-S only. **Not** the Select contract |
-| Prepared `resolveWindow` around playhead | Overlap ons in `[S, E)`. Identities / compact records, not a reconstructed `DisplayNote` vector |
+| Overdub (participant contract) | NOTE_EDIT (this proposal) |
+|--------------------------------|---------------------------|
+| Incoming hold `[S, E)` | Selected / mover LinearSpan `[start, end)` |
+| Notes present at S / overlapping `[S, E)` | Same participant identity (`NoteId` + LinearSpan) vs that span |
+| Playhead tick is **not** the overlap origin | `selectedTick` is **not** the overlap origin (Select only) |
+| Prepared present-at-S / span query (Phase 0b: not `PresentNote` alone) | Same. **Not** the Select contract |
+| 16-bar `resolveWindow` around playhead (withdrawn as USB fill) | Geometric interval around `selectedTick` (withdrawn as overlap fill) |
 | `tickEvents` / `spanBoundaries` | Select neighborhood navigation around `selectedTick` |
 | `appendNoteEvents(noteId)` | Same — mover and overlap targets |
 | `overlapNoteIds` + `appendNotesForIds` | Same set + lookup on resolved candidates |
@@ -166,9 +168,11 @@ NOTE_EDIT needs the same query shape. The editor origin is `selectedTick`, not `
 | 3b `visualCache.notes` copy fallback | Prepared **miss** only: legacy compatibility with today’s semantics, not a second analysis authority |
 | `NoteGeometryResolver` not the overdub owner | `NoteGeometryResolver` stays live overlap Resolution |
 
+Do **not** map `currentTick` → `selectedTick` as the overlap origin. That is the 16-bar analog.
+
 DEC-037 already drew the Editor as a `resolveWindow` / `resolveNotes` consumer. It was never wired. Display 6A and overdub 6C/6E were. This proposal is that missing consumer, not a second resolution owner.
 
-Rejected names: `EditSourceView`, `NoteEditSourceView`, `EditorWindowCache`, `LoopContentResolver`. Working set is a **Runtime Request**: prepared LCR × interval around `selectedTick`.
+Rejected names: `EditSourceView`, `NoteEditSourceView`, `EditorWindowCache`, `LoopContentResolver`. Overlap working set is the **participant query vs selected/mover LinearSpan** (same class as overdub). Select working set is a **Runtime Request**: prepared LCR × neighborhood around `selectedTick`.
 
 ---
 
@@ -204,9 +208,9 @@ Passes / EditPass                             Passes / EditPass
                                                 │
                               ┌─────────────────┼─────────────────┐
                               ▼                 ▼                 ▼
-                         tickEvents        resolveWindow     appendNoteEvents
-                         spanBoundaries    resolveState(S)   (by NoteId)
-                         (Select nav)      (overlap find)    (identity geometry)
+                         tickEvents        participant query  appendNoteEvents
+                         spanBoundaries    vs selected/mover  (by NoteId)
+                         (Select nav)      LinearSpan         (identity geometry)
                               │                 │                 │
                               └────────┬────────┴────────┬────────┘
                                        ▼                 ▼
@@ -218,12 +222,12 @@ Passes / EditPass                             Passes / EditPass
 ```
 
 ```text
-OVERDUB (6E Path A)                         NOTE_EDIT (this proposal)
+OVERDUB (participant query)                 NOTE_EDIT (this proposal)
 
 prepared LCR (history + 6D.4 delta)         prepared LCR ∪ settled currentState
-  → resolveState(currentTick)                 → Select: tickEvents neighborhood
-  → pitch-filter sounding                     → Overlap: indexed [S, E) identities
-  → incoming [S, E)                           → selected note(s) [start, end)
+  → notes present vs hold [S, E)              → Select: tickEvents neighborhood around selectedTick
+  → pitch-filter participants                 → Overlap: same participant query vs selected/mover LinearSpan
+  → incoming [S, E)                           → not a window around selectedTick
   → Shorten/Hide                              → same geometry
   → wrap seal: OverdubPass + companions       → settle: overlay queryable
   → stop: one U:                              → close: saveNoteEditPass + E:
@@ -275,7 +279,7 @@ CurrentState         mutable session delta
 | Question | Answer |
 |----------|--------|
 | **Ownership change?** | **NO** new owner. LCR stays producer of prepared derived state (DEC-037). `NoteGeometryResolver` stays live NOTE_EDIT overlap Resolution. `EditManager` stays session / `selectedTick` / current-state owner. `Loop` stays pass + visual-cache owner. `DisplayManager` stays draw. |
-| **State transition change?** | **NO.** NOTE_EDIT still opens, selects, applies, deselects, commits `EditPass`, session-gates **E:**. What changes is the **analyze interval**: `DerivedViews` v1 `[0, loopLength)` → interval around `selectedTick` / selected span. |
+| **State transition change?** | **NO.** NOTE_EDIT still opens, selects, applies, deselects, commits `EditPass`, session-gates **E:**. What changes is the **analyze query**: `DerivedViews` v1 `[0, loopLength)` pairwise → participants vs selected/mover LinearSpan (same class as overdub). Select stays a `selectedTick` neighborhood; that is not the overlap interval. |
 | **Reuse** | YES — Select: `tickEvents` / `spanBoundaries`. Overlap: `tryResolvePreparedState` / indexed window identities / `appendNoteEvents` / `OverlapCandidateLookup::appendNotesForIds` / `existingNoteOverlapsIncomingHold`. Do not add a parallel note map. Do not define Select as `resolveState`. |
 | **Formal trigger?** | DerivedViews analysis interval is a documented architecture change. Treat as a **DEC-037 amendment** (Editor consumer), not a new Manager. New DEC only if session store is removed or `NoteGeometryResolver` loses overlap ownership. |
 
@@ -287,7 +291,7 @@ CurrentState         mutable session delta
 
 1. **One resolution owner.** Committed effective MIDI at a tick or window comes from `LoopContentResolution`. Geometry actions (Hide / Shorten / Restore / Move) still come from `NoteGeometryResolver` + DEC-031/032.
 2. **Consume, do not construct, on the gesture path.** NOTE_EDIT open, encoder select, and fader geometry may only consume already-prepared LCR. Miss → **legacy compatibility path** (today’s `visualCache` / windowed gather semantics). Not a second analysis authority. Never `ensure*` rebuild on that stack. Same as OpenSpec 6.0 / 6.5.
-3. **Select and overlap are different query contracts.** Select is a bounded onset/navigation query (`tickEvents` / `spanBoundaries` around `selectedTick`). Overlap is identity-addressed hold intersection. `resolveState` is sounding-at-tick (overlap at S). It is not the definition of Select.
+3. **Select and overlap are different query contracts.** Select is a bounded onset/navigation query (`tickEvents` / `spanBoundaries` around `selectedTick`). Overlap is the same participant class as overdub: notes whose LinearSpan intersects the selected/mover span. Present-at-S (`resolveState`) is the overdub ON-at-S analog, not the definition of Select, and not a window around `selectedTick`.
 4. **Selected note(s) are the incoming hold.** Overlap candidates are same-pitch notes whose linearized `[start, end)` intersects the selected span. Empty candidate set does not gather or reconstruct (overdub Gate 3).
 5. **Prepared-hit overlap lookup is indexed → bounded identities → identity geometry.** It must not materialize, `reconstructDisplayNotes`, walk `visualCache`, walk `EditSession.store`, or per-candidate full-store scan. `resolveWindow` must not return a reconstructed whole-loop `DisplayNote` vector merely because a consumer used to expect one.
 6. **Lookup is identity-addressed and identity-bounded.** `appendNoteEvents(noteId)` cost is O(events belonging to that `NoteId`), not O(total loop events) per id. Do not `findLinearNoteSpanForNoteId` per id on a full flatten (overdub Gate 4).
@@ -316,9 +320,9 @@ If the fader moves again inside the same Move/Pitch action, repeat STOP+find aga
 
 ## Query shapes
 
-### Select (bracket) — navigation contract, not sounding-state
+### Select (bracket) — navigation contract, not present-at-S
 
-`resolveState(selectedTick)` is sounding-at-tick. That is the overlap query at S. It is **not** Select.
+`resolveState(selectedTick)` is present-at-tick. That can answer “who is present at the bracket tick.” It is **not** Select, and it is **not** the overlap participant query (overlap uses the selected/mover LinearSpan).
 
 ```text
 selectedTick
@@ -346,13 +350,16 @@ Today `SelectNavigation::buildSelectNavigationSlots` walks every display note fo
 ### Overlap (selected note as hold) — identity contract
 
 ```text
-selected note(s) N with span [S, E) at pitch P
-  → indexed query: sounding at S + ons in [S, E), pitch P
+selected note(s) N with LinearSpan [S, E) at pitch P
+  → same participant query as overdub vs that span
+     (not a geometric window around selectedTick)
   → bounded candidate NoteIds (exclude N)
   → appendNoteEvents / appendNotesForIds   // O(events of those ids)
   → existingNoteOverlapsIncomingHold
   → Shorten / Hide
 ```
+
+Phase 0b applies: emitted `PresentNote` lacks `endTick`; overlap needs LinearSpan (`NoteSpan` / `DisplayNote`). Wrap predicates are not proven equal. See [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §18.
 
 Prepared-hit overlap **must** perform: indexed query → bounded candidate enumeration → identity lookup.
 
@@ -565,6 +572,6 @@ DEC-037 amendment 2026-08-16. Architecture PASS. This revision records implement
 
 ## Verdict
 
-**Architecture: PASS.** NOTE_EDIT is an LCR consumer, not another materialization owner. `selectedTick` is the editor origin. No new DEC. No new representation.
+**Architecture: PASS** (overlap retarget 2026-08-17). NOTE_EDIT overlap is the same participant consumer as overdub, keyed by selected/mover LinearSpan. `selectedTick` is the Select origin only. No new DEC. No new representation.
 
-**Implementation plan: PASS WITH AMENDMENTS** (this revision). Firmware stays unauthorized until a stage is explicitly started from [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Wrap-move persist is parked. Prove select, overlap, fader, open, then audition as separate stages. Measure work shape, not only function-call absence.
+**Implementation plan: PASS WITH AMENDMENTS** (this revision). Firmware stays unauthorized until a stage is explicitly started from [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Do not start Stages 1–5 from “LCR × interval around `selectedTick`.” Wrap-move persist is parked. Prove select, overlap, fader, open, then audition as separate stages. Measure work shape, not only function-call absence.

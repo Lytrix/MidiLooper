@@ -535,6 +535,7 @@ void loop() {
 #endif
 
   // S0: observation-only timing telemetry emission (no scheduling decisions).
+  // maybeEmit drains pending first-late / rebuild one-shots, then the 5 s window.
   RuntimeTimingTelemetry::maybeEmit(micros());
 
   // Log memory every 60 seconds. Reports O(1) fields only: the external-pool free/used walk

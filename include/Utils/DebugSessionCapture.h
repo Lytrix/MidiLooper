@@ -105,10 +105,15 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
-/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. */
+/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. */
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
 /** S0 timing telemetry: DIAG,clockrate,<pulsesPerSecond> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
+/** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick> (Tier-A). */
+SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick);
+/** Playback gather rebuild: DIAG,playback_build,<durationUs>,<winStart>,<winLen>,<revision> (Tier-A). */
+SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
+                                 uint32_t windowLengthTicks, uint32_t revision);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);

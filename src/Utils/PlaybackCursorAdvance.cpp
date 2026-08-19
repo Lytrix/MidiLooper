@@ -6,7 +6,8 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
                                             const PlaybackEventStream& stream, PlaybackSendFn send,
                                             void* sendCtx, uint8_t playbackSlotIndex,
                                             PlaybackJamFilterFn jamFilter, void* jamCtx,
-                                            uint8_t trackMidiChannelForDedup) {
+                                            uint8_t trackMidiChannelForDedup,
+                                            PlaybackSendFn applyLedgerOnly) {
   if (cursorAdvance.cursor == nullptr || stream.eventAt == nullptr ||
       stream.eventPhase == nullptr || frame.playbackContext == nullptr ||
       stream.size == nullptr) {
@@ -63,6 +64,8 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
         lastSentChannel = effectiveCh;
         lastSentNote = note;
         lastSentType = evt.type;
+      } else if (applyLedgerOnly != nullptr) {
+        applyLedgerOnly(sendCtx, evt, playbackSlotIndex);
       }
     } else if (shouldSend) {
       send(sendCtx, evt, playbackSlotIndex);

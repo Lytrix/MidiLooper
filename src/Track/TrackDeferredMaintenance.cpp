@@ -242,16 +242,9 @@ TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
 #endif
 
 const char* contentResolutionDeviceGateDeferReason() {
-  if (StorageManager::hasPendingLoopSlotRestore()) {
-    return "restore";
-  }
-  if (StorageManager::hasPendingUndoSnapshotHydrate()) {
-    return "hydrate";
-  }
-  if (StorageManager::hasDeferredSaveWork()) {
-    return "save";
-  }
-  return nullptr;
+  return LoopContentResolution::deviceGateContentDeferReason(
+      StorageManager::hasPendingLoopSlotRestore(),
+      StorageManager::hasPendingUndoSnapshotHydrate());
 }
 
 }  // namespace
@@ -359,7 +352,7 @@ TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
 #if !defined(SESSION_CAPTURE)
   return;
 #else
-  if (LoopContentResolution::deviceGateFinished() || LoopContentResolution::deviceGateActive()) {
+  if (LoopContentResolution::deviceGateActive()) {
     return;
   }
   if (this != &trackManager.getSelectedTrack()) {
@@ -381,6 +374,15 @@ TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
     return;
   }
 #endif
+  if (LoopContentResolution::deviceGateFinished()) {
+    if (loop.loopLengthTicks == LoopContentResolution::deviceGateLoopLengthTicks()) {
+      return;
+    }
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "length");
+#endif
+    LoopContentResolution::deviceGateReset();
+  }
   LoopContentResolution::deviceGateBegin(loop.loopLengthTicks);
 #endif
 }
@@ -403,7 +405,22 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
     return;
   }
 #endif
-  if (!loop.hasCommittedPasses() || loop.visualCacheDirty || loop.loopLengthTicks == 0) {
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+#if defined(ARDUINO)
+    logContentResolutionDeviceGateOnce("reset", "dirty");
+#endif
+    LoopContentResolution::deviceGateReset();
+    return;
+  }
+  if (loop.visualCacheDirty) {
+    const LoopContentResolution::DeviceGateDirtyPolicy policy =
+        LoopContentResolution::deviceGateDirtyPolicy(true, loop.loopLengthTicks);
+    if (policy == LoopContentResolution::DeviceGateDirtyPolicy::Skip) {
+#if defined(ARDUINO)
+      logContentResolutionDeviceGateOnce("skip", "dirty");
+#endif
+      return;
+    }
 #if defined(ARDUINO)
     logContentResolutionDeviceGateOnce("reset", "dirty");
 #endif
@@ -656,6 +673,9 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       }
       maybeLogStoredNoteCount();
       maybeQueueContentResolutionDeviceGate();
+      if (!loop.visualCacheDirty) {
+        loop.prewarmOverdubSourceSpanCache();
+      }
     }
   }
 

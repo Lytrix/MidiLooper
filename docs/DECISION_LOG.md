@@ -14,6 +14,9 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; nested HITL MET [`095902`](../captures/session_20260819_095902.log); extra-open is catch-up stack RC |
+| [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
+| [DEC-040](#dec-040-skip-playingstoppedmuted-overdub-participant-hitl) | 2026-08-18 | Skip PLAYING/STOPPED/MUTED overdub participant HITL | Accepted |
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
 | [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) | 2026-08-15 | Overdub wrap commit at start-tick S; session-gated undo; one U: on stop | Accepted |
 | [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) | 2026-08-14 | LoopContentResolution parallel prototype; NOTE_EDIT hydrate and playback gather are separate work paths (amended 2026-08-16/17) | Accepted |
@@ -54,7 +57,137 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-040 -->
+<!-- Append new entries below (newest first). Next ID: DEC-043 -->
+
+## DEC-042 — Same-pitch active-note identity is a cardinality problem, not an Off-identity problem
+
+**Date:** 2026-08-19  
+**Status:** **Implemented.** Native shipped. Nested HITL **MET** [`095902`](../captures/session_20260819_095902.log) (`n=0 a=1` = 0). Extra-open is [`overdub_occupy_catchup_open_note_stack_bugfix.md`](Plans/overdub_occupy_catchup_open_note_stack_bugfix.md).  
+**Owner:** `ActiveNoteLedger` — `LoopPlaybackRuntime::ledger`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent`; `Track::snapshotOverlapHoldCandidates` / `collectOverdubNoteOnParticipantIds` read.  
+**Plan:** [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](Plans/overdub_occupy_active_note_ledger_cardinality_refinement.md)  
+**Investigation:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](Plans/overdub_occupy_unmatched_off_ledger_investigation.md)  
+**Parent:** [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) point 9  
+**Evidence:** [`090050`](../captures/session_20260819_090050.log) spans; [`092336`](../captures/session_20260819_092336.log) event-backed (`DIAG,lcr,mmevt`)
+
+**Context:** Occupy reported `n=0 a=1` at holds where the source view showed a note present. The
+proposed root cause was that committed NoteOffs carry no `noteId`, so an Off clears a lane it does
+not own — with a fix of stamping identity onto Offs. The device diagnostic disproves that framing.
+The proven geometry is **nested**: outer note `240–480` (id 4819) with `288–336` (id 4814) fully
+inside it, on one `(channel, pitch)`. `eq=1` on all 105 occupies and `b == a` on every mismatch, so
+the LCR prepared spans and the source view agree; only the ledger disagrees.
+
+**Decision:**
+
+1. **Off identity alone is rejected as the fix.** `ActiveNoteLedger::noteOn` overwrites the single
+   `Entry` unconditionally, so the outer note's identity is destroyed by the **inner NoteOn**,
+   before any Off. An identity-matched clear at `Off@336` compares 4814 against 4814, matches, and
+   still empties the lane. Stamping Offs cannot repair this geometry.
+2. **FIFO stamping stays rejected.** Untagged Off pairing in this repo is **LIFO**
+   (`appendCanonicalSpansFromMidiRange`, `LoopEventValidation` Pass 2,
+   `orderSamePitchNoteOffsForLifo`, `findLinearOffForNoteOnLifo`). LIFO pairs the proven nested
+   geometry correctly, so the pairing rule is not the defect either.
+3. **The defect is cardinality.** One `(channel, pitch)` can carry several **open NoteOns**.
+   Implemented: sparse open-NoteOn table (`kMaxOpenNotes = 128`). Occupy collects every open
+   identity via `forEachActive`. `noteId()` is newest-on-lane only (compatibility).
+4. **Rejected alternative:** having the ledger consult the derived canonical spans the source view
+   uses. It conflates "what is sounding" with "how source geometry is represented" and risks
+   derived-resolution work on a hot path.
+5. **Supersedes DEC-041 point 9.** The ledger is no longer one Entry per `(channel, pitch)`. It
+   does not Hide/Shorten stored overlap; it keeps every playback NoteOn open until NoteOff
+   **resolution**.
+6. **NoteOff resolution (design session):** known identity + found → exact remove; no identity →
+   LIFO on the lane; known identity + not found → orphan, **no** LIFO fallback. Do not stamp
+   capture Offs. `silenceSlotMidiOutput` sends one physical Off per unique `(channel, pitch)`;
+   `forEachActive` is not deduped. Overflow refuses the additional On (never evicts).
+
+**Design session must answer:** what an active entry means when 2+ identities are active on one
+lane; how committed notes get identities; how untagged committed Offs resolve to one of several
+active notes; how an Off crossing the loop boundary finds its note; how overdub notes participate;
+what `snapshotOverlapHoldCandidates` selects when several identities are active; whether the ledger
+needs all active notes or only those occupy consumes; and RAM1 cost on Teensy (`ActiveNoteLedger`
+is `16 × 128` entries today, and `longestActiveSpanBars` plus orphan-Off suppression in
+`applyPlaybackEvent` both depend on the current single-entry shape).
+
+**Does not change:** clock equal-phase Off before On (shipped); occupy staying a
+reader; `playMidiEvents` never called from occupy; capture never folded into `mergedMidiEvents`.
+
+**Validation:** observability only. `pio test -e native` 1359/1359;
+`test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12` pins the proven geometry and
+point 1. RAM1 unchanged (code 425852 / locals 4768).
+
+---
+
+## DEC-041 — Occupy present-at-S is JIT, not full-loop `lcr,mat`
+
+**Date:** 2026-08-18  
+**Status:** Accepted. Occupy-lookup firmware **shipped**. **Amended 2026-08-18:** `collectOverdubNoteOnParticipantIds` reads at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at `currentTick`. `LoopPlaybackRuntime::ledger` holds that state. `playCommittedLoopMidi` writes it via `applyPlaybackLedgerEvent` before `sendMidiEvent` may emit. Occupy **reads** it. Do not say “occupy = ledger.”  
+**Owner:** `Loop` / `LoopContentResolution` = `LoopPasses`. `LoopPlaybackRuntime::ledger` = state at `currentTick`. `playCommittedLoopMidi` writes. `sendMidiEvent` and occupy = readers.  
+**Plan:** [`overdub_present_at_tick_jit_architecture.md`](Plans/overdub_present_at_tick_jit_architecture.md)  
+**Implementation:** [`overdub_present_at_tick_jit_enhancement.md`](Plans/overdub_present_at_tick_jit_enhancement.md)  
+**Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype)  
+**Does not supersede:** DEC-037 6.0 (no cold LCR on the overdub button); DEC-040; Phase 3 note-on fill disable; Phase 4 note-off fill skip when the source view covers the loop.
+
+**Context:** Stage 1 `from=span` HITL treated STOPPED full-loop `deviceGateComplete` as occupy readiness. A 64-bar gate is 31–40 s STOPPED ([`173842`](../captures/session_20260815_173842.log) / [`185931`](../captures/session_20260815_185931.log)). That is rejected option A (always-ready). [`132806`](../captures/session_20260818_132806.log) Stage 1c held; 64-bar `from=span` missed because PLAYING started during `prep`. Occupy needs notes of pitch P present at `currentTick`, not a finished source-view copy.
+
+**Decision:**
+
+1. **Occupy contract** is present(S, P) via `displayNotePresentAtHold` on `NoteSpan`. Prepared hit stays `tryCollectPreparedPresentNoteIdsAtTick`. USB miss stays the source-view walk until resolved state at S exists. Note-on still must not `resolveWindow` / `ensureOverdubSourceNotesForHold`.
+2. **`from=span` / wait-for-`lcr,mat`** is opportunistic source-view quality, not occupy or product readiness. Stage 1 membership, length identity, and dirty/save stall stay shipped. Stage 2 consume merge stays parked.
+3. **Resolved state + overlap (amended).** At every resolved tick the resolver has enough state to determine which notes are present. Occupy evaluates that state **only** when a NoteOn/NoteOff for the recorded pitch occurs. It does not maintain or reconstruct a list of all notes present at the current tick. Time advancing does not make occupy revisit notes; the resolver advances state.
+4. **Not a collection primitive.** Do not add `collectPitchPresentNoteIdsAtTick` as the architectural API. `tryCollectPreparedPresentNoteIdsAtTick` is the prepared-path helper (evaluate P against prepared spans). Occupied ids are the overlap result, not a stored `vector<NoteId> presentAtTick`.
+5. **USB must not reconstruct pass history** to build a present list (`resolveWindow`, cold `resolveState(passes)`, this-pitch gather-then-reconstruct on note-on). Checkpoint tail / `tryResolvePreparedState` stays **rejected as a cold USB miss** (needs `deviceGateComplete` products). It is **accepted as consume of already-resolved state** when the resolver has advanced to S. Occupy then evaluates P against that state; it does not return the full `PresentNoteVec` as the occupy set.
+6. **Scheduled prepare** may extend the existing device gate as a **range** around the playhead (Stage 9 range tests) so resolved state exists at `currentTick` while PLAYING. Name: `deviceGate` range / `deviceGateBeginRange`. Not a new Session or Manager. PLAYING-admitted only for bounded range work. Full-loop LCR stays STOPPED-only and is not occupy readiness. Option B (PLAYING full-history LCR) stays rejected.
+7. **Consume / Hide** stays on `overdubSourceView`. Do not fold consume into occupy.
+
+**Does not change (pre-amendment):** DEC-037 6.0; `notePresentAt`; `overdubSourceView`; `kOverdubSourceWindowBars` production size.
+
+**Superseded by amendment 8–15:** occupy as present(S,P) span-collection (point 1); “occupy = ledger” investigation framing. Points 2, 4, 5 (no USB reconstruct), 7 (consume on source view) still hold. Point 6 (`deviceGateBeginRange` as occupy prepare) is **not** the path; keep `ActiveNoteLedger` at `currentTick` via `playCommittedLoopMidi`.
+
+**Validation:** none this architecture slice (docs). Implementation **paused** pending `PresentNote.noteId` vs `evt.noteId` — see amendment below.
+
+**Superseded (same day):** “this-pitch pass events whose LinearSpan can contain S” as the **production USB miss**. That path reconstructs notes from pass history on occupy. It is not the architecture.
+
+**Paused (same day):** `evaluateOccupyOverlap` / span-collect native tests.
+
+**Amendment 2026-08-18 — `ActiveNoteLedger` at `currentTick` (not “occupy = ledger”):**
+
+8. **Product contract.** `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`: at most one `Entry` per `(channel, pitch)`. `Track::sendMidiEvent` / `midiHandler.sendMidiEvent` use that `Entry`; they do not create it.
+9. **Runtime invariant.** `ActiveNoteLedger` has at most one active `Entry` per `(channel, pitch)`. After `Entry.noteId`, that slot holds at most one `noteId`. This is **not** a stored-content invariant. [`152940`](../captures/session_20260813_152940.log) `max_same_pitch=322` means `LoopPasses` may contain overlapping same-pitch notes. `playCommittedLoopMidi` applies `PlaybackMergedMidiEvents` to that one-slot ledger (last NoteOn overwrites). The ledger represents the resulting runtime owner; it does not resolve stored same-pitch overlap. The event stream does not guarantee one owner.
+10. **Content-commit owners.** Overdub Hide/Shorten (`Loop::accumulatePendingNoteChangesFromSourceNotes`) and NOTE_EDIT overlap (`NoteGeometryResolver`) remain owners for **new** overlap. They do not rewrite stored loops from this decision, and they do not currently guarantee every path that reaches playback is already one-owner. Not `ActiveNoteLedger`. Not `sendMidiEvent`.
+11. **Runtime.** `ActiveNoteLedger` holds state at `currentTick`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent` **before** `sendMidiEvent` may emit. Completing `Entry` with `evt.noteId` is identity on the slot, not a new occupy owner.
+12. **Do not say occupy = ledger.** `Loop` / `LoopContentResolution` keep `LoopPasses`. `LoopPlaybackRuntime` keeps `ledger`. Occupy reads `Entry.noteId`.
+13. **`PresentNote`.** Has `noteId`, but `PresentNoteVec` is **all** spans containing S (`upsertPresentNote` by `NoteId`) and has no `endTick`. Occupy already uses `NoteSpan`. Do not copy `PresentNoteVec` onto the ledger. Add `noteId` to `Entry`; keep `StateCheckpoints::presentAt` until a later decision. Do not add a third type.
+14. **`sendMidiEvent` lag.** Goes away if `playCommittedLoopMidi` writes `ledger.noteOn` at tick 32 **before** `midiHandler.sendMidiEvent`. USB at 32 reads `Entry.noteId` even if MIDI is not yet sent.
+15. **Keep ledger at `currentTick`.** Split write vs emit on `playCommittedLoopMidi` / `PlaybackMergedMidiEvents`. Not a second occupy resolver. Not full-loop `deviceGateBegin`. Not `resolveWindow` on USB.
+16. **No `length` on `Entry`.** The ledger is state at `currentTick` until NoteOff. Occupy does not need end geometry. `Entry.startTick` exists for `longestActiveSpanBars` (no `.cpp` call sites). Do not add `length` or `endTick`. Do not delete `startTick` in this occupy work. After Stage 0: `noteOn(channel, pitch, noteId, tick, velocity)` / `noteOff(channel, pitch)`.
+
+**Does not change:** DEC-037 6.0 (no cold LCR on the overdub button); `overdubSourceView` for consume; `kOverdubSourceWindowBars` production size; `notePresentAt` as checkpoint fill.
+
+**Validation:** Stage 0 answered: `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Write-before-emit: `applyPlaybackLedgerEvent` before `sendMidiEvent`. Occupy lookup: `collectOverdubNoteOnParticipantIds` reads `ledger.noteId`.
+
+---
+
+## DEC-040 — Skip PLAYING/STOPPED/MUTED overdub participant HITL
+
+**Date:** 2026-08-18  
+**Status:** Accepted  
+**Owner:** overdub participant discovery (`snapshotOverlapHoldCandidates` / prepared present-at-S)  
+**Plan:** [`overdub_participant_loop_content_architecture.md`](Plans/overdub_participant_loop_content_architecture.md)
+
+**Context:** Phase 2 required A vs B identity under PLAYING / STOPPED / MUTED / outside-gather before Phase 3 fill disable. Overdub participant `#CAP` (`lcr,part`) only fires on USB note-on while **OVERDUBBING**. PLAYING, STOPPED, and MUTED are not overdub states, so that HITL matrix cannot be run. Prepared HITL `eq=1` already passed [`040236`](../captures/session_20260818_040236.log).
+
+**Decision:**
+
+1. Do **not** require PLAYING / STOPPED / MUTED participant HITL. Those states cannot run overdub.
+2. Present-at-S must still not leak MIDI execution (send / `ActiveNoteLedger` / mute). That stays a definition, not a transport-state device matrix.
+3. Phase 3 may start after prepared OVERDUBBING `eq=1` (met: 040236). Production occupy uses prepared present-at-S when ready (Phase 3 firmware).
+4. Does **not** skip: 64-bar OVERDUBBING; a note present at `S` whose NOTE ON is outside the 2-bar playback gather (still testable while OVERDUBBING). That is Phase 3 validation, not a PLAYING-state test.
+
+**Does not change:** DEC-037 6.0 (no cold LCR on the overdub button); RC8 occupy/consume; `overdubSourceView` remaining responsibilities; `notePresentAt`.
+
+**Validation:** none for the skipped states. Phase 3 firmware in tree. Device gate is OVERDUBBING: no `why=hold` on note-on; 1-bar occupied `eq=1`; 64-bar / outside-gather occupy from prepared present-at-S without USB `resolveWindow`.
+
+---
 
 ## DEC-039 — Persist NoteId reconciled at NOTE_EDIT commit boundary
 
@@ -98,8 +231,8 @@ Overdub source view is frozen at session start. A wrap that returns to the start
 2. **Still an `OverdubPass`.** No new domain noun. No session-id on the pass in this DEC.
 3. **Held note at S.** Do not call `Track::finalizePendingNotes`. That closer is STOP only (6E.5). Publish completed ON/OFF pairs only. Add stays NoteOff-owned (`accumulatePendingNoteChangesForIncomingNote`).
 4. **Empty wrap.** No pass, no session-stack push, no revision bump, no LCR publish.
-5. **6.0 at wrap and enter.** Bounded 6D.4 publish (wrap), then a **bounded source-view window reconstruct** (`Loop::rebuildOverdubSourceView`: `tryResolvePreparedWindow` + `reconstructDisplayNotes`, else windowed `resolveWindow(passes)`). Session-start `establishOverdubSourceView` calls the same helper (`why=open`). Hold fill (`Loop::ensureOverdubSourceNotesForHold`) is a 16-bar `resolveWindow(passes)` for **this pitch** only — not a full-loop dump into the source view. Not visual cache. No LCR construct on the MIDI/button path, no full-loop materialize, no `resolveState` on note-off, no `VCACHE,full`, no SD. Clarified 2026-08-17 (RC6 wrap, RC7 enter, RC8 hold-window JIT).
-6. **Undo while OVERDUBBING.** Session-gate in `MidiButtonActions::handleUndo` / `handleRedo` (same routing as NOTE_EDIT **E:** — no **U:** fallthrough). Stack is a Loop-owned `PassId` list of this session’s sealed wraps plus live `capture.store`. Not `NoteEditSessionUndoStack`. Not `EditManager`. Undo: live wrap first (`discardCapture`), then `setPreparedCapturePassState(Disabled)` on the last sealed wrap. No GUS pop.
+5. **6.0 at wrap and enter.** Bounded 6D.4 publish (wrap), then a **bounded source-view rebuild** (`Loop::rebuildOverdubSourceView`: prepared `NoteSpan`s → `DisplayNote`s when ready; else `tryResolvePreparedWindow` / windowed `resolveWindow(passes)` + `reconstructDisplayNotes` + wrap-paired overdub fill). Session-start `establishOverdubSourceView` calls the same helper (`why=open`). Wrap undo/redo of a sealed pass calls the same helper (`why=undo` / `why=redo`) when the source view is already established. Live discard does not. Note-on occupy does **not** hold-fill: `Loop::collectOverdubNoteOnParticipantIds` uses prepared present-at-S when ready, else the source-view walk — never `resolveWindow` on USB note-on (Phase 3). Note-off consume JIT-fills (`Loop::ensureOverdubSourceNotesForHold`, 16-bar `resolveWindow(passes)` for **this pitch** only) **only when the source view does not already cover the loop** (`loopLen > overdubSourceWindowLengthTicks()`, Phase 4). Empty occupy still walks source-view notes. Not visual cache. No LCR construct on the MIDI/button path, no full-loop materialize, no `resolveState` on note-off, no `VCACHE,full`, no SD. Clarified 2026-08-17 (RC6 wrap, RC7 enter, RC8 hold-window JIT). Undo/redo refresh 2026-08-18 ([`010422`](../captures/session_20260818_010422.log): after wrap undo A was `a=2` vs B `b=1`). Prepared-span fill 2026-08-18 ([`021716`](../captures/session_20260818_021716.log): pre-wrap extras live only on finished checkpoint opens). Note-on fill disable 2026-08-18 (Phase 3). Note-off fill skip when source view covers the loop 2026-08-18 (Phase 4).
+6. **Undo while OVERDUBBING.** Session-gate in `MidiButtonActions::handleUndo` / `handleRedo` (same routing as NOTE_EDIT **E:** — no **U:** fallthrough). Sidebar prefix is **O:** while `Loop::hasOverdubSession()` (same role as **E:**). Stack is a Loop-owned `PassId` list of this session’s **sealed** wraps. `overdubSessionUndoDepth` increments only at `pushOverdubSessionPass` (start-tick S wrap), not when live `capture.store` gains notes and not on undo. Sidebar `O:` is `overdubSessionDisplayDepth` = sealed + 1 (the wrap in progress). Not `NoteEditSessionUndoStack`. Not `EditManager`. Undo: disable the last sealed wrap (`setCapturePassState(Disabled)` + companions), then `rebuildOverdubSourceView` if the source view is established. Live store stays. Live discard only when cursor is 0 (before the first sealed wrap). No GUS pop. Clarified 2026-08-18 ([`005000`](../captures/session_20260818_005000.log): seven live-first undos never peeled sealed wraps). Display +1 restored 2026-08-18 ([`005509`](../captures/session_20260818_005509.log)).
 7. **Undo after stop.** One **U:** `OverdubPassAdded` for the whole session. `passIds` = wrap 1..N. `editPassIds` = all companions. Extend that kind; do not add a new `UndoEntryKind`. GUS wire bump (STK2 → next token) for the `passIds` list.
 8. **Crash mid-session.** Out of this DEC. Reboot during OVERDUBBING is the same loss as today’s uncommitted overdub.
 
@@ -274,7 +407,7 @@ Not a new DEC. Restates [DEC-033](#dec-033-overdub-overlap-ignores-per-note-chan
 
 A loop’s notes are scoped to that loop. MIDI output channel is `Track::midiChannel` (`Track::sendMidiEvent` remaps recorded 1–16). `NoteUtils::DisplayNote` has no channel field. Pairing, overlap, and sounding identity use `NoteId` / pitch + tick, not `event.channel`.
 
-`openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `SoundingNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
+`openOnByPitch` stays pitch-only. Do not add `(pitch, channel)`. The 5.7c `channelByNoteId` index copies a stored MIDI byte onto `PresentNote.channel`; it is not a musical query. Do not reopen 5.7c to delete that copy in 5.18.
 
 ### Amendment 2026-08-15 — 5.18a pair instrument (no flatten)
 
@@ -407,6 +540,8 @@ Not a new DEC. Prepared LCR is not late at the overdub button. `Track::processDe
 
 Not a new DEC. Pins the Editor consumer already drawn in DEC-037. Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](Plans/note_edit_selectedtick_lcr_resolution_architecture.md). **Work identity:** [`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md) — separate from remaining LCR 6.x firmware. Firmware not authorized. Wrap-move persist is **parked** (current rematerialize / session-store structure is part of the [`201446`](../captures/session_20260816_201446.log) defect); it is not a start gate.
 
+**Overlap mapping withdrawn 2026-08-17:** pin 1 (`selectedTick` as the same-role origin as overdub `currentTick`) does **not** apply to overlap. Overlap is the selected/mover LinearSpan participant query. See amendment 2026-08-17 (NOTE_EDIT overlap). Select neighborhood around `selectedTick` stays.
+
 **Problem:** NOTE_EDIT analyze still rematerializes the loop (`rematerializeEditView`, `visualCache.notes`, `collectEvaluationScopeNoteIds` over `liveStore`). On a 16-bar / ~1000-note loop the 16-bar piano-roll window is the whole loop, so windowed reconstruct does not shrink the working set. Overdub already consumes prepared `resolveState(tick)` / identity lookup (6E Path A; 6.0 consume-only).
 
 **Decision:**
@@ -448,6 +583,24 @@ Not a new DEC. Closes the OpenSpec 6C recapture and 6D HITL rows on existing dev
 
 **6.3 moved.** Long-loop playback gather is not remaining firmware in this OpenSpec change. Work identity: [`playback_gather_lcr_consume_enhancement.md`](Plans/playback_gather_lcr_consume_enhancement.md). Same 6.0 rule: no construct on MIDI / `handleMidiInput`. Miss keeps today’s gather. Firmware not authorized until that file is in CURRENT_WORK § Now implementing.
 
+### Amendment 2026-08-17 — NOTE_EDIT overlap is selected-span participants
+
+Not a new DEC. Withdraws mapping `currentTick` → `selectedTick` as the **overlap** origin. That mapping is the 16-bar analog (geometric interval around a tick, then reconstruct, then find overlaps). Sibling: [`overdub_participant_loop_content_architecture.md`](Plans/overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling.
+
+**Decision:**
+
+1. **Overlap** uses the same participant query as overdub, keyed by **selected / mover LinearSpan**. Identity is `NoteId` + LinearSpan. Phase 0b applies (`PresentNote` lacks `endTick`; wrap predicates not proven equal).
+2. **Select** stays a `tickEvents` / `spanBoundaries` neighborhood around `selectedTick`. That is navigation, not participants.
+3. **Open** must not rematerialize the loop to analyze.
+4. Paint stays `visualCache` + `NoteEditCurrentState`. Path B stays forbidden. `NoteGeometryResolver` stays overlap Resolution.
+5. Do **not** start hydrate Stages 1–5 from “prepared LCR × interval around `selectedTick`.” Firmware stays unauthorized until hydrate is in CURRENT_WORK § Now implementing.
+
+**Rejected:** treating `selectedTick` as the overlap origin because overdub used `currentTick` for present-at-S ON discovery. Overdub hold is already `[S, E)`; NOTE_EDIT overlap is that hold analog from the first query.
+
+### Amendment 2026-08-17 — PresentNote C++ rename
+
+Not a new DEC. Executes the naming phase of [`overdub_participant_loop_content_architecture.md`](Plans/overdub_participant_loop_content_architecture.md): LCR present-at-S type and helpers are `PresentNote` / `PresentNoteVec` / `presentAt` / `notePresentAt` / `presentAtHoldOnly` / `displayNotePresentAtHold`. `isSoundingNoteOn` (pairing helper) and `ActiveNoteLedger` are unchanged. No ownership or transition change. Phase 1 observation firmware still not authorized.
+
 ### Constraints created
 
 - Overdub button / source-view open must not synchronously construct, sort, checkpoint, or resolve LCR state; they may only consume already-prepared derived state (`ensure*` rebuild helpers included). Commit-site delta publish + restamp is the approved 6D.4 placement (**landed**; HITL PASS [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log)).
@@ -457,7 +610,7 @@ Not a new DEC. Closes the OpenSpec 6C recapture and 6D HITL rows on existing dev
 - `resolveNotes` must not become the playback primitive.
 - Failure gate: if the prototype cannot show a materially better scaling model without another O(history) derived owner, stop and implement A+C on existing owners. A weak first tick index does not by itself disprove the architecture. Copying sounding state at every checkpoint does.
 - Always-ready for the **next overdub query** is **6D** (6D.1 one-vector mutation FAIL; 6D.2 split PASS; 6D.3 repeated overdub PASS native; **6D.4 HITL PASS** [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log)). Not all of LCR. Not a re-armed STOPPED cold-build (A) and not a sliced full-history build during PLAYING (B). 6C is consume-when-ready **closed** (same captures; 3b stays the fast path).
-- NOTE_EDIT open / fader must not construct, sort, checkpoint, or resolve LCR (same 6.0 consume-only rule). Select is neighborhood `tickEvents` / `spanBoundaries`, not `resolveState`. Participating-note find runs after mover stop plus one `DisplayManager::update` as trigger; data source is LCR ∪ overlay, not `visualCache` rebuild. Intra-action leave restores (`RestoreNote`); it does not apply DEC-030 sticky overlap end-of-participation. Remaining Active overlay rows are the session delta for the next select/overlap/audition (prepared LCR ∪ overlay). Do not insert live geometry into LCR (Path B). Editor paint follows overdub compose: `visualCache` + neighborhood overlay. Audition overlays settled session `NoteId`s onto the playback window around `currentTick`. Do not full-replace `mergedEvents` from a whole-loop session store. Do not fill current-state from every visual-cache row. Prepared miss is legacy compatibility only. `appendNoteEvents(NoteId)` must not scan the whole loop per id.
+- NOTE_EDIT open / fader must not construct, sort, checkpoint, or resolve LCR (same 6.0 consume-only rule). Select is neighborhood `tickEvents` / `spanBoundaries` around `selectedTick`, not `resolveState`. Overlap participants are the selected/mover LinearSpan query (same class as overdub), not a window around `selectedTick`. Participating-note find runs after mover stop plus one `DisplayManager::update` as trigger; data source is LCR ∪ overlay, not `visualCache` rebuild. Intra-action leave restores (`RestoreNote`); it does not apply DEC-030 sticky overlap end-of-participation. Remaining Active overlay rows are the session delta for the next select/overlap/audition. Do not insert live geometry into LCR (Path B). Editor paint follows overdub compose: `visualCache` + neighborhood overlay. Audition overlays settled session `NoteId`s onto the playback window around `currentTick`. Do not full-replace `mergedEvents` from a whole-loop session store. Do not fill current-state from every visual-cache row. Prepared miss is legacy compatibility only. `appendNoteEvents(NoteId)` must not scan the whole loop per id.
 
 ### Related OpenSpec
 

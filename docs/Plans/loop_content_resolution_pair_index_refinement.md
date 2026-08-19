@@ -126,7 +126,7 @@ A sorted unique `{pitch, index}` list is the wrong default. A small working stac
 
 ## Derived-structure contract table
 
-Channel lookup copies a stored MIDI byte onto `SoundingNote.channel`. It is **not** a musical query inside a loop (DEC-033; track output channel is `Track::midiChannel`). Do not treat it as a pairing or overlap key. Do not reopen 5.7c to delete it in this investigation.
+Channel lookup copies a stored MIDI byte onto `PresentNote.channel`. It is **not** a musical query inside a loop (DEC-033; track output channel is `Track::midiChannel`). Do not treat it as a pairing or overlap key. Do not reopen 5.7c to delete it in this investigation.
 
 | Index | Query | Multiplicity | Ordering | Mutation | Candidate |
 |-------|-------|--------------|----------|----------|-----------|

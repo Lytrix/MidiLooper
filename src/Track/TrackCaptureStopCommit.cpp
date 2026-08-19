@@ -83,12 +83,13 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
       }
       const bool isRecordPass =
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
+      EditPassIdList companionIds;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
         loop.markDisplayCachesStale();
       } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
-        EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+        companionIds = loop.sealPendingNoteChangesToEditPasses();
         TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
                                             true);
         if (overdubStop) {
@@ -104,7 +105,9 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
       if (!isRecordPass) {
         for (const OverdubPass& pass : loop.passes.overdubPasses) {
           if (pass.id == undoPassId) {
-            LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision);
+            LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision,
+                                                              loop.loopLengthTicks,
+                                                              loop.passes.editPasses, companionIds);
             break;
           }
         }

@@ -6,9 +6,11 @@
  * @brief S0 observation-only runtime timing telemetry.
  *
  * Measures the MIDI Input Gap between handleMidiInput() entries, the duration
- * of handleMidiInput(), Clock/track durations, USB/DIN drain segments, and
- * nested dispatch sums. Does not admit work, add handleMidiInput() call sites,
- * or drive any scheduling decision.
+ * of handleMidiInput(), Clock/track durations, USB/DIN drain segments, nested
+ * dispatch sums, and (Stage 1) MIDI deadline lateness. Hot-path hooks only
+ * accumulate integers. `#CAP` for lateness is a 5 s window plus rare one-shots
+ * drained from the main loop — never a line per MIDI event. Does not admit work,
+ * add handleMidiInput() call sites, or drive any scheduling decision.
  *
  * See docs/Plans/runtime_scheduling_admission_model_architecture.md.
  */
@@ -76,6 +78,15 @@ struct Snapshot {
   uint32_t persistSaveOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
+  uint32_t lateOnMaxUs = 0;
+  uint32_t lateOnCount = 0;
+  uint32_t lateOffMaxUs = 0;
+  uint32_t lateOffCount = 0;
+  uint32_t lateClkMaxUs = 0;
+  uint32_t lateClkCount = 0;
+  bool lateOneShotArmed = true;
+  bool pendingLateEvent = false;
+  bool pendingPlaybackRebuild = false;
 };
 
 void resetForTest();
@@ -149,6 +160,44 @@ void commitUsbDeviceNested();
 /** Count one external MIDI Clock pulse for clockrate. */
 void noteClockPulse();
 
+/**
+ * Mark the start of one playback service interval (internal tick ISR or external
+ * clock pulse). ISR-safe ITCM integer stores — not FLASHMEM. `tickPeriodUs` is one
+ * internal tick or one MIDI-clock period (`TICKS_PER_CLOCK` ticks).
+ */
+void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs);
+
+/** Clear due-time cadence on transport stop/start so the next pulse is not scored late. */
+void resetPlaybackDeadlineCadence();
+
+/**
+ * Note-on/off send lateness. ISR-safe ITCM stores. On time iff sent before the next
+ * playback tick is due (`now <= serviceDue + period`). Equality and early are 0.
+ */
+void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick);
+
+/**
+ * Outgoing MIDI clock send lateness (internal master `sendClock`). ISR-safe ITCM
+ * stores. Cadence is `clockPeriodUs`. On time iff sent before `clockDue + onTimeWindowUs`
+ * (one internal tick). Equality and early are 0.
+ */
+void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t onTimeWindowUs,
+                             uint32_t tick);
+
+/**
+ * Queue a playback-gather rebuild one-shot. ISR-safe integer stores; emit from
+ * `emitPendingDeadlineOneShots` on the main loop.
+ */
+void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
+                           uint32_t windowLengthTicks, uint32_t revision);
+
+/**
+ * Main-loop only: emit pending first-late / rebuild `#CAP` lines (SESSION_CAPTURE).
+ * Does not emit per-event traffic. `maybeEmit` calls this first so the main loop
+ * does not need a second hot-path call.
+ */
+void emitPendingDeadlineOneShots();
+
 /** Post-BAR remainder: Track::processDeferredIdleMaintenance across all tracks. */
 void noteIdleMaint(uint32_t durationUs);
 
@@ -188,7 +237,8 @@ void recordIdleMaintChildRem(uint8_t child, uint32_t startUs);
 /**
  * Emit Tier-A DIAG lines if the emit interval has elapsed.
  * Returns true when a window was emitted and counters reset.
- * Safe to call from main loop only (not from ISR).
+ * Safe to call from main loop only (not from ISR). Drains pending
+ * deadline one-shots before the 5 s window check.
  */
 bool maybeEmit(uint32_t nowUs);
 

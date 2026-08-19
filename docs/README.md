@@ -55,6 +55,8 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 |----------|---------|
 | [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Module map; suffix naming → [NAMING.md](Authority/NAMING.md) |
 | [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Capture / passes (record, overdub, edit), commitCapturePass, validation tiers, undo stacks, SD v4** — read before touching Loop/Track undo or stop paths |
+| [OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) | Overdub overlap candidate / classify / `resolveConstrainedGeometry` / pending / seal — update when those owners change |
+| [OVERDUB_LEDGER_NOTE_EVALUATIONS.md](Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) | Open ledger identities, catch-up vs clock, wrap exclusion, playback-order — update when those owners change |
 | [**record_overdub_memory_display_timeline_enhancement.md**](Plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
 | [DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Central deferred save routing and chunk-bounded SD writer stages |
 | [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables (**v3 / `dev` default DROID mapping**) |
@@ -63,7 +65,7 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 | [FADER_STATE_SYSTEM.md](Guides/FADER_STATE_SYSTEM.md) | Fader state machine; § NOTE_EDIT motor feedback (2026) |
 | [DROID_MOTORFADER_PITCHBEND.md](Guides/DROID_MOTORFADER_PITCHBEND.md) | DROID motorized fader scale, NOTE_EDIT arm, select/geometry motor sync, HITL probe |
 | [HITL_TEST_SCENARIOS.md](Guides/HITL_TEST_SCENARIOS.md) | Hardware-in-the-loop presets and serial verifiers |
-| [MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) | Note movement and overlap resolution |
+| [MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) | NOTE_EDIT movement and overlap resolution; shared classifier / resolver with overdub — see overlap-resolve catalog |
 | [NOTE_WRAPPING_LOGIC.md](Guides/NOTE_WRAPPING_LOGIC.md) | Note and loop wrap-around behavior |
 | [jam-bar-step-phases.md](Guides/jam-bar-step-phases.md) | Jam loops: bar/16th buttons, `jamTick`, HOLD_TWO, playback regions |
 | [MANUAL_TEST_CAPTURE_SESSION.md](Guides/MANUAL_TEST_CAPTURE_SESSION.md) | Capture session script for known bugs (instrumented `teensy41-capture-serial` build, **DebugSessionCapture** `#CAP` lines) |

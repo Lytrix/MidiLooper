@@ -18,6 +18,10 @@
 #include "Utils/TrackMem.h"
 #include "UndoLoopGeometry.h"
 #include "LoopContentHistory.h"
+#include "Utils/DebugSessionCapture.h"
+#include "DisplayManager.h"
+
+#include <cstdio>
 
 extern TrackManager trackManager;
 
@@ -619,15 +623,28 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
     if (!loop.hasOverdubSession() || !loop.canUndoOverdubSession()) {
         return false;
     }
+#if defined(SESSION_CAPTURE)
+    const bool peelWrap = loop.overdubSessionUndoDepth() > 0;
+#endif
     const uint32_t revisionBefore = loop.playbackRevision;
     if (!loop.undoOverdubSession()) {
         return false;
     }
     loop.invalidateCaches();
+    displayManager.invalidateLiveDisplayCache();
     if (loop.playbackRevision != revisionBefore) {
         refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     }
     logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
+#if defined(SESSION_CAPTURE)
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,odub,sess_undo,why=%s,tick=%lu,depth=%u",
+             static_cast<unsigned long>(micros()), peelWrap ? "wrap" : "live",
+             static_cast<unsigned long>(clockManager.getCurrentTick()),
+             static_cast<unsigned>(loop.overdubSessionUndoDepth()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
     return true;
 }
 
@@ -640,10 +657,20 @@ TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
         return false;
     }
     loop.invalidateCaches();
+    displayManager.invalidateLiveDisplayCache();
     if (loop.playbackRevision != revisionBefore) {
         refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
     }
     logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
+#if defined(SESSION_CAPTURE)
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,odub,sess_redo,tick=%lu,depth=%u",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned long>(clockManager.getCurrentTick()),
+             static_cast<unsigned>(loop.overdubSessionUndoDepth()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
     return true;
 }
 
@@ -809,7 +836,7 @@ TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop
         return 0;
     }
     if (loop.hasOverdubSession()) {
-        return loop.overdubSessionUndoDepth();
+        return loop.overdubSessionDisplayDepth();
     }
     if (loopHasLiveOverdubCapture(loop)) {
         return 1u + countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);

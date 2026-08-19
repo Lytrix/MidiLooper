@@ -52,4 +52,4 @@ Playback **does not** own storage or display representations.
 - [DerivedViews.md](DerivedViews.md) — event representation
 - [IntervalProjection.md](IntervalProjection.md) — phase / wrap
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](../../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — merge / materialize
-- [playback_gather_lcr_consume_enhancement.md](../../Plans/playback_gather_lcr_consume_enhancement.md) — queued LCR consume for long-loop gather (not remaining OpenSpec 6.3)
+- [playback_gather_lcr_consume_enhancement.md](../../Plans/playback_gather_lcr_consume_enhancement.md) — Stage 1 lateness hooks; LCR consume still queued; same `lateness_us` is the scheduling musical gate (not remaining OpenSpec 6.3)

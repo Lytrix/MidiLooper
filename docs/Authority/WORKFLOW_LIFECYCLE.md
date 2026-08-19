@@ -349,7 +349,7 @@ Before implementation, check:
 
 The existing delivery rules already require `PROJECT_STATE.md` and `CURRENT_WORK.md` to establish active scope for OpenSpec work.
 
-GitHub Project **NOW** may feed `CURRENT_WORK`; GitHub must not become a second detailed execution queue (see [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md)).
+GitHub Project **NOW** may feed `CURRENT_WORK`; capability cards on **Work** answer what is planned at milestone level (see [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) §1.1, §6). GitHub must not become a second detailed execution queue.
 
 ---
 

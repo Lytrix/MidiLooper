@@ -25,16 +25,8 @@ inline void snapshotSoundingAtHoldStart(const NoteUtils::DisplayNoteVec& notes, 
     if (note.note != pitch || note.noteId == kInvalidNoteId) {
       continue;
     }
-    uint32_t linearStart = 0;
-    uint32_t linearEnd = 0;
-    if (!OverlapNoteIdObservation::linearSoundingSpan(note.startTick, note.endTick, loopLength,
-                                                      linearStart, linearEnd)) {
-      continue;
-    }
-    const uint32_t s = IntervalProjection::tickPhaseInLoop(holdStartTick, 0, loopLength);
-    const bool direct = linearStart <= s && s < linearEnd;
-    const bool shifted = linearStart <= s + loopLength && s + loopLength < linearEnd;
-    if (direct || shifted) {
+    if (OverlapNoteIdObservation::displayNotePresentAtHold(note.startTick, note.endTick,
+                                                           holdStartTick, loopLength)) {
       (void)out.insert(note.noteId);
     }
   }
