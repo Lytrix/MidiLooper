@@ -2536,6 +2536,84 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
   return !out.empty();
 }
 
+TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedPitchSpansForHold(
+    uint32_t playbackRevision, uint32_t holdPhaseTick, uint8_t pitch,
+    uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
+    bool presentAtHoldOnly, NoteUtils::DisplayNoteVec& out) {
+  out.clear();
+  if (!preparedWindowReady(playbackRevision) ||
+      sDeviceGateSession.checkpoints.spans.empty() ||
+      sDeviceGateSession.checkpoints.loopLengthTicks == 0 || loopLengthTicks == 0 ||
+      loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks ||
+      loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
+    return false;
+  }
+  const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;
+  const TickIndex& index = sDeviceGateSession.index;
+  auto capturePassIsActive = [&index](NoteId noteId) -> bool {
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(noteId);
+    if (found == nullptr) {
+      return false;
+    }
+    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    return pass == nullptr || pass->state == CapturePassState::Active;
+  };
+  auto hasActiveCompanion = [](NoteId noteId) -> bool {
+    for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+      if (row.state == EditPassState::Active && row.note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto spanMatchesHold = [&](uint32_t startTick, uint32_t endTick) -> bool {
+    if (presentAtHoldOnly) {
+      return OverlapNoteIdObservation::displayNotePresentAtHold(startTick, endTick, holdPhaseTick,
+                                                                loopLength);
+    }
+    return DisplayWindowUtils::noteIntersectsWindow(startTick, endTick, windowStart, windowLength,
+                                                    loopLength);
+  };
+  auto appendSpan = [&](NoteId noteId, uint8_t spanPitch, uint32_t startTick, uint32_t endTick) {
+    if (noteId == kInvalidNoteId || spanPitch != pitch || startTick == endTick) {
+      return;
+    }
+    NoteUtils::DisplayNote note{};
+    note.noteId = noteId;
+    note.note = spanPitch;
+    note.velocity = 0;
+    note.startTick = startTick;
+    note.endTick = endTick;
+    out.push_back(note);
+  };
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.noteId == kInvalidNoteId || span.note.pitch != pitch) {
+      continue;
+    }
+    if (!capturePassIsActive(span.note.noteId)) {
+      continue;
+    }
+    if (!spanMatchesHold(span.startTick, span.endTick)) {
+      continue;
+    }
+    appendSpan(span.note.noteId, span.note.pitch, span.startTick, span.endTick);
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.note.noteId == kInvalidNoteId || row.note.pitch != pitch ||
+        row.state != EditPassState::Disabled) {
+      continue;
+    }
+    if (!capturePassIsActive(row.note.noteId) || hasActiveCompanion(row.note.noteId)) {
+      continue;
+    }
+    if (!spanMatchesHold(row.startTick, row.endTick)) {
+      continue;
+    }
+    appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);
+  }
+  return true;
+}
+
 void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) {
   if (line == nullptr || cap == 0) {
     return;

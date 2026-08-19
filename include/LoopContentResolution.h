@@ -395,6 +395,13 @@ struct LoopContentResolution {
                                                  const SessionMidiEventVec* windowEvents = nullptr,
                                                  uint32_t loopLengthTicks = 0,
                                                  bool logSpanExclusions = false);
+  /// RC2 hold-fill: copy prepared spans for one pitch. Returns false only on prepared
+  /// miss or length mismatch. Empty `out` is valid when prepared is ready.
+  static bool tryCopyPreparedPitchSpansForHold(uint32_t playbackRevision,
+                                               uint32_t holdPhaseTick, uint8_t pitch,
+                                               uint32_t loopLengthTicks, uint32_t windowStart,
+                                               uint32_t windowLength, bool presentAtHoldOnly,
+                                               NoteUtils::DisplayNoteVec& out);
   /// Prepared checkpoint membership (span or companion row). Diagnostic helper for wrap srcdrop.
   static bool preparedCheckpointHasNoteId(NoteId noteId);
 };

@@ -119,6 +119,71 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
 
+  NoteUtils::DisplayNoteVec preparedPitchNotes;
+  const bool preparedReady = LoopContentResolution::tryCopyPreparedPitchSpansForHold(
+      playbackRevision, holdPhaseTick, pitch, loopLen, windowStart, windowLength,
+      presentAtHoldOnly, preparedPitchNotes);
+
+  auto filterAndMergeCandidates = [&](const NoteUtils::DisplayNoteVec& candidates,
+                                      NoteUtils::DisplayNoteVec& toMerge) {
+    toMerge.clear();
+    for (const NoteUtils::DisplayNote& note : candidates) {
+      if (note.note != pitch || note.noteId == kInvalidNoteId) {
+        continue;
+      }
+      if (presentAtHoldOnly &&
+          !displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+        continue;
+      }
+      if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
+        continue;
+      }
+      bool already = false;
+      for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
+        if (existing.noteId == note.noteId) {
+          already = true;
+          break;
+        }
+      }
+      if (!already) {
+        toMerge.push_back(note);
+      }
+    }
+  };
+
+  if (preparedReady) {
+    NoteUtils::DisplayNoteVec toMerge;
+    filterAndMergeCandidates(preparedPitchNotes, toMerge);
+    mergeDisplayNotesIntoOverdubSourceView(toMerge);
+    if (newlyMergedPitchNotes != nullptr) {
+      *newlyMergedPitchNotes = toMerge;
+    }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    char line[224];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,src,why=hold,from=span,pitch=%u,win=0,ev=0,merged=%u,notes=%u,"
+             "bars=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+             static_cast<unsigned>(toMerge.size()),
+             static_cast<unsigned>(overdubSourceViewNotes_.size()),
+             static_cast<unsigned>(kOverdubSourceWindowBars));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+    return;
+  }
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  char missLine[160];
+  snprintf(missLine, sizeof(missLine),
+           "#CAP,%lu,DIAG,lcr,hold,miss,pitch=%u,hs=%lu,live=%lu,prep=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+           static_cast<unsigned long>(holdPhaseTick),
+           static_cast<unsigned long>(loopLen),
+           static_cast<unsigned>(LoopContentResolution::preparedWindowReady(playbackRevision) ? 1u
+                                                                                                : 0u));
+  DebugSessionCapture::appendCaptureTextLine(missLine);
+#endif
+
   SessionMidiEventVec windowEvents;
   ResolutionCostCounters windowCounters;
   LoopContentResolution::resolveWindow(passes, loopLen, windowStart, windowLength, windowEvents,
@@ -129,28 +194,7 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   const NoteUtils::DisplayNoteVec windowNotes =
       NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
   NoteUtils::DisplayNoteVec toMerge;
-  for (const NoteUtils::DisplayNote& note : windowNotes) {
-    if (note.note != pitch || note.noteId == kInvalidNoteId) {
-      continue;
-    }
-    if (presentAtHoldOnly &&
-        !displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
-      continue;
-    }
-    if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
-      continue;
-    }
-    bool already = false;
-    for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
-      if (existing.noteId == note.noteId) {
-        already = true;
-        break;
-      }
-    }
-    if (!already) {
-      toMerge.push_back(note);
-    }
-  }
+  filterAndMergeCandidates(windowNotes, toMerge);
   mergeDisplayNotesIntoOverdubSourceView(toMerge);
   if (newlyMergedPitchNotes != nullptr) {
     *newlyMergedPitchNotes = toMerge;
@@ -329,10 +373,6 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     (void)effectiveOverlapNoteIds.insert(overlapNoteIds.at(i));
   }
 
-  auto ensureHoldSegmentInSourceView = [&](uint32_t holdPhaseTick) {
-    ensureOverdubSourceNotesForHold(holdPhaseTick, pitch, nullptr, false);
-  };
-
   auto collectGeometricIdsForSegment = [&](uint32_t segStart, uint32_t segEnd) {
     if (segStart >= segEnd) {
       return;
@@ -353,10 +393,30 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   };
 
   const bool longLoop = loopLen > overdubSourceWindowLengthTicks();
-  auto maybeEnsureHoldSegmentInSourceView = [&](uint32_t holdPhaseTick) {
-    if (longLoop) {
-      ensureHoldSegmentInSourceView(holdPhaseTick);
+  auto sourceViewHasNoteId = [&](NoteId id) -> bool {
+    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+      if (note.noteId == id) {
+        return true;
+      }
     }
+    return false;
+  };
+  auto occupyIdsLackSourceRows = [&]() -> bool {
+    for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
+      if (!sourceViewHasNoteId(overlapNoteIds.at(i))) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto maybeEnsureHoldSegmentInSourceView = [&](uint32_t holdPhaseTick) {
+    if (!longLoop) {
+      return;
+    }
+    if (overlapNoteIds.size() > 0 && !occupyIdsLackSourceRows()) {
+      return;
+    }
+    ensureOverdubSourceNotesForHold(holdPhaseTick, pitch, nullptr, false);
   };
   auto completeConsumeParticipantIds = [&]() {
     if (wrapCrossing) {
@@ -368,23 +428,9 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       if (endTick > 0) {
         collectGeometricIdsForSegment(0, endTick);
       }
-      if (longLoop) {
-        maybeEnsureHoldSegmentInSourceView(startTick);
-        if (endTick > 0) {
-          maybeEnsureHoldSegmentInSourceView(0);
-        }
-        collectGeometricIdsForSegment(startTick, loopLen);
-        if (endTick > 0) {
-          collectGeometricIdsForSegment(0, endTick);
-        }
-      }
     } else {
       maybeEnsureHoldSegmentInSourceView(startTick);
       collectGeometricIdsForSegment(startTick, endTick);
-      if (longLoop) {
-        maybeEnsureHoldSegmentInSourceView(startTick);
-        collectGeometricIdsForSegment(startTick, endTick);
-      }
     }
   };
   completeConsumeParticipantIds();
