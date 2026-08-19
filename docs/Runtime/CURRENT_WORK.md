@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (missing open identity validity filter native shipped; HITL open)
+Last updated: 2026-08-19 (missing-open HITL [`121141`](../../captures/session_20260819_121141.log): 5893-class MET; remaining `n=1 a=2` has `on=1` — RC stop)
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-19 (missing open identity validity filter native shipped; 
 
 **Invariant:** A source-view / prepared identity counts as present-at-hold only if that `noteId` has a NoteOn in the complete committed playback stream.
 
-**Status:** Native **PASS** 1374/1374. RAM1 **425948** / **4768**. Full-loop playback NoteOn identity is an existence predicate over existing span geometry — not a span rebuild, not ledger synthesis. HITL still required (`n=1 a=2` → 0; leftover `n=1 a=0` stays 0; nested `n=2 a=2` is not a fail).
+**Status:** Native **PASS** 1374/1374. RAM1 **425948** / **4768**. HITL [`121141`](../../captures/session_20260819_121141.log): 5893-class **MET**. Remaining `n=1 a=2` **2 FAIL** — extra covering ids **have** a merged NoteOn (`on=1`). This RC’s root cause is invalid for those FAILs. **STOP** — do not widen the identity filter.
 
 **Does not reopen:** occupy catching up when `occupyPhase <= lastTick`; `playMidiEvents` from occupy; advancing `lastTick` from USB; Off stamping; FIFO; option B; leftover ledger erase; `isPlaybackCatchUpWindow` equal-tick contract.
 
