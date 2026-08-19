@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; HITL gate open |
+| [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; nested HITL MET [`095902`](../captures/session_20260819_095902.log); extra-open is catch-up stack RC |
 | [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
 | [DEC-040](#dec-040-skip-playingstoppedmuted-overdub-participant-hitl) | 2026-08-18 | Skip PLAYING/STOPPED/MUTED overdub participant HITL | Accepted |
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
@@ -62,7 +62,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-042 — Same-pitch active-note identity is a cardinality problem, not an Off-identity problem
 
 **Date:** 2026-08-19  
-**Status:** **Implemented.** Native shipped. HITL nested `n=0 a=1` / `n=1 a=2` gate open.  
+**Status:** **Implemented.** Native shipped. Nested HITL **MET** [`095902`](../captures/session_20260819_095902.log) (`n=0 a=1` = 0). Extra-open is [`overdub_occupy_catchup_open_note_stack_bugfix.md`](Plans/overdub_occupy_catchup_open_note_stack_bugfix.md).  
 **Owner:** `ActiveNoteLedger` — `LoopPlaybackRuntime::ledger`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent`; `Track::snapshotOverlapHoldCandidates` / `collectOverdubNoteOnParticipantIds` read.  
 **Plan:** [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](Plans/overdub_occupy_active_note_ledger_cardinality_refinement.md)  
 **Investigation:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](Plans/overdub_occupy_unmatched_off_ledger_investigation.md)  
@@ -108,7 +108,7 @@ needs all active notes or only those occupy consumes; and RAM1 cost on Teensy (`
 is `16 × 128` entries today, and `longestActiveSpanBars` plus orphan-Off suppression in
 `applyPlaybackEvent` both depend on the current single-entry shape).
 
-**Does not change:** clock equal-phase Off before On (shipped); catch-up two-pass; occupy staying a
+**Does not change:** clock equal-phase Off before On (shipped); occupy staying a
 reader; `playMidiEvents` never called from occupy; capture never folded into `mergedMidiEvents`.
 
 **Validation:** observability only. `pio test -e native` 1359/1359;
