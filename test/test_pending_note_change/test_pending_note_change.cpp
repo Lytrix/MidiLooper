@@ -1839,6 +1839,62 @@ void test_occupy_clock_duplicate_off_closes_both_pre_abut_103234() {
   TEST_ASSERT_FALSE(occupyIds.contains(kNewerPreOff));
 }
 
+void test_occupy_leftover_off_at_exclusive_end_closes_wrap_head_not_ghost_104654() {
+  // session_20260819_104654 L2668: Off@96 LIFO-closes wrap-head 5772; 5701 stays.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kGhost = 5701;
+  constexpr NoteId kWrapHead = 5772;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, kPitch, kGhost, 96, 100);
+  ledger.noteOn(1, kPitch, kWrapHead, 0, 100);
+  MidiEvent off96 = MidiEvent::NoteOff(96, 1, kPitch, 0);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, off96));
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kGhost));
+  TEST_ASSERT_FALSE(occupyIds.contains(kWrapHead));
+}
+
+void test_erase_open_notes_missing_from_committed_note_ons_drops_5701_keeps_5772() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kGhost = 5701;
+  constexpr NoteId kWrapHead = 5772;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, kPitch, kGhost, 96, 100);
+  ledger.noteOn(1, kPitch, kWrapHead, 0, 100);
+
+  MidiEvent onWrap = MidiEvent::NoteOn(0, 1, kPitch, 100);
+  onWrap.noteId = kWrapHead;
+  MidiEvent off96 = MidiEvent::NoteOff(96, 1, kPitch, 0);
+  MidiEvent committed[2] = {onWrap, off96};
+  ledger.eraseOpenNotesMissingFromCommittedNoteOns(committed, 2);
+
+  OverlapNoteIdSet afterErase;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, afterErase);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(afterErase.size()));
+  TEST_ASSERT_TRUE(afterErase.contains(kWrapHead));
+  TEST_ASSERT_FALSE(afterErase.contains(kGhost));
+
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, off96));
+  OverlapNoteIdSet afterOff;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, afterOff);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(afterOff.size()));
+}
+
 void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1955,6 +2011,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_ledger_catchup_closes_ons_started_in_same_interval_095902);
   RUN_TEST(test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902);
   RUN_TEST(test_occupy_clock_duplicate_off_closes_both_pre_abut_103234);
+  RUN_TEST(test_occupy_leftover_off_at_exclusive_end_closes_wrap_head_not_ghost_104654);
+  RUN_TEST(test_erase_open_notes_missing_from_committed_note_ons_drops_5701_keeps_5772);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();

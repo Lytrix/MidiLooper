@@ -12,6 +12,7 @@
 #include "ActiveNoteLedger.h"
 #include "MidiEvent.h"
 #include "OverlapNoteIdObservation.h"
+#include "PlaybackMergedMidiEvents.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/PlaybackMidiOutput.h"
@@ -145,6 +146,63 @@ void test_ledger_note_on_same_identity_does_not_push_second_entry() {
   TEST_ASSERT_EQUAL_UINT8(1, seen);
   TEST_ASSERT_EQUAL_UINT32(100, startTick);
   TEST_ASSERT_EQUAL_UINT32(42, ledger.noteId(1, 60));
+}
+
+void test_is_full_loop_merged_playback_window() {
+  PlaybackMergedMidiEvents merged;
+  TEST_ASSERT_FALSE(isFullLoopMergedPlaybackWindow(merged, 0));
+  TEST_ASSERT_FALSE(isFullLoopMergedPlaybackWindow(merged, 768));
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = 768;
+  TEST_ASSERT_TRUE(isFullLoopMergedPlaybackWindow(merged, 768));
+  TEST_ASSERT_FALSE(isFullLoopMergedPlaybackWindow(merged, 384));
+  merged.windowLengthTicks = 384;
+  TEST_ASSERT_FALSE(isFullLoopMergedPlaybackWindow(merged, 768));
+  merged.windowStartTick = 96;
+  merged.windowLengthTicks = 768;
+  TEST_ASSERT_FALSE(isFullLoopMergedPlaybackWindow(merged, 768));
+}
+
+void test_erase_open_notes_missing_from_committed_note_ons_keeps_present_ids() {
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, 60, 10, 0, 90);
+  ledger.noteOn(1, 60, 20, 48, 90);
+  ledger.noteOn(1, 60, 30, 96, 90);
+  ledger.noteOn(1, 61, kInvalidNoteId, 12, 90);
+
+  MidiEvent onB = MidiEvent::NoteOn(48, 1, 60, 90);
+  onB.noteId = 20;
+  MidiEvent offB = MidiEvent::NoteOff(96, 1, 60, 0);
+  MidiEvent onC = MidiEvent::NoteOn(96, 1, 60, 90);
+  onC.noteId = 30;
+  MidiEvent committed[3] = {onB, offB, onC};
+  ledger.eraseOpenNotesMissingFromCommittedNoteOns(committed, 3);
+
+  uint8_t seen = 0;
+  bool sawA = false;
+  bool sawB = false;
+  bool sawC = false;
+  bool sawUntagged = false;
+  ledger.forEachActive([&](uint8_t, uint8_t note, const ActiveNoteLedger::Entry& entry) {
+    ++seen;
+    if (entry.noteId == 10) {
+      sawA = true;
+    }
+    if (entry.noteId == 20) {
+      sawB = true;
+    }
+    if (entry.noteId == 30) {
+      sawC = true;
+    }
+    if (note == 61 && entry.noteId == kInvalidNoteId) {
+      sawUntagged = true;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT8(3, seen);
+  TEST_ASSERT_FALSE(sawA);
+  TEST_ASSERT_TRUE(sawB);
+  TEST_ASSERT_TRUE(sawC);
+  TEST_ASSERT_TRUE(sawUntagged);
 }
 
 void test_ledger_apply_playback_event_before_emit() {
@@ -413,6 +471,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_ledger_stays_active_after_note_on);
   RUN_TEST(test_ledger_note_on_pushes_untagged_off_pops_lifo);
   RUN_TEST(test_ledger_note_on_same_identity_does_not_push_second_entry);
+  RUN_TEST(test_is_full_loop_merged_playback_window);
+  RUN_TEST(test_erase_open_notes_missing_from_committed_note_ons_keeps_present_ids);
   RUN_TEST(test_ledger_apply_playback_event_before_emit);
   RUN_TEST(test_all_notes_off_clears_ledger_mute_does_not);
   RUN_TEST(test_cursor_advances_while_midi_send_suppressed);

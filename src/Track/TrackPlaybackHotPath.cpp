@@ -15,6 +15,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "PlaybackMergedMidiEvents.h"
 
 void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
   Loop& loop = getActiveLoop();
@@ -45,7 +46,11 @@ void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
   const uint32_t currentTick = clockManager.getCurrentTick();
-  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, true, currentTick);
+  const bool rebuilt =
+      ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, true, currentTick);
+  if (rebuilt) {
+    reconcilePlaybackLedgerAfterFullLoopRebuild(runtime, loop.loopLengthTicks);
+  }
   const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
   ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
 }
@@ -134,10 +139,19 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
     mergedIntervalApplied = true;
   }
   if (track.maybeCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
-    applyCommittedOverdubPassPlaybackInterval(track, loop, slotIndex, frame, jamCtx);
-    ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
+    // Commit first. Reconcile only after the new full-loop merged stream exists,
+    // and before wrap-pass playback writes more legitimate ledger state.
+    const bool rebuilt =
+        ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
     playbackContext = makePlaybackContext(track, loop, currentTick);
     frame.playbackContext = &playbackContext;
+    if (rebuilt &&
+        isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loop.loopLengthTicks)) {
+      runtime.ledger.eraseOpenNotesMissingFromCommittedNoteOns(
+          runtime.mergedMidiEvents.mergedEvents.data(),
+          runtime.mergedMidiEvents.mergedEvents.size());
+    }
+    applyCommittedOverdubPassPlaybackInterval(track, loop, slotIndex, frame, jamCtx);
     if (!runtime.mergedMidiEvents.mergedEvents.empty()) {
       ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
       loop.lastTickInLoop = frame.tickInLoop;
@@ -179,7 +193,11 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
-  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+  const bool rebuilt =
+      ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+  if (rebuilt) {
+    reconcilePlaybackLedgerAfterFullLoopRebuild(runtime, loop.loopLengthTicks);
+  }
   const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
   if (mergedEvents.empty()) {
     return;

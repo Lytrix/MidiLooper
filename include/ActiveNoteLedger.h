@@ -67,6 +67,16 @@ class ActiveNoteLedger {
     return i >= 0 ? entries_[static_cast<size_t>(i)].noteId : kInvalidNoteId;
   }
 
+  /// Drop identified open notes whose NoteOn is absent from committed events.
+  /// Untagged Entries stay. Reuse eraseAt. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  void eraseOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events, size_t eventCount) {
+    eraseOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+  }
+#else
+  void eraseOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events, size_t eventCount);
+#endif
+
   /// Untagged NoteOff resolution: LIFO pop the most recent open On on this lane.
   void noteOff(uint8_t channel, uint8_t note) {
     const int i = findNewestIndex(channel, note);
@@ -185,6 +195,30 @@ class ActiveNoteLedger {
     return true;
   }
 
+  void eraseOpenNotesMissingFromCommittedNoteOnsBody(const MidiEvent* events, size_t eventCount) {
+    if (eventCount > 0 && events == nullptr) {
+      return;
+    }
+    for (size_t i = count_; i > 0; --i) {
+      const NoteId id = entries_[i - 1].noteId;
+      if (id == kInvalidNoteId) {
+        continue;
+      }
+      bool found = false;
+      for (size_t eventIndex = 0; eventIndex < eventCount; ++eventIndex) {
+        const MidiEvent& evt = events[eventIndex];
+        if (evt.isNoteOn() && evt.noteId == id) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        logOpenNoteErase(id);
+        eraseAt(i - 1);
+      }
+    }
+  }
+
   static void logOpenNoteOverflow(uint8_t channel, uint8_t note, NoteId noteId) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     char line[160];
@@ -196,6 +230,17 @@ class ActiveNoteLedger {
 #else
     (void)channel;
     (void)note;
+    (void)noteId;
+#endif
+  }
+
+  static void logOpenNoteErase(NoteId noteId) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    char line[160];
+    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,ledger,erase,id=%lu",
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(noteId));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#else
     (void)noteId;
 #endif
   }

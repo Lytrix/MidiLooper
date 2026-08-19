@@ -65,10 +65,13 @@ TRACK_INTERNAL_MEM void reanchorPlaybackIndex(Loop& loop, const SessionMidiEvent
                                               const PlaybackOrderVec& order,
                                               const ProjectionContext& playbackContext);
 
-TRACK_INTERNAL_MEM void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop,
+TRACK_INTERNAL_MEM bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop,
                                                             LoopPlaybackRuntime& runtime,
                                                             bool allowHeavyBuild,
                                                             uint32_t currentTick);
+
+TRACK_INTERNAL_MEM void reconcilePlaybackLedgerAfterFullLoopRebuild(LoopPlaybackRuntime& runtime,
+                                                                    uint32_t loopLengthTicks);
 
 TRACK_INTERNAL_MEM void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
                                              const ProjectionContext& playbackContext);
