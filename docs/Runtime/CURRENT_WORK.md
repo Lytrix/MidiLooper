@@ -2,11 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (catch-up stack HITL [`101319`](../../captures/session_20260819_101319.log) extra-open remains)
+Last updated: 2026-08-19 (duplicate open identity — catch-up then clock)
 
 ---
 
 ## Now implementing
+
+### Occupy duplicate open identity (catch-up then clock)
+
+**Plan:** [`overdub_occupy_duplicate_open_identity_bugfix.md`](../Plans/overdub_occupy_duplicate_open_identity_bugfix.md)  
+**Parent:** [`overdub_occupy_catchup_open_note_stack_bugfix.md`](../Plans/overdub_occupy_catchup_open_note_stack_bugfix.md) — HITL [`101319`](../../captures/session_20260819_101319.log) extra-open remains  
+**Pin:** [`101319`](../../captures/session_20260819_101319.log) L2318 `n=2` `led=4`
+
+**Invariant:** An open playback identity occupies at most one ledger Entry. A second NoteOn with that `noteId` does not push; `applyPlaybackEvent` still returns true so clock can emit.
+
+**HITL gate:** `led == n` on mismatches; extra-open down vs 101319. Do not FAIL on parked span-start `n=0 a=1` or prepared `b=0`.
+
+**Does not reopen:** occupy catching up when `occupyPhase <= lastTick`; `playMidiEvents` from occupy; advancing `lastTick` from USB; Off stamping; `rebuildPlaybackOrder`.
 
 ### Occupy catch-up per-phase Off then On (open-NoteOn stack)
 

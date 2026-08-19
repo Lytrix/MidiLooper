@@ -1699,6 +1699,62 @@ void test_occupy_ledger_catchup_closes_ons_started_in_same_interval_095902() {
   TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
 }
 
+void test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902() {
+  // Catch-up does not advance lastTick; clock walks the same (lastTick, occupy].
+  // Duplicate On of 5242 must not stack a second Entry (101319 led > n).
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLastTick = 232;
+  constexpr uint32_t kOccupy = 336;
+  constexpr uint8_t kPitch = 12;
+  constexpr NoteId kEndedFirst = 5218;
+  constexpr NoteId kEndedSecond = 5224;
+  constexpr NoteId kCovering = 5242;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = kLastTick;
+  loop.nextEventIndex = 7;
+
+  MidiEvent on240 = MidiEvent::NoteOn(240, 1, kPitch, 100);
+  on240.noteId = kEndedFirst;
+  MidiEvent off287 = MidiEvent::NoteOff(287, 1, kPitch, 0);
+  MidiEvent on288 = MidiEvent::NoteOn(288, 1, kPitch, 100);
+  on288.noteId = kEndedSecond;
+  MidiEvent off327 = MidiEvent::NoteOff(327, 1, kPitch, 0);
+  MidiEvent on328 = MidiEvent::NoteOn(328, 1, kPitch, 100);
+  on328.noteId = kCovering;
+  MidiEventVec events;
+  events.push_back(on240);
+  events.push_back(on288);
+  events.push_back(on328);
+  events.push_back(off287);
+  events.push_back(off327);
+
+  ActiveNoteLedger ledger;
+  CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, events, kLastTick, kOccupy,
+                                                          kLoopLenTicks);
+  const MidiEvent clockOrder[] = {on240, off287, on288, off327, on328};
+  for (const MidiEvent& evt : clockOrder) {
+    TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, evt));
+  }
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kCovering));
+  TEST_ASSERT_FALSE(occupyIds.contains(kEndedFirst));
+  TEST_ASSERT_FALSE(occupyIds.contains(kEndedSecond));
+  uint8_t seen = 0;
+  ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    if (channel == 1 && note == kPitch) {
+      ++seen;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT8(1, seen);
+  TEST_ASSERT_EQUAL_UINT32(kLastTick, loop.lastTickInLoop);
+  TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
+}
+
 void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1813,6 +1869,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_off_before_on_replaces);
   RUN_TEST(test_occupy_ledger_catchup_closes_ons_started_in_same_interval_095902);
+  RUN_TEST(test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();
