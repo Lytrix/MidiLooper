@@ -10,6 +10,7 @@
 #include "OverlapCandidateLookup.h"
 #include "OverlapNoteIdObservation.h"
 #include "ResolveConstrainedGeometry.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/LoopMem.h"
@@ -119,10 +120,9 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
 
-  NoteUtils::DisplayNoteVec preparedPitchNotes;
-  const bool preparedReady = LoopContentResolution::tryCopyPreparedPitchSpansForHold(
-      playbackRevision, holdPhaseTick, pitch, loopLen, windowStart, windowLength,
-      presentAtHoldOnly, preparedPitchNotes);
+  NoteUtils::DisplayNoteVec preparedNotes;
+  const bool preparedReady = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      playbackRevision, preparedNotes, nullptr, loopLen, false);
 
   auto filterAndMergeCandidates = [&](const NoteUtils::DisplayNoteVec& candidates,
                                       NoteUtils::DisplayNoteVec& toMerge) {
@@ -131,8 +131,13 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
       if (note.note != pitch || note.noteId == kInvalidNoteId) {
         continue;
       }
-      if (presentAtHoldOnly &&
-          !displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+      if (presentAtHoldOnly) {
+        if (!displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+          continue;
+        }
+      } else if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick,
+                                                            windowStart, windowLength,
+                                                            loopLen)) {
         continue;
       }
       if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
@@ -151,50 +156,35 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
     }
   };
 
-  if (preparedReady) {
-    NoteUtils::DisplayNoteVec toMerge;
-    filterAndMergeCandidates(preparedPitchNotes, toMerge);
-    mergeDisplayNotesIntoOverdubSourceView(toMerge);
-    if (newlyMergedPitchNotes != nullptr) {
-      *newlyMergedPitchNotes = toMerge;
-    }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    char line[224];
-    snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,src,why=hold,from=span,pitch=%u,win=0,ev=0,merged=%u,notes=%u,"
-             "bars=%u",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
-             static_cast<unsigned>(toMerge.size()),
-             static_cast<unsigned>(overdubSourceViewNotes_.size()),
-             static_cast<unsigned>(kOverdubSourceWindowBars));
-    DebugSessionCapture::appendCaptureTextLine(line);
-#endif
-    return;
-  }
-
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-  char missLine[160];
-  snprintf(missLine, sizeof(missLine),
-           "#CAP,%lu,DIAG,lcr,hold,miss,pitch=%u,hs=%lu,live=%lu,prep=%u",
-           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
-           static_cast<unsigned long>(holdPhaseTick),
-           static_cast<unsigned long>(loopLen),
-           static_cast<unsigned>(LoopContentResolution::preparedWindowReady(playbackRevision) ? 1u
-                                                                                                : 0u));
-  DebugSessionCapture::appendCaptureTextLine(missLine);
-#endif
-
+  const NoteUtils::DisplayNoteVec* selectedNotes = &preparedNotes;
+  NoteUtils::DisplayNoteVec windowNotes;
   SessionMidiEventVec windowEvents;
   ResolutionCostCounters windowCounters;
-  LoopContentResolution::resolveWindow(passes, loopLen, windowStart, windowLength, windowEvents,
-                                       &windowCounters);
-  if (windowEvents.empty()) {
-    return;
+  const char* sourceKind = "span";
+  if (!preparedReady) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    char missLine[160];
+    snprintf(missLine, sizeof(missLine),
+             "#CAP,%lu,DIAG,lcr,hold,miss,pitch=%u,hs=%lu,live=%lu,prep=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+             static_cast<unsigned long>(holdPhaseTick),
+             static_cast<unsigned long>(loopLen),
+             static_cast<unsigned>(LoopContentResolution::preparedWindowReady(playbackRevision)
+                                       ? 1u
+                                       : 0u));
+    DebugSessionCapture::appendCaptureTextLine(missLine);
+#endif
+    LoopContentResolution::resolveWindow(passes, loopLen, windowStart, windowLength, windowEvents,
+                                         &windowCounters);
+    if (windowEvents.empty()) {
+      return;
+    }
+    windowNotes = NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
+    selectedNotes = &windowNotes;
+    sourceKind = "win";
   }
-  const NoteUtils::DisplayNoteVec windowNotes =
-      NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
   NoteUtils::DisplayNoteVec toMerge;
-  filterAndMergeCandidates(windowNotes, toMerge);
+  filterAndMergeCandidates(*selectedNotes, toMerge);
   mergeDisplayNotesIntoOverdubSourceView(toMerge);
   if (newlyMergedPitchNotes != nullptr) {
     *newlyMergedPitchNotes = toMerge;
@@ -202,8 +192,8 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   char line[224];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=hold,from=win,pitch=%u,win=%lu,ev=%u,merged=%u,notes=%u,bars=%u",
-           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+           "#CAP,%lu,DIAG,lcr,src,why=hold,from=%s,pitch=%u,win=%lu,ev=%u,merged=%u,notes=%u,bars=%u",
+           static_cast<unsigned long>(micros()), sourceKind, static_cast<unsigned>(pitch),
            static_cast<unsigned long>(windowCounters.elapsedMicros),
            static_cast<unsigned>(windowEvents.size()), static_cast<unsigned>(toMerge.size()),
            static_cast<unsigned>(overdubSourceViewNotes_.size()),
