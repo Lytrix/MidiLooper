@@ -36,10 +36,13 @@ struct PlaybackEventStream {
 /// Advance the committed playback cursor while emitting every event crossed by the playback
 /// interval. Mutates only cursorAdvance.cursor and optional cursorAdvance.playbackOrderDirty.
 /// Wrap / projection / order rebuild stay outside this function.
+/// ActiveCommitted may skip a second same-phase same-pitch same-type MIDI message.
+/// `applyLedgerOnly` still applies that event to the ledger (nullptr = skip, LayeredSlot tests).
 PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdvance,
                                             const PlaybackTickFrame& frame,
                                             PlaybackEmitPolicy policy,
                                             const PlaybackEventStream& stream, PlaybackSendFn send,
                                             void* sendCtx, uint8_t playbackSlotIndex,
                                             PlaybackJamFilterFn jamFilter, void* jamCtx,
-                                            uint8_t trackMidiChannelForDedup);
+                                            uint8_t trackMidiChannelForDedup,
+                                            PlaybackSendFn applyLedgerOnly = nullptr);

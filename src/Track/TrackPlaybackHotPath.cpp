@@ -62,6 +62,11 @@ void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotInde
   track->sendMidiEvent(evt, slotIndex);
 }
 
+void playbackCursorAdvanceApplyLedger(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
+  Track* track = static_cast<Track*>(ctx);
+  (void)track->applyPlaybackLedgerEvent(evt, slotIndex);
+}
+
 void playbackCursorAdvanceSendCapture(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
   // Live capture echo only. Occupy reads committed playback Entries; capture
   // Off/On must not last-write the same (channel, pitch) slot (221334).
@@ -124,7 +129,8 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
   if (loop.shouldCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
     (void)advancePlaybackCursor(mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
                                 playbackCursorAdvanceSend, &track, slotIndex,
-                                playbackCursorAdvanceJamFilter, &jamCtx, midiChannel);
+                                playbackCursorAdvanceJamFilter, &jamCtx, midiChannel,
+                                playbackCursorAdvanceApplyLedger);
     mergedIntervalApplied = true;
   }
   if (track.maybeCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
@@ -233,7 +239,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
         mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
         playbackCursorAdvanceSend, this, slotIndex,
         isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr,
-        midiChannel);
+        midiChannel, isActive ? playbackCursorAdvanceApplyLedger : nullptr);
   }
 
   if (isActive && loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {

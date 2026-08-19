@@ -1755,6 +1755,90 @@ void test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902() {
   TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
 }
 
+void test_occupy_clock_duplicate_off_closes_both_pre_abut_103234() {
+  // session_20260819_103234 L6674 pitch 24 hs=120 n=3 a=2: two Off@71, second skipped.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 24;
+  constexpr NoteId kLeftOpen = 5568;
+  constexpr NoteId kNewerPreOff = 5570;
+  constexpr NoteId kAbut = 5575;
+  constexpr NoteId kNested = 5583;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+
+  MidiEvent on24 = MidiEvent::NoteOn(24, 1, kPitch, 100);
+  on24.noteId = kLeftOpen;
+  MidiEvent on48 = MidiEvent::NoteOn(48, 1, kPitch, 100);
+  on48.noteId = kNewerPreOff;
+  MidiEvent off71a = MidiEvent::NoteOff(71, 1, kPitch, 0);
+  MidiEvent off71b = MidiEvent::NoteOff(71, 1, kPitch, 0);
+  MidiEvent on72 = MidiEvent::NoteOn(72, 1, kPitch, 100);
+  on72.noteId = kAbut;
+  MidiEvent on120 = MidiEvent::NoteOn(120, 1, kPitch, 100);
+  on120.noteId = kNested;
+
+  struct DirectPlaybackStreamCtx {
+    MidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events.push_back(on24);
+  streamCtx.events.push_back(on48);
+  streamCtx.events.push_back(off71a);
+  streamCtx.events.push_back(off71b);
+  streamCtx.events.push_back(on72);
+  streamCtx.events.push_back(on120);
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+
+  struct LedgerSendLog {
+    ActiveNoteLedger ledger;
+    unsigned midiOffs = 0;
+  };
+  LedgerSendLog log;
+  auto send = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+    if (evt.isNoteOff()) {
+      ++state->midiOffs;
+    }
+  };
+  auto applyLedgerOnly = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+  uint16_t cursor = 0;
+  PlaybackTickFrame frame{&playbackContext, 120U, 0U, false};
+  PlaybackCursorAdvanceState advance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                          send, &log, 0, nullptr, nullptr, 1, applyLedgerOnly));
+  TEST_ASSERT_EQUAL_UINT32(1, log.midiOffs);
+
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, log.ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kAbut));
+  TEST_ASSERT_TRUE(occupyIds.contains(kNested));
+  TEST_ASSERT_FALSE(occupyIds.contains(kLeftOpen));
+  TEST_ASSERT_FALSE(occupyIds.contains(kNewerPreOff));
+}
+
 void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1870,6 +1954,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_ledger_catchup_same_tick_off_before_on_replaces);
   RUN_TEST(test_occupy_ledger_catchup_closes_ons_started_in_same_interval_095902);
   RUN_TEST(test_occupy_ledger_catchup_then_clock_replay_keeps_one_covering_095902);
+  RUN_TEST(test_occupy_clock_duplicate_off_closes_both_pre_abut_103234);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();

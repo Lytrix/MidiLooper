@@ -78,7 +78,7 @@ Want `led == n` on mismatches (no extra copies). Extra-open (`n>a`) down vs [`10
 
 `n=2 a=1` is two **distinct** ids (`led=2`), e.g. L6480 pitch 24 `hs=216` covering 5584 `168–360`. Not copies. `n=1 a=0` rose (L6898 pitch 12 `hs=192` `lid=5604` `lst=288`) — parked exclusive-end / wrap leftover, unmasked now that copies are gone.
 
-Do not reopen occupy catching up when `occupyPhase <= lastTick`. Remaining extra unique identities and `n=1 a=0` are a new RC.
+Do not reopen occupy catching up when `occupyPhase <= lastTick`. Remaining extra unique identities and `n=1 a=0` are [`overdub_occupy_clock_duplicate_off_ledger_bugfix.md`](overdub_occupy_clock_duplicate_off_ledger_bugfix.md) (clock duplicate Off skips ledger).
 
 ## Pre-implementation review
 
