@@ -1,9 +1,6 @@
 # Occupy unmatched Off vs ledger — observability before identity RC
 
-**Status:** Observability stage. No fix. Geometry **proven** on device — see § Results
-([`090050`](../../captures/session_20260819_090050.log), event-backed
-[`092336`](../../captures/session_20260819_092336.log)). Option A eliminated; direction C in
-[DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem), design session required.  
+**Status:** Observability complete. Geometry proven. Successor **implemented** (native): [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](overdub_occupy_active_note_ledger_cardinality_refinement.md) ([DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem)). HITL nested gate open.  
 **Date:** 2026-08-19  
 **Kind:** investigation  
 **Parent (shipped):** [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md) — HITL **PASS** [`001021`](../../captures/session_20260819_001021.log)  

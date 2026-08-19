@@ -208,11 +208,13 @@ LOOP_COLD_MEM void Loop::collectOverdubNoteOnParticipantIds(uint8_t pitch, uint8
                                                             const ActiveNoteLedger& ledger,
                                                             OverlapNoteIdSet& out) const {
   out.clear();
-  const NoteId id = ledger.noteId(channel, pitch);
-  if (id == kInvalidNoteId) {
-    return;
-  }
-  (void)out.insert(id);
+  ledger.forEachActive([&](uint8_t entryChannel, uint8_t entryNote,
+                           const ActiveNoteLedger::Entry& entry) {
+    if (entryChannel != channel || entryNote != pitch) {
+      return;
+    }
+    (void)out.insert(entry.noteId);
+  });
 }
 
 LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(

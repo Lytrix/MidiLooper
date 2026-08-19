@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-19 (occupy clock same-tick Off before On HITL PASS 001021)
+Last updated: 2026-08-19 (occupy open-NoteOn ledger cardinality DEC-042)
 
 ---
 

@@ -2,33 +2,28 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (occupy unmatched Off — observability stage)
+Last updated: 2026-08-19 (occupy open-NoteOn ledger cardinality DEC-042)
 
 ---
 
 ## Now implementing
 
-### Occupy unmatched Off vs ledger — observability before identity RC
+### Occupy open-NoteOn ledger cardinality — DEC-042
+
+**Plan:** [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](../Plans/overdub_occupy_active_note_ledger_cardinality_refinement.md)  
+**Decision:** [DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem)  
+**Parent:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](../Plans/overdub_occupy_unmatched_off_ledger_investigation.md) — geometry proven [`092336`](../../captures/session_20260819_092336.log)
+
+**Invariant:** `ActiveNoteLedger` holds every open playback NoteOn. Occupy walks `forEachActive`. Untagged Off → LIFO; identified Off → exact or orphan (no LIFO fallback). `noteId()` is compatibility newest-on-lane only.
+
+**HITL gate:** nested `n=0 a=1` → `n=1 a=1`; structural `n=1 a=2` → `n=2 a=2`. Do not FAIL this RC on parked residuals.
+
+**Does not reopen:** Off stamping; option B; catch-up two-pass; clock equal-phase Off before On; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`.
+
+### Occupy unmatched Off vs ledger — observability (geometry proven)
 
 **Investigation:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](../Plans/overdub_occupy_unmatched_off_ledger_investigation.md)  
-**Parent (shipped):** [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](../Plans/overdub_occupy_clock_same_tick_off_before_on_bugfix.md) — HITL **PASS** [`001021`](../../captures/session_20260819_001021.log)  
-**Pin (residuals):** [`235314`](../../captures/session_20260818_235314.log) L4750 interior `192–288` @ `hs=240`; L4294 interior `240–384` @ `hs=352`
-
-**Invariant:** Occupy diagnostics must record, at every ledger-vs-source-view disagreement, the committed events and derived spans that could have written the lane — so the next RC targets a proven geometry rather than an inferred one. Observation only; occupy stays a reader.
-
-**Owner:** `Track::snapshotOverlapHoldCandidates` — file-local static `logOccupyLedgerMismatch` under `SESSION_CAPTURE && ARDUINO`, `TRACK_COLD_MEM`. Mismatch-gated (`n != a`); capped at 1 header + 6 `mmspan` + 8 `mmevt` lines.
-
-**Verified (do not re-derive):** committed capture-pass Offs carry **no** `noteId` — every assigner is guarded on `isNoteOn()`, and the gather copies chunk events verbatim. There is no canonical NoteSpan in committed storage; spans are derived by `appendCanonicalSpansFromMidiRange`, and LCR builds its spans from that same output. Untagged Off pairing is **LIFO**, not FIFO.
-
-**FIFO stamping: rejected.** Contradicts `LoopEventValidation` Pass 2, `appendCanonicalSpansFromMidiRange`, `stampNoteIdsOntoPairedNoteOffs`, `orderSamePitchNoteOffsForLifo`. Neither FIFO nor LIFO is a general identity resolver for overlapping same-pitch notes.
-
-**Geometry proven** — [`090050`](../../captures/session_20260819_090050.log) inferred from spans; [`092336`](../../captures/session_20260819_092336.log) event-backed (`mmevt` with `ech=`). Nested same-pitch pair, not staggered overlap. 092336 over 104 occupies: 4 × `n=0 a=1` (two nested, two other shapes), 2 × `n=1 a=2` (structural), 2 × `n=1 a=0` (exclusive-end vs equal-tick On — not DEC-042). `b=0,eq=0` on all 104 part lines this run.
-
-**Off identity alone cannot fix it.** `ActiveNoteLedger` is `std::array<Entry, 16*128>` — one entry per (channel, pitch) — and `noteOn` overwrites unconditionally, so the outer note's identity is destroyed by the **inner NoteOn**, before any Off. An identity-matched clear at `Off@336` still empties the lane. Pinned by `test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12`.
-
-**Direction — [DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem):** **C** — more than one active entry per `(channel, pitch)`, with NoteOff identity selecting which active note to resolve. **Design session required before any code.** A (stamp Off identity) is **eliminated**; B (ledger consults derived spans) is **rejected**. The defect is **cardinality**, not identity-on-Offs. DEC-042 supersedes DEC-041 point 9 only once implemented, so today's `n=0 a=1` is **expected ledger behavior**, not a regression. Not authorized: `Entry` as a vector, or any `applyPlaybackEvent` / `noteOn` / `noteOff` change.
-
-**Does not reopen:** catch-up two-pass; clock equal-phase Off before On; occupy repairing clock when `occupyPhase == lastTick`; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`; changing `applyPlaybackEvent` without a design session.
+**Successor:** cardinality refinement above.
 
 ### Occupy clock same-tick Off before On — shipped
 
@@ -126,13 +121,13 @@ Emit-only `playbackCursorAdvanceSendCapture` shipped. Remaining writer was live 
 **Decision:** [DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — `collectOverdubNoteOnParticipantIds` reads `ActiveNoteLedger` at `currentTick`; do **not** say occupy = ledger  
 **Evidence:** [`132806`](../../captures/session_20260818_132806.log), [`213401`](../../captures/session_20260817_213401.log), [`152940`](../../captures/session_20260813_152940.log), [`152745`](../../captures/session_20260818_152745.log)
 
-**Owners:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger` via `applyPlaybackLedgerEvent` on committed-only `mergedMidiEvents` / wrap-pass / loop-head. Capture emit does not write. `sendMidiEvent` emits. Occupy reads `Entry.noteId`.
+**Owners:** `Loop` / `LoopContentResolution` = `LoopPasses`. `playCommittedLoopMidi` writes `LoopPlaybackRuntime::ledger` via `applyPlaybackLedgerEvent` on committed-only `mergedMidiEvents` / wrap-pass / loop-head. Capture emit does not write. `sendMidiEvent` emits. Occupy reads every open identity via `forEachActive` ([DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem)).
 
-**Product:** at most one `ActiveNoteLedger::Entry` per `(channel, pitch)` at runtime. No `length` on `Entry`. `LoopPasses` may still overlap (`max_same_pitch=322`). `sendMidiEvent` does not create that `Entry`.
+**Product:** zero or more open NoteOns per `(channel, pitch)`. No `length` on `Entry`. `LoopPasses` may still overlap (`max_same_pitch=322`). `sendMidiEvent` does not create those entries.
 
 **Stage 0:** **Yes** — `PresentNote.noteId` and playback `evt.noteId` are both `MidiEvent.noteId`. Not a 1:1 pitch lookup.
 
-**Now:** occupy lookup **shipped** (`ledger.noteId(midiChannel, pitch)`). CAP `from=ledger`. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-S ledger catch-up **HITL PASS** [`185831`](../../captures/session_20260818_185831.log). Loop-head storage-0 **HITL PASS** [`203948`](../../captures/session_20260818_203948.log). Clock equal-tick Off-before-On HITL **PASS** [`001021`](../../captures/session_20260819_001021.log). Parent catch-up pin [`235314`](../../captures/session_20260818_235314.log) was 4 `n=0 a=1`.
+**Now:** occupy lookup **shipped** (`forEachActive` on the lane). CAP `from=ledger`. `noteId()` is compatibility newest-only. Consume stays on `overdubSourceView`. Do not copy `PresentNoteVec`. No `length`. Wrap-S ledger catch-up **HITL PASS** [`185831`](../../captures/session_20260818_185831.log). Loop-head storage-0 **HITL PASS** [`203948`](../../captures/session_20260818_203948.log). Clock equal-tick Off-before-On HITL **PASS** [`001021`](../../captures/session_20260819_001021.log). Open-NoteOn cardinality HITL gate open.
 
 **Parked:** `evaluateOccupyOverlap`; wait-STOPPED-for-`lcr,mat`; consume merge; “occupy = ledger” ownership transfer.
 
@@ -147,9 +142,9 @@ Membership, length identity, and dirty/save stall **shipped** ([`overdub_partici
 **Plan:** [`overdub_participant_loop_content_architecture.md`](../Plans/overdub_participant_loop_content_architecture.md)  
 **Parent:** [`consumer_window_budget_ownership_architecture.md`](../Plans/consumer_window_budget_ownership_architecture.md)  
 **Evidence:** [`213401`](../../captures/session_20260817_213401.log)  
-**Owner (shipped occupy):** `Loop::collectOverdubNoteOnParticipantIds` (`ledger.noteId(midiChannel, pitch)`). Not a smaller source window.
+**Owner (shipped occupy):** `Loop::collectOverdubNoteOnParticipantIds` (`forEachActive` on the lane). Not a smaller source window.
 
-**PresentNote** = LCR query snapshot at S (many `NoteId`s; no `endTick`). **ActiveNote** = one `ActiveNoteLedger::Entry` per `(channel, pitch)`. MIDI out = `midiHandler.sendMidiEvent`. Identity field: `noteId` on `Entry`; do not copy `PresentNoteVec`.
+**PresentNote** = LCR query snapshot at S (many `NoteId`s; no `endTick`). **ActiveNote** = open `ActiveNoteLedger::Entry` (several per `(channel, pitch)`). MIDI out = `midiHandler.sendMidiEvent`. Identity field: `noteId` on `Entry`; do not copy `PresentNoteVec`.
 
 **Phase 4 1-bar HITL PASS** [`123803`](../../captures/session_20260818_123803.log): `collectConsumeWindow` skips `ensureOverdubSourceNotesForHold` when `loopLen <= overdubSourceWindowLengthTicks()`. Track 6 (768): **`why=hold` = 0**; occupy 102/130 `from=prep` `a=1,b=1` `eq=1`; consume still Hide (`hide` 3–11). Track 0 (50688): 36 `why=hold` remain (1 `merged=1`); consume still Add/Hide (`empty_sets=0`). `late_clk=0`. Native `test_note_off_skips_hold_fill_when_source_view_covers_loop`.
 

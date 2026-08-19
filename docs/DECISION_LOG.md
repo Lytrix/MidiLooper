@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; multi-entry lane direction | Direction accepted; design session required |
+| [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; HITL gate open |
 | [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
 | [DEC-040](#dec-040-skip-playingstoppedmuted-overdub-participant-hitl) | 2026-08-18 | Skip PLAYING/STOPPED/MUTED overdub participant HITL | Accepted |
 | [DEC-039](#dec-039-persist-noteid-reconciled-at-note-edit-commit-boundary) | 2026-08-16 | Persist NoteId reconciled at NOTE_EDIT commit boundary | Accepted |
@@ -62,8 +62,9 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-042 — Same-pitch active-note identity is a cardinality problem, not an Off-identity problem
 
 **Date:** 2026-08-19  
-**Status:** **Direction accepted. Design session required before implementation.** No firmware change authorized by this entry.  
-**Owner (today):** `ActiveNoteLedger` — `LoopPlaybackRuntime::ledger`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent`; `Track::snapshotOverlapHoldCandidates` / `collectOverdubNoteOnParticipantIds` read.  
+**Status:** **Implemented.** Native shipped. HITL nested `n=0 a=1` / `n=1 a=2` gate open.  
+**Owner:** `ActiveNoteLedger` — `LoopPlaybackRuntime::ledger`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent`; `Track::snapshotOverlapHoldCandidates` / `collectOverdubNoteOnParticipantIds` read.  
+**Plan:** [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](Plans/overdub_occupy_active_note_ledger_cardinality_refinement.md)  
 **Investigation:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](Plans/overdub_occupy_unmatched_off_ledger_investigation.md)  
 **Parent:** [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) point 9  
 **Evidence:** [`090050`](../captures/session_20260819_090050.log) spans; [`092336`](../captures/session_20260819_092336.log) event-backed (`DIAG,lcr,mmevt`)
@@ -85,20 +86,19 @@ the LCR prepared spans and the source view agree; only the ledger disagrees.
    (`appendCanonicalSpansFromMidiRange`, `LoopEventValidation` Pass 2,
    `orderSamePitchNoteOffsForLifo`, `findLinearOffForNoteOnLifo`). LIFO pairs the proven nested
    geometry correctly, so the pairing rule is not the defect either.
-3. **The defect is cardinality.** One `(channel, pitch)` can carry several logically active notes.
-   Direction: allow **more than one active entry per lane**, with NoteOff identity selecting which
-   active note to resolve. Cross-loop overdub makes this a product scenario, not a malformed edge
-   case.
+3. **The defect is cardinality.** One `(channel, pitch)` can carry several **open NoteOns**.
+   Implemented: sparse open-NoteOn table (`kMaxOpenNotes = 128`). Occupy collects every open
+   identity via `forEachActive`. `noteId()` is newest-on-lane only (compatibility).
 4. **Rejected alternative:** having the ledger consult the derived canonical spans the source view
    uses. It conflates "what is sounding" with "how source geometry is represented" and risks
    derived-resolution work on a hot path.
-5. **Supersedes on implementation:** DEC-041 point 9 ("at most one active `Entry` per
-   `(channel, pitch)`… the ledger does not resolve stored same-pitch overlap"). That invariant is
-   what produces the mismatch, so it cannot stand alongside an occupy contract that must see both
-   nested notes. Until the design session lands, DEC-041 point 9 **still holds** and the mismatch
-   is expected ledger behavior.
-6. **Not authorized by this entry:** turning `Entry` into a vector, or any `applyPlaybackEvent` /
-   `noteOn` / `noteOff` change. The design session must first settle the identity model.
+5. **Supersedes DEC-041 point 9.** The ledger is no longer one Entry per `(channel, pitch)`. It
+   does not Hide/Shorten stored overlap; it keeps every playback NoteOn open until NoteOff
+   **resolution**.
+6. **NoteOff resolution (design session):** known identity + found → exact remove; no identity →
+   LIFO on the lane; known identity + not found → orphan, **no** LIFO fallback. Do not stamp
+   capture Offs. `silenceSlotMidiOutput` sends one physical Off per unique `(channel, pitch)`;
+   `forEachActive` is not deduped. Overflow refuses the additional On (never evicts).
 
 **Design session must answer:** what an active entry means when 2+ identities are active on one
 lane; how committed notes get identities; how untagged committed Offs resolve to one of several
