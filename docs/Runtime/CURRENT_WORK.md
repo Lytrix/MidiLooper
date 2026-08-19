@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (duplicate open identity — catch-up then clock)
+Last updated: 2026-08-19 (duplicate-identity HITL MET [`103234`](../../captures/session_20260819_103234.log))
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-19 (duplicate open identity — catch-up then clock)
 
 **Invariant:** An open playback identity occupies at most one ledger Entry. A second NoteOn with that `noteId` does not push; `applyPlaybackEvent` still returns true so clock can emit.
 
-**HITL gate:** `led == n` on mismatches; extra-open down vs 101319. Do not FAIL on parked span-start `n=0 a=1` or prepared `b=0`.
+**HITL [`103234`](../../captures/session_20260819_103234.log):** `led == n` **42/42 MET**. `n=0 a=1` **0**. Extra unique ids remain (`n=2 a=1` 25→20). `n=1 a=0` rose 3→18 (parked exclusive-end, unmasked). All mismatches `cu=0`. Do not FAIL this RC on `n=1 a=0` or leftover `n=2 a=1`.
 
 **Does not reopen:** occupy catching up when `occupyPhase <= lastTick`; `playMidiEvents` from occupy; advancing `lastTick` from USB; Off stamping; `rebuildPlaybackOrder`.
 
