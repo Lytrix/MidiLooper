@@ -106,6 +106,16 @@ Five holds emitted `DIAG,consume,select`:
 
 **Successor question (identity vs geometry).** `pitch=96` `ids=1 idsel=0 norow=1` is the ownership split named in the Stage 1A guard check: identity assignment is already single-owner, but an id in the set had no note to resolve against. That — not candidate blocking — is the next thing worth fixing.
 
+### Follow-up device evidence — HITL [`193024`](../../captures/session_20260819_193024.log)
+
+`DIAG,consume,select` emitted **9** times; every line is `jit=1`, `late=0`, `norow=0`. `DIAG,consume,norowid` emitted **0** times. `DIAG,consume,scanadd` emitted **18** times, all `in_ids=0` (ids `235`, `241`, `247`, `251`, `255`, `257`). Aggregate select totals: `ids=11`, `idsel=11`, `scan=42`, `late=0`, `norow=0`.
+
+Interpretation from evidence only:
+
+- The tagged `norow` class did **not** reproduce in this run.
+- The window-scan-add class remains active and is independent of `norow` (`scanadd` persists with non-empty id sets).
+- Selection-change rejection remains unchanged.
+
 ### Stage 1 — ledger-routed consume candidates (REJECTED 2026-08-19)
 
 Not implemented. HITL [`191133`](../../captures/session_20260819_191133.log) showed a non-empty occupy set still depends on the window scan. Kept for the record:
