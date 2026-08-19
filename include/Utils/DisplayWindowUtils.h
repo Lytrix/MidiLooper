@@ -67,6 +67,15 @@ inline size_t preservedOverdubStopDisplayNoteCount(size_t liveNoteCount, size_t 
     return composeBaseCount < liveNoteCount ? composeBaseCount : liveNoteCount;
 }
 
+/// RC5a: while visualCache is dirty after overdub stop, the revision-matched composed
+/// frame (committed + capture suffix) stays paint authority. A nonempty dirty cache
+/// does not yet include those just-committed notes (`000553`: 655 → 583 at same vis=2166).
+inline bool preferPreservedOverdubStopHandoff(bool incrementalCommittedDisplay,
+                                             bool preservedHandoffAuthority,
+                                             bool visualCacheDirty) {
+    return incrementalCommittedDisplay && preservedHandoffAuthority && visualCacheDirty;
+}
+
 /// Clean visualCache may authorize committed display; dirty/stale cache must not (RC5b).
 inline bool committedDisplayVisualCacheAuthoritative(bool visualCacheDirty,
                                                      bool visualCacheNonempty) {

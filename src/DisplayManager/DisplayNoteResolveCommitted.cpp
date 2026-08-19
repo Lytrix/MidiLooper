@@ -92,6 +92,37 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
+        // RC5a: dirty visualCache does not yet include the just-committed capture suffix.
+        // Keep the composed handoff frame and re-filter it to the follow window so
+        // auto-follow can still move (`000553`: first PLAYING dropped 655 → 583 while
+        // vis stayed 2166). Clean-cache follow still uses visualCache below.
+        if (DisplayWindowUtils::preferPreservedOverdubStopHandoff(
+                incrementalCommittedDisplay, preservedHandoffAuthority, loop.visualCacheDirty)) {
+            if (avoidFullVisualRebuild ||
+                loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
+                uint32_t windowStart = 0;
+                uint32_t windowLength = 0;
+                uint8_t windowBars = 0;
+                if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                            windowLength, windowBars)) {
+                    uint32_t gatherStart = 0;
+                    uint32_t gatherLength = 0;
+                    DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+                    filterNotesToFollowWindow(liveDisplayNotes, windowStart, windowLength, loopLength,
+                                              liveDisplayNotes, gatherStart, gatherLength);
+                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                    liveWindowGatherValid_ = true;
+                    liveWindowGatherStart_ = gatherStart;
+                    liveWindowGatherLength_ = gatherLength;
+                    liveWindowGatherLoopLength_ = loopLength;
+                    livePlaybackDisplaySlot_ = displaySlot;
+                    livePlaybackDisplayTrack_ = trackIndex;
+                    return liveDisplayNotes;
+                }
+            }
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            return liveDisplayNotes;
+        }
         // Window filter is allowed from a non-empty visualCache even while globally dirty, so
         // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes
         // on short loops.
@@ -117,7 +148,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 return liveDisplayNotes;
             }
         }
-        // RC5a/RC5b/RC5f: revision-matched preserved frame stays authority only when the
+        // RC5a/RC5b/RC5f: revision-matched preserved frame stays authority when the
         // visualCache cannot supply a window filter (empty notes).
         if (incrementalCommittedDisplay && preservedHandoffAuthority &&
             loop.visualCache.notes.empty()) {

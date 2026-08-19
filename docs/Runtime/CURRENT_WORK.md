@@ -2,11 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (display window follow readiness HITL PASS 000553)
+Last updated: 2026-08-20 (overdub-stop handoff flash RC)
 
 ---
 
 ## Now implementing
+
+### Overdub-stop handoff flash
+
+**Plan:** [`display_overdub_stop_handoff_flash_bugfix.md`](../Plans/display_overdub_stop_handoff_flash_bugfix.md)  
+**Evidence:** [`000553`](../../captures/session_20260820_000553.log)
+
+**Owner:** `DisplayManager::resolveDisplayNotesCommitted`, `preferPreservedOverdubStopHandoff`.
+
+**Invariant:** While `visualCacheDirty` after overdub stop, the revision-matched composed frame stays paint authority. Follow re-filters that frame; it does not replace it with pre-commit `visualCache.notes`.
+
+**Status:** Implemented. Native **1391/1391**. RAM1 code **425276** / locals **4768**. HITL: first PLAYING `DISP` after overdub stop must keep the composed frame while `visual` is unchanged.
 
 ### Display window follow readiness
 
