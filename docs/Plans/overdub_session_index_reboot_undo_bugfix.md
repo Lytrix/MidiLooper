@@ -1,6 +1,6 @@
 # Overdub session index reboot undo — bugfix
 
-**Status:** Native PASS — device HITL after flash
+**Status:** **HITL PASS** [`003854`](../../captures/session_20260820_003854.log)
 **Date:** 2026-08-20  
 **Decision:** [DEC-038](../DECISION_LOG.md#dec-038-overdub-wrap-commit-and-session-undo) amendment 2026-08-20; [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only) content metadata  
 **Approved:** Approach A — `overdubSessionIndex` follows `editPassIndex` grouping
@@ -82,3 +82,13 @@ None.
 ### Proceed?
 
 YES
+
+---
+
+## HITL PASS [`003854`](../../captures/session_20260820_003854.log)
+
+Track 6, 4-bar loop (3072). Record stop `DISP` **14**. Overdub open `undo_entries=179`. Three wrap commits (38.816 / 46.827 / 54.836) then stop (61.576). Stopped `DISP` **112**.
+
+Reboot. First undo: `Undo (entries=2)` `kind=1` `Overdub undone`, `undo_count=179`. `DISP` **112 → 14**. Redo `kind=1` restores **112**.
+
+Four sealed wraps would have been four `OverdubPassAdded` units without `overdubSessionIndex`. After reboot they are one unit.
