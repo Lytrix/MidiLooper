@@ -1,8 +1,9 @@
 # Occupy unmatched Off vs ledger — observability before identity RC
 
 **Status:** Observability stage. No fix. Geometry **proven** on device — see § Results
-([`090050`](../../captures/session_20260819_090050.log)). Option A eliminated; direction needs a
-design session.  
+([`090050`](../../captures/session_20260819_090050.log), event-backed
+[`092336`](../../captures/session_20260819_092336.log)). Option A eliminated; direction C in
+[DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem), design session required.  
 **Date:** 2026-08-19  
 **Kind:** investigation  
 **Parent (shipped):** [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md) — HITL **PASS** [`001021`](../../captures/session_20260819_001021.log)  
@@ -230,10 +231,75 @@ entry holds `lid=4822`. The same id also appears as two display rows across the 
    counted was invisible. Spans covering the hold are now emitted first, cap raised to 6.
 
 Until `mmevt` lands, `On@240` and `On@288` are inferred from the span ids and start ticks rather
-than read from the events. `mmspan` start ticks are post-overlap-merge, so the re-run is what
-closes that gap. The second `n=0 a=1` (pitch 24, `hs=168`) also needs the re-run: its neighbour
-mismatch at `hs=72` shows `168–215 id=4757`, `168–192 id=4763`, `216–263 id=4764`,
-`264–456 id=4806` on the lane — the same nested/abutting shape, not yet confirmed for that hold.
+than read from the events. Closed by [`092336`](../../captures/session_20260819_092336.log) below.
+
+---
+
+## Results — [`092336`](../../captures/session_20260819_092336.log)
+
+Firmware with the two diagnostic fixes (pitch-only `mmevt`, covering spans first, cap 6). `ech=4`
+on every event line — stored capture channel, as predicted. `RING,overflow` 3 (was 1 on 090050);
+more lines per mismatch, still mismatch-gated.
+
+`DIAG,lcr,part` outcomes over 104 occupies:
+
+| `n`,`a` | Count | Reading |
+|---------|------:|---------|
+| `1,1` | 56 | agree |
+| `0,0` | 40 | agree |
+| `0,1` | 4 | residual; two nested, two other shapes |
+| `1,2` | 2 | structural nesting, event-backed |
+| `1,0` | 2 | **new** — exclusive-end vs equal-tick On; not DEC-042 |
+
+`b=0,eq=0` on **all 104** part lines. The prepared-span path missed this entire run (same as
+[`001021`](../../captures/session_20260819_001021.log), unlike 090050). Recorded, not fixed here.
+
+`mmevt` iterates `merged.mergedEvents` in vector order, not `playbackOrder`. Equal-tick On/Off
+pairs in the log are storage order; they do not prove clock apply order.
+
+### Nested geometry now event-backed (closes the 090050 inference)
+
+Pitch 12 at `hs=288` (capture L4595–4609):
+
+```
+mismatch,pitch=12,ch=1,hs=288,n=0,a=1,led=0,lid=0,lst=0,ltick=288,cu=0
+mmspan,pitch=12,i=0,s=96,e=336,id=5052,p=1
+mmspan,pitch=12,i=3,s=144,e=192,id=5047,p=0
+mmevt On@96 id=5052; On@144 id=5047; Off@192; Off@336
+```
+
+LIFO pairs `Off@192`→`On@144` and `Off@336`→`On@96`, reproducing both spans. Walk: `On@96` holds
+5052; `On@144` overwrites to 5047; `Off@192` clears → `led=0`. Hold 288 is 96 ticks later, still
+inside `96–336`. Same one-entry overwrite as 090050, now read from events.
+
+Pitch 23 at `hs=288` (L3846–3860) is the same shape: `On@192 id=4996`, `On@240 id=4990`, `Off@288`
+at the hold, covering span `192–336`. The outer Off is not in the 8-event cap (8th line is
+`Off@288`); the inner Off at the hold is enough to prove the overwrite.
+
+Pitch 12 at `hs=240` (L3395–3409 and L3661–3675), `n=1 a=2`: covering `240–256 id=5009` and
+`160–336 id=5015`; ledger `lid=5009 lst=240`. Events `On@160 id=5015`, `On@240 id=5009`, `Off@256`.
+Two spans cover the hold; the one-entry ledger holds only the inner On. Structural, as DEC-042
+already states.
+
+### Separate residuals — do not fold into DEC-042
+
+**Abutting replacement interior.** Pitch 12 at `hs=352` (L3349–3363), `n=0 a=1`, covering
+`336–432 id=4997`. Events include equal-tick `On@336 id=4997` and `Off@336` (vector On then Off)
+plus `160–336 id=5015` ending at 336. Hold is 16 ticks inside the new note. `cu=0`, `ltick=352`.
+No nested inner ending at 352. Cause not proven from this log: catch-up did not run, and `mmevt`
+is not playback order.
+
+**Interior with no Off at the hold.** Pitch 24 at `hs=360` (L4278–4287), `n=0 a=1`, covering
+`216–408 id=5041`. Events on the lane: `On@216 id=5041`, `Off@408`, and the previous/next notes
+`72–215` / `456–648`. Three spans total, none nested at 360. `cu=0`, `ltick=360`. Same shape as
+parked L4294 — empty ledger inside a span with no Off in `(start, hold]`.
+
+**`n=1 a=0` at equal-tick On.** Pitch 12 at `hs=48` twice (L3945–3958, L4749–4761). Ledger
+`led=1 lid=5027 lst=48`. Source view `as=0,ae=0`. Neighbour span `0–48 id=5033` has `p=0` because
+`displayNotePresentAtHold` is inclusive start, **exclusive end** (`s < linearEnd`). Events:
+`On@48 id=5027` and `Off@48`. A 48–48 span is not present at 48 (`48 < 48` is false), so `a=0`
+while the ledger last-wrote the On. Representation disagreement at a point, not nested
+cardinality.
 
 ---
 

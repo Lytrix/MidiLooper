@@ -66,7 +66,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 **Owner (today):** `ActiveNoteLedger` — `LoopPlaybackRuntime::ledger`. `playCommittedLoopMidi` writes via `applyPlaybackLedgerEvent`; `Track::snapshotOverlapHoldCandidates` / `collectOverdubNoteOnParticipantIds` read.  
 **Investigation:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](Plans/overdub_occupy_unmatched_off_ledger_investigation.md)  
 **Parent:** [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) point 9  
-**Evidence:** [`090050`](../captures/session_20260819_090050.log) — `DIAG,lcr,mismatch` pitch 12 `hs=336`
+**Evidence:** [`090050`](../captures/session_20260819_090050.log) spans; [`092336`](../captures/session_20260819_092336.log) event-backed (`DIAG,lcr,mmevt`)
 
 **Context:** Occupy reported `n=0 a=1` at holds where the source view showed a note present. The
 proposed root cause was that committed NoteOffs carry no `noteId`, so an Off clears a lane it does
