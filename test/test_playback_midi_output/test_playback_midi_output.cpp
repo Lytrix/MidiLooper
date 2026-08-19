@@ -11,6 +11,7 @@
 
 #include "ActiveNoteLedger.h"
 #include "MidiEvent.h"
+#include "OverlapNoteIdObservation.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/PlaybackMidiOutput.h"
@@ -276,6 +277,44 @@ void test_equal_phase_off_before_on_last_writes_new_on() {
   TEST_ASSERT_EQUAL_UINT32(200, ledger.noteId(1, 12));
 }
 
+void test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12() {
+  // Proven occupy n=0 a=1 geometry from session_20260819_090050 (DIAG,lcr,mismatch pitch=12
+  // hs=336 led=0, spans 240-480 id 4819 covering and 288-336 id 4814 nested inside it).
+  // The lane carries one ActiveNoteLedger::Entry per (channel, pitch), so the inner note's
+  // NoteOn overwrites the outer note's identity before any Off arrives. That is why stamping
+  // identity onto Offs cannot repair this geometry: at Off@336 the entry already belongs to
+  // the inner note, so an identity-matched clear still empties a lane the source view shows
+  // as occupied. See overdub_occupy_unmatched_off_ledger_investigation.md.
+  constexpr uint32_t kLoop = 768;
+  constexpr uint32_t kHold = 336;
+  constexpr NoteId kOuterId = 4819;
+  constexpr NoteId kInnerId = 4814;
+  MidiEvent outerOn = MidiEvent::NoteOn(240, 1, 12, 100);
+  outerOn.noteId = kOuterId;
+  MidiEvent innerOn = MidiEvent::NoteOn(288, 1, 12, 100);
+  innerOn.noteId = kInnerId;
+  MidiEvent innerOff = MidiEvent::NoteOff(336, 1, 12, 0);
+  MidiEvent outerOff = MidiEvent::NoteOff(480, 1, 12, 0);
+
+  ActiveNoteLedger ledger;
+  (void)ledger.applyPlaybackEvent(1, outerOn);
+  TEST_ASSERT_EQUAL_UINT32(kOuterId, ledger.noteId(1, 12));
+
+  // The outer note's identity is already gone here — before any Off is applied.
+  (void)ledger.applyPlaybackEvent(1, innerOn);
+  TEST_ASSERT_EQUAL_UINT32(kInnerId, ledger.noteId(1, 12));
+
+  // The inner Off's LIFO identity is the inner note, so matching identity would still clear.
+  (void)ledger.applyPlaybackEvent(1, innerOff);
+  TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, ledger.noteId(1, 12));
+
+  // Source view still shows the outer note covering the hold: n=0 against a=1.
+  TEST_ASSERT_TRUE(
+      OverlapNoteIdObservation::displayNotePresentAtHold(240, 480, kHold, kLoop));
+  TEST_ASSERT_FALSE(ledger.isActive(1, 12));
+  (void)outerOff;
+}
+
 void test_wrap_advances_while_midi_send_suppressed() {
   DirectPlaybackStreamCtx streamCtx{{makePhaseEvent(5), makePhaseEvent(90)}};
   uint16_t cursor = 0;
@@ -312,6 +351,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_unmute_does_not_resend_crossed_events);
   RUN_TEST(test_wrap_committed_note_at_s_crosses_when_reanchored_at_prev);
   RUN_TEST(test_equal_phase_off_before_on_last_writes_new_on);
+  RUN_TEST(test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12);
   RUN_TEST(test_wrap_advances_while_midi_send_suppressed);
   return UNITY_END();
 }

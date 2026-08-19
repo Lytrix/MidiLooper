@@ -32,6 +32,121 @@ static void logCaptureAppendDeny(const Loop& loop, const CaptureAppendResult& re
 }
 #endif
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+namespace {
+
+constexpr size_t kOccupyMismatchSpanLogLimit = 6;
+constexpr size_t kOccupyMismatchEventLogLimit = 8;
+
+/// Circular tick distance on the loop, so a hold near the wrap still sees its lane events.
+uint32_t occupyMismatchTickDistance(uint32_t phase, uint32_t holdStart, uint32_t loopLength) {
+  const uint32_t linear = phase >= holdStart ? phase - holdStart : holdStart - phase;
+  if (loopLength == 0 || linear <= loopLength / 2) {
+    return linear;
+  }
+  return loopLength - linear;
+}
+
+/// Occupy mismatch evidence: which lane the ledger holds, every source-view span on that
+/// lane, and the committed events that could have written it. Emitted only when the ledger
+/// and the source view disagree, so passing runs stay quiet and the ring is not flooded.
+TRACK_COLD_MEM __attribute__((noinline)) void logOccupyLedgerMismatch(
+    const Loop& loop, const ActiveNoteLedger& ledger, const PlaybackMergedMidiEvents& merged,
+    uint8_t channel, uint8_t pitch, uint32_t holdStart, uint32_t loopLength,
+    unsigned ledgerParticipants, unsigned sourceViewParticipants) {
+  const uint32_t diagnosticStartUs = micros();
+  unsigned ledgerActive = 0;
+  NoteId ledgerNoteId = kInvalidNoteId;
+  uint32_t ledgerStartTick = 0;
+  ledger.forEachActive(
+      [&](uint8_t entryChannel, uint8_t entryNote, const ActiveNoteLedger::Entry& entry) {
+        if (entryChannel != channel || entryNote != pitch) {
+          return;
+        }
+        ledgerActive = 1;
+        ledgerNoteId = entry.noteId;
+        ledgerStartTick = entry.startTick;
+      });
+  const unsigned catchUpWouldApply =
+      CommittedPlaybackLedgerCatchUp::shouldApply(loop, holdStart) ? 1u : 0u;
+
+  char line[256];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,mismatch,pitch=%u,ch=%u,hs=%lu,n=%u,a=%u,led=%u,lid=%lu,lst=%lu,"
+           "ltick=%lu,cu=%u,win=%lu,wlen=%lu,rev=%lu,dus=%lu",
+           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+           static_cast<unsigned>(channel), static_cast<unsigned long>(holdStart),
+           ledgerParticipants, sourceViewParticipants, ledgerActive,
+           static_cast<unsigned long>(ledgerNoteId), static_cast<unsigned long>(ledgerStartTick),
+           static_cast<unsigned long>(loop.lastTickInLoop), catchUpWouldApply,
+           static_cast<unsigned long>(merged.windowStartTick),
+           static_cast<unsigned long>(merged.windowLengthTicks),
+           static_cast<unsigned long>(merged.builtFromRevision),
+           static_cast<unsigned long>(micros() - diagnosticStartUs));
+  DebugSessionCapture::appendCaptureTextLine(line);
+
+  // Every span on the lane, not only the first covering one — overlap candidates are the point.
+  // Spans covering the hold go first: they are the participants being counted, and a lane can
+  // carry more non-covering spans than the cap allows.
+  size_t spansLogged = 0;
+  for (unsigned pass = 0; pass < 2 && spansLogged < kOccupyMismatchSpanLogLimit; ++pass) {
+    for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+      if (spansLogged >= kOccupyMismatchSpanLogLimit) {
+        break;
+      }
+      if (note.note != pitch) {
+        continue;
+      }
+      const unsigned presentAtHold = OverlapNoteIdObservation::displayNotePresentAtHold(
+                                         note.startTick, note.endTick, holdStart, loopLength)
+                                         ? 1u
+                                         : 0u;
+      if (presentAtHold != (pass == 0 ? 1u : 0u)) {
+        continue;
+      }
+      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,mmspan,pitch=%u,i=%u,s=%lu,e=%lu,id=%lu,p=%u",
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+               static_cast<unsigned>(spansLogged), static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick), static_cast<unsigned long>(note.noteId),
+               presentAtHold);
+      DebugSessionCapture::appendCaptureTextLine(line);
+      ++spansLogged;
+    }
+  }
+
+  // Raw stored tick and phase both: overdub-pass events are linear and may exceed loopLength.
+  size_t eventsLogged = 0;
+  for (const MidiEvent& evt : merged.mergedEvents) {
+    if (eventsLogged >= kOccupyMismatchEventLogLimit) {
+      break;
+    }
+    if (!evt.isNoteOn() && !evt.isNoteOff()) {
+      continue;
+    }
+    // Pitch only: the ledger collapses every channel message onto the track channel
+    // (remappedPlaybackChannel), while stored capture events keep their input channel.
+    // Filtering merged events on the track channel matches nothing. Log evt.channel instead.
+    if (evt.data.noteData.note != pitch) {
+      continue;
+    }
+    const uint32_t phase = IntervalProjection::playbackEventPhase(evt.tick, loopLength);
+    if (occupyMismatchTickDistance(phase, holdStart, loopLength) > Config::TICKS_PER_BAR) {
+      continue;
+    }
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,mmevt,pitch=%u,i=%u,t=%lu,ph=%lu,k=%s,id=%lu,ech=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+             static_cast<unsigned>(eventsLogged), static_cast<unsigned long>(evt.tick),
+             static_cast<unsigned long>(phase), evt.isNoteOff() ? "off" : "on",
+             static_cast<unsigned long>(evt.noteId), static_cast<unsigned>(evt.channel));
+    DebugSessionCapture::appendCaptureTextLine(line);
+    ++eventsLogged;
+  }
+}
+
+}  // namespace
+#endif
+
 const uint32_t Track::TICKS_PER_BAR = Config::TICKS_PER_BAR;
 
 TRACK_COLD_MEM __attribute__((noinline)) void Track::catchUpCommittedPlaybackLedgerToPhase(
@@ -129,6 +244,13 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
            static_cast<unsigned long>(holdStart),
            static_cast<unsigned long>(observeUs));
   DebugSessionCapture::appendCaptureTextLine(line);
+  // Mismatch only: ledger vs source view disagree on this lane. Passing occupies stay quiet.
+  if (pending.overlapNoteIds.size() != sourceViewIds.size()) {
+    logOccupyLedgerMismatch(loop, runtime->ledger, runtime->mergedMidiEvents, midiChannel,
+                            pending.note, holdStart, loopLength,
+                            static_cast<unsigned>(pending.overlapNoteIds.size()),
+                            static_cast<unsigned>(sourceViewIds.size()));
+  }
 #endif
 }
 

@@ -2,13 +2,35 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (occupy clock same-tick Off before On HITL PASS 001021)
+Last updated: 2026-08-19 (occupy unmatched Off — observability stage)
 
 ---
 
 ## Now implementing
 
-### Occupy clock same-tick Off before On
+### Occupy unmatched Off vs ledger — observability before identity RC
+
+**Investigation:** [`overdub_occupy_unmatched_off_ledger_investigation.md`](../Plans/overdub_occupy_unmatched_off_ledger_investigation.md)  
+**Parent (shipped):** [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](../Plans/overdub_occupy_clock_same_tick_off_before_on_bugfix.md) — HITL **PASS** [`001021`](../../captures/session_20260819_001021.log)  
+**Pin (residuals):** [`235314`](../../captures/session_20260818_235314.log) L4750 interior `192–288` @ `hs=240`; L4294 interior `240–384` @ `hs=352`
+
+**Invariant:** Occupy diagnostics must record, at every ledger-vs-source-view disagreement, the committed events and derived spans that could have written the lane — so the next RC targets a proven geometry rather than an inferred one. Observation only; occupy stays a reader.
+
+**Owner:** `Track::snapshotOverlapHoldCandidates` — file-local static `logOccupyLedgerMismatch` under `SESSION_CAPTURE && ARDUINO`, `TRACK_COLD_MEM`. Mismatch-gated (`n != a`); capped at 1 header + 6 `mmspan` + 8 `mmevt` lines.
+
+**Verified (do not re-derive):** committed capture-pass Offs carry **no** `noteId` — every assigner is guarded on `isNoteOn()`, and the gather copies chunk events verbatim. There is no canonical NoteSpan in committed storage; spans are derived by `appendCanonicalSpansFromMidiRange`, and LCR builds its spans from that same output. Untagged Off pairing is **LIFO**, not FIFO.
+
+**FIFO stamping: rejected.** Contradicts `LoopEventValidation` Pass 2, `appendCanonicalSpansFromMidiRange`, `stampNoteIdsOntoPairedNoteOffs`, `orderSamePitchNoteOffsForLifo`. Neither FIFO nor LIFO is a general identity resolver for overlapping same-pitch notes.
+
+**Geometry proven** — [`090050`](../../captures/session_20260819_090050.log), 2 × `n=0 a=1` and 3 × `n=1 a=2` over 105 occupies. The real shape is a **nested** same-pitch pair, not the assumed staggered overlap: pitch 12 at `hs=336` carries outer `240–480` (id 4819) with `288–336` (id 4814) fully inside it. LIFO pairs that correctly, so the earlier contradiction is resolved. `eq=1` on all 105 lines and `b == a` on every mismatch, so the two derived representations agree and the fault is on the **ledger** side, not the gather window or overlap merge.
+
+**Off identity alone cannot fix it.** `ActiveNoteLedger` is `std::array<Entry, 16*128>` — one entry per (channel, pitch) — and `noteOn` overwrites unconditionally, so the outer note's identity is destroyed by the **inner NoteOn**, before any Off. An identity-matched clear at `Off@336` still empties the lane. Pinned by `test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12`.
+
+**Direction — [DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem):** **C** — more than one active entry per `(channel, pitch)`, with NoteOff identity selecting which active note to resolve. **Design session required before any code.** A (stamp Off identity) is **eliminated**; B (ledger consults derived spans) is **rejected**. The defect is **cardinality**, not identity-on-Offs. DEC-042 supersedes DEC-041 point 9 only once implemented, so today's `n=0 a=1` is **expected ledger behavior**, not a regression. Not authorized: `Entry` as a vector, or any `applyPlaybackEvent` / `noteOn` / `noteOff` change.
+
+**Does not reopen:** catch-up two-pass; clock equal-phase Off before On; occupy repairing clock when `occupyPhase == lastTick`; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`; changing `applyPlaybackEvent` without a design session.
+
+### Occupy clock same-tick Off before On — shipped
 
 **Plan:** [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](../Plans/overdub_occupy_clock_same_tick_off_before_on_bugfix.md)  
 **Parent (catch-up two-pass shipped, gate not met):** [`overdub_occupy_same_tick_off_before_on_bugfix.md`](../Plans/overdub_occupy_same_tick_off_before_on_bugfix.md)  
@@ -18,6 +40,8 @@ Last updated: 2026-08-19 (occupy clock same-tick Off before On HITL PASS 001021)
 **Invariant:** Clock playback at equal phase applies Off before On so abutting same-pitch replacement last-writes the new On. Occupy still reads `Entry.noteId`. Catch-up skip bound unchanged (`occupyPhase <= lastTick` still skips).
 
 **HITL gate:** **met.** Occupy 12 @ `hs=0` sounding `n=1 a=1`. Do not treat `n=1 a=2` as this FAIL. 235314 interiors L4750/L4294 were not in this capture; `n=0 a=1` is 0 so unmatched-Off is not opened.
+
+**Successor (observability):** [`overdub_occupy_unmatched_off_ledger_investigation.md`](../Plans/overdub_occupy_unmatched_off_ledger_investigation.md) — FIFO stamping rejected; geometry now **proven** as a nested same-pitch pair ([`090050`](../../captures/session_20260819_090050.log)).
 
 **Does not reopen:** catch-up two-pass; occupy repairing clock when `occupyPhase == lastTick`; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`; changing `applyPlaybackLedgerEvent`.
 
