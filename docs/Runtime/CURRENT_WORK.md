@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (leftover identity 5701 native shipped; HITL gate open)
+Last updated: 2026-08-19 (leftover identity HITL PASS [`111819`](../../captures/session_20260819_111819.log))
 
 ---
 
@@ -16,7 +16,8 @@ Last updated: 2026-08-19 (leftover identity 5701 native shipped; HITL gate open)
 
 **Invariant:** An open ledger identity is retained iff its NoteOn identity exists in a complete rebuilt committed playback stream.
 
-**Native:** **PASS** 1371/1371. RAM1 **425932** / **4768**. HITL gate: `n=1 a=0` down vs 19; leftover `5701` gone. Keep `led == n` and `n=0 a=1` = 0.
+**Native:** **PASS** 1371/1371. RAM1 **425932** / **4768**.  
+**HITL [`111819`](../../captures/session_20260819_111819.log):** leftover **MET**. `n=1 a=0` **0**. `n=0 a=1` **0**. `led == n` **1/1**. `5701` gone. 11 `ledger,erase`. Remaining 1 mismatch is `n=1 a=2` pitch 24 `hs=72` (two covering spans, one Entry) — not this FAIL.
 
 **Does not reopen:** occupy catching up when `occupyPhase <= lastTick`; `playMidiEvents` from occupy; advancing `lastTick` from USB; Off stamping; FIFO; option B; clearing the whole ledger; `isPlaybackCatchUpWindow` equal-tick contract; duplicate-Off ledger apply.
 
