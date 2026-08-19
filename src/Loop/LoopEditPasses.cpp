@@ -79,6 +79,7 @@ void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
   playbackOrderDirty = true;
   passes = std::move(snapshot.passes);
   snapshot.passes = LoopPasses{};
+  syncNextOverdubSessionIndexFromPasses();
   loopLengthTicks = reconcileLoopLengthWithCommittedPasses(loopLengthTicks);
   ++playbackRevision;
   markDisplayCachesStale();
@@ -101,6 +102,7 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   nextEventIndex = 0;
   playbackOrderDirty = true;
   passes = deepClonePasses(snapshot.passes);
+  syncNextOverdubSessionIndexFromPasses();
   ++playbackRevision;
   markDisplayCachesStale();
   notifyCommittedContentChanged();

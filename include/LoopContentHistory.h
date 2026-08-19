@@ -27,6 +27,8 @@ struct ContentUndoUnit {
   ContentUndoUnitKind kind = ContentUndoUnitKind::RecordPassAdded;
   PassId primaryPassId = kInvalidPassId;
   uint8_t editPassIndex = 0;
+  uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
+  PassIdList passIds;
   EditPassIdList editPassIds;
 };
 

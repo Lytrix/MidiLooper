@@ -41,6 +41,8 @@ void Loop::resetPassTimeline() {
   nextPassId_ = 1;
   nextNoteId_ = 1;
   nextMergeSequence_ = 0;
+  nextOverdubSessionIndex_ = 1;
+  currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   lastCommittedPassId_ = kInvalidPassId;
   playbackRevision = 0;
   editStateDirty_ = false;

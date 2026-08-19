@@ -325,6 +325,87 @@ void test_walk_effective_units_to_empty() {
   TEST_ASSERT_EQUAL(0u, units.size());
 }
 
+void test_overdub_session_index_groups_wraps_as_one_unit() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  OverdubPass wrap1;
+  wrap1.id = 2;
+  wrap1.overdubSessionIndex = 1;
+  passes.overdubPasses.push_back(wrap1);
+  passes.editPasses.push_back(makeNoteEdit(3, kOverdubCompanionEditPassIndex, 1, 0, 48));
+  OverdubPass wrap2;
+  wrap2.id = 4;
+  wrap2.overdubSessionIndex = 1;
+  passes.overdubPasses.push_back(wrap2);
+  passes.editPasses.push_back(makeNoteEdit(5, kOverdubCompanionEditPassIndex, 2, 48, 96));
+
+  std::vector<ContentUndoUnit> units;
+  deriveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(2u, units.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(ContentUndoUnitKind::OverdubPassAdded),
+                    static_cast<int>(units[1].kind));
+  TEST_ASSERT_EQUAL(2u, units[1].primaryPassId);
+  TEST_ASSERT_EQUAL(2u, units[1].passIds.size());
+  TEST_ASSERT_EQUAL(2u, units[1].passIds[0]);
+  TEST_ASSERT_EQUAL(4u, units[1].passIds[1]);
+  TEST_ASSERT_EQUAL(2u, units[1].editPassIds.size());
+  TEST_ASSERT_EQUAL(3u, units[1].editPassIds[0]);
+  TEST_ASSERT_EQUAL(5u, units[1].editPassIds[1]);
+
+  UndoEntryVec entries;
+  buildContentUndoEntries(passes, 0, 7, entries);
+  TEST_ASSERT_EQUAL(2u, entries.size());
+  TEST_ASSERT_EQUAL(2u, entries[1].passIds.size());
+  TEST_ASSERT_EQUAL(2u, entries[1].passId);
+}
+
+void test_ungrouped_overdub_session_index_stays_one_unit_each() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  OverdubPass first;
+  first.id = 2;
+  first.overdubSessionIndex = kUngroupedOverdubSessionIndex;
+  passes.overdubPasses.push_back(first);
+  OverdubPass second;
+  second.id = 3;
+  second.overdubSessionIndex = kUngroupedOverdubSessionIndex;
+  passes.overdubPasses.push_back(second);
+
+  std::vector<ContentUndoUnit> units;
+  deriveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(3u, units.size());
+  TEST_ASSERT_EQUAL(2u, units[1].primaryPassId);
+  TEST_ASSERT_EQUAL(1u, units[1].passIds.size());
+  TEST_ASSERT_EQUAL(3u, units[2].primaryPassId);
+  TEST_ASSERT_EQUAL(1u, units[2].passIds.size());
+}
+
+void test_two_overdub_session_indexes_are_two_units() {
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  OverdubPass session1a;
+  session1a.id = 2;
+  session1a.overdubSessionIndex = 1;
+  passes.overdubPasses.push_back(session1a);
+  OverdubPass session1b;
+  session1b.id = 3;
+  session1b.overdubSessionIndex = 1;
+  passes.overdubPasses.push_back(session1b);
+  OverdubPass session2;
+  session2.id = 4;
+  session2.overdubSessionIndex = 2;
+  passes.overdubPasses.push_back(session2);
+
+  std::vector<ContentUndoUnit> units;
+  deriveContentUndoUnits(passes, units);
+  TEST_ASSERT_EQUAL(3u, units.size());
+  TEST_ASSERT_EQUAL(2u, units[1].passIds.size());
+  TEST_ASSERT_EQUAL(2u, units[1].passIds[0]);
+  TEST_ASSERT_EQUAL(3u, units[1].passIds[1]);
+  TEST_ASSERT_EQUAL(1u, units[2].passIds.size());
+  TEST_ASSERT_EQUAL(4u, units[2].passIds[0]);
+}
+
 void test_two_loops_derive_independently() {
   LoopPasses slot0;
   slot0.recordPass.id = 1;
@@ -361,6 +442,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_effective_units_omit_disabled_records);
   RUN_TEST(test_build_content_undo_entries_at_tip);
   RUN_TEST(test_walk_effective_units_to_empty);
+  RUN_TEST(test_overdub_session_index_groups_wraps_as_one_unit);
+  RUN_TEST(test_ungrouped_overdub_session_index_stays_one_unit_each);
+  RUN_TEST(test_two_overdub_session_indexes_are_two_units);
   RUN_TEST(test_two_loops_derive_independently);
   return UNITY_END();
 }
