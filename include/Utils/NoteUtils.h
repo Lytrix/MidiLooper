@@ -245,4 +245,8 @@ void orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel, ui
  */
 void sortMidiEventsChronologically(MidiEventVec& midiEvents);
 
-} // namespace NoteUtils 
+/** Tick ascending, then NoteOff before NoteOn — same keys as sortMidiEventsChronologically. */
+bool midiEventChronologicalLess(const MidiEvent& a, const MidiEvent& b);
+
+} // namespace NoteUtils
+ 

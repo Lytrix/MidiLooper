@@ -21,6 +21,7 @@
 #include "LoopPasses.h"
 #include "LoopEventBuffer.h"
 #include "EditSession.h"
+#include "OverlapNoteIdObservation.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
@@ -659,6 +660,227 @@ void test_145518_assign_on_committed_passes_makes_rematerialize_find_id() {
     }
   }
   TEST_ASSERT_TRUE(foundMoved);
+}
+
+MidiEvent noteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
+                       NoteId noteId);
+
+// Pin 121141 L2324 pitch-24 merged dump order (Off@743 is the 9th event, past the occupy cap).
+MidiEventVec make121141Pitch24CombinedL2324() {
+  MidiEventVec events;
+  events.push_back(noteOnWithId(144, 4, 24, 100, 6079));
+  events.push_back(noteOnWithId(168, 4, 24, 100, 6073));
+  events.push_back(MidiEvent::NoteOff(168, 4, 24, 0));
+  events.push_back(MidiEvent::NoteOff(264, 4, 24, 0));
+  events.push_back(MidiEvent::NoteOff(360, 4, 24, 0));
+  events.push_back(noteOnWithId(408, 4, 24, 100, 6033));
+  events.push_back(noteOnWithId(504, 4, 24, 100, 6040));
+  events.push_back(MidiEvent::NoteOff(600, 4, 24, 0));
+  events.push_back(MidiEvent::NoteOff(743, 4, 24, 0));
+  return events;
+}
+
+int countPitch24OffAt(const MidiEventVec& events, uint32_t tick) {
+  return countMatching(events, false, 24, tick);
+}
+
+bool hasNoteOnId(const MidiEventVec& events, NoteId noteId) {
+  return findNoteOnById(events, noteId) >= 0;
+}
+
+MidiEventVec applyOneLength(const MidiEventVec& input, NoteId targetNoteId, uint32_t newEnd) {
+  MidiEventVec events = input;
+  applyNoteEditPass(events, makeLengthRow(targetNoteId, 0, 0, newEnd), 768);
+  return events;
+}
+
+MidiEventVec applyOneDelete(const MidiEventVec& input, NoteId targetNoteId) {
+  MidiEventVec events = input;
+  applyNoteEditPass(events, makeDeleteRow(targetNoteId), 768);
+  return events;
+}
+
+// Gate 4 named the pre-5A bug (Length 6073 stole Off@168 on On-then-Off order).
+// Gate 5A: findNoteOffForOnIndex walks Off-before-On, so dump order no longer matters.
+void test_121141_gate5a_on_then_off_length_pairing() {
+  const MidiEventVec input = make121141Pitch24CombinedL2324();
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(input, 168));
+  TEST_ASSERT_TRUE(hasNoteOnId(input, 6079));
+  TEST_ASSERT_TRUE(hasNoteOnId(input, 6073));
+
+  {
+    const MidiEventVec out = applyOneLength(input, 6079, 167);
+    TEST_ASSERT_EQUAL(0, countPitch24OffAt(out, 168));
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 167));
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 264));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+    const std::vector<NoteUtils::DisplayNote> notes =
+        NoteUtils::reconstructNotes(out, 768, false);
+    bool foundA = false;
+    bool foundB = false;
+    for (const NoteUtils::DisplayNote& note : notes) {
+      if (note.noteId == 6079 && note.note == 24) {
+        foundA = true;
+        TEST_ASSERT_EQUAL_UINT32(144u, note.startTick);
+        TEST_ASSERT_EQUAL_UINT32(167u, note.endTick);
+      }
+      if (note.noteId == 6073 && note.note == 24) {
+        foundB = true;
+        TEST_ASSERT_EQUAL_UINT32(168u, note.startTick);
+        TEST_ASSERT_EQUAL_UINT32(264u, note.endTick);
+      }
+    }
+    TEST_ASSERT_TRUE(foundA);
+    TEST_ASSERT_TRUE(foundB);
+  }
+  {
+    const MidiEventVec out = applyOneLength(input, 6040, 551);
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+  }
+  {
+    const MidiEventVec out = applyOneLength(input, 6033, 551);
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+  }
+  {
+    const MidiEventVec out = applyOneDelete(input, 6079);
+    TEST_ASSERT_EQUAL(0, countPitch24OffAt(out, 168));
+    TEST_ASSERT_FALSE(hasNoteOnId(out, 6079));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+  }
+  {
+    const MidiEventVec out = applyOneDelete(input, 6073);
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+    TEST_ASSERT_FALSE(hasNoteOnId(out, 6073));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+  }
+  {
+    const MidiEventVec out = applyOneLength(input, 6073, 167);
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 167));
+    TEST_ASSERT_EQUAL(0, countPitch24OffAt(out, 264));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+  }
+  {
+    const MidiEventVec out = applyOneLength(input, 6073, 551);
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 551));
+    TEST_ASSERT_EQUAL(0, countPitch24OffAt(out, 264));
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 360));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+  }
+  {
+    const MidiEventVec out = applyOneLength(input, 6073, 264);
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+    TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 264));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+    TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+  }
+}
+
+void test_121141_gate4_per_layer_6040_cannot_steal_off168_from_6073_layer() {
+  MidiEventVec lateLayer;
+  lateLayer.push_back(noteOnWithId(144, 4, 24, 100, 6079));
+  lateLayer.push_back(noteOnWithId(168, 4, 24, 100, 6073));
+  lateLayer.push_back(MidiEvent::NoteOff(168, 4, 24, 0));
+  lateLayer.push_back(MidiEvent::NoteOff(264, 4, 24, 0));
+  lateLayer.push_back(MidiEvent::NoteOff(360, 4, 24, 0));
+
+  const MidiEventVec after6040 = applyOneLength(lateLayer, 6040, 551);
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(after6040, 168));
+
+  const MidiEventVec after6073 = applyOneLength(lateLayer, 6073, 551);
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(after6073, 168));
+  TEST_ASSERT_TRUE(hasNoteOnId(after6073, 6073));
+  TEST_ASSERT_TRUE(hasNoteOnId(after6073, 6079));
+}
+
+void test_121141_gate4_tick_sorted_early_layer_length_6040_leaves_off168() {
+  MidiEventVec earlyLayer;
+  earlyLayer.push_back(MidiEvent::NoteOff(168, 4, 24, 0));
+  earlyLayer.push_back(noteOnWithId(408, 4, 24, 100, 6033));
+  earlyLayer.push_back(noteOnWithId(504, 4, 24, 100, 6040));
+  earlyLayer.push_back(MidiEvent::NoteOff(600, 4, 24, 0));
+  earlyLayer.push_back(MidiEvent::NoteOff(743, 4, 24, 0));
+
+  const MidiEventVec after6040 = applyOneLength(earlyLayer, 6040, 551);
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(after6040, 168));
+}
+
+// Gate 5A: Length 6073 551 still moves Off@264 after pairing; leftover Off@360 becomes B.
+void test_121141_gate5_off_before_on_length_6073_551_leaves_off168_reconstruct_b_168_360() {
+  MidiEventVec events = make121141Pitch24CombinedL2324();
+  NoteUtils::sortMidiEventsChronologically(events);
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(events, 168));
+  const MidiEventVec out = applyOneLength(events, 6073, 551);
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 168));
+  TEST_ASSERT_EQUAL(0, countPitch24OffAt(out, 264));
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 551));
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 360));
+  TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+  TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(out, 768, false);
+  bool foundA = false;
+  bool foundB = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == 6079 && note.note == 24) {
+      foundA = true;
+      TEST_ASSERT_EQUAL_UINT32(144u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(168u, note.endTick);
+      TEST_ASSERT_FALSE(OverlapNoteIdObservation::displayNotePresentAtHold(
+          note.startTick, note.endTick, 312, 768));
+    }
+    if (note.noteId == 6073 && note.note == 24) {
+      foundB = true;
+      TEST_ASSERT_EQUAL_UINT32(168u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(360u, note.endTick);
+      TEST_ASSERT_TRUE(OverlapNoteIdObservation::displayNotePresentAtHold(
+          note.startTick, note.endTick, 312, 768));
+    }
+  }
+  TEST_ASSERT_TRUE(foundA);
+  TEST_ASSERT_TRUE(foundB);
+}
+
+// Gate 5A: Length 6079 167 owns Off@168 and reconstructs A 144–167 / B 168–264.
+void test_121141_gate5_off_before_on_length_6079_167_shortens_a_off168() {
+  MidiEventVec events = make121141Pitch24CombinedL2324();
+  NoteUtils::sortMidiEventsChronologically(events);
+  const MidiEventVec out = applyOneLength(events, 6079, 167);
+  TEST_ASSERT_EQUAL(0, countPitch24OffAt(out, 168));
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 167));
+  TEST_ASSERT_EQUAL(1, countPitch24OffAt(out, 264));
+  TEST_ASSERT_TRUE(hasNoteOnId(out, 6079));
+  TEST_ASSERT_TRUE(hasNoteOnId(out, 6073));
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(out, 768, false);
+  bool foundA = false;
+  bool foundB = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == 6079 && note.note == 24) {
+      foundA = true;
+      TEST_ASSERT_EQUAL_UINT32(144u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(167u, note.endTick);
+      TEST_ASSERT_FALSE(OverlapNoteIdObservation::displayNotePresentAtHold(
+          note.startTick, note.endTick, 312, 768));
+    }
+    if (note.noteId == 6073 && note.note == 24) {
+      foundB = true;
+      TEST_ASSERT_EQUAL_UINT32(168u, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(264u, note.endTick);
+      TEST_ASSERT_FALSE(OverlapNoteIdObservation::displayNotePresentAtHold(
+          note.startTick, note.endTick, 312, 768));
+    }
+  }
+  TEST_ASSERT_TRUE(foundA);
+  TEST_ASSERT_TRUE(foundB);
 }
 
 MidiEvent noteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
@@ -1781,6 +2003,11 @@ void test_reconcile_already_present_session_id_does_not_retarget() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
+  RUN_TEST(test_121141_gate4_per_layer_6040_cannot_steal_off168_from_6073_layer);
+  RUN_TEST(test_121141_gate4_tick_sorted_early_layer_length_6040_leaves_off168);
+  RUN_TEST(test_121141_gate5_off_before_on_length_6073_551_leaves_off168_reconstruct_b_168_360);
+  RUN_TEST(test_121141_gate5_off_before_on_length_6079_167_shortens_a_off168);
   RUN_TEST(test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor);
   RUN_TEST(test_lengthen_after_move_keeps_p0_fixture_gate);
   RUN_TEST(test_change_length_rematerialize_keeps_p0_off_not_loop_end);

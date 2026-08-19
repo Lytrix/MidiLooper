@@ -1,6 +1,6 @@
 # Occupy missing open identity (`n=1 a=2` extra covering span)
 
-**Status:** Native **PASS** 1374/1374. RAM1 **425948** / locals **4768**. HITL [`121141`](../../captures/session_20260819_121141.log): **5893-class MET** (no `5893`; identity-without-NoteOn gone). Remaining `n=1 a=2` **FAIL** — extra covering ids have `on=1`. This RC’s root cause does not explain them. **STOP.** Do not widen the identity filter.  
+**Status:** Native **PASS** 1374/1374. RAM1 **425948** / locals **4768**. HITL [`121141`](../../captures/session_20260819_121141.log): **5893-class MET** (no `5893`; identity-without-NoteOn gone). Remaining `n=1 a=2` **FAIL** — extra covering ids have `on=1`. This RC’s root cause does not explain them. **STOP.** Do not widen the identity filter. Successor: [`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md).  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (leftover identity HITL PASS, remaining mismatch):** [`overdub_occupy_leftover_identity_bugfix.md`](overdub_occupy_leftover_identity_bugfix.md)  
