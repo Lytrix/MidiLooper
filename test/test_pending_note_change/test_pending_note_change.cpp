@@ -33,6 +33,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/PlaybackCursorAdvance.h"
+#include "PlaybackMergedMidiEvents.h"
 
 #include "../../src/Utils/PlaybackCursorAdvance.cpp"
 #include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"
@@ -63,6 +64,16 @@ bool hasDisplayNote(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint3
     }
   }
   return false;
+}
+
+NoteUtils::DisplayNote testSourceSpan(NoteId id, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  NoteUtils::DisplayNote note{};
+  note.noteId = id;
+  note.note = pitch;
+  note.velocity = 100;
+  note.startTick = startTick;
+  note.endTick = endTick;
+  return note;
 }
 
 const PendingNoteChange* findTransform(const PendingNoteChangeVec& pending, NoteId noteId) {
@@ -1895,6 +1906,105 @@ void test_erase_open_notes_missing_from_committed_note_ons_drops_5701_keeps_5772
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(afterOff.size()));
 }
 
+void test_occupy_source_hold_drops_span_without_merged_note_on() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = kLoopLenTicks;
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  MidiEvent offB = MidiEvent::NoteOff(168, 1, kPitch, 0);
+  merged.mergedEvents.push_back(onB);
+  merged.mergedEvents.push_back(offB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+  TEST_ASSERT_FALSE(sourceIds.contains(kIdA));
+}
+
+void test_occupy_source_hold_retains_span_with_merged_note_on() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = kLoopLenTicks;
+  MidiEvent onA = MidiEvent::NoteOn(0, 1, kPitch, 100);
+  onA.noteId = kIdA;
+  MidiEvent offA = MidiEvent::NoteOff(743, 1, kPitch, 0);
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  MidiEvent offB = MidiEvent::NoteOff(168, 1, kPitch, 0);
+  merged.mergedEvents.push_back(onA);
+  merged.mergedEvents.push_back(offA);
+  merged.mergedEvents.push_back(onB);
+  merged.mergedEvents.push_back(offB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdA));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+}
+
+void test_occupy_source_hold_partial_window_does_not_drop_span() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.windowStartTick = 6912;
+  merged.windowLengthTicks = 1536;
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  merged.mergedEvents.push_back(onB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdA));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+}
+
 void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2013,6 +2123,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_clock_duplicate_off_closes_both_pre_abut_103234);
   RUN_TEST(test_occupy_leftover_off_at_exclusive_end_closes_wrap_head_not_ghost_104654);
   RUN_TEST(test_erase_open_notes_missing_from_committed_note_ons_drops_5701_keeps_5772);
+  RUN_TEST(test_occupy_source_hold_drops_span_without_merged_note_on);
+  RUN_TEST(test_occupy_source_hold_retains_span_with_merged_note_on);
+  RUN_TEST(test_occupy_source_hold_partial_window_does_not_drop_span);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();

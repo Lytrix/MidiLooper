@@ -164,7 +164,7 @@ Do not FAIL this RC on nested `n=2 a=2` / `n=3 a=2` same-start pairs (L3910 On@2
 | **1,2** | 0 | **1** |
 | n>a | 41 | 0 |
 
-Leftover gate **MET**. Remaining L949 pitch 24 `hs=72` `n=1 a=2` covering **5893 `0–743`** and **5901 `0–168`**; ledger holds only 5901 `lst=744`. Two covering spans, one Entry — not a ghost On missing from merged. Not this FAIL.
+Leftover gate **MET**. Remaining L949 pitch 24 `hs=72` `n=1 a=2` covering **5893 `0–743`** and **5901 `0–168`**; ledger holds only 5901 `lst=744`. Two covering spans, one Entry — not a ghost On missing from merged. Not this FAIL. Successor: [`overdub_occupy_missing_open_identity_bugfix.md`](overdub_occupy_missing_open_identity_bugfix.md).
 
 ---
 

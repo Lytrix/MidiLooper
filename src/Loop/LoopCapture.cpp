@@ -17,6 +17,7 @@
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
+#include "PlaybackMergedMidiEvents.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -354,6 +355,68 @@ void Loop::mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVe
   }
 }
 
+LOOP_COLD_MEM __attribute__((noinline)) bool Loop::committedPlaybackNoteOnIdentityValid(
+    NoteId noteId) const {
+  if (committedPlaybackMergedForIdentity_ == nullptr) {
+    return true;
+  }
+  if (noteId == kInvalidNoteId) {
+    return true;
+  }
+  const PlaybackMergedMidiEvents& merged = *committedPlaybackMergedForIdentity_;
+  // Construction binds only a full-loop stream. Re-check here so a later
+  // windowed gather into the same struct cannot prune against a partial window.
+  if (!isFullLoopMergedPlaybackWindow(merged, loopLengthTicks)) {
+    return true;
+  }
+  for (const MidiEvent& evt : merged.mergedEvents) {
+    if (evt.isNoteOn() && evt.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM __attribute__((noinline)) void Loop::retainValidOverdubSourceViewIdentities() {
+  if (committedPlaybackMergedForIdentity_ == nullptr || !overdubSourceViewEstablished_) {
+    return;
+  }
+  size_t write = 0;
+  for (size_t read = 0; read < overdubSourceViewNotes_.size(); ++read) {
+    const NoteUtils::DisplayNote& note = overdubSourceViewNotes_[read];
+    if (note.noteId != kInvalidNoteId && !committedPlaybackNoteOnIdentityValid(note.noteId)) {
+      continue;
+    }
+    if (write != read) {
+      overdubSourceViewNotes_[write] = overdubSourceViewNotes_[read];
+    }
+    ++write;
+  }
+  overdubSourceViewNotes_.resize(write);
+}
+
+LOOP_COLD_MEM __attribute__((noinline)) void Loop::replaceCommittedPlaybackNoteOnIdentities(
+    const PlaybackMergedMidiEvents& merged) {
+  if (!isFullLoopMergedPlaybackWindow(merged, loopLengthTicks)) {
+    committedPlaybackMergedForIdentity_ = nullptr;
+    return;
+  }
+  committedPlaybackMergedForIdentity_ = &merged;
+  retainValidOverdubSourceViewIdentities();
+}
+
+LOOP_COLD_MEM __attribute__((noinline)) void Loop::clearCommittedPlaybackNoteOnIdentities() {
+  committedPlaybackMergedForIdentity_ = nullptr;
+}
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+void Loop::replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes) {
+  overdubSourceViewNotes_ = std::move(notes);
+  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceViewEstablished_ = true;
+}
+#endif
+
 LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) {
   overlapHoldTotals_ = {};
   rebuildOverdubSourceView(playheadPhaseTick, "open");
@@ -399,6 +462,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
     appendOverdubPassWrapPairedNotes(overdubSourceViewNotes_);
   }
   overdubSourceViewEstablished_ = true;
+  retainValidOverdubSourceViewIdentities();
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
