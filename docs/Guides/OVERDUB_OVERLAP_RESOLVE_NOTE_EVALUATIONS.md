@@ -96,6 +96,8 @@ persistent note event geometry (Off tick via shortenNoteEndById)
 
 `overdubSourceViewNotes_` is a cache. Source-view covering identities are read from it **without** applying pending. Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView` (that function is used from native tests; wrap path seals then rebuilds). Display paint overlays pending Hide/Shorten onto a paint vector only.
 
+**Candidate attribution (observability).** `accumulatePendingNoteChangesForIncomingNote` records which path reached each consume candidate: `OverlapHoldTotals::scanOnlyCandidates` (window/JIT scan selected it, `noteId` absent from `overlapNoteIds`), `lateNoteCandidates` (`noteId` in the set but no source-view note existed at lookup time, so the JIT merge materialized it), and `idsWithoutNotes`. Device marker `DIAG,consume,select` emits only when one is non-zero, with `jit=1` when `loopLen > overdubSourceWindowLengthTicks()`. Selection behavior is unchanged; this measures whether occupy ids alone are sufficient. Plan: [`../Plans/overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md).
+
 ---
 
 ## Resolver input: linear intervals only

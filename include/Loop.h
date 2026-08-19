@@ -53,6 +53,14 @@ struct OverlapHoldTotals {
   uint32_t add = 0;
   uint32_t shorten = 0;
   uint32_t hide = 0;
+  // Consume candidate attribution: which selection path reached each candidate.
+  // scanOnlyCandidates = window/JIT scan found it and its id was absent from the
+  // occupy set. lateNoteCandidates = id was in the set but no source-view note
+  // existed at lookup time (JIT merge materialized it). idsWithoutNotes = id in
+  // the set with no selected note at all.
+  uint32_t scanOnlyCandidates = 0;
+  uint32_t lateNoteCandidates = 0;
+  uint32_t idsWithoutNotes = 0;
 };
 
 struct Loop {

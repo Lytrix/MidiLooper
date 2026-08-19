@@ -356,6 +356,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   } else {
     ++overlapHoldTotals_.emptySets;
   }
+  const size_t idSelectedCount = selected.size();
 
   auto collectConsumeWindow = [&](uint32_t windowStart, uint32_t windowEnd) {
     if (windowStart >= windowEnd) {
@@ -400,6 +401,49 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   } else {
     collectConsumeWindow(startTick, endTick);
   }
+
+  uint32_t scanOnly = 0;
+  uint32_t lateNotes = 0;
+  for (size_t i = idSelectedCount; i < selected.size(); ++i) {
+    if (overlapNoteIds.contains(selected[i].noteId)) {
+      ++lateNotes;
+    } else {
+      ++scanOnly;
+    }
+  }
+  uint32_t idsWithoutNotes = 0;
+  for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
+    const NoteId id = overlapNoteIds.at(i);
+    bool selectedHasId = false;
+    for (const NoteUtils::DisplayNote& note : selected) {
+      if (note.noteId == id) {
+        selectedHasId = true;
+        break;
+      }
+    }
+    if (!selectedHasId) {
+      ++idsWithoutNotes;
+    }
+  }
+  overlapHoldTotals_.scanOnlyCandidates += scanOnly;
+  overlapHoldTotals_.lateNoteCandidates += lateNotes;
+  overlapHoldTotals_.idsWithoutNotes += idsWithoutNotes;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  // Attribution only when a path other than the occupy-id lookup mattered.
+  if (scanOnly != 0 || lateNotes != 0 || idsWithoutNotes != 0) {
+    char line[176];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,consume,select,pitch=%u,ids=%u,idsel=%u,scan=%u,late=%u,norow=%u,"
+             "s=%lu,e=%lu,jit=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+             static_cast<unsigned>(overlapNoteIds.size()),
+             static_cast<unsigned>(idSelectedCount), static_cast<unsigned>(scanOnly),
+             static_cast<unsigned>(lateNotes), static_cast<unsigned>(idsWithoutNotes),
+             static_cast<unsigned long>(startTick), static_cast<unsigned long>(endTick),
+             (loopLen > overdubSourceWindowLengthTicks()) ? 1u : 0u);
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
 
   const NoteId causingId =
       (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();

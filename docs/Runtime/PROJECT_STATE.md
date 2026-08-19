@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-19 (occupy source-view RC + wrap display **FROZEN**; HITL 174246)
+Last updated: 2026-08-19 (occupy source-view RC + wrap display **FROZEN**; consume attribution Stage 1A shipped)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — Occupy source-view RC **FROZEN** (5A + sibling D2-D [`174246`](../../captures/session_20260819_174246.log)). Wrap display D2-D **FROZEN**. Native **1384/1384**. 64-bar `from=span` HITL **parked** (DEC-041).
+**`feature/overdub-participant-discovery`** — Occupy source-view RC **FROZEN** (5A + sibling D2-D [`174246`](../../captures/session_20260819_174246.log)). Wrap display D2-D **FROZEN**. Consume candidate attribution **Stage 1A shipped** (observability only; selection unchanged) — [`overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md). Native **1386/1386**. RAM1 code **425964** / locals **4768**. 64-bar `from=span` HITL **parked** (DEC-041).
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
