@@ -209,16 +209,16 @@ struct Loop {
   /// value (1/2/4/8/16); a timing-passing length is evidence, not policy.
   static constexpr uint32_t kOverdubSourceWindowBars = 16;
   /// Rebuild source notes from prepared `NoteSpan`s when ready, else window MIDI
-  /// reconstruct + wrap-paired overdub fill. Not visual cache.
+  /// source notes from the span cache (`overdubSourceSpanCacheNotes_`) using the
+  /// source window filter. Not visual cache.
   /// `why` is CAP `open` / `wrap` / `undo` / `redo`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
-  /// window (`kOverdubSourceWindowBars`) into the session source view. Not the
-  /// full loop. Skips noteIds already present. Optional `newlyMergedPitchNotes`
-  /// receives only those new rows. `presentAtHoldOnly` keeps notes present at
-  /// the hold tick (not ahead notes in the same window). Note-on occupy does
-  /// not call this (Phase 3). Note-off skips this when the source view already
-  /// covers the whole loop (Phase 4). Empty occupy still walks source-view notes.
+  /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.
+  /// Skips noteIds already present. Optional `newlyMergedPitchNotes` receives
+  /// only those new rows. `presentAtHoldOnly` keeps notes present at the hold
+  /// tick (not ahead notes in the same window). Note-on occupy does not call
+  /// this (Phase 3). Empty occupy still walks source-view notes.
   void ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick, uint8_t pitch,
                                        NoteUtils::DisplayNoteVec* newlyMergedPitchNotes = nullptr,
                                        bool presentAtHoldOnly = false);
@@ -239,6 +239,9 @@ struct Loop {
                                           OverlapNoteIdSet& out) const;
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();
+  /// Build source span cache outside overdub entry when the loop is idle/clean.
+  /// No-op when already ready or when capture/session state is active.
+  void prewarmOverdubSourceSpanCache();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
   const SessionMidiEventVec& overdubSourceViewEvents() const { return overdubSourceViewEvents_; }
@@ -259,7 +262,7 @@ struct Loop {
   const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
   /// Resolve incoming note against hold-candidate ids, then geometry.
   /// Wrap-head off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold.
-  /// Empty `overlapNoteIds` skips span lookup (Gate 3) and uses window-scan fallback.
+  /// Empty `overlapNoteIds` skips id lookup and uses source-view geometric completion.
   /// Non-empty ids are completed geometrically and resolved by id lookup only.
   /// Returns false when no source view.
   bool accumulatePendingNoteChangesForIncomingNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
@@ -402,6 +405,8 @@ struct Loop {
   /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
   void notifyCommittedContentChanged();
   void rebuildEffectiveEventStore() const;
+  void rebuildOverdubSourceSpanCache();
+  bool overdubSourceSpanCacheReady() const;
   uint32_t overdubSourceWindowLengthTicks() const;
   void resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
                                   uint32_t& windowLength) const;
@@ -410,6 +415,12 @@ struct Loop {
   void retainValidOverdubSourceViewIdentities();
   SessionMidiEventVec overdubSourceViewEvents_;
   NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
+  /// Full-loop span cache for note-off consume hydration. Built at source-view
+  /// establish/rebuild and updated with pending Add/Shorten/Hide.
+  NoteUtils::DisplayNoteVec overdubSourceSpanCacheNotes_;
+  uint32_t overdubSourceSpanCacheLoopLengthTicks_ = 0;
+  uint32_t overdubSourceSpanCachePlaybackRevision_ = 0;
+  bool overdubSourceSpanCacheValid_ = false;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   /// Non-owning. Null means the identity filter is inactive. Points at

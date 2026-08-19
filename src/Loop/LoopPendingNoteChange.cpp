@@ -119,10 +119,12 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   uint32_t windowStart = 0;
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
-
-  NoteUtils::DisplayNoteVec preparedNotes;
-  const bool preparedReady = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
-      playbackRevision, preparedNotes, nullptr, loopLen, false);
+  if (!overdubSourceSpanCacheReady()) {
+    rebuildOverdubSourceSpanCache();
+  }
+  if (overdubSourceSpanCacheNotes_.empty()) {
+    return;
+  }
 
   auto filterAndMergeCandidates = [&](const NoteUtils::DisplayNoteVec& candidates,
                                       NoteUtils::DisplayNoteVec& toMerge) {
@@ -155,36 +157,8 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
       }
     }
   };
-
-  const NoteUtils::DisplayNoteVec* selectedNotes = &preparedNotes;
-  NoteUtils::DisplayNoteVec windowNotes;
-  SessionMidiEventVec windowEvents;
-  ResolutionCostCounters windowCounters;
-  const char* sourceKind = "span";
-  if (!preparedReady) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    char missLine[160];
-    snprintf(missLine, sizeof(missLine),
-             "#CAP,%lu,DIAG,lcr,hold,miss,pitch=%u,hs=%lu,live=%lu,prep=%u",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
-             static_cast<unsigned long>(holdPhaseTick),
-             static_cast<unsigned long>(loopLen),
-             static_cast<unsigned>(LoopContentResolution::preparedWindowReady(playbackRevision)
-                                       ? 1u
-                                       : 0u));
-    DebugSessionCapture::appendCaptureTextLine(missLine);
-#endif
-    LoopContentResolution::resolveWindow(passes, loopLen, windowStart, windowLength, windowEvents,
-                                         &windowCounters);
-    if (windowEvents.empty()) {
-      return;
-    }
-    windowNotes = NoteUtils::reconstructDisplayNotes(windowEvents, loopLen, false);
-    selectedNotes = &windowNotes;
-    sourceKind = "win";
-  }
   NoteUtils::DisplayNoteVec toMerge;
-  filterAndMergeCandidates(*selectedNotes, toMerge);
+  filterAndMergeCandidates(overdubSourceSpanCacheNotes_, toMerge);
   mergeDisplayNotesIntoOverdubSourceView(toMerge);
   if (newlyMergedPitchNotes != nullptr) {
     *newlyMergedPitchNotes = toMerge;
@@ -192,15 +166,13 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   char line[224];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=hold,from=%s,pitch=%u,win=%lu,ev=%u,merged=%u,notes=%u,bars=%u",
-           static_cast<unsigned long>(micros()), sourceKind, static_cast<unsigned>(pitch),
-           static_cast<unsigned long>(windowCounters.elapsedMicros),
-           static_cast<unsigned>(windowEvents.size()), static_cast<unsigned>(toMerge.size()),
+           "#CAP,%lu,DIAG,lcr,src,why=hold,from=cache,pitch=%u,merged=%u,notes=%u,cache=%u,bars=%u",
+           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+           static_cast<unsigned>(toMerge.size()),
            static_cast<unsigned>(overdubSourceViewNotes_.size()),
+           static_cast<unsigned>(overdubSourceSpanCacheNotes_.size()),
            static_cast<unsigned>(kOverdubSourceWindowBars));
   DebugSessionCapture::appendCaptureTextLine(line);
-#else
-  (void)windowCounters;
 #endif
 }
 
@@ -600,9 +572,26 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
       note.endTick = change.endTick;
       added.push_back(note);
       mergeDisplayNotesIntoOverdubSourceView(added);
+      if (overdubSourceSpanCacheValid_) {
+        for (const NoteUtils::DisplayNote& candidate : added) {
+          bool found = false;
+          for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
+            if (existing.noteId == candidate.noteId) {
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            overdubSourceSpanCacheNotes_.push_back(candidate);
+          }
+        }
+      }
     }
   }
   applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, pendingNoteChanges_);
+  if (overdubSourceSpanCacheValid_) {
+    applyPendingHideAndShortenToNotes(overdubSourceSpanCacheNotes_, pendingNoteChanges_);
+  }
 }
 
 LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
@@ -611,6 +600,16 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::Displa
 
 EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   EditPassIdList sealedIds;
+  size_t companionRowsToSeal = 0;
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind == PendingNoteChangeKind::Shorten ||
+        change.kind == PendingNoteChangeKind::Hide) {
+      ++companionRowsToSeal;
+    }
+  }
+  if (!pendingNoteChanges_.empty()) {
+    applyPendingNoteChangesToOverdubSourceView();
+  }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Shorten &&
         change.kind != PendingNoteChangeKind::Hide) {
@@ -646,6 +645,14 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
       DebugSessionCapture::appendCaptureTextLine(line);
 #endif
     }
+  }
+  // Keep cache reuse across overdub sessions only when companion sealing succeeded
+  // for every pending Shorten/Hide row (otherwise force a rebuild next entry).
+  if (hasOverdubSession() && companionRowsToSeal > 0 &&
+      sealedIds.size() == companionRowsToSeal &&
+      overdubSourceSpanCacheValid_ &&
+      overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks) {
+    overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
   }
   clearPendingNoteChanges();
   return sealedIds;

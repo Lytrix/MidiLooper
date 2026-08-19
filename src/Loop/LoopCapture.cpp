@@ -417,6 +417,10 @@ LOOP_COLD_MEM __attribute__((noinline)) void Loop::clearCommittedPlaybackNoteOnI
 #if defined(PIO_UNIT_TEST_NATIVE)
 void Loop::replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes) {
   overdubSourceViewNotes_ = std::move(notes);
+  overdubSourceSpanCacheNotes_ = overdubSourceViewNotes_;
+  overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+  overdubSourceSpanCacheValid_ = true;
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
   overdubSourceViewEstablished_ = true;
 }
@@ -426,6 +430,75 @@ LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) 
   overlapHoldTotals_ = {};
   rebuildOverdubSourceView(playheadPhaseTick, "open");
   clearPendingNoteChanges();
+}
+
+LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
+  if (!overdubSourceSpanCacheValid_) {
+    return false;
+  }
+  if (overdubSourceSpanCacheLoopLengthTicks_ != loopLengthTicks) {
+    return false;
+  }
+  return overdubSourceSpanCachePlaybackRevision_ == playbackRevision;
+}
+
+LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
+  overdubSourceSpanCacheNotes_.clear();
+  overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+  overdubSourceSpanCacheValid_ = true;
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      playbackRevision, overdubSourceSpanCacheNotes_, nullptr, loopLengthTicks, false);
+  if (!copiedPreparedSpans) {
+    SessionMidiEventVec fullResolvedEvents;
+    passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
+    overdubSourceSpanCacheNotes_ =
+        NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
+    appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
+  }
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
+      continue;
+    }
+    bool found = false;
+    for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
+      if (existing.noteId == change.noteId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      NoteUtils::DisplayNote note{};
+      note.noteId = change.noteId;
+      note.note = change.pitch;
+      note.velocity = change.velocity;
+      note.startTick = change.startTick;
+      note.endTick = change.endTick;
+      overdubSourceSpanCacheNotes_.push_back(note);
+    }
+  }
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind != PendingNoteChangeKind::Shorten &&
+        change.kind != PendingNoteChangeKind::Hide) {
+      continue;
+    }
+    for (auto it = overdubSourceSpanCacheNotes_.begin(); it != overdubSourceSpanCacheNotes_.end();) {
+      if (it->noteId != change.noteId) {
+        ++it;
+        continue;
+      }
+      if (change.kind == PendingNoteChangeKind::Hide) {
+        it = overdubSourceSpanCacheNotes_.erase(it);
+        continue;
+      }
+      it->startTick = change.startTick;
+      it->endTick = change.endTick;
+      ++it;
+    }
+  }
 }
 
 LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why) {
@@ -465,32 +538,39 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   uint32_t windowStart = 0;
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
-  ResolutionCostCounters windowCounters;
-  const char* from = "win";
-  if (LoopContentResolution::tryResolvePreparedWindow(
-          passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision,
-          overdubSourceViewEvents_, &windowCounters)) {
-    from = "prep";
-  } else {
-    LoopContentResolution::resolveWindow(passes, loopLengthTicks, windowStart, windowLength,
-                                         overdubSourceViewEvents_, &windowCounters);
+  const char* from = "cache";
+  if (!overdubSourceSpanCacheReady()) {
+    rebuildOverdubSourceSpanCache();
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-  const uint32_t reconstructStartUs = micros();
+  const uint32_t filterStartUs = micros();
 #endif
-  // Empty copy is a miss (024225: from=span notes=0 wiped RC12 display).
-  // Window noteIds only (030219: restamped leftover spans must not flood RC12).
-  if (LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
-          playbackRevision, overdubSourceViewNotes_, &overdubSourceViewEvents_, loopLengthTicks,
-          logSrcWrapDiag)) {
-    from = "span";
-  } else {
-    overdubSourceViewNotes_ =
-        NoteUtils::reconstructDisplayNotes(overdubSourceViewEvents_, loopLengthTicks, false, false);
-    appendOverdubPassWrapPairedNotes(overdubSourceViewNotes_);
+  auto noteOnTickInWindow = [&](uint32_t tick) {
+    if (windowLength >= loopLengthTicks) {
+      return true;
+    }
+    const uint32_t windowEnd = windowStart + windowLength;
+    if (windowEnd <= loopLengthTicks) {
+      return tick >= windowStart && tick < windowEnd;
+    }
+    const uint32_t wrappedEnd = windowEnd % loopLengthTicks;
+    return tick >= windowStart || tick < wrappedEnd;
+  };
+  for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!noteOnTickInWindow(note.startTick)) {
+      continue;
+    }
+    overdubSourceViewNotes_.push_back(note);
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
+#endif
   overdubSourceViewEstablished_ = true;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t filterUs = micros() - filterStartUs;
   NoteId beforeRetainIds[kSrcDiagMaxIds];
   size_t beforeRetainCount = 0;
   if (logSrcWrapDiag) {
@@ -551,11 +631,11 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
       if (sourceViewHasId(id)) {
         continue;
       }
-      const char* reason = "missing_prepared_span";
+      const char* reason = "missing_cache_span";
       if (idInList(id, beforeRetainIds, beforeRetainCount)) {
         reason = "identity_invalid";
       } else if (LoopContentResolution::preparedCheckpointHasNoteId(id)) {
-        reason = "copy_miss";
+        reason = "cache_filter";
       }
       char deltaLine[112];
       snprintf(deltaLine, sizeof(deltaLine), "#CAP,%lu,DIAG,lcr,srcdelta,id=%u,reason=%s",
@@ -573,31 +653,17 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   }
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-  const uint32_t reconstructUs = micros() - reconstructStartUs;
-  const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
   char line[256];
-  if (std::strcmp(from, "span") == 0) {
-    snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u",
-             static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
-             static_cast<unsigned long>(reconstructUs),
-             static_cast<unsigned long>(windowUs + reconstructUs),
-             static_cast<unsigned>(overdubSourceViewEvents_.size()),
-             static_cast<unsigned>(overdubSourceViewNotes_.size()),
-             static_cast<unsigned>(kOverdubSourceWindowBars));
-  } else {
-    snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u,"
-             "live=%lu,prep=%lu",
-             static_cast<unsigned long>(micros()), why, from, static_cast<unsigned long>(windowUs),
-             static_cast<unsigned long>(reconstructUs),
-             static_cast<unsigned long>(windowUs + reconstructUs),
-             static_cast<unsigned>(overdubSourceViewEvents_.size()),
-             static_cast<unsigned>(overdubSourceViewNotes_.size()),
-             static_cast<unsigned>(kOverdubSourceWindowBars),
-             static_cast<unsigned long>(loopLengthTicks),
-             static_cast<unsigned long>(LoopContentResolution::deviceGateLoopLengthTicks()));
-  }
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=0,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u,"
+           "live=%lu,prep=%lu",
+           static_cast<unsigned long>(micros()), why, from,
+           static_cast<unsigned long>(filterUs), static_cast<unsigned long>(filterUs),
+           static_cast<unsigned>(overdubSourceViewEvents_.size()),
+           static_cast<unsigned>(overdubSourceViewNotes_.size()),
+           static_cast<unsigned>(kOverdubSourceWindowBars),
+           static_cast<unsigned long>(loopLengthTicks),
+           static_cast<unsigned long>(LoopContentResolution::deviceGateLoopLengthTicks()));
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)from;
@@ -610,6 +676,26 @@ LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
   overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
   overdubSourceViewEstablished_ = false;
+}
+
+LOOP_COLD_MEM void Loop::prewarmOverdubSourceSpanCache() {
+  if (captureActive() || hasPendingCapturePass_ || hasOverdubSession()) {
+    return;
+  }
+  if (loopLengthTicks == 0 || !hasCommittedPasses()) {
+    return;
+  }
+  if (overdubSourceSpanCacheReady()) {
+    return;
+  }
+  // When the prepared gate is still building for this loop length, avoid a full
+  // fallback rebuild in the same idle turn and let the gate finish first.
+  if (!LoopContentResolution::preparedWindowReady(playbackRevision) &&
+      LoopContentResolution::deviceGateActive() &&
+      LoopContentResolution::deviceGateLoopLengthTicks() == loopLengthTicks) {
+    return;
+  }
+  rebuildOverdubSourceSpanCache();
 }
 
 void Loop::clearPendingNoteChanges() {
@@ -1024,7 +1110,7 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
   return SealOutcome::Ok;
 }
 
-bool Loop::commitPendingCapturePass() {
+LOOP_COLD_MEM bool Loop::commitPendingCapturePass() {
   if (!hasPendingCapturePass_) {
     return false;
   }
@@ -1051,7 +1137,77 @@ bool Loop::commitPendingCapturePass() {
   pendingCapturePass_ = PendingCapturePass{};
   hasPendingCapturePass_ = false;
 
+  bool spanCacheCanRestamp = hasOverdubSession() && overdubSourceSpanCacheValid_ &&
+                             overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks;
+  if (spanCacheCanRestamp && pendingPass.phase == CapturePassPhase::Overdub &&
+      !passes.overdubPasses.empty()) {
+    SessionMidiEventVec committedPassEvents;
+    LoopEventStore::appendChunkRefEvents(passes.overdubPasses.back().committedChunkIds,
+                                         committedPassEvents);
+    if (!committedPassEvents.empty()) {
+      for (const MidiEvent& evt : committedPassEvents) {
+        if (!evt.isNoteOff()) {
+          continue;
+        }
+        const uint8_t pitch = evt.data.noteData.note;
+        for (const MidiEvent& later : committedPassEvents) {
+          if (!later.isNoteOn() || later.channel != evt.channel ||
+              later.data.noteData.note != pitch) {
+            continue;
+          }
+          if (later.tick <= evt.tick) {
+            continue;
+          }
+          if (NoteUtils::isHeadTailWrappedPair(later.tick, evt.tick, loopLengthTicks)) {
+            spanCacheCanRestamp = false;
+            break;
+          }
+        }
+        if (!spanCacheCanRestamp) {
+          break;
+        }
+      }
+
+      NoteUtils::DisplayNoteVec committedPassNotes =
+          NoteUtils::reconstructDisplayNotes(committedPassEvents, loopLengthTicks, false, false, true);
+      for (const NoteUtils::DisplayNote& candidate : committedPassNotes) {
+        if (candidate.noteId == kInvalidNoteId) {
+          continue;
+        }
+        bool found = false;
+        for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
+          if (existing.noteId == candidate.noteId) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          overdubSourceSpanCacheNotes_.push_back(candidate);
+        }
+      }
+      for (const MidiEvent& evt : committedPassEvents) {
+        if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
+          continue;
+        }
+        bool present = false;
+        for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
+          if (note.noteId == evt.noteId) {
+            present = true;
+            break;
+          }
+        }
+        if (!present) {
+          spanCacheCanRestamp = false;
+          break;
+        }
+      }
+    }
+  }
+
   ++playbackRevision;
+  if (spanCacheCanRestamp) {
+    overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+  }
   pendingVisualDelta.clear();
 
   capture.store.clear();
