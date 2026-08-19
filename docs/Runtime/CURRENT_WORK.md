@@ -22,7 +22,7 @@ Last updated: 2026-08-19 (occupy unmatched Off — observability stage)
 
 **FIFO stamping: rejected.** Contradicts `LoopEventValidation` Pass 2, `appendCanonicalSpansFromMidiRange`, `stampNoteIdsOntoPairedNoteOffs`, `orderSamePitchNoteOffsForLifo`. Neither FIFO nor LIFO is a general identity resolver for overlapping same-pitch notes.
 
-**Geometry proven** — [`090050`](../../captures/session_20260819_090050.log), 2 × `n=0 a=1` and 3 × `n=1 a=2` over 105 occupies. The real shape is a **nested** same-pitch pair, not the assumed staggered overlap: pitch 12 at `hs=336` carries outer `240–480` (id 4819) with `288–336` (id 4814) fully inside it. LIFO pairs that correctly, so the earlier contradiction is resolved. `eq=1` on all 105 lines and `b == a` on every mismatch, so the two derived representations agree and the fault is on the **ledger** side, not the gather window or overlap merge.
+**Geometry proven** — [`090050`](../../captures/session_20260819_090050.log) inferred from spans; [`092336`](../../captures/session_20260819_092336.log) event-backed (`mmevt` with `ech=`). Nested same-pitch pair, not staggered overlap. 092336 over 104 occupies: 4 × `n=0 a=1` (two nested, two other shapes), 2 × `n=1 a=2` (structural), 2 × `n=1 a=0` (exclusive-end vs equal-tick On — not DEC-042). `b=0,eq=0` on all 104 part lines this run.
 
 **Off identity alone cannot fix it.** `ActiveNoteLedger` is `std::array<Entry, 16*128>` — one entry per (channel, pitch) — and `noteOn` overwrites unconditionally, so the outer note's identity is destroyed by the **inner NoteOn**, before any Off. An identity-matched clear at `Off@336` still empties the lane. Pinned by `test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12`.
 
