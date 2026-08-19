@@ -3,6 +3,7 @@
 
 #include "EditApply.h"
 
+#include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
 
 #include <algorithm>
@@ -22,7 +23,7 @@ uint32_t inferLoopLength(const MidiEventVec& events, uint32_t hint) {
   return std::max<uint32_t>(maxTick + 1u, 768u);
 }
 
-int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
+NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
   if (onIndex < 0 || static_cast<size_t>(onIndex) >= events.size()) {
     return -1;
   }
