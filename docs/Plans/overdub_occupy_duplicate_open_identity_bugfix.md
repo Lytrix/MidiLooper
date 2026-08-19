@@ -1,6 +1,6 @@
 # Occupy duplicate open identity (catch-up then clock)
 
-**Status:** Native **PASS** 1365/1365. `teensy41-capture-serial` links (RAM1 code **425804** / locals **4768**). HITL gate open.  
+**Status:** Native **PASS** 1365/1365. RAM1 **425804** / **4768**. HITL [`103234`](../../captures/session_20260819_103234.log) **duplicate-identity MET** (`led == n` on all mismatches). Extra unique identities remain — not this FAIL.  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (catch-up per-phase native, HITL extra-open remains):** [`overdub_occupy_catchup_open_note_stack_bugfix.md`](overdub_occupy_catchup_open_note_stack_bugfix.md)  
@@ -57,6 +57,28 @@ Keep `test_ledger_note_on_pushes_untagged_off_pops_lifo` (two **different** ids 
 ## HITL
 
 Want `led == n` on mismatches (no extra copies). Extra-open (`n>a`) down vs [`101319`](../../captures/session_20260819_101319.log) (25× `n=2 a=1`). Do not FAIL this RC on the parked span-start `n=0 a=1` or prepared `eq=0`/`b=0`.
+
+## HITL [`103234`](../../captures/session_20260819_103234.log)
+
+103 `DIAG,lcr,part`. **42** mismatches, all `cu=0`. `ledger,overflow` **0**. `eq=1` on all 103. **`led == n` on 42/42 mismatches** — duplicate-copy gate **MET**. No `led > n`.
+
+| n,a | 101319 | 103234 |
+|-----|------:|-------:|
+| 1,1 | 25 | 36 |
+| 0,0 | 4 | 23 |
+| **0,1** | **1** | **0** |
+| 2,2 | 0 | 2 |
+| 1,2 | 1 | 3 |
+| **1,0** | **3** | **18** |
+| **2,1** | **25** | **20** |
+| 2,0 | 1 | 0 |
+| 3,1 | 6 | 0 |
+| 3,2 | 0 | 1 |
+| n>a | 35 | 39 |
+
+`n=2 a=1` is two **distinct** ids (`led=2`), e.g. L6480 pitch 24 `hs=216` covering 5584 `168–360`. Not copies. `n=1 a=0` rose (L6898 pitch 12 `hs=192` `lid=5604` `lst=288`) — parked exclusive-end / wrap leftover, unmasked now that copies are gone.
+
+Do not reopen occupy catching up when `occupyPhase <= lastTick`. Remaining extra unique identities and `n=1 a=0` are a new RC.
 
 ## Pre-implementation review
 
