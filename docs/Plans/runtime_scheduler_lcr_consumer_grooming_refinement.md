@@ -232,7 +232,7 @@ openNoteEditSession
 
 Later, `EditManager::materializedLoopEventsForNoteEditFocus` materializes again on revision change. Session undo rematerializes on each undo.
 
-Do **not** fold this into the idle-slice or `ensureVisualCacheBuilt` audit. Work identity: [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md). Consume prepared LCR around `selectedTick` (overdub 6E analog). Not a resumable open-until-ready session. Not `lazy-slot-hydration`. Not this grooming file’s next slice.
+Do **not** fold this into the idle-slice or `ensureVisualCacheBuilt` audit. Work identity: [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md). Architecture: [`note_edit_selectedtick_lcr_resolution_architecture.md`](note_edit_selectedtick_lcr_resolution_architecture.md). Overlap is selected/mover LinearSpan participants (overdub sibling), not a window around `selectedTick`. Select stays a `selectedTick` neighborhood. Not a resumable open-until-ready session. Not `lazy-slot-hydration`. Not this grooming file’s next slice.
 
 ### `shouldRestoreCommittedOverlapOnOverdubStop` — Slice 3 closed
 

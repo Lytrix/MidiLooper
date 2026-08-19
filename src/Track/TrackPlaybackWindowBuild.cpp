@@ -15,6 +15,8 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/RuntimeTimingTelemetry.h"
+#include "PlaybackMergedMidiEvents.h"
 
 extern TrackManager trackManager;
 
@@ -82,16 +84,17 @@ void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, 
   loop.nextEventIndex = static_cast<uint16_t>(idx);
 }
 
-void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
+bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
-  // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — full replace, no
-  // materialized underlay. Outside NOTE_EDIT and live capture, chunk-ref merge only (DEC-016).
-  // Long loops use windowed gather — full-loop gather after LoadLoopJob Commit hard-faults
-  // (session_20260718_210532 / 210001).
+  // playback order + MIDI send. Playback mergedMidiEvents is committed-only (224719):
+  // live capture must not fold into this representation. NOTE_EDIT uses session store
+  // (Tier 2) — full replace, no materialized underlay. Outside NOTE_EDIT, chunk-ref
+  // merge of committed passes only (DEC-016). Long loops use windowed gather — full-loop
+  // gather after LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
   static bool mergedMidiEventsBuildInProgress = false;
   if (mergedMidiEventsBuildInProgress) {
-    return;
+    return false;
   }
   const bool noteEditPreview = editManager.isNoteEditActive() &&
                                &track == &trackManager.getSelectedTrack();
@@ -107,7 +110,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   if (!longLoop) {
     if (runtime.mergedMidiEvents.builtFromRevision == windowRevision) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
-      return;
+      return false;
     }
   } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
              !runtime.mergedMidiEvents.empty() &&
@@ -117,7 +120,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     const uint32_t margin = Config::TICKS_PER_BAR / 2;
     if (playhead + margin >= winStart && playhead < winEnd) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
-      return;
+      return false;
     }
   }
 
@@ -137,30 +140,36 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     if (winStart + winLen > loop.loopLengthTicks) {
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
-    if (loop.captureActive()) {
-      loop.gatherCommittedEventsInWindowWithCapture(runtime.mergedMidiEvents.mergedEvents, winStart,
-                                                    winLen);
-    } else {
-      loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
-    }
+    loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
-  } else if (!loop.captureActive()) {
-    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
-    runtime.mergedMidiEvents.windowStartTick = 0;
-    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else {
-    loop.gatherCommittedEventsWithCapture(runtime.mergedMidiEvents.mergedEvents);
+    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
-  DIAG_TIMING_RECORD(PlaybackBuild, micros() - playbackBuildStartUs);
+  const uint32_t playbackBuildUs = micros() - playbackBuildStartUs;
+  DIAG_TIMING_RECORD(PlaybackBuild, playbackBuildUs);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(
+      playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
+      runtime.mergedMidiEvents.windowLengthTicks, windowRevision);
   mergedMidiEventsBuildInProgress = false;
+  return true;
 }
-void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
-                          const ProjectionContext& playbackContext) {
+
+TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFullLoopRebuild(
+    Loop& loop, LoopPlaybackRuntime& runtime) {
+  loop.replaceCommittedPlaybackNoteOnIdentities(runtime.mergedMidiEvents);
+  if (!isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loop.loopLengthTicks)) {
+    return;
+  }
+  runtime.ledger.eraseOpenNotesMissingFromCommittedNoteOns(
+      runtime.mergedMidiEvents.mergedEvents.data(), runtime.mergedMidiEvents.mergedEvents.size());
+}
+TRACK_INTERNAL_MEM __attribute__((noinline)) void rebuildPlaybackOrder(
+    Loop& loop, const SessionMidiEventVec& mergedEvents, const ProjectionContext& playbackContext) {
   PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   playbackOrder.resize(mergedEvents.size());
   for (size_t i = 0; i < mergedEvents.size(); i++) {
@@ -177,6 +186,34 @@ void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
     }
     return mergedEvents[a].tick < mergedEvents[b].tick;
   });
+  // Equal-phase Off before On — same keys as NoteUtils::sortMidiEventsChronologically.
+  // Keep those keys out of the std::sort lambda so the ITCM sort instantiation does not grow.
+  for (size_t i = 0; i < playbackOrder.size();) {
+    size_t groupEnd = i + 1;
+    while (groupEnd < playbackOrder.size() &&
+           sortPhases[playbackOrder[groupEnd]] == sortPhases[playbackOrder[i]] &&
+           mergedEvents[playbackOrder[groupEnd]].tick == mergedEvents[playbackOrder[i]].tick) {
+      ++groupEnd;
+    }
+    for (size_t a = i + 1; a < groupEnd; ++a) {
+      const size_t inserted = playbackOrder[a];
+      const int insertedOrder =
+          mergedEvents[inserted].isNoteOff() ? 0 : (mergedEvents[inserted].isNoteOn() ? 1 : 2);
+      size_t k = a;
+      while (k > i) {
+        const size_t prev = playbackOrder[k - 1];
+        const int prevOrder =
+            mergedEvents[prev].isNoteOff() ? 0 : (mergedEvents[prev].isNoteOn() ? 1 : 2);
+        if (prevOrder <= insertedOrder) {
+          break;
+        }
+        playbackOrder[k] = prev;
+        --k;
+      }
+      playbackOrder[k] = inserted;
+    }
+    i = groupEnd;
+  }
   loop.playbackOrderDirty = false;
 }
 void reanchorCaptureIndex(Loop& loop) {
@@ -258,7 +295,11 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
   if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
     const uint32_t currentTick = clockManager.getCurrentTick();
-    ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
+    const bool rebuilt =
+        ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
+    if (rebuilt) {
+      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime);
+    }
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
       ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);

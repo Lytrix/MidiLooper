@@ -120,8 +120,9 @@ public:
   bool loopPrefixMeasureAfterUndoActive() const;
   void noteLoopPrefixMeasureAfterUndo();
   /// DEC-038 038.1: seal completed pairs at S, publish, beginCapture, stay OVERDUBBING.
-  void commitOverdubWrapAtSessionStart();
-  void maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
+  /// Returns true only when a capture pass was committed (`CommitResult::Committed`).
+  bool commitOverdubWrapAtSessionStart();
+  bool maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
 
   // Track management
   void clear();
@@ -356,6 +357,8 @@ private:
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
   bool playbackEmitMidiOutput_ = false;
+  bool applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
+  void catchUpCommittedPlaybackLedgerToPhase(uint32_t occupyPhase);
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void snapshotOverlapHoldCandidates(PendingNote& pending);
   void collectOverlapHoldPlaybackNoteOn(NoteId noteId, uint8_t pitch);
@@ -443,6 +446,8 @@ private:
   bool isStorageTickInJamRegion(uint32_t storageTick, const Loop& loop) const;
 
   friend void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  friend void playbackCursorAdvanceApplyLedger(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  friend void playbackCursorAdvanceSendCapture(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
   friend bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick);
 
 };

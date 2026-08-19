@@ -476,6 +476,18 @@ SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond) {
                 (unsigned long)pulsesPerSecond);
 }
 
+SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick) {
+  emitCapPrintf("#CAP,%lu,DIAG,late_event,%s,%lu,%lu\r\n", (unsigned long)micros(), midiClass,
+                (unsigned long)latenessUs, (unsigned long)tick);
+}
+
+SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
+                                 uint32_t windowLengthTicks, uint32_t revision) {
+  emitCapPrintf("#CAP,%lu,DIAG,playback_build,%lu,%lu,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)durationUs, (unsigned long)windowStartTick,
+                (unsigned long)windowLengthTicks, (unsigned long)revision);
+}
+
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus) {
   emitCapPrintf("#CAP,%lu,DIAG,loop_rem,%s,%lu,%u,%u,%u,%u\r\n", (unsigned long)micros(), span,

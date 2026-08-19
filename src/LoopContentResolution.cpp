@@ -10,12 +10,14 @@
 #include "EditApply.h"
 #include "Globals.h"
 #include "LoopEventStore.h"
+#include "OverlapNoteIdObservation.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/TrackMem.h"
 
 #if defined(ARDUINO)
 #include <Arduino.h>
+#include "Utils/DebugSessionCapture.h"
 #endif
 
 #include <algorithm>
@@ -144,7 +146,7 @@ TRACK_COLD_MEM bool workingHasNoteOnId(const SessionMidiEventVec& events, NoteId
   return false;
 }
 
-TRACK_COLD_MEM bool noteSoundsAt(const NoteUtils::DisplayNote& note, uint32_t tick, uint32_t loopLengthTicks) {
+TRACK_COLD_MEM bool notePresentAt(const NoteUtils::DisplayNote& note, uint32_t tick, uint32_t loopLengthTicks) {
   if (NoteUtils::isWrappedLoopNotePair(note.startTick, note.endTick, loopLengthTicks)) {
     return tick >= note.startTick || tick < note.endTick;
   }
@@ -160,38 +162,38 @@ TRACK_COLD_MEM uint8_t channelForNoteId(const SessionMidiEventVec& events, NoteI
   return 0;
 }
 
-TRACK_COLD_MEM void upsertSounding(SoundingNoteVec& sounding, const SoundingNote& note) {
-  for (SoundingNote& existing : sounding) {
+TRACK_COLD_MEM void upsertPresentNote(PresentNoteVec& presentNotes, const PresentNote& note) {
+  for (PresentNote& existing : presentNotes) {
     if (note.noteId != kInvalidNoteId && existing.noteId == note.noteId) {
       existing = note;
       return;
     }
   }
-  sounding.push_back(note);
+  presentNotes.push_back(note);
 }
 
-TRACK_COLD_MEM void eraseSounding(SoundingNoteVec& sounding, const MidiEvent& off) {
-  sounding.erase(std::remove_if(sounding.begin(), sounding.end(),
-                                [&](const SoundingNote& note) {
-                                  if (off.noteId != kInvalidNoteId) {
-                                    return note.noteId == off.noteId;
-                                  }
-                                  return note.channel == off.channel &&
-                                         note.pitch == off.data.noteData.note;
-                                }),
-                 sounding.end());
+TRACK_COLD_MEM void erasePresentNote(PresentNoteVec& presentNotes, const MidiEvent& off) {
+  presentNotes.erase(std::remove_if(presentNotes.begin(), presentNotes.end(),
+                                    [&](const PresentNote& note) {
+                                      if (off.noteId != kInvalidNoteId) {
+                                        return note.noteId == off.noteId;
+                                      }
+                                      return note.channel == off.channel &&
+                                             note.pitch == off.data.noteData.note;
+                                    }),
+                     presentNotes.end());
 }
 
 TRACK_COLD_MEM void applySpanBoundaryAtTick(
-    SoundingNoteVec& sounding, const LoopContentResolution::StateCheckpoints::NoteSpan& span,
+    PresentNoteVec& presentNotes, const LoopContentResolution::StateCheckpoints::NoteSpan& span,
     uint32_t keyTick) {
   if (keyTick == span.startTick) {
-    upsertSounding(sounding, span.note);
+    upsertPresentNote(presentNotes, span.note);
   }
   if (keyTick == span.endTick) {
     MidiEvent off = MidiEvent::NoteOff(span.endTick, span.note.channel, span.note.pitch, 0);
     off.noteId = span.note.noteId;
-    eraseSounding(sounding, off);
+    erasePresentNote(presentNotes, off);
   }
 }
 
@@ -248,6 +250,16 @@ struct EventRef {
     return passId < other.passId || (passId == other.passId && eventIndex < other.eventIndex);
   }
 };
+
+struct PreparedCompanion {
+  EditPassId id = kInvalidEditPassId;
+  EditPassState state = EditPassState::Active;
+  PresentNote note{};
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+};
+using PreparedCompanionVec =
+    std::vector<PreparedCompanion, ExternalMemoryFirstAllocator<PreparedCompanion>>;
 
 TRACK_COLD_MEM void pairNotesInPassRange(LoopContentResolution::TickIndex::CapturePassEntry& pass,
                                          LoopContentResolution::TickIndex& index,
@@ -923,7 +935,7 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const LoopPasses& passe
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes, uint32_t loopLengthTicks,
-                                         uint32_t tick, SoundingNoteVec& out,
+                                         uint32_t tick, PresentNoteVec& out,
                                          ResolutionCostCounters* counters) {
   out.clear();
   SessionMidiEventVec events;
@@ -932,15 +944,15 @@ TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes
       NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
   bumpOps(counters, static_cast<uint32_t>(notes.size()));
   for (const NoteUtils::DisplayNote& note : notes) {
-    if (!noteSoundsAt(note, tick, loopLengthTicks)) {
+    if (!notePresentAt(note, tick, loopLengthTicks)) {
       continue;
     }
-    SoundingNote sounding{};
-    sounding.channel = channelForNoteId(events, note.noteId);
-    sounding.pitch = note.note;
-    sounding.noteId = note.noteId;
-    sounding.onTick = note.startTick;
-    out.push_back(sounding);
+    PresentNote presentNote{};
+    presentNote.channel = channelForNoteId(events, note.noteId);
+    presentNote.pitch = note.note;
+    presentNote.noteId = note.noteId;
+    presentNote.onTick = note.startTick;
+    out.push_back(presentNote);
   }
 }
 
@@ -948,7 +960,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::beginRebuildResolve
     uint32_t loopLength, uint32_t checkpointIntervalTicks, SessionMidiEventVec& resolved) {
   intervalTicks = checkpointIntervalTicks;
   loopLengthTicks = loopLength;
-  soundingAt.clear();
+  presentAt.clear();
   spans.clear();
   spanBoundaries.clear();
   channelByNoteId.clear();
@@ -1055,7 +1067,7 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
     const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
   spans.clear();
   spanBoundaries.clear();
-  soundingAt.clear();
+  presentAt.clear();
   channelByNoteId.clear();
   if (loopLengthTicks == 0 || intervalTicks == 0) {
     return true;
@@ -1074,10 +1086,10 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
   if (count == 0) {
     count = 1;
   }
-  soundingAt.resize(count);
+  presentAt.resize(count);
   if (counters != nullptr) {
     counters->checkpointIntervalTicks = intervalTicks;
-    counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
+    counters->checkpointCount = static_cast<uint32_t>(presentAt.size());
     counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
   }
   return true;
@@ -1096,11 +1108,11 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans
 
 TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::fillCheckpointRange(
     uint32_t beginIndex, uint32_t endIndexExclusive, ResolutionCostCounters* counters) {
-  if (intervalTicks == 0 || loopLengthTicks == 0 || soundingAt.empty()) {
+  if (intervalTicks == 0 || loopLengthTicks == 0 || presentAt.empty()) {
     return true;
   }
-  if (endIndexExclusive > soundingAt.size()) {
-    endIndexExclusive = static_cast<uint32_t>(soundingAt.size());
+  if (endIndexExclusive > presentAt.size()) {
+    endIndexExclusive = static_cast<uint32_t>(presentAt.size());
   }
   for (uint32_t i = beginIndex; i < endIndexExclusive; ++i) {
     const uint32_t checkpointTick = i * intervalTicks;
@@ -1110,15 +1122,15 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::fillCheckpointRange
       probe.note = span.note.pitch;
       probe.startTick = span.startTick;
       probe.endTick = span.endTick;
-      if (!noteSoundsAt(probe, checkpointTick, loopLengthTicks)) {
+      if (!notePresentAt(probe, checkpointTick, loopLengthTicks)) {
         continue;
       }
-      soundingAt[i].push_back(span.note);
+      presentAt[i].push_back(span.note);
     }
   }
   if (counters != nullptr) {
     counters->checkpointIntervalTicks = intervalTicks;
-    counters->checkpointCount = static_cast<uint32_t>(soundingAt.size());
+    counters->checkpointCount = static_cast<uint32_t>(presentAt.size());
     counters->eventsInHistory = static_cast<uint32_t>(spans.size());
   }
   return true;
@@ -1130,26 +1142,26 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::rebuild(const TickI
                                                       uint32_t checkpointIntervalTicks,
                                                       ResolutionCostCounters* counters) {
   prepareRebuildSpans(index, editPasses, loopLength, checkpointIntervalTicks, counters);
-  fillCheckpointRange(0, static_cast<uint32_t>(soundingAt.size()), counters);
+  fillCheckpointRange(0, static_cast<uint32_t>(presentAt.size()), counters);
 }
 
 TRACK_COLD_MEM bool seedResolveStateFromCheckpoint(
-    const LoopContentResolution::StateCheckpoints& checkpoints, uint32_t tick, SoundingNoteVec& out,
+    const LoopContentResolution::StateCheckpoints& checkpoints, uint32_t tick, PresentNoteVec& out,
     uint32_t& replayStart) {
   out.clear();
   if (checkpoints.intervalTicks == 0 || checkpoints.loopLengthTicks == 0 ||
-      checkpoints.soundingAt.empty()) {
+      checkpoints.presentAt.empty()) {
     return false;
   }
   const uint32_t queryTick =
       IntervalProjection::tickPhaseInLoop(tick, 0, checkpoints.loopLengthTicks);
   replayStart = (queryTick / checkpoints.intervalTicks) * checkpoints.intervalTicks;
   uint32_t checkpointIndex = replayStart / checkpoints.intervalTicks;
-  if (checkpointIndex >= checkpoints.soundingAt.size()) {
-    checkpointIndex = static_cast<uint32_t>(checkpoints.soundingAt.size() - 1);
+  if (checkpointIndex >= checkpoints.presentAt.size()) {
+    checkpointIndex = static_cast<uint32_t>(checkpoints.presentAt.size() - 1);
     replayStart = checkpointIndex * checkpoints.intervalTicks;
   }
-  out = checkpoints.soundingAt[checkpointIndex];
+  out = checkpoints.presentAt[checkpointIndex];
   return true;
 }
 
@@ -1160,7 +1172,7 @@ TRACK_COLD_MEM void writeResolveStateCounters(const LoopContentResolution::State
     return;
   }
   counters->checkpointIntervalTicks = checkpoints.intervalTicks;
-  counters->checkpointCount = static_cast<uint32_t>(checkpoints.soundingAt.size());
+  counters->checkpointCount = static_cast<uint32_t>(checkpoints.presentAt.size());
   counters->replayStartTick = replayStart;
   counters->eventsReplayed = replayed;
   counters->eventsInHistory = static_cast<uint32_t>(checkpoints.spans.size());
@@ -1207,9 +1219,126 @@ TRACK_COLD_MEM void mergeSortedSpanBoundaryEntries(
              });
 }
 
+TRACK_COLD_MEM void removeSpanBoundaries(
+    LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& entries, size_t spanIndex) {
+  entries.erase(std::remove_if(entries.begin(), entries.end(),
+                               [spanIndex](const LoopContentResolution::StateCheckpoints::SpanBoundaryEntry&
+                                               entry) { return entry.spanIndex == spanIndex; }),
+                entries.end());
+}
+
+TRACK_COLD_MEM void insertSpanBoundarySorted(
+    LoopContentResolution::StateCheckpoints::SpanBoundaryEntryVec& entries, uint32_t tick,
+    size_t spanIndex) {
+  LoopContentResolution::StateCheckpoints::SpanBoundaryEntry entry;
+  entry.tick = tick;
+  entry.spanIndex = spanIndex;
+  auto it = std::lower_bound(entries.begin(), entries.end(), tick,
+                             [](const LoopContentResolution::StateCheckpoints::SpanBoundaryEntry& existing,
+                                uint32_t bound) { return existing.tick < bound; });
+  entries.insert(it, entry);
+}
+
+TRACK_COLD_MEM void erasePresentNoteId(PresentNoteVec& presentNotes, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return;
+  }
+  presentNotes.erase(std::remove_if(presentNotes.begin(), presentNotes.end(),
+                                    [noteId](const PresentNote& note) { return note.noteId == noteId; }),
+                     presentNotes.end());
+}
+
+TRACK_COLD_MEM void refreshPresentAtForSpan(LoopContentResolution::StateCheckpoints& checkpoints,
+                                            size_t spanIndex) {
+  if (spanIndex >= checkpoints.spans.size() || checkpoints.intervalTicks == 0) {
+    return;
+  }
+  const LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
+  NoteUtils::DisplayNote probe{};
+  probe.noteId = span.note.noteId;
+  probe.note = span.note.pitch;
+  probe.startTick = span.startTick;
+  probe.endTick = span.endTick;
+  for (uint32_t c = 0; c < static_cast<uint32_t>(checkpoints.presentAt.size()); ++c) {
+    const bool nowPresent =
+        notePresentAt(probe, c * checkpoints.intervalTicks, checkpoints.loopLengthTicks);
+    bool wasPresent = false;
+    for (const PresentNote& note : checkpoints.presentAt[c]) {
+      if (note.noteId == span.note.noteId) {
+        wasPresent = true;
+        break;
+      }
+    }
+    if (wasPresent && !nowPresent) {
+      erasePresentNoteId(checkpoints.presentAt[c], span.note.noteId);
+    } else if (!wasPresent && nowPresent) {
+      checkpoints.presentAt[c].push_back(span.note);
+    }
+  }
+}
+
+TRACK_COLD_MEM const EditPass* findEditPassById(const EditPassVec& editPasses, EditPassId id) {
+  if (id == kInvalidEditPassId) {
+    return nullptr;
+  }
+  for (const EditPass& row : editPasses) {
+    if (row.id == id) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+TRACK_COLD_MEM void projectSealedCompanionsOntoCheckpoints(
+    LoopContentResolution::StateCheckpoints& checkpoints, const EditPassVec& editPasses,
+    const EditPassIdList& companionIds, PreparedCompanionVec& recorded) {
+  for (const EditPassId id : companionIds) {
+    const EditPass* row = findEditPassById(editPasses, id);
+    if (row == nullptr || row->state != EditPassState::Active ||
+        row->passType != EditPassType::Note) {
+      continue;
+    }
+    const bool hide = row->actionType == EditActionType::Delete;
+    const bool shorten =
+        row->actionType == EditActionType::Update && row->propertyType == EditPropertyType::Length;
+    if (!hide && !shorten) {
+      continue;
+    }
+    bool recordedCompanion = false;
+    // Wrap head+tail share a NoteId. First-match Hide left the tail sounding (030958).
+    for (size_t spanIndex = 0; spanIndex < checkpoints.spans.size(); ++spanIndex) {
+      LoopContentResolution::StateCheckpoints::NoteSpan& span = checkpoints.spans[spanIndex];
+      if (span.note.noteId != row->targetNoteId) {
+        continue;
+      }
+      if (!recordedCompanion) {
+        PreparedCompanion recordedRow{};
+        recordedRow.id = id;
+        recordedRow.state = EditPassState::Active;
+        recordedRow.note = span.note;
+        recordedRow.startTick = span.startTick;
+        recordedRow.endTick = span.endTick;
+        recorded.push_back(recordedRow);
+        recordedCompanion = true;
+      }
+      removeSpanBoundaries(checkpoints.spanBoundaries, spanIndex);
+      if (hide) {
+        span.endTick = span.startTick;
+      } else {
+        span.endTick = row->endTick;
+        if (span.endTick != span.startTick) {
+          insertSpanBoundarySorted(checkpoints.spanBoundaries, span.startTick, spanIndex);
+          insertSpanBoundarySorted(checkpoints.spanBoundaries, span.endTick, spanIndex);
+        }
+      }
+      refreshPresentAtForSpan(checkpoints, spanIndex);
+    }
+  }
+}
+
 TRACK_COLD_MEM void eraseDisabledSounding(const LoopContentResolution::TickIndex& index,
-                                          SoundingNoteVec& out) {
-  auto isDisabled = [&](const SoundingNote& note) {
+                                          PresentNoteVec& out) {
+  auto isDisabled = [&](const PresentNote& note) {
     const LoopContentResolution::TickIndex::ByNoteIdEntry* found = index.findByNoteId(note.noteId);
     if (found == nullptr) {
       return false;
@@ -1275,13 +1404,13 @@ TRACK_COLD_MEM uint8_t LoopContentResolution::StateCheckpoints::findChannelByNot
 }
 
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveState(uint32_t tick,
-                                                                         SoundingNoteVec& out,
+                                                                         PresentNoteVec& out,
                                                                          ResolutionCostCounters* counters) const {
   resolveStateFromSpanBoundaries(spanBoundaries, tick, out, counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveStateFromSpanBoundaries(
-    const SpanBoundaryEntryVec& entries, uint32_t tick, SoundingNoteVec& out,
+    const SpanBoundaryEntryVec& entries, uint32_t tick, PresentNoteVec& out,
     ResolutionCostCounters* counters) const {
   uint32_t replayStart = 0;
   if (!seedResolveStateFromCheckpoint(*this, tick, out, replayStart)) {
@@ -1307,7 +1436,7 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveStateFromSpa
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveState(const StateCheckpoints& checkpoints, uint32_t tick,
-                                         SoundingNoteVec& out, ResolutionCostCounters* counters) {
+                                         PresentNoteVec& out, ResolutionCostCounters* counters) {
   checkpoints.resolveState(tick, out, counters);
 }
 
@@ -1411,6 +1540,7 @@ struct DeviceGateSession {
     delta = LoopContentResolution::TickIndex::TickEventEntryVec{};
     index = LoopContentResolution::TickIndex{};
     checkpoints = LoopContentResolution::StateCheckpoints{};
+    preparedCompanions.clear();
     rebuildEvents = SessionMidiEventVec{};
     rebuildNotes = NoteUtils::DisplayNoteVec{};
     sample_ = LoopContentResolution::DeviceGateSample{};
@@ -1426,14 +1556,14 @@ struct DeviceGateSession {
       return;
     }
     const uint32_t factor = keepInterval / checkpoints.intervalTicks;
-    std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> kept;
-    for (uint32_t i = 0; i < static_cast<uint32_t>(checkpoints.soundingAt.size()); i += factor) {
-      kept.push_back(std::move(checkpoints.soundingAt[i]));
+    std::vector<PresentNoteVec, ExternalMemoryFirstAllocator<PresentNoteVec>> kept;
+    for (uint32_t i = 0; i < static_cast<uint32_t>(checkpoints.presentAt.size()); i += factor) {
+      kept.push_back(std::move(checkpoints.presentAt[i]));
     }
-    if (kept.empty() && !checkpoints.soundingAt.empty()) {
-      kept.push_back(std::move(checkpoints.soundingAt.front()));
+    if (kept.empty() && !checkpoints.presentAt.empty()) {
+      kept.push_back(std::move(checkpoints.presentAt.front()));
     }
-    checkpoints.soundingAt.swap(kept);
+    checkpoints.presentAt.swap(kept);
     checkpoints.intervalTicks = keepInterval;
   }
 
@@ -1805,7 +1935,7 @@ struct DeviceGateSession {
           }
           checkpoints.spans.clear();
           checkpoints.spanBoundaries.clear();
-          checkpoints.soundingAt.clear();
+          checkpoints.presentAt.clear();
           checkpoints.channelByNoteId.clear();
           rebuildNotes = NoteUtils::dedupeProjectedDisplayNotes(reconProjected);
           reconProjected = NoteUtils::DisplayNoteVec{};
@@ -1865,9 +1995,9 @@ struct DeviceGateSession {
         if (count == 0) {
           count = 1;
         }
-        checkpoints.soundingAt.resize(count);
+        checkpoints.presentAt.resize(count);
         sample_.rebuild.checkpointIntervalTicks = checkpoints.intervalTicks;
-        sample_.rebuild.checkpointCount = static_cast<uint32_t>(checkpoints.soundingAt.size());
+        sample_.rebuild.checkpointCount = static_cast<uint32_t>(checkpoints.presentAt.size());
         rebuildEvents = SessionMidiEventVec{};
         rebuildNotes = NoteUtils::DisplayNoteVec{};
         checkpointCursor = 0;
@@ -1877,7 +2007,7 @@ struct DeviceGateSession {
       }
       case Phase::RebuildCheckpoints: {
         constexpr uint32_t kCheckpointsPerSlice = 1;
-        const uint32_t total = static_cast<uint32_t>(checkpoints.soundingAt.size());
+        const uint32_t total = static_cast<uint32_t>(checkpoints.presentAt.size());
         if (checkpointCursor >= total) {
           lastStepName = "state";
           phase = Phase::State;
@@ -1900,8 +2030,8 @@ struct DeviceGateSession {
       case Phase::State: {
         const uint32_t highTick = loopLengthTicks > 24u ? loopLengthTicks - 24u : 0u;
         ElapsedTimer timer;
-        SoundingNoteVec sounding;
-        LoopContentResolution::resolveState(checkpoints, highTick, sounding, &sample_.state);
+        PresentNoteVec presentNotes;
+        LoopContentResolution::resolveState(checkpoints, highTick, presentNotes, &sample_.state);
         sample_.state.elapsedMicros += timer.elapsed();
         lastStepName = "state";
         phase = Phase::Done;
@@ -1965,6 +2095,7 @@ struct DeviceGateSession {
   /// 6D.4: committed overdub rows since the last full prepare. Not a TickIndex member.
   LoopContentResolution::TickIndex::TickEventEntryVec delta;
   LoopContentResolution::StateCheckpoints checkpoints;
+  PreparedCompanionVec preparedCompanions;
   SessionMidiEventVec rebuildEvents;
   NoteUtils::DisplayNoteVec rebuildNotes;
   LoopContentResolution::DeviceGateSample sample_;
@@ -2001,6 +2132,33 @@ TRACK_COLD_MEM void LoopContentResolution::deviceGateReset() {
   sDeviceGateFinished = false;
 }
 
+uint32_t LoopContentResolution::deviceGateLoopLengthTicks() {
+  return sDeviceGateSession.loopLengthTicks;
+}
+
+LoopContentResolution::DeviceGateDirtyPolicy LoopContentResolution::deviceGateDirtyPolicy(
+    bool visualCacheDirty, uint32_t liveLoopLengthTicks) {
+  if (!visualCacheDirty) {
+    return DeviceGateDirtyPolicy::Run;
+  }
+  const uint32_t sessionLength = deviceGateLoopLengthTicks();
+  if (sessionLength != 0 && liveLoopLengthTicks == sessionLength) {
+    return DeviceGateDirtyPolicy::Skip;
+  }
+  return DeviceGateDirtyPolicy::Reset;
+}
+
+const char* LoopContentResolution::deviceGateContentDeferReason(bool pendingRestore,
+                                                                bool pendingHydrate) {
+  if (pendingRestore) {
+    return "restore";
+  }
+  if (pendingHydrate) {
+    return "hydrate";
+  }
+  return nullptr;
+}
+
 TRACK_COLD_MEM void LoopContentResolution::deviceGateComplete(uint32_t playbackRevision) {
   sDeviceGateSession.keepPreparedIndex(playbackRevision);
   sDeviceGateFinished = true;
@@ -2011,10 +2169,14 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
          sDeviceGateSession.preparedPlaybackRevision == playbackRevision;
 }
 
-TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const OverdubPass& pass,
-                                                                     uint32_t playbackRevision) {
+TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
+    const OverdubPass& pass, uint32_t playbackRevision, uint32_t loopLengthTicks,
+    const EditPassVec& editPasses, const EditPassIdList& companionIds) {
   if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
       pass.id == kInvalidPassId) {
+    return;
+  }
+  if (loopLengthTicks == 0 || loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
     return;
   }
   TickIndex& index = sDeviceGateSession.index;
@@ -2060,12 +2222,14 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(const Over
     probe.note = checkpoints.spans[i].note.pitch;
     probe.startTick = checkpoints.spans[i].startTick;
     probe.endTick = checkpoints.spans[i].endTick;
-    for (uint32_t c = 0; c < static_cast<uint32_t>(checkpoints.soundingAt.size()); ++c) {
-      if (noteSoundsAt(probe, c * checkpoints.intervalTicks, checkpoints.loopLengthTicks)) {
-        checkpoints.soundingAt[c].push_back(checkpoints.spans[i].note);
+    for (uint32_t c = 0; c < static_cast<uint32_t>(checkpoints.presentAt.size()); ++c) {
+      if (notePresentAt(probe, c * checkpoints.intervalTicks, checkpoints.loopLengthTicks)) {
+        checkpoints.presentAt[c].push_back(checkpoints.spans[i].note);
       }
     }
   }
+  projectSealedCompanionsOntoCheckpoints(checkpoints, editPasses, companionIds,
+                                         sDeviceGateSession.preparedCompanions);
   sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
 }
 
@@ -2075,6 +2239,41 @@ TRACK_COLD_MEM void LoopContentResolution::setPreparedCapturePassState(PassId id
     return;
   }
   sDeviceGateSession.index.setCapturePassState(id, state);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::setPreparedEditPassState(EditPassId id,
+                                                                   EditPassState state) {
+  if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
+      id == kInvalidEditPassId) {
+    return;
+  }
+  for (PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.id == id) {
+      row.state = state;
+    }
+  }
+}
+
+TRACK_COLD_MEM void restoreDisabledCompanions(uint32_t tick, PresentNoteVec& out) {
+  const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;
+  if (loopLength == 0) {
+    return;
+  }
+  const uint32_t queryTick = IntervalProjection::tickPhaseInLoop(tick, 0, loopLength);
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    NoteUtils::DisplayNote probe{};
+    probe.noteId = row.note.noteId;
+    probe.note = row.note.pitch;
+    probe.startTick = row.startTick;
+    probe.endTick = row.endTick;
+    if (!notePresentAt(probe, queryTick, loopLength)) {
+      continue;
+    }
+    upsertPresentNote(out, row.note);
+  }
 }
 
 TRACK_COLD_MEM void LoopContentResolution::restampPreparedPlaybackRevision(uint32_t playbackRevision) {
@@ -2105,18 +2304,236 @@ TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedWindow(
 
 TRACK_COLD_MEM bool LoopContentResolution::tryResolvePreparedState(uint32_t tick,
                                                                   uint32_t playbackRevision,
-                                                                  SoundingNoteVec& out,
+                                                                  PresentNoteVec& out,
                                                                   ResolutionCostCounters* counters) {
   out.clear();
   if (!preparedWindowReady(playbackRevision) ||
       sDeviceGateSession.checkpoints.spans.empty() ||
       sDeviceGateSession.checkpoints.spanBoundaries.empty() ||
-      sDeviceGateSession.checkpoints.soundingAt.empty()) {
+      sDeviceGateSession.checkpoints.presentAt.empty()) {
     return false;
   }
   resolveState(sDeviceGateSession.checkpoints, tick, out, counters);
   eraseDisabledSounding(sDeviceGateSession.index, out);
+  restoreDisabledCompanions(tick, out);
   return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
+    uint32_t tick, uint8_t pitch, uint32_t playbackRevision, uint32_t loopLengthTicks,
+    OverlapNoteIdSet& out) {
+  out.clear();
+  if (!preparedWindowReady(playbackRevision) ||
+      sDeviceGateSession.checkpoints.spans.empty() ||
+      sDeviceGateSession.checkpoints.loopLengthTicks == 0 || loopLengthTicks == 0 ||
+      loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks ||
+      loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
+    return false;
+  }
+  const uint32_t loopLength = sDeviceGateSession.checkpoints.loopLengthTicks;
+  const TickIndex& index = sDeviceGateSession.index;
+  auto capturePassIsActive = [&index](NoteId noteId) -> bool {
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(noteId);
+    if (found == nullptr) {
+      return false;
+    }
+    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    return pass == nullptr || pass->state == CapturePassState::Active;
+  };
+  auto hasActiveCompanion = [](NoteId noteId) -> bool {
+    for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+      if (row.state == EditPassState::Active && row.note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.pitch != pitch || span.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!capturePassIsActive(span.note.noteId)) {
+      continue;
+    }
+    if (!OverlapNoteIdObservation::displayNotePresentAtHold(span.startTick, span.endTick, tick,
+                                                            loopLength)) {
+      continue;
+    }
+    (void)out.insert(span.note.noteId);
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId ||
+        row.note.pitch != pitch) {
+      continue;
+    }
+    if (!capturePassIsActive(row.note.noteId) || hasActiveCompanion(row.note.noteId)) {
+      continue;
+    }
+    if (!OverlapNoteIdObservation::displayNotePresentAtHold(row.startTick, row.endTick, tick,
+                                                            loopLength)) {
+      continue;
+    }
+    (void)out.insert(row.note.noteId);
+  }
+  return true;
+}
+
+bool LoopContentResolution::preparedCheckpointHasNoteId(NoteId noteId) {
+  if (noteId == kInvalidNoteId ||
+      !preparedWindowReady(sDeviceGateSession.preparedPlaybackRevision)) {
+    return false;
+  }
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.noteId == noteId) {
+      return true;
+    }
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.note.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+    uint32_t playbackRevision, NoteUtils::DisplayNoteVec& out,
+    const SessionMidiEventVec* windowEvents, uint32_t loopLengthTicks, bool logSpanExclusions) {
+  out.clear();
+  if (!preparedWindowReady(playbackRevision) ||
+      sDeviceGateSession.checkpoints.spans.empty() ||
+      sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
+    return false;
+  }
+  if (loopLengthTicks != 0 &&
+      loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks) {
+    return false;
+  }
+  std::vector<NoteId> windowNoteOnIds;
+  if (windowEvents != nullptr) {
+    windowNoteOnIds.reserve(windowEvents->size());
+    for (const MidiEvent& evt : *windowEvents) {
+      if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
+        continue;
+      }
+      windowNoteOnIds.push_back(evt.noteId);
+    }
+    if (windowNoteOnIds.empty()) {
+      return false;
+    }
+    std::sort(windowNoteOnIds.begin(), windowNoteOnIds.end());
+    windowNoteOnIds.erase(std::unique(windowNoteOnIds.begin(), windowNoteOnIds.end()),
+                          windowNoteOnIds.end());
+  }
+  const TickIndex& index = sDeviceGateSession.index;
+  auto capturePassIsActive = [&index](NoteId noteId) -> bool {
+    const TickIndex::ByNoteIdEntry* found = index.findByNoteId(noteId);
+    if (found == nullptr) {
+      return false;
+    }
+    const TickIndex::CapturePassEntry* pass = findPass(index, found->loc.passId);
+    return pass == nullptr || pass->state == CapturePassState::Active;
+  };
+  auto hasActiveCompanion = [](NoteId noteId) -> bool {
+    for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+      if (row.state == EditPassState::Active && row.note.noteId == noteId) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto inWindow = [&](NoteId noteId) {
+    if (windowEvents == nullptr) {
+      return true;
+    }
+    return std::binary_search(windowNoteOnIds.begin(), windowNoteOnIds.end(), noteId);
+  };
+  auto appendSpan = [&out](NoteId noteId, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+    if (noteId == kInvalidNoteId || startTick == endTick) {
+      return;
+    }
+    NoteUtils::DisplayNote note{};
+    note.noteId = noteId;
+    note.note = pitch;
+    note.velocity = 0;
+    note.startTick = startTick;
+    note.endTick = endTick;
+    out.push_back(note);
+  };
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  uint32_t srcdropLogged = 0;
+  constexpr uint32_t kMaxSrcdropLogs = 32;
+  auto logSpanExclusion = [&](NoteId noteId, const char* reason) {
+    if (!logSpanExclusions || noteId == kInvalidNoteId || reason == nullptr) {
+      return;
+    }
+    if (srcdropLogged >= kMaxSrcdropLogs) {
+      return;
+    }
+    ++srcdropLogged;
+    char line[96];
+    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=%s",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), reason);
+    DebugSessionCapture::appendCaptureTextLine(line);
+  };
+#else
+  (void)logSpanExclusions;
+#endif
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!inWindow(span.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(span.note.noteId, "inWindow");
+#endif
+      continue;
+    }
+    if (!capturePassIsActive(span.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(span.note.noteId, "inactive");
+#endif
+      continue;
+    }
+    appendSpan(span.note.noteId, span.note.pitch, span.startTick, span.endTick);
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (row.state != EditPassState::Disabled) {
+      continue;
+    }
+    if (!inWindow(row.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(row.note.noteId, "inWindow");
+#endif
+      continue;
+    }
+    // Same guards as tryCollectPreparedPresentNoteIdsAtTick (034455 wrap flash).
+    if (!capturePassIsActive(row.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(row.note.noteId, "inactive");
+#endif
+      continue;
+    }
+    if (hasActiveCompanion(row.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(row.note.noteId, "hide_companion");
+#endif
+      continue;
+    }
+    appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  if (logSpanExclusions && srcdropLogged >= kMaxSrcdropLogs) {
+    char line[96];
+    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,srcdrop,reason=truncated,limit=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(kMaxSrcdropLogs));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
+  return !out.empty();
 }
 
 void LoopContentResolution::deviceGateFormatCaptureLine(char* line, size_t cap) {

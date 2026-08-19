@@ -43,6 +43,8 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Resolution** | Deterministic synchronous conflict solving | Runtime scheduling; pipeline or queue metaphors; a generic `Resolver` type |
 | **NoteGeometryResolver** | Live NOTE_EDIT overlap Resolution (geometry → actions) | Loop history / playback effective-state queries |
 | **LoopContentResolution** | Query-time effective musical state from active pass set + edit history (`resolveState`, `resolveWindow`; `resolveNotes` is a derived consumer) | `LoopPasses::materialize`; `NoteGeometryResolver`; a generic `Resolver` / `LoopContentResolver` |
+| **PresentNote** | LCR query snapshot of notes whose span contains tick S (`resolveState` / `StateCheckpoints::presentAt`). Keyed by `NoteId`; many same-pitch rows allowed. Emitted type has no `endTick` | `ActiveNoteLedger::Entry` (one per `(channel, pitch)` at `currentTick`); `midiHandler.sendMidiEvent` |
+| **ActiveNote** | Runtime slot at `currentTick` until NoteOff — `ActiveNoteLedger::Entry`, one per `(channel, pitch)`. No `length` / `endTick`. Written from **committed** playback (`playbackCursorAdvanceSend` → `applyPlaybackLedgerEvent`). Capture overdub emit (`playbackCursorAdvanceSendCapture`) does not write it. `sendMidiEvent` and `collectOverdubNoteOnParticipantIds` read it. Mute still writes the ledger. Does not mean stored `LoopPasses` are already one-owner | Geometry (`NoteSpan`); LCR `PresentNoteVec`; `midiHandler.sendMidiEvent` (only if `playbackEmitMidiOutput_`) |
 | **Analyze** (consumer role) | Select / overlap / effective-state queries against prepared `LoopContentResolution` around a tick | A new type; piano-roll `visualCache`; playback `mergedEvents` |
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
@@ -96,7 +98,8 @@ MIDI Input is timing-critical. The owner is `MidiHandler`; the operation is `han
 |------|---------|
 | **MIDI Input handling duration** | Time spent inside `handleMidiInput()` (`DIAG,midi_input`) |
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`) |
-| **RuntimeTimingTelemetry** | Instrumentation that measures that relationship — not a MIDI owner |
+| **MIDI deadline lateness** | `lateness_us = sendMidiEvent() − scheduled_deadline` for each required note-on, note-off, and MIDI clock (scored independently). Equality is on time. This is **product correctness**, not a synonym for MIDI Input Gap |
+| **RuntimeTimingTelemetry** | Instrumentation for MIDI Input Gap, `handleMidiInput()` duration, and (when hooked) MIDI deadline lateness — not a MIDI owner |
 | **Runtime admission** | Future coordinator of which bounded runtime units may execute between MIDI Input handling opportunities |
 
 Historical captures (2026-08-12) emit `DIAG,msi` / `DIAG,midisvc` for the same two measurements. Do not rename `MidiHandler` or `handleMidiInput()` to fit scheduling prose.
@@ -457,6 +460,8 @@ Referenced from [docs/Agents/reviewer.md](../Agents/reviewer.md).
 | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership, forbidden patterns, extension rules |
 | [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md) | Module map and input stack layout |
 | [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | Capture, passes, stop path, undo |
+| [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) | Overdub overlap candidate / classify / resolve / seal (not vocabulary authority) |
+| [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) | Open ledger identities, catch-up vs clock (not vocabulary authority) |
 | [architecture_naming_authority_refinement.md](../Plans/architecture_naming_authority_refinement.md) | Investigation audit, naming debt roadmap |
 | [refactor_priority_backlog.md](../Plans/refactor_priority_backlog.md) | Cross-cutting refactor priority index (P1/P2/P3) |
 | Archived OpenSpec baselines | `m8-rename`, `m8-edit`, `pool-budget` in `openspec/specs/` |

@@ -8,6 +8,7 @@
 #include "EditPass.h"
 #include "LoopPasses.h"
 #include "MidiEvent.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
 
 #include <cstdint>
@@ -63,14 +64,14 @@ struct ResolutionCostCounters {
   uint64_t pairOpenOnHeapBytes = 0;
 };
 
-struct SoundingNote {
+struct PresentNote {
   uint8_t channel = 0;
   uint8_t pitch = 0;
   NoteId noteId = kInvalidNoteId;
   uint32_t onTick = 0;
 };
 
-using SoundingNoteVec = std::vector<SoundingNote, ExternalMemoryFirstAllocator<SoundingNote>>;
+using PresentNoteVec = std::vector<PresentNote, ExternalMemoryFirstAllocator<PresentNote>>;
 
 // Stage 1 vocabulary pin (DEC-037): three roles, no fourth synonym.
 // RawMidiEvent  — MIDI shape stored on capture passes (today: MidiEvent).
@@ -189,10 +190,10 @@ struct LoopContentResolution {
     }
   };
 
-  /// Stage 7 in-RAM sounding snapshots. Not persisted (D3 is out of scope).
+  /// Stage 7 in-RAM present-at-S snapshots. Not persisted (D3 is out of scope).
   struct StateCheckpoints {
     struct NoteSpan {
-      SoundingNote note;
+      PresentNote note;
       uint32_t startTick = 0;
       uint32_t endTick = 0;
     };
@@ -214,7 +215,7 @@ struct LoopContentResolution {
 
     uint32_t intervalTicks = 0;
     uint32_t loopLengthTicks = 0;
-    std::vector<SoundingNoteVec, ExternalMemoryFirstAllocator<SoundingNoteVec>> soundingAt;
+    std::vector<PresentNoteVec, ExternalMemoryFirstAllocator<PresentNoteVec>> presentAt;
     NoteSpanVec spans;
     /// Tick-ordered start and exclusive-end entries for tail replay (flat A).
     SpanBoundaryEntryVec spanBoundaries;
@@ -250,7 +251,7 @@ struct LoopContentResolution {
     void sortChannelByNoteId(ResolutionCostCounters* counters = nullptr);
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
-    void resolveState(uint32_t tick, SoundingNoteVec& out,
+    void resolveState(uint32_t tick, PresentNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;
     /// C-order append (start then end per span), then `stable_sort` by tick.
     static void appendSpanBoundaryEntries(const NoteSpanVec& spans, uint32_t begin,
@@ -261,7 +262,7 @@ struct LoopContentResolution {
     static void sortAndUniqueChannelByNoteIdEntries(ChannelByNoteIdEntryVec& entries);
     static uint8_t findChannelByNoteId(const ChannelByNoteIdEntryVec& entries, NoteId noteId);
     void resolveStateFromSpanBoundaries(const SpanBoundaryEntryVec& entries, uint32_t tick,
-                                        SoundingNoteVec& out,
+                                        PresentNoteVec& out,
                                         ResolutionCostCounters* counters = nullptr) const;
   };
 
@@ -298,9 +299,9 @@ struct LoopContentResolution {
                             SessionMidiEventVec& out, ResolutionCostCounters* counters = nullptr);
 
   static void resolveState(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t tick,
-                           SoundingNoteVec& out, ResolutionCostCounters* counters = nullptr);
+                           PresentNoteVec& out, ResolutionCostCounters* counters = nullptr);
 
-  static void resolveState(const StateCheckpoints& checkpoints, uint32_t tick, SoundingNoteVec& out,
+  static void resolveState(const StateCheckpoints& checkpoints, uint32_t tick, PresentNoteVec& out,
                            ResolutionCostCounters* counters = nullptr);
 
   static void resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
@@ -321,6 +322,9 @@ struct LoopContentResolution {
                                 DeviceGateSample& out);
 
   enum class DeviceGateSliceResult : uint8_t { Inactive, Continue, Complete };
+  /// Active-gate dirty policy for STOPPED idle. Display dirty is not an identity break
+  /// when the selected loop still matches the session.
+  enum class DeviceGateDirtyPolicy : uint8_t { Run, Skip, Reset };
 
   /// Sliced device gate for idle maintenance — one heavy step per `deviceGateRunOneSlice`.
   static bool deviceGateFinished();
@@ -334,15 +338,31 @@ struct LoopContentResolution {
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static void deviceGateReset();
-  /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `soundingAt`.
+  /// Prepared session loop length. 0 when the gate has not begun or was reset.
+  static uint32_t deviceGateLoopLengthTicks();
+  /// Skip the slice when dirty and live length matches the session. Reset when
+  /// length disagrees. Not dirty → Run. Does not itself reset the session.
+  static DeviceGateDirtyPolicy deviceGateDirtyPolicy(bool visualCacheDirty,
+                                                     uint32_t liveLoopLengthTicks);
+  /// Restore/hydrate defer LCR (those mutate passes). Deferred save is not a defer.
+  static const char* deviceGateContentDeferReason(bool pendingRestore, bool pendingHydrate);
+  /// Keep `TickIndex` plus `spans` / `spanBoundaries` / sparse `presentAt`.
   /// Drop rebuild working buffers. Does not construct or sort. Stamp is `playbackRevision`.
   static void deviceGateComplete(uint32_t playbackRevision);
   static bool preparedWindowReady(uint32_t playbackRevision);
   /// 6D.4 / 6E.4: append one committed overdub into the session `delta`, pair it, append
-  /// its spans, and restamp. No-op when no prepared index is kept. Does not write `tickEvents`.
-  static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision);
+  /// its spans, and restamp. Projects this wrap's sealed companion Delete/Length rows onto
+  /// existing `spans` / `spanBoundaries` / `presentAt`. Does not call `applyNoteEditPass`.
+  /// No-op when no prepared index is kept, or when `loopLengthTicks` disagrees with the
+  /// prepared session length. Does not write `tickEvents`.
+  static void publishPreparedOverdubPass(const OverdubPass& pass, uint32_t playbackRevision,
+                                         uint32_t loopLengthTicks,
+                                         const EditPassVec& editPasses = EditPassVec(),
+                                         const EditPassIdList& companionIds = EditPassIdList());
   /// Session-disable / re-enable a prepared capture pass. Does not restamp.
   static void setPreparedCapturePassState(PassId id, CapturePassState state);
+  /// Session-disable / re-enable a published companion. Does not restamp.
+  static void setPreparedEditPassState(EditPassId id, EditPassState state);
   /// Keep prepared ready after `Loop` bumps `playbackRevision` (undo/redo). No-op on miss.
   static void restampPreparedPlaybackRevision(uint32_t playbackRevision);
   /// Consume the kept index. Returns false on miss or stamp mismatch — never rebuilds.
@@ -351,6 +371,30 @@ struct LoopContentResolution {
                                        uint32_t playbackRevision, SessionMidiEventVec& out,
                                        ResolutionCostCounters* counters = nullptr);
   /// Consume kept `spans` + `spanBoundaries`. Returns false on miss or stamp mismatch.
-  static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, SoundingNoteVec& out,
+  static bool tryResolvePreparedState(uint32_t tick, uint32_t playbackRevision, PresentNoteVec& out,
                                       ResolutionCostCounters* counters = nullptr);
+  /// Prepared present-at-S NoteIds for pitch using RC8 `displayNotePresentAtHold` on
+  /// `NoteSpan`s. Does not call `resolveState`. Returns false on prepared miss or
+  /// when live `loopLengthTicks` disagrees with the prepared session length.
+  static bool tryCollectPreparedPresentNoteIdsAtTick(uint32_t tick, uint8_t pitch,
+                                                     uint32_t playbackRevision,
+                                                     uint32_t loopLengthTicks,
+                                                     OverlapNoteIdSet& out);
+  /// Copy prepared `NoteSpan`s (Active passes + Disabled companions) to DisplayNotes.
+  /// Same membership B walks. Omits Hide rows (`endTick == startTick`).
+  /// When `windowEvents` is set, keep only spans whose `noteId` is a **unique
+  /// window NoteOn ID** (030219: restamped leftover checkpoints must not replace
+  /// the gathered MIDI). Membership is a rebuild-local sorted id list — not
+  /// `OverlapNoteIdSet` (cap 128 is the USB occupy set). When `loopLengthTicks`
+  /// is non-zero, miss if it disagrees with the checkpoint length.
+  /// Returns false on prepared miss or when every span is skipped (empty is not
+  /// authoritative). Does not reconstruct MIDI. After this returns true, the
+  /// caller must not reconstruct.
+  static bool tryCopyPreparedSpansToDisplayNotes(uint32_t playbackRevision,
+                                                 NoteUtils::DisplayNoteVec& out,
+                                                 const SessionMidiEventVec* windowEvents = nullptr,
+                                                 uint32_t loopLengthTicks = 0,
+                                                 bool logSpanExclusions = false);
+  /// Prepared checkpoint membership (span or companion row). Diagnostic helper for wrap srcdrop.
+  static bool preparedCheckpointHasNoteId(NoteId noteId);
 };

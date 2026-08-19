@@ -5,6 +5,10 @@
 
 #include "Utils/DebugSessionCapture.h"
 
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#include <Arduino.h>
+#endif
+
 #if defined(__IMXRT1062__)
 #define RT_FLASHMEM_FN __attribute__((noinline, section(".flashmem")))
 #else
@@ -26,6 +30,29 @@ void recordSample(Accumulator& acc, uint32_t durationUs) {
   if (durationUs > kObservationalSoftCeilingUs) {
     ++acc.overCount;
   }
+}
+
+// ISR-called (IntervalTimer updateInternalClock / sendClock / sendMidiEvent).
+// Must stay in ITCM with noteClockPulse — FLASHMEM from that ISR starved USB
+// after transport start (session_20260817_212654).
+void recordLateness(Accumulator& acc, uint32_t latenessUs) {
+  if (latenessUs > acc.maxUs) {
+    acc.maxUs = latenessUs;
+  }
+  if (latenessUs > 0) {
+    ++acc.overCount;
+  }
+}
+
+uint32_t latenessAfterDeadline(uint32_t nowUs, uint32_t dueUs, uint32_t periodUs) {
+  if (periodUs == 0) {
+    return 0;
+  }
+  const uint32_t deadlineUs = dueUs + periodUs;
+  if (static_cast<int32_t>(nowUs - deadlineUs) <= 0) {
+    return 0;
+  }
+  return nowUs - deadlineUs;
 }
 
 struct State {
@@ -52,6 +79,9 @@ struct State {
   Accumulator idleMaint;
   Accumulator loadFrame;
   Accumulator persistSave;
+  Accumulator lateOn;
+  Accumulator lateOff;
+  Accumulator lateClk;
   uint32_t usbNestedCaptureUs = 0;
   uint32_t usbNestedThruUs = 0;
   uint32_t usbNestedClockUs = 0;
@@ -69,6 +99,22 @@ struct State {
   bool inputActive = false;
   uint32_t windowStartUs = 0;
   uint32_t lastEmitUs = 0;
+  uint32_t serviceDueUs = 0;
+  uint32_t servicePeriodUs = 0;
+  bool serviceCadenceActive = false;
+  uint32_t clockDueUs = 0;
+  uint32_t clockPeriodUs = 0;
+  bool clockCadenceActive = false;
+  bool lateOneShotArmed = true;
+  bool pendingLateEvent = false;
+  uint8_t pendingLateClass = 0;  // 0=on, 1=off, 2=clk
+  uint32_t pendingLateUs = 0;
+  uint32_t pendingLateTick = 0;
+  bool pendingPlaybackRebuild = false;
+  uint32_t pendingRebuildDurationUs = 0;
+  uint32_t pendingRebuildWindowStartTick = 0;
+  uint32_t pendingRebuildWindowLengthTicks = 0;
+  uint32_t pendingRebuildRevision = 0;
 };
 
 State& state() {
@@ -76,7 +122,18 @@ State& state() {
   return s;
 }
 
-void clearWindow(State& s) {
+void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t tick) {
+  if (latenessUs == 0 || !s.lateOneShotArmed) {
+    return;
+  }
+  s.lateOneShotArmed = false;
+  s.pendingLateEvent = true;
+  s.pendingLateClass = lateClass;
+  s.pendingLateUs = latenessUs;
+  s.pendingLateTick = tick;
+}
+
+RT_FLASHMEM_FN void clearWindow(State& s) {
   s.midiGap = Accumulator{};
   s.midiInput = Accumulator{};
   s.clk = Accumulator{};
@@ -100,6 +157,9 @@ void clearWindow(State& s) {
   s.idleMaint = Accumulator{};
   s.loadFrame = Accumulator{};
   s.persistSave = Accumulator{};
+  s.lateOn = Accumulator{};
+  s.lateOff = Accumulator{};
+  s.lateClk = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -129,6 +189,9 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("persist_save", s.persistSave.maxUs,
                                              s.persistSave.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("late_on", s.lateOn.maxUs, s.lateOn.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("late_off", s.lateOff.maxUs, s.lateOff.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("late_clk", s.lateClk.maxUs, s.lateClk.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -300,6 +363,65 @@ void noteClockPulse() {
   ++s.clockPulses;
 }
 
+void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs) {
+  State& s = state();
+  s.servicePeriodUs = tickPeriodUs;
+  if (!s.serviceCadenceActive || tickPeriodUs == 0) {
+    s.serviceDueUs = nowUs;
+    s.serviceCadenceActive = tickPeriodUs != 0;
+    return;
+  }
+  s.serviceDueUs += tickPeriodUs;
+}
+
+RT_FLASHMEM_FN void resetPlaybackDeadlineCadence() {
+  State& s = state();
+  s.serviceDueUs = 0;
+  s.servicePeriodUs = 0;
+  s.serviceCadenceActive = false;
+  s.clockDueUs = 0;
+  s.clockPeriodUs = 0;
+  s.clockCadenceActive = false;
+}
+
+void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick) {
+  State& s = state();
+  const uint32_t latenessUs =
+      latenessAfterDeadline(nowUs, s.serviceDueUs, s.servicePeriodUs);
+  recordLateness(isNoteOn ? s.lateOn : s.lateOff, latenessUs);
+  queueFirstLate(s, isNoteOn ? 0 : 1, latenessUs, tick);
+}
+
+void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t onTimeWindowUs,
+                             uint32_t tick) {
+  State& s = state();
+  if (clockPeriodUs == 0) {
+    return;
+  }
+  if (!s.clockCadenceActive) {
+    s.clockDueUs = nowUs;
+    s.clockPeriodUs = clockPeriodUs;
+    s.clockCadenceActive = true;
+    recordLateness(s.lateClk, 0);
+    return;
+  }
+  s.clockPeriodUs = clockPeriodUs;
+  s.clockDueUs += clockPeriodUs;
+  const uint32_t latenessUs = latenessAfterDeadline(nowUs, s.clockDueUs, onTimeWindowUs);
+  recordLateness(s.lateClk, latenessUs);
+  queueFirstLate(s, 2, latenessUs, tick);
+}
+
+RT_FLASHMEM_FN void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
+                                          uint32_t windowLengthTicks, uint32_t revision) {
+  State& s = state();
+  s.pendingPlaybackRebuild = true;
+  s.pendingRebuildDurationUs = durationUs;
+  s.pendingRebuildWindowStartTick = windowStartTick;
+  s.pendingRebuildWindowLengthTicks = windowLengthTicks;
+  s.pendingRebuildRevision = revision;
+}
+
 RT_FLASHMEM_FN void noteIdleMaint(uint32_t durationUs) {
   recordSample(state().idleMaint, durationUs);
 }
@@ -310,6 +432,37 @@ RT_FLASHMEM_FN void noteLoadFrame(uint32_t durationUs) {
 
 RT_FLASHMEM_FN void notePersistSave(uint32_t durationUs) {
   recordSample(state().persistSave, durationUs);
+}
+
+RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
+  State& s = state();
+#if defined(SESSION_CAPTURE)
+#if defined(__IMXRT1062__)
+  const char* midiClass = PSTR("on");
+  if (s.pendingLateClass == 1) {
+    midiClass = PSTR("off");
+  } else if (s.pendingLateClass == 2) {
+    midiClass = PSTR("clk");
+  }
+#else
+  const char* midiClass = "on";
+  if (s.pendingLateClass == 1) {
+    midiClass = "off";
+  } else if (s.pendingLateClass == 2) {
+    midiClass = "clk";
+  }
+#endif
+  if (s.pendingLateEvent) {
+    DebugSessionCapture::midiDeadlineLateEvent(midiClass, s.pendingLateUs, s.pendingLateTick);
+  }
+  if (s.pendingPlaybackRebuild) {
+    DebugSessionCapture::playbackRebuild(s.pendingRebuildDurationUs, s.pendingRebuildWindowStartTick,
+                                         s.pendingRebuildWindowLengthTicks,
+                                         s.pendingRebuildRevision);
+  }
+#endif
+  s.pendingLateEvent = false;
+  s.pendingPlaybackRebuild = false;
 }
 
 RT_FLASHMEM_FN void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs) {
@@ -407,6 +560,7 @@ RT_FLASHMEM_FN void recordIdleMaintChildRem(uint8_t child, uint32_t startUs) {
 }
 
 RT_FLASHMEM_FN bool maybeEmit(uint32_t nowUs) {
+  emitPendingDeadlineOneShots();
   State& s = state();
   if (s.windowStartUs == 0) {
     s.windowStartUs = nowUs;
@@ -419,12 +573,13 @@ RT_FLASHMEM_FN bool maybeEmit(uint32_t nowUs) {
   const uint32_t windowElapsedUs = nowUs - s.windowStartUs;
   emitWindow(s, nowUs, windowElapsedUs);
   clearWindow(s);
+  s.lateOneShotArmed = true;
   s.windowStartUs = nowUs;
   s.lastEmitUs = nowUs;
   return true;
 }
 
-Snapshot peek(uint32_t nowUs) {
+RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   const State& s = state();
   Snapshot out;
   out.midiGapMaxUs = s.midiGap.maxUs;
@@ -473,6 +628,15 @@ Snapshot peek(uint32_t nowUs) {
   out.loadFrameOverCount = s.loadFrame.overCount;
   out.persistSaveMaxUs = s.persistSave.maxUs;
   out.persistSaveOverCount = s.persistSave.overCount;
+  out.lateOnMaxUs = s.lateOn.maxUs;
+  out.lateOnCount = s.lateOn.overCount;
+  out.lateOffMaxUs = s.lateOff.maxUs;
+  out.lateOffCount = s.lateOff.overCount;
+  out.lateClkMaxUs = s.lateClk.maxUs;
+  out.lateClkCount = s.lateClk.overCount;
+  out.lateOneShotArmed = s.lateOneShotArmed;
+  out.pendingLateEvent = s.pendingLateEvent;
+  out.pendingPlaybackRebuild = s.pendingPlaybackRebuild;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

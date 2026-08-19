@@ -8,6 +8,7 @@
 #include "MidiEvent.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
+#include "ActiveNoteLedger.h"
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
@@ -93,9 +94,52 @@ void test_playback_cursor_advance_loop_start_catch_up() {
   TEST_ASSERT_EQUAL_UINT16(3, cursor);
 }
 
+void test_active_committed_duplicate_off_applies_ledger_without_second_midi() {
+  // session_20260819_103234 L6683: two Off@71. Wire keeps one Off; ledger must pop both.
+  MidiEvent on24 = MidiEvent::NoteOn(24, 1, 24, 100);
+  on24.noteId = 5568;
+  MidiEvent on48 = MidiEvent::NoteOn(48, 1, 24, 100);
+  on48.noteId = 5570;
+  MidiEvent off71a = MidiEvent::NoteOff(71, 1, 24, 0);
+  MidiEvent off71b = MidiEvent::NoteOff(71, 1, 24, 0);
+  DirectPlaybackStreamCtx streamCtx{{on24, on48, off71a, off71b}};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = 768;
+  PlaybackTickFrame frame{&playbackContext, 71U, 0U, false};
+  uint16_t cursor = 0;
+  PlaybackCursorAdvanceState advance{&cursor, nullptr};
+
+  struct LedgerSendLog {
+    ActiveNoteLedger ledger;
+    unsigned midiOffs = 0;
+  };
+  LedgerSendLog log;
+  auto send = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+    if (evt.isNoteOff()) {
+      ++state->midiOffs;
+    }
+  };
+  auto applyLedgerOnly = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, directPlaybackStreamSize, nullptr,
+                                   directPlaybackStreamEventAt, directPlaybackStreamPhase};
+  const PlaybackAdvanceResult result = advancePlaybackCursor(
+      advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream, send, &log, 0, nullptr, nullptr,
+      1, applyLedgerOnly);
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed, result);
+  TEST_ASSERT_EQUAL_UINT32(1, log.midiOffs);
+  TEST_ASSERT_FALSE(log.ledger.isActive(1, 24));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_playback_cursor_advance_mid_interval);
   RUN_TEST(test_playback_cursor_advance_loop_start_catch_up);
+  RUN_TEST(test_active_committed_duplicate_off_applies_ledger_without_second_midi);
   return UNITY_END();
 }

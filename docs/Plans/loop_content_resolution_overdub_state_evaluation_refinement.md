@@ -137,9 +137,9 @@ NOTE_EDIT cannot be open during overdub (`openNoteEditSession` stops overdub fir
 
 ## What is missing today
 
-- `keepPreparedIndex` → `dropWorkingBuffers()` now keeps `spans` + `spanBoundaries` + sparse `soundingAt`. Rebuild events/notes are dropped. `tryResolvePreparedState` consumes that keep-set. Not wired to Track.
+- `keepPreparedIndex` → `dropWorkingBuffers()` now keeps `spans` + `spanBoundaries` + sparse `presentAt`. Rebuild events/notes are dropped. `tryResolvePreparedState` consumes that keep-set. Not wired to Track.
 - `resolveState(LoopPasses, …)` rematerializes the whole loop. Do not call it on the MIDI path.
-- `SoundingNote` has `onTick` but no `endTick`. Geometry needs `appendNoteEvents(noteId)` or a kept span.
+- `PresentNote` has `onTick` but no `endTick`. Geometry needs `appendNoteEvents(noteId)` or a kept span.
 - 6D.4 publish now pairs the new pass and appends its spans / boundaries (**6E.4**). Not wired to wrap-commit or session undo.
 
 6.0 consume reading:
@@ -213,11 +213,11 @@ Not firmware. Not 6C consume-path edits.
 
 `test_stage6e3_keep_spans_after_drop_rebuild_buffers`.
 
-`dropWorkingBuffers` no longer assigns `checkpoints = {}`. It keeps `spans`, `spanBoundaries`, and thins `soundingAt` to the device 8-bar stride. `rebuildEvents` / `rebuildNotes` still drop.
+`dropWorkingBuffers` no longer assigns `checkpoints = {}`. It keeps `spans`, `spanBoundaries`, and thins `presentAt` to the device 8-bar stride. `rebuildEvents` / `rebuildNotes` still drop.
 
 `tryResolvePreparedState(tick, revision)` consumes that keep-set. Stamp miss returns false (3b / 6C unchanged). Not wired to Track.
 
-Keep-all per-bar `soundingAt` is the FAIL path: 64 snapshots / more sounding copies than the 8-bar keep-set. After complete, `checkpointCount` is `kCanonicalBars / 8`. `resolveState` still matches the rematerialize oracle.
+Keep-all per-bar `presentAt` is the FAIL path: 64 snapshots / more sounding copies than the 8-bar keep-set. After complete, `checkpointCount` is `kCanonicalBars / 8`. `resolveState` still matches the rematerialize oracle.
 
 ---
 
@@ -225,7 +225,7 @@ Keep-all per-bar `soundingAt` is the FAIL path: 64 snapshots / more sounding cop
 
 `test_stage6e4_publish_is_next_wrap_source`. 8-bar loop. Record 60@0–48. Wrap-1 72@200–400.
 
-`publishPreparedOverdubPass` pairs the new pass, reconstructs that pass only, appends spans, merges `spanBoundaries`, and patches sparse `soundingAt`. Does not write `tickEvents`.
+`publishPreparedOverdubPass` pairs the new pass, reconstructs that pass only, appends spans, merges `spanBoundaries`, and patches sparse `presentAt`. Does not write `tickEvents`.
 
 - After publish, `tryResolvePreparedState(300)` matches the rematerialize oracle and includes wrap-1. Span count grows by 1.
 - `setPreparedCapturePassState(Disabled)` hides wrap-1. Stamp stays. Prepared remains true.
@@ -259,7 +259,7 @@ Native tests in [`test/test_loop_content_resolution/test_loop_content_resolution
 | **6E.1** | **PASS** — LCR candidates + existing geometry. 60@0–5000 / 4000–4200 → Shorten. Loop-filling source + incoming 4000–200: loop 4000 → **Hide**; loop 4100 → **Shorten 0–3999**. |
 | **6E.1b** | **PASS** — S = 777 is wrap origin. Rotated linear 6E.1 rows match. Absolute 0–5000 + incoming across S Shortens. Loop-filling 4000/4100 not rotated. |
 | **6E.2** | **PASS** — checkpoint replay < interval and < history spans. Hold window < 16-bar `resolveWindow` and < full rematerialize. Early-bar history growth does not grow replay. |
-| **6E.3** | **PASS** — after `deviceGateComplete`, `tryResolvePreparedState` matches the oracle. `checkpointCount` is the 8-bar stride. Keep-all per-bar `soundingAt` copies fail the size gate. |
+| **6E.3** | **PASS** — after `deviceGateComplete`, `tryResolvePreparedState` matches the oracle. `checkpointCount` is the 8-bar stride. Keep-all per-bar `presentAt` copies fail the size gate. |
 | **6E.4** | **PASS** — publish pairs + appends spans. `resolveState(300)` sees wrap-1. Disable hides it without restamp. Stamp+1 → miss. |
 | **6E.5** | **PASS** — held ON@500 across S=777 is not published. Reconstruct-to-loop-end and OFF-at-S are the FAIL seals. Owner: `finalizePendingNotes` (STOP). |
 
@@ -277,7 +277,7 @@ Native: `test_overdub_source_view` wrap/extract/session + `didPlayheadCrossPhase
 
 ## Production architecture gate (DEC-038; firmware after 038.1 approval)
 
-- Keep `spans` + `spanBoundaries` at `deviceGateComplete` (not per-bar `soundingAt`).
+- Keep `spans` + `spanBoundaries` at `deviceGateComplete` (not per-bar `presentAt`).
 - `tryResolvePreparedState(tick)` — miss → 3b / 6C unchanged.
 - `establishOverdubSourceView` is a wrap-boundary flag; no note-list reconstruct on hit.
 - Start-tick re-entry: existing commit-site publish, then `beginCapture(Overdub)`, stay OVERDUBBING.
@@ -341,7 +341,7 @@ Session undo **fires** while OVERDUBBING. Sealed-wrap committed count does not f
 - `establishOverdubSourceView` LCR hit
 - `publishPreparedOverdubPass`
 
-Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`, `test_source_view_prepared_window_omits_unpaired_open_tails`.
+Default remains `true` (live overlay / NOTE_EDIT). Unpaired NoteOns no longer become `loopLength` tails on wrap display. Native: `test_reconstruct_display_omits_open_tails_when_finish_open_notes_false`. Prepared source-view fill includes finished opens; the unprepared MIDI fallback still omits them (`test_source_view_prepared_window_includes_unpaired_open_tails`).
 
 Issue 3 (wrap-on-clock stall) is **closed** — not reproduced; two loops were playing. After-stop multi-wrap GUS is 038.2 (landed).
 

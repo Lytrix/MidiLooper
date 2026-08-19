@@ -2,7 +2,7 @@
 
 Agent-oriented map of how loop MIDI events are stored, cleaned up, snapshotted, and persisted. Read this before changing `Loop`, `Track`, `TrackUndo`, `StorageManager`, `StorageLoopIo`, or stop-path code.
 
-For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../Plans/overdub_undo_baseline_phase1_refinement.md`](../Plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../Plans/memory_scalability_refactor_enhancement.md`](../Plans/memory_scalability_refactor_enhancement.md). For internal heap vs external memory pool routing (NOTE_EDIT cold buffers, undo admission), see [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md). For the unified RAM + SD mental model and proposed continuous-runtime-persistence evolution, see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md). For central deferred SD save routing and chunk-bounded writer stages, see [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md). For a record/overdub timeline across memory, playback, display, and SD, see [`../Plans/record_overdub_memory_display_timeline_enhancement.md`](../Plans/record_overdub_memory_display_timeline_enhancement.md).
+For overdub overlap candidate / classify / resolve / seal, see [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md). For open ledger identities, catch-up vs clock, and wrap exclusion, see [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](OVERDUB_LEDGER_NOTE_EVALUATIONS.md). For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../Plans/overdub_undo_baseline_phase1_refinement.md`](../Plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../Plans/memory_scalability_refactor_enhancement.md`](../Plans/memory_scalability_refactor_enhancement.md). For internal heap vs external memory pool routing (NOTE_EDIT cold buffers, undo admission), see [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md). For the unified RAM + SD mental model and proposed continuous-runtime-persistence evolution, see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md). For central deferred SD save routing and chunk-bounded writer stages, see [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md). For a record/overdub timeline across memory, playback, display, and SD, see [`../Plans/record_overdub_memory_display_timeline_enhancement.md`](../Plans/record_overdub_memory_display_timeline_enhancement.md).
 
 ---
 
@@ -164,7 +164,7 @@ Runs on **every** record and overdub stop (after `loopLengthTicks` is known):
 - **`sealCapture`** on `capture.store` for **record and overdub** (before detach):
   - `finalizePendingNotes(currentTick)` before commit on record and overdub stop.
   - `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** with playhead `closeTick`.
-  - **`removePairsShorterThanNoteMinLength`** when **`noteMinLengthRemoveEnabled`**.
+  - **`removePairsShorterThanNoteMinLength`** when **`noteMinLengthRemoveEnabled`** — **hot stop only**. `CommitReason::OverdubWrap` skips Q16 so completed short pairs (e.g. On@0 Off@8) remain in the sealed pass ([`overdub_loop_head_playback_ledger_bugfix.md`](../Plans/overdub_loop_head_playback_ledger_bugfix.md)).
   - **`verifyCaptureHotStop`** — log warning only.
 - **`finalizeLoopAtStop`** — schedules deferred full validate on record stop only; **no write-back** on overdub stop (pass rows stay separate for undo).
 - Does **not** run full-loop `validateAndCleanupMidiEvents` on stop.
@@ -183,7 +183,7 @@ Full-loop pass over merged active capture passes (materialized flat):
 
 - Uses **`LoopEventValidation::repairOrphanNoteEvents`** (wrap-aware) on a probe copy.
 - **v1 log-only:** reports orphan count; does **not** write back or call **`commitStopFinalizeFromStore`** (undo-safe).
-- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture`** hot stop — see [`capture_pass_note_min_length_refinement.md`](../Plans/capture_pass_note_min_length_refinement.md).
+- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture` hot stop** (not OverdubWrap) — see [`capture_pass_note_min_length_refinement.md`](../Plans/capture_pass_note_min_length_refinement.md).
 
 **When it runs:**
 

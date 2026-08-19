@@ -268,6 +268,17 @@ void test_gate1_prior_hide_companion_absent_from_geometry() {
   TEST_ASSERT_FALSE(observed.contains(2));
 }
 
+void test_display_note_present_at_hold_linearizes_short_wrap_pair() {
+  constexpr uint32_t kOneBar = 768;
+  TEST_ASSERT_FALSE(NoteUtils::isWrappedLoopNotePair(100, 50, kOneBar));
+  TEST_ASSERT_TRUE(
+      OverlapNoteIdObservation::displayNotePresentAtHold(100, 50, 200, kOneBar));
+  TEST_ASSERT_TRUE(
+      OverlapNoteIdObservation::displayNotePresentAtHold(100, 50, 100, kOneBar));
+  TEST_ASSERT_FALSE(
+      OverlapNoteIdObservation::displayNotePresentAtHold(100, 50, 50, kOneBar));
+}
+
 void test_gate1_unrelated_companion_other_pitch_does_not_select() {
   NoteUtils::DisplayNoteVec notes;
   notes.push_back(makeNote(1, 1000, 1800));
@@ -301,6 +312,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_gate1_split_chunk_on_off_outside_incoming_window);
   RUN_TEST(test_gate1_prior_shorten_companion_uses_shortened_span);
   RUN_TEST(test_gate1_prior_hide_companion_absent_from_geometry);
+  RUN_TEST(test_display_note_present_at_hold_linearizes_short_wrap_pair);
   RUN_TEST(test_gate1_unrelated_companion_other_pitch_does_not_select);
   return UNITY_END();
 }

@@ -104,6 +104,8 @@ When writing OpenSpec proposals, designs, or agent plans, **link** these instead
 | `~/.cursor/plans/timeline_data_model_refactor_9cbaeb60.plan.md` | M1–M10 milestone order |
 | [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md) | Shipped vs next |
 | [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | Capture/stop/undo constraints |
+| [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) | Overdub overlap candidate / classify / resolve / seal |
+| [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) | Open ledger identities, catch-up vs clock, wrap exclusion |
 | [Guides/DEFERRED_RUNTIME_PERSISTENCE.md](../Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Deferred save FSM |
 | [plans/phase-3-multi-loop.md](../Plans/phase-3-multi-loop.md) | Jam requirements (D13–D15 deferred) |
 | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership and forbidden patterns |

@@ -189,7 +189,7 @@ Do not recreate: raw events → build all Notes → cache Notes → play Notes.
 2. **After indexing/checkpointing, resolution cost is proportional to the relevant candidate events and affected state, not the number of historical passes.** Two costs, both bounded:
    - **Find:** history → index → candidate events (must not walk every pass list)
    - **Resolve:** candidate events → layer semantics → ResolvedEvent / state
-3. **`resolveState(tick)` must have a bounded historical replay distance through checkpoints. It may not require replaying the loop from tick 0.** Checkpoint spacing is a measured **performance** parameter (`checkpointIntervalTicks`), not a semantic property of the loop. A checkpoint is a jump point: it MUST reduce replay work without becoming a proportional copy of the resolved loop. Per-bar full `soundingAt` fails this ([`225351`](../captures/session_20260814_225351.log)). Fast live loop switching is a fundamental query, not an optional later optimization.
+3. **`resolveState(tick)` must have a bounded historical replay distance through checkpoints. It may not require replaying the loop from tick 0.** Checkpoint spacing is a measured **performance** parameter (`checkpointIntervalTicks`), not a semantic property of the loop. A checkpoint is a jump point: it MUST reduce replay work without becoming a proportional copy of the resolved loop. Per-bar full `presentAt` fails this ([`225351`](../captures/session_20260814_225351.log)). Fast live loop switching is a fundamental query, not an optional later optimization.
 4. **For a fixed active pass set and fixed edit history, resolution is deterministic and independent of cache state, chunk boundaries, or previous resolution order.** `resolveWindow(A)` and `resolveWindow(B)` cannot disagree because A populated a cache first.
 5. **Valid derived state is never discarded merely because unrelated content changed.**
 6. **No realtime MIDI or display-critical path may perform work proportional to total loop history.**
@@ -204,7 +204,7 @@ Do not accumulate unnamed caches. Every derived structure has a query contract b
 |-------|-------|--------------|----------|----------|-----------|
 | `spanBoundaries` | tick range → start/end apply | many | tick + C-order at equal tick | build, then read | flat A **frozen** |
 | `tickEvents` | tick window → Active `(passId, eventIndex)` | many | tick + C-order at equal tick | build, then read | flat A **frozen** |
-| channel lookup | stored-byte copy onto `SoundingNote.channel`; not loop identity (DEC-033; output is `Track::midiChannel`) | unique, first-wins | `noteId` after sort | build, then read | flat A **frozen**; not a pairing key |
+| channel lookup | stored-byte copy onto `PresentNote.channel`; not loop identity (DEC-033; output is `Track::midiChannel`) | unique, first-wins | `noteId` after sort | build, then read | flat A **frozen**; not a pairing key |
 | `byNoteId` | `NoteId` → `{passId, on, off}` for `appendNoteEvents` | unique key, last assignment wins | none | pair walk, then read | last-wins flat A **frozen** (5.18) |
 | `openOnByPitch` | pairing walk only: pitch → open ON indexes | many per pitch | LIFO | every on/off in the pass | retain stack (5.18 `op=2.3 ms`, `pk=1`) |
 

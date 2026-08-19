@@ -23,8 +23,8 @@ Every committed overdub wrap becomes part of the source geometry for the next wr
 | Token | Meaning |
 |-------|---------|
 | `DIAG,lcr,vch` | Idle prepared window → visual cache (was `6a`) |
-| `DIAG,lcr,src,why=open,from=prep\|win` | Session-start rebuild (RC7; was `6c` / `why=open` without `from`) |
-| `DIAG,lcr,src,why=wrap,from=prep\|win` | Wrap rebuild |
+| `DIAG,lcr,src,why=open,from=prep\|win\|span` | Session-start rebuild (RC7; was `6c` / `why=open` without `from`) |
+| `DIAG,lcr,src,why=wrap,from=prep\|win\|span` | Wrap rebuild |
 
 Historical captures keep `6a` / `6c`.
 

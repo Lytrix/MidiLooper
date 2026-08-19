@@ -45,6 +45,8 @@ Always load first:
 **Required**
 
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
+- [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — overdub overlap candidate / classify / resolve / seal
+- [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — open ledger identities vs source-view covering identities
 - [plans/record_overdub_memory_display_timeline_enhancement.md](Plans/record_overdub_memory_display_timeline_enhancement.md)
 - [plans/overdub_lifecycle_representation_authority.md](Plans/overdub_lifecycle_representation_authority.md) — overdub wrap consume/seal/rebuild authority
 - [plans/overdub_wrap_crossing_hold_head_consume_bugfix.md](Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md) — wrap-shaped off consumes `[S, L) ∪ [0, E)` as one hold (shipped; HITL [`155450`](../../captures/session_20260817_155450.log))
@@ -71,9 +73,13 @@ Always load first:
 - [Authority/Architecture/RuntimeArchitecture.md](Authority/Architecture/RuntimeArchitecture.md) — layers and revision chain
 - [Authority/Architecture/Playback.md](Authority/Architecture/Playback.md)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
+- [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — open ledger identities, catch-up vs clock, wrap exclusion
 - `TrackManager`, `LoopPasses` materialize APIs
 - [plans/loop_event_sourced_resolution_architecture.md](Plans/loop_event_sourced_resolution_architecture.md) — DEC-037; do not treat `materializeToEventVector` as the long-term playback owner
-- [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — queued; firmware not authorized
+- [plans/consumer_window_budget_ownership_architecture.md](Plans/consumer_window_budget_ownership_architecture.md) — per-consumer horizon/budget; `kMaxDetailedWindowBars` must not govern overdub source/hold; no WindowManager
+- [plans/overdub_participant_loop_content_architecture.md](Plans/overdub_participant_loop_content_architecture.md) — overdub participants from notes present at tick `S`; `PresentNote` C++ type; NOTE_EDIT overlap sibling (selected/mover LinearSpan); not MIDI send / mute; Phase 1–2a HITL; Phase 3 note-on occupy from present-at-S (device HITL open); hydrate firmware not authorized
+- [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — Stage 1 hooks on device; 2-bar gather not the 64-bar overdub stall
+- [plans/runtime_scheduling_admission_model_architecture.md](Plans/runtime_scheduling_admission_model_architecture.md) — MIDI Input Gap is interval/contention; per-event lateness is product correctness when hooked
 
 **Optional**
 
@@ -212,6 +218,7 @@ Always load first:
 **Required**
 
 - [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) — current geometry / participation / leave-restore / commit workflow
+- [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — `resolveConstrainedGeometry` / classify / pending (shared with overdub)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
 - `EditManager`, `NoteGeometryResolver`, `NoteEditCurrentState`, `ControlSurfaceManager`, `EditStates/`
 - [NAMING.md](Authority/NAMING.md)

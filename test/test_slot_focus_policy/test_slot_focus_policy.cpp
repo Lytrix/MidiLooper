@@ -158,7 +158,7 @@ void test_playhead_storage_phase_uses_projection_on_active_slot() {
 void test_active_note_ledger_orphan_off_is_inactive() {
   ActiveNoteLedger ledger;
   TEST_ASSERT_FALSE(ledger.isActive(3, 93));
-  ledger.noteOn(3, 92, 100, 100);
+  ledger.noteOn(3, 92, 7, 100, 100);
   TEST_ASSERT_TRUE(ledger.isActive(3, 92));
   TEST_ASSERT_FALSE(ledger.isActive(3, 93));
   ledger.noteOff(3, 92);

@@ -4,7 +4,8 @@
 **Date:** 2026-08-17  
 **Use:** trace one overdub note across a wrap; decide which representation is authoritative at each moment; spot forbidden consumer edges before patching.  
 **Shipped consumer:** [`overdub_overlap_hold_display_cache_bugfix.md`](overdub_overlap_hold_display_cache_bugfix.md) — RC11 + RC12 **FROZEN**, HITL PASS [`140355`](../../captures/session_20260817_140355.log). Wrap-shaped consume: [`overdub_wrap_crossing_hold_head_consume_bugfix.md`](overdub_wrap_crossing_hold_head_consume_bugfix.md) HITL PASS [`155450`](../../captures/session_20260817_155450.log).  
-**Queued successor:** [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) (length preview vs source-view length)
+**Queued successor:** [`overdub_loop_length_during_overdub_enhancement.md`](overdub_loop_length_during_overdub_enhancement.md) (length preview vs source-view length)  
+**Participant-discovery successor:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) — notes present at tick `S` from loop content, independent of MIDI send and mute; Phase 0b done. Does not change this consume → seal → rebuild spine.
 
 **Not this document's job:** introduce a runtime state machine, new owners, or drive refactors. It names **authority** and **allowed derivation** so RC layers stop circular fixes.
 
@@ -145,7 +146,7 @@ new source view
 | Note-off | source view + hold IDs → **complete consume set** (wrap-shaped off: `[S, L) ∪ [0, E)`, one Add) | `resolveConstrainedGeometry` → `pendingNoteChanges_` | `visualCache`, stale cache; head as a second hold |
 | In-bar (before seal) | `pendingNoteChanges_` on top of source view | live paint copy (`applyPendingNoteChangesToDisplayNotes`) | persist, next hold consume |
 | After wrap / stop seal | `editPasses` (companions) + committed overdub pass | LCR prepare, persistence, source rebuild | independent display reconstruct |
-| After `rebuildOverdubSourceView` | `overdubSourceViewNotes_` | **next** hold, **next** consume, display (RC12) | `appendOverdubPassDisplayNotes` beside LCR picture |
+| After `rebuildOverdubSourceView` | `overdubSourceViewNotes_` (prepared `NoteSpan`s when ready; else MIDI reconstruct + per-pass wrap-paired fill) | **next** hold, **next** consume, display (RC12) | `appendOverdubPassDisplayNotes` beside LCR picture; visual cache as consume input |
 | Visual cache | **derived** | OLED / LED paint, idle slice output | consume, source view fill, overlap selection |
 
 **Hold IDs ≠ source view.** IDs answer “what was sounding at hold start S”. Source view answers “what is the current resolved geometry in the overdub window”. Consume must union both (RC11).

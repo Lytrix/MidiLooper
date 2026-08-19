@@ -1,56 +1,109 @@
 #pragma once
 
+#include "MidiEvent.h"
+
 #include <array>
 #include <cstdint>
 
-/// Lightweight active-note tracking for playback window sizing.
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#include "Utils/DebugSessionCapture.h"
+#include <cstdio>
+#endif
+
+/// Open-NoteOn ledger: zero or more applied NoteOns whose Off has not yet been applied.
+/// Logical identities, not "audible on the MIDI wire." Sparse table; not one slot per pitch.
 class ActiveNoteLedger {
  public:
+  static constexpr size_t kMaxOpenNotes = 128;
+
   struct Entry {
-    bool active = false;
+    uint8_t channel = 0;
+    uint8_t note = 0;
+    NoteId noteId = kInvalidNoteId;
     uint32_t startTick = 0;
     uint8_t velocity = 0;
   };
 
   void clear() {
-    for (Entry& e : entries_) {
-      e = Entry{};
+    for (size_t i = 0; i < count_; ++i) {
+      entries_[i] = Entry{};
     }
+    count_ = 0;
+    overflowed_ = false;
   }
 
-  void noteOn(uint8_t channel, uint8_t note, uint32_t tick, uint8_t velocity) {
+  bool overflowed() const { return overflowed_; }
+
+  /// Push an open NoteOn. Same identity already open → no-op (catch-up then clock
+  /// must not stack a second Entry). Refuses when full — never evicts.
+  void noteOn(uint8_t channel, uint8_t note, NoteId noteId, uint32_t tick, uint8_t velocity) {
     if (channel == 0 || channel > 16 || note > 127) {
       return;
     }
-    Entry& e = entries_[indexFor(channel, note)];
-    e.active = true;
+    if (noteId != kInvalidNoteId && findIndexByNoteId(channel, note, noteId) >= 0) {
+      return;
+    }
+    if (count_ >= kMaxOpenNotes) {
+      overflowed_ = true;
+      logOpenNoteOverflow(channel, note, noteId);
+      return;
+    }
+    Entry& e = entries_[count_++];
+    e.channel = channel;
+    e.note = note;
+    e.noteId = noteId;
     e.startTick = tick;
     e.velocity = velocity;
   }
 
   bool isActive(uint8_t channel, uint8_t note) const {
-    if (channel == 0 || channel > 16 || note > 127) {
-      return false;
-    }
-    return entries_[indexFor(channel, note)].active;
+    return findNewestIndex(channel, note) >= 0;
   }
 
-  void noteOff(uint8_t channel, uint8_t note) {
-    if (channel == 0 || channel > 16 || note > 127) {
-      return;
-    }
-    entries_[indexFor(channel, note)] = Entry{};
+  /// Newest open identity on the lane. Compatibility accessor only — not occupy.
+  /// Authoritative set: forEachActive.
+  NoteId noteId(uint8_t channel, uint8_t note) const {
+    const int i = findNewestIndex(channel, note);
+    return i >= 0 ? entries_[static_cast<size_t>(i)].noteId : kInvalidNoteId;
   }
+
+  /// Drop identified open notes whose NoteOn is absent from committed events.
+  /// Untagged Entries stay. Reuse eraseAt. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  void eraseOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events, size_t eventCount) {
+    eraseOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+  }
+#else
+  void eraseOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events, size_t eventCount);
+#endif
+
+  /// Untagged NoteOff resolution: LIFO pop the most recent open On on this lane.
+  void noteOff(uint8_t channel, uint8_t note) {
+    const int i = findNewestIndex(channel, note);
+    if (i >= 0) {
+      eraseAt(static_cast<size_t>(i));
+    }
+  }
+
+  /// Apply a playback NoteOn/NoteOff. Returns false if the event must not be emitted.
+  /// NoteOff resolution:
+  /// - known identity + found → remove that exact Entry
+  /// - no identity → LIFO pop on the lane
+  /// - known identity + not found → orphan, no mutation
+  /// Firmware: defined in ActiveNoteLedger.cpp (FLASHMEM). Native: inline below.
+#if defined(PIO_UNIT_TEST_NATIVE)
+  bool applyPlaybackEvent(uint8_t channel, const MidiEvent& evt) {
+    return applyPlaybackEventBody(channel, evt);
+  }
+#else
+  bool applyPlaybackEvent(uint8_t channel, const MidiEvent& evt);
+#endif
 
   template <typename Fn>
   void forEachActive(Fn&& fn) const {
-    for (size_t i = 0; i < kLedgerSize; ++i) {
-      if (!entries_[i].active) {
-        continue;
-      }
-      const uint8_t channel = static_cast<uint8_t>(i / 128u) + 1u;
-      const uint8_t note = static_cast<uint8_t>(i % 128u);
-      fn(channel, note, entries_[i]);
+    for (size_t i = 0; i < count_; ++i) {
+      const Entry& e = entries_[i];
+      fn(e.channel, e.note, e);
     }
   }
 
@@ -61,10 +114,8 @@ class ActiveNoteLedger {
     }
 
     uint32_t longestTicks = 0;
-    for (const Entry& e : entries_) {
-      if (!e.active) {
-        continue;
-      }
+    for (size_t i = 0; i < count_; ++i) {
+      const Entry& e = entries_[i];
       const uint32_t span = (playheadTick >= e.startTick)
                                 ? (playheadTick - e.startTick)
                                 : (loopLengthTicks - e.startTick + playheadTick);
@@ -72,17 +123,125 @@ class ActiveNoteLedger {
         longestTicks = span;
       }
     }
-
     // +1 bar to keep upcoming note-offs inside the active window.
     const uint32_t bars = (longestTicks / ticksPerBar) + 1;
     return static_cast<uint8_t>(bars > 255 ? 255 : bars);
   }
 
  private:
-  static constexpr size_t kLedgerSize = 16u * 128u;
-  std::array<Entry, kLedgerSize> entries_{};
+  std::array<Entry, kMaxOpenNotes> entries_{};
+  size_t count_ = 0;
+  bool overflowed_ = false;
 
-  static size_t indexFor(uint8_t channel, uint8_t note) {
-    return static_cast<size_t>(channel - 1) * 128u + note;
+  int findNewestIndex(uint8_t channel, uint8_t note) const {
+    if (channel == 0 || channel > 16 || note > 127) {
+      return -1;
+    }
+    for (size_t i = count_; i > 0; --i) {
+      const Entry& e = entries_[i - 1];
+      if (e.channel == channel && e.note == note) {
+        return static_cast<int>(i - 1);
+      }
+    }
+    return -1;
+  }
+
+  int findIndexByNoteId(uint8_t channel, uint8_t note, NoteId noteId) const {
+    if (channel == 0 || channel > 16 || note > 127 || noteId == kInvalidNoteId) {
+      return -1;
+    }
+    for (size_t i = count_; i > 0; --i) {
+      const Entry& e = entries_[i - 1];
+      if (e.channel == channel && e.note == note && e.noteId == noteId) {
+        return static_cast<int>(i - 1);
+      }
+    }
+    return -1;
+  }
+
+  void eraseAt(size_t index) {
+    if (index >= count_) {
+      return;
+    }
+    for (size_t j = index + 1; j < count_; ++j) {
+      entries_[j - 1] = entries_[j];
+    }
+    --count_;
+    entries_[count_] = Entry{};
+  }
+
+  bool applyPlaybackEventBody(uint8_t channel, const MidiEvent& evt) {
+    if (evt.isNoteOff()) {
+      const uint8_t note = evt.data.noteData.note;
+      if (evt.noteId != kInvalidNoteId) {
+        const int i = findIndexByNoteId(channel, note, evt.noteId);
+        if (i < 0) {
+          return false;
+        }
+        eraseAt(static_cast<size_t>(i));
+        return true;
+      }
+      const int i = findNewestIndex(channel, note);
+      if (i < 0) {
+        return false;
+      }
+      eraseAt(static_cast<size_t>(i));
+      return true;
+    }
+    if (evt.isNoteOn()) {
+      noteOn(channel, evt.data.noteData.note, evt.noteId, evt.tick, evt.data.noteData.velocity);
+      return true;
+    }
+    return true;
+  }
+
+  void eraseOpenNotesMissingFromCommittedNoteOnsBody(const MidiEvent* events, size_t eventCount) {
+    if (eventCount > 0 && events == nullptr) {
+      return;
+    }
+    for (size_t i = count_; i > 0; --i) {
+      const NoteId id = entries_[i - 1].noteId;
+      if (id == kInvalidNoteId) {
+        continue;
+      }
+      bool found = false;
+      for (size_t eventIndex = 0; eventIndex < eventCount; ++eventIndex) {
+        const MidiEvent& evt = events[eventIndex];
+        if (evt.isNoteOn() && evt.noteId == id) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        logOpenNoteErase(id);
+        eraseAt(i - 1);
+      }
+    }
+  }
+
+  static void logOpenNoteOverflow(uint8_t channel, uint8_t note, NoteId noteId) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,ledger,overflow,ch=%u,pitch=%u,id=%lu",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(channel),
+             static_cast<unsigned>(note), static_cast<unsigned long>(noteId));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#else
+    (void)channel;
+    (void)note;
+    (void)noteId;
+#endif
+  }
+
+  static void logOpenNoteErase(NoteId noteId) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    char line[160];
+    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,ledger,erase,id=%lu",
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(noteId));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#else
+    (void)noteId;
+#endif
   }
 };

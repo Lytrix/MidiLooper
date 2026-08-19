@@ -5,6 +5,7 @@
 
 #include "LoopInternal.h"
 #include "Logger.h"
+#include "LoopContentResolution.h"
 #include "Utils/MemoryMonitor.h"
 
 #include <algorithm>
@@ -182,8 +183,10 @@ void Loop::disableEditPasses(const EditPassIdList& ids) {
         editPass.state = EditPassState::Disabled;
       }
     }
+    LoopContentResolution::setPreparedEditPassState(id, EditPassState::Disabled);
   }
   ++playbackRevision;
+  LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
   notifyCommittedContentChanged();
 }
 
@@ -194,8 +197,10 @@ void Loop::enableEditPasses(const EditPassIdList& ids) {
         editPass.state = EditPassState::Active;
       }
     }
+    LoopContentResolution::setPreparedEditPassState(id, EditPassState::Active);
   }
   ++playbackRevision;
+  LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
   notifyCommittedContentChanged();
 }
 
