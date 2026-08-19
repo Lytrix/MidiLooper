@@ -1695,6 +1695,42 @@ void test_stop_collects_session_wraps_then_close_clears_stack() {
   TEST_ASSERT_TRUE(companionsAfterClose.empty());
 }
 
+void test_overdub_session_index_stamps_wraps_and_groups_after_reload() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 777));
+  const uint8_t session1 = loop.passes.overdubPasses.back().overdubSessionIndex;
+  TEST_ASSERT_TRUE(session1 != kUngroupedOverdubSessionIndex);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(600, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 777));
+  TEST_ASSERT_EQUAL(2u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(session1, loop.passes.overdubPasses[0].overdubSessionIndex);
+  TEST_ASSERT_EQUAL_UINT8(session1, loop.passes.overdubPasses[1].overdubSessionIndex);
+  loop.closeOverdubSession();
+
+  loop.openOverdubSession(777);
+  loop.beginCapture(CapturePhase::Overdub, 777);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 67, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 67, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 777));
+  TEST_ASSERT_EQUAL(3u, loop.passes.overdubPasses.size());
+  const uint8_t session2 = loop.passes.overdubPasses.back().overdubSessionIndex;
+  TEST_ASSERT_TRUE(session2 != kUngroupedOverdubSessionIndex);
+  TEST_ASSERT_TRUE(session2 != session1);
+  loop.closeOverdubSession();
+}
+
 void prepareLcrFromLoop(Loop& loop) {
   LoopContentResolution::deviceGateReset();
   LoopContentResolution::DeviceGateSample sample;
@@ -2705,6 +2741,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_session_undo_depth_counts_sealed_wraps_only);
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);
   RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
+  RUN_TEST(test_overdub_session_index_stamps_wraps_and_groups_after_reload);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
   RUN_TEST(test_retire_superseded_pitch_drops_home_when_settled_present);
   RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);

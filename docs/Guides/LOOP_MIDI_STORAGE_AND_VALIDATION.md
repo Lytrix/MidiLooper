@@ -235,7 +235,7 @@ Playback/materialize from committed passes uses the same **paired on/off** model
 | **`finalizePendingNotes`** + **`LoopStopFinalize`** | Hot stop: close held keys; synthetic offs for tail open-ons; wrap-window pairing |
 | **`CaptureIncrementalSanity`** | During capture: pair-close, wrap slice, budget orphan repair |
 | **`isDuplicateCaptureEvent`** | Drop duplicate **events** within **12 ticks** (`DUPLICATE_TICK_TOLERANCE`) on **record** capture. Skipped when `overdubSourceView` is established — overdub overlap authority is source-view geometry (`accumulatePendingNoteChangesForIncomingNote`), not reverse-tick capture-store dedup |
-| **`overdubSourceView` + pending delta** | At overdub start: materialize-aware baseline. Completed notes → Add/Shorten/Hide via `resolveConstrainedGeometry` (shared `noteMinLengthTicks`). Wrap-shaped off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold — not a second note-off ([`overdub_wrap_crossing_hold_head_consume_bugfix.md`](../Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md); HITL [`155450`](../../captures/session_20260817_155450.log)). Stop seals Shorten/Hide as EditPass companions; one `OverdubPassAdded` undo (`passIds` = session wraps, GUS STK3; legacy STK2 is a single `passId`). OpenSpec: `overdub-pass-overlap-resolution` (DEC-031/032); DEC-038 038.2 |
+| **`overdubSourceView` + pending delta** | At overdub start: materialize-aware baseline. Completed notes → Add/Shorten/Hide via `resolveConstrainedGeometry` (shared `noteMinLengthTicks`). Wrap-shaped off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold — not a second note-off ([`overdub_wrap_crossing_hold_head_consume_bugfix.md`](../Plans/overdub_wrap_crossing_hold_head_consume_bugfix.md); HITL [`155450`](../../captures/session_20260817_155450.log)). Stop seals Shorten/Hide as EditPass companions; one `OverdubPassAdded` undo (`passIds` = session wraps, GUS STK3; legacy STK2 is a single `passId`). After reboot, `overdubSessionIndex` / `OSI1` rebuilds that unit. OpenSpec: `overdub-pass-overlap-resolution` (DEC-031/032); DEC-038 038.2 |
 | **`validateAndCleanupMidiEvents`** | Idle fallback: remove orphan on/off; no synth insert |
 | **Q16** | **`removePairsShorterThanNoteMinLength`** + **`verifyCaptureHotStop`** on hot stop when enabled |
 
@@ -347,7 +347,7 @@ Committed **editPass** rows store canonical **EditPass** row fields (SD v5); liv
 
 **While NOTE_EDIT inactive and not OVERDUBBING:**
 
-1. Global undo/redo for the selected slot via `TrackUndo::undoForLoop` / `redoForLoop` — any `UndoEntryKind` at stack cursor for that slot (**RecordPassAdded**, **OverdubPassAdded**, **NoteEditPassClosed**, **LoopBoundaryChange**, **ClearSlot**, …). After an overdub session stop, one **OverdubPassAdded** disables every wrap in `passIds` plus companions (DEC-038 038.2).
+1. Global undo/redo for the selected slot via `TrackUndo::undoForLoop` / `redoForLoop` — any `UndoEntryKind` at stack cursor for that slot (**RecordPassAdded**, **OverdubPassAdded**, **NoteEditPassClosed**, **LoopBoundaryChange**, **ClearSlot**, …). After an overdub session stop, one **OverdubPassAdded** disables every wrap in `passIds` plus companions (DEC-038 038.2). After reboot the same unit is derived from `OverdubPass.overdubSessionIndex` (`OSI1` tail; missing tail stays one unit per pass).
 
 **Separate input path:** `handleUndoClearTrack` / `handleRedoClearTrack` — only when the top global entry is **ClearSlot** for the slot (Button B double-press).
 

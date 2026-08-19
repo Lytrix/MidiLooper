@@ -44,6 +44,7 @@ LOOP_CONTENT_HISTORY_MEM void deriveContentUndoUnits(const LoopPasses& passes,
     Type type = Type::Record;
     PassId id = kInvalidPassId;
     uint8_t editPassIndex = 0;
+    uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
     EditPassType editPassType = EditPassType::Note;
   };
 
@@ -65,6 +66,7 @@ LOOP_CONTENT_HISTORY_MEM void deriveContentUndoUnits(const LoopPasses& passes,
     Row row;
     row.type = Row::Type::Overdub;
     row.id = pass.id;
+    row.overdubSessionIndex = pass.overdubSessionIndex;
     rows.push_back(row);
   }
   for (const EditPass& pass : passes.editPasses) {
@@ -111,11 +113,24 @@ LOOP_CONTENT_HISTORY_MEM void deriveContentUndoUnits(const LoopPasses& passes,
       unit.kind = ContentUndoUnitKind::OverdubPassAdded;
       unit.primaryPassId = row.id;
       unit.editPassIndex = kOverdubCompanionEditPassIndex;
+      unit.overdubSessionIndex = row.overdubSessionIndex;
+      unit.passIds.push_back(row.id);
       ++i;
-      while (i < rows.size() && rows[i].type == Row::Type::Edit &&
-             rows[i].editPassIndex == kOverdubCompanionEditPassIndex) {
-        unit.editPassIds.push_back(rows[i].id);
-        ++i;
+      auto consumeCompanions = [&]() {
+        while (i < rows.size() && rows[i].type == Row::Type::Edit &&
+               rows[i].editPassIndex == kOverdubCompanionEditPassIndex) {
+          unit.editPassIds.push_back(rows[i].id);
+          ++i;
+        }
+      };
+      consumeCompanions();
+      if (row.overdubSessionIndex != kUngroupedOverdubSessionIndex) {
+        while (i < rows.size() && rows[i].type == Row::Type::Overdub &&
+               rows[i].overdubSessionIndex == row.overdubSessionIndex) {
+          unit.passIds.push_back(rows[i].id);
+          ++i;
+          consumeCompanions();
+        }
       }
       out.push_back(std::move(unit));
       continue;
@@ -166,6 +181,9 @@ LOOP_CONTENT_HISTORY_MEM void buildContentUndoEntries(const LoopPasses& passes, 
     entry.passId = unit.primaryPassId;
     entry.editPassIndex = unit.editPassIndex;
     entry.editPassIds = unit.editPassIds;
+    if (unit.kind == ContentUndoUnitKind::OverdubPassAdded && unit.passIds.size() > 1) {
+      entry.passIds = unit.passIds;
+    }
     if (unit.kind == ContentUndoUnitKind::ControlChangeEditPassClosed) {
       entry.editPassType = EditPassType::ControlChange;
     } else if (unit.kind == ContentUndoUnitKind::OverdubPassAdded ||

@@ -2,11 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub-stop handoff flash HITL PASS 001925)
+Last updated: 2026-08-20 (overdubSessionIndex reboot undo)
 
 ---
 
 ## Now implementing
+
+### Overdub session index reboot undo
+
+**Plan:** [`overdub_session_index_reboot_undo_bugfix.md`](../Plans/overdub_session_index_reboot_undo_bugfix.md)  
+**Decision:** DEC-038 amendment 2026-08-20
+
+**Owner:** `Loop::openOverdubSession`, `deriveContentUndoUnits`, `StorageLoopIo` `OSI1`.
+
+**Invariant:** One overdub session is one `OverdubPassAdded` before and after reboot. Wraps share `overdubSessionIndex` (same grouping role as `editPassIndex`). Missing `OSI1` stays one unit per pass.
+
+**Status:** Native **1397/1397**. RAM1 code **425548** / locals **4768**. Device HITL after flash: record → multi-wrap overdub → stop (`U:` +1) → reboot → same `U:` depth; one undo removes the whole session.
 
 ### Overdub-stop handoff flash
 

@@ -182,6 +182,8 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 
 A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEditPassIndex**. Session `editPassIds` are in-session `E:` undo only; commit (or reboot-during-edit durable checkpoint) is one noteEditPass.
 
+Wraps from one overdub session share **overdubSessionIndex** on each `OverdubPass` (same grouping role as **editPassIndex**). Index `0` is ungrouped (legacy cards). Do not call this field session-id.
+
 ### Loop content history (persistence)
 
 [DEC-035](../DECISION_LOG.md#dec-035-loop-persists-content-only): the Loop persists content records only. Undo/redo is derived at runtime.
