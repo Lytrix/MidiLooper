@@ -446,6 +446,7 @@ private:
   bool isStorageTickInJamRegion(uint32_t storageTick, const Loop& loop) const;
 
   friend void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  friend void playbackCursorAdvanceApplyLedger(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
   friend void playbackCursorAdvanceSendCapture(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
   friend bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick);
 
