@@ -1,6 +1,6 @@
 # Occupy catch-up per-phase Off then On (open-NoteOn stack)
 
-**Status:** Native **PASS** 1363/1363. `teensy41-capture-serial` links (RAM1 code **425804** / locals **4768**, same as DEC-042). HITL gate open.  
+**Status:** Native **PASS** 1363/1363. Firmware RAM1 **425804** / **4768**. HITL [`101319`](../../captures/session_20260819_101319.log) **not met** — extra-open remains; one span-start `n=0 a=1`.  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (DEC-042 nested HITL MET, extra-open unmasked):** [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](overdub_occupy_active_note_ledger_cardinality_refinement.md)  
@@ -54,6 +54,30 @@ Native in [`test_pending_note_change.cpp`](../../test/test_pending_note_change/t
 ## HITL
 
 Want extra-open (`n>a`, including `n=2 a=0`) down vs [`095902`](../../captures/session_20260819_095902.log) (18× `n=3 a=1`, 15× `n=2 a=0`). Nested `n=0 a=1` stays 0. Do not FAIL this RC on parked `n=1 a=2` same-tick double On or exclusive-end `n=1 a=0`. Pin mismatches remain `cu=0`; a remaining extra-open after this ship is a new clock-path RC, not a silent widening of this helper.
+
+## HITL [`101319`](../../captures/session_20260819_101319.log)
+
+66 `DIAG,lcr,part`. **37** mismatches, all `cu=0`. `ledger,overflow` **0**. `RING,overflow` **3**. `eq=0` on all 66 (`b=0`): `tryCollectPreparedPresentNoteIdsAtTick` was not ready — parked prepared-span miss, not this gate.
+
+| n,a | 095902 | 101319 |
+|-----|------:|-------:|
+| 1,1 | 24 | 25 |
+| 0,0 | 7 | 4 |
+| **0,1** | **0** | **1** |
+| 2,2 | 2 | 0 |
+| 1,2 | 1 | 1 |
+| 1,0 | 2 | 3 |
+| 3,1 | 18 | 6 |
+| **2,0** | **15** | **1** |
+| **2,1** | **6** | **25** |
+| 4,2 | 1 | 0 |
+| n>a total | 40 | 35 |
+
+**`n=2 a=0` pin shape nearly gone** (15 → 1). Extra-open is not gone: pitch 12 is 22× `n=2 a=1`. Several mismatches have `led > n` (e.g. L2318 `n=2` `led=4`): occupy counts unique `noteId`s, the ledger holds extra copies of those ids.
+
+One `n=0 a=1`: pitch 23 `hs=384` `as=384–432` (5395), `led=0` `ltick=384` `cu=0`. Span-start empty ledger. First eight `mmevt` do not include `On@384`.
+
+Do not widen catch-up. Do not make occupy catch-up when `occupyPhase <= lastTick`. Remaining extra-open / span-start empty ledger is a clock-path RC.
 
 ## Pre-implementation review
 
