@@ -8,7 +8,6 @@
 #include "ActiveNoteLedger.h"
 #include "Loop.h"
 #include "MidiEvent.h"
-#include "Utils/IntervalProjection.h"
 #include "Utils/TrackMem.h"
 
 #include <cstdint>
@@ -30,37 +29,24 @@ inline TRACK_COLD_MEM bool shouldApply(const Loop& loop, uint32_t occupyPhase) {
   return true;
 }
 
-/// Apply committed events in (lastTickInLoop, occupyPhase]. Equal-tick Off then
-/// On (same rule as NoteUtils::sortMidiEventsChronologically). Two walks; no
-/// scratch. Does not send MIDI, rebuild merged events, or mutate cursor /
-/// nextEventIndex / lastTickInLoop.
+/// Apply committed events in (lastTickInLoop, occupyPhase]. Phase order, and at
+/// each phase Off then On (same rule as NoteUtils::sortMidiEventsChronologically).
+/// Per-phase walks; no scratch. A global Off-then-On two-pass cannot close a
+/// NoteOn that starts in the same interval (open-NoteOn stack, DEC-042).
+/// Does not send MIDI, rebuild merged events, or mutate cursor / nextEventIndex /
+/// lastTickInLoop.
+/// Firmware: defined in CommittedPlaybackLedgerCatchUp.cpp (FLASHMEM).
+void applyOpenClosedIntervalEvents(ActiveNoteLedger& ledger, uint8_t channel,
+                                   const MidiEvent* events, size_t eventCount,
+                                   uint32_t lastTickInLoop, uint32_t occupyPhase,
+                                   uint32_t loopLength);
+
 template <typename EventVec>
-inline TRACK_COLD_MEM void applyOpenClosedInterval(ActiveNoteLedger& ledger, uint8_t channel,
-                                                    const EventVec& events, uint32_t lastTickInLoop,
-                                                    uint32_t occupyPhase, uint32_t loopLength) {
-  if (lastTickInLoop == UINT32_MAX || occupyPhase <= lastTickInLoop || loopLength == 0) {
-    return;
-  }
-  for (const MidiEvent& evt : events) {
-    if (!evt.isNoteOff()) {
-      continue;
-    }
-    const uint32_t evPhase = IntervalProjection::playbackEventPhase(evt.tick, loopLength);
-    if (!IntervalProjection::didPlaybackEventCross(false, lastTickInLoop, evPhase, occupyPhase)) {
-      continue;
-    }
-    (void)ledger.applyPlaybackEvent(channel, evt);
-  }
-  for (const MidiEvent& evt : events) {
-    if (evt.isNoteOff()) {
-      continue;
-    }
-    const uint32_t evPhase = IntervalProjection::playbackEventPhase(evt.tick, loopLength);
-    if (!IntervalProjection::didPlaybackEventCross(false, lastTickInLoop, evPhase, occupyPhase)) {
-      continue;
-    }
-    (void)ledger.applyPlaybackEvent(channel, evt);
-  }
+inline void applyOpenClosedInterval(ActiveNoteLedger& ledger, uint8_t channel, const EventVec& events,
+                                    uint32_t lastTickInLoop, uint32_t occupyPhase,
+                                    uint32_t loopLength) {
+  applyOpenClosedIntervalEvents(ledger, channel, events.data(), events.size(), lastTickInLoop,
+                                occupyPhase, loopLength);
 }
 
 }  // namespace CommittedPlaybackLedgerCatchUp

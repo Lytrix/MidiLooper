@@ -1,11 +1,11 @@
 # Occupy unmatched Off vs ledger — observability before identity RC
 
-**Status:** Observability complete. Geometry proven. Successor **implemented** (native): [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](overdub_occupy_active_note_ledger_cardinality_refinement.md) ([DEC-042](../DECISION_LOG.md#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem)). HITL nested gate open.  
+**Status:** Observability complete. Geometry proven. Successor DEC-042 nested HITL **MET** [`095902`](../../captures/session_20260819_095902.log): [`overdub_occupy_active_note_ledger_cardinality_refinement.md`](overdub_occupy_active_note_ledger_cardinality_refinement.md). Extra-open (`n>a`) unmasked — new RC, not this file.  
 **Date:** 2026-08-19  
 **Kind:** investigation  
 **Parent (shipped):** [`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](overdub_occupy_clock_same_tick_off_before_on_bugfix.md) — HITL **PASS** [`001021`](../../captures/session_20260819_001021.log)  
 **Pin (residuals):** [`235314`](../../captures/session_20260818_235314.log) L4750 interior `192–288` @ `hs=240`; L4294 interior `240–384` @ `hs=352`  
-**Does not reopen:** catch-up two-pass; clock equal-phase Off before On; occupy repairing clock when `occupyPhase == lastTick`; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`
+**Does not reopen:** clock equal-phase Off before On; occupy repairing clock when `occupyPhase == lastTick`; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`. Catch-up two-pass vs stack: [`overdub_occupy_catchup_open_note_stack_bugfix.md`](overdub_occupy_catchup_open_note_stack_bugfix.md).
 
 ---
 
@@ -38,9 +38,9 @@ Occupy diagnostics must record, at every ledger-vs-source-view disagreement, the
 
 ```
 … → clock equal-phase Off before On ← trust (HITL PASS 001021)
- → USB occupy ledger catch-up (lastTick, occupyPhase] ← trust two-pass when it runs
- → occupy interior mismatch geometry ← current investigation (observability only)
- → Off identity assignment ← deferred, needs proven geometry first
+ → USB occupy ledger catch-up (lastTick, occupyPhase] ← successor [`overdub_occupy_catchup_open_note_stack_bugfix.md`](overdub_occupy_catchup_open_note_stack_bugfix.md)
+ → occupy interior mismatch geometry ← this investigation (observability complete)
+ → Off identity assignment ← rejected (DEC-042)
 ```
 
 Do not implement an identity fix from this file until § Results is filled from a device capture.
