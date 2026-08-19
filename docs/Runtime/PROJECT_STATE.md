@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-19 (overdub ledger completion span-cache hold hydration shipped)
+Last updated: 2026-08-19 (display window follow readiness implemented; HITL gate open)
 
 ---
 
@@ -62,6 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
+- **Display window follow readiness:** committed paint filters `visualCache.notes` for the moving 16-bar window plus lookahead; source-view is not display authority. Native **1390/1390**; RAM1 code **425276** / locals **4768**. Device HITL open — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Overdub participant discovery:** `feature/overdub-participant-discovery` — occupy clock same-tick Off-before-On HITL PASS [`001021`](../../captures/session_20260819_001021.log); parent catch-up pin [`235314`](../../captures/session_20260818_235314.log) was 4 `n=0 a=1`; USB `playMidiEvents` catch-up HITL FAIL [`214856`](../../captures/session_20260818_214856.log) reverted; wrap-S HITL PASS; loop-head storage-0 HITL PASS [`203948`](../../captures/session_20260818_203948.log) — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Codebase consistency:** [#18](https://github.com/Lytrix/MidiLooper/issues/18) **NOW** — Phase 4 TrackManager **shipped** PR #22; next extractions in [`codebase_consistency_phase4_extraction_boundaries_refinement.md`](../Plans/codebase_consistency_phase4_extraction_boundaries_refinement.md)
 - **StorageManager TU remaining:** **Merged** PR [#17](https://github.com/Lytrix/MidiLooper/pull/17) → `dev` (2026-08-08); closeout [#16](https://github.com/Lytrix/MidiLooper/issues/16)

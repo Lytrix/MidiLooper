@@ -4,6 +4,7 @@
 #include <unity.h>
 
 #include "MidiEvent.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "VisualCache.h"
 
@@ -236,20 +237,99 @@ void test_paint_window_inside_gather_detects_follow_exit() {
       DisplayWindowUtils::paintWindowInsideGather(2u * bar, 16u * bar, 0, 18u * bar));
 }
 
-void test_visual_cache_covers_window_requires_fully_built() {
+void test_visual_cache_covers_window_uses_clean_neighborhood() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const uint32_t loopLength = 195u * bar;
   VisualBarVec dirty(195u, 1);
   for (uint32_t b = 170; b < 195; ++b) {
     dirty[b] = 0;
   }
-  // Partial neighborhood clean must not authorize filter paint (sparse-cache gaps).
+  // Dirty bars in the requested window still block the filter.
   TEST_ASSERT_FALSE(visualCacheCoversWindow(true, dirty, 0, 16u * bar, loopLength, bar));
-  TEST_ASSERT_FALSE(
+  // A fully clean 16-bar neighborhood may authorize filter while the rest of the loop is dirty.
+  TEST_ASSERT_TRUE(
       visualCacheCoversWindow(true, dirty, 179u * bar, 16u * bar, loopLength, bar));
   TEST_ASSERT_TRUE(visualCacheCoversWindow(false, VisualBarVec{}, 0, 16u * bar, loopLength, bar));
   TEST_ASSERT_FALSE(
       visualCacheCoversWindow(true, VisualBarVec{}, 0, 16u * bar, loopLength, bar));
+}
+
+void test_visual_cache_covers_window_follow_lookahead_requires_next_bar() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 66u * bar;
+  VisualBarVec dirty(66u, 0);
+  dirty[16] = 1;
+  const uint32_t windowStart = 0;
+  const uint32_t windowLength = 16u * bar;
+  TEST_ASSERT_TRUE(visualCacheCoversWindow(true, dirty, windowStart, windowLength, loopLength, bar,
+                                           0));
+  TEST_ASSERT_FALSE(visualCacheCoversWindow(true, dirty, windowStart, windowLength, loopLength, bar,
+                                            DisplayWindowUtils::kFollowReadyLookaheadBars));
+  dirty[16] = 0;
+  TEST_ASSERT_TRUE(visualCacheCoversWindow(true, dirty, windowStart, windowLength, loopLength, bar,
+                                           DisplayWindowUtils::kFollowReadyLookaheadBars));
+}
+
+void test_follow_window_filter_includes_newly_exposed_bars() {
+  // session_20260819_232337: after bar 16 the paint window leaves bars 0-15. Filtering the
+  // full visualCache must include the newly exposed bar and drop the vacated start bar.
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 66u * bar;
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({kInvalidNoteId, 36, 100, 0, 48});
+  notes.push_back({kInvalidNoteId, 48, 100, 16u * bar, 16u * bar + 48});
+  notes.push_back({kInvalidNoteId, 60, 100, 40u * bar, 40u * bar + 48});
+  uint32_t gatherStart = 0;
+  uint32_t gatherLength = 0;
+  const uint32_t marginBars =
+      2u > DisplayWindowUtils::kFollowReadyLookaheadBars
+          ? 2u
+          : DisplayWindowUtils::kFollowReadyLookaheadBars;
+  DisplayWindowUtils::expandWindowWithMargin(8u * bar, 16u * bar, loopLength, marginBars * bar,
+                                             gatherStart, gatherLength);
+  const NoteUtils::DisplayNoteVec filtered =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, gatherStart, gatherLength,
+                                                              loopLength);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::paintWindowInsideGather(8u * bar, 16u * bar, 0, 18u * bar));
+  bool sawStartBar = false;
+  bool sawNewlyExposed = false;
+  bool sawFarBar = false;
+  for (const auto& note : filtered) {
+    if (note.note == 36) {
+      sawStartBar = true;
+    }
+    if (note.note == 48) {
+      sawNewlyExposed = true;
+    }
+    if (note.note == 60) {
+      sawFarBar = true;
+    }
+  }
+  TEST_ASSERT_FALSE(sawStartBar);
+  TEST_ASSERT_TRUE(sawNewlyExposed);
+  TEST_ASSERT_FALSE(sawFarBar);
+}
+
+void test_expand_window_with_margin_clamps_to_loop() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 66u * bar;
+  const uint32_t margin = 2u * bar;
+  uint32_t gatherStart = 0;
+  uint32_t gatherLength = 0;
+  DisplayWindowUtils::expandWindowWithMargin(0, 16u * bar, loopLength, margin, gatherStart,
+                                             gatherLength);
+  TEST_ASSERT_EQUAL_UINT32(0u, gatherStart);
+  TEST_ASSERT_EQUAL_UINT32(18u * bar, gatherLength);
+
+  DisplayWindowUtils::expandWindowWithMargin(16u * bar, 16u * bar, loopLength, margin, gatherStart,
+                                             gatherLength);
+  TEST_ASSERT_EQUAL_UINT32(14u * bar, gatherStart);
+  TEST_ASSERT_EQUAL_UINT32(20u * bar, gatherLength);
+
+  DisplayWindowUtils::expandWindowWithMargin(50u * bar, 16u * bar, loopLength, margin, gatherStart,
+                                             gatherLength);
+  TEST_ASSERT_EQUAL_UINT32(48u * bar, gatherStart);
+  TEST_ASSERT_EQUAL_UINT32(18u * bar, gatherLength);
 }
 
 void test_format_loop_length_bars_info_strip() {
@@ -408,7 +488,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
-  RUN_TEST(test_visual_cache_covers_window_requires_fully_built);
+  RUN_TEST(test_visual_cache_covers_window_uses_clean_neighborhood);
+  RUN_TEST(test_visual_cache_covers_window_follow_lookahead_requires_next_bar);
+  RUN_TEST(test_follow_window_filter_includes_newly_exposed_bars);
+  RUN_TEST(test_expand_window_with_margin_clamps_to_loop);
   RUN_TEST(test_adopt_partial_visual_cache_marks_uncovered_bars_dirty);
   RUN_TEST(test_adopt_partial_visual_cache_clears_dirty_when_loop_fits_window);
   RUN_TEST(test_overview_band_mask_marks_every_bar_the_note_spans);

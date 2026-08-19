@@ -7,6 +7,12 @@
 
 #include <cstdio>
 
+#if defined(__IMXRT1062__)
+#define DWU_COLD FLASHMEM
+#else
+#define DWU_COLD
+#endif
+
 namespace DisplayWindowUtils {
 
 using DisplayNoteVec = NoteUtils::DisplayNoteVec;
@@ -255,6 +261,25 @@ void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEven
       out.push_back(evt);
     }
   }
+}
+
+DWU_COLD void expandWindowWithMargin(uint32_t windowStart, uint32_t windowLength,
+                                     uint32_t loopLength, uint32_t marginTicks,
+                                     uint32_t& outStart, uint32_t& outLength) {
+  if (loopLength == 0 || windowLength == 0) {
+    outStart = 0;
+    outLength = 0;
+    return;
+  }
+  outStart = windowStart > marginTicks ? windowStart - marginTicks : 0;
+  uint32_t gatherEnd = windowStart + windowLength + marginTicks;
+  if (gatherEnd > loopLength) {
+    gatherEnd = loopLength;
+  }
+  if (outStart > gatherEnd) {
+    outStart = 0;
+  }
+  outLength = gatherEnd > outStart ? gatherEnd - outStart : windowLength;
 }
 
 void formatLoopLengthBars(char* out, size_t outSize, uint32_t loopLengthTicks,

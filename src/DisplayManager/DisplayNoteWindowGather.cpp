@@ -25,6 +25,21 @@
 
 using namespace DisplayManagerInternal;
 
+DISP_COLD_MEM void DisplayManagerInternal::filterNotesToFollowWindow(
+    const NoteUtils::DisplayNoteVec& source, uint32_t windowStart, uint32_t windowLength,
+    uint32_t loopLength, NoteUtils::DisplayNoteVec& outNotes, uint32_t& gatherStart,
+    uint32_t& gatherLength) {
+    const uint32_t padBars =
+        kWindowedGatherMarginBars > DisplayWindowUtils::kFollowReadyLookaheadBars
+            ? kWindowedGatherMarginBars
+            : static_cast<uint8_t>(DisplayWindowUtils::kFollowReadyLookaheadBars);
+    const uint32_t marginTicks = static_cast<uint32_t>(padBars) * Config::TICKS_PER_BAR;
+    DisplayWindowUtils::expandWindowWithMargin(windowStart, windowLength, loopLength, marginTicks,
+                                               gatherStart, gatherLength);
+    outNotes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(source, gatherStart,
+                                                                       gatherLength, loopLength);
+}
+
 bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t displaySlot,
                                              uint32_t currentTick, uint32_t loopLength,
                                              uint32_t& outWindowStart, uint32_t& outWindowLength,
@@ -58,12 +73,11 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     uint32_t windowStart, uint32_t windowLength) {
     const uint8_t trackIndex = resolveTrackIndex(track);
 
-    // Prefer filtering a covered visualCache over gather+reconstruct when capture is idle.
-    // session_20260811_030614: long-loop PLAYING filled visualCache while every frame still
-    // reconstructed the window — dual work tore the OLED after record stop.
-    if (!loop.captureActive() &&
-        visualCacheCoversWindow(loop.visualCacheDirty, loop.visualCache.dirtyBars, windowStart,
-                                windowLength, loopLength, Config::TICKS_PER_BAR)) {
+    // Prefer filtering visualCache over gather+reconstruct when capture is idle and notes exist.
+    // A globally dirty cache may still authorize a clean paint neighborhood, including the
+    // one-bar follow lookahead. Non-empty notes also filter when some window bars are dirty
+    // so auto-follow can show the next bar instead of holding a 16-bar source-view frame.
+    if (!loop.captureActive() && !loop.visualCache.notes.empty()) {
         const bool visualCacheHit =
             liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
             trackIndex == livePlaybackDisplayTrack_ &&
@@ -71,23 +85,26 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
             liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
             liveWindowVisualCacheRevision_ == loop.visualCache.revision &&
             liveWindowGatherLoopLength_ == loopLength &&
-            liveWindowGatherStart_ == windowStart && liveWindowGatherLength_ == windowLength;
+            DisplayWindowUtils::paintWindowInsideGather(windowStart, windowLength,
+                                                        liveWindowGatherStart_,
+                                                        liveWindowGatherLength_);
         if (visualCacheHit) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             return liveDisplayNotes;
         }
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-        const DisplayNoteVec filtered = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-            loop.visualCache.notes, windowStart, windowLength, loopLength);
-        liveDisplayNotes.assign(filtered.begin(), filtered.end());
+        uint32_t gatherStart = 0;
+        uint32_t gatherLength = 0;
+        filterNotesToFollowWindow(loop.visualCache.notes, windowStart, windowLength, loopLength,
+                                  liveDisplayNotes, gatherStart, gatherLength);
         liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
-        liveWindowGatherStart_ = windowStart;
-        liveWindowGatherLength_ = windowLength;
+        liveWindowGatherStart_ = gatherStart;
+        liveWindowGatherLength_ = gatherLength;
         liveWindowGatherLoopLength_ = loopLength;
         liveWindowGatherValid_ = true;
         liveWindowVisualCacheRevision_ = loop.visualCache.revision;
@@ -114,15 +131,10 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     DIAG_COUNTER_INC(DisplayFullRebuild);
     const uint32_t marginTicks =
         static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
-    uint32_t gatherStart = windowStart > marginTicks ? windowStart - marginTicks : 0;
-    uint32_t gatherEnd = windowStart + windowLength + marginTicks;
-    if (gatherEnd > loopLength) {
-        gatherEnd = loopLength;
-    }
-    if (gatherStart > gatherEnd) {
-        gatherStart = 0;
-    }
-    const uint32_t gatherLength = gatherEnd - gatherStart;
+    uint32_t gatherStart = 0;
+    uint32_t gatherLength = 0;
+    DisplayWindowUtils::expandWindowWithMargin(windowStart, windowLength, loopLength, marginTicks,
+                                               gatherStart, gatherLength);
     rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
                                 liveDisplayEventBuffer, liveDisplayNotes, true);
     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
