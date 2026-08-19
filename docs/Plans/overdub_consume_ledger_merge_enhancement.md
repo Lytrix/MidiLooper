@@ -1,6 +1,6 @@
 # Overdub consume ledger merge
 
-**Status:** **FROZEN** — closed 2026-08-19. **Stage 1A observability COMPLETE**; **consume merge selection change (Stages 1–2) REJECTED** on device evidence HITL [`191133`](../../captures/session_20260819_191133.log). Attribution counters + `DIAG,consume,select` in tree; selection behavior **unchanged and staying**. Native **1386/1386**. RAM1 code **425964** / locals **4768**. `norow=1` successor **tagged for investigation** in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Parked — no plan opened.  
+**Status:** **FROZEN** — closed 2026-08-19. **Stage 1A/1B observability COMPLETE**; **consume merge selection change (Stages 1–2) REJECTED** on device evidence HITL [`191133`](../../captures/session_20260819_191133.log). Attribution counters + `DIAG,consume,select` and detail lines `DIAG,consume,norowid` / `DIAG,consume,scanadd` are in tree; selection behavior **unchanged and staying**. Native **1386/1386**. RAM1 code **425964** / locals **4768**. `norow=1` successor **tagged for investigation** in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Parked — no plan opened.  
 **Date:** 2026-08-19  
 **Kind:** enhancement  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  

@@ -429,6 +429,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   overlapHoldTotals_.lateNoteCandidates += lateNotes;
   overlapHoldTotals_.idsWithoutNotes += idsWithoutNotes;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const bool jitEligible = (loopLen > overdubSourceWindowLengthTicks());
   // Attribution only when a path other than the occupy-id lookup mattered.
   if (scanOnly != 0 || lateNotes != 0 || idsWithoutNotes != 0) {
     char line[176];
@@ -440,8 +441,50 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
              static_cast<unsigned>(idSelectedCount), static_cast<unsigned>(scanOnly),
              static_cast<unsigned>(lateNotes), static_cast<unsigned>(idsWithoutNotes),
              static_cast<unsigned long>(startTick), static_cast<unsigned long>(endTick),
-             (loopLen > overdubSourceWindowLengthTicks()) ? 1u : 0u);
+             jitEligible ? 1u : 0u);
     DebugSessionCapture::appendCaptureTextLine(line);
+  }
+  if (idsWithoutNotes != 0) {
+    uint32_t logged = 0;
+    constexpr uint32_t kMaxConsumeDetailLogs = 8;
+    for (size_t i = 0; i < overlapNoteIds.size() && logged < kMaxConsumeDetailLogs; ++i) {
+      const NoteId id = overlapNoteIds.at(i);
+      bool selectedHasId = false;
+      for (const NoteUtils::DisplayNote& note : selected) {
+        if (note.noteId == id) {
+          selectedHasId = true;
+          break;
+        }
+      }
+      if (selectedHasId) {
+        continue;
+      }
+      char line[160];
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,consume,norowid,pitch=%u,id=%u,s=%lu,e=%lu,jit=%u",
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+               static_cast<unsigned>(id), static_cast<unsigned long>(startTick),
+               static_cast<unsigned long>(endTick), jitEligible ? 1u : 0u);
+      DebugSessionCapture::appendCaptureTextLine(line);
+      ++logged;
+    }
+  }
+  if (scanOnly != 0 || lateNotes != 0) {
+    uint32_t logged = 0;
+    constexpr uint32_t kMaxConsumeDetailLogs = 8;
+    for (size_t i = idSelectedCount; i < selected.size() && logged < kMaxConsumeDetailLogs; ++i) {
+      const NoteUtils::DisplayNote& note = selected[i];
+      const bool inIds = overlapNoteIds.contains(note.noteId);
+      char line[192];
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,consume,scanadd,pitch=%u,id=%u,in_ids=%u,start=%lu,end=%lu,jit=%u",
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
+               static_cast<unsigned>(note.noteId), inIds ? 1u : 0u,
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick), jitEligible ? 1u : 0u);
+      DebugSessionCapture::appendCaptureTextLine(line);
+      ++logged;
+    }
   }
 #endif
 
