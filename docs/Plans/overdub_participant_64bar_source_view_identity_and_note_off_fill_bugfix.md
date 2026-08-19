@@ -1,6 +1,6 @@
 # 64-bar source-view identity and note-off fill
 
-**Status:** Stage 1 membership **shipped**. Stage 1b prepared-session identity **shipped**. Stage 1c dirty/save stall **shipped** ([`132806`](../../captures/session_20260818_132806.log) held). Stage 1 `from=span` / wait-STOPPED-for-`lcr,mat` HITL **parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — occupy is present-at-S JIT, not full-loop `lcr,mat`). Stage 2 **not started**.  
+**Status:** Stage 1 membership **shipped**. Stage 1b prepared-session identity **shipped**. Stage 1c dirty/save stall **shipped** ([`132806`](../../captures/session_20260818_132806.log) held). Stage 1 `from=span` / wait-STOPPED-for-`lcr,mat` HITL **parked** ([DEC-041](../DECISION_LOG.md#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) — occupy is present-at-S JIT, not full-loop `lcr,mat`). **RC2 note-off fill** → active in [`overdub_ledger_completion_enhancement.md`](overdub_ledger_completion_enhancement.md). Stage 2 consume merge **obsolete** (`collectConsumeWindow` removed).  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md)  

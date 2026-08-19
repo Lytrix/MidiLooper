@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (consume id-resolution **FROZEN** — Stage 2 HITL [`201457`](../../captures/session_20260819_201457.log))
+Last updated: 2026-08-19 (overdub ledger completion Stages 2–4 shipped; consume id-resolution **FROZEN**)
 
 ---
 
@@ -11,6 +11,16 @@ Last updated: 2026-08-19 (consume id-resolution **FROZEN** — Stage 2 HITL [`20
 ### Overdub participant discovery (occupy / source-view RC closed)
 
 Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)) and wrap display D2-D ([`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)) are **FROZEN** — HITL [`174246`](../../captures/session_20260819_174246.log). Native **1384/1384**. Next on this branch: 64-bar `from=span` HITL **parked** (DEC-041); see § Parked below.
+
+### Overdub ledger completion — shipped (Stages 2–4)
+
+**Plan:** [`overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md)
+
+**Owner:** `Loop::ensureOverdubSourceNotesForHold`, `Loop::accumulatePendingNoteChangesForIncomingNote`.
+
+**Invariant:** Long-loop note-off uses prepared pitch-span merge (`from=span`) when LCR is ready; explicit `hold,miss` + `from=win` only on prepared miss; skip hold fill when non-empty occupy ids already have source-view rows.
+
+**Status:** Native **1387/1387**. Baseline cost anchor [`202256`](../../captures/session_20260819_202256.log) (32× `from=win`, `merged=0`). HITL gate open post-flash.
 
 ### Consume id-resolution completeness — FROZEN (Stages 1–2)
 
