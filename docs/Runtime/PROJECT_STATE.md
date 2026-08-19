@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-19 (consume id-resolution Stages 1–2 shipped; occupy source-view RC + wrap display **FROZEN**)
+Last updated: 2026-08-19 (consume id-resolution **FROZEN** — Stage 2 HITL [`201457`](../../captures/session_20260819_201457.log))
 
 ---
 
 ## Current branch
 
-**`feature/overdub-participant-discovery`** — Consume id-resolution completeness **shipped** Stages 1–2 (native 1387/1387; Stage 1 HITL [`195016`](../../captures/session_20260819_195016.log); `collectConsumeWindow` removed). Plan: [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md). Occupy source-view RC **FROZEN**. RAM1 code **425964** / locals **4768**.
+**`feature/overdub-participant-discovery`** — Consume id-resolution completeness **FROZEN** Stages 1–2 (native 1387/1387; HITL [`195016`](../../captures/session_20260819_195016.log), [`201457`](../../captures/session_20260819_201457.log); `collectConsumeWindow` removed). Plan: [`overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md). Occupy source-view RC **FROZEN**. RAM1 code **425964** / locals **4768**.
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
