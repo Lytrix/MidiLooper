@@ -3,13 +3,13 @@
 **Status:** Durable evaluation catalog. **Not architecture authority.** Update this file when ledger / occupy-catch-up / playback-order owners change.  
 **Date:** 2026-08-19  
 **Companion:** [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md)  
-**Active investigation:** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)
+**Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)
 
 This catalog is every **note evaluation** that decides whether an identity is open in `ActiveNoteLedger` (**open ledger identities**) or whether a committed playback event is applied to the ledger. It is **not** overlap geometry and **not** source-view covering identities.
 
 CAP `n=` = open ledger identities (`collectOverdubNoteOnParticipantIds`). CAP `a=` = source-view covering identities (`collectOverdubSourceHoldParticipantIds`). They are allowed to differ: they answer different questions.
 
-Firmware for Gate 5B is **not approved**. **Gate 5A shipped** (equal-tick apply pairing). HITL [`161349`](../../captures/session_20260819_161349.log): extra covering `a>n` **0**; remaining mismatches are `n>a` (more open ledger identities than covering spans) — do not treat that as a ledger-owner bug for this RC. Gate 4 pinned (pre-5A Length `6073` moved Off@168). **Gate 5B** Length `6073` 551 effect: after pairing, B reconstructs `168–360` and covers 312; provenance not proven — no implementation. Do not change ledger owners to “fix” source-view geometry. At hold 312, intended `n=1 a=0` is A still open in the ledger; `a=0` does not mean the ledger is wrong.
+**RC closed (FROZEN).** Gate 5A shipped. D2-D HITL [`174246`](../../captures/session_20260819_174246.log). **`n>a` is diagnostic only** — do not patch occupy collect. Gate 5B **withdrawn**.
 
 **Update this catalog in the same change** if any of these moved: `ActiveNoteLedger::applyPlaybackEvent` / `noteOn`, `rebuildPlaybackOrder`, `CommittedPlaybackLedgerCatchUp`, `collectOverdubNoteOnParticipantIds`, wrap catch-up exclusion.
 
@@ -220,7 +220,7 @@ The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lc
 | Present-at-hold covering | `displayNotePresentAtHold` on source-view notes |
 | Whether a NoteOn is still live capture (uncommitted) | `extractOpenCaptureNoteOns` — open B never reaches this ledger |
 | Pairing Off to On in storage | `reconstructDisplayNotes` |
-| Source-view membership after rebuild | `rebuildOverdubSourceView` |
+| Source-view membership after rebuild | `rebuildOverdubSourceView` / `retainValidOverdubSourceViewIdentities` | Identity filter runs only on revision-fresh full-loop merged stream |
 | Whether open ledger identities should equal source-view covering identities | It must not be forced. Mismatch is a diagnostic, not a coupling license |
 
 An open B that has no recorded NoteOff is not a ledger Entry. Wrap carries it as live capture only.

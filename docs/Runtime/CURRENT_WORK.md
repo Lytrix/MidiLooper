@@ -2,21 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (Gate 5A HITL 161349: extra covering a>n = 0; 5B no implementation)
+Last updated: 2026-08-19 (occupy source-view RC + wrap display D2-D **FROZEN**)
 
 ---
 
 ## Now implementing
 
-### Occupy source view keeps resolver geometry
+### Overdub participant discovery (occupy / source-view RC closed)
+
+Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)) and wrap display D2-D ([`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)) are **FROZEN** — HITL [`174246`](../../captures/session_20260819_174246.log). Native **1384/1384**. Next on this branch: 64-bar `from=span` HITL **parked** (DEC-041); see § Parked below.
+
+### Occupy source view keeps resolver geometry — FROZEN
 
 **Plan:** [`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)  
-**Parent:** [`overdub_occupy_missing_open_identity_bugfix.md`](../Plans/overdub_occupy_missing_open_identity_bugfix.md) — 5893-class HITL **MET** [`121141`](../../captures/session_20260819_121141.log); remaining mismatch is one open ledger identity vs two source-view covering identities (`n=1 a=2`) with `on=1`  
-**Pin:** [`121141`](../../captures/session_20260819_121141.log) L2324 `6079 144–168` → L3298 `6079 144–360` at `hs=312`
+**Closed:** 2026-08-19 — **Gate 5A** shipped; extra covering `a>n` **0** [`161349`](../../captures/session_20260819_161349.log). Display/source-view fix: sibling D2-D [`174246`](../../captures/session_20260819_174246.log). **Gate 5B withdrawn.** Do not reopen without new `a>n` or pin [`121141`](../../captures/session_20260819_121141.log) `n=1 a=2`.
 
-**Invariant:** Resolver geometry is authoritative for `overdubSourceViewNotes_`. After rebuild, A (`6079`) still exists as DisplayNote `startTick=144` `endTick=167`. Rebuild must not restore A's pre-resolution `144–360`. Do not equate Length payload 167 with exclusive `[144,168)` or L2324 `ae=168`. Open ledger identities and source-view covering identities may differ.
+### Overdub wrap display drop — FROZEN
 
-**Status:** **Gate 5A shipped.** Native **1379/1379**. RAM1 code **425836** / locals **4768**. HITL [`161349`](../../captures/session_20260819_161349.log): extra covering **`a>n` = 0** (`n=1 a=2` **0**, `n=2 a=3` **0**, `s=144,e=360` **0**, `n=0 a=1` **0**, `led==n` **32/32**). Pin [`121141`](../../captures/session_20260819_121141.log) had `n=1 a=2` **2** (including pitch 24 `hs=312` `6079 144–360`) and `n=2 a=3` **1**. Remaining [`161349`](../../captures/session_20260819_161349.log) mismatches **32** are `n>a` only (`n=1 a=0` **15**, `n=2 a=1` **15**, `n=2 a=0` **2`). **Gate 5B** not implemented. Do not skip Length by `targetNoteId`. Do not reopen leftover identity or patch occupy collect.
+**Plan:** [`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)  
+**Closed:** 2026-08-19 — D2-D revision-freshness guard in `committedPlaybackNoteOnIdentityValid`. HITL [`174246`](../../captures/session_20260819_174246.log): DISP monotonic, `identity_invalid` **0**, ledger **95/95**. Lane **N** diagnostic only. Layer 1 `prep=0` [`170838`](../../captures/session_20260819_170838.log) **parked**.
 
 ### Occupy missing open identity (`n=1 a=2` extra covering span)
 
@@ -516,6 +520,8 @@ LoadLoopJob PLAYING skip is device-proven in [`105505`](../../captures/session_2
 
 | Slice | Decision / commit | Evidence |
 |-------|-------------------|----------|
+| Overdub wrap source-view D2-D | Revision guard in `committedPlaybackNoteOnIdentityValid` | [`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md); HITL [`174246`](../../captures/session_20260819_174246.log); native 1384/1384 |
+| Occupy source-view Gate 5A + RC close | Equal-tick Off-before-On; sibling D2-D closes pin | [`overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md); HITL [`161349`](../../captures/session_20260819_161349.log), [`174246`](../../captures/session_20260819_174246.log) |
 | Overdub pass overlap (G2) | DEC-031/032; archived `2026-08-12-overdub-pass-overlap-resolution` | Native 1016/1016; OLED PASS [`010000`](../../captures/session_20260812_010000.log); specs synced; merge PR pending |
 | Live-record tick-0 NoteOn blip | `8de682c` | Native 999/999; device PASS [`182949`](../../captures/session_20260811_182949.log); pre-fix [`182528`](../../captures/session_20260811_182528.log) |
 | Note edit current state | DEC-029; `3e9253e` | Native 969/969; [`PHASE8_CLOSEOUT`](../../openspec/changes/archive/2026-08-08-note-edit-current-state/PHASE8_CLOSEOUT.md); HITL [`112202`](../../captures/session_20260808_112202.log), [`115120`](../../captures/session_20260808_115120.log), [`032118`](../../captures/session_20260808_032118.log) |

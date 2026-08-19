@@ -87,6 +87,25 @@ const PendingNoteChange* findTransform(const PendingNoteChangeVec& pending, Note
   return nullptr;
 }
 
+const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
+                                                  NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+const EditPass* findEditPassByTarget(const Loop& loop, NoteId targetNoteId) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.targetNoteId == targetNoteId) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
 void seedLongSourceNote(Loop& loop, NoteId id, uint32_t onTick, uint32_t offTick, uint8_t pitch,
                         uint32_t loopLength = kLoopLen) {
   loop.loopLengthTicks = loopLength;
@@ -751,6 +770,65 @@ void test_pending_wrap_crossing_incoming_consumes_head_occupied_lane() {
                    transform->kind == PendingNoteChangeKind::Shorten);
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) +
                            countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+}
+
+// Pin 121141 three-point proof: resolver Shorten(6079,167) → seal → rebuild source view.
+void test_121141_three_point_resolver_seal_rebuild_handoff() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kOneBar = Config::TICKS_PER_BAR;
+  constexpr uint8_t kPitch = 24;
+  constexpr NoteId kIdA = 6079;
+  constexpr NoteId kIdB = 6073;
+
+  Loop loop;
+  loop.loopLengthTicks = kOneBar;
+  loop.nextNoteId_ = kIdB;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 144, 1, kPitch, 100, kIdA));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(360, 1, kPitch, 0)));
+  loop.seedRecordPassFromStore(store);
+
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  Loop::resetCommittedPitchQueryWork();
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(168, 1, kPitch, 100, kIdB)));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, kPitch, 100, 168, 264, kIdB,
+                                                                   overlapIds({kIdA})));
+
+  const PendingNoteChange* shortenA = findTransform(loop.pendingNoteChanges(), kIdA);
+  TEST_ASSERT_NOT_NULL(shortenA);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten),
+                    static_cast<int>(shortenA->kind));
+  TEST_ASSERT_EQUAL_UINT32(kIdA, shortenA->noteId);
+  TEST_ASSERT_EQUAL_UINT32(167u, shortenA->endTick);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(264, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, companionIds.size());
+  TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  const EditPass* sealedA = findEditPassByTarget(loop, kIdA);
+  TEST_ASSERT_NOT_NULL(sealedA);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(sealedA->actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(sealedA->propertyType));
+  TEST_ASSERT_EQUAL_UINT32(167u, sealedA->endTick);
+
+  loop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  const NoteUtils::DisplayNote* viewA = findDisplayNoteById(loop.overdubSourceViewNotes(), kIdA);
+  const NoteUtils::DisplayNote* viewB = findDisplayNoteById(loop.overdubSourceViewNotes(), kIdB);
+  TEST_ASSERT_NOT_NULL(viewA);
+  TEST_ASSERT_NOT_NULL(viewB);
+  TEST_ASSERT_EQUAL_UINT8(kPitch, viewA->note);
+  TEST_ASSERT_EQUAL_UINT32(144u, viewA->startTick);
+  TEST_ASSERT_EQUAL_UINT32(167u, viewA->endTick);
+  TEST_ASSERT_EQUAL_UINT8(kPitch, viewB->note);
+  TEST_ASSERT_EQUAL_UINT32(168u, viewB->startTick);
+  TEST_ASSERT_EQUAL_UINT32(264u, viewB->endTick);
 }
 
 void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
@@ -2005,6 +2083,38 @@ void test_occupy_source_hold_partial_window_does_not_drop_span() {
   TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
 }
 
+void test_occupy_source_hold_stale_revision_does_not_drop_span() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = 768;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kIdA = 1;
+  constexpr NoteId kIdB = 2;
+  loop.loopLengthTicks = kLoopLenTicks;
+  loop.playbackRevision = 9;
+
+  NoteUtils::DisplayNoteVec spans;
+  spans.push_back(testSourceSpan(kIdA, kPitch, 0, 743));
+  spans.push_back(testSourceSpan(kIdB, kPitch, 0, 168));
+  loop.replaceOverdubSourceViewNotesForTest(std::move(spans));
+
+  PlaybackMergedMidiEvents merged;
+  merged.builtFromRevision = 8;  // stale w.r.t. loop.playbackRevision
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = kLoopLenTicks;
+  MidiEvent onB = MidiEvent::NoteOn(744, 1, kPitch, 100);
+  onB.noteId = kIdB;
+  merged.mergedEvents.push_back(onB);
+  loop.replaceCommittedPlaybackNoteOnIdentities(merged);
+
+  OverlapNoteIdSet sourceIds;
+  loop.collectOverdubSourceHoldParticipantIds(72, kPitch, sourceIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(sourceIds.size()));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdA));
+  TEST_ASSERT_TRUE(sourceIds.contains(kIdB));
+}
+
 void test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2100,6 +2210,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_long_source_wrap_loop_4000);
   RUN_TEST(test_pending_hide_long_source_wrap_loop_4100);
   RUN_TEST(test_pending_wrap_crossing_incoming_consumes_head_occupied_lane);
+  RUN_TEST(test_121141_three_point_resolver_seal_rebuild_handoff);
   RUN_TEST(test_seal_pending_shorten_to_edit_pass_after_overdub_publish);
   RUN_TEST(test_prepared_present_note_ids_match_source_hold_participants);
   RUN_TEST(test_prepared_present_note_ids_miss_does_not_fill_source_window);
@@ -2126,6 +2237,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_source_hold_drops_span_without_merged_note_on);
   RUN_TEST(test_occupy_source_hold_retains_span_with_merged_note_on);
   RUN_TEST(test_occupy_source_hold_partial_window_does_not_drop_span);
+  RUN_TEST(test_occupy_source_hold_stale_revision_does_not_drop_span);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
   return UNITY_END();

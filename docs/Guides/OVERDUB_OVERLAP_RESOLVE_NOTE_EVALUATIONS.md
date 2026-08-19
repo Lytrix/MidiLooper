@@ -3,7 +3,7 @@
 **Status:** Durable evaluation catalog. **Not architecture authority.** Update this file when overlap-resolve owners change.  
 **Date:** 2026-08-19  
 **Companion:** [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](OVERDUB_LEDGER_NOTE_EVALUATIONS.md)  
-**Active investigation:** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md)
+**Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md) — HITL [`174246`](../../captures/session_20260819_174246.log)
 
 This catalog is every **note evaluation** in overlap resolve: candidate selection, interaction classification, exclusive-end / Hide geometry, and where that result survives. It is **not** open ledger identities and **not** source-view covering identities.
 
@@ -15,7 +15,7 @@ ledger owns open identities
 source-view covering identities answer present-at-hold
 ```
 
-Do not converge those three because a mismatch between open ledger identities and source-view covering identities looks suspicious. **Gate 5A shipped:** `findNoteOffForOnIndex` equal-tick Off-before-On (`midiEventChronologicalLess`); not a full tick sort. HITL [`161349`](../../captures/session_20260819_161349.log) extra covering `a>n` **0**. **Gate 5B** (Length `6073` 551 provenance) has effect proven and source not proven — **no implementation**. Rebuild cannot manufacture Length-167. Do not “fix” this RC by changing the resolver, `OverlapCandidateLookup`, or ledger ownership.
+Do not converge those three because a mismatch between open ledger identities and source-view covering identities looks suspicious. **Gate 5A shipped** (equal-tick Off-before-On). **RC closed** — D2-D revision guard [`174246`](../../captures/session_20260819_174246.log); plans **FROZEN**. Remaining `n>a` is diagnostic-only. **Gate 5B withdrawn** — no Length skip firmware.
 
 **Update this catalog in the same change** if any of these moved: `resolveConstrainedGeometry`, `classifyEditSessionInteraction`, `computeShortenedEndTick`, `accumulatePendingNoteChangesForIncomingNote`, `sealPendingNoteChangesToEditPasses`, `applyChangeLengthById` shorten/lengthen, `rebuildOverdubSourceView`, `collectOverdubSourceHoldParticipantIds`, pending overlay vs cache.
 
@@ -300,6 +300,7 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | Step | Owner | What it writes |
 |---|---|---|
 | Seal | `sealPendingNoteChangesToEditPasses` | Companion rows at `kOverdubCompanionEditPassIndex` (255). Then `clearPendingNoteChanges` |
+| Seal observability | `sealPendingNoteChangesToEditPasses` | `#CAP,DIAG,seal_companion,id=,target=,kind=,end=` per sealed row (SESSION_CAPTURE only; Gate 5B provenance) |
 | Replay | `applyNoteEditPass` Length | `applyChangeLengthById` |
 | Length **shorten** (`newEnd < refEnd`) | `shortenNoteEndById` | Moves that note's Off tick. No sibling exclusive-end scan |
 | Length **lengthen** (`newEnd > refEnd`) | `applyChangeLengthById` | Own `newStart - 1` shorten + contained deletes. Audit only if it can overwrite this path's committed exclusive end |
@@ -314,7 +315,7 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | Wrap-held pair heuristic | `overdubPassWrapPairing` | Pairing fallback — source of duplicate B `168–360` at L3298. **Not** B's committed Off (Gate 3: Off@264) |
 | Wrapped-pair predicate | `isWrappedLoopNotePair` | Tail On + head Off is one note (`offTick < onTick` strictly) |
 | Present at hold (source-view covering identities) | `displayNotePresentAtHold` on **source-view cache** (no pending overlay) | Does this cache span cover hold |
-| Identity exists | `committedPlaybackNoteOnIdentityValid` | NoteOn in full-loop merged stream |
+| Identity exists | `committedPlaybackNoteOnIdentityValid` | NoteOn in full-loop merged stream; **inactive** when `builtFromRevision != playbackRevision` (do not prune on stale stream — see [`overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)) |
 | Open ledger identities | `collectOverdubNoteOnParticipantIds` | Open ledger Entries. See ledger catalog |
 
 ---

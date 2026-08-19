@@ -1,9 +1,6 @@
 # Occupy source view keeps resolver geometry
 
-**Status:** Gates 1–4 pinned. Coordinate conversion **pinned**. **Investigation approved.**  
-**Gate 5A** (EditApply pairing): **shipped** — `findNoteOffForOnIndex` equal-tick Off-before-On (`NOTE_EDIT_MEM`). Native **1379/1379**. `teensy41-capture-serial` RAM1 code **425836** / locals **4768**. HITL [`161349`](../../captures/session_20260819_161349.log): extra covering **`a>n` = 0** (`n=1 a=2` **0**; `s=144,e=360` **0**; `led==n` **32/32**). Remaining mismatches are `n>a` only.  
-**Gate 5B** (Length `6073` 551 provenance): effect proven, source **not** proven — **no implementation permitted**.  
-Do not land 5B with 5A. Native Gate 4: Off@168 disappeared only when Length targeted `6073` (pre-5A). After 5A, On-then-Off dump order no longer steals Off@168.  
+**Status:** **FROZEN** — closed 2026-08-19. **Gate 5A shipped** (equal-tick Off-before-On in `findNoteOffForOnIndex`). HITL [`161349`](../../captures/session_20260819_161349.log): extra covering `a>n` **0**. User-visible wrap/source-view regression closed by sibling [`overdub_wrap_source_view_display_drops_committed_bugfix.md`](overdub_wrap_source_view_display_drops_committed_bugfix.md) D2-D — HITL [`174246`](../../captures/session_20260819_174246.log). **Gate 5B** (Length `6073` 551 provenance) **withdrawn** — do not implement Length skip/filter; misattribution guard below. Native **1384/1384**.  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent (5893-class MET, remaining one open ledger identity vs two source-view covering identities (`n=1 a=2`) with `on=1`):** [`overdub_occupy_missing_open_identity_bugfix.md`](overdub_occupy_missing_open_identity_bugfix.md)  
@@ -609,6 +606,10 @@ See [Follow-up](#follow-up--same-tick-onoff-at-the-loop-wrap). An agent must **n
 
 **Gate 5B effect native (no firmware):** `test_121141_gate5_off_before_on_length_6073_551_leaves_off168_reconstruct_b_168_360`. After 5A pairing, Length `6073` 551 reconstructs B `168–360` (covers 312).
 
+**Three-point handoff native (shipped):** `test_121141_three_point_resolver_seal_rebuild_handoff` — resolver Shorten `6079`/`167` → sealed Length → `rebuildOverdubSourceView` yields A `144–167`, B `168–264`. Does not prove pin L2324 had Point 2; proves the chain when it does.
+
+**5B investigation telemetry (shipped):** `#CAP,DIAG,seal_companion,id=,target=,kind=,end=` on each `sealPendingNoteChangesToEditPasses` row (SESSION_CAPTURE only).
+
 **Hard diagnostic assertion** (three-point proof, when firmware is approved). Identity is mandatory. Do not assert only “some shortened pitch-24 note.” Gate 4 showed Off@168 loss is Length of `6073`, not Length of `6079`. Point 3 cannot pass merely because some pitch-24 note got shortened. Rebuild cannot produce `endTick=167` unless Point 2 sealed `Length(6079, 167)`.
 
 ```
@@ -739,12 +740,18 @@ What already exists:
 | Gate 1 | **Pinned** — L2324 `144–168` is Off@168 pairing, not Length 167 |
 | Gate 2 | **Pinned** — Off@168 gone after wrap L2772 `applyActiveEdits`; reconstruct pairs 6079 to Off@360. Wrap-pair is not the A replacement. Gate 4 names the move |
 
-### Open after 5A
+### Open after 5A — **closed**
 
-1. **5B remains investigation.** Device EditPass index is still not dumped. Do not skip/filter Length by identity.
-2. Native three-point fixture with identity remains a later firmware-gate artifact. Point 3 requires Point 2.
-3. HITL [`161349`](../../captures/session_20260819_161349.log) extra covering **MET** (`a>n` **0**). Remaining **32** mismatches are `n>a` (`n=1 a=0` **15**, `n=2 a=1` **15**, `n=2 a=0` **2**) — more open ledger identities than covering spans. That is not the 5A extra-covering FAIL. Do not reopen leftover identity or patch occupy collect.
+All items closed or withdrawn. Do not reopen without a new capture showing `a>n` or pin [`121141`](../../captures/session_20260819_121141.log) `n=1 a=2` at `hs=312`.
+
+| Item | Closeout |
+|------|----------|
+| 5A extra covering | **MET** [`161349`](../../captures/session_20260819_161349.log) |
+| Wrap display / source-view prune | **Fixed** sibling D2-D [`174246`](../../captures/session_20260819_174246.log) |
+| 5B Length `6073` 551 | **Withdrawn** — no firmware; stale-identity prune was the shipped regression |
+| Three-point fixture | `test_121141_three_point_resolver_seal_rebuild_handoff` — handoff when Point 2 seals |
+| `seal_companion` telemetry | Shipped for future captures; not required to close this RC |
 
 ### Proceed?
 
-**5A: HITL extra covering MET.** **5B: NO.** Do not implement a Length skip.
+**CLOSED.** Reopen only if HITL shows `a>n` extra covering or [`121141`](../../captures/session_20260819_121141.log)-class `n=1 a=2` after D2-D firmware.
