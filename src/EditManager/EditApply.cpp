@@ -31,14 +31,40 @@ int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
   const uint8_t note = onEvt.data.noteData.note;
 
   // Same-pitch pairing is LIFO everywhere else (findLinearOffForNoteOnLifo,
-  // findCorrespondingNoteOff, pairedNoteOnTickForOffAtIndex). Walk from the start of the
-  // vector: an earlier unclosed same-pitch note-on changes which off closes this on.
+  // findCorrespondingNoteOff, pairedNoteOnTickForOffAtIndex). Walk vector order,
+  // except at an equal tick process Off before On (same keys as
+  // sortMidiEventsChronologically / reconstruct / playback clock). Do not sort
+  // by tick across the whole stream: capture stores sequential pairs
+  // (On, Off, On, Off); a full tick sort would nest them (On, On, Off, Off) and
+  // steal the wrong Off (pre-commit Length of the later note).
+  // Tick-only gather is On then Off at a shared tick; vector-order LIFO then
+  // gives the Off to the later On (121141 Off@168 → 6073).
+  // Do not mutate the vector: applyChangeLengthById lengthen ends with tick-only
+  // stable_sort and would restore On-before-Off for a later row.
   // Tick-sorted wrap capture (195941: Off@96 then On@2592) hits the off while the stack is
   // empty, so LIFO never pairs it. After the linear walk, pair a still-open on to its wrap
   // off (tick < on.tick) — tagged NoteId first, else the unique unpaired wrap off.
+  std::vector<size_t> walkOrder;
+  walkOrder.reserve(events.size());
+  for (size_t i = 0; i < events.size(); ++i) {
+    const MidiEvent& evt = events[i];
+    if (evt.channel == channel && evt.data.noteData.note == note &&
+        (evt.isNoteOn() || evt.isNoteOff())) {
+      walkOrder.push_back(i);
+    }
+  }
+  std::stable_sort(walkOrder.begin(), walkOrder.end(), [&](size_t a, size_t b) {
+    const MidiEvent& ea = events[a];
+    const MidiEvent& eb = events[b];
+    if (ea.tick == eb.tick) {
+      return NoteUtils::midiEventChronologicalLess(ea, eb);
+    }
+    return a < b;
+  });
+
   std::vector<size_t> openNoteOnIndices;
   std::vector<uint8_t> offPaired(events.size(), 0);
-  for (size_t i = 0; i < events.size(); ++i) {
+  for (const size_t i : walkOrder) {
     const MidiEvent& evt = events[i];
     if (evt.channel != channel || evt.data.noteData.note != note) {
       continue;

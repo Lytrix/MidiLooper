@@ -1,0 +1,34 @@
+---
+description: Overdub overlap-resolve and ledger evaluation catalogs — update Guides when those owners change
+globs: "{include/ActiveNoteLedger.h,include/Utils/CommittedPlaybackLedgerCatchUp.h,src/ActiveNoteLedger.cpp,src/Utils/CommittedPlaybackLedgerCatchUp.cpp,src/EditManager/ResolveConstrainedGeometry.cpp,src/EditManager/EditSessionInteraction.cpp,src/EditManager/EditApply.cpp,src/Loop/LoopPendingNoteChange.cpp,src/Loop/LoopCapture.cpp,src/Track/TrackCaptureInput.cpp,src/Track/TrackOverdubWrap.cpp,src/Track/TrackPlaybackHotPath.cpp,src/Track/TrackPlaybackWindowBuild.cpp}"
+alwaysApply: false
+---
+
+# Overdub overlap-resolve and ledger evaluations
+
+When changing **overlap resolve** or **ActiveNoteLedger** / occupy catch-up / playback-order logic, update the Guides so they still match the code. Do not leave the catalogs describing the previous evaluations.
+
+**Read before editing those owners:**
+
+- [`docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — candidate select, classify, `resolveConstrainedGeometry`, pending, seal
+- [`docs/Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](docs/Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — apply, emit vs mutate, catch-up vs clock, wrap exclusion, open ledger identities
+
+They are **not** architecture authority. They are the durable evaluation catalogs.
+
+## When a logic change lands
+
+Update the matching catalog in the **same change** if any of these moved:
+
+| If you changed | Update |
+|---|---|
+| `resolveConstrainedGeometry`, `classifyEditSessionInteraction`, `computeShortenedEndTick`, `accumulatePendingNoteChangesForIncomingNote`, `sealPendingNoteChangesToEditPasses`, `applyChangeLengthById` shorten/lengthen | overlap-resolve catalog |
+| `ActiveNoteLedger::applyPlaybackEvent` / `noteOn`, `rebuildPlaybackOrder`, `CommittedPlaybackLedgerCatchUp`, `collectOverdubNoteOnParticipantIds`, wrap catch-up exclusion | ledger catalog |
+| `rebuildOverdubSourceView`, `collectOverdubSourceHoldParticipantIds`, pending overlay vs cache | overlap-resolve catalog (handoff / covering identities) |
+
+Keep the hard boundary: resolver owns exclusive-end geometry; ledger owns open identities; source-view covering identities answer present-at-hold. Do not couple those three because a CAP `n=` / `a=` mismatch looks suspicious.
+
+## Primary files
+
+Overlap resolve: `src/Loop/LoopPendingNoteChange.cpp`, `src/EditManager/ResolveConstrainedGeometry.cpp`, `src/EditManager/EditSessionInteraction.cpp`, `src/EditManager/EditApply.cpp`, `src/Track/TrackCaptureInput.cpp`, `src/Track/TrackOverdubWrap.cpp`, `src/Loop/LoopCapture.cpp`.
+
+Ledger: `include/ActiveNoteLedger.h`, `src/ActiveNoteLedger.cpp`, `include/Utils/CommittedPlaybackLedgerCatchUp.h`, `src/Utils/CommittedPlaybackLedgerCatchUp.cpp`, `src/Track/TrackPlaybackWindowBuild.cpp`, `src/Track/TrackPlaybackHotPath.cpp`.

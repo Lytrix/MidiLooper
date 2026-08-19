@@ -979,15 +979,17 @@ NOTE_EDIT_MEM bool NoteUtils::notesOverlap(uint32_t start1, uint32_t end1, uint3
     return (start1 < unwrappedEnd2) || (start2 < unwrappedEnd1);
 }
 
+NOTE_EDIT_MEM bool NoteUtils::midiEventChronologicalLess(const MidiEvent& a, const MidiEvent& b) {
+    if (a.tick != b.tick) {
+        return a.tick < b.tick;
+    }
+    const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
+    const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
+    return aOrder < bOrder;
+}
+
 NOTE_EDIT_MEM void NoteUtils::sortMidiEventsChronologically(MidiEventVec& midiEvents) {
-    std::sort(midiEvents.begin(), midiEvents.end(), [](const MidiEvent& a, const MidiEvent& b) {
-        if (a.tick != b.tick) {
-            return a.tick < b.tick;
-        }
-        const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
-        const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
-        return aOrder < bOrder;
-    });
+    std::sort(midiEvents.begin(), midiEvents.end(), midiEventChronologicalLess);
 }
 
 NOTE_EDIT_MEM void NoteUtils::orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel,
