@@ -20,11 +20,13 @@ Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolve
 
 **Invariant:** consume candidate selection is measured, not changed: every candidate is attributed to the occupy-id lookup, the window scan, or late JIT materialization.
 
-**Status:** `OverlapHoldTotals` counters `scanOnlyCandidates` / `lateNoteCandidates` / `idsWithoutNotes` + `DIAG,consume,select` (non-zero only). Native **1386/1386**. RAM1 code **425964** / locals **4768**.
+**Status:** Counters + `DIAG,consume,select` shipped. **Consume merge selection change REJECTED** — HITL [`191133`](../../captures/session_20260819_191133.log): 3 of 5 attributed holds had a **non-empty** occupy set where the window scan was the only path to a participant (2× `idsel=1`, 1× `norow=1`). Empty-ids fallback confirmed load-bearing (201 of ~347 note-offs). Native **1386/1386**. RAM1 code **425964** / locals **4768**.
 
 **Stage 1A guard check:** `overlapNoteIds` is written by `snapshotOverlapHoldCandidates` (open at `holdStart`) **and** `collectOverlapHoldPlaybackNoteOn` (NoteOns during the hold, from `sendMidiEvent` before the `playbackEmitMidiOutput_` gate). `appendNotesForIds` cannot reach a note absent from `overdubSourceViewNotes_`, so the long-loop JIT branch is the only path to a JIT-merged ahead note — proven by `test_consume_attribution_counts_late_note_for_jit_ahead_candidate`. Blocking additive candidates on non-empty ids therefore changes long-loop consume, which a 1-bar gate cannot observe.
 
-**Next:** capture a session with overdub overlap on a short **and** a long loop, then read `scan` / `late` / `jit` before deciding the selection change. Do not implement the block first.
+**Long-loop JIT class did not reproduce:** `why=hold` **140** with long loops present (`live=18432`, `live=52224`), yet every line is `jit=0` / `late=0`. Reachable in native, not the device problem.
+
+**Next:** occupy id that resolves to no source-view note (`pitch=96` `ids=1 idsel=0 norow=1`). Needs its own plan + architecture checkpoint. **Do not** block additive scan candidates on non-empty ids.
 
 ### Occupy source view keeps resolver geometry — FROZEN
 
