@@ -1,6 +1,6 @@
 # Overdub consume id-resolution completeness
 
-**Status:** **shipped** — Stage 1 native + HITL [`195016`](../../captures/session_20260819_195016.log); Stage 2 native **1387/1387** (`collectConsumeWindow` removed).  
+**Status:** **FROZEN** — Stages 1–2 shipped; native **1387/1387**; HITL Stage 1 [`195016`](../../captures/session_20260819_195016.log), Stage 2 [`201457`](../../captures/session_20260819_201457.log).  
 **Date:** 2026-08-19  
 **Kind:** bugfix  
 **Parent:** [`overdub_consume_ledger_merge_enhancement.md`](overdub_consume_ledger_merge_enhancement.md) (FROZEN — selection change rejected)  
@@ -44,6 +44,8 @@ Non-empty `overlapNoteIds` → complete `effectiveOverlapNoteIds`, id lookup onl
 
 **Validation:** Native **1387/1387**; `test_overdub_consumes_existing_source_view_overlap` and `test_note_off_skips_hold_fill_when_source_view_covers_loop` now expect `lookedUp=1`, `emptySets=0` for empty incoming ids with geometric overlap.
 
+**HITL [`201457`](../../captures/session_20260819_201457.log):** track 7, 24-bar loop, extended manual overdub + undo. Zero `DIAG,consume` / `scanadd` / `norow` (vs [`193024`](../../captures/session_20260819_193024.log): 27 / 18 / 9). Occupy `DIAG,lcr,part` **86/86** `eq=1` (vs `193024`: 46/62). `why=hold,from=win` (180) is hold-prep JIT only — not consume window scan.
+
 ---
 
 ## Architecture checkpoint
@@ -74,7 +76,8 @@ Non-empty `overlapNoteIds` → complete `effectiveOverlapNoteIds`, id lookup onl
 | Gate | Criterion | Result |
 |------|-----------|--------|
 | Native | `test_consume_attribution_*` + `test_consume_id_resolution_norow_repaired_by_hold_fill`; `pio test -e native` | **PASS** 1387/1387 |
-| HITL | `DIAG,consume,select` on non-empty holds: `scan=0`, `norow=0`; no `scanadd` on attributed holds | **PASS** [`195016`](../../captures/session_20260819_195016.log) — zero `DIAG,consume` lines (attribution emits only when non-zero) |
+| HITL Stage 1 | Zero `DIAG,consume` on id-complete non-empty holds | **PASS** [`195016`](../../captures/session_20260819_195016.log) |
+| HITL Stage 2 | Zero `DIAG,consume` / `scanadd` / `norow`; occupy `eq=1` under extended manual overdub | **PASS** [`201457`](../../captures/session_20260819_201457.log) |
 | Decommission | `collectConsumeWindow` removed; all holds use geometric id completion + `appendNotesForIds` | **shipped** Stage 2 |
 
 ---
