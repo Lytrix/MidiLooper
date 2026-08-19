@@ -16,6 +16,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "PlaybackMergedMidiEvents.h"
 
 extern TrackManager trackManager;
 
@@ -83,7 +84,7 @@ void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, 
   loop.nextEventIndex = static_cast<uint16_t>(idx);
 }
 
-void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
+bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
   // playback order + MIDI send. Playback mergedMidiEvents is committed-only (224719):
@@ -93,7 +94,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   // gather after LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
   static bool mergedMidiEventsBuildInProgress = false;
   if (mergedMidiEventsBuildInProgress) {
-    return;
+    return false;
   }
   const bool noteEditPreview = editManager.isNoteEditActive() &&
                                &track == &trackManager.getSelectedTrack();
@@ -109,7 +110,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   if (!longLoop) {
     if (runtime.mergedMidiEvents.builtFromRevision == windowRevision) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
-      return;
+      return false;
     }
   } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
              !runtime.mergedMidiEvents.empty() &&
@@ -119,7 +120,7 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     const uint32_t margin = Config::TICKS_PER_BAR / 2;
     if (playhead + margin >= winStart && playhead < winEnd) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
-      return;
+      return false;
     }
   }
 
@@ -155,6 +156,16 @@ void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
       runtime.mergedMidiEvents.windowLengthTicks, windowRevision);
   mergedMidiEventsBuildInProgress = false;
+  return true;
+}
+
+TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFullLoopRebuild(
+    LoopPlaybackRuntime& runtime, uint32_t loopLengthTicks) {
+  if (!isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loopLengthTicks)) {
+    return;
+  }
+  runtime.ledger.eraseOpenNotesMissingFromCommittedNoteOns(
+      runtime.mergedMidiEvents.mergedEvents.data(), runtime.mergedMidiEvents.mergedEvents.size());
 }
 TRACK_INTERNAL_MEM __attribute__((noinline)) void rebuildPlaybackOrder(
     Loop& loop, const SessionMidiEventVec& mergedEvents, const ProjectionContext& playbackContext) {
@@ -283,7 +294,11 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
   if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
     const uint32_t currentTick = clockManager.getCurrentTick();
-    ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
+    const bool rebuilt =
+        ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
+    if (rebuilt) {
+      reconcilePlaybackLedgerAfterFullLoopRebuild(*runtime, loop.loopLengthTicks);
+    }
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
       ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);

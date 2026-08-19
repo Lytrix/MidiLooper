@@ -96,7 +96,7 @@ Do not FAIL this RC on parked span-start `n=0 a=1` or prepared `eq=0`/`b=0`. Nes
 
 **`n=1 a=0` is one stuck identity:** all 19 are pitch 12 `lid=5701` `lst=96`, including occupy at `hs=96` (start tick, `a=0`) and wrap-head `hs=0`. Not exclusive-end at an Off tick. Same leftover also produces `n=2 a=1` / `n=3 a=1` when other spans cover.
 
-`n=2 a=1` **down** 20→10. Do not reopen duplicate-Off ledger apply. Leftover `5701` is a new RC.
+`n=2 a=1` **down** 20→10. Do not reopen duplicate-Off ledger apply. Leftover `5701` is [`overdub_occupy_leftover_identity_bugfix.md`](overdub_occupy_leftover_identity_bugfix.md).
 
 ## Pre-implementation review
 

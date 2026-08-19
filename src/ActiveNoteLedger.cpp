@@ -9,3 +9,8 @@ TRACK_COLD_MEM __attribute__((noinline)) bool ActiveNoteLedger::applyPlaybackEve
     uint8_t channel, const MidiEvent& evt) {
   return applyPlaybackEventBody(channel, evt);
 }
+
+TRACK_COLD_MEM __attribute__((noinline)) void ActiveNoteLedger::eraseOpenNotesMissingFromCommittedNoteOns(
+    const MidiEvent* events, size_t eventCount) {
+  eraseOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+}

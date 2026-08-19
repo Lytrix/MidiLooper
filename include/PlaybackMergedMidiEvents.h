@@ -21,3 +21,11 @@ struct PlaybackMergedMidiEvents {
 
   bool empty() const { return mergedEvents.empty(); }
 };
+
+/// Complete committed playback window only. A partial gather must not invalidate
+/// ledger identities.
+inline bool isFullLoopMergedPlaybackWindow(const PlaybackMergedMidiEvents& merged,
+                                           uint32_t loopLengthTicks) {
+  return loopLengthTicks > 0 && merged.windowStartTick == 0 &&
+         merged.windowLengthTicks == loopLengthTicks;
+}
