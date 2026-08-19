@@ -52,7 +52,9 @@ USB-before-clock (8-tick catch-up window) was 11→4. Remaining span-start fails
 
 ## Residuals (not this RC)
 
-- **L4750** interior `192–288` @ 240: Off@240 of `144–240` (L4369) clears the continuing 192–288 note. No replacement On@240 in source-view (`a=1` names 192–288 only). Clock Off-before-On still last-writes empty. Unmatched Off vs overlapping same-pitch — later RC; would change Off identity, not sort order.
+**Successor (observability, no fix):** [`overdub_occupy_unmatched_off_ledger_investigation.md`](overdub_occupy_unmatched_off_ledger_investigation.md). FIFO stamping of Off `noteId` is **rejected** (repo pairing is LIFO). The L4750 geometry below was **inferred, not proven**, and is now **superseded**: [`090050`](../../captures/session_20260819_090050.log) proves the real shape is a **nested** same-pitch pair (`240–480` with `288–336` inside it), where the outer note's ledger entry is lost at the inner **NoteOn** — before any Off. Off identity alone therefore cannot repair it. See the successor § Results.
+
+- **L4750** interior `192–288` @ 240: originally read as Off@240 of `144–240` (L4369) clearing the continuing note. Superseded — see above. Native pin is now `test_nested_same_pitch_note_lost_at_second_note_on_090050_pitch12` in [`test_playback_midi_output.cpp`](../../test/test_playback_midi_output/test_playback_midi_output.cpp), which pins the proven nested geometry instead of the inferred one.
 - **L4294** interior `240–384` @ 352 after wrap 7: catch-up skipped; no known Off in (240, 352]; same span occupies at span-start later (L4517). Not proven as equal-tick order.
 
 ## Fix
