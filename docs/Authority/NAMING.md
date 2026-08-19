@@ -460,6 +460,8 @@ Referenced from [docs/Agents/reviewer.md](../Agents/reviewer.md).
 | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership, forbidden patterns, extension rules |
 | [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md) | Module map and input stack layout |
 | [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | Capture, passes, stop path, undo |
+| [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) | Overdub overlap candidate / classify / resolve / seal (not vocabulary authority) |
+| [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) | Open ledger identities, catch-up vs clock (not vocabulary authority) |
 | [architecture_naming_authority_refinement.md](../Plans/architecture_naming_authority_refinement.md) | Investigation audit, naming debt roadmap |
 | [refactor_priority_backlog.md](../Plans/refactor_priority_backlog.md) | Cross-cutting refactor priority index (P1/P2/P3) |
 | Archived OpenSpec baselines | `m8-rename`, `m8-edit`, `pool-budget` in `openspec/specs/` |

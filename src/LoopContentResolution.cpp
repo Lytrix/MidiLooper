@@ -17,6 +17,7 @@
 
 #if defined(ARDUINO)
 #include <Arduino.h>
+#include "Utils/DebugSessionCapture.h"
 #endif
 
 #include <algorithm>
@@ -2377,9 +2378,27 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTic
   return true;
 }
 
+bool LoopContentResolution::preparedCheckpointHasNoteId(NoteId noteId) {
+  if (noteId == kInvalidNoteId ||
+      !preparedWindowReady(sDeviceGateSession.preparedPlaybackRevision)) {
+    return false;
+  }
+  for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
+    if (span.note.noteId == noteId) {
+      return true;
+    }
+  }
+  for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
+    if (row.note.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     uint32_t playbackRevision, NoteUtils::DisplayNoteVec& out,
-    const SessionMidiEventVec* windowEvents, uint32_t loopLengthTicks) {
+    const SessionMidiEventVec* windowEvents, uint32_t loopLengthTicks, bool logSpanExclusions) {
   out.clear();
   if (!preparedWindowReady(playbackRevision) ||
       sDeviceGateSession.checkpoints.spans.empty() ||
@@ -2441,26 +2460,79 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     note.endTick = endTick;
     out.push_back(note);
   };
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  uint32_t srcdropLogged = 0;
+  constexpr uint32_t kMaxSrcdropLogs = 32;
+  auto logSpanExclusion = [&](NoteId noteId, const char* reason) {
+    if (!logSpanExclusions || noteId == kInvalidNoteId || reason == nullptr) {
+      return;
+    }
+    if (srcdropLogged >= kMaxSrcdropLogs) {
+      return;
+    }
+    ++srcdropLogged;
+    char line[96];
+    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=%s",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), reason);
+    DebugSessionCapture::appendCaptureTextLine(line);
+  };
+#else
+  (void)logSpanExclusions;
+#endif
   for (const StateCheckpoints::NoteSpan& span : sDeviceGateSession.checkpoints.spans) {
-    if (span.note.noteId == kInvalidNoteId || !inWindow(span.note.noteId)) {
+    if (span.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!inWindow(span.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(span.note.noteId, "inWindow");
+#endif
       continue;
     }
     if (!capturePassIsActive(span.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(span.note.noteId, "inactive");
+#endif
       continue;
     }
     appendSpan(span.note.noteId, span.note.pitch, span.startTick, span.endTick);
   }
   for (const PreparedCompanion& row : sDeviceGateSession.preparedCompanions) {
-    if (row.state != EditPassState::Disabled || row.note.noteId == kInvalidNoteId ||
-        !inWindow(row.note.noteId)) {
+    if (row.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (row.state != EditPassState::Disabled) {
+      continue;
+    }
+    if (!inWindow(row.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(row.note.noteId, "inWindow");
+#endif
       continue;
     }
     // Same guards as tryCollectPreparedPresentNoteIdsAtTick (034455 wrap flash).
-    if (!capturePassIsActive(row.note.noteId) || hasActiveCompanion(row.note.noteId)) {
+    if (!capturePassIsActive(row.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(row.note.noteId, "inactive");
+#endif
+      continue;
+    }
+    if (hasActiveCompanion(row.note.noteId)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logSpanExclusion(row.note.noteId, "hide_companion");
+#endif
       continue;
     }
     appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  if (logSpanExclusions && srcdropLogged >= kMaxSrcdropLogs) {
+    char line[96];
+    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,srcdrop,reason=truncated,limit=%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(kMaxSrcdropLogs));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
   return !out.empty();
 }
 

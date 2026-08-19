@@ -499,6 +499,17 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
         saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row), EditPassType::Note);
     if (id != kInvalidEditPassId) {
       sealedIds.push_back(id);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      char line[128];
+      const char* kind =
+          (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u",
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
+               static_cast<unsigned>(change.noteId), kind,
+               static_cast<unsigned>(change.endTick));
+      DebugSessionCapture::appendCaptureTextLine(line);
+#endif
     }
   }
   clearPendingNoteChanges();

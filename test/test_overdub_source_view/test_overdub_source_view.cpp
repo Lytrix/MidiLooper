@@ -1283,6 +1283,165 @@ void test_rebuild_overdub_source_view_after_publish_includes_wrap_add() {
   LoopContentResolution::deviceGateReset();
 }
 
+// Lane D1 (161349): span copy after wrap must keep record-pass noteId, not only the new overdub id.
+void test_wrap_rebuild_retains_record_pass_note_id_after_publish() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 0, 48, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(240, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 0));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 64));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
+// Lane D1/D2-A: sealed Hide removes record from RC12 source view (expected resolver output).
+void test_wrap_rebuild_with_hide_companion_drops_record_from_source_view() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 0, 480, 60);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(200, 1, 60, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 1;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    EditPassIdList{hideId});
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
+  LoopContentResolution::deviceGateReset();
+}
+
+// Lane D1/D2: multi-wrap membership — untouched survives, hidden absent, shortened keeps geometry.
+void test_multi_wrap_source_view_membership_three_classes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 64, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(400, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 100, 1, 62, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(300, 1, 62, 0)));
+  loop.seedRecordPassFromStore(store);
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.establishOverdubSourceView(0);
+
+  constexpr uint8_t kPitchHide = 60;
+  constexpr uint8_t kPitchUntouched = 62;
+  OverlapNoteIdSet occupy;
+  loop.collectOverdubSourceHoldParticipantIds(100, kPitchHide, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(1));
+  const EditPassIdList wrap1Companions =
+      commitSamePitchWrapAndPublish(loop, 10, 64, 240, occupy);
+
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 1));
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(150, 1, 61, 90, 11)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 61, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap2 = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap2);
+  LoopContentResolution::publishPreparedOverdubPass(*wrap2, loop.playbackRevision,
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    wrap1Companions);
+  loop.rebuildOverdubSourceView(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 11));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+
+  occupy.clear();
+  loop.collectOverdubSourceHoldParticipantIds(230, kPitchHide, occupy);
+  TEST_ASSERT_TRUE(occupy.contains(10));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, kPitchHide, 90, 224, 280, 12,
+                                                                   overlapIds({10})));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(224, 1, kPitchHide, 90, 12)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(280, 1, kPitchHide, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap3 = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap3);
+  const EditPassIdList wrap3Companions = loop.sealPendingNoteChangesToEditPasses();
+  EditPassIdList allCompanions = wrap1Companions;
+  for (EditPassId id : wrap3Companions) {
+    allCompanions.push_back(id);
+  }
+  LoopContentResolution::publishPreparedOverdubPass(*wrap3, loop.playbackRevision,
+                                                    loop.loopLengthTicks, loop.passes.editPasses,
+                                                    allCompanions);
+  loop.rebuildOverdubSourceView(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 11));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 12));
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+  const NoteUtils::DisplayNote* shortened =
+      findDisplayNoteById(loop.overdubSourceViewNotes(), 10);
+  TEST_ASSERT_NOT_NULL(shortened);
+  TEST_ASSERT_EQUAL_UINT32(64u, shortened->startTick);
+  TEST_ASSERT_EQUAL_UINT32(223u, shortened->endTick);
+  TEST_ASSERT_EQUAL_UINT8(kPitchHide, shortened->note);
+  const NoteUtils::DisplayNote* untouched =
+      findDisplayNoteById(loop.overdubSourceViewNotes(), 2);
+  TEST_ASSERT_NOT_NULL(untouched);
+  TEST_ASSERT_EQUAL_UINT8(kPitchUntouched, untouched->note);
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_overdub_session_undo_rebuilds_source_view_to_match_prepared() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2538,6 +2697,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_session_undo_hides_wrap_from_prepared_lcr);
   RUN_TEST(test_overdub_session_undo_restores_companion_source_on_prepared_lcr);
   RUN_TEST(test_rebuild_overdub_source_view_after_publish_includes_wrap_add);
+  RUN_TEST(test_wrap_rebuild_retains_record_pass_note_id_after_publish);
+  RUN_TEST(test_wrap_rebuild_with_hide_companion_drops_record_from_source_view);
+  RUN_TEST(test_multi_wrap_source_view_membership_three_classes);
   RUN_TEST(test_overdub_session_undo_rebuilds_source_view_to_match_prepared);
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_overdub_session_undo_depth_counts_sealed_wraps_only);

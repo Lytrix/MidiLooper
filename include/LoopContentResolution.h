@@ -393,5 +393,8 @@ struct LoopContentResolution {
   static bool tryCopyPreparedSpansToDisplayNotes(uint32_t playbackRevision,
                                                  NoteUtils::DisplayNoteVec& out,
                                                  const SessionMidiEventVec* windowEvents = nullptr,
-                                                 uint32_t loopLengthTicks = 0);
+                                                 uint32_t loopLengthTicks = 0,
+                                                 bool logSpanExclusions = false);
+  /// Prepared checkpoint membership (span or companion row). Diagnostic helper for wrap srcdrop.
+  static bool preparedCheckpointHasNoteId(NoteId noteId);
 };

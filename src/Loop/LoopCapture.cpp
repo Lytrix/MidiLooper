@@ -360,6 +360,11 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::committedPlaybackNoteOnIdenti
   if (committedPlaybackMergedForIdentity_ == nullptr) {
     return true;
   }
+  // Identity filtering is only valid for the current loop revision. A stale
+  // merged stream must not prune source-view notes during wrap rebuild fallback.
+  if (committedPlaybackMergedForIdentity_->builtFromRevision != playbackRevision) {
+    return true;
+  }
   if (noteId == kInvalidNoteId) {
     return true;
   }
@@ -427,6 +432,29 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   if (why == nullptr || why[0] == '\0') {
     why = "wrap";
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  constexpr size_t kSrcDiagMaxIds = 48;
+  NoteId beforeIds[kSrcDiagMaxIds];
+  size_t beforeCount = 0;
+  const bool logSrcWrapDiag = (std::strcmp(why, "wrap") == 0);
+  if (logSrcWrapDiag) {
+    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+      if (note.noteId == kInvalidNoteId) {
+        continue;
+      }
+      if (beforeCount >= kSrcDiagMaxIds) {
+        break;
+      }
+      beforeIds[beforeCount++] = note.noteId;
+    }
+    char beforeLine[96];
+    snprintf(beforeLine, sizeof(beforeLine), "#CAP,%lu,DIAG,lcr,srcbefore,why=%s,count=%u",
+             static_cast<unsigned long>(micros()), why, static_cast<unsigned>(beforeCount));
+    DebugSessionCapture::appendCaptureTextLine(beforeLine);
+  }
+#else
+  const bool logSrcWrapDiag = false;
+#endif
   overdubSourceViewEvents_.clear();
   overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
@@ -453,8 +481,8 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   // Empty copy is a miss (024225: from=span notes=0 wiped RC12 display).
   // Window noteIds only (030219: restamped leftover spans must not flood RC12).
   if (LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
-          playbackRevision, overdubSourceViewNotes_, &overdubSourceViewEvents_,
-          loopLengthTicks)) {
+          playbackRevision, overdubSourceViewNotes_, &overdubSourceViewEvents_, loopLengthTicks,
+          logSrcWrapDiag)) {
     from = "span";
   } else {
     overdubSourceViewNotes_ =
@@ -462,7 +490,88 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
     appendOverdubPassWrapPairedNotes(overdubSourceViewNotes_);
   }
   overdubSourceViewEstablished_ = true;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  NoteId beforeRetainIds[kSrcDiagMaxIds];
+  size_t beforeRetainCount = 0;
+  if (logSrcWrapDiag) {
+    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+      if (note.noteId == kInvalidNoteId || beforeRetainCount >= kSrcDiagMaxIds) {
+        continue;
+      }
+      beforeRetainIds[beforeRetainCount++] = note.noteId;
+    }
+    if (committedPlaybackMergedForIdentity_ != nullptr &&
+        committedPlaybackMergedForIdentity_->builtFromRevision != playbackRevision) {
+      char skipLine[128];
+      snprintf(skipLine, sizeof(skipLine),
+               "#CAP,%lu,DIAG,lcr,srcskip,reason=stale_identity_stream,built=%u,loop=%u",
+               static_cast<unsigned long>(micros()),
+               static_cast<unsigned>(committedPlaybackMergedForIdentity_->builtFromRevision),
+               static_cast<unsigned>(playbackRevision));
+      DebugSessionCapture::appendCaptureTextLine(skipLine);
+    }
+  }
+#endif
   retainValidOverdubSourceViewIdentities();
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  if (logSrcWrapDiag) {
+    auto sourceViewHasId = [this](NoteId id) {
+      for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+        if (note.noteId == id) {
+          return true;
+        }
+      }
+      return false;
+    };
+    auto idInList = [](NoteId id, const NoteId* ids, size_t count) {
+      for (size_t i = 0; i < count; ++i) {
+        if (ids[i] == id) {
+          return true;
+        }
+      }
+      return false;
+    };
+    uint32_t deltaLogged = 0;
+    uint32_t dropLogged = 0;
+    constexpr uint32_t kMaxSrcDeltaLogs = 16;
+    constexpr uint32_t kMaxSrcDropLogs = 16;
+    for (size_t i = 0; i < beforeRetainCount && dropLogged < kMaxSrcDropLogs; ++i) {
+      const NoteId id = beforeRetainIds[i];
+      if (sourceViewHasId(id)) {
+        continue;
+      }
+      char dropLine[112];
+      snprintf(dropLine, sizeof(dropLine), "#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=identity_invalid",
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(id));
+      DebugSessionCapture::appendCaptureTextLine(dropLine);
+      ++dropLogged;
+    }
+    for (size_t i = 0; i < beforeCount && deltaLogged < kMaxSrcDeltaLogs; ++i) {
+      const NoteId id = beforeIds[i];
+      if (sourceViewHasId(id)) {
+        continue;
+      }
+      const char* reason = "missing_prepared_span";
+      if (idInList(id, beforeRetainIds, beforeRetainCount)) {
+        reason = "identity_invalid";
+      } else if (LoopContentResolution::preparedCheckpointHasNoteId(id)) {
+        reason = "copy_miss";
+      }
+      char deltaLine[112];
+      snprintf(deltaLine, sizeof(deltaLine), "#CAP,%lu,DIAG,lcr,srcdelta,id=%u,reason=%s",
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(id), reason);
+      DebugSessionCapture::appendCaptureTextLine(deltaLine);
+      ++deltaLogged;
+    }
+    char afterLine[112];
+    snprintf(afterLine, sizeof(afterLine),
+             "#CAP,%lu,DIAG,lcr,srcafter,why=%s,from=%s,before=%u,copy=%u,after=%u",
+             static_cast<unsigned long>(micros()), why, from, static_cast<unsigned>(beforeCount),
+             static_cast<unsigned>(beforeRetainCount),
+             static_cast<unsigned>(overdubSourceViewNotes_.size()));
+    DebugSessionCapture::appendCaptureTextLine(afterLine);
+  }
+#endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);

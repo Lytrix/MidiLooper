@@ -29,7 +29,8 @@ Authority: [`docs/Authority/README.md`](docs/Authority/README.md). OpenSpec: [`.
 1. Update [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md) and [`docs/Runtime/CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md)
 2. Update [`docs/DELIVERABLE_TRACKING.md`](docs/DELIVERABLE_TRACKING.md) when something ships
 3. Update OpenSpec `tasks.md` for the active change
-4. Run `pio test -e native` before push/merge (see Testing-Workflow rule)
+4. If overlap-resolve or ledger/occupy-catch-up/playback-order logic changed, update [`docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) and/or [`docs/Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](docs/Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md)
+5. Run `pio test -e native` before push/merge (see Testing-Workflow rule)
 
 ## Session closeout
 

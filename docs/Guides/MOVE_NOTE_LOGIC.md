@@ -4,6 +4,7 @@ Living guide for NOTE_EDIT move, length, pitch, overlap hide/shorten/restore, an
 Normative OpenSpec: [`openspec/specs/edit-session-action-geometry/spec.md`](../../openspec/specs/edit-session-action-geometry/spec.md).
 Authority contracts plan: [`docs/Plans/note_edit_resolver_authority_contracts_refinement.md`](../Plans/note_edit_resolver_authority_contracts_refinement.md).
 Decision: DEC-029 (`NoteEditCurrentState`), DEC-030 (sticky `Ended` participation).
+Overdub uses the same classifier / `resolveConstrainedGeometry` path: [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md).
 
 ---
 
