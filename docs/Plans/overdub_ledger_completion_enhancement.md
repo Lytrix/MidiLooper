@@ -53,7 +53,7 @@ On long loops, overdub note-off materializes consume participant rows from prepa
 ### Stage 2 — RC2 prepared-ready hold resolution (note-off) — **shipped**
 
 **Owner:** `Loop::ensureOverdubSourceNotesForHold`  
-**Reuse:** `LoopContentResolution::tryCopyPreparedPitchSpansForHold`  
+**Reuse:** `LoopContentResolution::tryCopyPreparedSpansToDisplayNotes` + hold-window pitch filtering  
 **Behavior:** Prepared-ready path logs `why=hold,from=span`; no `resolveWindow` on prepared hit.
 
 ### Stage 3 — Bounded miss fallback — **shipped**
