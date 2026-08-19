@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (Gate 5A shipped: equal-tick Off-before-On pairing; 5B no implementation)
+Last updated: 2026-08-19 (Gate 5A HITL 161349: extra covering a>n = 0; 5B no implementation)
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-19 (Gate 5A shipped: equal-tick Off-before-On pairing; 5B 
 
 **Invariant:** Resolver geometry is authoritative for `overdubSourceViewNotes_`. After rebuild, A (`6079`) still exists as DisplayNote `startTick=144` `endTick=167`. Rebuild must not restore A's pre-resolution `144–360`. Do not equate Length payload 167 with exclusive `[144,168)` or L2324 `ae=168`. Open ledger identities and source-view covering identities may differ.
 
-**Status:** **Investigation approved. Gate 5A shipped (native 1379/1379; `teensy41-capture-serial` RAM1 code **425836** / locals **4768**).** Gates 1–4 pinned. Coordinate conversion pinned. **Gate 4 (pre-5A):** on L2324 tick-sorted order, Length `targetNoteId=6073` removed Off@168 (`applyChangeLengthById` LIFO-paired Off@168 to B). **Gate 5A:** `findNoteOffForOnIndex` equal-tick Off-before-On (`midiEventChronologicalLess`); not a full tick sort. On-then-Off Length `6079` 167 reconstructs A `144–167` / B `168–264`. Length `6073` 551 leaves Off@168 and moves Off@264. **Gate 5B:** Length `6073` 551 effect proven (B reconstructs `168–360` and covers 312); provenance **not** proven — **no implementation**. Rebuild cannot manufacture Length-167; Point 3 requires sealed `Length(6079, 167)`. Catalogs: [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md), [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md). Settled: an open B is not a committed sounding/resolved span — it remains live capture and is carried across wrap; synthesized stop Off is a valid close; restore-without-Off is a guardrail. Same-tick wrap continuity is a **follow-up**, not this RC. Do not add a second Shorten pass. Do not patch occupy collect.
+**Status:** **Gate 5A shipped.** Native **1379/1379**. RAM1 code **425836** / locals **4768**. HITL [`161349`](../../captures/session_20260819_161349.log): extra covering **`a>n` = 0** (`n=1 a=2` **0**, `n=2 a=3` **0**, `s=144,e=360` **0**, `n=0 a=1` **0**, `led==n` **32/32**). Pin [`121141`](../../captures/session_20260819_121141.log) had `n=1 a=2` **2** (including pitch 24 `hs=312` `6079 144–360`) and `n=2 a=3` **1**. Remaining [`161349`](../../captures/session_20260819_161349.log) mismatches **32** are `n>a` only (`n=1 a=0` **15**, `n=2 a=1` **15**, `n=2 a=0` **2`). **Gate 5B** not implemented. Do not skip Length by `targetNoteId`. Do not reopen leftover identity or patch occupy collect.
 
 ### Occupy missing open identity (`n=1 a=2` extra covering span)
 

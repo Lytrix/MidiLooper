@@ -9,7 +9,7 @@ This catalog is every **note evaluation** that decides whether an identity is op
 
 CAP `n=` = open ledger identities (`collectOverdubNoteOnParticipantIds`). CAP `a=` = source-view covering identities (`collectOverdubSourceHoldParticipantIds`). They are allowed to differ: they answer different questions.
 
-Firmware for Gate 5B is **not approved**. **Gate 5A shipped** (equal-tick apply pairing). Gate 4 pinned (pre-5A Length `6073` moved Off@168). **Gate 5B** Length `6073` 551 effect: after pairing, B reconstructs `168–360` and covers 312; provenance not proven — no implementation. Do not change ledger owners to “fix” source-view geometry. At hold 312, intended `n=1 a=0` is A still open in the ledger; `a=0` does not mean the ledger is wrong.
+Firmware for Gate 5B is **not approved**. **Gate 5A shipped** (equal-tick apply pairing). HITL [`161349`](../../captures/session_20260819_161349.log): extra covering `a>n` **0**; remaining mismatches are `n>a` (more open ledger identities than covering spans) — do not treat that as a ledger-owner bug for this RC. Gate 4 pinned (pre-5A Length `6073` moved Off@168). **Gate 5B** Length `6073` 551 effect: after pairing, B reconstructs `168–360` and covers 312; provenance not proven — no implementation. Do not change ledger owners to “fix” source-view geometry. At hold 312, intended `n=1 a=0` is A still open in the ledger; `a=0` does not mean the ledger is wrong.
 
 **Update this catalog in the same change** if any of these moved: `ActiveNoteLedger::applyPlaybackEvent` / `noteOn`, `rebuildPlaybackOrder`, `CommittedPlaybackLedgerCatchUp`, `collectOverdubNoteOnParticipantIds`, wrap catch-up exclusion.
 
