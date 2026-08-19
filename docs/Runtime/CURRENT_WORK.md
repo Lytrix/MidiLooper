@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-19 (occupy catch-up per-phase Off then On vs open-NoteOn stack)
+Last updated: 2026-08-19 (catch-up stack HITL [`101319`](../../captures/session_20260819_101319.log) extra-open remains)
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-08-19 (occupy catch-up per-phase Off then On vs open-NoteOn s
 
 **Invariant:** `applyOpenClosedInterval` applies in-interval events in phase order, Off before On at each phase. An untagged Off can close a NoteOn that started in the same `(lastTick, occupy]` window.
 
-**HITL gate:** extra-open (`n>a`, `n=2 a=0`) down vs 095902. Nested `n=0 a=1` stays 0. Do not FAIL on parked `n=1 a=2` same-tick double On or exclusive-end `n=1 a=0`.
+**HITL [`101319`](../../captures/session_20260819_101319.log):** extra-open **not met** (`n>a` 35 vs 40 on [`095902`](../../captures/session_20260819_095902.log); `n=2 a=0` 15→1; `n=2 a=1` 6→25). One span-start `n=0 a=1` (pitch 23 `hs=384`). All 37 mismatches `cu=0`. Native fixture still holds. Do not widen catch-up; next is clock-path.
 
 **Does not reopen:** Off stamping; option B; clock equal-phase Off before On; `playMidiEvents` from occupy; folding capture into `mergedMidiEvents`; occupy catching up when `occupyPhase <= lastTick`; `rebuildPlaybackOrder`.
 
