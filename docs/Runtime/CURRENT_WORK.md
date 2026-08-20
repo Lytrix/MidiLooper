@@ -101,6 +101,27 @@ Last updated: 2026-08-20 (overdub lag runtime-target alignment)
 - Dominant outlier cycle attribution: `ODUB,stop,display=124.432 ms` with `seal=115.351 ms`, split primarily across `seal_publish_span_cache_restamp=62.323 ms` and `seal_fx_seal_pending_changes=44.809 ms`; publish owner is now directly measured.
 - Carryover checks in the same run: run-wide `DIAG,midi_gap` max **1.907 s** (1 window over 1 s, 1 over 500 ms); lateness remains non-zero (`late_on` max **53.490 ms**, 36 events; `late_off` max **48.415 ms**, 27 events; `late_clk` zero).
 
+**P2 re-measure after global post-overdub drain-window clamp ([`230507`](../../captures/session_20260820_230507.log)):**
+- Sample shape: **10** stop cycles, **10** published cycles, **10** handoff rows, **6** unique first post-stop windows.
+- **`ODUB,stop,display` (published):** **34.471-58.055 ms** (median **49.813 ms**).
+- **Published `seal`:** **24.092-47.049 ms** (median **39.534 ms**).
+- **First post-stop `DIAG,midi_gap` (unique windows):** **87.209-168.113 ms** (median **108.276 ms**).
+- First post-stop decomposition (same unique windows):
+  - `idle_maint`: **87.178-168.095 ms** (median **108.244 ms**)
+  - `load_frame`: **29.352-34.071 ms** (median **32.430 ms**)
+  - `persist_save`: **0.001 ms** (flat)
+- Debt classification in the same run:
+  - `ODUB,stop,debt_handoff`: **10/10 stop_created_debt**
+  - `DIAG,odub_debt visual`: **10/10 stop_created_debt**
+  - `DIAG,odub_debt save`: **9/10 pre_existing_debt**, **1/10 stop_created_debt**
+  - Clamp contract check: `idle_slice=1` and `idle_bars=1` in **10/10** rows
+- Delta vs pre-clamp reference [`225521`](../../captures/session_20260820_225521.log):
+  - First post-stop `midi_gap` median **160.499 -> 108.276 ms**; max **506.253 -> 168.113 ms**
+  - First post-stop `idle_maint` median **147.522 -> 108.244 ms**; max **498.002 -> 168.095 ms**
+- Remaining synchronous stop owners in this run:
+  - `seal_publish_span_cache_restamp`: **2.357-20.746 ms** (median **15.792 ms**)
+  - `seal_fx_seal_pending_changes`: **2.709-23.835 ms** (median **17.319 ms**)
+
 **Stage changes shipped:**  
 - `applyPendingHideAndShortenToNotes` now applies `Shorten`/`Hide` transforms by rebuilding the note vector once, avoiding repeated in-place erase scans for each pending change.  
 - `saveNoteEditPass` gained `deferDerivedInvalidate` for batch callsites.  
