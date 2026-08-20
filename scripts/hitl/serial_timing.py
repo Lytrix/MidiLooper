@@ -5,10 +5,8 @@ from __future__ import annotations
 from typing import Optional
 
 from hitl.capture_transitions import _phase_ts_from_marker_line
+from hitl.control_constants import MIDI_CLOCKS_PER_BAR, MIDI_CLOCKS_PER_BEAT
 from hitl.serial_transport import parse_latest_bpm
-
-MIDI_CLOCKS_PER_BAR = 96
-MIDI_CLOCKS_PER_BEAT = 24
 
 
 def phase_start_delay_clocks(*, delay_bars: int = 0, delay_beats: int = 0) -> int:

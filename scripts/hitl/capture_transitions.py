@@ -6,74 +6,30 @@ import re
 import time
 from typing import Optional
 
+from hitl.serial.protocol import (
+    count_track_state_entries as _count_track_state_entries,
+    count_track_transitions as _count_track_transitions,
+    parse_cap_micros as _parse_cap_micros,
+    parse_disp_track_state as _parse_disp_track_state,
+)
 from hitl.serial_collector import RunAbort, SerialCaptureCollector
 
 _HUMAN_LOG_TS_RE = re.compile(r"^\[(\d+\.\d+)\]")
 
 
-def _parse_cap_micros(line: str) -> Optional[int]:
-    if not line.startswith("#CAP,"):
-        return None
-    parts = line.split(",", 2)
-    if len(parts) < 2:
-        return None
-    try:
-        return int(parts[1])
-    except ValueError:
-        return None
-
-
-def _parse_disp_track_state(line: str) -> Optional[str]:
-    marker = ",DISP,"
-    if marker not in line or not line.startswith("#CAP,"):
-        return None
-    tail = line.split(marker, 1)[1]
-    parts = tail.split(",")
-    if len(parts) < 2:
-        return None
-    return parts[1].strip()
+def _cap_prefixed_line(line: str) -> str:
+    cap_index = line.find("#CAP,")
+    if cap_index >= 0:
+        return line[cap_index:]
+    return line
 
 
 def _count_capture_transitions(lines: list[str]) -> dict[tuple[str, str], int]:
-    counts: dict[tuple[str, str], int] = {}
-    for line in lines:
-        marker = ",ST,Track,"
-        if marker not in line:
-            continue
-        tail = line.split(marker, 1)[1]
-        parts = tail.split(",")
-        if len(parts) < 2:
-            continue
-        key = (parts[0].strip(), parts[1].strip())
-        counts[key] = counts.get(key, 0) + 1
-    return counts
+    return _count_track_transitions([_cap_prefixed_line(line) for line in lines])
 
 
 def _count_capture_state_entries(lines: list[str]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for line in lines:
-        marker = ",ST,Track,"
-        if marker not in line:
-            continue
-        tail = line.split(marker, 1)[1]
-        parts = tail.split(",")
-        if len(parts) < 2:
-            continue
-        to_state = parts[1].strip()
-        counts[to_state] = counts.get(to_state, 0) + 1
-    return counts
-
-
-def _parse_cap_ts_from_line(line: str) -> Optional[int]:
-    if not line.startswith("#CAP,"):
-        return None
-    parts = line.split(",", 2)
-    if len(parts) < 2:
-        return None
-    try:
-        return int(parts[1])
-    except ValueError:
-        return None
+    return _count_track_state_entries([_cap_prefixed_line(line) for line in lines])
 
 
 def _human_log_ts_micros(line: str) -> Optional[int]:
@@ -177,12 +133,12 @@ def _cap_ts_near_line(
 ) -> Optional[int]:
     end = min(len(lines), index + search_ahead)
     for i in range(index, end):
-        ts = _parse_cap_ts_from_line(lines[i])
+        ts = _parse_cap_micros(lines[i])
         if ts is not None:
             return ts
     start = max(0, index - search_back)
     for i in range(index - 1, start - 1, -1):
-        ts = _parse_cap_ts_from_line(lines[i])
+        ts = _parse_cap_micros(lines[i])
         if ts is not None:
             return ts
     return None

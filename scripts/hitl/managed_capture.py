@@ -11,10 +11,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-from hitl.config import HitlConfig
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
-_DEFAULT_CAPTURE_PORT = "/dev/cu.usbmodem154944801"
 
 
 def wait_for_current_session_pointer(
@@ -53,7 +52,7 @@ class ManagedCaptureSession:
     def __init__(
         self,
         *,
-        port: str = _DEFAULT_CAPTURE_PORT,
+        port: str = DEFAULT_CAPTURE_SERIAL_PORT,
         boot_wait_s: float = 0.0,
         out_dir: Path,
         python_executable: Optional[str] = None,

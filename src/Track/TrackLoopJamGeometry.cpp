@@ -9,9 +9,23 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
-#include "StorageManager.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/RecordStopLength.h"
+
+namespace {
+
+TRACK_COLD_MEM void persistActiveLoopGeometryChange(Track& track) {
+  requestActiveLoopSlotPersist(track);
+  track.invalidateCaches();
+}
+
+TRACK_COLD_MEM void resetActiveLoopPlaybackCursorForJam(Track& track) {
+  Loop& loop = track.getActiveLoop();
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = UINT32_MAX;
+}
+
+}  // namespace
 
 TRACK_COLD_MEM void Track::clear() {
     if (trackState == TRACK_EMPTY) {
@@ -45,11 +59,7 @@ void Track::setLoopLength(uint32_t ticks) {
   Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == ticks) return;
   loop.loopLengthTicks = ticks;
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
 }
 
 void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
@@ -59,11 +69,7 @@ void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   uint32_t oldLoopLength = loop.loopLengthTicks;
   logger.log(CAT_TRACK, LOG_INFO, "Loop length change: %lu -> %lu ticks", oldLoopLength, newLoopLength);
   loop.loopLengthTicks = newLoopLength;
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
   logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loop.loopLengthTicks);
 }
 
@@ -77,11 +83,7 @@ void Track::setLoopStartTick(uint32_t startTick) {
   }
   loop.loopStartTick = startTick;
   logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loop.loopStartTick);
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
 }
 
 void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
@@ -94,11 +96,7 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
   logger.log(CAT_TRACK, LOG_INFO, "Setting loop start=%lu, end=%lu, length=%lu", startTick, endTick, newLength);
   loop.loopStartTick = startTick;
   loop.loopLengthTicks = newLength;
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
 }
 
 void Track::setJam(uint32_t startTick, uint32_t length) {
@@ -106,8 +104,7 @@ void Track::setJam(uint32_t startTick, uint32_t length) {
   jamStartTick = startTick;
   jamLength = length;
   jamTick = 0;
-  getActiveLoop().nextEventIndex = 0;
-  getActiveLoop().lastTickInLoop = UINT32_MAX;
+  resetActiveLoopPlaybackCursorForJam(*this);
   interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam set: start=%lu, length=%lu", jamStartTick, jamLength);
 }
@@ -118,8 +115,7 @@ void Track::clearJam() {
   jamLength = 0;
   jamPlaybackActive = false;
   jamTick = 0;
-  getActiveLoop().nextEventIndex = 0;
-  getActiveLoop().lastTickInLoop = UINT32_MAX;
+  resetActiveLoopPlaybackCursorForJam(*this);
   interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam cleared");
 }
@@ -141,8 +137,7 @@ void Track::setJamTick(uint32_t tick) {
   uint32_t newTick = IntervalProjection::tickPhaseInLoop(tick, 0, jamLength);
   if (newTick != jamTick) {
     jamTick = newTick;
-    getActiveLoop().nextEventIndex = 0;
-    getActiveLoop().lastTickInLoop = UINT32_MAX;
+    resetActiveLoopPlaybackCursorForJam(*this);
   }
   interrupts();
 }
@@ -151,8 +146,7 @@ void Track::setJamPlayback(bool enabled) {
   noInterrupts();
   jamPlaybackActive = enabled;
   if (enabled) {
-    getActiveLoop().nextEventIndex = 0;
-    getActiveLoop().lastTickInLoop = UINT32_MAX;
+    resetActiveLoopPlaybackCursorForJam(*this);
   }
   interrupts();
 }

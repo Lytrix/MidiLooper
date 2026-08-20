@@ -108,8 +108,9 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   notifyCommittedContentChanged();
 }
 
-EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType) {
-  if (!canHeapAdmitEditPass(row)) {
+EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType,
+                                  bool deferDerivedInvalidate, bool skipHeapReserveCheck) {
+  if (!skipHeapReserveCheck && !canHeapAdmitEditPass(row)) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "saveNoteEditPass rejected: heap below reserve (need=%u free=%u)",
                static_cast<unsigned>(Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(row)),
@@ -121,9 +122,11 @@ EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassT
   row.editPassIndex = editPassIndex;
   row.state = EditPassState::Active;
   passes.editPasses.push_back(std::move(row));
-  ++playbackRevision;
-  editStateDirty_ = true;
-  notifyCommittedContentChanged();
+  if (!deferDerivedInvalidate) {
+    ++playbackRevision;
+    editStateDirty_ = true;
+    notifyCommittedContentChanged();
+  }
   return passes.editPasses.back().id;
 }
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from hitl.baseline_canonical_args import canonical_external_capture_legacy_args
-from hitl.config import HitlConfig
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 
 
 def _legacy_flag_value(
@@ -143,6 +143,6 @@ def config_from_runner_args(args: argparse.Namespace, legacy: list[str]) -> Hitl
         legacy_extra_args=tuple(merged_legacy),
         boot_settle_ms=int(_legacy_flag_value(legacy, "--boot-settle-ms", "10000") or "10000"),
         managed_capture=managed_capture,
-        capture_serial_port=getattr(args, "capture_port", "/dev/cu.usbmodem154944801"),
+        capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
     )

@@ -443,6 +443,14 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
 }
 
 LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
+  NoteUtils::DisplayNoteVec priorSpanCacheNotes;
+  const bool keepPriorSpanCache =
+      hasOverdubSession() && overdubSourceSpanCacheValid_ &&
+      overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks &&
+      !overdubSourceSpanCacheNotes_.empty();
+  if (keepPriorSpanCache) {
+    priorSpanCacheNotes.swap(overdubSourceSpanCacheNotes_);
+  }
   overdubSourceSpanCacheNotes_.clear();
   overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
   overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
@@ -453,11 +461,19 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
   const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
       playbackRevision, overdubSourceSpanCacheNotes_, nullptr, loopLengthTicks, false);
   if (!copiedPreparedSpans) {
-    SessionMidiEventVec fullResolvedEvents;
-    passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
-    overdubSourceSpanCacheNotes_ =
-        NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
-    appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
+    if (hasOverdubSession()) {
+      // Overdub start/wrap must stay deterministic. Reuse prior cache notes when prepared spans
+      // are unavailable instead of forcing a full materialize on this timing-critical path.
+      if (!priorSpanCacheNotes.empty()) {
+        overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
+      }
+    } else {
+      SessionMidiEventVec fullResolvedEvents;
+      passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
+      overdubSourceSpanCacheNotes_ =
+          NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
+      appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
+    }
   }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
