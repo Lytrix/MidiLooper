@@ -654,6 +654,13 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   if (!pendingNoteChanges_.empty()) {
     applyPendingNoteChangesToOverdubSourceView();
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t companionSealStartUs = micros();
+#endif
+  if (companionRowsToSeal > 0) {
+    sealedIds.reserve(companionRowsToSeal);
+    passes.editPasses.reserve(passes.editPasses.size() + companionRowsToSeal);
+  }
   const size_t companionBytesNeeded =
       Config::HEAP_RESERVE_BYTES + companionRowsToSeal * sizeof(EditPass);
   const bool batchHeapReserveAdmitted =
@@ -695,6 +702,18 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
 #endif
     }
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  if (companionRowsToSeal > 0) {
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,seal_companion_batch,rows=%u,sealed=%u,us=%lu",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned>(companionRowsToSeal),
+             static_cast<unsigned>(sealedIds.size()),
+             static_cast<unsigned long>(micros() - companionSealStartUs));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
   if (!sealedIds.empty()) {
     ++playbackRevision;
     editStateDirty_ = true;
