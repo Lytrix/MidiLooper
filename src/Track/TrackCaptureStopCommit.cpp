@@ -23,6 +23,24 @@ extern TrackManager trackManager;
 
 namespace {
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+TRACK_COLD_MEM void emitOverdubStopSubstage(const char* stage, uint32_t durationUs, size_t companionCount,
+                                            PassId passId, bool noteEditActive) {
+  char line[176];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,odub_stop,%s,us=%lu,comp=%u,pass=%u,ne=%u",
+           static_cast<unsigned long>(micros()),
+           stage != nullptr ? stage : "unknown",
+           static_cast<unsigned long>(durationUs),
+           static_cast<unsigned>(companionCount),
+           static_cast<unsigned>(passId),
+           noteEditActive ? 1U : 0U);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#else
+TRACK_COLD_MEM void emitOverdubStopSubstage(const char*, uint32_t, size_t, PassId, bool) {}
+#endif
+
 TRACK_COLD_MEM void logRecordStopSaveRequestAndPersist(Track& track, Loop& loop,
                                                        uint32_t stopPathStartUs,
                                                        uint8_t recordedSlotIndex,
@@ -176,6 +194,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
     }
     case CommitResult::Committed: {
       const PassId undoPassId = loop.lastCommittedPassId();
+      const bool noteEditActive = editManager.isNoteEditActive();
       if (overdubStop) {
         finalizeLoopAtStop(closeTick, false);
       } else {
@@ -188,22 +207,35 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
         loop.markDisplayCachesStale();
-      } else if (!editManager.isNoteEditActive()) {
+      } else if (!noteEditActive) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
+        const uint32_t companionSealStartUs = micros();
         companionIds = loop.sealPendingNoteChangesToEditPasses();
+        emitOverdubStopSubstage("companion_seal", micros() - companionSealStartUs,
+                                companionIds.size(), undoPassId, noteEditActive);
+        const uint32_t undoPushStartUs = micros();
         TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
                                             true);
+        emitOverdubStopSubstage("undo_push", micros() - undoPushStartUs, companionIds.size(),
+                                undoPassId, noteEditActive);
         if (overdubStop) {
+          const uint32_t markRangeStartUs = micros();
           loop.markAffectedDisplayCacheRanges(undoPassId, companionIds);
+          emitOverdubStopSubstage("mark_range", micros() - markRangeStartUs,
+                                  companionIds.size(), undoPassId, noteEditActive);
         } else {
           loop.markDisplayCachesStale();
         }
       } else if (overdubStop) {
+        const uint32_t markRangeStartUs = micros();
         loop.markAffectedDisplayCacheRanges(undoPassId, EditPassIdList{});
+        emitOverdubStopSubstage("mark_range", micros() - markRangeStartUs, 0, undoPassId,
+                                noteEditActive);
       } else {
         loop.markDisplayCachesStale();
       }
       if (!isRecordPass) {
+        const uint32_t publishPreparedStartUs = micros();
         for (const OverdubPass& pass : loop.passes.overdubPasses) {
           if (pass.id == undoPassId) {
             LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision,
@@ -212,9 +244,14 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
             break;
           }
         }
+        emitOverdubStopSubstage("publish_prepared", micros() - publishPreparedStartUs,
+                                companionIds.size(), undoPassId, noteEditActive);
       }
       if (overdubStop) {
+        const uint32_t persistRequestStartUs = micros();
         persistActiveLoopAfterOverdubStop();
+        emitOverdubStopSubstage("persist_request", micros() - persistRequestStartUs,
+                                companionIds.size(), undoPassId, noteEditActive);
       }
       break;
     }
