@@ -19,6 +19,12 @@ TRACK_COLD_MEM void persistActiveLoopGeometryChange(Track& track) {
   track.invalidateCaches();
 }
 
+TRACK_COLD_MEM void resetActiveLoopPlaybackCursorForJam(Track& track) {
+  Loop& loop = track.getActiveLoop();
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = UINT32_MAX;
+}
+
 }  // namespace
 
 TRACK_COLD_MEM void Track::clear() {
@@ -98,8 +104,7 @@ void Track::setJam(uint32_t startTick, uint32_t length) {
   jamStartTick = startTick;
   jamLength = length;
   jamTick = 0;
-  getActiveLoop().nextEventIndex = 0;
-  getActiveLoop().lastTickInLoop = UINT32_MAX;
+  resetActiveLoopPlaybackCursorForJam(*this);
   interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam set: start=%lu, length=%lu", jamStartTick, jamLength);
 }
@@ -110,8 +115,7 @@ void Track::clearJam() {
   jamLength = 0;
   jamPlaybackActive = false;
   jamTick = 0;
-  getActiveLoop().nextEventIndex = 0;
-  getActiveLoop().lastTickInLoop = UINT32_MAX;
+  resetActiveLoopPlaybackCursorForJam(*this);
   interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam cleared");
 }
@@ -133,8 +137,7 @@ void Track::setJamTick(uint32_t tick) {
   uint32_t newTick = IntervalProjection::tickPhaseInLoop(tick, 0, jamLength);
   if (newTick != jamTick) {
     jamTick = newTick;
-    getActiveLoop().nextEventIndex = 0;
-    getActiveLoop().lastTickInLoop = UINT32_MAX;
+    resetActiveLoopPlaybackCursorForJam(*this);
   }
   interrupts();
 }
@@ -143,8 +146,7 @@ void Track::setJamPlayback(bool enabled) {
   noInterrupts();
   jamPlaybackActive = enabled;
   if (enabled) {
-    getActiveLoop().nextEventIndex = 0;
-    getActiveLoop().lastTickInLoop = UINT32_MAX;
+    resetActiveLoopPlaybackCursorForJam(*this);
   }
   interrupts();
 }
