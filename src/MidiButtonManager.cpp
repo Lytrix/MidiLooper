@@ -6,7 +6,6 @@
 #include "DisplayManager.h"
 #include "MidiConfig.h"
 #include "LooperState.h"
-#include "TrackManager.h"
 #include "Utils/PressTiming.h"
 #include <functional>
 
@@ -39,7 +38,6 @@ void MidiButtonManager::update() {
     // Update the processor to handle pending button presses
     processor.update();
     updateLoopHoldLayering();
-    syncOverdubPreRollArming();
 }
 
 void MidiButtonManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
@@ -247,32 +245,4 @@ void MidiButtonManager::updateLoopHoldLayering() {
             actions.endSlotLayerHold(slot);
         }
     }
-}
-
-void MidiButtonManager::syncOverdubPreRollArming() {
-    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
-    const bool recordTapPending =
-        processor.hasPendingTapFor(MidiConfig::Transport::NOTE_RECORD,
-                                   MidiConfig::Channels::SELECT);
-
-    uint8_t targetTrackIndex = Config::INVALID_TRACK_INDEX;
-    if (recordTapPending && trackIndex < Config::NUM_TRACKS) {
-        Track& track = trackManager.getTrack(trackIndex);
-        const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIndex);
-        if (track.isPlaying() && track.hasCommittedPassesInSlot(slotIndex)) {
-            targetTrackIndex = trackIndex;
-        }
-    }
-
-    if (overdubPreRollTrackIndex_ == targetTrackIndex) {
-        return;
-    }
-
-    if (overdubPreRollTrackIndex_ < Config::NUM_TRACKS) {
-        trackManager.getTrack(overdubPreRollTrackIndex_).clearOverdubPreRoll();
-    }
-    if (targetTrackIndex < Config::NUM_TRACKS) {
-        trackManager.getTrack(targetTrackIndex).armOverdubPreRoll();
-    }
-    overdubPreRollTrackIndex_ = targetTrackIndex;
 }

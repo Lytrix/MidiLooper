@@ -46,16 +46,12 @@ TRACK_COLD_MEM void dropRedoBranch(GlobalUndoStack& stack) {
         return;
     }
     stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor), stack.entries.end());
-    if (!StorageManager::hasPendingUndoSnapshotHydrate()) {
-        trackManager.reclaimUnreferencedDisabledPasses();
-    }
+    trackManager.reclaimUnreferencedDisabledPasses();
 }
 
 TRACK_COLD_MEM void trimUndoStackForMemory(Track& track) {
     if (trimGlobalUndoStackForMemory(track.getGlobalUndoStack()) > 0) {
-        if (!StorageManager::hasPendingUndoSnapshotHydrate()) {
-            trackManager.reclaimUnreferencedDisabledPasses();
-        }
+        trackManager.reclaimUnreferencedDisabledPasses();
     }
 }
 
@@ -115,9 +111,7 @@ TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t sl
     if (stack.entries.empty()) {
         stack.nextEntryId = 1;
     }
-    if (!StorageManager::hasPendingUndoSnapshotHydrate()) {
-        trackManager.reclaimUnreferencedDisabledPasses();
-    }
+    trackManager.reclaimUnreferencedDisabledPasses();
     return removedTotal;
 }
 

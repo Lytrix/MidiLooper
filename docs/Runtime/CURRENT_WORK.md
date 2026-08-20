@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (capture telemetry unsampled-heap stages)
+Last updated: 2026-08-20 (cleanup telemetry/fader compile-gating stage)
 
 ---
 
@@ -17,38 +17,6 @@ Last updated: 2026-08-20 (capture telemetry unsampled-heap stages)
 **Invariant:** Plain `teensy41` builds do not execute telemetry-only timing work (`micros()`/heap snapshots/local telemetry structs) when the owning capture or perf feature is disabled; fader USB-host helper logic is compiled only with `MIDI_USB_FADER_PROBE_PASSTHROUGH`.
 
 **Status:** **Verified** `pio test -e native`, `pio run -e teensy41`, `pio run -e teensy41-capture-serial` with zero compiler warnings.
-
-### Overdub arm pre-roll note capture — in verification
-
-**Evidence:** [`135356`](../../captures/session_20260820_135356.log)
-
-**Owner:** `MidiButtonProcessor` pending-short tap window, `MidiButtonManager` pre-roll arming, `Track::startOverdubbing` pre-roll flush.
-
-**Invariant:** While the record button short-press is pending in `PLAYING`, held performance notes are buffered and flushed into capture on `startOverdubbing`, so the first note-on is not lost during tap-window delay.
-
-**Pre-removal delta (vs committed `HEAD`, classified from captures):**
-
-| Delta | Classification |
-|--------|----------------|
-| Reclaim removed from `startOverdubbingTrack` | Keeps system stable — [`144819`](../../captures/session_20260820_144819.log) |
-| Hydrate early-return in `reclaimUnreferencedDisabledPasses` | Keeps system stable — pre-overdub `DIAG,reclaim` in [`151859`](../../captures/session_20260820_151859.log) |
-| Reclaim removed from boot restore frame | Keeps system stable — same pre-start reclaim class |
-| `!captureActive` on deferred load frames | Keeps system stable — [`145026`](../../captures/session_20260820_145026.log) |
-| Event-driven Critical reclaim (no 250 ms timer) | Keeps system stable — timer rejected; [`152351`](../../captures/session_20260820_152351.log) no-op storm |
-| `releaseBackgroundPlaybackMergedMidiEventsMemory` at overdub start | **Current start-crash** — [`153347`](../../captures/session_20260820_153347.log) last line `Overdubbing started`; next call was `resetAll(false)` on other tracks. [`150427`](../../captures/session_20260820_150427.log) first-start crash after removing this call is the hydrate/reclaim class, not this call. |
-| Live `getInternalHeapFreeBytes()` in overdub-start `SC_ODUB_STAGE` | **Current start-crash** — [`160457`](../../captures/session_20260820_160457.log) last line `Overdubbing started` then `#CAPTURE_RECONNECT`; next manager call sampled heap for `manager_done`. Stage telemetry now uses `kUnsampledHeapBytes`. |
-
-**Status:** Native **1397/1397**. New RC from [`160457`](../../captures/session_20260820_160457.log): reconnect immediately after `Overdubbing started` (pre-roll flushed 1 note). Capture start/stop stage telemetry no longer calls `MemoryMonitor::getInternalHeapFreeBytes()`; `ODUB`/`RECS` heap fields emit `DebugSessionCapture::kUnsampledHeapBytes` (`UINT32_MAX`). Persist admission and pressure headroom checks still query heap at their owners. Follow-up from [`153347`](../../captures/session_20260820_153347.log): `TrackManager::startOverdubbingTrack` no longer calls `releaseBackgroundPlaybackMergedMidiEventsMemory` after `Track::startOverdubbing`. That call `resetAll(false)` on PLAYING background tracks immediately after `Overdubbing started`. Record start still releases background merged events; pressure still uses `tryReleasePlaybackMergedMidiEventsMemory`. Follow-up from [`154930`](../../captures/session_20260820_154930.log): reconnect moved to post-start (`manager_done` already logged) with sustained zero-heap stop windows. To restore pre-removal playback-runtime release without re-entering the start-crash window, `MidiButtonActions::handleToggleRecord` now calls `TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory` immediately after `Track::stopOverdubbing()`. No direct heap-query guard was added in `loop()`. Follow-up regression fix landed from [`141858`](../../captures/session_20260820_141858.log): pre-roll flush no longer runs per-note hold snapshot/catch-up work on overdub start; it uses current ledger occupancy only to avoid start-path multi-second stalls/reboot. New RC from [`142651`](../../captures/session_20260820_142651.log) fixed: overdub-open no longer falls back to full `passes.materializeToEventVector` rebuild when prepared spans are unavailable in-session; it keeps deterministic cached source spans, removing the measured `ODUB stage begin_capture` 2,482,421 us start stall. Follow-up RC from [`143518`](../../captures/session_20260820_143518.log) fixed: overdub-open fallback no longer allocates a fresh source-span cache from `visualCache.notes` during active session fallback, so this path remains non-allocating and avoids allocator abort/reboot risk (`#CAPTURE_RECONNECT` immediately after overdub start in the evidence run). Follow-up RC from [`144819`](../../captures/session_20260820_144819.log) fixed: `TrackManager::startOverdubbingTrack` no longer runs disabled-pass reclaim in the overdub-start path; reclaim of large undo history remains on existing idle/pressure paths, removing the immediate post-start crash window where capture reported `read failed: [Errno 6] Device not configured`. Follow-up RC from [`145026`](../../captures/session_20260820_145026.log) fixed: deferred slot-restore/load frames are now gated out while capture is active, so lazy-load work cannot execute in `RECORDING`/`OVERDUBBING` timing-critical windows. Follow-up RC from [`145554`](../../captures/session_20260820_145554.log) fixed: overdub-stop path now uses timing-critical capture flush budget (`flush=8`) instead of stop-time burst flush (`flush=256`) to avoid serial blocking and ring overflow in PLAYING windows during back-to-back overdub cycles. [`150427`](../../captures/session_20260820_150427.log) first-start crash after an earlier removal of background merged-runtime release is the hydrate/`DIAG,reclaim` class, not that release. [`153347`](../../captures/session_20260820_153347.log) re-proves the post-`Overdubbing started` crash with no reclaim lines; background `resetAll` is removed from overdub start again. New RC from [`150844`](../../captures/session_20260820_150844.log), [`151235`](../../captures/session_20260820_151235.log), [`151534`](../../captures/session_20260820_151534.log), and [`151859`](../../captures/session_20260820_151859.log): regression boundary confirms pre-overdub `DIAG,reclaim` bursts before first overdub start. `TrackManager::reclaimUnreferencedDisabledPasses` now exits while deferred undo snapshot hydrate is pending, centralizing the guard at the reclaim owner so every caller is blocked during hydrate. Follow-up RC from [`152351`](../../captures/session_20260820_152351.log): reboot path is closed (5/5 overdub start-stop cycles, no reconnect), but Critical-pressure disabled-pass reclaim was executing as a repeated no-op scan (`passes=0 chunks=0`, ~5.7 ms per call), with `RING,overflow` under sustained logging. Main-loop Critical reclaim is now event-driven (Critical entry or worsening chunk headroom), with per-call diagnostic visibility disabled in that path. HITL verification pending.
-
-### Overdub-stop display snapshot stall — in verification
-
-**Evidence:** [`141149`](../../captures/session_20260820_141149.log)
-
-**Owner:** `DisplayManager::emitDisplayCaptureSnapshot`, `DisplayWindowUtils`.
-
-**Invariant:** Overdub stop telemetry capture does not allocate/materialize a filtered `windowNotes` vector on the stop path; it computes `windowNoteCount` directly, reducing post-stop UI hitch without changing display authority.
-
-**Status:** Native **1397/1397**. HITL verification pending on `teensy41-capture-serial`.
 
 ### Overdub session index reboot undo — HITL PASS
 

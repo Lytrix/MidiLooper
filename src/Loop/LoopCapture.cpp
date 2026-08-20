@@ -15,6 +15,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "PlaybackMergedMidiEvents.h"
 
@@ -442,14 +443,6 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
 }
 
 LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
-  NoteUtils::DisplayNoteVec priorSpanCacheNotes;
-  const bool keepPriorSpanCache =
-      hasOverdubSession() && overdubSourceSpanCacheValid_ &&
-      overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks &&
-      !overdubSourceSpanCacheNotes_.empty();
-  if (keepPriorSpanCache) {
-    priorSpanCacheNotes.swap(overdubSourceSpanCacheNotes_);
-  }
   overdubSourceSpanCacheNotes_.clear();
   overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
   overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
@@ -460,20 +453,11 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
   const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
       playbackRevision, overdubSourceSpanCacheNotes_, nullptr, loopLengthTicks, false);
   if (!copiedPreparedSpans) {
-    if (hasOverdubSession()) {
-      // Overdub start/wrap must stay deterministic. Reuse prior cache notes when prepared spans
-      // are unavailable instead of forcing a full materialize or fresh allocation on this
-      // timing-critical path.
-      if (!priorSpanCacheNotes.empty()) {
-        overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
-      }
-    } else {
-      SessionMidiEventVec fullResolvedEvents;
-      passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
-      overdubSourceSpanCacheNotes_ =
-          NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
-      appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
-    }
+    SessionMidiEventVec fullResolvedEvents;
+    passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
+    overdubSourceSpanCacheNotes_ =
+        NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
+    appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
   }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
@@ -1000,35 +984,35 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   };
 
   if (capture.store.empty()) {
-    emitStage("seal", 0, DebugSessionCapture::kUnsampledHeapBytes,
-              DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty");
-    emitStage("publish", 0, DebugSessionCapture::kUnsampledHeapBytes,
-              DebugSessionCapture::kUnsampledHeapBytes, "not_run");
+    const uint32_t heap = MemoryMonitor::getInternalHeapFreeBytes();
+    emitStage("seal", 0, heap, heap, "skipped_empty");
+    emitStage("publish", 0, heap, heap, "not_run");
     discardCapture();
     return CommitResult::Skipped;
   }
 
+  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = traceMicros();
   const SealOutcome seal = sealCapture(sealedAtTick, reason);
   const uint32_t sealDurationUs = traceMicros() - sealStartUs;
-  emitStage("seal", sealDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
-            DebugSessionCapture::kUnsampledHeapBytes, sealOutcomeLabel(seal));
+  const uint32_t sealHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+  emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
   if (seal != SealOutcome::Ok) {
-    emitStage("publish", 0, DebugSessionCapture::kUnsampledHeapBytes,
-              DebugSessionCapture::kUnsampledHeapBytes, "not_run");
+    emitStage("publish", 0, sealHeapAfter, sealHeapAfter, "not_run");
     return CommitResult::SealFailed;
   }
 
+  const uint32_t publishHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t publishStartUs = traceMicros();
   if (!commitPendingCapturePass()) {
     const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-    emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
-              DebugSessionCapture::kUnsampledHeapBytes, "failed");
+    const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+    emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
     return CommitResult::SealFailed;
   }
   const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-  emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
-            DebugSessionCapture::kUnsampledHeapBytes, "ok");
+  const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+  emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
 
   notifyCommittedContentChanged();
   return CommitResult::Committed;

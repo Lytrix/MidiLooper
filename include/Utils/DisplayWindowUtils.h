@@ -35,10 +35,6 @@ NoteUtils::DisplayNoteVec filterDisplayNotesToWindow(const NoteUtils::DisplayNot
                                                      uint32_t windowStart, uint32_t windowLength,
                                                      uint32_t loopLength);
 
-/// Count notes intersecting a display window without materializing a filtered vector.
-size_t countDisplayNotesInWindow(const NoteUtils::DisplayNoteVec& notes, uint32_t windowStart,
-                                 uint32_t windowLength, uint32_t loopLength);
-
 /// Window inclusion filter for edit/motor/nav inventory — keeps storage ticks unchanged.
 NoteUtils::DisplayNoteVec filterDisplayNotesByWindowInclusion(
     const NoteUtils::DisplayNoteVec& notes, const TickInterval& viewport, uint32_t loopLength);
