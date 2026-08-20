@@ -48,6 +48,24 @@ TRACK_COLD_MEM void resetAndLogEmptyRecordStop(Loop& loop, uint32_t stopPathStar
                      saveRequestOutcome, &stopPathStats);
 }
 
+TRACK_COLD_MEM void logRecordStopPathEntry(Loop& loop, uint32_t& stopPathStartUs,
+                                           uint32_t& stopHeap) {
+  stopPathStartUs = micros();
+  stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
+  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
+}
+
+TRACK_COLD_MEM void logRecordStopStateAdvance(Loop& loop, uint32_t stopPathStartUs,
+                                              uint32_t stateAdvanceDurationUs,
+                                              uint32_t stateAdvanceHeapBefore,
+                                              uint32_t stateAdvanceHeapAfter,
+                                              bool stateAdvanceSucceeded,
+                                              const StopPathStorageStats& stopPathStats) {
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+                     stateAdvanceHeapBefore, stateAdvanceHeapAfter,
+                     stateAdvanceSucceeded ? "ok" : "failed", &stopPathStats);
+}
+
 }  // namespace
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferredFullValidate) {
@@ -208,9 +226,9 @@ void Track::stopRecording(uint32_t currentTick) {
   [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
   const uint8_t recordedSlotIndex = activeLoopIndex;
   Loop& loop = getActiveLoop();
-  const uint32_t stopPathStartUs = micros();
-  const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
+  uint32_t stopPathStartUs = 0;
+  uint32_t stopHeap = 0;
+  logRecordStopPathEntry(loop, stopPathStartUs, stopHeap);
 
   const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecording");
   pendingNotes.clear();
@@ -312,9 +330,8 @@ void Track::stopRecording(uint32_t currentTick) {
   displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
   const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
-                     stateAdvanceHeapBefore, stateAdvanceHeapAfter,
-                     trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
+  logRecordStopStateAdvance(loop, stopPathStartUs, stateAdvanceDurationUs, stateAdvanceHeapBefore,
+                            stateAdvanceHeapAfter, trackState == TRACK_PLAYING, stopPathStats);
   logRecordStopSaveRequestAndPersist(*this, loop, stopPathStartUs, recordedSlotIndex,
                                      stateAdvanceHeapAfter, sideEffectResult, stopPathStats);
 }
@@ -325,9 +342,9 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   alignLoopOriginOnNextStop = false;
   const uint8_t recordedSlotIndex = activeLoopIndex;
   Loop& loop = getActiveLoop();
-  const uint32_t stopPathStartUs = micros();
-  const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
+  uint32_t stopPathStartUs = 0;
+  uint32_t stopHeap = 0;
+  logRecordStopPathEntry(loop, stopPathStartUs, stopHeap);
 
   const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecordingToStopped");
   pendingNotes.clear();
@@ -385,9 +402,8 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   setState(TRACK_STOPPED);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
   const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
-                     stateAdvanceHeapBefore, stateAdvanceHeapAfter,
-                     trackState == TRACK_STOPPED ? "ok" : "failed", &stopPathStats);
+  logRecordStopStateAdvance(loop, stopPathStartUs, stateAdvanceDurationUs, stateAdvanceHeapBefore,
+                            stateAdvanceHeapAfter, trackState == TRACK_STOPPED, stopPathStats);
   logRecordStopSaveRequestAndPersist(*this, loop, stopPathStartUs, recordedSlotIndex,
                                      stateAdvanceHeapAfter, sideEffectResult, stopPathStats);
 }
