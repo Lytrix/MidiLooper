@@ -377,6 +377,14 @@ private:
   bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
   bool loopPrefixMeasureAfterUndo_ = false;
   bool loopPrefixMeasureAfterUndoNoted_ = false;
+  bool overdubStopDebtProbeArmed_ = false;
+  uint32_t overdubStopDebtProbeArmedUs_ = 0;
+  bool overdubStopVisualDirtyBefore_ = false;
+  bool overdubStopVisualDirtyAfter_ = false;
+  uint16_t overdubStopDirtyBarsBefore_ = 0;
+  uint16_t overdubStopDirtyBarsAfter_ = 0;
+  bool overdubStopSavePendingBefore_ = false;
+  bool overdubStopSavePendingAfter_ = false;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredRecordRevtsPending = false;
   bool deferredRecordRevtChunkScan = false;
@@ -414,6 +422,12 @@ private:
   void resetDeferredStoredMidiVerification();
   void processDeferredStoredMidiVerification(size_t maxEventsPerSlice = 64);
   void processDeferredContentResolutionDeviceGate();
+  uint16_t countVisualCacheDirtyBars(const Loop& loop) const;
+  void armOverdubStopDebtProbe(bool visualDirtyBeforeStop, uint16_t dirtyBarsBeforeStop,
+                               bool savePendingBeforeStop, const Loop& loop);
+  void emitOverdubStopDebtProbeIfArmed(const Loop& loop, bool idleVisualSliceRan,
+                                       uint8_t idleBarsPerSlice, uint16_t idleDirtyBefore,
+                                       uint16_t idleDirtyAfter);
 
   /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
   /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.
