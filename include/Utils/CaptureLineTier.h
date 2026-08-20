@@ -58,6 +58,7 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,notepair,", 14) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0 ||
          strncmp(tag, "DIAG,idle_maint,", 16) == 0 || strncmp(tag, "DIAG,load_frame,", 16) == 0 ||
          strncmp(tag, "DIAG,persist_save,", 18) == 0 || strncmp(tag, "DIAG,loop_rem,", 14) == 0 ||
+         strncmp(tag, "DIAG,odub_stop,", 15) == 0 ||
          strncmp(tag, "DIAG,stored_notes,", 18) == 0 ||
          strncmp(tag, "DIAG,lcr,", 9) == 0 ||
          strncmp(tag, "DIAG,lcr,skip,", 14) == 0 ||
