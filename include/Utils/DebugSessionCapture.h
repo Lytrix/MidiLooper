@@ -50,6 +50,9 @@
 
 namespace DebugSessionCapture {
 
+/** Heap field when capture telemetry skips live sampling (direct query hangs Teensy). */
+constexpr uint32_t kUnsampledHeapBytes = UINT32_MAX;
+
 struct PendingRevt {
   uint32_t tick;
   uint8_t ch;
@@ -296,6 +299,7 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
 
 namespace DebugSessionCapture {
+constexpr uint32_t kUnsampledHeapBytes = UINT32_MAX;
 inline bool appendDiagTraceRecord(const void*, uint16_t) { return false; }
 inline void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord&) {}
 inline bool captureBootGraceActive() { return false; }
