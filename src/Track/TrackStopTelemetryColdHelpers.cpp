@@ -20,6 +20,25 @@
 
 extern TrackManager trackManager;
 
+namespace {
+
+struct StopStageTelemetry {
+  StopPathStorageStats stats{};
+  uint32_t elapsedUs = 0;
+};
+
+StopStageTelemetry captureStopStageTelemetry(const Loop& loop, uint32_t stopStartUs,
+                                             const StopPathStorageStats* cachedStats,
+                                             bool includeCaptureBuffer) {
+  StopStageTelemetry telemetry{};
+  telemetry.stats =
+      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, includeCaptureBuffer);
+  telemetry.elapsedUs = micros() - stopStartUs;
+  return telemetry;
+}
+
+}  // namespace
+
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
                                                                     bool includeCaptureBuffer) {
   StopPathStorageStats stats{};
@@ -61,11 +80,10 @@ TRACK_INTERNAL_MEM void logRecordStopStage(const Loop& loop, uint32_t stopStartU
                                            uint32_t stageDurationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome,
                                            const StopPathStorageStats* cachedStats) {
-  const StopPathStorageStats stats =
-      cachedStats ? *cachedStats : collectStopPathStorageStats(loop);
-  const uint32_t elapsedUs = micros() - stopStartUs;
-  SC_REC_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
-                    stats.chunkRefCount, outcome);
+  const StopStageTelemetry telemetry =
+      captureStopStageTelemetry(loop, stopStartUs, cachedStats, true);
+  SC_REC_STOP_STAGE(stage, telemetry.elapsedUs, stageDurationUs, heapBefore, heapAfter,
+                    telemetry.stats.eventCount, telemetry.stats.chunkRefCount, outcome);
   // Record-stop publish DIAG emits from Loop::commitCapturePass (seal/publish stages live there).
 }
 
@@ -73,11 +91,10 @@ TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStart
                                            uint32_t stageDurationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome,
                                            const StopPathStorageStats* cachedStats) {
-  const StopPathStorageStats stats =
-      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, false);
-  const uint32_t elapsedUs = micros() - stopStartUs;
-  SC_ODUB_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
-                     stats.chunkRefCount, outcome);
+  const StopStageTelemetry telemetry =
+      captureStopStageTelemetry(loop, stopStartUs, cachedStats, false);
+  SC_ODUB_STOP_STAGE(stage, telemetry.elapsedUs, stageDurationUs, heapBefore, heapAfter,
+                     telemetry.stats.eventCount, telemetry.stats.chunkRefCount, outcome);
   if (stage != nullptr && std::strcmp(stage, "seal") == 0) {
     loop.emitOverlapHoldTotals();
   }
