@@ -28,6 +28,20 @@ Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 
 **Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`165956`](../../captures/session_20260820_165956.log) validates the reserve stage with zero reconnects and complete stop windows at `seal=52.0 ms -> display=61.3 ms`, `seal=38.4 ms -> display=49.9 ms`, and `seal=24.9 ms -> display=35.8 ms`; a remaining long-tail cycle still shows `flush=140.1 ms` / `display=147.2 ms` with `RING,overflow` in-window and 55 `overlap_hold` note-offs. `DIAG,seal_companion_batch` confirms companion-row insertion itself is bounded (`rows=12 us=1098`, `rows=11 us=170`).
 
+### Overdub-start begin-capture long-delay restoration — ready for HITL verify
+
+**Evidence:** [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log)
+
+**Owner:** `Loop::rebuildOverdubSourceSpanCache`, `Track::startOverdubbing` (`ODUB,stage,begin_capture`).
+
+**Invariant:** Overdub start stays deterministic while an overdub session is active: if prepared spans are unavailable, start/wrap does not force a full-loop materialize on the timing-critical path.
+
+**Root cause proved in captures:** `ODUB,stage,begin_capture` spiked to about **2.2 s** (`2194189 us`, `2248843 us`) in [`165956`](../../captures/session_20260820_165956.log), and `Live Overdub -> Overdubbing started` was delayed by **2143-2249 ms** on early starts. The same pattern appears in [`165534`](../../captures/session_20260820_165534.log) (~2102/2189 ms). This directly maps to `rebuildOverdubSourceSpanCache` falling back to `passes.materializeToEventVector` when prepared spans are unavailable.
+
+**Stage change shipped:** Restored overdub-session cache fallback in `rebuildOverdubSourceSpanCache`: when prepared spans are unavailable during an active overdub session, reuse prior cache notes instead of forcing full-loop materialization on start/wrap. Non-session behavior remains unchanged (full materialize is still allowed outside active overdub sessions).
+
+**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). Awaiting HITL re-measure of `ODUB,stage,begin_capture` and `Live Overdub -> Overdubbing started` latency.
+
 ### Overdub-start reboot — reverted to baseline, blocked on instrumentation
 
 **Evidence:** [`162146`](../../captures/session_20260820_162146.log), [`132145`](../../captures/session_20260820_132145.log), [`143518`](../../captures/session_20260820_143518.log)
