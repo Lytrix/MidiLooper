@@ -37,6 +37,17 @@ TRACK_COLD_MEM void logRecordStopSaveRequestAndPersist(Track& track, Loop& loop,
   }
 }
 
+TRACK_COLD_MEM void resetAndLogEmptyRecordStop(Loop& loop, uint32_t stopPathStartUs,
+                                               uint32_t heapValue,
+                                               const char* saveRequestOutcome,
+                                               const StopPathStorageStats& stopPathStats) {
+  resetActiveLoopAfterEmptyCapture(loop);
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, heapValue, heapValue,
+                     "skipped_empty", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, heapValue, heapValue,
+                     saveRequestOutcome, &stopPathStats);
+}
+
 }  // namespace
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferredFullValidate) {
@@ -280,12 +291,10 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Empty record-stop: reset capture slot geometry so hasDataInSlot stays false.
   if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
-    resetActiveLoopAfterEmptyCapture(loop);
-    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stopHeap, stopHeap,
-                       "skipped_empty", &stopPathStats);
-    logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stopHeap, stopHeap,
-                       sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                       &stopPathStats);
+    resetAndLogEmptyRecordStop(loop, stopPathStartUs, stopHeap,
+                               sideEffectResult == CommitResult::Committed ? "requested"
+                                                                           : "skipped",
+                               stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
   }
@@ -366,11 +375,8 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   if (!loop.hasData()) {
-    resetActiveLoopAfterEmptyCapture(loop);
-    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stateAdvanceHeapBefore,
-                       stateAdvanceHeapBefore, "skipped_empty", &stopPathStats);
-    logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapBefore,
-                       stateAdvanceHeapBefore, "skipped", &stopPathStats);
+    resetAndLogEmptyRecordStop(loop, stopPathStartUs, stateAdvanceHeapBefore, "skipped",
+                               stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
   }
