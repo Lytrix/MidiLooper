@@ -407,17 +407,6 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
         pendingNotes.erase(key);
         continue;
       }
-      // G2: when overdubSourceView owns overlap resolution, do not drop the Add.
-      // shouldRestoreCommittedOverlapOnOverdubStop never materializes; it stays
-      // false so a missing-view session synthesizes NoteOff instead.
-      if (!loop.hasOverdubSourceView() &&
-          shouldRestoreCommittedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
-        if (loop.removeOpenCaptureNoteOn(channel, note)) {
-          ++overlapCaptureRestored;
-        }
-        pendingNotes.erase(key);
-        continue;
-      }
     }
 
     if (appendCaptureNoteOffAtPhase(channel, note, phaseTick)) {
