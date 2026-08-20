@@ -127,25 +127,19 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingEditPitchGeometry(Track& t
 #endif
     editManager.ensureNoteEditFocusForLiveEdit(track, liveNote);
 #if defined(SESSION_CAPTURE)
-    logger.info("#CAP,%lu,GEOM_APPLY,focus,%lu,%u,0,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(micros() - focusStartUs),
-                static_cast<unsigned>(NoteEditKind::Pitch));
+    logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Pitch);
     const uint32_t undoStartUs = micros();
 #endif
     if (!editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true)) {
 #if defined(SESSION_CAPTURE)
-        logger.info("#CAP,%lu,GEOM_APPLY,undo,fail,%lu,%u,0", static_cast<unsigned long>(micros()),
-                    static_cast<unsigned long>(micros() - undoStartUs),
-                    static_cast<unsigned>(NoteEditKind::Pitch));
+        logGeomApplyUndo(false, micros() - undoStartUs, NoteEditKind::Pitch);
 #endif
         logger.log(CAT_MIDI, LOG_WARNING,
                    "Note pitch change aborted: session undo snapshot unavailable (heap reserve)");
         return false;
     }
 #if defined(SESSION_CAPTURE)
-    logger.info("#CAP,%lu,GEOM_APPLY,undo,ok,%lu,%u,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(micros() - undoStartUs),
-                static_cast<unsigned>(NoteEditKind::Pitch));
+    logGeomApplyUndo(true, micros() - undoStartUs, NoteEditKind::Pitch);
     const uint32_t resolveStartUs = micros();
 #endif
 
