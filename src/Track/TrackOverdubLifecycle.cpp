@@ -187,9 +187,6 @@ void Track::startOverdubbing(uint32_t currentTick) {
   SC_ODUB_STAGE("undo_session", micros() - undoStartUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
 #endif
-  logger.info("Overdub session opened: events=%d, undo_entries=%d",
-              static_cast<int>(loop.displayEventCountHint()),
-              static_cast<int>(TrackUndo::getUndoCount(*this)));
 #if defined(SESSION_CAPTURE)
   HOT_PATH_TELEMETRY_RECORD_OVERDUB_START(
       micros() - telemetryStartUs, static_cast<uint32_t>(loop.displayEventCountHint()),
@@ -198,9 +195,6 @@ void Track::startOverdubbing(uint32_t currentTick) {
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
 #endif
   logger.logTrackEvent("Overdubbing started", currentTick);
-#if defined(SESSION_CAPTURE)
-  logger.info("Overdub start stage: startOverdubbing_return");
-#endif
 }
 
 
