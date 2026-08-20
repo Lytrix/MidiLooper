@@ -122,6 +122,15 @@ TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t
   StorageManager::requestDeferredSaveState(looperState.getLooperState(), admissionHeap, true);
 }
 
+TRACK_INTERNAL_MEM void requestActiveLoopSlotPersist(Track& track) {
+  requestLoopSlotPersist(track, track.getActiveLoopIndex());
+}
+
+TRACK_INTERNAL_MEM void requestActiveLoopSlotPersistAndSaveState(Track& track,
+                                                                 uint32_t admissionHeap) {
+  requestLoopSlotPersistAndSaveState(track, track.getActiveLoopIndex(), admissionHeap);
+}
+
 TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
   loop.discardCapture();
   loop.resetPassTimeline();

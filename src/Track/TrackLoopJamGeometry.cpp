@@ -44,7 +44,7 @@ void Track::setLoopLength(uint32_t ticks) {
   Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == ticks) return;
   loop.loopLengthTicks = ticks;
-  requestLoopSlotPersist(*this, getActiveLoopIndex());
+  requestActiveLoopSlotPersist(*this);
   invalidateCaches();
 }
 
@@ -55,7 +55,7 @@ void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   uint32_t oldLoopLength = loop.loopLengthTicks;
   logger.log(CAT_TRACK, LOG_INFO, "Loop length change: %lu -> %lu ticks", oldLoopLength, newLoopLength);
   loop.loopLengthTicks = newLoopLength;
-  requestLoopSlotPersist(*this, getActiveLoopIndex());
+  requestActiveLoopSlotPersist(*this);
   invalidateCaches();
   logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loop.loopLengthTicks);
 }
@@ -70,7 +70,7 @@ void Track::setLoopStartTick(uint32_t startTick) {
   }
   loop.loopStartTick = startTick;
   logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loop.loopStartTick);
-  requestLoopSlotPersist(*this, getActiveLoopIndex());
+  requestActiveLoopSlotPersist(*this);
   invalidateCaches();
 }
 
@@ -84,7 +84,7 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
   logger.log(CAT_TRACK, LOG_INFO, "Setting loop start=%lu, end=%lu, length=%lu", startTick, endTick, newLength);
   loop.loopStartTick = startTick;
   loop.loopLengthTicks = newLength;
-  requestLoopSlotPersist(*this, getActiveLoopIndex());
+  requestActiveLoopSlotPersist(*this);
   invalidateCaches();
 }
 
