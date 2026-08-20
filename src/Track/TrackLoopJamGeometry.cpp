@@ -9,7 +9,6 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
-#include "StorageManager.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/RecordStopLength.h"
 
@@ -45,10 +44,7 @@ void Track::setLoopLength(uint32_t ticks) {
   Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == ticks) return;
   loop.loopLengthTicks = ticks;
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+  requestLoopSlotPersist(*this, getActiveLoopIndex());
   invalidateCaches();
 }
 
@@ -59,10 +55,7 @@ void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   uint32_t oldLoopLength = loop.loopLengthTicks;
   logger.log(CAT_TRACK, LOG_INFO, "Loop length change: %lu -> %lu ticks", oldLoopLength, newLoopLength);
   loop.loopLengthTicks = newLoopLength;
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+  requestLoopSlotPersist(*this, getActiveLoopIndex());
   invalidateCaches();
   logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loop.loopLengthTicks);
 }
@@ -77,10 +70,7 @@ void Track::setLoopStartTick(uint32_t startTick) {
   }
   loop.loopStartTick = startTick;
   logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loop.loopStartTick);
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+  requestLoopSlotPersist(*this, getActiveLoopIndex());
   invalidateCaches();
 }
 
@@ -94,10 +84,7 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
   logger.log(CAT_TRACK, LOG_INFO, "Setting loop start=%lu, end=%lu, length=%lu", startTick, endTick, newLength);
   loop.loopStartTick = startTick;
   loop.loopLengthTicks = newLength;
-  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-  const uint8_t persistSlotIndex = getActiveLoopIndex();
-  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-  StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+  requestLoopSlotPersist(*this, getActiveLoopIndex());
   invalidateCaches();
 }
 
