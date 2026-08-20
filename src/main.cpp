@@ -208,7 +208,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
       displayManager.update();
 #if defined(SESSION_CAPTURE)
-      RuntimeTimingTelemetry::recordLoadFrameChildRem(0, displayStartUs);
+      RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
 #endif
     }
   }
@@ -226,7 +226,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
     DeferredJobScheduler::runFrame(budgetUs);
 #if defined(SESSION_CAPTURE)
-    RuntimeTimingTelemetry::recordLoadFrameChildRem(1, loadJobStartUs);
+    RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(1, loadJobStartUs);
 #endif
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
@@ -239,7 +239,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
       prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
 #if defined(SESSION_CAPTURE)
-      RuntimeTimingTelemetry::recordLoadFrameChildRem(2, firstCommitStartUs);
+      RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(2, firstCommitStartUs);
 #endif
       displayManager.invalidateLiveDisplayCache();
     }
@@ -262,7 +262,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
       displayManager.update();
 #if defined(SESSION_CAPTURE)
-      RuntimeTimingTelemetry::recordLoadFrameChildRem(0, displayStartUs);
+      RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
 #endif
     }
   }
@@ -289,13 +289,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     displayManager.update();
     lastDisplayUpdate = now;
 #if defined(SESSION_CAPTURE)
-    RuntimeTimingTelemetry::recordLoadFrameChildRem(3, bootCommitStartUs);
+    RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(3, bootCommitStartUs);
 #endif
   }
 }
 
 void setup() {
-  HotPathTelemetry::reset();
+  HOT_PATH_TELEMETRY_RESET();
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);
@@ -395,7 +395,7 @@ void setup() {
     emitBootMilestone("heap", heapDetail);
   }
 
-  HotPathTelemetry::emitSummary("startup");
+  HOT_PATH_TELEMETRY_EMIT_SUMMARY("startup");
 
   // finishBootSetup() runs in loop() with USB after bootInteractiveReady() — keep
   // OSTINATIX title until the restore queue is empty (no piano roll during drain).
@@ -433,7 +433,7 @@ void loop() {
     }
   }
 
-  HotPathTelemetry::processDeferredSummary();
+  HOT_PATH_TELEMETRY_PROCESS_DEFERRED_SUMMARY();
 
   SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 8 : 64);
 
@@ -468,7 +468,7 @@ void loop() {
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
-  RuntimeTimingTelemetry::noteIdleMaint(idleMaintUs);
+  RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
   DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
 #endif
   if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
@@ -490,7 +490,7 @@ void loop() {
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
 #if defined(SESSION_CAPTURE)
   const uint32_t loadFrameUs = micros() - remainderStartUs;
-  RuntimeTimingTelemetry::noteLoadFrame(loadFrameUs);
+  RUNTIME_TIMING_NOTE_LOAD_FRAME(loadFrameUs);
   DebugSessionCapture::recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
 
@@ -521,7 +521,7 @@ void loop() {
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;
-  RuntimeTimingTelemetry::notePersistSave(persistSaveUs);
+  RUNTIME_TIMING_NOTE_PERSIST_SAVE(persistSaveUs);
   DebugSessionCapture::recordLoopRemainderSpan("persist_save", persistSaveUs);
 #endif
 
@@ -536,7 +536,7 @@ void loop() {
 
   // S0: observation-only timing telemetry emission (no scheduling decisions).
   // maybeEmit drains pending first-late / rebuild one-shots, then the 5 s window.
-  RuntimeTimingTelemetry::maybeEmit(micros());
+  RUNTIME_TIMING_MAYBE_EMIT(micros());
 
   // Log memory every 60 seconds. Reports O(1) fields only: the external-pool free/used walk
   // (sm_malloc_stats_pool) blocked the loop 593 ms in 141815 and lost external MIDI clock.

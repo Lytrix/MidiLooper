@@ -260,5 +260,5 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       }
     }
   }
-  RuntimeTimingTelemetry::noteTracksUpdate(micros() - tracksStartUs);
+  RUNTIME_TIMING_NOTE_TRACKS_UPDATE(micros() - tracksStartUs);
 }

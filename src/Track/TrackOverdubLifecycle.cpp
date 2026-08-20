@@ -60,7 +60,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "display", 0,
                                 MemoryMonitor::getInternalHeapFreeBytes(),
                                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-    HotPathTelemetry::requestDeferredSummary("overdub_stop");
+    HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("overdub_stop");
     armPlayingMidiDrainAfterOverdubStop();
   } else {
     TRACK_SC_OVERDUB_STOP_MEMORY(recordAddedNoteOnCount, loop);
@@ -74,7 +74,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
     displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
     logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
-    HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+    HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("overdub_stop_to_stopped");
   }
   return true;
 }
@@ -127,9 +127,9 @@ void Track::startOverdubbing(uint32_t currentTick) {
   logger.info("Overdub session opened: events=%d, undo_entries=%d",
               static_cast<int>(loop.displayEventCountHint()),
               static_cast<int>(TrackUndo::getUndoCount(*this)));
-  HotPathTelemetry::recordOverdubStart(micros() - telemetryStartUs,
-                                       static_cast<uint32_t>(loop.displayEventCountHint()),
-                                       static_cast<uint32_t>(TrackUndo::getUndoCount(*this)));
+  HOT_PATH_TELEMETRY_RECORD_OVERDUB_START(
+      micros() - telemetryStartUs, static_cast<uint32_t>(loop.displayEventCountHint()),
+      static_cast<uint32_t>(TrackUndo::getUndoCount(*this)));
   SC_ODUB_STAGE("complete", micros() - telemetryStartUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   logger.logTrackEvent("Overdubbing started", currentTick);
@@ -194,7 +194,7 @@ void Track::stopOverdubbing() {
   TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "display", 0,
                               MemoryMonitor::getInternalHeapFreeBytes(),
                               MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-  HotPathTelemetry::requestDeferredSummary("overdub_stop");
+  HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("overdub_stop");
   loop.closeOverdubSession();
   armPlayingMidiDrainAfterOverdubStop();
 }
@@ -278,6 +278,6 @@ void Track::stopOverdubbingToStopped() {
   displayManager.refreshViewportAfterOverdubStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
   logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
-  HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+  HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("overdub_stop_to_stopped");
   loop.closeOverdubSession();
 }

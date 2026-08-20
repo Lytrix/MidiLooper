@@ -261,7 +261,7 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
     pairs.push_back(CausingTargetPair{causingId, note.noteId});
     baseline[note.noteId] = NoteBaseline{note.note, note.velocity, note.startTick, note.endTick};
   }
-  RuntimeTimingTelemetry::addNotePair(micros() - pairStartUs);
+  RUNTIME_TIMING_ADD_NOTE_PAIR(micros() - pairStartUs);
 
   if (!pairs.empty()) {
     const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);

@@ -190,14 +190,20 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                 break;
             }
             PersistenceFailurePolicy::maybeEmitBackpressureTelemetry(captureActiveForScheduler);
+#if defined(SESSION_CAPTURE)
             const uint32_t ioStartUs = micros();
+#endif
             storageSession.midPassChunkPersist.sdIoActive = true;
             const bool midOk = stepMidPassChunkPersist();
-            const uint32_t sliceLatencyUs = micros() - ioStartUs;
             storageSession.midPassChunkPersist.sdIoActive = false;
+#if defined(SESSION_CAPTURE)
+            const uint32_t sliceLatencyUs = micros() - ioStartUs;
             PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+#endif
             if (!midOk) {
+#if defined(SESSION_CAPTURE)
                 SC_PERSIST("mid_pass", sliceLatencyUs, 0, 0, "failed");
+#endif
                 break;
             }
             break;
@@ -213,16 +219,22 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                 break;
             }
             PersistenceFailurePolicy::maybeEmitBackpressureTelemetry(captureActiveForScheduler);
+#if defined(SESSION_CAPTURE)
             const uint32_t ioStartUs = micros();
+#endif
             storageSession.persistenceWorkItem.sdIoActive = true;
             storageSession.currentWorkspaceSave.sdIoActive = true;
             const bool workOk = stepPersistenceWorkItem(state);
-            const uint32_t sliceLatencyUs = micros() - ioStartUs;
             storageSession.persistenceWorkItem.sdIoActive = false;
             storageSession.currentWorkspaceSave.sdIoActive = false;
+#if defined(SESSION_CAPTURE)
+            const uint32_t sliceLatencyUs = micros() - ioStartUs;
             PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+#endif
             if (!workOk) {
+#if defined(SESSION_CAPTURE)
                 SC_PERSIST("work", sliceLatencyUs, 0, 0, "failed");
+#endif
                 break;
             }
             break;

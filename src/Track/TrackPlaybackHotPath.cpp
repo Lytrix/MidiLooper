@@ -354,7 +354,7 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   if (playbackEmitMidiOutput_) {
     midiHandler.sendMidiEvent(evtCopy);
     if (evt.isNoteOn() || evt.isNoteOff()) {
-      RuntimeTimingTelemetry::recordNoteSendLateness(evt.isNoteOn(), micros(), evt.tick);
+      RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(evt.isNoteOn(), micros(), evt.tick);
     }
   }
   ignorePlaybackMidiInput = false;  // Reset playback state

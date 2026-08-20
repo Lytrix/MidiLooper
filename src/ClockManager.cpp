@@ -141,7 +141,7 @@ void ClockManager::updateInternalClock() {
   if (clockSource == CLOCK_EXTERNAL) return;
   currentTick++;
   const uint32_t nowUs = micros();
-  RuntimeTimingTelemetry::notePlaybackServiceEnter(nowUs, microsPerTick);
+  RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, microsPerTick);
   // Output MIDI clock when we are master (every 8 internal ticks = 24 PPQN)
   if (currentTick % Config::TICKS_PER_CLOCK == 0) {
     midiHandler.sendClock();
@@ -155,7 +155,7 @@ void ClockManager::onMidiClockPulse() {
   if (!sequencerRunning) return;
 
   const uint32_t clockDispatchStartUs = micros();
-  RuntimeTimingTelemetry::noteClockPulse();
+  RUNTIME_TIMING_NOTE_CLOCK_PULSE();
 
   requestTransitionTo(CLOCK_EXTERNAL);
   if (transitionPending &&
@@ -194,11 +194,11 @@ void ClockManager::onMidiClockPulse() {
     currentTick += Config::TICKS_PER_CLOCK;
     trackManager.advanceJamTicks(Config::TICKS_PER_CLOCK);
   }
-  RuntimeTimingTelemetry::notePlaybackServiceEnter(clockDispatchStartUs,
-                                                   microsPerTick * Config::TICKS_PER_CLOCK);
+  RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(clockDispatchStartUs,
+                                             microsPerTick * Config::TICKS_PER_CLOCK);
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = micros();
-  RuntimeTimingTelemetry::noteClockDispatch(lastMidiClockTime - clockDispatchStartUs);
+  RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(lastMidiClockTime - clockDispatchStartUs);
 }
 
 uint32_t ClockManager::setLastMidiClockTime(uint32_t lastMidiClockTime){
@@ -222,7 +222,7 @@ void ClockManager::checkClockSource() {
 CLOCK_COLD_MEM void ClockManager::onMidiStart() {
   sequencerRunning = true;
   pendingStart = false;
-  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
+  RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE();
   requestTransitionTo(CLOCK_EXTERNAL);
   // Slave immediately: while clockSource stays INTERNAL, updateInternalClock()
   // keeps advancing currentTick at 192 PPQN until checkClockSource() runs.
@@ -257,7 +257,7 @@ CLOCK_COLD_MEM void ClockManager::onMidiStart() {
 void ClockManager::onMidiStop() {
   sequencerRunning = false;
   firstPulseAfterStart = false;
-  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
+  RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE();
 }
 
 void ClockManager::handleMidiClock() {
@@ -308,7 +308,7 @@ CLOCK_COLD_MEM void ClockManager::toggleTransport() {
 
   if (sequencerRunning) {
     sequencerRunning = false;
-    RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
+    RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE();
     if (emitTransport) {
       if (clockSource == CLOCK_EXTERNAL) {
         actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);
@@ -319,7 +319,7 @@ CLOCK_COLD_MEM void ClockManager::toggleTransport() {
     logger.info("Transport stopped");
   } else {
     sequencerRunning = true;
-    RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
+    RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE();
     if (emitTransport) {
       if (clockSource == CLOCK_EXTERNAL) {
         actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);

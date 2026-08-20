@@ -152,7 +152,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   loop.playbackOrderDirty = true;
   const uint32_t playbackBuildUs = micros() - playbackBuildStartUs;
   DIAG_TIMING_RECORD(PlaybackBuild, playbackBuildUs);
-  RuntimeTimingTelemetry::recordPlaybackRebuild(
+  RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(
       playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
       runtime.mergedMidiEvents.windowLengthTicks, windowRevision);
   mergedMidiEventsBuildInProgress = false;
