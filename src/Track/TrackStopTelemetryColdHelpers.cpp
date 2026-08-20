@@ -20,6 +20,8 @@
 
 extern TrackManager trackManager;
 
+#if defined(SESSION_CAPTURE)
+
 namespace {
 
 struct StopStageTelemetry {
@@ -117,6 +119,39 @@ TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const
   MemoryMonitor::logStatusAtAddedNotes(overdubNoteOns, stats.eventCount, nullptr,
                                        stats.chunkRefCount, stats.chunkRefCount > 0);
 }
+
+#else
+
+TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop&,
+                                                                    bool) {
+  return {};
+}
+
+TRACK_INTERNAL_MEM const char* commitResultLabel(CommitResult) { return "disabled"; }
+
+TRACK_INTERNAL_MEM void logRecordStopStage(const Loop&, uint32_t, const char*,
+                                           uint32_t, uint32_t, uint32_t, const char*,
+                                           const StopPathStorageStats*) {}
+
+TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop&, uint32_t, const char*,
+                                            uint32_t, uint32_t, uint32_t, const char*,
+                                            const StopPathStorageStats*) {}
+
+TRACK_INTERNAL_MEM void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot,
+                                                       uint32_t currentTick) {
+  const Loop& loop = track.getLoop(displaySlot);
+  if (LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+          MemoryMonitor::getInternalHeapFreeBytes())) {
+    displayManager.emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
+    return;
+  }
+  SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loop.loopLengthTicks, 0, 0, 0,
+          0, loop.hasCommittedPasses() ? 1 : 0);
+}
+
+TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
+
+#endif
 
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {

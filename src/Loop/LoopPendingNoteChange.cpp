@@ -321,6 +321,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     return false;
   }
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   ++overlapHoldTotals_.noteOffs;
   const uint32_t idCount = static_cast<uint32_t>(overlapNoteIds.size());
   if (idCount > overlapHoldTotals_.maxIds) {
@@ -329,6 +330,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (overlapNoteIds.overflowed()) {
     ++overlapHoldTotals_.overflows;
   }
+#endif
 
   OverlapNoteIdSet effectiveOverlapNoteIds;
   for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
@@ -396,9 +398,11 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   };
   completeConsumeParticipantIds();
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   if (effectiveOverlapNoteIds.overflowed()) {
     ++overlapHoldTotals_.overflows;
   }
+#endif
 
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(effectiveOverlapNoteIds)) {
@@ -407,6 +411,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, effectiveOverlapNoteIds,
                                               selected, &notesExamined);
     const uint32_t lookupUs = micros() - lookupStartUs;
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     ++overlapHoldTotals_.lookedUp;
     const uint32_t examined = static_cast<uint32_t>(notesExamined);
     overlapHoldTotals_.sumExamined += examined;
@@ -417,8 +422,11 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     if (lookupUs > overlapHoldTotals_.maxLookupUs) {
       overlapHoldTotals_.maxLookupUs = lookupUs;
     }
+#endif
   } else {
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     ++overlapHoldTotals_.emptySets;
+#endif
   }
   const size_t idSelectedCount = selected.size();
 
@@ -445,9 +453,11 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       ++idsWithoutNotes;
     }
   }
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   overlapHoldTotals_.scanOnlyCandidates += scanOnly;
   overlapHoldTotals_.lateNoteCandidates += lateNotes;
   overlapHoldTotals_.idsWithoutNotes += idsWithoutNotes;
+#endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const bool jitEligible = (loopLen > overdubSourceWindowLengthTicks());
   // Attribution only when a path other than the occupy-id lookup mattered.
@@ -532,6 +542,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   addChange.endTick = endTick;
   pendingNoteChanges_.push_back(addChange);
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   overlapHoldTotals_.add = 0;
   overlapHoldTotals_.shorten = 0;
   overlapHoldTotals_.hide = 0;
@@ -544,14 +555,17 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       ++overlapHoldTotals_.hide;
     }
   }
+#endif
   return true;
 }
 
 LOOP_COLD_MEM __attribute__((noinline)) void Loop::emitOverlapHoldTotals() const {
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   const OverlapHoldTotals& totals = overlapHoldTotals_;
   SC_OVERLAP_HOLD(totals.noteOffs, totals.emptySets, totals.maxIds, totals.overflows,
                   totals.lookedUp, totals.maxExamined, totals.sumExamined, totals.maxLookupUs,
                   totals.sumLookupUs, totals.add, totals.shorten, totals.hide);
+#endif
 }
 
 LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
