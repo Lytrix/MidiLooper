@@ -125,7 +125,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   }
 
   mergedMidiEventsBuildInProgress = true;
+#if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
   const uint32_t playbackBuildStartUs = micros();
+#endif
   DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
@@ -150,7 +152,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   }
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
+#if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
   const uint32_t playbackBuildUs = micros() - playbackBuildStartUs;
+#endif
   DIAG_TIMING_RECORD(PlaybackBuild, playbackBuildUs);
   RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(
       playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,

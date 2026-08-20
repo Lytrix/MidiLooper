@@ -102,7 +102,9 @@ void TrackManager::advanceJamTicks(uint32_t delta) {
 }
 
 void TrackManager::updateAllTracks(uint32_t currentTick) {
+#if RUNTIME_TIMING_ENABLED
   const uint32_t tracksStartUs = micros();
+#endif
   handlePendingRecordStart(currentTick);
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
@@ -260,5 +262,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       }
     }
   }
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_TRACKS_UPDATE(micros() - tracksStartUs);
+#endif
 }

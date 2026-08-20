@@ -2,11 +2,21 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdubSessionIndex reboot undo HITL PASS 003854)
+Last updated: 2026-08-20 (cleanup telemetry/fader compile-gating stage)
 
 ---
 
 ## Now implementing
+
+### Cleanup branch telemetry/fader compile-gating — shipped stage
+
+**Branch:** `chore/cleanup-codebase-tidiness`
+
+**Owner:** `MidiHandler::mirrorUsbFaderProbePassthrough`, `RuntimeTimingTelemetry` callsites, overdub stop telemetry callsites.
+
+**Invariant:** Plain `teensy41` builds do not execute telemetry-only timing work (`micros()`/heap snapshots/local telemetry structs) when the owning capture or perf feature is disabled; fader USB-host helper logic is compiled only with `MIDI_USB_FADER_PROBE_PASSTHROUGH`.
+
+**Status:** **Verified** `pio test -e native`, `pio run -e teensy41`, `pio run -e teensy41-capture-serial` with zero compiler warnings.
 
 ### Overdub session index reboot undo — HITL PASS
 

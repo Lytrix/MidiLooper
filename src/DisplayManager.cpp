@@ -84,7 +84,9 @@ void DisplayManager::setup() {
 }
 
 void DisplayManager::update() {
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     const uint32_t telemetryStartUs = micros();
+#endif
     uint32_t now = millis();
     if (bootScreenVisible_) {
         if (!bootSetupComplete_ || now < bootScreenHoldUntilMs_) {

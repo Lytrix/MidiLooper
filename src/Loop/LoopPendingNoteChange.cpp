@@ -249,7 +249,9 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
   edited.causingSpans.push_back(causingSpan);
 
   std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs;
+#if RUNTIME_TIMING_ENABLED
   const uint32_t pairStartUs = micros();
+#endif
   for (const NoteUtils::DisplayNote& note : sourceNotes) {
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
       continue;
@@ -261,7 +263,9 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
     pairs.push_back(CausingTargetPair{causingId, note.noteId});
     baseline[note.noteId] = NoteBaseline{note.note, note.velocity, note.startTick, note.endTick};
   }
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_ADD_NOTE_PAIR(micros() - pairStartUs);
+#endif
 
   if (!pairs.empty()) {
     const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);
@@ -407,10 +411,14 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(effectiveOverlapNoteIds)) {
     size_t notesExamined = 0;
+#if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     const uint32_t lookupStartUs = micros();
+#endif
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, effectiveOverlapNoteIds,
                                               selected, &notesExamined);
+#if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     const uint32_t lookupUs = micros() - lookupStartUs;
+#endif
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     ++overlapHoldTotals_.lookedUp;
     const uint32_t examined = static_cast<uint32_t>(notesExamined);

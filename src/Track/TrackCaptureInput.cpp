@@ -390,7 +390,6 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 
   size_t pendingFinalized = 0;
   size_t captureNoteOffsAppended = 0;
-  size_t overlapCaptureRestored = 0;
   for (const auto& key : toClose) {
     const uint8_t note = key.first;
     const uint8_t channel = key.second;
@@ -445,10 +444,9 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
   }
 
 #if defined(SESSION_CAPTURE)
-  logger.info("Stop finalize pending: finalized=%u capture_offs=%u overlap_restore=%u phase=%u",
+  logger.info("Stop finalize pending: finalized=%u capture_offs=%u phase=%u",
               static_cast<unsigned>(pendingFinalized),
               static_cast<unsigned>(captureNoteOffsAppended),
-              static_cast<unsigned>(overlapCaptureRestored),
               phaseTick);
 #endif
 
@@ -530,9 +528,13 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       newEvt.tick = tickRelative;
     }
 
+#if RUNTIME_TIMING_ENABLED
     const uint32_t appendStartUs = micros();
+#endif
     const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
+#if RUNTIME_TIMING_ENABLED
     RUNTIME_TIMING_ADD_NOTE_APPEND(micros() - appendStartUs);
+#endif
     if (!appendResult.accepted) {
       logger.log(CAT_TRACK, LOG_WARNING,
                  "Capture append failed (%s) ch=%u note=%u",
@@ -564,7 +566,9 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
             prior.data.noteData.note != data1) {
           continue;
         }
+#if RUNTIME_TIMING_ENABLED
         const uint32_t noteChangeStartUs = micros();
+#endif
         const auto pendingIt = pendingNotes.find({data1, channel});
         static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
         const OverlapNoteIdSet& overlapNoteIds = (pendingIt != pendingNotes.end())
@@ -573,7 +577,9 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         (void)loop.accumulatePendingNoteChangesForIncomingNote(
             channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId,
             overlapNoteIds);
+#if RUNTIME_TIMING_ENABLED
         RUNTIME_TIMING_ADD_NOTE_CHANGE(micros() - noteChangeStartUs);
+#endif
         break;
       }
     }
