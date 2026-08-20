@@ -681,7 +681,8 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::Displa
   applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_);
 }
 
-EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
+LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
+    bool updateOverdubSourceView) {
   EditPassIdList sealedIds;
   size_t companionRowsToSeal = 0;
   for (const PendingNoteChange& change : pendingNoteChanges_) {
@@ -690,7 +691,7 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
       ++companionRowsToSeal;
     }
   }
-  if (!pendingNoteChanges_.empty()) {
+  if (updateOverdubSourceView && !pendingNoteChanges_.empty()) {
     applyPendingNoteChangesToOverdubSourceView();
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
@@ -767,7 +768,7 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   }
   // Keep cache reuse across overdub sessions only when companion sealing succeeded
   // for every pending Shorten/Hide row (otherwise force a rebuild next entry).
-  if (hasOverdubSession() && companionRowsToSeal > 0 &&
+  if (updateOverdubSourceView && hasOverdubSession() && companionRowsToSeal > 0 &&
       sealedIds.size() == companionRowsToSeal &&
       overdubSourceSpanCacheValid_ &&
       overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks) {

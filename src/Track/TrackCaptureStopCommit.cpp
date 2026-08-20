@@ -188,7 +188,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #if defined(SESSION_CAPTURE)
         const uint32_t sealPendingStartUs = micros();
 #endif
-        companionIds = loop.sealPendingNoteChangesToEditPasses();
+        companionIds = loop.sealPendingNoteChangesToEditPasses(!overdubStop);
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_seal_pending_changes",
                                           micros() - sealPendingStartUs, "ok");

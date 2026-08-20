@@ -317,6 +317,7 @@ LOOP_COLD_MEM void emitOverdubPublishTraceStage(const OverdubPublishTraceCtx& ct
 }
 
 constexpr size_t kMaxEventsForSpanCacheRestamp = 2048;
+constexpr uint32_t kWrapPairWindowTicks = 768;
 
 LOOP_COLD_MEM bool hasLaterWrappedHeadTailPairByScan(const SessionMidiEventVec& events,
                                                       const MidiEvent& noteOffEvent,
@@ -339,6 +340,44 @@ LOOP_COLD_MEM bool hasLaterWrappedHeadTailPairByScan(const SessionMidiEventVec& 
 
 LOOP_COLD_MEM bool capturePassContainsWrappedHeadTailPairs(const SessionMidiEventVec& events,
                                                             uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0 || events.empty()) {
+    return false;
+  }
+  const uint32_t wrapWindowTicks =
+      kWrapPairWindowTicks > loopLengthTicks ? loopLengthTicks : kWrapPairWindowTicks;
+  const uint32_t tailStart =
+      loopLengthTicks > wrapWindowTicks ? loopLengthTicks - wrapWindowTicks : 0;
+  if (tailStart > 0) {
+    std::vector<uint16_t> tailNoteOnKeys;
+    tailNoteOnKeys.reserve(events.size());
+    for (const MidiEvent& evt : events) {
+      if (!evt.isNoteOn() || evt.tick < tailStart || evt.tick >= loopLengthTicks) {
+        continue;
+      }
+      const uint16_t key =
+          static_cast<uint16_t>((static_cast<uint16_t>(evt.channel) << 8u) |
+                                static_cast<uint16_t>(evt.data.noteData.note));
+      tailNoteOnKeys.push_back(key);
+    }
+    if (tailNoteOnKeys.empty()) {
+      return false;
+    }
+    std::sort(tailNoteOnKeys.begin(), tailNoteOnKeys.end());
+    tailNoteOnKeys.erase(std::unique(tailNoteOnKeys.begin(), tailNoteOnKeys.end()),
+                         tailNoteOnKeys.end());
+    for (const MidiEvent& evt : events) {
+      if (!evt.isNoteOff() || evt.tick >= wrapWindowTicks) {
+        continue;
+      }
+      const uint16_t key =
+          static_cast<uint16_t>((static_cast<uint16_t>(evt.channel) << 8u) |
+                                static_cast<uint16_t>(evt.data.noteData.note));
+      if (std::binary_search(tailNoteOnKeys.begin(), tailNoteOnKeys.end(), key)) {
+        return true;
+      }
+    }
+    return false;
+  }
   for (const MidiEvent& evt : events) {
     if (!evt.isNoteOff()) {
       continue;
@@ -1424,15 +1463,19 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
           std::vector<NoteId> spanCacheNoteIds;
           collectSortedSpanCacheNoteIds(overdubSourceSpanCacheNotes_, spanCacheNoteIds);
           std::vector<NoteId> missingNoteIds;
+          missingNoteIds.reserve(committedPassEvents.size());
           for (const MidiEvent& evt : committedPassEvents) {
             if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
               continue;
             }
             if (!std::binary_search(spanCacheNoteIds.begin(), spanCacheNoteIds.end(), evt.noteId)) {
-              (void)insertSortedUniqueNoteId(missingNoteIds, evt.noteId);
+              missingNoteIds.push_back(evt.noteId);
             }
           }
           if (!missingNoteIds.empty()) {
+            std::sort(missingNoteIds.begin(), missingNoteIds.end());
+            missingNoteIds.erase(std::unique(missingNoteIds.begin(), missingNoteIds.end()),
+                                 missingNoteIds.end());
             NoteUtils::DisplayNoteVec committedPassNotes = NoteUtils::reconstructDisplayNotes(
                 committedPassEvents, loopLengthTicks, false, false, true);
             for (const NoteUtils::DisplayNote& candidate : committedPassNotes) {

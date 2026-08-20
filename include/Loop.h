@@ -282,7 +282,8 @@ struct Loop {
                                                    uint32_t startTick, uint32_t endTick,
                                                    NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
-  EditPassIdList sealPendingNoteChangesToEditPasses();
+  EditPassIdList sealPendingNoteChangesToEditPasses(
+      bool updateOverdubSourceView = true);
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
   /// uses `rebuildOverdubSourceView` instead. Does not clear pending.
   void applyPendingNoteChangesToOverdubSourceView();
