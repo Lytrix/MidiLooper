@@ -284,4 +284,29 @@ MIDI dispatch → button actions → stop/start; USB-host callbacks; loop-edit `
 
 ## Current execution
 
-Immediate firmware, if any, remains the work named in [`docs/Runtime/CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) (overdub-stop PLAYING dump observation / R1B design). This roadmap does **not** move interval reservation or R1A/R1B firmware into “now implementing.”
+Immediate firmware, if any, remains the work named in [`docs/Runtime/CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md), including the active overdub-lag baseline-reset stages.
+
+Current linkage from active overdub-lag work to this roadmap:
+
+- `P1` stop display envelope trim: synchronous owner attribution before contract work; no interval reservation start.
+- `P2` post-stop debt causality proof: Stage R evidence classification (`pre-existing`, `stop-created`, `stop-amplified`, `newly scheduled after stop`).
+- `P3` scheduler policy gate: if stop-triggered unnecessary invalidation/rebuild is found, fix that owner cause before any slice-cap tuning.
+- `P4` background arbitration: candidate scheduling-policy refinement only after causality closure and Owner-Boundary conditions are met.
+
+Target-aligned runtime baseline used by this linkage (same sample + values as [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md), evidence [`210319`](../../captures/session_20260820_210319.log)):
+
+- Published stop cycles with complete first post-stop window: **6**
+- `ODUB,stop,display` (published + complete): **56.451-71.803 ms** (median **65.288 ms**)
+- First post-stop `DIAG,midi_gap` (published + complete): **78.634-145.373 ms** (median **107.569 ms**)
+- First post-stop decomposition (published + complete):
+  - `idle_maint`: **78.619-145.357 ms** (median **101.576 ms**)
+  - `load_frame`: **27.553-42.889 ms** (median **33.548 ms**)
+  - `persist_save`: **13.295-122.704 ms** (median **47.168 ms**)
+- `seal` duration (same 6 complete published cycles): **45.461-61.129 ms** (median **56.006 ms**)
+- Dominant synchronous owners (`seal_fx_*` maxima): `seal_fx_seal_pending_changes` **41.310 ms**, `seal_fx_push_overdub_undo` **13.243 ms**, `seal_fx_mark_display_ranges` **2.828 ms**
+- Additional published but incomplete cycle (tracked separately): `display=39.965 ms`, `seal=29.498 ms`
+- `seal=skipped` cycles: `display` around **11 ms** with first post-stop `DIAG,midi_gap` **672.708-711.300 ms** (deferred debt can dominate independently of stop display)
+- Carryover scheduler target check in the same run: run-wide `DIAG,midi_gap` max **2.855 s** (3 windows over 1 s)
+- Carryover lateness gate check in the same run: `late_on` non-zero in 5 windows (23 events, max lateness **42.458 ms**), `late_off` non-zero in 4 windows (13 events, max lateness **29.551 ms**), `late_clk` zero events
+
+This roadmap does **not** move interval reservation or R1A/R1B firmware into “now implementing.”

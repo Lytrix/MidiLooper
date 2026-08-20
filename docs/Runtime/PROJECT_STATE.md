@@ -187,3 +187,4 @@ Full log: [DECISION_LOG.md](../DECISION_LOG.md).
 - `ButtonManager` / GPIO dormant (DEC-005)
 - M8 edit + pool-budget archived to `openspec/specs/`
 - **Runtime scheduling:** contract [`runtime_scheduling_admission_model_architecture.md`](../Plans/runtime_scheduling_admission_model_architecture.md); roadmap [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md). Interval reservation is **not** authorized. Persist `admit*` and `DeferredJobScheduler` (DEC-027) remain separate.
+- **Active linkage:** [`CURRENT_WORK.md`](CURRENT_WORK.md) overdub-lag stages `P1`–`P4` feed the roadmap as pre-contract owner-boundary work (causality + arbitration ordering), not as interval-reservation implementation.

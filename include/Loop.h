@@ -67,6 +67,8 @@ struct Loop {
   Capture capture;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
+  bool captureHasLastAppendTick_ = false;
+  uint32_t captureLastAppendTick_ = 0;
   uint16_t captureDisplayRevision = 0;
   uint32_t captureDedupEventsDropped_ = 0;
 
@@ -349,7 +351,7 @@ struct Loop {
                           CommitReason reason = CommitReason::RecordStop);
   /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
   LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
-  bool commitPendingCapturePass();
+  bool commitPendingCapturePass(CommitReason reason = CommitReason::RecordStop);
   void discardPendingCapturePass();
 
   bool reclaimDisabledCapturePass(PassId id);
