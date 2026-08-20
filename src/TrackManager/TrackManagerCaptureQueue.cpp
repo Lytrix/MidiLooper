@@ -214,10 +214,19 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   slotMuted[trackIndex][slot] = false;
   const uint32_t startUs = micros();
   track.startOverdubbing(clockManager.getCurrentTick());
-  releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex);
-  reclaimUnreferencedDisabledPasses();
+#if defined(SESSION_CAPTURE)
+  logger.info("Overdub start stage: post_started");
+#endif
+  // Overdub start is timing-critical. Do not resetAll other tracks' playback runtimes here:
+  // session_20260820_153347 truncated immediately after "Overdubbing started", which is the
+  // next call in this function. Record start still releases background merged events;
+  // Low/Critical pressure uses tryReleasePlaybackMergedMidiEventsMemory.
+  // Disabled-pass reclaim also stays off this path (session_20260820_144819).
   SC_ODUB_STAGE("manager_done", micros() - startUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+#if defined(SESSION_CAPTURE)
+  logger.info("Overdub start stage: manager_done");
+#endif
 }
 
 void TrackManager::handlePendingRecordStart(uint32_t currentTick) {

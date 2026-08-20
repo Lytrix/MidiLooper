@@ -71,6 +71,9 @@ bool Track::transitionState(TrackState newState) {
   if (oldState == TRACK_ARMED && newState != TRACK_RECORDING) {
     armedPreRollNotes.clear();
   }
+  if (newState != TRACK_PLAYING && newState != TRACK_OVERDUBBING) {
+    clearOverdubPreRoll();
+  }
 
   logger.logStateTransition("Track", TrackStateMachine::toString(oldState),
                             TrackStateMachine::toString(newState));

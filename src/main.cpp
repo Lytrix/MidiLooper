@@ -215,7 +215,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 
   // Finish focus LoadLoopJob (especially Committing) even when tap/revision hold would
   // otherwise skip the deferred frame — 000205 starved apply after parse_leave.
-  if (allowDeferredSlotRestore || focusSlotRestoreWork) {
+  // Capture-active windows are timing-critical; defer slot-restore frames until capture exits.
+  if (!captureActive && (allowDeferredSlotRestore || focusSlotRestoreWork)) {
     const uint32_t budgetUs =
         allowDeferredSlotRestore
             ? LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
@@ -247,7 +248,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
         !SlotLoadSession::isActive()) {
       StorageManager::processDeferredUndoSnapshots();
       StorageManager::processEditAutosave(looperState.getLooperState());
-      trackManager.reclaimUnreferencedDisabledPasses();
+      // Disabled-pass reclaim remains on memory-pressure paths. Running it in this
+      // boot/restore frame path can reclaim pass chunks shortly before overdub
+      // start and destabilize subsequent capture transitions.
     }
   }
 
@@ -508,11 +511,26 @@ void loop() {
   if (pressure >= MemoryPressureLevel::Low) {
     trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
   }
+  static uint16_t lastCriticalDisabledPassReclaimFreeChunks = UINT16_MAX;
   if (pressure >= MemoryPressureLevel::Critical) {
     // Policy: Critical reclaims disabled-pass chunks (memory_pressure_reclaim_refinement §Policy).
     // Idle-only reclaim at line ~114 misses chunk pressure during RECORDING/PLAYING/OVERDUBBING
     // (session_20260811_021117: append failures with heap headroom, pool at CHUNK_RESERVE).
-    trackManager.reclaimUnreferencedDisabledPasses(nullptr, true);
+    // Avoid fixed-time cadence. Reclaim is event-driven while Critical:
+    // run on Critical entry and when chunk headroom drops further.
+    const uint16_t freeChunks = LoopEventStore::freeChunkCount();
+    const bool enteringCritical =
+        (lastCriticalDisabledPassReclaimFreeChunks == UINT16_MAX);
+    const bool chunkHeadroomDropped =
+        !enteringCritical && freeChunks < lastCriticalDisabledPassReclaimFreeChunks;
+    if (enteringCritical || chunkHeadroomDropped) {
+      trackManager.reclaimUnreferencedDisabledPasses(nullptr, false);
+      lastCriticalDisabledPassReclaimFreeChunks = LoopEventStore::freeChunkCount();
+    } else {
+      lastCriticalDisabledPassReclaimFreeChunks = freeChunks;
+    }
+  } else {
+    lastCriticalDisabledPassReclaimFreeChunks = UINT16_MAX;
   }
 
 #if defined(SESSION_CAPTURE)

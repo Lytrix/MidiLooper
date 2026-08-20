@@ -47,6 +47,7 @@ private:
     MidiButtonProcessor processor;
     MidiButtonActions actions;
     bool loopButtonHeld[Config::MAX_LOOPS_PER_TRACK] = {false};
+    uint8_t overdubPreRollTrackIndex_ = Config::INVALID_TRACK_INDEX;
     
     // Button press callback - called by processor when a button press is detected
     void onButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType);
@@ -55,6 +56,7 @@ private:
     bool isValidChannel(uint8_t channel) const;
     bool isValidNote(uint8_t note) const;
     void updateLoopHoldLayering();
+    void syncOverdubPreRollArming();
 };
 
 extern MidiButtonManager midiButtonManager;

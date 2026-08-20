@@ -50,7 +50,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t flushStartUs = micros();
 #endif
-    SC_REC_FLUSH_PENDING_REVTS(256);
+    SC_REC_FLUSH_PENDING_REVTS(8);
 #if defined(SESSION_CAPTURE)
     TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs,
                                 flushHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -88,6 +88,20 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
   }
   return true;
 }
+
+void Track::armOverdubPreRoll() {
+  if (!isPlaying()) {
+    clearOverdubPreRoll();
+    return;
+  }
+  overdubPreRollArmed_ = true;
+}
+
+void Track::clearOverdubPreRoll() {
+  overdubPreRollArmed_ = false;
+  overdubPreRollNotes.clear();
+}
+
 void Track::startOverdubbing(uint32_t currentTick) {
   Loop& loopRef = getActiveLoop();
   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
@@ -121,6 +135,8 @@ void Track::startOverdubbing(uint32_t currentTick) {
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
 #endif
   recordAddedNoteOnCount = 0;
+  auto preRoll = std::move(overdubPreRollNotes);
+  overdubPreRollArmed_ = false;
   Loop& loop = getActiveLoop();
   uint32_t playheadPhase = 0;
   if (loop.loopLengthTicks > 0) {
@@ -132,6 +148,27 @@ void Track::startOverdubbing(uint32_t currentTick) {
 #endif
   loop.openOverdubSession(playheadPhase);
   loop.beginCapture(CapturePhase::Overdub, playheadPhase);
+#if defined(SESSION_CAPTURE)
+  if (!preRoll.empty()) {
+    logger.info("Overdub pre-roll armed notes: %u", static_cast<unsigned>(preRoll.size()));
+  }
+#endif
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  for (const auto& entry : preRoll) {
+    const PendingNote& preRollPending = entry.second;
+    PendingNote pending{preRollPending.note, preRollPending.channel, currentTick,
+                        preRollPending.velocity};
+    // Start path must stay deterministic: avoid per-note hold snapshot/catch-up work here.
+    // Use current ledger occupancy only; regular overdub note-ons continue through the
+    // full snapshot path once overdubbing is active.
+    if (runtime != nullptr) {
+      loop.collectOverdubNoteOnParticipantIds(pending.note, midiChannel, runtime->ledger,
+                                              pending.overlapNoteIds);
+    }
+    pendingNotes[entry.first] = pending;
+    recordMidiEvents(midi::NoteOn, preRollPending.channel, preRollPending.note,
+                     preRollPending.velocity, currentTick);
+  }
 #if defined(SESSION_CAPTURE)
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -161,6 +198,9 @@ void Track::startOverdubbing(uint32_t currentTick) {
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
 #endif
   logger.logTrackEvent("Overdubbing started", currentTick);
+#if defined(SESSION_CAPTURE)
+  logger.info("Overdub start stage: startOverdubbing_return");
+#endif
 }
 
 
@@ -219,7 +259,7 @@ void Track::stopOverdubbing() {
   const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t flushStartUs = micros();
 #endif
-  SC_REC_FLUSH_PENDING_REVTS(256);
+  SC_REC_FLUSH_PENDING_REVTS(8);
 #if defined(SESSION_CAPTURE)
   TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
                               MemoryMonitor::getInternalHeapFreeBytes(), "ok");

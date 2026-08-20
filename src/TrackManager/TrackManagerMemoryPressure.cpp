@@ -7,6 +7,7 @@
 #include "EditManager.h"
 #include "LoopEventStore.h"
 #include "PassReclaim.h"
+#include "StorageManager.h"
 #include "Utils/MemoryPressureLevel.h"
 #include "Utils/MemoryPressurePolicy.h"
 #include "Utils/MemoryMonitor.h"
@@ -71,6 +72,9 @@ PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure
 
 void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut,
                                                      bool diagnosticVisibility) {
+  if (StorageManager::hasPendingUndoSnapshotHydrate()) {
+    return;
+  }
   const uint32_t startUs = micros();
   const uint16_t usedBefore = LoopEventStore::usedChunkCount();
   const uint16_t freeBefore = LoopEventStore::freeChunkCount();
