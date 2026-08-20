@@ -175,6 +175,25 @@ DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, uint32_t 
                                   loopLength);
 }
 
+size_t countDisplayNotesInWindow(const DisplayNoteVec& notes, uint32_t windowStart,
+                                 uint32_t windowLength, uint32_t loopLength) {
+  if (loopLength == 0 || windowLength == 0 || notes.empty()) {
+    return 0;
+  }
+  const TickInterval viewport = makeViewportInterval(windowStart, windowLength);
+  size_t count = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    // Match window filter inclusion semantics while avoiding vector allocations/copies.
+    NoteUtils::DisplayNote paintNote = note;
+    clampNonWrapDisplayNoteBarTicks(paintNote.startTick, paintNote.endTick, loopLength);
+    if (noteIntersectsWindow(displayNoteSpanInLoop(paintNote, loopLength), viewport,
+                             loopLength)) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 DisplayNoteVec filterDisplayNotesByWindowInclusion(const DisplayNoteVec& notes,
                                                    const TickInterval& viewport,
                                                    uint32_t loopLength) {

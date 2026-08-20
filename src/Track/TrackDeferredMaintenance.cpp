@@ -604,7 +604,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   }
 
   const bool deferredDerivedViewMaintenance =
-      (isPlaying() || isStoppedRecording() || isOverdubbing()) && !isRecording();
+      (isPlaying() || isStoppedRecording()) && !isRecording() && !isOverdubbing();
   if (deferredDerivedViewMaintenance) {
     Loop& loop = getActiveLoop();
     if (loop.hasCommittedPasses() && loop.visualCacheDirty) {

@@ -268,6 +268,10 @@ bool MidiButtonProcessor::hasPendingTapAction() const {
     return false;
 }
 
+bool MidiButtonProcessor::hasPendingTapFor(uint8_t note, uint8_t channel) const {
+    return getButtonState(channel, note).tapState != TapState::Idle;
+}
+
 size_t MidiButtonProcessor::getButtonIndex(uint8_t channel, uint8_t note) const {
     // Convert 1-based MIDI channel to 0-based indexing
     uint8_t channelIndex = channel - 1;

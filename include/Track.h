@@ -111,6 +111,11 @@ public:
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
+  /// Arm short-lived pre-roll note capture while overdub short-press is pending.
+  void armOverdubPreRoll();
+  /// Clear pre-roll note capture when overdub short-press is canceled or consumed.
+  void clearOverdubPreRoll();
+  bool overdubPreRollArmed() const { return overdubPreRollArmed_; }
   /// Arm gated PLAYING MIDI polls after overdub→PLAYING. Not all PLAYING.
   void armPlayingMidiDrainAfterOverdubStop();
   bool playingMidiDrainAfterOverdubStopActive() const;
@@ -435,6 +440,9 @@ private:
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
   // Notes received while ARMED before external MIDI Start (downbeat pre-roll)
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> armedPreRollNotes;
+  // Notes received while overdub short-press is pending (PLAYING pre-roll capture).
+  std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> overdubPreRollNotes;
+  bool overdubPreRollArmed_ = false;
   
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
