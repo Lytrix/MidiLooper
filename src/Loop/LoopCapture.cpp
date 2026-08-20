@@ -15,7 +15,6 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
-#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "PlaybackMergedMidiEvents.h"
 
@@ -1001,35 +1000,35 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   };
 
   if (capture.store.empty()) {
-    const uint32_t heap = MemoryMonitor::getInternalHeapFreeBytes();
-    emitStage("seal", 0, heap, heap, "skipped_empty");
-    emitStage("publish", 0, heap, heap, "not_run");
+    emitStage("seal", 0, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty");
+    emitStage("publish", 0, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "not_run");
     discardCapture();
     return CommitResult::Skipped;
   }
 
-  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = traceMicros();
   const SealOutcome seal = sealCapture(sealedAtTick, reason);
   const uint32_t sealDurationUs = traceMicros() - sealStartUs;
-  const uint32_t sealHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
+  emitStage("seal", sealDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
+            DebugSessionCapture::kUnsampledHeapBytes, sealOutcomeLabel(seal));
   if (seal != SealOutcome::Ok) {
-    emitStage("publish", 0, sealHeapAfter, sealHeapAfter, "not_run");
+    emitStage("publish", 0, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "not_run");
     return CommitResult::SealFailed;
   }
 
-  const uint32_t publishHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t publishStartUs = traceMicros();
   if (!commitPendingCapturePass()) {
     const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-    const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-    emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
+    emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "failed");
     return CommitResult::SealFailed;
   }
   const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-  const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
+  emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
+            DebugSessionCapture::kUnsampledHeapBytes, "ok");
 
   notifyCommittedContentChanged();
   return CommitResult::Committed;
