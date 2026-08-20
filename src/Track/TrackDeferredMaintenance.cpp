@@ -712,9 +712,13 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   if (deferredDerivedViewMaintenance) {
     Loop& loop = activeLoop;
     if (loop.hasCommittedPasses() && loop.visualCacheDirty) {
+      const bool postOverdubDrainWindow = playingMidiDrainAfterOverdubStopActive();
       uint8_t barsPerSlice = 4;
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
+      }
+      if (postOverdubDrainWindow && barsPerSlice > 1) {
+        barsPerSlice = 1;
       }
       idleVisualBarsPerSlice = barsPerSlice;
       idleVisualDirtyBefore = countVisualCacheDirtyBars(loop);
@@ -749,7 +753,11 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
             sawCleanBar = true;
           }
           if (sawCleanBar && sawDirtyBar) {
-            maxBarDistanceFromPriority = UINT32_MAX;
+            // Post-overdub drain window: keep neighborhood-bounded slices to avoid
+            // one-turn long-loop dirty-bar walks that starve MIDI input.
+            if (!postOverdubDrainWindow) {
+              maxBarDistanceFromPriority = UINT32_MAX;
+            }
             break;
           }
         }
