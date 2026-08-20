@@ -88,12 +88,12 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
                               DisplayWindowUtils::kMaxDetailedWindowBars);
         const uint32_t windowStart = detailedWindowStartTick_[displaySlot];
         const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-        const size_t windowNoteCount = DisplayWindowUtils::countDisplayNotesInWindow(
+        const DisplayNoteVec windowNotes = DisplayWindowUtils::filterDisplayNotesToWindow(
             frameNotes, windowStart, windowLength, loopLen);
         SC_DISP_WINDOW(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
                        bufferEventsExpr, loop.visualCache.notes.size(), frameNotes.size(),
                        bufferEventsExpr, loop.hasCommittedPasses() ? 1 : 0, windowStart, windowBars,
-                       windowNoteCount);
+                       windowNotes.size());
         return;
     }
 

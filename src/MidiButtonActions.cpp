@@ -580,7 +580,6 @@ void MidiButtonActions::handleToggleRecord() {
     if (track.isOverdubbing()) {
         logger.info("MIDI Button A: Stop Overdub");
         track.stopOverdubbing();
-        trackManager.releaseBackgroundPlaybackMergedMidiEventsMemory(idx);
         return;
     }
 

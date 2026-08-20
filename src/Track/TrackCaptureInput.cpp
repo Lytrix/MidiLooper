@@ -594,11 +594,6 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
     return;
   }
 
-  if (trackState == TRACK_PLAYING && overdubPreRollArmed_) {
-    overdubPreRollNotes[{note, channel}] = PendingNote{note, channel, tick, velocity};
-    return;
-  }
-
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     // Store pending note for later duration fix
     PendingNote pending{note, channel, tick, velocity};
@@ -614,11 +609,6 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
 
   if (trackState == TRACK_ARMED) {
     armedPreRollNotes.erase({note, channel});
-    return;
-  }
-
-  if (trackState == TRACK_PLAYING && overdubPreRollArmed_) {
-    overdubPreRollNotes.erase({note, channel});
     return;
   }
 
