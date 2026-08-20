@@ -712,9 +712,12 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   Loop& activeLoop = getActiveLoop();
   if (deferredDerivedViewMaintenance) {
     Loop& loop = activeLoop;
-    if (loop.hasCommittedPasses() && loop.visualCacheDirty) {
-      const bool postOverdubDrainWindow =
-          postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
+    const bool postOverdubDrainWindow =
+        postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
+    const bool overdubDrainOwnerTrack = playingMidiDrainAfterOverdubStopActive();
+    const bool allowVisualMaintenanceSlice =
+        !postOverdubDrainWindow || overdubDrainOwnerTrack;
+    if (allowVisualMaintenanceSlice && loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
