@@ -275,6 +275,14 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
   }
   return rawLength;
 }
+
+uint32_t Track::prepareRecordStopAndClearPendingNotes(uint32_t currentTick,
+                                                      const char* guardLabel) {
+  const uint32_t rawLength = prepareRecordStop(currentTick, guardLabel);
+  pendingNotes.clear();
+  return rawLength;
+}
+
 void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
@@ -285,8 +293,8 @@ void Track::stopRecording(uint32_t currentTick) {
   uint32_t stopHeap = 0;
   logRecordStopPathEntry(loop, stopPathStartUs, stopHeap);
 
-  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecording");
-  pendingNotes.clear();
+  const uint32_t rawLength =
+      prepareRecordStopAndClearPendingNotes(currentTick, "stopRecording");
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
   // (the second pass and synthetic note-offs) are active for this record-stop.
@@ -370,8 +378,8 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   uint32_t stopHeap = 0;
   logRecordStopPathEntry(loop, stopPathStartUs, stopHeap);
 
-  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecordingToStopped");
-  pendingNotes.clear();
+  const uint32_t rawLength =
+      prepareRecordStopAndClearPendingNotes(currentTick, "stopRecordingToStopped");
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
   const RecordStopFinalizeContext finalizeContext = finalizeRecordStopCommitAndLog(
