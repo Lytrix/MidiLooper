@@ -60,8 +60,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
           TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), kInvalidPassId, {},
                                               false);
         }
-        requestLoopSlotPersistAndSaveState(*this, getActiveLoopIndex(),
-                                           MemoryMonitor::getInternalHeapFreeBytes());
+        requestActiveLoopSlotPersistAndSaveState(*this, MemoryMonitor::getInternalHeapFreeBytes());
       } else {
         scheduleDeferredValidateOnly();
       }
@@ -107,8 +106,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
         }
       }
       if (overdubStop) {
-        requestLoopSlotPersistAndSaveState(*this, getActiveLoopIndex(),
-                                           MemoryMonitor::getInternalHeapFreeBytes());
+        requestActiveLoopSlotPersistAndSaveState(*this, MemoryMonitor::getInternalHeapFreeBytes());
       }
       break;
     }

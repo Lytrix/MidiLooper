@@ -52,6 +52,11 @@ TRACK_INTERNAL_MEM void requestLoopSlotPersist(Track& track, uint8_t slotIndex);
 TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t slotIndex,
                                                            uint32_t admissionHeap);
 
+TRACK_INTERNAL_MEM void requestActiveLoopSlotPersist(Track& track);
+
+TRACK_INTERNAL_MEM void requestActiveLoopSlotPersistAndSaveState(Track& track,
+                                                                 uint32_t admissionHeap);
+
 TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop);
 
 struct MergedPlaybackStreamCtx {
