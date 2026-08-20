@@ -31,6 +31,24 @@ uint32_t totalVisualBarsForLoop(uint32_t loopLengthTicks) {
   return (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
 }
 
+bool containsEditPassId(const EditPassIdList& ids, EditPassId id) {
+  for (EditPassId candidate : ids) {
+    if (candidate == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool containsNoteId(const std::vector<NoteId>& ids, NoteId id) {
+  for (NoteId candidate : ids) {
+    if (candidate == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Coverage of the cached notes over the loop, for RC-E attribution. Bounds only, so no
 // per-bar allocation on the commit path.
 #if defined(SESSION_CAPTURE)
@@ -512,15 +530,6 @@ LOOP_COLD_MEM const CommittedChunkIdList* chunksForPassId(const LoopPasses& pass
   return nullptr;
 }
 
-LOOP_COLD_MEM const EditPass* editPassById(const EditPassVec& editPasses, EditPassId id) {
-  for (const EditPass& editPass : editPasses) {
-    if (editPass.id == id) {
-      return &editPass;
-    }
-  }
-  return nullptr;
-}
-
 }  // namespace
 
 LOOP_COLD_MEM void Loop::markAffectedDisplayCacheRanges(PassId committedPassId,
@@ -579,18 +588,24 @@ LOOP_COLD_MEM void Loop::markAffectedDisplayCacheRanges(PassId committedPassId,
     }
   }
 
-  for (EditPassId companionId : companionIds) {
-    const EditPass* row = editPassById(passes.editPasses, companionId);
-    if (row == nullptr) {
+  std::vector<NoteId> companionTargetNoteIds;
+  companionTargetNoteIds.reserve(companionIds.size());
+  for (const EditPass& row : passes.editPasses) {
+    if (!containsEditPassId(companionIds, row.id)) {
       continue;
     }
-    markTickSpanDirty(visualCache, row->startTick, row->endTick, loopLengthTicks);
+    markTickSpanDirty(visualCache, row.startTick, row.endTick, loopLengthTicks);
+    if (row.targetNoteId != kInvalidNoteId &&
+        !containsNoteId(companionTargetNoteIds, row.targetNoteId)) {
+      companionTargetNoteIds.push_back(row.targetNoteId);
+    }
+  }
+
+  if (!companionTargetNoteIds.empty()) {
     for (const NoteUtils::DisplayNote& note : visualCache.notes) {
-      if (note.noteId != row->targetNoteId) {
-        continue;
+      if (containsNoteId(companionTargetNoteIds, note.noteId)) {
+        markTickSpanDirty(visualCache, note.startTick, note.endTick, loopLengthTicks);
       }
-      markTickSpanDirty(visualCache, note.startTick, note.endTick, loopLengthTicks);
-      break;
     }
   }
 
