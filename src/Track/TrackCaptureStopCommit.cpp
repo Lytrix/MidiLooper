@@ -91,6 +91,36 @@ TRACK_COLD_MEM RecordStopFinalizeContext finalizeRecordStopCommitAndLog(
   return {sideEffectResult, stopPathStats};
 }
 
+TRACK_COLD_MEM uint32_t applyRecordStopTruncationRewind(uint32_t currentTick, uint32_t rawLength,
+                                                        uint32_t finalLength,
+                                                        bool logRewindDetails) {
+  uint32_t playbackTick = currentTick;
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
+  if (rewindTicks > 0) {
+    playbackTick = currentTick - rewindTicks;
+    clockManager.assignCurrentTickSilently(playbackTick);
+    if (logRewindDetails) {
+      logger.log(
+          CAT_TRACK, LOG_INFO,
+          "Record stop truncation rewind: raw=%lu final=%lu rewind=%lu playbackTick=%lu positionInBar=%lu",
+          rawLength, finalLength, rewindTicks, playbackTick, rawLength % Config::TICKS_PER_BAR);
+    }
+  }
+  return playbackTick;
+}
+
+TRACK_COLD_MEM uint32_t reanchorLoopPlaybackAfterRecordStop(Loop& loop, uint32_t playbackTick,
+                                                            uint32_t recordStartTick,
+                                                            uint32_t finalLength) {
+  loop.nextEventIndex = 0;
+  loop.startLoopTick = recordStartTick;
+  loop.lastTickInLoop =
+      (finalLength > 0) ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength) : 0;
+  loop.invalidatePlaybackCaches();
+  return loop.lastTickInLoop;
+}
+
 }  // namespace
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferredFullValidate) {
@@ -284,32 +314,16 @@ void Track::stopRecording(uint32_t currentTick) {
     }
   }
 
-  loop.nextEventIndex = 0;
   uint32_t recordStartTick = loop.startLoopTick;
   uint32_t finalLength = loop.loopLengthTicks;
-
-  uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks =
-      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
-  if (rewindTicks > 0) {
-    playbackTick = currentTick - rewindTicks;
-    clockManager.assignCurrentTickSilently(playbackTick);
-    logger.log(CAT_TRACK, LOG_INFO,
-               "Record stop truncation rewind: raw=%lu final=%lu rewind=%lu playbackTick=%lu positionInBar=%lu",
-               rawLength, finalLength, rewindTicks, playbackTick, rawLength % Config::TICKS_PER_BAR);
-  }
-
-  loop.startLoopTick = recordStartTick;
-  loop.lastTickInLoop = (finalLength > 0)
-                            ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
-                            : 0;
-  const uint32_t storagePhaseTickAtStop = loop.lastTickInLoop;
+  uint32_t playbackTick =
+      applyRecordStopTruncationRewind(currentTick, rawLength, finalLength, true);
+  const uint32_t storagePhaseTickAtStop =
+      reanchorLoopPlaybackAfterRecordStop(loop, playbackTick, recordStartTick, finalLength);
   if (finalLength > 0) {
     projectionCycleStartTick =
         static_cast<int32_t>(playbackTick) - static_cast<int32_t>(loop.lastTickInLoop);
   }
-
-  invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
   logger.logTrackEvent("Recording stopped", playbackTick, "recStart=%lu length=%lu",
                        static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(finalLength));
@@ -366,24 +380,15 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const StopPathStorageStats& stopPathStats = finalizeContext.stopPathStats;
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
-  loop.nextEventIndex = 0;
-  uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks =
-      RecordStopLength::computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
-  if (rewindTicks > 0) {
-    playbackTick = currentTick - rewindTicks;
-    clockManager.assignCurrentTickSilently(playbackTick);
-  }
-  loop.startLoopTick = recordStartTickStopped;
-  loop.lastTickInLoop = (loop.loopLengthTicks > 0)
-                            ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
-                            : 0;
-  invalidatePlaybackCaches();
+  const uint32_t finalLength = loop.loopLengthTicks;
+  uint32_t playbackTick =
+      applyRecordStopTruncationRewind(currentTick, rawLength, finalLength, false);
+  reanchorLoopPlaybackAfterRecordStop(loop, playbackTick, recordStartTickStopped, finalLength);
 
   SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
-              rawLength, loop.loopLengthTicks, false);
+              rawLength, finalLength, false);
   logger.logTrackEvent("Recording stopped (to STOPPED)", playbackTick, "length=%lu",
-                       static_cast<unsigned long>(loop.loopLengthTicks));
+                       static_cast<unsigned long>(finalLength));
 
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   if (!loop.hasData()) {
