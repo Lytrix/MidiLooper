@@ -587,6 +587,105 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
 #endif  // SESSION_CAPTURE
 }
 
+namespace {
+
+TRACK_COLD_MEM const char* classifyStopDebtState(bool preState, bool postState, uint16_t preDirtyBars,
+                                                 uint16_t postDirtyBars) {
+  if (!preState && postState) {
+    return "stop_created_debt";
+  }
+  if (preState && postState && postDirtyBars > preDirtyBars) {
+    return "stop_amplified_debt";
+  }
+  if (preState && postState) {
+    return "pre_existing_debt";
+  }
+  return "newly_scheduled_after_stop";
+}
+
+}  // namespace
+
+TRACK_COLD_MEM uint16_t Track::countVisualCacheDirtyBars(const Loop& loop) const {
+  if (!loop.visualCacheDirty || loop.visualCache.dirtyBars.empty()) {
+    return 0;
+  }
+  uint16_t dirtyBars = 0;
+  for (uint8_t dirty : loop.visualCache.dirtyBars) {
+    if (dirty != 0) {
+      ++dirtyBars;
+    }
+  }
+  return dirtyBars;
+}
+
+TRACK_COLD_MEM void Track::armOverdubStopDebtProbe(bool visualDirtyBeforeStop,
+                                                   uint16_t dirtyBarsBeforeStop,
+                                                   bool savePendingBeforeStop,
+                                                   const Loop& loop) {
+#if !defined(SESSION_CAPTURE)
+  (void)visualDirtyBeforeStop;
+  (void)dirtyBarsBeforeStop;
+  (void)savePendingBeforeStop;
+  (void)loop;
+  return;
+#else
+  overdubStopDebtProbeArmed_ = true;
+  overdubStopDebtProbeArmedUs_ = micros();
+  overdubStopVisualDirtyBefore_ = visualDirtyBeforeStop;
+  overdubStopVisualDirtyAfter_ = loop.visualCacheDirty;
+  overdubStopDirtyBarsBefore_ = dirtyBarsBeforeStop;
+  overdubStopDirtyBarsAfter_ = countVisualCacheDirtyBars(loop);
+  overdubStopSavePendingBefore_ = savePendingBeforeStop;
+  overdubStopSavePendingAfter_ = StorageManager::hasDeferredSaveWork();
+#endif
+}
+
+TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
+                                                           bool idleVisualSliceRan,
+                                                           uint8_t idleBarsPerSlice,
+                                                           uint16_t idleDirtyBefore,
+                                                           uint16_t idleDirtyAfter) {
+#if !defined(SESSION_CAPTURE)
+  (void)loop;
+  (void)idleVisualSliceRan;
+  (void)idleBarsPerSlice;
+  (void)idleDirtyBefore;
+  (void)idleDirtyAfter;
+  return;
+#else
+  if (!overdubStopDebtProbeArmed_) {
+    return;
+  }
+  if (!isPlaying()) {
+    overdubStopDebtProbeArmed_ = false;
+    return;
+  }
+  const char* visualClass =
+      classifyStopDebtState(overdubStopVisualDirtyBefore_, overdubStopVisualDirtyAfter_,
+                            overdubStopDirtyBarsBefore_, overdubStopDirtyBarsAfter_);
+  const char* saveClass = classifyStopDebtState(overdubStopSavePendingBefore_,
+                                                overdubStopSavePendingAfter_, 0, 0);
+  logOverdubStopStage(loop, overdubStopDebtProbeArmedUs_, "debt_handoff", 0,
+                      DebugSessionCapture::kUnsampledHeapBytes,
+                      DebugSessionCapture::kUnsampledHeapBytes, visualClass);
+#if defined(ARDUINO)
+  char line[288];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,odub_debt,track=%u,visual=%s,save=%s,pre_v=%u,post_v=%u,pre_b=%u,"
+           "post_b=%u,idle_slice=%u,idle_bars=%u,idle_pre_b=%u,idle_post_b=%u,state=%s",
+           static_cast<unsigned long>(micros()),
+           static_cast<unsigned>(resolveTrackIndexForPersistence(*this)), visualClass, saveClass,
+           overdubStopVisualDirtyBefore_ ? 1u : 0u, overdubStopVisualDirtyAfter_ ? 1u : 0u,
+           static_cast<unsigned>(overdubStopDirtyBarsBefore_),
+           static_cast<unsigned>(overdubStopDirtyBarsAfter_), idleVisualSliceRan ? 1u : 0u,
+           static_cast<unsigned>(idleBarsPerSlice), static_cast<unsigned>(idleDirtyBefore),
+           static_cast<unsigned>(idleDirtyAfter), getStateName(getState()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+  overdubStopDebtProbeArmed_ = false;
+#endif
+}
+
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
@@ -605,13 +704,20 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
 
   const bool deferredDerivedViewMaintenance =
       (isPlaying() || isStoppedRecording() || isOverdubbing()) && !isRecording();
+  bool idleVisualSliceRan = false;
+  uint8_t idleVisualBarsPerSlice = 0;
+  uint16_t idleVisualDirtyBefore = 0;
+  uint16_t idleVisualDirtyAfter = 0;
+  Loop& activeLoop = getActiveLoop();
   if (deferredDerivedViewMaintenance) {
-    Loop& loop = getActiveLoop();
+    Loop& loop = activeLoop;
     if (loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
       }
+      idleVisualBarsPerSlice = barsPerSlice;
+      idleVisualDirtyBefore = countVisualCacheDirtyBars(loop);
       uint32_t playheadBar = 0;
       if (loop.lastTickInLoop != UINT32_MAX) {
         playheadBar = visualBarForTick(loop.lastTickInLoop, Config::TICKS_PER_BAR);
@@ -649,8 +755,13 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
         }
       }
       loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar, maxBarDistanceFromPriority);
+      idleVisualSliceRan = true;
+      idleVisualDirtyAfter = countVisualCacheDirtyBars(loop);
     }
   }
+
+  emitOverdubStopDebtProbeIfArmed(activeLoop, idleVisualSliceRan, idleVisualBarsPerSlice,
+                                  idleVisualDirtyBefore, idleVisualDirtyAfter);
 
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();

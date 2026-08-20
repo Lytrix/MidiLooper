@@ -10,6 +10,7 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "StorageManager.h"
 #include "TickPhase.h"
 #include "TrackUndo.h"
 #include "Utils/DebugSessionCapture.h"
@@ -22,6 +23,11 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     return false;
   }
   Loop& loop = getActiveLoop();
+#if defined(SESSION_CAPTURE)
+  const bool probeVisualDirtyBeforeStop = loop.visualCacheDirty;
+  const uint16_t probeDirtyBarsBeforeStop = countVisualCacheDirtyBars(loop);
+  const bool probeSavePendingBeforeStop = StorageManager::hasDeferredSaveWork();
+#endif
   finalizePendingNotes(currentTick);
   if (!loop.capture.store.empty() && loop.loopLengthTicks > 0) {
     loop.ensureCaptureEventsSorted();
@@ -58,6 +64,10 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     logOverdubStopStage(loop, stopStartUs, "display", 0,
                         DebugSessionCapture::kUnsampledHeapBytes,
                         DebugSessionCapture::kUnsampledHeapBytes, "ok");
+#if defined(SESSION_CAPTURE)
+    armOverdubStopDebtProbe(probeVisualDirtyBeforeStop, probeDirtyBarsBeforeStop,
+                            probeSavePendingBeforeStop, loop);
+#endif
     HotPathTelemetry::requestDeferredSummary("overdub_stop");
     armPlayingMidiDrainAfterOverdubStop();
   } else {
@@ -85,6 +95,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   playingMidiDrainAfterOverdubStopIdleNoted_ = false;
   loopPrefixMeasureAfterUndo_ = false;
   loopPrefixMeasureAfterUndoNoted_ = false;
+  overdubStopDebtProbeArmed_ = false;
   const uint32_t telemetryStartUs = micros();
   SC_ODUB_STAGE("enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
@@ -140,6 +151,11 @@ void Track::startOverdubbing(uint32_t currentTick) {
 void Track::stopOverdubbing() {
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
+#if defined(SESSION_CAPTURE)
+  const bool probeVisualDirtyBeforeStop = loop.visualCacheDirty;
+  const uint16_t probeDirtyBarsBeforeStop = countVisualCacheDirtyBars(loop);
+  const bool probeSavePendingBeforeStop = StorageManager::hasDeferredSaveWork();
+#endif
   const uint32_t stopStartUs = micros();
   logOverdubStopStage(loop, stopStartUs, "enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
                       DebugSessionCapture::kUnsampledHeapBytes, "entered");
@@ -195,6 +211,10 @@ void Track::stopOverdubbing() {
   logOverdubStopStage(loop, stopStartUs, "display", 0,
                       DebugSessionCapture::kUnsampledHeapBytes,
                       DebugSessionCapture::kUnsampledHeapBytes, "ok");
+#if defined(SESSION_CAPTURE)
+  armOverdubStopDebtProbe(probeVisualDirtyBeforeStop, probeDirtyBarsBeforeStop,
+                          probeSavePendingBeforeStop, loop);
+#endif
   HotPathTelemetry::requestDeferredSummary("overdub_stop");
   loop.closeOverdubSession();
   armPlayingMidiDrainAfterOverdubStop();
@@ -246,6 +266,7 @@ TRACK_COLD_MEM void Track::noteLoopPrefixMeasureAfterUndo() {
 
 void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
+  overdubStopDebtProbeArmed_ = false;
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
   const uint32_t stopStartUs = micros();
