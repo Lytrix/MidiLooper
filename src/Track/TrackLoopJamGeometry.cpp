@@ -12,6 +12,15 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/RecordStopLength.h"
 
+namespace {
+
+TRACK_COLD_MEM void persistActiveLoopGeometryChange(Track& track) {
+  requestActiveLoopSlotPersist(track);
+  track.invalidateCaches();
+}
+
+}  // namespace
+
 TRACK_COLD_MEM void Track::clear() {
     if (trackState == TRACK_EMPTY) {
         logger.debug("Track already empty; ignoring clear");
@@ -44,8 +53,7 @@ void Track::setLoopLength(uint32_t ticks) {
   Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == ticks) return;
   loop.loopLengthTicks = ticks;
-  requestActiveLoopSlotPersist(*this);
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
 }
 
 void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
@@ -55,8 +63,7 @@ void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   uint32_t oldLoopLength = loop.loopLengthTicks;
   logger.log(CAT_TRACK, LOG_INFO, "Loop length change: %lu -> %lu ticks", oldLoopLength, newLoopLength);
   loop.loopLengthTicks = newLoopLength;
-  requestActiveLoopSlotPersist(*this);
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
   logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loop.loopLengthTicks);
 }
 
@@ -70,8 +77,7 @@ void Track::setLoopStartTick(uint32_t startTick) {
   }
   loop.loopStartTick = startTick;
   logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loop.loopStartTick);
-  requestActiveLoopSlotPersist(*this);
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
 }
 
 void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
@@ -84,8 +90,7 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
   logger.log(CAT_TRACK, LOG_INFO, "Setting loop start=%lu, end=%lu, length=%lu", startTick, endTick, newLength);
   loop.loopStartTick = startTick;
   loop.loopLengthTicks = newLength;
-  requestActiveLoopSlotPersist(*this);
-  invalidateCaches();
+  persistActiveLoopGeometryChange(*this);
 }
 
 void Track::setJam(uint32_t startTick, uint32_t length) {
