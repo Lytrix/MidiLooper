@@ -24,6 +24,7 @@ MidiHandler midiHandler;  // Global instance
 MidiHandler* MidiHandler::instance = nullptr;  // Static instance pointer
 
 namespace {
+#if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
 bool isMotorFaderUsbHostServiceMessage(uint8_t type, uint8_t channel, uint8_t data1) {
   if (channel != MidiConfig::Fader::COARSE_CHANNEL &&
       channel != MidiConfig::Fader::SELECT_CHANNEL &&
@@ -44,6 +45,7 @@ bool isMotorFaderUsbHostServiceMessage(uint8_t type, uint8_t channel, uint8_t da
   return data1 == MidiConfig::Fader::FINE_MOTOR_TRIGGER_NOTE ||
          data1 == MidiConfig::Fader::NOTE_VALUE_MOTOR_TRIGGER_NOTE;
 }
+#endif
 
 bool isDroidFaderFeedbackOnlyPitchbend(uint8_t channel) {
   return channel == MidiConfig::Fader::COARSE_CHANNEL ||
@@ -158,35 +160,47 @@ void MidiHandler::beginUsbHost() {
 }
 
 void MidiHandler::handleMidiInput() {
+#if RUNTIME_TIMING_ENABLED
   const uint32_t inputEnterUs = micros();
   RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(inputEnterUs);
+#endif
 
   MidiInputMsg batch[kMidiInputBatchMax];
   size_t count = 0;
 
   // --- USB MIDI Input (transport before notes within each poll) ---
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_BEGIN_USB_DEVICE_NESTED();
   uint32_t segmentStartUs = micros();
+#endif
   while (count < kMidiInputBatchMax && usbMIDI.read()) {
     batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
                       usbMIDI.getData2(), SOURCE_USB};
   }
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_DEVICE_READ(micros() - segmentStartUs);
   const uint32_t dispatchStartUs = micros();
+#endif
   dispatchMidiBatch(batch, count);
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_DEVICE_DISPATCH(micros() - dispatchStartUs);
   RUNTIME_TIMING_COMMIT_USB_DEVICE_NESTED();
   RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(micros() - segmentStartUs);
+#endif
 
   // --- Serial MIDI Input (DIN) ---
   count = 0;
+#if RUNTIME_TIMING_ENABLED
   segmentStartUs = micros();
+#endif
   while (count < kMidiInputBatchMax && MIDIserial.read()) {
     batch[count++] = {MIDIserial.getType(), MIDIserial.getChannel(), MIDIserial.getData1(),
                       MIDIserial.getData2(), SOURCE_SERIAL};
   }
   dispatchMidiBatch(batch, count);
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_DIN_DRAIN(micros() - segmentStartUs);
+#endif
 
   if (!usbHostReady_) {
     RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(micros());
@@ -197,9 +211,13 @@ void MidiHandler::handleMidiInput() {
   // USBHost_t36 delivers one MIDI message per read() via callbacks. Drain a bounded
   // batch each handleMidiInput() call (same cap as USB-device / DIN) so DROID NoteOn/NoteOff
   // pairs are not left queued across a long main-loop frame.
+#if RUNTIME_TIMING_ENABLED
   segmentStartUs = micros();
+#endif
   usbHost.Task();
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_HOST_TASK(micros() - segmentStartUs);
+#endif
 
   static bool lastConnected = false;
   bool currentlyConnected = usbHostMIDI;
@@ -212,12 +230,16 @@ void MidiHandler::handleMidiInput() {
     lastConnected = currentlyConnected;
   }
 
+#if RUNTIME_TIMING_ENABLED
   segmentStartUs = micros();
+#endif
   size_t hostReads = 0;
   while (hostReads < kMidiInputBatchMax && usbHostMIDI.read()) {
     ++hostReads;
   }
+#if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_HOST_DRAIN(micros() - segmentStartUs);
+#endif
   if (hostReads >= kMidiInputBatchMax) {
     logger.log(CAT_MIDI, LOG_DEBUG,
                "USB Host MIDI drain hit batch cap (%u)",
@@ -231,9 +253,13 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   // Clock is high-rate (24 PPQN); skip synchronous capture to keep timing paths lean.
   if (type != midi::Clock) {
     if (source == SOURCE_USB) {
+#if RUNTIME_TIMING_ENABLED
       const uint32_t captureStartUs = micros();
+#endif
       SC_MIDI_IN('U', type, channel, data1, data2);
+#if RUNTIME_TIMING_ENABLED
       RUNTIME_TIMING_ADD_USB_DEVICE_CAPTURE(micros() - captureStartUs);
+#endif
     } else {
       SC_MIDI_IN(source == SOURCE_SERIAL ? 'S' : 'H', type, channel, data1, data2);
     }
@@ -272,9 +298,13 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
                            type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
   if (isChannelMessage && !isMidiThruExcludedChannel(channel)) {
     if (source == SOURCE_USB) {
+#if RUNTIME_TIMING_ENABLED
       const uint32_t thruStartUs = micros();
+#endif
       sendMidiThru(type, outCh, data1, data2);
+#if RUNTIME_TIMING_ENABLED
       RUNTIME_TIMING_ADD_USB_DEVICE_THRU(micros() - thruStartUs);
+#endif
     } else {
       sendMidiThru(type, outCh, data1, data2);
     }
@@ -285,9 +315,13 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   switch (type) {
     case midi::Clock:
       if (source == SOURCE_USB) {
+#if RUNTIME_TIMING_ENABLED
         const uint32_t clockStartUs = micros();
+#endif
         clockManager.onMidiClockPulse();
+#if RUNTIME_TIMING_ENABLED
         RUNTIME_TIMING_ADD_USB_DEVICE_CLOCK(micros() - clockStartUs);
+#endif
       } else {
         clockManager.onMidiClockPulse();
       }
@@ -296,7 +330,9 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     case midi::Start:
     case midi::Stop:
     case midi::Continue: {
+#if RUNTIME_TIMING_ENABLED
       const uint32_t transportStartUs = (source == SOURCE_USB) ? micros() : 0;
+#endif
       if (type == midi::Start) {
         handleMidiStart();
       } else if (type == midi::Stop) {
@@ -304,9 +340,11 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       } else {
         handleMidiContinue();
       }
+#if RUNTIME_TIMING_ENABLED
       if (source == SOURCE_USB) {
         RUNTIME_TIMING_ADD_USB_DEVICE_TRANSPORT(micros() - transportStartUs);
       }
+#endif
       return;
     }
 
@@ -315,7 +353,9 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   }
 
   uint32_t tickNow = clockManager.getCurrentTick();
+#if RUNTIME_TIMING_ENABLED
   const uint32_t channelStartUs = (source == SOURCE_USB) ? micros() : 0;
+#endif
 
   switch (type) {
     case midi::NoteOn:
@@ -350,6 +390,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   }
 
   if (source == SOURCE_USB) {
+#if RUNTIME_TIMING_ENABLED
     const uint32_t channelDurationUs = micros() - channelStartUs;
     if (type == midi::NoteOn || type == midi::NoteOff) {
       RUNTIME_TIMING_ADD_USB_DEVICE_NOTE(channelDurationUs);
@@ -357,6 +398,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
                type == midi::AfterTouchChannel || type == midi::ProgramChange) {
       RUNTIME_TIMING_ADD_USB_DEVICE_CC(channelDurationUs);
     }
+#endif
   }
 }
 
@@ -371,8 +413,7 @@ bool MidiHandler::isLedChannel(byte channel) {
 
 #if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
 void MidiHandler::mirrorUsbFaderProbePassthrough(byte type, byte channel, byte data1, byte data2) {
-  const bool isFaderMotorChannel =
-      channel == MidiConfig::Fader::COARSE_CHANNEL || channel == MidiConfig::Fader::SELECT_CHANNEL;
+  const bool isFaderMotorChannel = isMotorFaderUsbHostServiceMessage(type, channel, data1);
   const bool isEditModeLedTrigger =
       channel == MidiConfig::Channels::LED_FEEDBACK &&
       (type == midi::NoteOn || type == midi::NoteOff) && data1 == 0;
@@ -807,9 +848,11 @@ void MidiHandler::sendProgramChange(uint8_t channel, uint8_t program) {
 
 // --- Clock / Transport Output ---
 void MidiHandler::sendClock() {
+#if RUNTIME_TIMING_ENABLED
   const uint32_t tickUs = clockManager.getMicrosPerTick();
   RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(micros(), tickUs * Config::TICKS_PER_CLOCK, tickUs,
                                             clockManager.getCurrentTick());
+#endif
   if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Clock);
   if (outputSerial) MIDIserial.sendRealTime(midi::Clock);
 }

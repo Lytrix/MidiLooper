@@ -18,6 +18,12 @@
 
 #include <cstdint>
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+#define RUNTIME_TIMING_ENABLED 1
+#else
+#define RUNTIME_TIMING_ENABLED 0
+#endif
+
 namespace RuntimeTimingTelemetry {
 
 /** Rate-limit DIAG emission to once per this many microseconds. */
@@ -246,7 +252,7 @@ Snapshot peek(uint32_t nowUs = 0);
 
 }  // namespace RuntimeTimingTelemetry
 
-#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+#if RUNTIME_TIMING_ENABLED
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) RuntimeTimingTelemetry::noteMidiInputEnter(nowUs)
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) RuntimeTimingTelemetry::noteMidiInputExit(nowUs)
 #define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) RuntimeTimingTelemetry::noteClockDispatch(durationUs)

@@ -6,6 +6,12 @@
 #include <cstdint>
 #include <cstddef>
 
+#if defined(PERF_TELEMETRY) || defined(PIO_UNIT_TEST_NATIVE)
+#define HOT_PATH_TELEMETRY_ENABLED 1
+#else
+#define HOT_PATH_TELEMETRY_ENABLED 0
+#endif
+
 namespace HotPathTelemetry {
 
 #if defined(PERF_TELEMETRY)
@@ -68,7 +74,7 @@ public:
 
 }  // namespace HotPathTelemetry
 
-#if defined(PERF_TELEMETRY) || defined(PIO_UNIT_TEST_NATIVE)
+#if HOT_PATH_TELEMETRY_ENABLED
 #define HOT_PATH_TELEMETRY_RESET() HotPathTelemetry::reset()
 #define HOT_PATH_TELEMETRY_RECORD_OVERDUB_START(elapsedUs, sourceEvents, undoDepth) \
   HotPathTelemetry::recordOverdubStart(elapsedUs, sourceEvents, undoDepth)
