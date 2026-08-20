@@ -21,6 +21,24 @@
 
 extern TrackManager trackManager;
 
+namespace {
+
+TRACK_COLD_MEM void logRecordStopSaveRequestAndPersist(Track& track, Loop& loop,
+                                                       uint32_t stopPathStartUs,
+                                                       uint8_t recordedSlotIndex,
+                                                       uint32_t heapAfter,
+                                                       CommitResult sideEffectResult,
+                                                       const StopPathStorageStats& stopPathStats) {
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, heapAfter, heapAfter,
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
+                     &stopPathStats);
+  if (sideEffectResult == CommitResult::Committed) {
+    requestLoopSlotPersistAndSaveState(track, recordedSlotIndex, heapAfter);
+  }
+}
+
+}  // namespace
+
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferredFullValidate) {
   (void)openTailCloseTick;
   deferredFullMidiValidate = scheduleDeferredFullValidate;
@@ -288,13 +306,8 @@ void Track::stopRecording(uint32_t currentTick) {
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
                      stateAdvanceHeapBefore, stateAdvanceHeapAfter,
                      trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
-                     stateAdvanceHeapAfter,
-                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                     &stopPathStats);
-  if (sideEffectResult == CommitResult::Committed) {
-    requestLoopSlotPersistAndSaveState(*this, recordedSlotIndex, stateAdvanceHeapAfter);
-  }
+  logRecordStopSaveRequestAndPersist(*this, loop, stopPathStartUs, recordedSlotIndex,
+                                     stateAdvanceHeapAfter, sideEffectResult, stopPathStats);
 }
 
 TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
@@ -369,11 +382,6 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
                      stateAdvanceHeapBefore, stateAdvanceHeapAfter,
                      trackState == TRACK_STOPPED ? "ok" : "failed", &stopPathStats);
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
-                     stateAdvanceHeapAfter,
-                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                     &stopPathStats);
-  if (sideEffectResult == CommitResult::Committed) {
-    requestLoopSlotPersistAndSaveState(*this, recordedSlotIndex, stateAdvanceHeapAfter);
-  }
+  logRecordStopSaveRequestAndPersist(*this, loop, stopPathStartUs, recordedSlotIndex,
+                                     stateAdvanceHeapAfter, sideEffectResult, stopPathStats);
 }
