@@ -10,7 +10,6 @@
 #include "PassReclaim.h"
 #include "StorageManager.h"
 #include "Utils/DebugSessionCapture.h"
-#include "Utils/MemoryMonitor.h"
 
 namespace {
 
@@ -207,20 +206,24 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   if (track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub) {
     return;
   }
-  const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
-  SC_ODUB_STAGE("manager_enter", 0, heapAtEnter, heapAtEnter, "ok");
+  SC_ODUB_STAGE("manager_enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
+                DebugSessionCapture::kUnsampledHeapBytes, "ok");
   const uint8_t slot = track.getActiveLoopIndex();
   slotEnabled[trackIndex][slot] = true;
   slotMuted[trackIndex][slot] = false;
+#if defined(SESSION_CAPTURE)
   const uint32_t startUs = micros();
+#endif
   track.startOverdubbing(clockManager.getCurrentTick());
   // Overdub start is timing-critical. Do not resetAll other tracks' playback runtimes here:
   // session_20260820_153347 truncated immediately after "Overdubbing started", which is the
   // next call in this function. Record start still releases background merged events;
   // Low/Critical pressure uses tryReleasePlaybackMergedMidiEventsMemory.
   // Disabled-pass reclaim also stays off this path (session_20260820_144819).
-  SC_ODUB_STAGE("manager_done", micros() - startUs, heapAtEnter,
-                MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+#if defined(SESSION_CAPTURE)
+  SC_ODUB_STAGE("manager_done", micros() - startUs, DebugSessionCapture::kUnsampledHeapBytes,
+                DebugSessionCapture::kUnsampledHeapBytes, "ok");
+#endif
 }
 
 void TrackManager::handlePendingRecordStart(uint32_t currentTick) {
