@@ -28,7 +28,7 @@ Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 
 **Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`165956`](../../captures/session_20260820_165956.log) validates the reserve stage with zero reconnects and complete stop windows at `seal=52.0 ms -> display=61.3 ms`, `seal=38.4 ms -> display=49.9 ms`, and `seal=24.9 ms -> display=35.8 ms`; a remaining long-tail cycle still shows `flush=140.1 ms` / `display=147.2 ms` with `RING,overflow` in-window and 55 `overlap_hold` note-offs. `DIAG,seal_companion_batch` confirms companion-row insertion itself is bounded (`rows=12 us=1098`, `rows=11 us=170`).
 
-### Overdub-start begin-capture long-delay restoration — ready for HITL verify
+### Overdub-start begin-capture long-delay restoration — validated
 
 **Evidence:** [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log)
 
@@ -40,7 +40,9 @@ Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 
 **Stage change shipped:** Restored overdub-session cache fallback in `rebuildOverdubSourceSpanCache`: when prepared spans are unavailable during an active overdub session, reuse prior cache notes instead of forcing full-loop materialization on start/wrap. Non-session behavior remains unchanged (full materialize is still allowed outside active overdub sessions).
 
-**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). Awaiting HITL re-measure of `ODUB,stage,begin_capture` and `Live Overdub -> Overdubbing started` latency.
+**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`170724`](../../captures/session_20260820_170724.log) validates the restoration: `Live Overdub -> Overdubbing started` is now **2-8 ms** and `ODUB,stage,begin_capture` is **8198 us** / **2150 us** (no 2.2 s start stalls).
+
+**Remaining issue exposed by the same run:** stop-path long tail persists and worsened in one cycle: `ODUB,stop,seal=310980 us`, `flush=312270 us`, `display=320406 us`, with in-window `DIAG,overlap_hold note_offs=100`. `DIAG,seal_companion_batch` remains bounded (`rows=5 sealed=5 us=84` in the complete cycle), so companion-row insertion itself is no longer the dominant stop cost.
 
 ### Overdub-start reboot — reverted to baseline, blocked on instrumentation
 
