@@ -41,6 +41,9 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
     deferredFullMidiValidate = deferFullValidate && hasCommittedPasses;
     deferredValidateQueuedAtMs = deferredFullMidiValidate ? millis() : 0;
   };
+  auto persistActiveLoopAfterOverdubStop = [&]() {
+    requestActiveLoopSlotPersistAndSaveState(*this, MemoryMonitor::getInternalHeapFreeBytes());
+  };
 
   switch (result) {
     case CommitResult::Skipped: {
@@ -60,7 +63,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
           TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), kInvalidPassId, {},
                                               false);
         }
-        requestActiveLoopSlotPersistAndSaveState(*this, MemoryMonitor::getInternalHeapFreeBytes());
+        persistActiveLoopAfterOverdubStop();
       } else {
         scheduleDeferredValidateOnly();
       }
@@ -106,7 +109,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
         }
       }
       if (overdubStop) {
-        requestActiveLoopSlotPersistAndSaveState(*this, MemoryMonitor::getInternalHeapFreeBytes());
+        persistActiveLoopAfterOverdubStop();
       }
       break;
     }
