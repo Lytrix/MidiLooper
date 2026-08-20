@@ -464,7 +464,7 @@ void loop() {
   uint32_t remainderStartUs = micros();
 #endif
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    trackManager.getTrack(i).processDeferredIdleMaintenance(now);
+    trackManager.getTrack(i).processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;

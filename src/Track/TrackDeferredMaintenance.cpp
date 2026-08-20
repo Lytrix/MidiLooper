@@ -686,7 +686,8 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 #endif
 }
 
-void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
+void Track::processDeferredIdleMaintenance(uint32_t nowMs,
+                                           bool postOverdubDrainWindowActive) {
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
   // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).
@@ -712,7 +713,8 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   if (deferredDerivedViewMaintenance) {
     Loop& loop = activeLoop;
     if (loop.hasCommittedPasses() && loop.visualCacheDirty) {
-      const bool postOverdubDrainWindow = playingMidiDrainAfterOverdubStopActive();
+      const bool postOverdubDrainWindow =
+          postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
       uint8_t barsPerSlice = 4;
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
