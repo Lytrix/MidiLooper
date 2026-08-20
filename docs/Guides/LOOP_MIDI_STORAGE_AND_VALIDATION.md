@@ -129,6 +129,31 @@ After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is set on r
 
 ---
 
+## Stop-path optimization pattern (reusable)
+
+Use this pattern when a stop-path owner shows long-tail latency or stack pressure:
+
+1. **Move scratch indexing off stack and onto heap-backed vectors**
+   - Build short-lived sorted `NoteId` indices in vectors (`collectSorted...`) instead of large fixed stack tables.
+   - Keep owner functions in cold/flash sections (`LOOP_COLD_MEM` / `TRACK_COLD_MEM`) so added diagnostics/indexing does not consume RAM1 hot-path budget.
+2. **Exclude disallowed values early**
+   - Fast-filter invalid/irrelevant rows before expensive work (`noteId == kInvalidNoteId`, non-`NoteOn`, non-target kinds).
+   - Build a compact "missing/eligible id" set first; run reconstruction only when that set is non-empty.
+3. **Promote bounded lookup over repeated linear scans**
+   - Replace repeated nested scans with sorted `NoteId` membership checks (`lower_bound` / `binary_search`) and unique insertion helpers.
+4. **Keep fallback semantics explicit**
+   - If fast-path restamp cannot prove completeness (`invalidated_*` outcomes), keep existing invalidation/fallback behavior; do not invent a new stop owner.
+
+Concrete owner examples:
+
+- `Loop::commitPendingCapturePass` (`seal_publish_span_cache_restamp`)
+- `Loop::sealPendingNoteChangesToEditPasses` and `Loop::applyPendingNoteChangesToOverdubSourceView`
+- `Loop::mergeDisplayNotesIntoOverdubSourceView`
+
+Why this is reusable: it preserves behavior while turning variable O(n²)-style membership/scan work into bounded lookup with early exits, and it removes large temporary stack footprints from timing-sensitive paths.
+
+---
+
 ## Capture ownership invariants (overdub wrap)
 
 **Files:** `Track::recordMidiEvents`, `Track::finalizePendingNotes`, `Track::stopRecording`, `Track::stopOverdubbing`, `Loop::sealCapture`, `NoteUtils::reconstructNotes`
