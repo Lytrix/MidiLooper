@@ -66,6 +66,28 @@ bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingE
   return direct || existingShifted || incomingShifted;
 }
 
+LOOP_COLD_MEM void collectPendingSortedNoteIds(const NoteUtils::DisplayNoteVec& notes,
+                                               std::vector<NoteId>& out) {
+  out.clear();
+  out.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId != kInvalidNoteId) {
+      out.push_back(note.noteId);
+    }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+LOOP_COLD_MEM bool insertSortedUniquePendingNoteId(std::vector<NoteId>& ids, NoteId noteId) {
+  const auto it = std::lower_bound(ids.begin(), ids.end(), noteId);
+  if (it != ids.end() && *it == noteId) {
+    return false;
+  }
+  ids.insert(it, noteId);
+  return true;
+}
+
 void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChange& change) {
   if (change.kind != PendingNoteChangeKind::Shorten && change.kind != PendingNoteChangeKind::Hide) {
     pending.push_back(change);
@@ -82,8 +104,8 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
   pending.push_back(change);
 }
 
-void insertOrReplaceSourceTransformSorted(PendingNoteChangeVec& transforms,
-                                          const PendingNoteChange& change) {
+LOOP_COLD_MEM void insertOrReplaceSourceTransformSorted(PendingNoteChangeVec& transforms,
+                                                        const PendingNoteChange& change) {
   const auto it = std::lower_bound(
       transforms.begin(), transforms.end(), change.noteId,
       [](const PendingNoteChange& existing, NoteId noteId) {
@@ -96,8 +118,8 @@ void insertOrReplaceSourceTransformSorted(PendingNoteChangeVec& transforms,
   transforms.insert(it, change);
 }
 
-const PendingNoteChange* findSourceTransformByNoteIdSorted(const PendingNoteChangeVec& transforms,
-                                                           NoteId noteId) {
+LOOP_COLD_MEM const PendingNoteChange* findSourceTransformByNoteIdSorted(
+    const PendingNoteChangeVec& transforms, NoteId noteId) {
   const auto it = std::lower_bound(
       transforms.begin(), transforms.end(), noteId,
       [](const PendingNoteChange& existing, NoteId id) {
@@ -109,12 +131,13 @@ const PendingNoteChange* findSourceTransformByNoteIdSorted(const PendingNoteChan
   return &(*it);
 }
 
-void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
-                                       const PendingNoteChangeVec& pending) {
+LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
+                                                     const PendingNoteChangeVec& pending) {
   PendingNoteChangeVec transforms;
   for (const PendingNoteChange& change : pending) {
-    if (change.kind == PendingNoteChangeKind::Shorten ||
-        change.kind == PendingNoteChangeKind::Hide) {
+    if ((change.kind == PendingNoteChangeKind::Shorten ||
+         change.kind == PendingNoteChangeKind::Hide) &&
+        change.noteId != kInvalidNoteId) {
       // Keep source transforms sorted by NoteId so stop sealing does bounded lookup work.
       insertOrReplaceSourceTransformSorted(transforms, change);
     }
@@ -636,15 +659,13 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
   if (!added.empty()) {
     mergeDisplayNotesIntoOverdubSourceView(added);
     if (overdubSourceSpanCacheValid_) {
+      std::vector<NoteId> spanCacheNoteIds;
+      collectPendingSortedNoteIds(overdubSourceSpanCacheNotes_, spanCacheNoteIds);
       for (const NoteUtils::DisplayNote& candidate : added) {
-        bool found = false;
-        for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
-          if (existing.noteId == candidate.noteId) {
-            found = true;
-            break;
-          }
+        if (candidate.noteId == kInvalidNoteId) {
+          continue;
         }
-        if (!found) {
+        if (insertSortedUniquePendingNoteId(spanCacheNoteIds, candidate.noteId)) {
           overdubSourceSpanCacheNotes_.push_back(candidate);
         }
       }

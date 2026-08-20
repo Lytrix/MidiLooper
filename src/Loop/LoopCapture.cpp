@@ -363,6 +363,15 @@ LOOP_COLD_MEM void collectSortedSpanCacheNoteIds(const NoteUtils::DisplayNoteVec
   out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
+LOOP_COLD_MEM bool insertSortedUniqueNoteId(std::vector<NoteId>& noteIds, NoteId noteId) {
+  const auto it = std::lower_bound(noteIds.begin(), noteIds.end(), noteId);
+  if (it != noteIds.end() && *it == noteId) {
+    return false;
+  }
+  noteIds.insert(it, noteId);
+  return true;
+}
+
 }  // namespace
 
 LOOP_COLD_MEM void Loop::assignMissingNoteIdsInCommittedCapturePasses() {
@@ -470,7 +479,8 @@ void Loop::resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& window
       DisplayWindowUtils::resolveCenteredWindowStart(centerPhaseTick, windowLength, loopLen);
 }
 
-void Loop::mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates) {
+LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoOverdubSourceView(
+    const NoteUtils::DisplayNoteVec& candidates) {
   for (const NoteUtils::DisplayNote& candidate : candidates) {
     if (candidate.noteId == kInvalidNoteId) {
       continue;
@@ -1411,27 +1421,36 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
           spanCacheRestampOutcome = "invalidated_wrap_pair";
         }
         if (spanCacheCanRestamp) {
-          NoteUtils::DisplayNoteVec committedPassNotes = NoteUtils::reconstructDisplayNotes(
-              committedPassEvents, loopLengthTicks, false, false, true);
           std::vector<NoteId> spanCacheNoteIds;
           collectSortedSpanCacheNoteIds(overdubSourceSpanCacheNotes_, spanCacheNoteIds);
-          for (const NoteUtils::DisplayNote& candidate : committedPassNotes) {
-            if (candidate.noteId == kInvalidNoteId) {
-              continue;
-            }
-            const auto it = std::lower_bound(spanCacheNoteIds.begin(), spanCacheNoteIds.end(),
-                                             candidate.noteId);
-            if (it != spanCacheNoteIds.end() && *it == candidate.noteId) {
-              continue;
-            }
-            overdubSourceSpanCacheNotes_.push_back(candidate);
-            spanCacheNoteIds.insert(it, candidate.noteId);
-          }
+          std::vector<NoteId> missingNoteIds;
           for (const MidiEvent& evt : committedPassEvents) {
             if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
               continue;
             }
             if (!std::binary_search(spanCacheNoteIds.begin(), spanCacheNoteIds.end(), evt.noteId)) {
+              (void)insertSortedUniqueNoteId(missingNoteIds, evt.noteId);
+            }
+          }
+          if (!missingNoteIds.empty()) {
+            NoteUtils::DisplayNoteVec committedPassNotes = NoteUtils::reconstructDisplayNotes(
+                committedPassEvents, loopLengthTicks, false, false, true);
+            for (const NoteUtils::DisplayNote& candidate : committedPassNotes) {
+              if (candidate.noteId == kInvalidNoteId) {
+                continue;
+              }
+              if (!std::binary_search(missingNoteIds.begin(), missingNoteIds.end(),
+                                      candidate.noteId)) {
+                continue;
+              }
+              if (insertSortedUniqueNoteId(spanCacheNoteIds, candidate.noteId)) {
+                overdubSourceSpanCacheNotes_.push_back(candidate);
+              }
+            }
+            for (const NoteId noteId : missingNoteIds) {
+              if (std::binary_search(spanCacheNoteIds.begin(), spanCacheNoteIds.end(), noteId)) {
+                continue;
+              }
               spanCacheCanRestamp = false;
               spanCacheRestampOutcome = "invalidated_missing_id";
               break;
