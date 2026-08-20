@@ -47,39 +47,31 @@ void logGeomApplySkip(uint8_t reasonCode) {
 
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditMove(const NoteUtils::DisplayNote& note,
                                                                     uint32_t targetTick) {
-    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Move;
-    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryTargetTick_ = targetTick;
-    pendingPlayingEditGeometryQueuedAtMs_ = millis();
-#if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Move), targetTick,
-                      clockManager.isTransportRunning());
-#endif
+    queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType::Move, note, targetTick);
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditLength(const NoteUtils::DisplayNote& note,
                                                                       uint32_t targetEndTick) {
-    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Length;
-    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryTargetTick_ = targetEndTick;
-    pendingPlayingEditGeometryQueuedAtMs_ = millis();
-#if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Length), targetEndTick,
-                      clockManager.isTransportRunning());
-#endif
+    queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType::Length, note, targetEndTick);
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditPitch(const NoteUtils::DisplayNote& note,
                                                                      uint8_t currentPitch,
                                                                      uint8_t newPitch) {
-    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Pitch;
-    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryPitchCurrent_ = currentPitch;
     pendingPlayingEditGeometryPitchNew_ = newPitch;
+    queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType::Pitch, note, newPitch);
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditGeometryCore(
+    PendingPlayingEditGeometryType type, const NoteUtils::DisplayNote& note, uint32_t targetField) {
+    pendingPlayingEditGeometryType_ = type;
+    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryQueuedAtMs_ = millis();
 #if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Pitch), newPitch,
-                      clockManager.isTransportRunning());
+    logGeomApplyQueue(static_cast<uint8_t>(type), targetField, clockManager.isTransportRunning());
 #endif
 }
 
@@ -127,25 +119,19 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingEditPitchGeometry(Track& t
 #endif
     editManager.ensureNoteEditFocusForLiveEdit(track, liveNote);
 #if defined(SESSION_CAPTURE)
-    logger.info("#CAP,%lu,GEOM_APPLY,focus,%lu,%u,0,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(micros() - focusStartUs),
-                static_cast<unsigned>(NoteEditKind::Pitch));
+    logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Pitch);
     const uint32_t undoStartUs = micros();
 #endif
     if (!editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true)) {
 #if defined(SESSION_CAPTURE)
-        logger.info("#CAP,%lu,GEOM_APPLY,undo,fail,%lu,%u,0", static_cast<unsigned long>(micros()),
-                    static_cast<unsigned long>(micros() - undoStartUs),
-                    static_cast<unsigned>(NoteEditKind::Pitch));
+        logGeomApplyUndo(false, micros() - undoStartUs, NoteEditKind::Pitch);
 #endif
         logger.log(CAT_MIDI, LOG_WARNING,
                    "Note pitch change aborted: session undo snapshot unavailable (heap reserve)");
         return false;
     }
 #if defined(SESSION_CAPTURE)
-    logger.info("#CAP,%lu,GEOM_APPLY,undo,ok,%lu,%u,0", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(micros() - undoStartUs),
-                static_cast<unsigned>(NoteEditKind::Pitch));
+    logGeomApplyUndo(true, micros() - undoStartUs, NoteEditKind::Pitch);
     const uint32_t resolveStartUs = micros();
 #endif
 

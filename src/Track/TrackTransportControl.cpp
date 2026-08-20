@@ -38,7 +38,7 @@ void Track::stopPlaying() {
   setState(TRACK_STOPPED);
   logger.logTrackEvent("Playback stopped", clockManager.getCurrentTick());
   displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, clockManager.getCurrentTick());
-  HotPathTelemetry::requestDeferredSummary("playback_stop");
+  HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("playback_stop");
 }
 
 // -------------------------

@@ -3,6 +3,7 @@
 
 #include "TrackUndo.h"
 #include "Track.h"
+#include "TrackInternal.h"
 #include "PendingNoteChange.h"
 #include "EditManager.h"
 #include "LoopEditManager.h"
@@ -54,13 +55,13 @@ TRACK_COLD_MEM void trimUndoStackForMemory(Track& track) {
     }
 }
 
-TRACK_COLD_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
-    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-        if (&trackManager.getTrack(i) == &track) {
-            return i;
-        }
+TRACK_COLD_MEM void refreshNoteEditSessionAfterPassStateChange(Loop& loop) {
+    if (!editManager.isNoteEditActive()) {
+        return;
     }
-    return trackManager.getSelectedTrackIndex();
+    loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+    editManager.getEditSession().store.discardEventsCache();
+    editManager.getEditSession().undoStack.clear();
 }
 
 TRACK_COLD_MEM void pushUndoEntry(Track& track, UndoEntry&& entry) {
@@ -216,11 +217,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             // Keep disabled capture passes on the timeline so redo can re-enable them.
             loop.invalidateCaches();
             track.invalidateCaches();
-            if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardEventsCache();
-                editManager.getEditSession().undoStack.clear();
-            }
+            refreshNoteEditSessionAfterPassStateChange(loop);
             return true;
         case UndoEntryKind::OverdubPassAdded: {
             PassIdList overdubIds;
@@ -249,11 +246,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             loop.refreshVisualCacheAfterPassStateChange();
-            if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardEventsCache();
-                editManager.getEditSession().undoStack.clear();
-            }
+            refreshNoteEditSessionAfterPassStateChange(loop);
             entry.hasRedoPayload = true;
             return true;
         }
@@ -277,11 +270,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             loop.refreshVisualCacheAfterPassStateChange();
-            if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardEventsCache();
-                editManager.getEditSession().undoStack.clear();
-            }
+            refreshNoteEditSessionAfterPassStateChange(loop);
             entry.hasRedoPayload = true;
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass undone session=%u editPass=%u edits=%u",
                        static_cast<unsigned>(entry.editPassType),
@@ -350,11 +339,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             applyGeometry(loop, entry.afterGeometry);
             loop.invalidateCaches();
             track.invalidateCaches();
-            if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardEventsCache();
-                editManager.getEditSession().undoStack.clear();
-            }
+            refreshNoteEditSessionAfterPassStateChange(loop);
             return true;
         case UndoEntryKind::OverdubPassAdded: {
             if (!entry.hasRedoPayload) {
@@ -388,11 +373,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             }
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             loop.refreshVisualCacheAfterPassStateChange();
-            if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardEventsCache();
-                editManager.getEditSession().undoStack.clear();
-            }
+            refreshNoteEditSessionAfterPassStateChange(loop);
             return true;
         }
         case UndoEntryKind::NoteEditPassClosed:
@@ -415,11 +396,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             }
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             loop.refreshVisualCacheAfterPassStateChange();
-            if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardEventsCache();
-                editManager.getEditSession().undoStack.clear();
-            }
+            refreshNoteEditSessionAfterPassStateChange(loop);
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass redone session=%u editPass=%u edits=%u",
                        static_cast<unsigned>(entry.editPassType),
                        static_cast<unsigned>(entry.editPassIndex),

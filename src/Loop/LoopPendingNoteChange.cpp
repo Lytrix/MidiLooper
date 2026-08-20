@@ -14,6 +14,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/LoopMem.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
@@ -81,27 +82,48 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
   pending.push_back(change);
 }
 
-void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
-                                       const PendingNoteChangeVec& pending) {
-  for (const PendingNoteChange& change : pending) {
-    if (change.kind != PendingNoteChangeKind::Shorten &&
-        change.kind != PendingNoteChangeKind::Hide) {
-      continue;
-    }
-    for (auto it = notes.begin(); it != notes.end();) {
-      if (it->noteId != change.noteId) {
-        ++it;
-        continue;
-      }
-      if (change.kind == PendingNoteChangeKind::Hide) {
-        it = notes.erase(it);
-        continue;
-      }
-      it->startTick = change.startTick;
-      it->endTick = change.endTick;
-      ++it;
+const PendingNoteChange* findSourceTransformByNoteId(const PendingNoteChangeVec& transforms,
+                                                     NoteId noteId) {
+  for (const PendingNoteChange& transform : transforms) {
+    if ((transform.kind == PendingNoteChangeKind::Shorten ||
+         transform.kind == PendingNoteChangeKind::Hide) &&
+        transform.noteId == noteId) {
+      return &transform;
     }
   }
+  return nullptr;
+}
+
+void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
+                                       const PendingNoteChangeVec& pending) {
+  PendingNoteChangeVec transforms;
+  for (const PendingNoteChange& change : pending) {
+    if (change.kind == PendingNoteChangeKind::Shorten ||
+        change.kind == PendingNoteChangeKind::Hide) {
+      upsertSourceTransform(transforms, change);
+    }
+  }
+  if (transforms.empty() || notes.empty()) {
+    return;
+  }
+
+  NoteUtils::DisplayNoteVec updated;
+  updated.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    const PendingNoteChange* transform = findSourceTransformByNoteId(transforms, note.noteId);
+    if (transform == nullptr) {
+      updated.push_back(note);
+      continue;
+    }
+    if (transform->kind == PendingNoteChangeKind::Hide) {
+      continue;
+    }
+    NoteUtils::DisplayNote revised = note;
+    revised.startTick = transform->startTick;
+    revised.endTick = transform->endTick;
+    updated.push_back(revised);
+  }
+  notes.swap(updated);
 }
 
 }  // namespace
@@ -249,7 +271,9 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
   edited.causingSpans.push_back(causingSpan);
 
   std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs;
+#if RUNTIME_TIMING_ENABLED
   const uint32_t pairStartUs = micros();
+#endif
   for (const NoteUtils::DisplayNote& note : sourceNotes) {
     if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == causingId) {
       continue;
@@ -261,7 +285,9 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
     pairs.push_back(CausingTargetPair{causingId, note.noteId});
     baseline[note.noteId] = NoteBaseline{note.note, note.velocity, note.startTick, note.endTick};
   }
-  RuntimeTimingTelemetry::addNotePair(micros() - pairStartUs);
+#if RUNTIME_TIMING_ENABLED
+  RUNTIME_TIMING_ADD_NOTE_PAIR(micros() - pairStartUs);
+#endif
 
   if (!pairs.empty()) {
     const auto interactions = analyzeEditSessionInteractions(pairs, edited, baseline);
@@ -321,6 +347,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     return false;
   }
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   ++overlapHoldTotals_.noteOffs;
   const uint32_t idCount = static_cast<uint32_t>(overlapNoteIds.size());
   if (idCount > overlapHoldTotals_.maxIds) {
@@ -329,6 +356,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (overlapNoteIds.overflowed()) {
     ++overlapHoldTotals_.overflows;
   }
+#endif
 
   OverlapNoteIdSet effectiveOverlapNoteIds;
   for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
@@ -396,17 +424,24 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     }
   };
   completeConsumeParticipantIds();
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   if (effectiveOverlapNoteIds.overflowed()) {
     ++overlapHoldTotals_.overflows;
   }
+#endif
 
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(effectiveOverlapNoteIds)) {
     size_t notesExamined = 0;
+#if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     const uint32_t lookupStartUs = micros();
+#endif
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, effectiveOverlapNoteIds,
                                               selected, &notesExamined);
+#if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     const uint32_t lookupUs = micros() - lookupStartUs;
+#endif
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     ++overlapHoldTotals_.lookedUp;
     const uint32_t examined = static_cast<uint32_t>(notesExamined);
     overlapHoldTotals_.sumExamined += examined;
@@ -417,8 +452,11 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     if (lookupUs > overlapHoldTotals_.maxLookupUs) {
       overlapHoldTotals_.maxLookupUs = lookupUs;
     }
+#endif
   } else {
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     ++overlapHoldTotals_.emptySets;
+#endif
   }
   const size_t idSelectedCount = selected.size();
 
@@ -445,9 +483,11 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       ++idsWithoutNotes;
     }
   }
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   overlapHoldTotals_.scanOnlyCandidates += scanOnly;
   overlapHoldTotals_.lateNoteCandidates += lateNotes;
   overlapHoldTotals_.idsWithoutNotes += idsWithoutNotes;
+#endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const bool jitEligible = (loopLen > overdubSourceWindowLengthTicks());
   // Attribution only when a path other than the occupy-id lookup mattered.
@@ -532,6 +572,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   addChange.endTick = endTick;
   pendingNoteChanges_.push_back(addChange);
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   overlapHoldTotals_.add = 0;
   overlapHoldTotals_.shorten = 0;
   overlapHoldTotals_.hide = 0;
@@ -544,46 +585,50 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       ++overlapHoldTotals_.hide;
     }
   }
+#endif
   return true;
 }
 
 LOOP_COLD_MEM __attribute__((noinline)) void Loop::emitOverlapHoldTotals() const {
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   const OverlapHoldTotals& totals = overlapHoldTotals_;
   SC_OVERLAP_HOLD(totals.noteOffs, totals.emptySets, totals.maxIds, totals.overflows,
                   totals.lookedUp, totals.maxExamined, totals.sumExamined, totals.maxLookupUs,
                   totals.sumLookupUs, totals.add, totals.shorten, totals.hide);
+#endif
 }
 
 LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
   if (!overdubSourceViewEstablished_) {
     return;
   }
+  NoteUtils::DisplayNoteVec added;
+  added.reserve(pendingNoteChanges_.size());
   for (const PendingNoteChange& change : pendingNoteChanges_) {
-    if (change.kind == PendingNoteChangeKind::Add) {
-      if (change.noteId == kInvalidNoteId) {
-        continue;
-      }
-      NoteUtils::DisplayNoteVec added;
-      NoteUtils::DisplayNote note{};
-      note.noteId = change.noteId;
-      note.note = change.pitch;
-      note.velocity = change.velocity;
-      note.startTick = change.startTick;
-      note.endTick = change.endTick;
-      added.push_back(note);
-      mergeDisplayNotesIntoOverdubSourceView(added);
-      if (overdubSourceSpanCacheValid_) {
-        for (const NoteUtils::DisplayNote& candidate : added) {
-          bool found = false;
-          for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
-            if (existing.noteId == candidate.noteId) {
-              found = true;
-              break;
-            }
+    if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
+      continue;
+    }
+    NoteUtils::DisplayNote note{};
+    note.noteId = change.noteId;
+    note.note = change.pitch;
+    note.velocity = change.velocity;
+    note.startTick = change.startTick;
+    note.endTick = change.endTick;
+    added.push_back(note);
+  }
+  if (!added.empty()) {
+    mergeDisplayNotesIntoOverdubSourceView(added);
+    if (overdubSourceSpanCacheValid_) {
+      for (const NoteUtils::DisplayNote& candidate : added) {
+        bool found = false;
+        for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
+          if (existing.noteId == candidate.noteId) {
+            found = true;
+            break;
           }
-          if (!found) {
-            overdubSourceSpanCacheNotes_.push_back(candidate);
-          }
+        }
+        if (!found) {
+          overdubSourceSpanCacheNotes_.push_back(candidate);
         }
       }
     }
@@ -610,6 +655,20 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   if (!pendingNoteChanges_.empty()) {
     applyPendingNoteChangesToOverdubSourceView();
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t companionSealStartUs = micros();
+  uint32_t companionRowsLogged = 0;
+  constexpr uint32_t kMaxCompanionRowsLogged = 8;
+#endif
+  if (companionRowsToSeal > 0) {
+    sealedIds.reserve(companionRowsToSeal);
+    passes.editPasses.reserve(passes.editPasses.size() + companionRowsToSeal);
+  }
+  const size_t companionBytesNeeded =
+      Config::HEAP_RESERVE_BYTES + companionRowsToSeal * sizeof(EditPass);
+  const bool batchHeapReserveAdmitted =
+      companionRowsToSeal > 0 &&
+      MemoryMonitor::getInternalHeapFreeBytes() >= companionBytesNeeded;
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Shorten &&
         change.kind != PendingNoteChangeKind::Hide) {
@@ -629,22 +688,42 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
       row.actionType = EditActionType::Update;
       row.propertyType = EditPropertyType::Length;
     }
-    const EditPassId id =
-        saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row), EditPassType::Note);
+    const EditPassId id = saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row),
+                                           EditPassType::Note, true, batchHeapReserveAdmitted);
     if (id != kInvalidEditPassId) {
       sealedIds.push_back(id);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      char line[128];
-      const char* kind =
-          (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
-      snprintf(line, sizeof(line),
-               "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u",
-               static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
-               static_cast<unsigned>(change.noteId), kind,
-               static_cast<unsigned>(change.endTick));
-      DebugSessionCapture::appendCaptureTextLine(line);
+      if (companionRowsLogged < kMaxCompanionRowsLogged) {
+        char line[128];
+        const char* kind =
+            (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u",
+                 static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
+                 static_cast<unsigned>(change.noteId), kind,
+                 static_cast<unsigned>(change.endTick));
+        DebugSessionCapture::appendCaptureTextLine(line);
+        ++companionRowsLogged;
+      }
 #endif
     }
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  if (companionRowsToSeal > 0) {
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,seal_companion_batch,rows=%u,sealed=%u,us=%lu",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned>(companionRowsToSeal),
+             static_cast<unsigned>(sealedIds.size()),
+             static_cast<unsigned long>(micros() - companionSealStartUs));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
+  if (!sealedIds.empty()) {
+    ++playbackRevision;
+    editStateDirty_ = true;
+    notifyCommittedContentChanged();
   }
   // Keep cache reuse across overdub sessions only when companion sealing succeeded
   // for every pending Shorten/Hide row (otherwise force a rebuild next entry).

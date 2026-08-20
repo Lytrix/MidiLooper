@@ -100,21 +100,21 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
         prepareLedNoteLookup(mutableLoop);
 #endif
 #if defined(SESSION_CAPTURE)
-        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 0, childStartUs);
+        RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, 0, childStartUs);
         if (measure) {
             childStartUs = micros();
         }
 #endif
         analyzeAndUpdateBar(mutableLoop, barStartTickDisplay);
 #if defined(SESSION_CAPTURE)
-        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 1, childStartUs);
+        RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, 1, childStartUs);
         if (measure) {
             childStartUs = micros();
         }
 #endif
         updateBarLeds(mutableLoop, currentBar);
 #if defined(SESSION_CAPTURE)
-        RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, 2, childStartUs);
+        RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, 2, childStartUs);
 #endif
         
         lastUpdateBar = currentBar;
