@@ -2,11 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub-start reboot reverted to 28cf6e3 baseline; capture blind spot named)
+Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 
 ---
 
 ## Now implementing
+
+### Overdub-stop seal lag optimization — ready for HITL verify
+
+**Evidence:** [`163904`](../../captures/session_20260820_163904.log)
+
+**Owner:** `Loop::applyPendingHideAndShortenToNotes`, `Loop::sealPendingNoteChangesToEditPasses`, `Loop::saveNoteEditPass`.
+
+**Invariant:** Overdub stop commit semantics remain unchanged, but companion seal applies source-note transforms and derived-cache invalidation in bounded batch form (one vector rewrite pass + one derived-stale publish), instead of per-row erase/notify churn on the stop path.
+
+**Root cause proved in capture:** The 55-64 ms stop window is dominated by the `seal` segment (44.1 ms in the complete `ODUB,stop` sample). Within that window, `DIAG,seal_companion` plus repeated `VCACHE,stale` lines show companion-row sealing and per-row `notifyCommittedContentChanged` churn before `ODUB,stop,seal`.
+
+**Stage changes shipped:**  
+- `applyPendingHideAndShortenToNotes` now applies `Shorten`/`Hide` transforms by rebuilding the note vector once, avoiding repeated in-place erase scans for each pending change.  
+- `saveNoteEditPass` gained `deferDerivedInvalidate` for batch callsites.  
+- `sealPendingNoteChangesToEditPasses` now defers derived invalidation during companion row inserts and performs a single `playbackRevision` + `notifyCommittedContentChanged` publish after the batch.
+- Companion sealing now performs one heap-reserve admission check for the entire companion batch and skips repeated per-row heap checks once the batch is admitted.
+
+**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **424892** / locals **4768**). Awaiting HITL capture to re-measure `ODUB,stop,seal` and total stop window.
 
 ### Overdub-start reboot — reverted to baseline, blocked on instrumentation
 

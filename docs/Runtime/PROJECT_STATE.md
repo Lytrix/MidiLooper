@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-20 (overdub-start reboot reverted to 28cf6e3 baseline; capture blind spot named)
+Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 
 ---
 
@@ -62,6 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
+- **Overdub-stop seal lag optimization:** baseline capture [`163904`](../../captures/session_20260820_163904.log) runs stable (0 reconnects, 9 overdub cycles) but stop window remains 55-64 ms with `ODUB,stop,seal` at 44.1 ms in the complete sample. Root-cause owner path is companion sealing (`Loop::applyPendingHideAndShortenToNotes` + `Loop::sealPendingNoteChangesToEditPasses` + `Loop::saveNoteEditPass`). Stage now batches source-note transforms, batches derived invalidation to one publish per stop, and batches heap-reserve admission to one check per companion seal. Native **1397/1397** and `teensy41-capture-serial` build pass; waiting on HITL re-measure of stop window — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Overdub-start reboot:** USB drops right after `[TRACK] Overdubbing started`. Present in [`132145`](../../captures/session_20260820_132145.log) and [`143518`](../../captures/session_20260820_143518.log), i.e. before the 2026-08-20 removals, so commits `4af158a`…`6ff4142` are reverted and the tree is byte-identical to `28cf6e3`. Blocked on instrumentation: `flushCaptureBuffer` budgets `<= 8` take a drop-only branch, and `appendCaptureRecord` refuses Tier-B lines while the ring is full with a Tier-A head, so Tier-B `ODUB,stage` never reaches serial ([`162146`](../../captures/session_20260820_162146.log): last `MI` at 9.387 s, last `LED` at 14.89 s, `DIAG,lcr,phase` to 33.38 s, no `MI` for the 35.198 s button press). `CrashReport` prints before `logger.setup`, so no capture today contains it; SD `crashlog.txt` is the authoritative record and is unread. Native **1397/1397**; RAM1 locals **4768**; not flashed — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Overdub session index reboot undo:** HITL **PASS** [`003854`](../../captures/session_20260820_003854.log) — reboot `entries=2` `kind=1`; one undo 112→14 — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Cleanup branch telemetry/fader compile-gating:** `chore/cleanup-codebase-tidiness` stage shipped — telemetry-only timing work gated by owning feature macros; `MidiHandler` motor-fader USB-host service helper now feature-gated to `MIDI_USB_FADER_PROBE_PASSTHROUGH`; verification passed (`pio test -e native`, `pio run -e teensy41`, `pio run -e teensy41-capture-serial`) with zero warnings.

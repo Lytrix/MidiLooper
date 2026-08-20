@@ -14,6 +14,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/LoopMem.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
@@ -81,27 +82,48 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
   pending.push_back(change);
 }
 
-void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
-                                       const PendingNoteChangeVec& pending) {
-  for (const PendingNoteChange& change : pending) {
-    if (change.kind != PendingNoteChangeKind::Shorten &&
-        change.kind != PendingNoteChangeKind::Hide) {
-      continue;
-    }
-    for (auto it = notes.begin(); it != notes.end();) {
-      if (it->noteId != change.noteId) {
-        ++it;
-        continue;
-      }
-      if (change.kind == PendingNoteChangeKind::Hide) {
-        it = notes.erase(it);
-        continue;
-      }
-      it->startTick = change.startTick;
-      it->endTick = change.endTick;
-      ++it;
+const PendingNoteChange* findSourceTransformByNoteId(const PendingNoteChangeVec& transforms,
+                                                     NoteId noteId) {
+  for (const PendingNoteChange& transform : transforms) {
+    if ((transform.kind == PendingNoteChangeKind::Shorten ||
+         transform.kind == PendingNoteChangeKind::Hide) &&
+        transform.noteId == noteId) {
+      return &transform;
     }
   }
+  return nullptr;
+}
+
+void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
+                                       const PendingNoteChangeVec& pending) {
+  PendingNoteChangeVec transforms;
+  for (const PendingNoteChange& change : pending) {
+    if (change.kind == PendingNoteChangeKind::Shorten ||
+        change.kind == PendingNoteChangeKind::Hide) {
+      upsertSourceTransform(transforms, change);
+    }
+  }
+  if (transforms.empty() || notes.empty()) {
+    return;
+  }
+
+  NoteUtils::DisplayNoteVec updated;
+  updated.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    const PendingNoteChange* transform = findSourceTransformByNoteId(transforms, note.noteId);
+    if (transform == nullptr) {
+      updated.push_back(note);
+      continue;
+    }
+    if (transform->kind == PendingNoteChangeKind::Hide) {
+      continue;
+    }
+    NoteUtils::DisplayNote revised = note;
+    revised.startTick = transform->startTick;
+    revised.endTick = transform->endTick;
+    updated.push_back(revised);
+  }
+  notes.swap(updated);
 }
 
 }  // namespace
@@ -632,6 +654,11 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   if (!pendingNoteChanges_.empty()) {
     applyPendingNoteChangesToOverdubSourceView();
   }
+  const size_t companionBytesNeeded =
+      Config::HEAP_RESERVE_BYTES + companionRowsToSeal * sizeof(EditPass);
+  const bool batchHeapReserveAdmitted =
+      companionRowsToSeal > 0 &&
+      MemoryMonitor::getInternalHeapFreeBytes() >= companionBytesNeeded;
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Shorten &&
         change.kind != PendingNoteChangeKind::Hide) {
@@ -651,8 +678,8 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
       row.actionType = EditActionType::Update;
       row.propertyType = EditPropertyType::Length;
     }
-    const EditPassId id =
-        saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row), EditPassType::Note);
+    const EditPassId id = saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row),
+                                           EditPassType::Note, true, batchHeapReserveAdmitted);
     if (id != kInvalidEditPassId) {
       sealedIds.push_back(id);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
@@ -667,6 +694,11 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
       DebugSessionCapture::appendCaptureTextLine(line);
 #endif
     }
+  }
+  if (!sealedIds.empty()) {
+    ++playbackRevision;
+    editStateDirty_ = true;
+    notifyCommittedContentChanged();
   }
   // Keep cache reuse across overdub sessions only when companion sealing succeeded
   // for every pending Shorten/Hide row (otherwise force a rebuild next entry).
