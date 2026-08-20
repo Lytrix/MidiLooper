@@ -47,39 +47,31 @@ void logGeomApplySkip(uint8_t reasonCode) {
 
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditMove(const NoteUtils::DisplayNote& note,
                                                                     uint32_t targetTick) {
-    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Move;
-    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryTargetTick_ = targetTick;
-    pendingPlayingEditGeometryQueuedAtMs_ = millis();
-#if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Move), targetTick,
-                      clockManager.isTransportRunning());
-#endif
+    queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType::Move, note, targetTick);
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditLength(const NoteUtils::DisplayNote& note,
                                                                       uint32_t targetEndTick) {
-    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Length;
-    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryTargetTick_ = targetEndTick;
-    pendingPlayingEditGeometryQueuedAtMs_ = millis();
-#if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Length), targetEndTick,
-                      clockManager.isTransportRunning());
-#endif
+    queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType::Length, note, targetEndTick);
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditPitch(const NoteUtils::DisplayNote& note,
                                                                      uint8_t currentPitch,
                                                                      uint8_t newPitch) {
-    pendingPlayingEditGeometryType_ = PendingPlayingEditGeometryType::Pitch;
-    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryPitchCurrent_ = currentPitch;
     pendingPlayingEditGeometryPitchNew_ = newPitch;
+    queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType::Pitch, note, newPitch);
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingEditGeometryCore(
+    PendingPlayingEditGeometryType type, const NoteUtils::DisplayNote& note, uint32_t targetField) {
+    pendingPlayingEditGeometryType_ = type;
+    pendingPlayingEditGeometryNote_ = note;
     pendingPlayingEditGeometryQueuedAtMs_ = millis();
 #if defined(SESSION_CAPTURE)
-    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingEditGeometryType::Pitch), newPitch,
-                      clockManager.isTransportRunning());
+    logGeomApplyQueue(static_cast<uint8_t>(type), targetField, clockManager.isTransportRunning());
 #endif
 }
 
