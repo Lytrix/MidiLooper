@@ -42,6 +42,7 @@ inline bool isTierALine(const char* line) {
   }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||
          strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "HDR,", 4) == 0 ||
+         strncmp(tag, "ODUB,stop,", 10) == 0 ||
          strncmp(tag, "VCACHE,", 7) == 0 ||
          strncmp(tag, "DIAG,timing_max,", 16) == 0 || strncmp(tag, "DIAG,midi_gap,", 14) == 0 ||
          strncmp(tag, "DIAG,midi_input,", 16) == 0 ||

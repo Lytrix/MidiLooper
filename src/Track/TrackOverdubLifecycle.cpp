@@ -43,7 +43,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
                         MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
     const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t flushStartUs = micros();
-    SC_REC_FLUSH_PENDING_REVTS(256);
+    SC_REC_FLUSH_PENDING_REVTS(8);
     logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
                         MemoryMonitor::getInternalHeapFreeBytes(), "ok");
     logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
@@ -174,7 +174,7 @@ void Track::stopOverdubbing() {
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t flushStartUs = micros();
-  SC_REC_FLUSH_PENDING_REVTS(256);
+  SC_REC_FLUSH_PENDING_REVTS(8);
   logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
