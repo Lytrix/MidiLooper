@@ -47,6 +47,16 @@ TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const
 
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track);
 
+#if defined(SESSION_CAPTURE)
+#define TRACK_SC_RECORD_STOP_STAGE(...) logRecordStopStage(__VA_ARGS__)
+#define TRACK_SC_OVERDUB_STOP_STAGE(...) logOverdubStopStage(__VA_ARGS__)
+#define TRACK_SC_OVERDUB_STOP_MEMORY(...) logMemoryAfterOverdubStop(__VA_ARGS__)
+#else
+#define TRACK_SC_RECORD_STOP_STAGE(...) ((void)0)
+#define TRACK_SC_OVERDUB_STOP_STAGE(...) ((void)0)
+#define TRACK_SC_OVERDUB_STOP_MEMORY(...) ((void)0)
+#endif
+
 TRACK_INTERNAL_MEM void requestLoopSlotPersist(Track& track, uint8_t slotIndex);
 
 TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t slotIndex,

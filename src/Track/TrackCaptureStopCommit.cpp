@@ -29,9 +29,9 @@ TRACK_COLD_MEM void logRecordStopSaveRequestAndPersist(Track& track, Loop& loop,
                                                        uint32_t heapAfter,
                                                        CommitResult sideEffectResult,
                                                        const StopPathStorageStats& stopPathStats) {
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, heapAfter, heapAfter,
-                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                     &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "save_request", 0, heapAfter, heapAfter,
+                             sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
+                             &stopPathStats);
   if (sideEffectResult == CommitResult::Committed) {
     requestLoopSlotPersistAndSaveState(track, recordedSlotIndex, heapAfter);
   }
@@ -42,17 +42,17 @@ TRACK_COLD_MEM void resetAndLogEmptyRecordStop(Loop& loop, uint32_t stopPathStar
                                                const char* saveRequestOutcome,
                                                const StopPathStorageStats& stopPathStats) {
   resetActiveLoopAfterEmptyCapture(loop);
-  logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, heapValue, heapValue,
-                     "skipped_empty", &stopPathStats);
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, heapValue, heapValue,
-                     saveRequestOutcome, &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "state_advance", 0, heapValue, heapValue,
+                             "skipped_empty", &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "save_request", 0, heapValue, heapValue,
+                             saveRequestOutcome, &stopPathStats);
 }
 
 TRACK_COLD_MEM void logRecordStopPathEntry(Loop& loop, uint32_t& stopPathStartUs,
                                            uint32_t& stopHeap) {
   stopPathStartUs = micros();
   stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 }
 
 TRACK_COLD_MEM void logRecordStopStateAdvance(Loop& loop, uint32_t stopPathStartUs,
@@ -61,9 +61,9 @@ TRACK_COLD_MEM void logRecordStopStateAdvance(Loop& loop, uint32_t stopPathStart
                                               uint32_t stateAdvanceHeapAfter,
                                               bool stateAdvanceSucceeded,
                                               const StopPathStorageStats& stopPathStats) {
-  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
-                     stateAdvanceHeapBefore, stateAdvanceHeapAfter,
-                     stateAdvanceSucceeded ? "ok" : "failed", &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+                             stateAdvanceHeapBefore, stateAdvanceHeapAfter,
+                             stateAdvanceSucceeded ? "ok" : "failed", &stopPathStats);
 }
 
 struct RecordStopFinalizeContext {
@@ -80,14 +80,17 @@ TRACK_COLD_MEM RecordStopFinalizeContext finalizeRecordStopCommitAndLog(
   const CommitResult sideEffectResult = track.commitCaptureForStop(reason, currentTick, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
-  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
-                     finalizeHeapAfter, commitResultLabel(sideEffectResult), &stopPathStats);
+  StopPathStorageStats stopPathStats{};
+#if defined(SESSION_CAPTURE)
+  stopPathStats = collectStopPathStorageStats(loop, false);
+#endif
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
+                             finalizeHeapAfter, commitResultLabel(sideEffectResult), &stopPathStats);
   const char* requestOutcome = sideEffectResult == CommitResult::Committed ? "deferred" : "skipped";
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
-                     finalizeHeapAfter, requestOutcome, &stopPathStats);
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     requestOutcome, &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
+                             finalizeHeapAfter, requestOutcome, &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter,
+                             finalizeHeapAfter, requestOutcome, &stopPathStats);
   return {sideEffectResult, stopPathStats};
 }
 
@@ -352,8 +355,8 @@ void Track::stopRecording(uint32_t currentTick) {
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
-                     stateAdvanceHeapBefore, "enter", &stopPathStats);
+  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
+                             stateAdvanceHeapBefore, "enter", &stopPathStats);
   // Silence live/held notes on the wire before loop playback catch-up; CC123 is not stored.
   sendAllNotesOff();
   resetPlaybackState(playbackTick);
