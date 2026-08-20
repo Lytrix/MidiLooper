@@ -51,6 +51,11 @@ TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const
 
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track);
 
+TRACK_INTERNAL_MEM void requestLoopSlotPersist(Track& track, uint8_t slotIndex);
+
+TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t slotIndex,
+                                                           uint32_t admissionHeap);
+
 TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop);
 
 struct MergedPlaybackStreamCtx {

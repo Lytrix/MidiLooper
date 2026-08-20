@@ -7,6 +7,8 @@
 
 #include "DisplayManager.h"
 #include "LoopEventStore.h"
+#include "LooperState.h"
+#include "StorageManager.h"
 #include "TrackManager.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
@@ -121,6 +123,18 @@ TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
     }
   }
   return trackManager.getSelectedTrackIndex();
+}
+
+TRACK_INTERNAL_MEM void requestLoopSlotPersist(Track& track, uint8_t slotIndex) {
+  const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
+  StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
+  StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+}
+
+TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t slotIndex,
+                                                           uint32_t admissionHeap) {
+  requestLoopSlotPersist(track, slotIndex);
+  StorageManager::requestDeferredSaveState(looperState.getLooperState(), admissionHeap, true);
 }
 
 TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
