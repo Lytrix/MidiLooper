@@ -18,6 +18,12 @@
 
 #include <cstdint>
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+#define RUNTIME_TIMING_ENABLED 1
+#else
+#define RUNTIME_TIMING_ENABLED 0
+#endif
+
 namespace RuntimeTimingTelemetry {
 
 /** Rate-limit DIAG emission to once per this many microseconds. */
@@ -245,3 +251,88 @@ bool maybeEmit(uint32_t nowUs);
 Snapshot peek(uint32_t nowUs = 0);
 
 }  // namespace RuntimeTimingTelemetry
+
+#if RUNTIME_TIMING_ENABLED
+#define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) RuntimeTimingTelemetry::noteMidiInputEnter(nowUs)
+#define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) RuntimeTimingTelemetry::noteMidiInputExit(nowUs)
+#define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) RuntimeTimingTelemetry::noteClockDispatch(durationUs)
+#define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) RuntimeTimingTelemetry::noteTracksUpdate(durationUs)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(durationUs) RuntimeTimingTelemetry::noteUsbDeviceDrain(durationUs)
+#define RUNTIME_TIMING_NOTE_DIN_DRAIN(durationUs) RuntimeTimingTelemetry::noteDinDrain(durationUs)
+#define RUNTIME_TIMING_NOTE_USB_HOST_TASK(durationUs) RuntimeTimingTelemetry::noteUsbHostTask(durationUs)
+#define RUNTIME_TIMING_NOTE_USB_HOST_DRAIN(durationUs) RuntimeTimingTelemetry::noteUsbHostDrain(durationUs)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_READ(durationUs) RuntimeTimingTelemetry::noteUsbDeviceRead(durationUs)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_DISPATCH(durationUs) RuntimeTimingTelemetry::noteUsbDeviceDispatch(durationUs)
+#define RUNTIME_TIMING_BEGIN_USB_DEVICE_NESTED() RuntimeTimingTelemetry::beginUsbDeviceNested()
+#define RUNTIME_TIMING_ADD_USB_DEVICE_CAPTURE(durationUs) RuntimeTimingTelemetry::addUsbDeviceCapture(durationUs)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_THRU(durationUs) RuntimeTimingTelemetry::addUsbDeviceThru(durationUs)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_CLOCK(durationUs) RuntimeTimingTelemetry::addUsbDeviceClock(durationUs)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_NOTE(durationUs) RuntimeTimingTelemetry::addUsbDeviceNote(durationUs)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_CC(durationUs) RuntimeTimingTelemetry::addUsbDeviceCc(durationUs)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_TRANSPORT(durationUs) RuntimeTimingTelemetry::addUsbDeviceTransport(durationUs)
+#define RUNTIME_TIMING_ADD_NOTE_APPEND(durationUs) RuntimeTimingTelemetry::addNoteAppend(durationUs)
+#define RUNTIME_TIMING_ADD_NOTE_CHANGE(durationUs) RuntimeTimingTelemetry::addNoteChange(durationUs)
+#define RUNTIME_TIMING_ADD_NOTE_RECON(durationUs) RuntimeTimingTelemetry::addNoteRecon(durationUs)
+#define RUNTIME_TIMING_ADD_NOTE_PAIR(durationUs) RuntimeTimingTelemetry::addNotePair(durationUs)
+#define RUNTIME_TIMING_COMMIT_USB_DEVICE_NESTED() RuntimeTimingTelemetry::commitUsbDeviceNested()
+#define RUNTIME_TIMING_NOTE_CLOCK_PULSE() RuntimeTimingTelemetry::noteClockPulse()
+#define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) \
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(nowUs, tickPeriodUs)
+#define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() \
+  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence()
+#define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) \
+  RuntimeTimingTelemetry::recordNoteSendLateness(isNoteOn, nowUs, tick)
+#define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) \
+  RuntimeTimingTelemetry::recordOutgoingClockSend(nowUs, clockPeriodUs, onTimeWindowUs, tick)
+#define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision) \
+  RuntimeTimingTelemetry::recordPlaybackRebuild(durationUs, windowStartTick, windowLengthTicks, revision)
+#define RUNTIME_TIMING_RECORD_LOOP_REMAINDER_IF_MEASURING(measure, span, startUs) \
+  RuntimeTimingTelemetry::recordLoopRemainderIfMeasuring(measure, span, startUs)
+#define RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, helper, startUs) \
+  RuntimeTimingTelemetry::recordMidiLedHelperRem(measure, helper, startUs)
+#define RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(child, startUs) \
+  RuntimeTimingTelemetry::recordLoadFrameChildRem(child, startUs)
+#define RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(child, startUs) \
+  RuntimeTimingTelemetry::recordIdleMaintChildRem(child, startUs)
+#define RUNTIME_TIMING_NOTE_IDLE_MAINT(durationUs) RuntimeTimingTelemetry::noteIdleMaint(durationUs)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME(durationUs) RuntimeTimingTelemetry::noteLoadFrame(durationUs)
+#define RUNTIME_TIMING_NOTE_PERSIST_SAVE(durationUs) RuntimeTimingTelemetry::notePersistSave(durationUs)
+#define RUNTIME_TIMING_MAYBE_EMIT(nowUs) RuntimeTimingTelemetry::maybeEmit(nowUs)
+#else
+#define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_DIN_DRAIN(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_USB_HOST_TASK(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_USB_HOST_DRAIN(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_READ(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_DISPATCH(durationUs) ((void)0)
+#define RUNTIME_TIMING_BEGIN_USB_DEVICE_NESTED() ((void)0)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_CAPTURE(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_THRU(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_CLOCK(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_NOTE(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_CC(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_USB_DEVICE_TRANSPORT(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_NOTE_APPEND(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_NOTE_CHANGE(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_NOTE_RECON(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_NOTE_PAIR(durationUs) ((void)0)
+#define RUNTIME_TIMING_COMMIT_USB_DEVICE_NESTED() ((void)0)
+#define RUNTIME_TIMING_NOTE_CLOCK_PULSE() ((void)0)
+#define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) ((void)0)
+#define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() ((void)0)
+#define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) ((void)0)
+#define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) ((void)0)
+#define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision) ((void)0)
+#define RUNTIME_TIMING_RECORD_LOOP_REMAINDER_IF_MEASURING(measure, span, startUs) ((void)0)
+#define RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, helper, startUs) ((void)0)
+#define RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(child, startUs) ((void)0)
+#define RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(child, startUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_IDLE_MAINT(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_PERSIST_SAVE(durationUs) ((void)0)
+#define RUNTIME_TIMING_MAYBE_EMIT(nowUs) ((void)0)
+#endif

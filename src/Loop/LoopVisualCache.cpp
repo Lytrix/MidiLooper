@@ -51,6 +51,7 @@ bool containsNoteId(const std::vector<NoteId>& ids, NoteId id) {
 
 // Coverage of the cached notes over the loop, for RC-E attribution. Bounds only, so no
 // per-bar allocation on the commit path.
+#if defined(SESSION_CAPTURE)
 struct VisualCacheCoverage {
   uint32_t firstBar = UINT32_MAX;
   uint32_t lastBar = 0;
@@ -77,6 +78,7 @@ VisualCacheCoverage measureVisualCacheCoverage(const VisualCache& cache) {
   }
   return coverage;
 }
+#endif
 
 void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
   const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
@@ -184,11 +186,16 @@ size_t Loop::displayEventCountHint() const {
 }
 
 LOOP_COLD_MEM void Loop::emitVisualCacheState(const char* phase, int32_t gatheredEvents) const {
+#if defined(SESSION_CAPTURE)
   const VisualCacheCoverage coverage = measureVisualCacheCoverage(visualCache);
   SC_VCACHE(phase, gatheredEvents, static_cast<uint32_t>(visualCache.notes.size()),
             coverage.firstBar, coverage.lastBar, totalVisualBarsForLoop(loopLengthTicks),
             static_cast<uint32_t>(visualCache.dirtyBars.size()), coverage.dirtyCount,
             visualCacheDirty ? 1 : 0);
+#else
+  (void)phase;
+  (void)gatheredEvents;
+#endif
 }
 
 LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
@@ -268,7 +275,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 #if defined(SESSION_CAPTURE)
   if (!usedPrepared) {
-    RuntimeTimingTelemetry::recordIdleMaintChildRem(0, gatherStartUs);
+    RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);
   }
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
@@ -281,7 +288,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
 #if defined(SESSION_CAPTURE)
-  RuntimeTimingTelemetry::recordIdleMaintChildRem(1, reconstructStartUs);
+  RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(1, reconstructStartUs);
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_recon,notes,"));
@@ -300,7 +307,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 #if defined(SESSION_CAPTURE)
   if (appendOverdub) {
-    RuntimeTimingTelemetry::recordIdleMaintChildRem(2, appendStartUs);
+    RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
   }
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)

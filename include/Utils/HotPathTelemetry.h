@@ -6,6 +6,12 @@
 #include <cstdint>
 #include <cstddef>
 
+#if defined(PERF_TELEMETRY) || defined(PIO_UNIT_TEST_NATIVE)
+#define HOT_PATH_TELEMETRY_ENABLED 1
+#else
+#define HOT_PATH_TELEMETRY_ENABLED 0
+#endif
+
 namespace HotPathTelemetry {
 
 #if defined(PERF_TELEMETRY)
@@ -67,4 +73,25 @@ public:
 #endif
 
 }  // namespace HotPathTelemetry
+
+#if HOT_PATH_TELEMETRY_ENABLED
+#define HOT_PATH_TELEMETRY_RESET() HotPathTelemetry::reset()
+#define HOT_PATH_TELEMETRY_RECORD_OVERDUB_START(elapsedUs, sourceEvents, undoDepth) \
+  HotPathTelemetry::recordOverdubStart(elapsedUs, sourceEvents, undoDepth)
+#define HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(elapsedUs) \
+  HotPathTelemetry::recordDisplayUpdate(elapsedUs)
+#define HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY(checkpoint) \
+  HotPathTelemetry::requestDeferredSummary(checkpoint)
+#define HOT_PATH_TELEMETRY_PROCESS_DEFERRED_SUMMARY() \
+  HotPathTelemetry::processDeferredSummary()
+#define HOT_PATH_TELEMETRY_EMIT_SUMMARY(checkpoint) \
+  HotPathTelemetry::emitSummary(checkpoint)
+#else
+#define HOT_PATH_TELEMETRY_RESET() ((void)0)
+#define HOT_PATH_TELEMETRY_RECORD_OVERDUB_START(elapsedUs, sourceEvents, undoDepth) ((void)0)
+#define HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(elapsedUs) ((void)0)
+#define HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY(checkpoint) ((void)0)
+#define HOT_PATH_TELEMETRY_PROCESS_DEFERRED_SUMMARY() ((void)0)
+#define HOT_PATH_TELEMETRY_EMIT_SUMMARY(checkpoint) ((void)0)
+#endif
 

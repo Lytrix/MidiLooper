@@ -87,6 +87,7 @@ from hitl.serial_timing import (
     extract_phase_boundaries as _extract_phase_boundaries,
     phase_start_delay_clocks as _phase_start_delay_clocks,
 )
+from hitl.serial.protocol import extract_recs_stop_lengths
 from hitl.serial_transport import (
     resolve_wall_tempo_for_proxy as _resolve_wall_tempo_for_proxy,
     serial_capture_active as _serial_capture_active,
@@ -1639,37 +1640,6 @@ def _verify_record_note_span(
     }
 
 
-def _extract_recs_lengths(lines: list[str]) -> list[dict[str, int]]:
-    rows: list[dict[str, int]] = []
-    for line in lines:
-        if ",RECS," not in line:
-            continue
-        parts = line.split(",")
-        if len(parts) < 6:
-            continue
-        if parts[3] not in ("stop", "stopToStopped"):
-            continue
-        try:
-            ts = int(parts[1])
-        except ValueError:
-            continue
-        ints: list[int] = []
-        for token in parts[3:]:
-            token = token.strip()
-            if token.isdigit():
-                ints.append(int(token))
-        if len(ints) < 3:
-            continue
-        rows.append(
-            {
-                "timestamp": ts,
-                "raw_length": ints[-3],
-                "final_length": ints[-2],
-            }
-        )
-    return rows
-
-
 def _extract_record_stop_stage_rows(lines: list[str]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for line in lines:
@@ -2621,7 +2591,7 @@ def _build_serial_verification(
             low_note=args.overdub_low_note,
             high_note=args.overdub_high_note,
         )
-    recs_lengths = _extract_recs_lengths(lines)
+    recs_lengths = extract_recs_stop_lengths(lines)
     if not recs_lengths:
         recs_lengths = _extract_recs_lengths_from_human_logs(lines)
     record_loop_length: Optional[dict[str, object]] = None

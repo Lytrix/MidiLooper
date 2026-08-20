@@ -84,7 +84,9 @@ void DisplayManager::setup() {
 }
 
 void DisplayManager::update() {
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     const uint32_t telemetryStartUs = micros();
+#endif
     uint32_t now = millis();
     if (bootScreenVisible_) {
         if (!bootSetupComplete_ || now < bootScreenHoldUntilMs_) {
@@ -133,7 +135,7 @@ void DisplayManager::update() {
     if (loadSaveActive) {
         drawLoadSaveView(now);
         _display.api.display();
-        HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
+        HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(micros() - telemetryStartUs);
         DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
         return;
     }
@@ -158,7 +160,7 @@ void DisplayManager::update() {
         }
     }
 #endif
-    HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
+    HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(micros() - telemetryStartUs);
     DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
     // Acknowledge unconditionally: invalidateLiveDisplayCache raises the paint request with no
     // note-edit precondition, so gating the ack on isNoteEditActive left it permanently raised

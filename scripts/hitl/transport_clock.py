@@ -18,12 +18,12 @@ from hitl.serial_transport import (
     resolve_wall_tempo_bpm,
     use_serial_transport_proxy,
 )
-
-MIDI_CLOCKS_PER_BAR = 96
-MIDI_CLOCKS_PER_BEAT = 24
-
-CONTROL_CHANNEL_1BASED = 16
-GLOBAL_TRANSPORT_NOTE = 39
+from hitl.control_constants import (
+    CONTROL_CHANNEL_1BASED,
+    GLOBAL_TRANSPORT_NOTE,
+    MIDI_CLOCKS_PER_BAR,
+    MIDI_CLOCKS_PER_BEAT,
+)
 
 
 def _send_short_press(

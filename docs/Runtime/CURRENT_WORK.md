@@ -2,11 +2,89 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdubSessionIndex reboot undo HITL PASS 003854)
+Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
 
 ---
 
 ## Now implementing
+
+### Overdub-stop seal lag optimization — long-tail attribution and trim stage
+
+**Evidence:** [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`171246`](../../captures/session_20260820_171246.log), [`171909`](../../captures/session_20260820_171909.log), [`172553`](../../captures/session_20260820_172553.log), [`173206`](../../captures/session_20260820_173206.log), [`174941`](../../captures/session_20260820_174941.log)
+
+**Owner:** `Loop::applyPendingHideAndShortenToNotes`, `Loop::sealPendingNoteChangesToEditPasses`, `Loop::saveNoteEditPass`, `Loop::markAffectedDisplayCacheRanges`.
+
+**Invariant:** Overdub stop commit semantics remain unchanged, but companion seal applies source-note transforms and derived-cache invalidation in bounded batch form (one vector rewrite pass + one derived-stale publish), instead of per-row erase/notify churn on the stop path.
+
+**Root cause proved in captures:** Stop lag remains seal-driven. In [`165534`](../../captures/session_20260820_165534.log), three complete stop-stage windows show `seal` elapsed of **30.8 ms**, **66.6 ms**, and **197.2 ms**; the 197.2 ms spike coincides with **25** `DIAG,seal_companion` rows between `ODUB,stop,enter` and `ODUB,stop,seal`. That proves companion-row sealing remains the dominant variable cost.
+
+**Stage changes shipped:**  
+- `applyPendingHideAndShortenToNotes` now applies `Shorten`/`Hide` transforms by rebuilding the note vector once, avoiding repeated in-place erase scans for each pending change.  
+- `saveNoteEditPass` gained `deferDerivedInvalidate` for batch callsites.  
+- `sealPendingNoteChangesToEditPasses` now defers derived invalidation during companion row inserts and performs a single `playbackRevision` + `notifyCommittedContentChanged` publish after the batch.
+- Companion sealing now performs one heap-reserve admission check for the entire companion batch and skips repeated per-row heap checks once the batch is admitted.
+- Companion sealing now reserves `passes.editPasses` capacity for the full companion batch before row insertion, removing vector growth churn from the stop path.
+- Added one batch timing line per companion seal (`DIAG,seal_companion_batch`) so each stop cycle records rows/sealed/duration directly.
+- Added Tier-A stop sub-stage timing lines (`DIAG,odub_stop`) for `companion_seal`, `undo_push`, `mark_range`, `publish_prepared`, and `persist_request` inside `finalizeCommitSideEffects`, so long-tail stop cycles can be attributed to one owner step even under ring pressure.
+- Companion per-row telemetry is now capped (first 8 `DIAG,seal_companion` rows) to avoid line-format/append churn during heavy stop cycles while preserving batch-level timing visibility (`DIAG,seal_companion_batch`).
+- `markAffectedDisplayCacheRanges` now marks companion row spans first, then does one note-cache pass against the companion target-note set, instead of scanning `visualCache.notes` once per companion row.
+- `applyPendingNoteChangesToOverdubSourceView` Add-note merge batching is restored (user-directed) so pending Add notes are merged in one pass before `Shorten`/`Hide` projection updates.
+- `Track::stopOverdubbing` and the in-edit `handleNoteEditFold` stop path now use `SC_REC_FLUSH_PENDING_REVTS(8)` (non-blocking drop-only path) instead of `256`, removing variable USB serial flush work from the overdub-stop critical path before display refresh.
+- `CaptureLineTier::isTierALine` now treats `ODUB,stop` lines as Tier-A so stop-stage telemetry remains visible even with deterministic `flush(8)` stop budgets under ring pressure.
+
+**Status:** Native **1397/1397** and `teensy41-capture-serial` build **PASS** (`RAM1 code 425084 / locals 4768`). HITL [`174941`](../../captures/session_20260820_174941.log) verified deterministic stop flush with restored stop telemetry (`ODUB,stop,flush` stage duration **5 us**, `ODUB,stop,display` delta **11088 us**, no reconnects). Later display-focused follow-ups are reverted per user request; stop-lag measurement remains open.
+
+### Overdub-start begin-capture long-delay restoration — validated
+
+**Evidence:** [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log)
+
+**Owner:** `Loop::rebuildOverdubSourceSpanCache`, `Track::startOverdubbing` (`ODUB,stage,begin_capture`).
+
+**Invariant:** Overdub start stays deterministic while an overdub session is active: if prepared spans are unavailable, start/wrap does not force a full-loop materialize on the timing-critical path.
+
+**Root cause proved in captures:** `ODUB,stage,begin_capture` spiked to about **2.2 s** (`2194189 us`, `2248843 us`) in [`165956`](../../captures/session_20260820_165956.log), and `Live Overdub -> Overdubbing started` was delayed by **2143-2249 ms** on early starts. The same pattern appears in [`165534`](../../captures/session_20260820_165534.log) (~2102/2189 ms). This directly maps to `rebuildOverdubSourceSpanCache` falling back to `passes.materializeToEventVector` when prepared spans are unavailable.
+
+**Stage change shipped:** Restored overdub-session cache fallback in `rebuildOverdubSourceSpanCache`: when prepared spans are unavailable during an active overdub session, reuse prior cache notes instead of forcing full-loop materialization on start/wrap. Non-session behavior remains unchanged (full materialize is still allowed outside active overdub sessions).
+
+**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`170724`](../../captures/session_20260820_170724.log) validates the restoration: `Live Overdub -> Overdubbing started` is now **2-8 ms** and `ODUB,stage,begin_capture` is **8198 us** / **2150 us** (no 2.2 s start stalls).
+
+**Remaining issue exposed by the same run:** stop-path long tail persists and worsened in one cycle: `ODUB,stop,seal=310980 us`, `flush=312270 us`, `display=320406 us`, with in-window `DIAG,overlap_hold note_offs=100`. `DIAG,seal_companion_batch` remains bounded (`rows=5 sealed=5 us=84` in the complete cycle), so companion-row insertion itself is no longer the dominant stop cost.
+
+### Overdub-start reboot — reverted to baseline, blocked on instrumentation
+
+**Evidence:** [`162146`](../../captures/session_20260820_162146.log), [`132145`](../../captures/session_20260820_132145.log), [`143518`](../../captures/session_20260820_143518.log)
+
+**Owner:** `Track::startOverdubbing`, `TrackManager::startOverdubbingTrack`, `DebugSessionCapture` capture ring.
+
+**Symptom:** USB drops immediately after `[TRACK] Overdubbing started @ tick N`, the final statement of `Track::startOverdubbing`. Reproduces on first and second overdub start.
+
+**Not caused by the 2026-08-20 removals.** The reboot is present in [`132145`](../../captures/session_20260820_132145.log) and [`143518`](../../captures/session_20260820_143518.log), before any of them. Commits `4af158a`, `39b8e1d`, `983262d`, `98699b6`, `6ff4142` are reverted; the tree is byte-identical to `28cf6e3`. Pass accumulation is also ruled out — the first capture of the day already reached `pass,99` and the last reached `pass,101`.
+
+**Capture blind spot (why eight successive fixes all "made no difference"):** two independent mechanisms starve overdub telemetry out of the ring.
+
+| Mechanism | Owner | Effect |
+|---|---|---|
+| Flush budget `<= 8` takes the drop-only branch | `DebugSessionCapture::flushCaptureBuffer` | Discards up to 8 non-Tier-A head records and returns without transmitting. The overdub `SC_REC_FLUSH_PENDING_REVTS(8)` sites delete telemetry instead of sending it. |
+| Tier-B append refused while ring is full and head is Tier-A | `DebugSessionCapture::appendCaptureRecord` | `ODUB,stage`, `MI`, `MO`, `LED` never enter the ring. `DIAG,lcr,` and `VCACHE,` are Tier-A per `CaptureLineTier::isTierALine`. |
+| `formatPhaseLine` 1 s rate limit never engages | `LoopContentResolution` device-gate slice machine | `stepChanged` is true on every slice because the machine alternates `idx` ↔ `pair`, so the Tier-A `DIAG,lcr,phase` line emits per slice, not per second. |
+
+In [`162146`](../../captures/session_20260820_162146.log) the last `#CAP,…,MI,…` is at 9.387 s and the last `LED` at 14.89 s, while `DIAG,lcr,phase` keeps emitting to 33.38 s (355 lines). The record button press at 35.198 s produced a text log line but **no** `MI` capture line, so Tier-B appends were already being refused when overdub started. `ODUB,stage,manager_enter` / `manager_done` are therefore absent for instrumentation reasons, not because that code did not run.
+
+**Fault reason never observed.** `setup()` prints `CrashReport` before `logger.setup(LOG_DEBUG)`, and every reconnect boot in the 2026-08-20 captures begins at `Logger initialized with level: 3`. The pre-logger boot output is absent from all of them. The firmware also writes `CrashReport` to `crashlog.txt` on SD (`main.cpp` `setup()`); that file is the authoritative record and has not been read.
+
+**Next:** read SD `crashlog.txt` to classify the fault (allocator abort vs hard fault vs watchdog) before any further code change. Do not attribute the reboot to a removal again without an `ODUB,stage` line or a crash record.
+
+**Status:** Native **1397/1397**. `teensy41-capture-serial` RAM1 code **424572** / locals **4768**. Not flashed.
+
+### Cleanup branch telemetry/fader compile-gating — shipped stage
+
+**Branch:** `chore/cleanup-codebase-tidiness`
+
+**Owner:** `MidiHandler::mirrorUsbFaderProbePassthrough`, `RuntimeTimingTelemetry` callsites, overdub stop telemetry callsites.
+
+**Invariant:** Plain `teensy41` builds do not execute telemetry-only timing work (`micros()`/heap snapshots/local telemetry structs) when the owning capture or perf feature is disabled; fader USB-host helper logic is compiled only with `MIDI_USB_FADER_PROBE_PASSTHROUGH`.
+
+**Status:** **Verified** `pio test -e native`, `pio run -e teensy41`, `pio run -e teensy41-capture-serial` with zero compiler warnings.
 
 ### Overdub session index reboot undo — HITL PASS
 
