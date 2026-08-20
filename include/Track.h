@@ -418,6 +418,8 @@ private:
   /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
   /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.
   uint32_t prepareRecordStop(uint32_t currentTick, const char* guardLabel);
+  /// Record-stop prep plus pending-note clear for stop-path callers.
+  uint32_t prepareRecordStopAndClearPendingNotes(uint32_t currentTick, const char* guardLabel);
 
   /// In-edit overdub fold. true = stop fully completed; caller must return immediately.
   bool handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,

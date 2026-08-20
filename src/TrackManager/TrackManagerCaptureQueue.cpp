@@ -12,6 +12,16 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/MemoryMonitor.h"
 
+namespace {
+
+void requestLoopSlotPersistAndSaveState(const Track& track, uint8_t trackIndex, uint8_t slotIndex) {
+  StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
+  StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+  StorageManager::requestDeferredSaveState(looperState.getLooperState());
+}
+
+}  // namespace
+
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
   if (trackIndex >= Config::NUM_TRACKS) return;
 
@@ -295,9 +305,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     if (autoAlignEnabled) {
       t.setLoopLength(masterLoopLength);
     }
-    StorageManager::markLoopSlotMaterialDirty(trackIndex, captureSlot);
-    StorageManager::admitLoopPersist(t.loopIdForSlot(captureSlot));
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    requestLoopSlotPersistAndSaveState(t, trackIndex, captureSlot);
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();
   }

@@ -152,7 +152,9 @@ struct Loop {
   void rematerializeEditView(LoopEventStore& store) const;
 
   EditPassId saveNoteEditPass(uint8_t editPassIndex, EditPass row,
-                              EditPassType passType = EditPassType::Note);
+                              EditPassType passType = EditPassType::Note,
+                              bool deferDerivedInvalidate = false,
+                              bool skipHeapReserveCheck = false);
   PassId saveLoopGeometry(LoopGeometry row);
   bool setLoopGeometryState(PassId id, LoopGeometryState state);
   EditPassIdList replaceNoteEditPass(uint8_t editPassIndex,

@@ -5,6 +5,8 @@
 
 #include "Utils/DebugSessionCapture.h"
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+
 #if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
 #include <Arduino.h>
 #endif
@@ -645,3 +647,5 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
 }
 
 }  // namespace RuntimeTimingTelemetry
+
+#endif  // SESSION_CAPTURE || PIO_UNIT_TEST_NATIVE

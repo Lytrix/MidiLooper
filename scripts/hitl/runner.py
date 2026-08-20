@@ -20,6 +20,7 @@ from hitl.layered_cli import (
     legacy_args_with_slot_flags,
     require_slot_target,
 )
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT
 from hitl.registry import get_registry, resolve_scenarios
 
 
@@ -123,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--capture-port",
-        default="/dev/cu.usbmodem154944801",
+        default=DEFAULT_CAPTURE_SERIAL_PORT,
         help="USB serial port for managed capture_session.py (default Teensy cu device)",
     )
     run_parser.add_argument(
@@ -180,7 +181,7 @@ def _run_with_optional_managed_capture(
         verify_only=False,
         out_dir=Path(getattr(args, "out_dir", Path("captures"))),
         managed_capture=True,
-        capture_serial_port=getattr(args, "capture_port", "/dev/cu.usbmodem154944801"),
+        capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
     )
 
