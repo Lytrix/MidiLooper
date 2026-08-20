@@ -6,6 +6,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
+DEFAULT_CAPTURE_SERIAL_PORT = "/dev/cu.usbmodem154944801"
+
 
 @dataclass(frozen=True)
 class HitlConfig:
@@ -29,7 +31,7 @@ class HitlConfig:
     legacy_extra_args: tuple[str, ...] = ()
     boot_settle_ms: int = 10000
     managed_capture: bool = True
-    capture_serial_port: str = "/dev/cu.usbmodem154944801"
+    capture_serial_port: str = DEFAULT_CAPTURE_SERIAL_PORT
     capture_boot_wait_s: float = 10.0
 
     def needs_managed_capture(self) -> bool:
