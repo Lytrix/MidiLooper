@@ -25,10 +25,6 @@ struct StopPathStorageStats {
   size_t chunkRefCount = 0;
 };
 
-TRACK_INTERNAL_MEM bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
-                                                                   uint32_t pendingOnPhaseTick,
-                                                                   uint32_t closePhaseTick);
-
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
                                                                     bool includeCaptureBuffer = true);
 

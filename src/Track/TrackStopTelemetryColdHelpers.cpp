@@ -20,21 +20,6 @@
 
 extern TrackManager trackManager;
 
-TRACK_INTERNAL_MEM bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
-                                                                   uint32_t pendingOnPhaseTick,
-                                                                   uint32_t closePhaseTick) {
-  (void)loop;
-  (void)note;
-  (void)pendingOnPhaseTick;
-  (void)closePhaseTick;
-  // DEC-031 G2: overdubSourceView owns overlap. beginCapture(Overdub) always
-  // establishes the view, so finalizePendingNotes never takes this branch.
-  // Do not materializeToEventVector here — that whole-loop flatten is the
-  // stalker this slice removes. A session without a view keeps the Add and
-  // synthesizes NoteOff.
-  return false;
-}
-
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
                                                                     bool includeCaptureBuffer) {
   StopPathStorageStats stats{};
