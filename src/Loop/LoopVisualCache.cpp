@@ -250,7 +250,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 #if defined(SESSION_CAPTURE)
   if (!usedPrepared) {
-    RuntimeTimingTelemetry::recordIdleMaintChildRem(0, gatherStartUs);
+    RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);
   }
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
@@ -263,7 +263,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   NoteUtils::DisplayNoteVec sliceNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
 #if defined(SESSION_CAPTURE)
-  RuntimeTimingTelemetry::recordIdleMaintChildRem(1, reconstructStartUs);
+  RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(1, reconstructStartUs);
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_recon,notes,"));
@@ -282,7 +282,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 #if defined(SESSION_CAPTURE)
   if (appendOverdub) {
-    RuntimeTimingTelemetry::recordIdleMaintChildRem(2, appendStartUs);
+    RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
   }
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)

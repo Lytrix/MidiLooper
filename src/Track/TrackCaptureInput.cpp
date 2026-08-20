@@ -532,7 +532,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     const uint32_t appendStartUs = micros();
     const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
-    RuntimeTimingTelemetry::addNoteAppend(micros() - appendStartUs);
+    RUNTIME_TIMING_ADD_NOTE_APPEND(micros() - appendStartUs);
     if (!appendResult.accepted) {
       logger.log(CAT_TRACK, LOG_WARNING,
                  "Capture append failed (%s) ch=%u note=%u",
@@ -573,7 +573,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         (void)loop.accumulatePendingNoteChangesForIncomingNote(
             channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId,
             overlapNoteIds);
-        RuntimeTimingTelemetry::addNoteChange(micros() - noteChangeStartUs);
+        RUNTIME_TIMING_ADD_NOTE_CHANGE(micros() - noteChangeStartUs);
         break;
       }
     }
