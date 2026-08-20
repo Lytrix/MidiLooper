@@ -2,17 +2,17 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
+Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
 
 ---
 
 ## Now implementing
 
-### Overdub-stop seal lag optimization — reserve stage validated
+### Overdub-stop seal lag optimization — long-tail attribution and trim stage
 
-**Evidence:** [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log)
+**Evidence:** [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`171246`](../../captures/session_20260820_171246.log), [`171909`](../../captures/session_20260820_171909.log), [`172553`](../../captures/session_20260820_172553.log), [`173206`](../../captures/session_20260820_173206.log), [`174941`](../../captures/session_20260820_174941.log)
 
-**Owner:** `Loop::applyPendingHideAndShortenToNotes`, `Loop::sealPendingNoteChangesToEditPasses`, `Loop::saveNoteEditPass`.
+**Owner:** `Loop::applyPendingHideAndShortenToNotes`, `Loop::sealPendingNoteChangesToEditPasses`, `Loop::saveNoteEditPass`, `Loop::markAffectedDisplayCacheRanges`.
 
 **Invariant:** Overdub stop commit semantics remain unchanged, but companion seal applies source-note transforms and derived-cache invalidation in bounded batch form (one vector rewrite pass + one derived-stale publish), instead of per-row erase/notify churn on the stop path.
 
@@ -26,8 +26,13 @@ Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 - Companion sealing now reserves `passes.editPasses` capacity for the full companion batch before row insertion, removing vector growth churn from the stop path.
 - Added one batch timing line per companion seal (`DIAG,seal_companion_batch`) so each stop cycle records rows/sealed/duration directly.
 - Added Tier-A stop sub-stage timing lines (`DIAG,odub_stop`) for `companion_seal`, `undo_push`, `mark_range`, `publish_prepared`, and `persist_request` inside `finalizeCommitSideEffects`, so long-tail stop cycles can be attributed to one owner step even under ring pressure.
+- Companion per-row telemetry is now capped (first 8 `DIAG,seal_companion` rows) to avoid line-format/append churn during heavy stop cycles while preserving batch-level timing visibility (`DIAG,seal_companion_batch`).
+- `markAffectedDisplayCacheRanges` now marks companion row spans first, then does one note-cache pass against the companion target-note set, instead of scanning `visualCache.notes` once per companion row.
+- `applyPendingNoteChangesToOverdubSourceView` Add-note merge batching is restored (user-directed) so pending Add notes are merged in one pass before `Shorten`/`Hide` projection updates.
+- `Track::stopOverdubbing` and the in-edit `handleNoteEditFold` stop path now use `SC_REC_FLUSH_PENDING_REVTS(8)` (non-blocking drop-only path) instead of `256`, removing variable USB serial flush work from the overdub-stop critical path before display refresh.
+- `CaptureLineTier::isTierALine` now treats `ODUB,stop` lines as Tier-A so stop-stage telemetry remains visible even with deterministic `flush(8)` stop budgets under ring pressure.
 
-**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`165956`](../../captures/session_20260820_165956.log) validates the reserve stage with zero reconnects and complete stop windows at `seal=52.0 ms -> display=61.3 ms`, `seal=38.4 ms -> display=49.9 ms`, and `seal=24.9 ms -> display=35.8 ms`; a remaining long-tail cycle still shows `flush=140.1 ms` / `display=147.2 ms` with `RING,overflow` in-window and 55 `overlap_hold` note-offs. `DIAG,seal_companion_batch` confirms companion-row insertion itself is bounded (`rows=12 us=1098`, `rows=11 us=170`). The new `DIAG,odub_stop` split telemetry stage is now ready for HITL attribution of the 300+ ms stop cycle seen in [`170724`](../../captures/session_20260820_170724.log).
+**Status:** Native **1397/1397** and `teensy41-capture-serial` build **PASS** (`RAM1 code 425084 / locals 4768`). HITL [`174941`](../../captures/session_20260820_174941.log) verified deterministic stop flush with restored stop telemetry (`ODUB,stop,flush` stage duration **5 us**, `ODUB,stop,display` delta **11088 us**, no reconnects). Later display-focused follow-ups are reverted per user request; stop-lag measurement remains open.
 
 ### Overdub-start begin-capture long-delay restoration — validated
 

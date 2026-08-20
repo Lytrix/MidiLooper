@@ -50,7 +50,8 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t flushStartUs = micros();
 #endif
-    SC_REC_FLUSH_PENDING_REVTS(256);
+    // Deterministic stop-path budget: maxRecords<=8 never performs USB serial writes.
+    SC_REC_FLUSH_PENDING_REVTS(8);
 #if defined(SESSION_CAPTURE)
     TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs,
                                 flushHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -219,7 +220,8 @@ void Track::stopOverdubbing() {
   const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t flushStartUs = micros();
 #endif
-  SC_REC_FLUSH_PENDING_REVTS(256);
+  // Deterministic stop-path budget: maxRecords<=8 never performs USB serial writes.
+  SC_REC_FLUSH_PENDING_REVTS(8);
 #if defined(SESSION_CAPTURE)
   TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
                               MemoryMonitor::getInternalHeapFreeBytes(), "ok");

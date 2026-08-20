@@ -602,32 +602,33 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
   if (!overdubSourceViewEstablished_) {
     return;
   }
+  NoteUtils::DisplayNoteVec added;
+  added.reserve(pendingNoteChanges_.size());
   for (const PendingNoteChange& change : pendingNoteChanges_) {
-    if (change.kind == PendingNoteChangeKind::Add) {
-      if (change.noteId == kInvalidNoteId) {
-        continue;
-      }
-      NoteUtils::DisplayNoteVec added;
-      NoteUtils::DisplayNote note{};
-      note.noteId = change.noteId;
-      note.note = change.pitch;
-      note.velocity = change.velocity;
-      note.startTick = change.startTick;
-      note.endTick = change.endTick;
-      added.push_back(note);
-      mergeDisplayNotesIntoOverdubSourceView(added);
-      if (overdubSourceSpanCacheValid_) {
-        for (const NoteUtils::DisplayNote& candidate : added) {
-          bool found = false;
-          for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
-            if (existing.noteId == candidate.noteId) {
-              found = true;
-              break;
-            }
+    if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
+      continue;
+    }
+    NoteUtils::DisplayNote note{};
+    note.noteId = change.noteId;
+    note.note = change.pitch;
+    note.velocity = change.velocity;
+    note.startTick = change.startTick;
+    note.endTick = change.endTick;
+    added.push_back(note);
+  }
+  if (!added.empty()) {
+    mergeDisplayNotesIntoOverdubSourceView(added);
+    if (overdubSourceSpanCacheValid_) {
+      for (const NoteUtils::DisplayNote& candidate : added) {
+        bool found = false;
+        for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
+          if (existing.noteId == candidate.noteId) {
+            found = true;
+            break;
           }
-          if (!found) {
-            overdubSourceSpanCacheNotes_.push_back(candidate);
-          }
+        }
+        if (!found) {
+          overdubSourceSpanCacheNotes_.push_back(candidate);
         }
       }
     }
@@ -656,6 +657,8 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t companionSealStartUs = micros();
+  uint32_t companionRowsLogged = 0;
+  constexpr uint32_t kMaxCompanionRowsLogged = 8;
 #endif
   if (companionRowsToSeal > 0) {
     sealedIds.reserve(companionRowsToSeal);
@@ -690,15 +693,18 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
     if (id != kInvalidEditPassId) {
       sealedIds.push_back(id);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      char line[128];
-      const char* kind =
-          (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
-      snprintf(line, sizeof(line),
-               "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u",
-               static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
-               static_cast<unsigned>(change.noteId), kind,
-               static_cast<unsigned>(change.endTick));
-      DebugSessionCapture::appendCaptureTextLine(line);
+      if (companionRowsLogged < kMaxCompanionRowsLogged) {
+        char line[128];
+        const char* kind =
+            (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u",
+                 static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
+                 static_cast<unsigned>(change.noteId), kind,
+                 static_cast<unsigned>(change.endTick));
+        DebugSessionCapture::appendCaptureTextLine(line);
+        ++companionRowsLogged;
+      }
 #endif
     }
   }
