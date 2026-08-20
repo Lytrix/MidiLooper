@@ -82,16 +82,31 @@ void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChang
   pending.push_back(change);
 }
 
-const PendingNoteChange* findSourceTransformByNoteId(const PendingNoteChangeVec& transforms,
-                                                     NoteId noteId) {
-  for (const PendingNoteChange& transform : transforms) {
-    if ((transform.kind == PendingNoteChangeKind::Shorten ||
-         transform.kind == PendingNoteChangeKind::Hide) &&
-        transform.noteId == noteId) {
-      return &transform;
-    }
+void insertOrReplaceSourceTransformSorted(PendingNoteChangeVec& transforms,
+                                          const PendingNoteChange& change) {
+  const auto it = std::lower_bound(
+      transforms.begin(), transforms.end(), change.noteId,
+      [](const PendingNoteChange& existing, NoteId noteId) {
+        return existing.noteId < noteId;
+      });
+  if (it != transforms.end() && it->noteId == change.noteId) {
+    *it = change;
+    return;
   }
-  return nullptr;
+  transforms.insert(it, change);
+}
+
+const PendingNoteChange* findSourceTransformByNoteIdSorted(const PendingNoteChangeVec& transforms,
+                                                           NoteId noteId) {
+  const auto it = std::lower_bound(
+      transforms.begin(), transforms.end(), noteId,
+      [](const PendingNoteChange& existing, NoteId id) {
+        return existing.noteId < id;
+      });
+  if (it == transforms.end() || it->noteId != noteId) {
+    return nullptr;
+  }
+  return &(*it);
 }
 
 void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
@@ -100,7 +115,8 @@ void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
   for (const PendingNoteChange& change : pending) {
     if (change.kind == PendingNoteChangeKind::Shorten ||
         change.kind == PendingNoteChangeKind::Hide) {
-      upsertSourceTransform(transforms, change);
+      // Keep source transforms sorted by NoteId so stop sealing does bounded lookup work.
+      insertOrReplaceSourceTransformSorted(transforms, change);
     }
   }
   if (transforms.empty() || notes.empty()) {
@@ -110,7 +126,8 @@ void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
   NoteUtils::DisplayNoteVec updated;
   updated.reserve(notes.size());
   for (const NoteUtils::DisplayNote& note : notes) {
-    const PendingNoteChange* transform = findSourceTransformByNoteId(transforms, note.noteId);
+    const PendingNoteChange* transform =
+        findSourceTransformByNoteIdSorted(transforms, note.noteId);
     if (transform == nullptr) {
       updated.push_back(note);
       continue;
@@ -657,6 +674,7 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t companionSealStartUs = micros();
+  (void)companionSealStartUs;
   uint32_t companionRowsLogged = 0;
   constexpr uint32_t kMaxCompanionRowsLogged = 8;
 #endif
@@ -669,6 +687,7 @@ EditPassIdList Loop::sealPendingNoteChangesToEditPasses() {
   const bool batchHeapReserveAdmitted =
       companionRowsToSeal > 0 &&
       MemoryMonitor::getInternalHeapFreeBytes() >= companionBytesNeeded;
+  (void)batchHeapReserveAdmitted;
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Shorten &&
         change.kind != PendingNoteChangeKind::Hide) {

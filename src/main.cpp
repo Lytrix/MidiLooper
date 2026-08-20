@@ -435,7 +435,7 @@ void loop() {
 
   HOT_PATH_TELEMETRY_PROCESS_DEFERRED_SUMMARY();
 
-  SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 8 : 64);
+  SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 128 : 64);
 
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {

@@ -23,7 +23,7 @@ LOOP_INTERNAL_MEM bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent
 
 LOOP_INTERNAL_MEM const char* capturePhaseLabel(CapturePhase phase);
 
-LOOP_INTERNAL_MEM void sortCaptureStoreByTick(LoopEventStore& store);
+LOOP_INTERNAL_MEM void sortCaptureStoreByTick(LoopEventStore& store, uint32_t* lastTickOut = nullptr);
 
 LOOP_INTERNAL_MEM void markPreviewSpan(CapturePreview& preview, uint32_t startTick, uint32_t endTick,
                                         uint32_t ticksPerBar);

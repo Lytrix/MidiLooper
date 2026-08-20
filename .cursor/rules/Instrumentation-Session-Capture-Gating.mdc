@@ -1,0 +1,27 @@
+---
+description: Keep performance instrumentation gated behind session capture or explicit debug gates
+alwaysApply: true
+---
+
+# Instrumentation gating
+
+When adding runtime instrumentation (timing, stage markers, diagnostics), keep it disableable in non-capture builds.
+
+## Required pattern
+
+1. Prefer `SC_*` session-capture macros for firmware timing diagnostics.
+2. If instrumentation is not `SC_*`, gate it with explicit compile/runtime switches:
+   - compile-time: `#if defined(SESSION_CAPTURE)` or explicit debug define
+   - runtime: local `constexpr bool ...Enabled = false` for optional probes
+3. For non-hot investigation helpers on Teensy, place instrumentation code in cold/flash sections (`TRACK_COLD_MEM`, `LOOP_COLD_MEM`, `FLASHMEM`-style owner macros) so RAM1/ITCM pressure does not grow from debug-only paths.
+4. Disabled builds must not execute instrumentation-only argument work in hot paths (for example extra `traceMicros()` spans used only for logs).
+
+## Hot-path rule
+
+- In RECORD/OVERDUB stop, playback, and MIDI service paths, investigation-only instrumentation must compile out or return immediately when disabled.
+- Do not leave always-on investigative logs in these paths.
+
+## Re-enable policy
+
+- Enable only for scoped investigation slices.
+- Re-disable before latency/performance validation captures.

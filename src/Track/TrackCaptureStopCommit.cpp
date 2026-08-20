@@ -11,6 +11,8 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "LoopContentResolution.h"
+#include "LooperState.h"
+#include "StorageManager.h"
 #include "TrackManager.h"
 #include "TrackUndo.h"
 #include "Utils/DebugSessionCapture.h"
@@ -23,123 +25,49 @@ extern TrackManager trackManager;
 
 namespace {
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-TRACK_COLD_MEM void emitOverdubStopSubstage(const char* stage, uint32_t durationUs, size_t companionCount,
-                                            PassId passId, bool noteEditActive) {
-  char line[176];
-  snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,odub_stop,%s,us=%lu,comp=%u,pass=%u,ne=%u",
-           static_cast<unsigned long>(micros()),
-           stage != nullptr ? stage : "unknown",
-           static_cast<unsigned long>(durationUs),
-           static_cast<unsigned>(companionCount),
-           static_cast<unsigned>(passId),
-           noteEditActive ? 1U : 0U);
-  DebugSessionCapture::appendCaptureTextLine(line);
-}
-#else
-TRACK_COLD_MEM void emitOverdubStopSubstage(const char*, uint32_t, size_t, PassId, bool) {}
-#endif
-
-TRACK_COLD_MEM void logRecordStopSaveRequestAndPersist(Track& track, Loop& loop,
-                                                       uint32_t stopPathStartUs,
-                                                       uint8_t recordedSlotIndex,
-                                                       uint32_t heapAfter,
-                                                       CommitResult sideEffectResult,
-                                                       const StopPathStorageStats& stopPathStats) {
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "save_request", 0, heapAfter, heapAfter,
-                             sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                             &stopPathStats);
-  if (sideEffectResult == CommitResult::Committed) {
-    requestLoopSlotPersistAndSaveState(track, recordedSlotIndex, heapAfter);
-  }
-}
-
-TRACK_COLD_MEM void resetAndLogEmptyRecordStop(Loop& loop, uint32_t stopPathStartUs,
-                                               uint32_t heapValue,
-                                               const char* saveRequestOutcome,
-                                               const StopPathStorageStats& stopPathStats) {
-  resetActiveLoopAfterEmptyCapture(loop);
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "state_advance", 0, heapValue, heapValue,
-                             "skipped_empty", &stopPathStats);
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "save_request", 0, heapValue, heapValue,
-                             saveRequestOutcome, &stopPathStats);
-}
-
-TRACK_COLD_MEM void logRecordStopPathEntry(Loop& loop, uint32_t& stopPathStartUs,
-                                           uint32_t& stopHeap) {
-  stopPathStartUs = micros();
-  stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
-}
-
-TRACK_COLD_MEM void logRecordStopStateAdvance(Loop& loop, uint32_t stopPathStartUs,
-                                              uint32_t stateAdvanceDurationUs,
-                                              uint32_t stateAdvanceHeapBefore,
-                                              uint32_t stateAdvanceHeapAfter,
-                                              bool stateAdvanceSucceeded,
-                                              const StopPathStorageStats& stopPathStats) {
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
-                             stateAdvanceHeapBefore, stateAdvanceHeapAfter,
-                             stateAdvanceSucceeded ? "ok" : "failed", &stopPathStats);
-}
-
-struct RecordStopFinalizeContext {
-  CommitResult sideEffectResult = CommitResult::Skipped;
-  StopPathStorageStats stopPathStats{};
+struct OverdubStopFinalizeTraceCtx {
+  bool enabled = false;
+  uint32_t timelineStartUs = 0;
+  size_t eventCount = 0;
+  size_t chunkRefCount = 0;
 };
 
-TRACK_COLD_MEM RecordStopFinalizeContext finalizeRecordStopCommitAndLog(
-    Track& track, Loop& loop, CommitReason reason, uint32_t currentTick,
-    uint32_t stopPathStartUs) {
-  const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  const uint32_t finalizeStartUs = micros();
-  const CommitResult sideEffectResult = track.commitCaptureForStop(reason, currentTick, closeTick);
-  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  StopPathStorageStats stopPathStats{};
+TRACK_COLD_MEM OverdubStopFinalizeTraceCtx beginOverdubStopFinalizeTrace(const Loop& loop,
+                                                                         bool overdubStop) {
+  OverdubStopFinalizeTraceCtx ctx{};
 #if defined(SESSION_CAPTURE)
-  stopPathStats = collectStopPathStorageStats(loop, false);
-#endif
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
-                             finalizeHeapAfter, commitResultLabel(sideEffectResult), &stopPathStats);
-  const char* requestOutcome = sideEffectResult == CommitResult::Committed ? "deferred" : "skipped";
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
-                             finalizeHeapAfter, requestOutcome, &stopPathStats);
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter,
-                             finalizeHeapAfter, requestOutcome, &stopPathStats);
-  return {sideEffectResult, stopPathStats};
-}
-
-TRACK_COLD_MEM uint32_t applyRecordStopTruncationRewind(uint32_t currentTick, uint32_t rawLength,
-                                                        uint32_t finalLength,
-                                                        bool logRewindDetails) {
-  uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks =
-      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
-  if (rewindTicks > 0) {
-    playbackTick = currentTick - rewindTicks;
-    clockManager.assignCurrentTickSilently(playbackTick);
-    if (logRewindDetails) {
-      logger.log(
-          CAT_TRACK, LOG_INFO,
-          "Record stop truncation rewind: raw=%lu final=%lu rewind=%lu playbackTick=%lu positionInBar=%lu",
-          rawLength, finalLength, rewindTicks, playbackTick, rawLength % Config::TICKS_PER_BAR);
-    }
+  if (!overdubStop) {
+    return ctx;
   }
-  return playbackTick;
+  ctx.enabled = true;
+  ctx.timelineStartUs = micros();
+  const StopPathStorageStats stats = collectStopPathStorageStats(loop, false);
+  ctx.eventCount = stats.eventCount;
+  ctx.chunkRefCount = stats.chunkRefCount;
+#else
+  (void)loop;
+  (void)overdubStop;
+#endif
+  return ctx;
 }
 
-TRACK_COLD_MEM uint32_t reanchorLoopPlaybackAfterRecordStop(Loop& loop, uint32_t playbackTick,
-                                                            uint32_t recordStartTick,
-                                                            uint32_t finalLength) {
-  loop.nextEventIndex = 0;
-  loop.startLoopTick = recordStartTick;
-  loop.lastTickInLoop =
-      (finalLength > 0) ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength) : 0;
-  loop.invalidatePlaybackCaches();
-  return loop.lastTickInLoop;
+TRACK_COLD_MEM void emitOverdubStopFinalizeTraceStage(const OverdubStopFinalizeTraceCtx& ctx,
+                                                      const char* stage, uint32_t durationUs,
+                                                      const char* outcome) {
+#if defined(SESSION_CAPTURE)
+  if (!ctx.enabled) {
+    return;
+  }
+  const uint32_t elapsedUs = micros() - ctx.timelineStartUs;
+  SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, ctx.eventCount, ctx.chunkRefCount,
+                     outcome);
+#else
+  (void)ctx;
+  (void)stage;
+  (void)durationUs;
+  (void)outcome;
+#endif
 }
 
 }  // namespace
@@ -158,14 +86,13 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
                           reason == CommitReason::RecordStopToStopped;
   const bool overdubStop = reason == CommitReason::OverdubStop ||
                            reason == CommitReason::OverdubStopToStopped;
+  const OverdubStopFinalizeTraceCtx finalizeTrace =
+      beginOverdubStopFinalizeTrace(loop, overdubStop);
   const bool deferFullValidate = recordStop;
   auto scheduleDeferredValidateOnly = [&]() {
     const bool hasCommittedPasses = loop.hasCommittedPasses() && loop.loopLengthTicks > 0;
     deferredFullMidiValidate = deferFullValidate && hasCommittedPasses;
     deferredValidateQueuedAtMs = deferredFullMidiValidate ? millis() : 0;
-  };
-  auto persistActiveLoopAfterOverdubStop = [&]() {
-    requestActiveLoopSlotPersistAndSaveState(*this, MemoryMonitor::getInternalHeapFreeBytes());
   };
 
   switch (result) {
@@ -181,12 +108,55 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
         loop.invalidatePlaybackCaches();
       }
       if (overdubStop) {
+#if defined(SESSION_CAPTURE)
+        const uint32_t finalizeLoopStartUs = micros();
+#endif
         finalizeLoopAtStop(closeTick, false);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_finalize_loop_stop",
+                                          micros() - finalizeLoopStartUs, "ok");
+#endif
         if (!editManager.isNoteEditActive()) {
+#if defined(SESSION_CAPTURE)
+          const uint32_t pushUndoStartUs = micros();
+#endif
           TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), kInvalidPassId, {},
                                               false);
+#if defined(SESSION_CAPTURE)
+          emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_push_overdub_undo",
+                                            micros() - pushUndoStartUs, "ok");
+#endif
+        } else {
+          emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_push_overdub_undo", 0,
+                                            "skipped_note_edit");
         }
-        persistActiveLoopAfterOverdubStop();
+        const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
+        const uint8_t persistSlotIndex = getActiveLoopIndex();
+#if defined(SESSION_CAPTURE)
+        const uint32_t markDirtyStartUs = micros();
+#endif
+        StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_mark_material_dirty",
+                                          micros() - markDirtyStartUs, "ok");
+#endif
+#if defined(SESSION_CAPTURE)
+        const uint32_t admitPersistStartUs = micros();
+#endif
+        StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_admit_loop_persist",
+                                          micros() - admitPersistStartUs, "ok");
+#endif
+#if defined(SESSION_CAPTURE)
+        const uint32_t requestSaveStartUs = micros();
+#endif
+        StorageManager::requestDeferredSaveState(looperState.getLooperState(),
+                                                 MemoryMonitor::getInternalHeapFreeBytes(), true);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_request_deferred_save",
+                                          micros() - requestSaveStartUs, "ok");
+#endif
       } else {
         scheduleDeferredValidateOnly();
       }
@@ -194,9 +164,15 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
     }
     case CommitResult::Committed: {
       const PassId undoPassId = loop.lastCommittedPassId();
-      const bool noteEditActive = editManager.isNoteEditActive();
       if (overdubStop) {
+#if defined(SESSION_CAPTURE)
+        const uint32_t finalizeLoopStartUs = micros();
+#endif
         finalizeLoopAtStop(closeTick, false);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_finalize_loop_stop",
+                                          micros() - finalizeLoopStartUs, "ok");
+#endif
       } else {
         // Record stop already finalizes wrap-window at seal; defer full validate only.
         scheduleDeferredValidateOnly();
@@ -207,51 +183,97 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
         loop.markDisplayCachesStale();
-      } else if (!noteEditActive) {
+      } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
-        const uint32_t companionSealStartUs = micros();
+#if defined(SESSION_CAPTURE)
+        const uint32_t sealPendingStartUs = micros();
+#endif
         companionIds = loop.sealPendingNoteChangesToEditPasses();
-        emitOverdubStopSubstage("companion_seal", micros() - companionSealStartUs,
-                                companionIds.size(), undoPassId, noteEditActive);
-        const uint32_t undoPushStartUs = micros();
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_seal_pending_changes",
+                                          micros() - sealPendingStartUs, "ok");
+#endif
+#if defined(SESSION_CAPTURE)
+        const uint32_t pushUndoStartUs = micros();
+#endif
         TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
                                             true);
-        emitOverdubStopSubstage("undo_push", micros() - undoPushStartUs, companionIds.size(),
-                                undoPassId, noteEditActive);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_push_overdub_undo",
+                                          micros() - pushUndoStartUs, "ok");
+#endif
         if (overdubStop) {
-          const uint32_t markRangeStartUs = micros();
+#if defined(SESSION_CAPTURE)
+          const uint32_t markRangesStartUs = micros();
+#endif
           loop.markAffectedDisplayCacheRanges(undoPassId, companionIds);
-          emitOverdubStopSubstage("mark_range", micros() - markRangeStartUs,
-                                  companionIds.size(), undoPassId, noteEditActive);
+#if defined(SESSION_CAPTURE)
+          emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_mark_display_ranges",
+                                            micros() - markRangesStartUs, "ok");
+#endif
         } else {
           loop.markDisplayCachesStale();
         }
       } else if (overdubStop) {
-        const uint32_t markRangeStartUs = micros();
+#if defined(SESSION_CAPTURE)
+        const uint32_t markRangesStartUs = micros();
+#endif
         loop.markAffectedDisplayCacheRanges(undoPassId, EditPassIdList{});
-        emitOverdubStopSubstage("mark_range", micros() - markRangeStartUs, 0, undoPassId,
-                                noteEditActive);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_mark_display_ranges",
+                                          micros() - markRangesStartUs, "active_note_edit");
+#endif
       } else {
         loop.markDisplayCachesStale();
       }
       if (!isRecordPass) {
+        bool published = false;
+#if defined(SESSION_CAPTURE)
         const uint32_t publishPreparedStartUs = micros();
+#endif
         for (const OverdubPass& pass : loop.passes.overdubPasses) {
           if (pass.id == undoPassId) {
             LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision,
                                                               loop.loopLengthTicks,
                                                               loop.passes.editPasses, companionIds);
+            published = true;
             break;
           }
         }
-        emitOverdubStopSubstage("publish_prepared", micros() - publishPreparedStartUs,
-                                companionIds.size(), undoPassId, noteEditActive);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_publish_prepared_overdub",
+                                          micros() - publishPreparedStartUs,
+                                          published ? "ok" : "missing_pass");
+#endif
       }
       if (overdubStop) {
-        const uint32_t persistRequestStartUs = micros();
-        persistActiveLoopAfterOverdubStop();
-        emitOverdubStopSubstage("persist_request", micros() - persistRequestStartUs,
-                                companionIds.size(), undoPassId, noteEditActive);
+        const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
+        const uint8_t persistSlotIndex = getActiveLoopIndex();
+#if defined(SESSION_CAPTURE)
+        const uint32_t markDirtyStartUs = micros();
+#endif
+        StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_mark_material_dirty",
+                                          micros() - markDirtyStartUs, "ok");
+#endif
+#if defined(SESSION_CAPTURE)
+        const uint32_t admitPersistStartUs = micros();
+#endif
+        StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_admit_loop_persist",
+                                          micros() - admitPersistStartUs, "ok");
+#endif
+#if defined(SESSION_CAPTURE)
+        const uint32_t requestSaveStartUs = micros();
+#endif
+        StorageManager::requestDeferredSaveState(looperState.getLooperState(),
+                                                 MemoryMonitor::getInternalHeapFreeBytes(), true);
+#if defined(SESSION_CAPTURE)
+        emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_request_deferred_save",
+                                          micros() - requestSaveStartUs, "ok");
+#endif
       }
       break;
     }
@@ -273,12 +295,28 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
   }
 
   if (result == CommitResult::Committed) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t invalidateCachesStartUs = micros();
+#endif
     invalidateCaches();
+#if defined(SESSION_CAPTURE)
+    if (overdubStop) {
+      emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_invalidate_caches",
+                                        micros() - invalidateCachesStartUs, "ok");
+    }
+#endif
     if (recordStop) {
       queueDeferredRecordRevts();
     }
     if (overdubStop) {
+#if defined(SESSION_CAPTURE)
+      const uint32_t queueStoredVerifyStartUs = micros();
+#endif
       queueDeferredStoredMidiVerification();
+#if defined(SESSION_CAPTURE)
+      emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_queue_stored_verify",
+                                        micros() - queueStoredVerifyStartUs, "ok");
+#endif
     }
   }
   return result;
@@ -315,34 +353,45 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
   }
   return rawLength;
 }
-
-uint32_t Track::prepareRecordStopAndClearPendingNotes(uint32_t currentTick,
-                                                      const char* guardLabel) {
-  const uint32_t rawLength = prepareRecordStop(currentTick, guardLabel);
-  pendingNotes.clear();
-  return rawLength;
-}
-
 void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
   [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
   const uint8_t recordedSlotIndex = activeLoopIndex;
   Loop& loop = getActiveLoop();
-  uint32_t stopPathStartUs = 0;
-  uint32_t stopHeap = 0;
-  logRecordStopPathEntry(loop, stopPathStartUs, stopHeap);
+  const uint32_t stopPathStartUs = micros();
+  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "entered");
 
-  const uint32_t rawLength =
-      prepareRecordStopAndClearPendingNotes(currentTick, "stopRecording");
+  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecording");
+  pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
   // (the second pass and synthetic note-offs) are active for this record-stop.
   // Record-stop must close open tails at loop end, not at the stop playhead tick.
-  const RecordStopFinalizeContext finalizeContext = finalizeRecordStopCommitAndLog(
-      *this, loop, CommitReason::RecordStop, currentTick, stopPathStartUs);
-  const CommitResult sideEffectResult = finalizeContext.sideEffectResult;
-  const StopPathStorageStats& stopPathStats = finalizeContext.stopPathStats;
+  const uint32_t closeTick = UINT32_MAX;
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult =
+      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick);
+  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
+  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
+  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, commitResultLabel(sideEffectResult),
+                     &stopPathStats);
+
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
+                     &stopPathStats);
+
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
+                     &stopPathStats);
 
   if (alignLoopOriginOnNextStop) {
     alignLoopOriginOnNextStop = false;
@@ -362,16 +411,32 @@ void Track::stopRecording(uint32_t currentTick) {
     }
   }
 
+  loop.nextEventIndex = 0;
   uint32_t recordStartTick = loop.startLoopTick;
   uint32_t finalLength = loop.loopLengthTicks;
-  uint32_t playbackTick =
-      applyRecordStopTruncationRewind(currentTick, rawLength, finalLength, true);
-  const uint32_t storagePhaseTickAtStop =
-      reanchorLoopPlaybackAfterRecordStop(loop, playbackTick, recordStartTick, finalLength);
+
+  uint32_t playbackTick = currentTick;
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
+  if (rewindTicks > 0) {
+    playbackTick = currentTick - rewindTicks;
+    clockManager.assignCurrentTickSilently(playbackTick);
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Record stop truncation rewind: raw=%lu final=%lu rewind=%lu playbackTick=%lu positionInBar=%lu",
+               rawLength, finalLength, rewindTicks, playbackTick, rawLength % Config::TICKS_PER_BAR);
+  }
+
+  loop.startLoopTick = recordStartTick;
+  loop.lastTickInLoop = (finalLength > 0)
+                            ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
+                            : 0;
+  const uint32_t storagePhaseTickAtStop = loop.lastTickInLoop;
   if (finalLength > 0) {
     projectionCycleStartTick =
         static_cast<int32_t>(playbackTick) - static_cast<int32_t>(loop.lastTickInLoop);
   }
+
+  invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
   logger.logTrackEvent("Recording stopped", playbackTick, "recStart=%lu length=%lu",
                        static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(finalLength));
@@ -381,19 +446,24 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Empty record-stop: reset capture slot geometry so hasDataInSlot stays false.
   if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
-    resetAndLogEmptyRecordStop(loop, stopPathStartUs, stopHeap,
-                               sideEffectResult == CommitResult::Committed ? "requested"
-                                                                           : "skipped",
-                               stopPathStats);
+    resetActiveLoopAfterEmptyCapture(loop);
+    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty", &stopPathStats);
+    logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
+                       &stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
   }
 
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
-  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  TRACK_SC_RECORD_STOP_STAGE(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
-                             stateAdvanceHeapBefore, "enter", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "enter", &stopPathStats);
   // Silence live/held notes on the wire before loop playback catch-up; CC123 is not stored.
   sendAllNotesOff();
   resetPlaybackState(playbackTick);
@@ -401,11 +471,23 @@ void Track::stopRecording(uint32_t currentTick) {
   startPlaying(playbackTick, true);
   displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
-  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStateAdvance(loop, stopPathStartUs, stateAdvanceDurationUs, stateAdvanceHeapBefore,
-                            stateAdvanceHeapAfter, trackState == TRACK_PLAYING, stopPathStats);
-  logRecordStopSaveRequestAndPersist(*this, loop, stopPathStartUs, recordedSlotIndex,
-                                     stateAdvanceHeapAfter, sideEffectResult, stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
+                     &stopPathStats);
+  if (sideEffectResult == CommitResult::Committed) {
+    const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
+    const uint8_t persistSlotIndex = recordedSlotIndex;
+    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+    StorageManager::requestDeferredSaveState(looperState.getLooperState(),
+                                             MemoryMonitor::getInternalHeapFreeBytes(), true);
+  }
 }
 
 TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
@@ -414,34 +496,66 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   alignLoopOriginOnNextStop = false;
   const uint8_t recordedSlotIndex = activeLoopIndex;
   Loop& loop = getActiveLoop();
-  uint32_t stopPathStartUs = 0;
-  uint32_t stopHeap = 0;
-  logRecordStopPathEntry(loop, stopPathStartUs, stopHeap);
+  const uint32_t stopPathStartUs = micros();
+  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "entered");
 
-  const uint32_t rawLength =
-      prepareRecordStopAndClearPendingNotes(currentTick, "stopRecordingToStopped");
+  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecordingToStopped");
+  pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
-  const RecordStopFinalizeContext finalizeContext = finalizeRecordStopCommitAndLog(
-      *this, loop, CommitReason::RecordStopToStopped, currentTick, stopPathStartUs);
-  const CommitResult sideEffectResult = finalizeContext.sideEffectResult;
-  const StopPathStorageStats& stopPathStats = finalizeContext.stopPathStats;
+  const uint32_t closeTick = UINT32_MAX;
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult =
+      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick);
+  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
+  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
+  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, commitResultLabel(sideEffectResult),
+                     &stopPathStats);
+
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
+                     &stopPathStats);
+
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
+                     &stopPathStats);
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
-  const uint32_t finalLength = loop.loopLengthTicks;
-  uint32_t playbackTick =
-      applyRecordStopTruncationRewind(currentTick, rawLength, finalLength, false);
-  reanchorLoopPlaybackAfterRecordStop(loop, playbackTick, recordStartTickStopped, finalLength);
+  loop.nextEventIndex = 0;
+  uint32_t playbackTick = currentTick;
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
+  if (rewindTicks > 0) {
+    playbackTick = currentTick - rewindTicks;
+    clockManager.assignCurrentTickSilently(playbackTick);
+  }
+  loop.startLoopTick = recordStartTickStopped;
+  loop.lastTickInLoop = (loop.loopLengthTicks > 0)
+                            ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
+                            : 0;
+  invalidatePlaybackCaches();
 
   SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
-              rawLength, finalLength, false);
+              rawLength, loop.loopLengthTicks, false);
   logger.logTrackEvent("Recording stopped (to STOPPED)", playbackTick, "length=%lu",
-                       static_cast<unsigned long>(finalLength));
+                       static_cast<unsigned long>(loop.loopLengthTicks));
 
-  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   if (!loop.hasData()) {
-    resetAndLogEmptyRecordStop(loop, stopPathStartUs, stateAdvanceHeapBefore, "skipped",
-                               stopPathStats);
+    resetActiveLoopAfterEmptyCapture(loop);
+    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty", &stopPathStats);
+    logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes, "skipped", &stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
   }
@@ -449,9 +563,21 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const uint32_t stateAdvanceStartUs = micros();
   setState(TRACK_STOPPED);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
-  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  logRecordStopStateAdvance(loop, stopPathStartUs, stateAdvanceDurationUs, stateAdvanceHeapBefore,
-                            stateAdvanceHeapAfter, trackState == TRACK_STOPPED, stopPathStats);
-  logRecordStopSaveRequestAndPersist(*this, loop, stopPathStartUs, recordedSlotIndex,
-                                     stateAdvanceHeapAfter, sideEffectResult, stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     trackState == TRACK_STOPPED ? "ok" : "failed", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
+                     &stopPathStats);
+  if (sideEffectResult == CommitResult::Committed) {
+    const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
+    const uint8_t persistSlotIndex = recordedSlotIndex;
+    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
+    StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+    StorageManager::requestDeferredSaveState(looperState.getLooperState(),
+                                             MemoryMonitor::getInternalHeapFreeBytes(), true);
+  }
 }

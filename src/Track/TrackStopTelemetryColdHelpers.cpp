@@ -20,26 +20,25 @@
 
 extern TrackManager trackManager;
 
-#if defined(SESSION_CAPTURE)
-
 namespace {
-
-struct StopStageTelemetry {
-  StopPathStorageStats stats{};
-  uint32_t elapsedUs = 0;
-};
-
-StopStageTelemetry captureStopStageTelemetry(const Loop& loop, uint32_t stopStartUs,
-                                             const StopPathStorageStats* cachedStats,
-                                             bool includeCaptureBuffer) {
-  StopStageTelemetry telemetry{};
-  telemetry.stats =
-      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, includeCaptureBuffer);
-  telemetry.elapsedUs = micros() - stopStartUs;
-  return telemetry;
+constexpr bool kOverdubStopMemoryLoggingEnabled = false;
+constexpr bool kOverdubStopDisplayHeapGateEnabled = false;
 }
 
-}  // namespace
+TRACK_INTERNAL_MEM bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
+                                                                   uint32_t pendingOnPhaseTick,
+                                                                   uint32_t closePhaseTick) {
+  (void)loop;
+  (void)note;
+  (void)pendingOnPhaseTick;
+  (void)closePhaseTick;
+  // DEC-031 G2: overdubSourceView owns overlap. beginCapture(Overdub) always
+  // establishes the view, so finalizePendingNotes never takes this branch.
+  // Do not materializeToEventVector here — that whole-loop flatten is the
+  // stalker this slice removes. A session without a view keeps the Add and
+  // synthesizes NoteOff.
+  return false;
+}
 
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
                                                                     bool includeCaptureBuffer) {
@@ -82,10 +81,11 @@ TRACK_INTERNAL_MEM void logRecordStopStage(const Loop& loop, uint32_t stopStartU
                                            uint32_t stageDurationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome,
                                            const StopPathStorageStats* cachedStats) {
-  const StopStageTelemetry telemetry =
-      captureStopStageTelemetry(loop, stopStartUs, cachedStats, true);
-  SC_REC_STOP_STAGE(stage, telemetry.elapsedUs, stageDurationUs, heapBefore, heapAfter,
-                    telemetry.stats.eventCount, telemetry.stats.chunkRefCount, outcome);
+  const StopPathStorageStats stats =
+      cachedStats ? *cachedStats : collectStopPathStorageStats(loop);
+  const uint32_t elapsedUs = micros() - stopStartUs;
+  SC_REC_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
+                    stats.chunkRefCount, outcome);
   // Record-stop publish DIAG emits from Loop::commitCapturePass (seal/publish stages live there).
 }
 
@@ -93,10 +93,11 @@ TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStart
                                            uint32_t stageDurationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome,
                                            const StopPathStorageStats* cachedStats) {
-  const StopStageTelemetry telemetry =
-      captureStopStageTelemetry(loop, stopStartUs, cachedStats, false);
-  SC_ODUB_STOP_STAGE(stage, telemetry.elapsedUs, stageDurationUs, heapBefore, heapAfter,
-                     telemetry.stats.eventCount, telemetry.stats.chunkRefCount, outcome);
+  const StopPathStorageStats stats =
+      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, false);
+  const uint32_t elapsedUs = micros() - stopStartUs;
+  SC_ODUB_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
+                     stats.chunkRefCount, outcome);
   if (stage != nullptr && std::strcmp(stage, "seal") == 0) {
     loop.emitOverlapHoldTotals();
   }
@@ -104,6 +105,11 @@ TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStart
 
 TRACK_INTERNAL_MEM void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot,
                                                      uint32_t currentTick) {
+  if (!kOverdubStopDisplayHeapGateEnabled) {
+    displayManager.emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
+    return;
+  }
+
   const Loop& loop = track.getLoop(displaySlot);
   if (LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
           MemoryMonitor::getInternalHeapFreeBytes())) {
@@ -115,43 +121,15 @@ TRACK_INTERNAL_MEM void emitOverdubStopDisplaySnapshot(Track& track, uint8_t dis
 }
 
 TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
+  if (!kOverdubStopMemoryLoggingEnabled) {
+    (void)overdubNoteOns;
+    (void)loop;
+    return;
+  }
   const StopPathStorageStats stats = collectStopPathStorageStats(loop, false);
   MemoryMonitor::logStatusAtAddedNotes(overdubNoteOns, stats.eventCount, nullptr,
                                        stats.chunkRefCount, stats.chunkRefCount > 0);
 }
-
-#else
-
-TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop&,
-                                                                    bool) {
-  return {};
-}
-
-TRACK_INTERNAL_MEM const char* commitResultLabel(CommitResult) { return "disabled"; }
-
-TRACK_INTERNAL_MEM void logRecordStopStage(const Loop&, uint32_t, const char*,
-                                           uint32_t, uint32_t, uint32_t, const char*,
-                                           const StopPathStorageStats*) {}
-
-TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop&, uint32_t, const char*,
-                                            uint32_t, uint32_t, uint32_t, const char*,
-                                            const StopPathStorageStats*) {}
-
-TRACK_INTERNAL_MEM void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot,
-                                                       uint32_t currentTick) {
-  const Loop& loop = track.getLoop(displaySlot);
-  if (LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
-          MemoryMonitor::getInternalHeapFreeBytes())) {
-    displayManager.emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
-    return;
-  }
-  SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loop.loopLengthTicks, 0, 0, 0,
-          0, loop.hasCommittedPasses() ? 1 : 0);
-}
-
-TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
-
-#endif
 
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {

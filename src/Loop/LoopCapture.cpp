@@ -15,7 +15,6 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
-#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "PlaybackMergedMidiEvents.h"
 
@@ -228,6 +227,140 @@ NoteId assignCommittedPassNoteId(void* ctx) {
   auto* assignCtx = static_cast<AssignCommittedPassNoteIdCtx*>(ctx);
   ++*assignCtx->assigned;
   return assignCtx->loop->allocateNoteId();
+}
+
+struct OverdubSealTraceCtx {
+  bool enabled = false;
+  uint32_t timelineStartUs = 0;
+  size_t eventCount = 0;
+  size_t chunkRefCount = 0;
+};
+
+LOOP_COLD_MEM OverdubSealTraceCtx beginOverdubSealTrace(const Loop& loop, CommitReason reason) {
+  OverdubSealTraceCtx ctx{};
+#if defined(SESSION_CAPTURE)
+  ctx.enabled = reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped;
+  if (!ctx.enabled) {
+    return ctx;
+  }
+  ctx.timelineStartUs = traceMicros();
+  ctx.eventCount = stopPathEventCount(loop);
+  ctx.chunkRefCount = stopPathChunkRefCount(loop);
+#else
+  (void)loop;
+  (void)reason;
+#endif
+  return ctx;
+}
+
+LOOP_COLD_MEM void emitOverdubSealTraceStage(const OverdubSealTraceCtx& ctx, const char* stage,
+                                             uint32_t durationUs, const char* outcome) {
+#if defined(SESSION_CAPTURE)
+  if (!ctx.enabled) {
+    return;
+  }
+  const uint32_t elapsedUs = traceMicros() - ctx.timelineStartUs;
+  SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, ctx.eventCount,
+                     ctx.chunkRefCount, outcome);
+#else
+  (void)ctx;
+  (void)stage;
+  (void)durationUs;
+  (void)outcome;
+#endif
+}
+
+struct OverdubPublishTraceCtx {
+  bool enabled = false;
+  uint32_t timelineStartUs = 0;
+  size_t eventCount = 0;
+  size_t chunkRefCount = 0;
+};
+
+LOOP_COLD_MEM OverdubPublishTraceCtx beginOverdubPublishTrace(const Loop& loop,
+                                                              CommitReason reason) {
+  OverdubPublishTraceCtx ctx{};
+#if defined(SESSION_CAPTURE)
+  ctx.enabled = reason == CommitReason::OverdubStop ||
+                reason == CommitReason::OverdubStopToStopped;
+  if (!ctx.enabled) {
+    return ctx;
+  }
+  ctx.timelineStartUs = traceMicros();
+  ctx.eventCount = stopPathEventCount(loop);
+  ctx.chunkRefCount = stopPathChunkRefCount(loop);
+#else
+  (void)loop;
+  (void)reason;
+#endif
+  return ctx;
+}
+
+LOOP_COLD_MEM void emitOverdubPublishTraceStage(const OverdubPublishTraceCtx& ctx,
+                                                const char* stage, uint32_t durationUs,
+                                                const char* outcome) {
+#if defined(SESSION_CAPTURE)
+  if (!ctx.enabled) {
+    return;
+  }
+  const uint32_t elapsedUs = traceMicros() - ctx.timelineStartUs;
+  SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, ctx.eventCount,
+                     ctx.chunkRefCount, outcome);
+#else
+  (void)ctx;
+  (void)stage;
+  (void)durationUs;
+  (void)outcome;
+#endif
+}
+
+constexpr size_t kMaxEventsForSpanCacheRestamp = 2048;
+
+LOOP_COLD_MEM bool hasLaterWrappedHeadTailPairByScan(const SessionMidiEventVec& events,
+                                                      const MidiEvent& noteOffEvent,
+                                                      uint32_t loopLengthTicks) {
+  const uint8_t pitch = noteOffEvent.data.noteData.note;
+  for (const MidiEvent& later : events) {
+    if (!later.isNoteOn() || later.channel != noteOffEvent.channel ||
+        later.data.noteData.note != pitch) {
+      continue;
+    }
+    if (later.tick <= noteOffEvent.tick) {
+      continue;
+    }
+    if (NoteUtils::isHeadTailWrappedPair(later.tick, noteOffEvent.tick, loopLengthTicks)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM bool capturePassContainsWrappedHeadTailPairs(const SessionMidiEventVec& events,
+                                                            uint32_t loopLengthTicks) {
+  for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOff()) {
+      continue;
+    }
+    if (hasLaterWrappedHeadTailPairByScan(events, evt, loopLengthTicks)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM void collectSortedSpanCacheNoteIds(const NoteUtils::DisplayNoteVec& notes,
+                                                 std::vector<NoteId>& out) {
+  out.clear();
+  out.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId != kInvalidNoteId) {
+      out.push_back(note.noteId);
+    }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
 }  // namespace
@@ -725,6 +858,8 @@ void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   capturePreview.clear();
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
+  captureHasLastAppendTick_ = false;
+  captureLastAppendTick_ = 0;
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
   if (phase == CapturePhase::Overdub) {
@@ -743,6 +878,8 @@ void Loop::discardCapture() {
   capture.phase = CapturePhase::None;
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
+  captureHasLastAppendTick_ = false;
+  captureLastAppendTick_ = 0;
   capturePreview.clear();
   captureDedupEventsDropped_ = 0;
   clearOverdubSourceView();
@@ -774,7 +911,14 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
             : CaptureAppendDenyReason::StoreOther;
     return result;
   }
-  captureEventsSortDirty = true;
+  if (captureHasLastAppendTick_) {
+    if (evt.tick < captureLastAppendTick_) {
+      captureEventsSortDirty = true;
+    }
+  } else {
+    captureHasLastAppendTick_ = true;
+  }
+  captureLastAppendTick_ = evt.tick;
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR, loopLengthTicks);
   ++captureDisplayRevision;
   overdubSessionLiveUndoEvents_.clear();
@@ -880,7 +1024,10 @@ bool Loop::ensureCaptureEventsSorted() {
   if (!captureEventsSortDirty) {
     return false;
   }
-  sortCaptureStoreByTick(capture.store);
+  uint32_t sortedLastTick = 0;
+  sortCaptureStoreByTick(capture.store, &sortedLastTick);
+  captureHasLastAppendTick_ = !capture.store.empty();
+  captureLastAppendTick_ = sortedLastTick;
   captureEventsSortDirty = false;
   return true;
 }
@@ -979,7 +1126,7 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   }
 }
 
-CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {
+LOOP_COLD_MEM CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {
   const bool emitStopStage = reason == CommitReason::RecordStop ||
                              reason == CommitReason::RecordStopToStopped;
   const uint32_t commitStartUs = traceMicros();
@@ -1000,35 +1147,47 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   };
 
   if (capture.store.empty()) {
-    const uint32_t heap = MemoryMonitor::getInternalHeapFreeBytes();
-    emitStage("seal", 0, heap, heap, "skipped_empty");
-    emitStage("publish", 0, heap, heap, "not_run");
+    emitStage("seal", 0, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty");
+    emitStage("publish", 0, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "not_run");
     discardCapture();
     return CommitResult::Skipped;
   }
 
-  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = traceMicros();
   const SealOutcome seal = sealCapture(sealedAtTick, reason);
   const uint32_t sealDurationUs = traceMicros() - sealStartUs;
-  const uint32_t sealHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
+  emitStage("seal", sealDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
+            DebugSessionCapture::kUnsampledHeapBytes, sealOutcomeLabel(seal));
   if (seal != SealOutcome::Ok) {
-    emitStage("publish", 0, sealHeapAfter, sealHeapAfter, "not_run");
+    emitStage("publish", 0, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "not_run");
     return CommitResult::SealFailed;
   }
 
-  const uint32_t publishHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t publishStartUs = traceMicros();
-  if (!commitPendingCapturePass()) {
+#if defined(SESSION_CAPTURE)
+  const OverdubPublishTraceCtx publishTrace = beginOverdubPublishTrace(*this, reason);
+  const uint32_t publishPendingStartUs = traceMicros();
+#endif
+  if (!commitPendingCapturePass(reason)) {
+#if defined(SESSION_CAPTURE)
+    emitOverdubPublishTraceStage(publishTrace, "seal_fx_publish_pending_pass",
+                                 traceMicros() - publishPendingStartUs, "failed");
+#endif
     const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-    const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-    emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
+    emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
+              DebugSessionCapture::kUnsampledHeapBytes, "failed");
     return CommitResult::SealFailed;
   }
+#if defined(SESSION_CAPTURE)
+  emitOverdubPublishTraceStage(publishTrace, "seal_fx_publish_pending_pass",
+                               traceMicros() - publishPendingStartUs, "ok");
+#endif
   const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-  const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
+  emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
+            DebugSessionCapture::kUnsampledHeapBytes, "ok");
 
   notifyCommittedContentChanged();
   return CommitResult::Committed;
@@ -1044,7 +1203,7 @@ void Loop::discardPendingCapturePass() {
   pendingVisualDelta.clear();
 }
 
-LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick) {
+LOOP_COLD_MEM LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick) {
   if (capture.store.empty() || loopLengthTicks == 0) {
     return {};
   }
@@ -1060,19 +1219,39 @@ LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsT
                                                      openTailCloseTick);
 }
 
-SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
+LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
+  const OverdubSealTraceCtx sealTrace = beginOverdubSealTrace(*this, reason);
+
   if (hasPendingCapturePass_) {
+    emitOverdubSealTraceStage(sealTrace, "seal_precheck", 0, "already_pending");
     return SealOutcome::AlreadyPending;
   }
   if (capture.store.empty()) {
+    emitOverdubSealTraceStage(sealTrace, "seal_precheck", 0, "skipped_empty");
     return SealOutcome::SkippedEmpty;
   }
   if (!LoopEventStore::canAllocChunkWithReserve()) {
+    emitOverdubSealTraceStage(sealTrace, "seal_precheck", 0, "pool_exhausted");
     return SealOutcome::PoolExhausted;
   }
 
-  ensureCaptureEventsSorted();
+#if defined(SESSION_CAPTURE)
+  const uint32_t sortStartUs = traceMicros();
+#endif
+  const bool sorted = ensureCaptureEventsSorted();
+#if defined(SESSION_CAPTURE)
+  emitOverdubSealTraceStage(sealTrace, "seal_sort_capture_store", traceMicros() - sortStartUs,
+                            sorted ? "sorted" : "already_sorted");
+#endif
+
+#if defined(SESSION_CAPTURE)
+  const uint32_t assignIdsStartUs = traceMicros();
+#endif
   assignMissingNoteIdsInStore(capture.store);
+#if defined(SESSION_CAPTURE)
+  emitOverdubSealTraceStage(sealTrace, "seal_assign_note_ids", traceMicros() - assignIdsStartUs,
+                            "ok");
+#endif
 
   const char* phaseLabel = capturePhaseLabel(capture.phase);
   uint32_t minLenPairsRemoved = 0;
@@ -1080,17 +1259,40 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
 
   if (loopLengthTicks > 0 &&
       (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t finalizeWrapStartUs = traceMicros();
+#endif
     const LoopStopFinalize::Result fin = finalizeCaptureWrapWindowAtStop(sealedAtTick);
+#if defined(SESSION_CAPTURE)
+    emitOverdubSealTraceStage(sealTrace, "seal_finalize_wrap_window",
+                              traceMicros() - finalizeWrapStartUs, "ok");
+#endif
     wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
     // Q16 min-length is hot stop only — not OverdubWrap. Wrap must keep
     // completed short pairs (185831: 60 On@0 Off@8) so loop-head playback
     // can apply phase-0 NoteOns.
     if (reason != CommitReason::OverdubWrap) {
+#if defined(SESSION_CAPTURE)
+      const uint32_t minLengthStartUs = traceMicros();
+#endif
       minLenPairsRemoved = static_cast<uint32_t>(
           CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
               capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled));
+#if defined(SESSION_CAPTURE)
+      emitOverdubSealTraceStage(sealTrace, "seal_remove_min_length_pairs",
+                                traceMicros() - minLengthStartUs,
+                                noteMinLengthRemoveEnabled ? "enabled" : "disabled");
+#endif
     }
+#if defined(SESSION_CAPTURE)
+    const uint32_t verifyHotStopStartUs = traceMicros();
+#endif
     CaptureIncrementalSanity::verifyCaptureHotStop(capture.store, loopLengthTicks);
+#if defined(SESSION_CAPTURE)
+    emitOverdubSealTraceStage(sealTrace, "seal_verify_hot_stop",
+                              traceMicros() - verifyHotStopStartUs,
+                              capture.store.empty() ? "failed_empty" : "ok");
+#endif
     if (capture.store.empty()) {
       return SealOutcome::FailedValidation;
     }
@@ -1118,10 +1320,22 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
       (phase == CapturePassPhase::Overdub && hasOverdubSession())
           ? currentOverdubSessionIndex_
           : kUngroupedOverdubSessionIndex;
+#if defined(SESSION_CAPTURE)
+  const uint32_t detachChunksStartUs = traceMicros();
+#endif
   if (!capture.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
+#if defined(SESSION_CAPTURE)
+    emitOverdubSealTraceStage(sealTrace, "seal_detach_capture_chunks",
+                              traceMicros() - detachChunksStartUs, "failed");
+#endif
     pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
   }
+#if defined(SESSION_CAPTURE)
+  emitOverdubSealTraceStage(sealTrace, "seal_detach_capture_chunks",
+                            traceMicros() - detachChunksStartUs,
+                            pendingCapturePass_.committedChunkIds.empty() ? "empty" : "ok");
+#endif
 
   if (pendingCapturePass_.committedChunkIds.empty()) {
     pendingCapturePass_ = PendingCapturePass{};
@@ -1130,15 +1344,21 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
 
   pendingVisualDelta.clear();
   hasPendingCapturePass_ = true;
+  emitOverdubSealTraceStage(sealTrace, "seal_stage_complete", 0, "ok");
   return SealOutcome::Ok;
 }
 
-LOOP_COLD_MEM bool Loop::commitPendingCapturePass() {
+LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
+  const OverdubPublishTraceCtx publishTrace = beginOverdubPublishTrace(*this, reason);
   if (!hasPendingCapturePass_) {
+    emitOverdubPublishTraceStage(publishTrace, "seal_publish_precheck", 0, "no_pending");
     return false;
   }
 
   PendingCapturePass pendingPass = std::move(pendingCapturePass_);
+#if defined(SESSION_CAPTURE)
+  const uint32_t promotePassStartUs = traceMicros();
+#endif
   if (pendingPass.phase == CapturePassPhase::Record) {
     RecordPass record{};
     record.id = pendingPass.id;
@@ -1156,88 +1376,107 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass() {
     overdub.committedChunkIds = std::move(pendingPass.committedChunkIds);
     passes.overdubPasses.push_back(std::move(overdub));
   }
+#if defined(SESSION_CAPTURE)
+  emitOverdubPublishTraceStage(publishTrace, "seal_publish_promote_pass",
+                               traceMicros() - promotePassStartUs, "ok");
+#endif
   lastCommittedPassId_ = pendingPass.id;
 
   pendingCapturePass_ = PendingCapturePass{};
   hasPendingCapturePass_ = false;
 
+#if defined(SESSION_CAPTURE)
+  const uint32_t spanCacheRestampStartUs = traceMicros();
+#endif
   bool spanCacheCanRestamp = hasOverdubSession() && overdubSourceSpanCacheValid_ &&
                              overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks;
+  bool spanCacheRestampAttempted = false;
+  const char* spanCacheRestampOutcome = "skipped";
   if (spanCacheCanRestamp && pendingPass.phase == CapturePassPhase::Overdub &&
       !passes.overdubPasses.empty()) {
-    SessionMidiEventVec committedPassEvents;
-    LoopEventStore::appendChunkRefEvents(passes.overdubPasses.back().committedChunkIds,
-                                         committedPassEvents);
-    if (!committedPassEvents.empty()) {
-      for (const MidiEvent& evt : committedPassEvents) {
-        if (!evt.isNoteOff()) {
-          continue;
-        }
-        const uint8_t pitch = evt.data.noteData.note;
-        for (const MidiEvent& later : committedPassEvents) {
-          if (!later.isNoteOn() || later.channel != evt.channel ||
-              later.data.noteData.note != pitch) {
-            continue;
-          }
-          if (later.tick <= evt.tick) {
-            continue;
-          }
-          if (NoteUtils::isHeadTailWrappedPair(later.tick, evt.tick, loopLengthTicks)) {
-            spanCacheCanRestamp = false;
-            break;
-          }
-        }
-        if (!spanCacheCanRestamp) {
-          break;
-        }
-      }
-
-      NoteUtils::DisplayNoteVec committedPassNotes =
-          NoteUtils::reconstructDisplayNotes(committedPassEvents, loopLengthTicks, false, false, true);
-      for (const NoteUtils::DisplayNote& candidate : committedPassNotes) {
-        if (candidate.noteId == kInvalidNoteId) {
-          continue;
-        }
-        bool found = false;
-        for (const NoteUtils::DisplayNote& existing : overdubSourceSpanCacheNotes_) {
-          if (existing.noteId == candidate.noteId) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          overdubSourceSpanCacheNotes_.push_back(candidate);
-        }
-      }
-      for (const MidiEvent& evt : committedPassEvents) {
-        if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
-          continue;
-        }
-        bool present = false;
-        for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
-          if (note.noteId == evt.noteId) {
-            present = true;
-            break;
-          }
-        }
-        if (!present) {
+    spanCacheRestampAttempted = true;
+    const size_t committedPassEventCount =
+        LoopEventStore::countEventsInChunkIds(passes.overdubPasses.back().committedChunkIds);
+    if (committedPassEventCount > kMaxEventsForSpanCacheRestamp) {
+      spanCacheCanRestamp = false;
+      spanCacheRestampOutcome = "deferred_event_budget";
+    }
+    if (spanCacheCanRestamp) {
+      SessionMidiEventVec committedPassEvents;
+      LoopEventStore::appendChunkRefEvents(passes.overdubPasses.back().committedChunkIds,
+                                           committedPassEvents);
+      if (!committedPassEvents.empty()) {
+        if (capturePassContainsWrappedHeadTailPairs(committedPassEvents, loopLengthTicks)) {
           spanCacheCanRestamp = false;
-          break;
+          spanCacheRestampOutcome = "invalidated_wrap_pair";
+        }
+        if (spanCacheCanRestamp) {
+          NoteUtils::DisplayNoteVec committedPassNotes = NoteUtils::reconstructDisplayNotes(
+              committedPassEvents, loopLengthTicks, false, false, true);
+          std::vector<NoteId> spanCacheNoteIds;
+          collectSortedSpanCacheNoteIds(overdubSourceSpanCacheNotes_, spanCacheNoteIds);
+          for (const NoteUtils::DisplayNote& candidate : committedPassNotes) {
+            if (candidate.noteId == kInvalidNoteId) {
+              continue;
+            }
+            const auto it = std::lower_bound(spanCacheNoteIds.begin(), spanCacheNoteIds.end(),
+                                             candidate.noteId);
+            if (it != spanCacheNoteIds.end() && *it == candidate.noteId) {
+              continue;
+            }
+            overdubSourceSpanCacheNotes_.push_back(candidate);
+            spanCacheNoteIds.insert(it, candidate.noteId);
+          }
+          for (const MidiEvent& evt : committedPassEvents) {
+            if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
+              continue;
+            }
+            if (!std::binary_search(spanCacheNoteIds.begin(), spanCacheNoteIds.end(), evt.noteId)) {
+              spanCacheCanRestamp = false;
+              spanCacheRestampOutcome = "invalidated_missing_id";
+              break;
+            }
+          }
         }
       }
     }
   }
+#if defined(SESSION_CAPTURE)
+  if (spanCacheCanRestamp && spanCacheRestampAttempted) {
+    spanCacheRestampOutcome = "ok";
+  } else if (!spanCacheRestampAttempted) {
+    spanCacheRestampOutcome = "skipped";
+  } else if (spanCacheRestampOutcome == nullptr ||
+             std::strcmp(spanCacheRestampOutcome, "skipped") == 0) {
+    spanCacheRestampOutcome = "invalidated";
+  }
+  emitOverdubPublishTraceStage(publishTrace, "seal_publish_span_cache_restamp",
+                               traceMicros() - spanCacheRestampStartUs,
+                               spanCacheRestampOutcome);
+#endif
 
+#if defined(SESSION_CAPTURE)
+  const uint32_t finalizeStateStartUs = traceMicros();
+#endif
   ++playbackRevision;
   if (spanCacheCanRestamp) {
     overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
   }
   pendingVisualDelta.clear();
+#if defined(SESSION_CAPTURE)
+  emitOverdubPublishTraceStage(publishTrace, "seal_publish_finalize_state",
+                               traceMicros() - finalizeStateStartUs, "ok");
+#endif
 
+#if defined(SESSION_CAPTURE)
+  const uint32_t clearCaptureStartUs = traceMicros();
+#endif
   capture.store.clear();
   capture.phase = CapturePhase::None;
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
+  captureHasLastAppendTick_ = false;
+  captureLastAppendTick_ = 0;
   capturePreview.clear();
   // Wrap and stop commit keep the session source view. Clearing here makes
   // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
@@ -1246,6 +1485,10 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass() {
   if (!hasOverdubSession()) {
     clearOverdubSourceView();
   }
+#if defined(SESSION_CAPTURE)
+  emitOverdubPublishTraceStage(publishTrace, "seal_publish_clear_capture",
+                               traceMicros() - clearCaptureStartUs, "ok");
+#endif
 
   return true;
 }

@@ -61,11 +61,14 @@ LOOP_INTERNAL_MEM const char* capturePhaseLabel(CapturePhase phase) {
   }
 }
 
-LOOP_INTERNAL_MEM void sortCaptureStoreByTick(LoopEventStore& store) {
+LOOP_INTERNAL_MEM void sortCaptureStoreByTick(LoopEventStore& store, uint32_t* lastTickOut) {
   SessionMidiEventVec sorted;
   store.copyEventsTo(sorted);
   std::stable_sort(sorted.begin(), sorted.end(),
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  if (lastTickOut != nullptr) {
+    *lastTickOut = sorted.empty() ? 0 : sorted.back().tick;
+  }
   store.clear();
   store.loadFromEvents(sorted);
 }

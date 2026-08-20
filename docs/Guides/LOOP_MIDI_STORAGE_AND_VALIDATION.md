@@ -396,6 +396,28 @@ GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `
 
 Record stop calls `queueDeferredRecordRevts()` after a published commit; idle maintenance emits REVT while `PLAYING` (not only when transport is stopped). Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
 
+### Overdub-stop memory logger (disabled by default)
+
+Purpose: keep one reusable stop-path memory log hook available for targeted investigations without deleting/restoring call sites each time.
+
+| Item | Location / rule |
+|------|------------------|
+| Call-site owner | `Track::handleNoteEditFold`, `Track::stopOverdubbing`, `Track::stopOverdubbingToStopped` call `logMemoryAfterOverdubStop(...)` |
+| Logger owner | `logMemoryAfterOverdubStop` in `src/Track/TrackStopTelemetryColdHelpers.cpp` |
+| Default | `kOverdubStopMemoryLoggingEnabled = false` (early return, no heap/pool query, no log emission) |
+| Emitted line when enabled | `MemoryMonitor::logStatusAtAddedNotes` (`[Memory] notes=...`) |
+
+Enable policy:
+
+1. Keep this logger **disabled** for normal development and all latency validation runs.
+2. Enable only for a scoped investigation that explicitly needs stop-path memory snapshots.
+3. Re-disable immediately after the investigation commit/slice, before latency comparisons.
+
+Rationale:
+
+- The call sites stay stable for future investigation reuse.
+- Default behavior preserves stop-path timing characteristics by avoiding memory-query work in the overdub-stop critical section.
+
 ---
 
 ## Tests (native)

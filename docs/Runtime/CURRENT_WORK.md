@@ -2,21 +2,104 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
+Last updated: 2026-08-20 (overdub lag runtime-target alignment)
 
 ---
 
 ## Now implementing
 
-### Overdub-stop seal lag optimization — long-tail attribution and trim stage
+### Overdub lag plan — baseline reset and reprioritized execution
 
-**Evidence:** [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`171246`](../../captures/session_20260820_171246.log), [`171909`](../../captures/session_20260820_171909.log), [`172553`](../../captures/session_20260820_172553.log), [`173206`](../../captures/session_20260820_173206.log), [`174941`](../../captures/session_20260820_174941.log)
+**Evidence:** [`210319`](../../captures/session_20260820_210319.log) (new baseline), plus prior attribution captures [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`174941`](../../captures/session_20260820_174941.log)
 
-**Owner:** `Loop::applyPendingHideAndShortenToNotes`, `Loop::sealPendingNoteChangesToEditPasses`, `Loop::saveNoteEditPass`, `Loop::markAffectedDisplayCacheRanges`.
+**Owner set (current priority order):**
+1. `Track::stopOverdubbing` stop-path handoff (`ODUB,stop,display` envelope)
+2. `Loop::sealPendingNoteChangesToEditPasses` + `TrackUndo::pushOverdubSessionOnStop` (dominant `seal_fx_*` contributors)
+3. Post-stop scheduler debt window (`processDeferredIdleMaintenance`, `runDeferredLoadAndDisplayFrame`, `StorageManager::processDeferredSaveState`)
 
-**Invariant:** Overdub stop commit semantics remain unchanged, but companion seal applies source-note transforms and derived-cache invalidation in bounded batch form (one vector rewrite pass + one derived-stale publish), instead of per-row erase/notify churn on the stop path.
+**Invariant:** Prioritize only runtime-blocking windows: stop display handoff and first post-stop scheduler stall. Stop commit semantics remain unchanged; stop return must not wait on newly discovered deferred debt.
 
-**Root cause proved in captures:** Stop lag remains seal-driven. In [`165534`](../../captures/session_20260820_165534.log), three complete stop-stage windows show `seal` elapsed of **30.8 ms**, **66.6 ms**, and **197.2 ms**; the 197.2 ms spike coincides with **25** `DIAG,seal_companion` rows between `ODUB,stop,enter` and `ODUB,stop,seal`. That proves companion-row sealing remains the dominant variable cost.
+**Runtime-stall baseline (from [`210319`](../../captures/session_20260820_210319.log)):**
+- **Published stop cycles with complete first post-stop window:** 6
+- **`ODUB,stop,display` elapsed:** **56.451-71.803 ms** (median **65.288 ms**)
+- **First post-stop `DIAG,midi_gap`:** **78.634-145.373 ms** (median **107.569 ms**)
+- First post-stop decomposition:
+  - `idle_maint`: **78.619-145.357 ms** (median **101.576 ms**) — dominant
+  - `load_frame`: **27.553-42.889 ms** (median **33.548 ms**)
+  - `persist_save`: **13.295-122.704 ms** (median **47.168 ms**)
+- Published stop `seal` duration (same 6 complete cycles): **45.461-61.129 ms** (median **56.006 ms**)
+- `seal_fx_*` maxima in the same run:
+  - `seal_fx_seal_pending_changes`: **41.310 ms** (dominant synchronous owner)
+  - `seal_fx_push_overdub_undo`: **13.243 ms** (secondary synchronous spike)
+  - `seal_fx_mark_display_ranges`: **2.828 ms**; remaining `seal_fx_*` are minor
+- Additional published cycle without a complete first post-stop window in this capture: `display=39.965 ms`, `seal=29.498 ms` (tracked separately from the 6-cycle target sample).
+- Two `seal=skipped` cycles still show large first gaps (**672.708-711.300 ms**) with small display (~11 ms), proving deferred scheduler debt can dominate independently of stop display.
+
+**Reprioritized execution (based on measured stalls):**
+1. **P1 — Stop display envelope trim (synchronous):** keep attribution on `seal_fx_seal_pending_changes` and `seal_fx_push_overdub_undo`; reduce and bound the `ODUB,stop,display` envelope before any broad scheduler tuning.
+2. **P2 — Post-stop debt causality proof (deferred):** classify first-gap contributors as **pre-existing debt**, **stop-created debt**, **stop-amplified debt**, or **newly scheduled after stop**.
+3. **P3 — Scheduler policy only after causality:** if P2 finds architectural stop-triggered invalidation/rebuild, fix that owner cause first; do not mask it with slice caps.
+4. **P4 — Background arbitration:** prevent large `idle_maint` + `persist_save` stacking from consuming the same post-stop runtime window once causality is closed.
+
+**Runtime scheduling roadmap linkage:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md)
+- P1 remains pre-contract synchronous owner attribution on `Track::stopOverdubbing` / seal owners; it does not start interval reservation.
+- P2 contributes Stage R owner-boundary evidence for post-stop debt classification (`pre-existing`, `stop-created`, `stop-amplified`, `newly scheduled after stop`).
+- P3 enforces Owner-Boundary Gate ordering: if stop-triggered unnecessary invalidation/rebuild is found, fix that owner cause before slice caps or arbitration tuning.
+- P4 is scheduling policy input only after owner causality is closed; interval reservation remains unauthorized until roadmap Stage C/A gates are explicitly satisfied.
+
+**Runtime targets (for this overdub-lag slice):**
+1. **Stop handoff target:** `ODUB,stop,display` is measured as a bounded owner envelope with dominant contributors attributed (`seal_fx_seal_pending_changes`, `seal_fx_push_overdub_undo`) and trimmed without changing stop commit semantics.
+2. **First post-stop opportunity target:** first post-stop `DIAG,midi_gap` is reduced by owner-cause closure, not by masking unknown debt; each major contribution is classified as `pre-existing debt`, `stop-created debt`, `stop-amplified debt`, or `newly scheduled after stop`.
+3. **Stop/deferred boundary target:** stop return does not wait on completion of deferred maintenance debt discovered in P2.
+4. **Arbitration target:** long `idle_maint`, `load_frame`, and `persist_save` work does not stack into the same first post-stop runtime window after P4 policy work.
+5. **Scheduling-contract target carryover:** no multi-second PLAYING/transport-active `DIAG,midi_gap` windows; interval reservation remains out of scope for this slice.
+6. **Musical correctness gate carryover (when lateness hooks are present in the same evidence run):** `late_event_count == 0` and `max_lateness_us <= 0` for note-on, note-off, and clock.
+
+**Target-aligned baseline checkpoints (same [`210319`](../../captures/session_20260820_210319.log) evidence):**
+1. **Stop handoff target baseline:** complete published stop-display envelope is **56.451-71.803 ms** (median **65.288 ms**); dominant synchronous contributors remain `seal_fx_seal_pending_changes` (max **41.310 ms**) and `seal_fx_push_overdub_undo` (max **13.243 ms**).
+2. **First post-stop opportunity target baseline:** first post-stop `DIAG,midi_gap` on complete published cycles is **78.634-145.373 ms** (median **107.569 ms**) with decomposition windows above.
+3. **Stop/deferred boundary target baseline:** two `seal=skipped` cycles still show small stop-display windows (~**11 ms**) with large first post-stop gaps (**672.708-711.300 ms**), confirming deferred debt can dominate without large synchronous display cost.
+4. **Arbitration target baseline:** in the 6 complete published windows, `load_frame` remains **27.553-42.889 ms** every cycle and `persist_save` reaches **47+ ms** in 4/6 windows (max **122.704 ms**), so stacked post-stop work remains an active scheduling risk.
+5. **Scheduling-contract carryover baseline:** run-wide `DIAG,midi_gap` in this capture reaches **2.855 s** (3 windows over 1 s), so the no-multi-second-gap carryover target is not yet met globally.
+6. **Musical correctness gate carryover baseline:** lateness hooks are present; this run reports non-zero late note windows (`late_on`: 5 windows, 23 events total, max lateness **42.458 ms**; `late_off`: 4 windows, 13 events total, max lateness **29.551 ms**; `late_clk`: 0 events).
+
+**P1 re-measure after sorted transform lookup ([`213848`](../../captures/session_20260820_213848.log)):**
+- Sample shape: **9** stop cycles, **7** published cycles with complete first post-stop windows, **0** skipped-complete cycles.
+- **`ODUB,stop,display` (published + complete):** **26.751-134.121 ms** (median **58.246 ms**) — median improved vs baseline, but one long-tail outlier remains.
+- **Published `seal` (same 7 complete cycles):** **18.250-125.144 ms** (median **48.153 ms**).
+- **First post-stop `DIAG,midi_gap` (published + complete):** **43.875-189.583 ms** (median **104.331 ms**).
+- First post-stop decomposition (published + complete):
+  - `idle_maint`: **32.233-189.565 ms** (median **104.313 ms**)
+  - `load_frame`: **27.147-36.773 ms** (median **31.289 ms**)
+  - `persist_save`: **13.960-55.248 ms** (median **45.047 ms**)
+- `seal_fx_*` maxima in the same run:
+  - `seal_fx_seal_pending_changes`: **48.354 ms** (higher max than baseline)
+  - `seal_fx_push_overdub_undo`: **6.650 ms** (lower max than baseline)
+  - `seal_fx_mark_display_ranges`: **3.818 ms**
+- Dominant outlier cycle: `ODUB,stop,display=134.121 ms`, `seal=125.144 ms`, `seal_fx_seal_pending_changes=48.354 ms`, `seal_fx_mark_display_ranges=3.818 ms` (same stop cycle).
+- Carryover checks in the same run: run-wide `DIAG,midi_gap` max **2.890 s** (5 windows over 1 s); lateness remains non-zero (`late_on` max **64.220 ms**, 46 events; `late_off` max **87.453 ms**, 30 events; `late_clk` zero).
+
+**P1 re-measure after publish-owner telemetry ([`215223`](../../captures/session_20260820_215223.log)):**
+- Sample shape: **8** stop cycles, **7** published cycles with complete first post-stop windows, **0** skipped-complete cycles.
+- **`ODUB,stop,display` (published + complete):** **32.702-124.432 ms** (median **50.174 ms**).
+- **Published `seal` (same 7 complete cycles):** **23.529-115.351 ms** (median **42.042 ms**).
+- **First post-stop `DIAG,midi_gap` (published + complete):** **50.388-160.096 ms** (median **102.466 ms**).
+- First post-stop decomposition (published + complete):
+  - `idle_maint`: **38.602-160.081 ms** (median **102.448 ms**)
+  - `load_frame`: **27.039-36.331 ms** (median **30.616 ms**)
+  - `persist_save`: **16.108-85.121 ms** (median **46.960 ms**)
+- New publish-owner telemetry maxima in the same run:
+  - `seal_fx_publish_pending_pass`: **62.448 ms**
+  - `seal_publish_span_cache_restamp`: **62.323 ms**
+  - `seal_publish_promote_pass`: **9 us**
+  - `seal_publish_finalize_state`: **10 us**
+  - `seal_publish_clear_capture`: **13 us**
+- Existing `seal_fx_*` maxima in the same run:
+  - `seal_fx_seal_pending_changes`: **44.809 ms**
+  - `seal_fx_push_overdub_undo`: **69 us**
+  - `seal_fx_mark_display_ranges`: **3.991 ms**
+- Dominant outlier cycle attribution: `ODUB,stop,display=124.432 ms` with `seal=115.351 ms`, split primarily across `seal_publish_span_cache_restamp=62.323 ms` and `seal_fx_seal_pending_changes=44.809 ms`; publish owner is now directly measured.
+- Carryover checks in the same run: run-wide `DIAG,midi_gap` max **1.907 s** (1 window over 1 s, 1 over 500 ms); lateness remains non-zero (`late_on` max **53.490 ms**, 36 events; `late_off` max **48.415 ms**, 27 events; `late_clk` zero).
 
 **Stage changes shipped:**  
 - `applyPendingHideAndShortenToNotes` now applies `Shorten`/`Hide` transforms by rebuilding the note vector once, avoiding repeated in-place erase scans for each pending change.  
@@ -29,10 +112,15 @@ Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
 - Companion per-row telemetry is now capped (first 8 `DIAG,seal_companion` rows) to avoid line-format/append churn during heavy stop cycles while preserving batch-level timing visibility (`DIAG,seal_companion_batch`).
 - `markAffectedDisplayCacheRanges` now marks companion row spans first, then does one note-cache pass against the companion target-note set, instead of scanning `visualCache.notes` once per companion row.
 - `applyPendingNoteChangesToOverdubSourceView` Add-note merge batching is restored (user-directed) so pending Add notes are merged in one pass before `Shorten`/`Hide` projection updates.
-- `Track::stopOverdubbing` and the in-edit `handleNoteEditFold` stop path now use `SC_REC_FLUSH_PENDING_REVTS(8)` (non-blocking drop-only path) instead of `256`, removing variable USB serial flush work from the overdub-stop critical path before display refresh.
+- `applyPendingHideAndShortenToNotes` now keeps Shorten/Hide transforms sorted by `noteId` and uses bounded lookup, removing repeated linear transform scans from the overdub-stop seal path while preserving Shorten/Hide outcomes.
+- Added `SESSION_CAPTURE`-gated stop publish telemetry for the previously uninstrumented overdub-stop publish owner (`Loop::commitPendingCapturePass`) with cold/Flash placement (`LOOP_COLD_MEM`): `seal_fx_publish_pending_pass`, `seal_publish_promote_pass`, `seal_publish_span_cache_restamp`, `seal_publish_finalize_state`, `seal_publish_clear_capture`.
+- `commitPendingCapturePass` span-cache restamp now hard-bounds stop-path work: when the committed pass exceeds the stop restamp event budget (`2048` events), restamp is deferred (`seal_publish_span_cache_restamp=deferred_event_budget`) and revision restamp is skipped so heavy rebuild work moves out of the synchronous stop envelope.
+- Wrapped head/tail detection during span-cache restamp now uses bounded linear scan without the previous 17x128 stack table, removing large fixed stack footprint from the overdub-stop publish owner.
+- `Loop::commitCapturePass`, `Loop::sealCapture`, and `Loop::finalizeCaptureWrapWindowAtStop` are explicitly `LOOP_COLD_MEM` to keep overdub-stop owner code on flash and restore RAM1 headroom in `teensy41-capture-serial`.
+- `Track::stopOverdubbing` and the in-edit `handleNoteEditFold` stop path now use `SC_REC_FLUSH_PENDING_REVTS(128)` with Tier-A ODUB stop markers, preserving stop-stage observability without reintroducing broad flush churn in the synchronous owner path.
 - `CaptureLineTier::isTierALine` now treats `ODUB,stop` lines as Tier-A so stop-stage telemetry remains visible even with deterministic `flush(8)` stop budgets under ring pressure.
 
-**Status:** Native **1397/1397** and `teensy41-capture-serial` build **PASS** (`RAM1 code 425084 / locals 4768`). HITL [`174941`](../../captures/session_20260820_174941.log) verified deterministic stop flush with restored stop telemetry (`ODUB,stop,flush` stage duration **5 us**, `ODUB,stop,display` delta **11088 us**, no reconnects). Later display-focused follow-ups are reverted per user request; stop-lag measurement remains open.
+**Status:** Native **1397/1397** and `teensy41-capture-serial` build **PASS**. New baseline capture [`210319`](../../captures/session_20260820_210319.log) replaces older stop-lag envelopes for planning.
 
 ### Overdub-start begin-capture long-delay restoration — validated
 
@@ -46,9 +134,9 @@ Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
 
 **Stage change shipped:** Restored overdub-session cache fallback in `rebuildOverdubSourceSpanCache`: when prepared spans are unavailable during an active overdub session, reuse prior cache notes instead of forcing full-loop materialization on start/wrap. Non-session behavior remains unchanged (full materialize is still allowed outside active overdub sessions).
 
-**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`170724`](../../captures/session_20260820_170724.log) validates the restoration: `Live Overdub -> Overdubbing started` is now **2-8 ms** and `ODUB,stage,begin_capture` is **8198 us** / **2150 us** (no 2.2 s start stalls).
+**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS**. New baseline [`210319`](../../captures/session_20260820_210319.log): `ODUB,stage,begin_capture` stays bounded at **1851-6443 us** (median **2070 us**), confirming start stalls are no longer the active bottleneck.
 
-**Remaining issue exposed by the same run:** stop-path long tail persists and worsened in one cycle: `ODUB,stop,seal=310980 us`, `flush=312270 us`, `display=320406 us`, with in-window `DIAG,overlap_hold note_offs=100`. `DIAG,seal_companion_batch` remains bounded (`rows=5 sealed=5 us=84` in the complete cycle), so companion-row insertion itself is no longer the dominant stop cost.
+**Historical outlier context:** [`170724`](../../captures/session_20260820_170724.log) contains a one-cycle stop-path outlier (`ODUB,stop,seal=310980 us`, `display=320406 us`). The new planning baseline is [`210319`](../../captures/session_20260820_210319.log) runtime windows above (published stop display 56.451-71.803 ms; first post-stop MIDI Input Gap 78.634-145.373 ms).
 
 ### Overdub-start reboot — reverted to baseline, blocked on instrumentation
 
