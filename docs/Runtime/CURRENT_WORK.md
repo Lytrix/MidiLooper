@@ -8,9 +8,9 @@ Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 
 ## Now implementing
 
-### Overdub-stop seal lag optimization — ready for HITL verify
+### Overdub-stop seal lag optimization — reserve stage validated
 
-**Evidence:** [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log)
+**Evidence:** [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log)
 
 **Owner:** `Loop::applyPendingHideAndShortenToNotes`, `Loop::sealPendingNoteChangesToEditPasses`, `Loop::saveNoteEditPass`.
 
@@ -26,7 +26,7 @@ Last updated: 2026-08-20 (overdub-stop seal lag optimization stage)
 - Companion sealing now reserves `passes.editPasses` capacity for the full companion batch before row insertion, removing vector growth churn from the stop path.
 - Added one batch timing line per companion seal (`DIAG,seal_companion_batch`) so each stop cycle records rows/sealed/duration directly.
 
-**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). Awaiting HITL capture with this reserve stage to re-measure `ODUB,stop,seal` and total stop window.
+**Status:** Native **1397/1397**. `teensy41-capture-serial` build **PASS** (RAM1 code **425020** / locals **4768**). HITL [`165956`](../../captures/session_20260820_165956.log) validates the reserve stage with zero reconnects and complete stop windows at `seal=52.0 ms -> display=61.3 ms`, `seal=38.4 ms -> display=49.9 ms`, and `seal=24.9 ms -> display=35.8 ms`; a remaining long-tail cycle still shows `flush=140.1 ms` / `display=147.2 ms` with `RING,overflow` in-window and 55 `overlap_hold` note-offs. `DIAG,seal_companion_batch` confirms companion-row insertion itself is bounded (`rows=12 us=1098`, `rows=11 us=170`).
 
 ### Overdub-start reboot — reverted to baseline, blocked on instrumentation
 
