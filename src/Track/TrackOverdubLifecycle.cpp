@@ -14,7 +14,6 @@
 #include "TrackUndo.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/HotPathTelemetry.h"
-#include "Utils/MemoryMonitor.h"
 
 bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
                                uint32_t stopStartUs) {
@@ -33,7 +32,6 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
   pendingNotes.clear();
   if (endInPlaying) {
 #if defined(SESSION_CAPTURE)
-    const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t stateStartUs = micros();
 #endif
     silenceTrackMidiOutput();
@@ -43,17 +41,17 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     setState(TRACK_PLAYING);
 #if defined(SESSION_CAPTURE)
     TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "set_state", micros() - stateStartUs,
-                                stateHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(),
-                                "in_edit");
+                                DebugSessionCapture::kUnsampledHeapBytes,
+                                DebugSessionCapture::kUnsampledHeapBytes, "in_edit");
 #endif
 #if defined(SESSION_CAPTURE)
-    const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t flushStartUs = micros();
 #endif
     SC_REC_FLUSH_PENDING_REVTS(8);
 #if defined(SESSION_CAPTURE)
     TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs,
-                                flushHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+                                DebugSessionCapture::kUnsampledHeapBytes,
+                                DebugSessionCapture::kUnsampledHeapBytes, "ok");
 #endif
     TRACK_SC_OVERDUB_STOP_MEMORY(recordAddedNoteOnCount, loop);
     logger.logTrackEvent("Overdubbing stopped", currentTick);
@@ -67,8 +65,8 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
 #if defined(SESSION_CAPTURE)
     TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "display", 0,
-                                MemoryMonitor::getInternalHeapFreeBytes(),
-                                MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+                                DebugSessionCapture::kUnsampledHeapBytes,
+                                DebugSessionCapture::kUnsampledHeapBytes, "ok");
 #endif
     HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("overdub_stop");
     armPlayingMidiDrainAfterOverdubStop();
@@ -206,8 +204,9 @@ void Track::stopOverdubbing() {
   Loop& loop = getActiveLoop();
 #if defined(SESSION_CAPTURE)
   const uint32_t stopStartUs = micros();
-  const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
-  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "enter", 0, heapAtEnter, heapAtEnter, "entered");
+  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "enter", 0,
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes, "entered");
 #else
   const uint32_t stopStartUs = 0;
 #endif
@@ -222,23 +221,22 @@ void Track::stopOverdubbing() {
   }
   finalizePendingNotes(currentTick);
 #if defined(SESSION_CAPTURE)
-  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = micros();
   const CommitResult sideEffectResult =
       commitCaptureForStop(CommitReason::OverdubStop, currentTick, closeTick);
   // Stage order seal → finalize preserved; duration covers seal+finalize together on seal.
-  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
-                              MemoryMonitor::getInternalHeapFreeBytes(),
+  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "seal", micros() - sealStartUs,
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes,
                               commitResultLabel(sideEffectResult));
   TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "finalize", 0,
-                              MemoryMonitor::getInternalHeapFreeBytes(),
-                              MemoryMonitor::getInternalHeapFreeBytes(),
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes,
                               commitResultLabel(sideEffectResult));
 #else
   (void)commitCaptureForStop(CommitReason::OverdubStop, currentTick, closeTick);
 #endif
 #if defined(SESSION_CAPTURE)
-  const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateStartUs = micros();
 #endif
   // Silence this track only, then resume loop playback. Do not CC123 every channel —
@@ -250,16 +248,17 @@ void Track::stopOverdubbing() {
   setState(TRACK_PLAYING);
 #if defined(SESSION_CAPTURE)
   TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "set_state", micros() - stateStartUs,
-                              stateHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes, "ok");
 #endif
 #if defined(SESSION_CAPTURE)
-  const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t flushStartUs = micros();
 #endif
   SC_REC_FLUSH_PENDING_REVTS(8);
 #if defined(SESSION_CAPTURE)
-  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
-                              MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "flush", micros() - flushStartUs,
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes, "ok");
 #endif
   TRACK_SC_OVERDUB_STOP_MEMORY(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
@@ -274,8 +273,8 @@ void Track::stopOverdubbing() {
   emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
 #if defined(SESSION_CAPTURE)
   TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "display", 0,
-                              MemoryMonitor::getInternalHeapFreeBytes(),
-                              MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes, "ok");
 #endif
   HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("overdub_stop");
   loop.closeOverdubSession();
@@ -332,8 +331,9 @@ void Track::stopOverdubbingToStopped() {
   Loop& loop = getActiveLoop();
 #if defined(SESSION_CAPTURE)
   const uint32_t stopStartUs = micros();
-  const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
-  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "enter", 0, heapAtEnter, heapAtEnter, "entered");
+  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "enter", 0,
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes, "entered");
 #else
   const uint32_t stopStartUs = 0;
 #endif
@@ -347,12 +347,12 @@ void Track::stopOverdubbingToStopped() {
   }
   finalizePendingNotes(currentTick);
 #if defined(SESSION_CAPTURE)
-  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = micros();
   const CommitResult commitResult =
       commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
-  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
-                              MemoryMonitor::getInternalHeapFreeBytes(),
+  TRACK_SC_OVERDUB_STOP_STAGE(loop, stopStartUs, "seal", micros() - sealStartUs,
+                              DebugSessionCapture::kUnsampledHeapBytes,
+                              DebugSessionCapture::kUnsampledHeapBytes,
                               commitResultLabel(commitResult));
 #else
   (void)commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
