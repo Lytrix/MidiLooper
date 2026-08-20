@@ -66,6 +66,31 @@ TRACK_COLD_MEM void logRecordStopStateAdvance(Loop& loop, uint32_t stopPathStart
                      stateAdvanceSucceeded ? "ok" : "failed", &stopPathStats);
 }
 
+struct RecordStopFinalizeContext {
+  CommitResult sideEffectResult = CommitResult::Skipped;
+  StopPathStorageStats stopPathStats{};
+};
+
+TRACK_COLD_MEM RecordStopFinalizeContext finalizeRecordStopCommitAndLog(
+    Track& track, Loop& loop, CommitReason reason, uint32_t currentTick,
+    uint32_t stopPathStartUs) {
+  const uint32_t closeTick = UINT32_MAX;
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult = track.commitCaptureForStop(reason, currentTick, closeTick);
+  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
+  const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
+  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
+                     finalizeHeapAfter, commitResultLabel(sideEffectResult), &stopPathStats);
+  const char* requestOutcome = sideEffectResult == CommitResult::Committed ? "deferred" : "skipped";
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
+                     finalizeHeapAfter, requestOutcome, &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
+                     requestOutcome, &stopPathStats);
+  return {sideEffectResult, stopPathStats};
+}
+
 }  // namespace
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferredFullValidate) {
@@ -236,25 +261,10 @@ void Track::stopRecording(uint32_t currentTick) {
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
   // (the second pass and synthetic note-offs) are active for this record-stop.
   // Record-stop must close open tails at loop end, not at the stop playhead tick.
-  const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  const uint32_t finalizeStartUs = micros();
-  const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick);
-  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
-  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
-                     finalizeHeapAfter, commitResultLabel(sideEffectResult), &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
-                     finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
+  const RecordStopFinalizeContext finalizeContext = finalizeRecordStopCommitAndLog(
+      *this, loop, CommitReason::RecordStop, currentTick, stopPathStartUs);
+  const CommitResult sideEffectResult = finalizeContext.sideEffectResult;
+  const StopPathStorageStats& stopPathStats = finalizeContext.stopPathStats;
 
   if (alignLoopOriginOnNextStop) {
     alignLoopOriginOnNextStop = false;
@@ -350,25 +360,10 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
-  const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  const uint32_t finalizeStartUs = micros();
-  const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick);
-  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
-  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
-                     finalizeHeapAfter, commitResultLabel(sideEffectResult), &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
-                     finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
+  const RecordStopFinalizeContext finalizeContext = finalizeRecordStopCommitAndLog(
+      *this, loop, CommitReason::RecordStopToStopped, currentTick, stopPathStartUs);
+  const CommitResult sideEffectResult = finalizeContext.sideEffectResult;
+  const StopPathStorageStats& stopPathStats = finalizeContext.stopPathStats;
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
