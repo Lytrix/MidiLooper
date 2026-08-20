@@ -258,6 +258,9 @@ private:
     uint8_t pendingPlayingEditGeometryPitchNew_ = 0;
     uint8_t pendingPlayingEditGeometryPitchCurrent_ = 0;
     uint32_t pendingPlayingEditGeometryQueuedAtMs_ = 0;
+    void queuePendingPlayingEditGeometryCore(PendingPlayingEditGeometryType type,
+                                             const NoteUtils::DisplayNote& note,
+                                             uint32_t targetField);
     void queuePendingPlayingEditMove(const NoteUtils::DisplayNote& note, uint32_t targetTick);
     void queuePendingPlayingEditLength(const NoteUtils::DisplayNote& note, uint32_t targetEndTick);
     void queuePendingPlayingEditPitch(const NoteUtils::DisplayNote& note, uint8_t currentPitch,
