@@ -16,6 +16,19 @@
 /// DisplayWindowUtils (linear firstTick/lastTick vs window is insufficient when a span wraps).
 class CommittedEventRange {
  public:
+  struct WindowTraversalCursor {
+    size_t listIndex = 0;
+    size_t chunkIndex = 0;
+    size_t chunkEventOffset = 0;
+    bool complete = false;
+  };
+
+  struct WindowTraversalResult {
+    size_t eventsAppended = 0;
+    bool complete = false;
+    bool resumed = false;
+  };
+
   /// Full committed traversal — appends every event from the listed chunk id lists.
   static CommittedEventRange full(const CommittedChunkIdList* const* lists, size_t listCount,
                                   uint32_t loopLengthTicks);
@@ -28,6 +41,15 @@ class CommittedEventRange {
 
   void appendTo(SessionMidiEventVec& out) const;
   void appendTo(MidiEventVec& out) const;
+
+  /// Budgeted window traversal primitive. Appends up to `maxEvents` from the current cursor.
+  /// The cursor can be reused to resume in the next maintenance slice.
+  static WindowTraversalResult appendWindowBudgeted(
+      const CommittedChunkIdList* const* lists, size_t listCount, uint32_t loopLengthTicks,
+      uint32_t windowStart, uint32_t windowLength, size_t maxEvents,
+      WindowTraversalCursor& cursor, SessionMidiEventVec& out);
+
+  static void resetWindowTraversalCursor(WindowTraversalCursor& cursor);
 
   /// True when chunk [firstTick, lastTick] intersects the half-open window (wrap-aware).
   static bool chunkIntersectsWindow(uint32_t firstTick, uint32_t lastTick, uint32_t windowStart,
