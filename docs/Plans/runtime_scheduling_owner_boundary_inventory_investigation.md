@@ -557,3 +557,44 @@ Threshold-gating rather than accumulators is deliberate: the bounded `visualCach
 The `PSTR` rule from §11 applied again and was not optional: with plain format-string literals RAM1 headroom fell **4640 → 544 bytes**, the same alignment edge, restored to **4640** by routing both through `DISP_DIAG_FMT`. Net RAM1 cost of this slice is **zero**. Native **1406/1406**.
 
 `append` is the phase to watch. If it dominates `disp_win`, the multi-second resolve is the non-windowed `appendOverdubPassDisplayNotes` call and L4 — not L1 or L3 — is the owner-boundary fix that removes the largest gap in the system.
+
+### Measured results — [`102119`](../../captures/session_20260821_102119.log)
+
+**`append` is not the owner. The windowed gather is.** One `disp_win` crossing in the whole capture, at boot commit:
+
+```
+DIAG,disp_win,us=26727786,gather=26368771,recon=44867,append=313376,filter=772,ev=2093,notes=1094,ws=0,wl=13824
+```
+
+| Phase | Owner | µs | Share |
+|---|---|---|---|
+| `gather` | `Loop::gatherCommittedEventsInWindow` | **26 368 771** | **98.66 %** |
+| `append` | `appendOverdubPassDisplayNotes` | 313 376 | 1.17 % |
+| `recon` | `NoteUtils::reconstructDisplayNotes` | 44 867 | 0.17 % |
+| `filter` | window `remove_if` | 772 | 0.00 % |
+
+`DIAG,disp_full` never crossed 10 ms, so the unwindowed committed tail block is **not** implicated — the cost is entirely on the windowed path. Corroborating window values: `loop_rem,boot_commit` 26 990 771 µs, `load_frame` 27 004 850 µs, `midi_gap` 27 011 815 µs, gap spanning 9.165 s → 35.897 s. Third consecutive boot to reproduce a 22–27 s resolve.
+
+**Correction to §12.** The prediction that `append` would dominate was wrong. It is real, non-windowed, and worth 313 ms, but it is 1.2 % of the span. **L4 is not the fix for the largest gap in the system.** The owner is `Loop::gatherCommittedEventsInWindow` → `copyEffectiveCommittedEventsInRange` → `CommittedEventRange::appendWindowBudgeted`.
+
+**What reading the code rules out.** Every step in that traversal is linear or O(1), so the span is not explained by algorithmic shape:
+
+- `LoopEventStore::chunkTickSpan` and `appendChunkRefEvent` both index `pool_[id]` directly after a bounds and `poolUsed_` check — no chunk-id search, so the traversal is **not** quadratic in chunk count.
+- `DisplayWindowUtils::filterMidiEventsToWindow` is a single pass over the chunk's own events with `reserve` up front — it does not scan outside its chunk.
+- `chunkEvents` / `windowEvents` are hoisted above the loop, so `clear()` retains capacity and per-chunk reallocation does not recur.
+- The `std::sort` in `copyEffectiveCommittedEventsInRange` covers 2093 events and cannot account for seconds.
+- `includeActiveEditRows` defaults false on the display call, so `applyNoteEditPassSequence` — the §10 gather-tail owner — does not run here at all. This is a second, independent confirmation that the multi-second resolve is not the edit tail.
+
+26.4 s across 2093 emitted events is 12.6 ms per emitted event. No linear reading of this code produces that, so the cause is not visible in the call graph and must be measured.
+
+### Instrumentation shipped for the traversal decomposition
+
+`CommittedEventRange::appendWindowBudgeted` now emits one threshold-gated line at ≥ 10 ms, at **every** exit (both budget-exhausted returns and the completion return) so budgeted callers cannot traverse silently:
+
+```
+DIAG,cer_win,us=…,span=…,copy=…,filter=…,lists=…,chunks=…,nospan=…,outside=…,copied=…,evcopy=…,evout=…
+```
+
+This separates the three per-chunk calls (`span` = `chunkTickSpan` plus the intersect test, `copy` = `appendChunkRefEvent`, `filter` = `filterMidiEventsToWindow`) and reports the traversal shape: lists collected, chunks visited, chunks rejected for missing span, chunks rejected as outside the window, chunks copied, events copied pre-filter, events emitted. Those counts decide between the remaining candidates — a chunk population far larger than the emitted event count, versus a per-event memory cost — without further guessing.
+
+`DIAG,cer_` added to the `CaptureLineTier` Tier-A prefixes with coverage in `test_capture_line_tier`, alongside the `disp_win` / `disp_full` / `disp_res_cmt` / `lframe_reclaim` cases that had no test. Format strings route through `CER_DIAG_FMT`; RAM1 unchanged at **4640** bytes. Native **1406/1406**.
