@@ -145,15 +145,28 @@ NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex)
   // Tick-sorted wrap capture (195941: Off@96 then On@2592) hits the off while the stack is
   // empty, so LIFO never pairs it. After the linear walk, pair a still-open on to its wrap
   // off (tick < on.tick) — tagged NoteId first, else the unique unpaired wrap off.
-  std::vector<size_t> walkOrder;
-  walkOrder.reserve(events.size());
+  // Both the walk and the paired flags only ever cover this channel + pitch, so size them to that
+  // subset instead of the whole vector: reserving events.size() cost a 21 KB heap block and the
+  // flags a full-length zero fill on every call, and this runs once per delete and twice per
+  // length apply — several thousand times per boot replay.
+  size_t pitchEventCount = 0;
+  for (const MidiEvent& evt : events) {
+    if (evt.channel == channel && evt.data.noteData.note == note &&
+        (evt.isNoteOn() || evt.isNoteOff())) {
+      ++pitchEventCount;
+    }
+  }
+  std::vector<size_t> pitchIndices;
+  pitchIndices.reserve(pitchEventCount);
   for (size_t i = 0; i < events.size(); ++i) {
     const MidiEvent& evt = events[i];
     if (evt.channel == channel && evt.data.noteData.note == note &&
         (evt.isNoteOn() || evt.isNoteOff())) {
-      walkOrder.push_back(i);
+      pitchIndices.push_back(i);
     }
   }
+
+  std::vector<size_t> walkOrder(pitchIndices);
   std::stable_sort(walkOrder.begin(), walkOrder.end(), [&](size_t a, size_t b) {
     const MidiEvent& ea = events[a];
     const MidiEvent& eb = events[b];
@@ -164,7 +177,8 @@ NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex)
   });
 
   std::vector<size_t> openNoteOnIndices;
-  std::vector<uint8_t> offPaired(events.size(), 0);
+  // Indexed by position in pitchIndices, which is ascending, so lower_bound maps an event index.
+  std::vector<uint8_t> offPaired(pitchIndices.size(), 0);
   for (const size_t i : walkOrder) {
     const MidiEvent& evt = events[i];
     if (evt.channel != channel || evt.data.noteData.note != note) {
@@ -179,7 +193,10 @@ NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex)
     }
     const size_t pairedOnIndex = openNoteOnIndices.back();
     openNoteOnIndices.pop_back();
-    offPaired[i] = 1;
+    const auto pairedIt = std::lower_bound(pitchIndices.begin(), pitchIndices.end(), i);
+    if (pairedIt != pitchIndices.end() && *pairedIt == i) {
+      offPaired[static_cast<size_t>(pairedIt - pitchIndices.begin())] = 1;
+    }
     if (pairedOnIndex == static_cast<size_t>(onIndex)) {
       return static_cast<int>(i);
     }
@@ -199,12 +216,15 @@ NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex)
   int taggedWrapOff = -1;
   int untaggedWrapOff = -1;
   uint32_t untaggedWrapOffCount = 0;
-  for (size_t i = 0; i < events.size(); ++i) {
-    if (offPaired[i] != 0) {
+  // pitchIndices is ascending and holds exactly this channel + pitch, so walking it is the same
+  // traversal as scanning every event and skipping the non-matching ones.
+  for (size_t p = 0; p < pitchIndices.size(); ++p) {
+    if (offPaired[p] != 0) {
       continue;
     }
+    const size_t i = pitchIndices[p];
     const MidiEvent& evt = events[i];
-    if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != note) {
+    if (!evt.isNoteOff()) {
       continue;
     }
     if (evt.tick >= onEvt.tick) {
