@@ -940,3 +940,43 @@ Candidate explanations, **none measured, none to be acted on before instrumentin
 | Revive the parked last-wins dedupe (§15) | Fails the randomized planner parity guard |
 
 **B. Question the replay itself.** Boot replays **1216 deletes and 316 length rows** to paint a loop the user recorded four notes per bar into (§13 established row accumulation comes from cumulative overdub companion sealing without supersession disable). Making that replay faster may be the wrong frame; not replaying it at boot is the alternative. This path does not depend on the decision in A.
+
+## 18. Incremental effective companion projection experiment
+
+The native experiment is implemented in
+`test/test_edit_apply/test_edit_apply.cpp`:
+
+- `R(history)` uses the current ordered `applyNoteEditPassSequence()`.
+- `I(history)` starts from the initial capture events and applies each newly
+  sealed companion with `applyNoteEditPass()`.
+- Both states are compared after every generation, including exact MIDI event
+  identity/order/ticks and reconstructed display-note geometry.
+- Undo/redo is modeled by moving through retained generation states while
+  re-evaluating the corresponding historical prefix.
+
+The deterministic matrix covers single and repeated Hide, increasing and
+decreasing Shorten/Lengthen, Hide/Shorten ordering, wrap notes, and multiple
+overdub generations. The randomized fixture covers repeated targets, same-
+pitch overlaps, different-pitch notes, wrap notes, and undo/redo transitions.
+
+Native result: **1408/1408**, including the two new experiment cases.
+
+The affected-geometry assertions establish:
+
+- Shorten changes only the target note.
+- Hide removes only the target note.
+- Lengthen can affect multiple same-pitch overlap notes, including more than
+  one neighboring row; a different-pitch note is unchanged.
+- Shorten after Hide is a no-op.
+- Hide after Shorten applies the target deletion to the already-shortened
+  state.
+
+This proves that ordered companion application is compositional: applying a
+new companion to the existing effective event state produces the same result
+as replaying the complete history for the tested sequences. It does **not**
+prove that historical rows may be discarded, nor does it establish the
+smallest persistent representation. The retained state must still contain
+enough same-pitch and wrap-aware geometry for the next companion delta.
+
+No production firmware, EditPass state, ordering, undo, persistence, NoteId,
+scheduler, or playback-state-machine behavior was changed.
