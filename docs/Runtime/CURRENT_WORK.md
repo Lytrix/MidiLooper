@@ -2,15 +2,39 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub lag runtime-target alignment)
+Last updated: 2026-08-21 (boot_commit title-clear stall)
 
 ---
 
 ## Now implementing
 
+### Boot title `boot_commit` display stall
+
+**Evidence:** [`161804`](../../captures/session_20260821_161804.log) device PASS. Prior gather hangs: [`161148`](../../captures/session_20260821_161148.log) (`boot_commit=70438665`, first `DISP` visual=0), [`154353`](../../captures/session_20260821_154353.log) (`boot_commit=75457996`, visual=0).
+
+**Owner:** `runDeferredIdleMaintenance` / `runDeferredLoadAndDisplayFrame` / `TrackManager::onBootSlotLoadComplete`
+
+**Invariant:** First piano roll filters the focus visual cache. `onBootSlotLoadComplete` must not clear `visualCache.notes`.
+
+**Stage change shipped:** Boot idle stays on the focus track; `boot_commit` waits until that cache is clean; boot complete no longer calls `invalidateForSlotChange`. Guide: [`BOOT_LOAD.md`](../Guides/BOOT_LOAD.md).
+
+**Status:** Device PASS [`161804`](../../captures/session_20260821_161804.log) — focus `slice_clean` 2638 notes at 10.9 s; USB at 11.484 s; first `DISP` visual=**2638** / 1224 window notes; `boot_commit=288557` (289 ms). `DFRAME` continues at ~15 ms.
+
+### Boot title startup stall hardening
+
+**Evidence:** [`161410`](../../captures/session_20260820_161410.log)
+
+**Owner:** `Looper::setup`
+
+**Invariant:** Startup does not stall at the title screen when SD bootstrap is transiently unavailable; boot continues without requiring repeated manual reboots.
+
+**Stage change shipped:** `Looper::setup` now initializes SD with bounded retries (`3` attempts, `50 ms` delay). If SD remains unavailable, boot takes an explicit empty-runtime fallback path and skips `StorageManager::loadState` instead of blocking startup.
+
+**Status:** Native verification pending.
+
 ### Overdub lag plan — baseline reset and reprioritized execution
 
-**Evidence:** [`210319`](../../captures/session_20260820_210319.log) (new baseline), plus prior attribution captures [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`174941`](../../captures/session_20260820_174941.log)
+**Evidence:** [`210319`](../../captures/session_20260820_210319.log) (new baseline), [`231845`](../../captures/session_20260820_231845.log), [`232951`](../../captures/session_20260820_232951.log), plus prior attribution captures [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`174941`](../../captures/session_20260820_174941.log)
 
 **Owner set (current priority order):**
 1. `Track::stopOverdubbing` stop-path handoff (`ODUB,stop,display` envelope)
@@ -122,6 +146,25 @@ Last updated: 2026-08-20 (overdub lag runtime-target alignment)
   - `seal_publish_span_cache_restamp`: **2.357-20.746 ms** (median **15.792 ms**)
   - `seal_fx_seal_pending_changes`: **2.709-23.835 ms** (median **17.319 ms**)
 
+**P3/P4 re-measure after stop-owner trim ([`231845`](../../captures/session_20260820_231845.log), [`232951`](../../captures/session_20260820_232951.log), [`233633`](../../captures/session_20260820_233633.log), [`235214`](../../captures/session_20260820_235214.log)):**
+- Sample shape in both captures: **12** stops = **9 published** + **3 skipped**.
+- Published synchronous stop owners stay bounded:
+  - [`231845`](../../captures/session_20260820_231845.log): `ODUB,stop,display` median **21.993 ms** (max **37.466 ms**), `seal_publish_span_cache_restamp` median **2.988 ms** (max **5.391 ms**), `seal_fx_seal_pending_changes` median **1.226 ms** (max **1.524 ms**).
+  - [`232951`](../../captures/session_20260820_232951.log): `ODUB,stop,display` median **24.824 ms** (max **36.010 ms**), `seal_publish_span_cache_restamp` median **3.898 ms** (max **5.343 ms**), `seal_fx_seal_pending_changes` median **1.090 ms** (max **1.601 ms**).
+- Remaining long-tail is deferred-window, not synchronous stop owner:
+  - [`232951`](../../captures/session_20260820_232951.log) skipped stops: `ODUB,stop,display` **9.829-9.991 ms**, but first post-stop `DIAG,midi_gap` **595.365-603.237 ms**.
+  - First post-stop unique windows in [`232951`](../../captures/session_20260820_232951.log): `midi_gap` median **134.773 ms**, max **603.237 ms**; `idle_maint` median **134.753 ms**, max **603.218 ms**; `persist_save` median **17.333 ms**, max **55.075 ms**.
+- Debt causality remains classified and clamped (`ODUB,stop,debt_handoff`: **10 stop_created_debt**, **2 pre_existing_debt**; `idle_slice=1`, `idle_bars=1` in **12/12** rows).
+- [`233633`](../../captures/session_20260820_233633.log) confirms the remaining long-tail owner is `idle_append` during post-stop PLAYING debt windows after `VCACHE,stale_all` (undo path), not synchronous stop publish owners:
+  - `DIAG,midi_gap=850.101 ms` aligns with `DIAG,loop_rem,idle_append=797.766 ms` + `DIAG,loop_rem,idle_maint=844.487 ms`.
+  - `DIAG,midi_gap=817.292 ms` aligns with `DIAG,loop_rem,idle_append=769.842 ms` + `DIAG,loop_rem,idle_maint=817.272 ms`.
+- [`235214`](../../captures/session_20260820_235214.log) validates the Stage D arbitration + append guard on overdub windows:
+  - Sample shape: **6** stops, **6 published**, **0 skipped**, `RING,overflow=0`.
+  - First post-stop unique windows: `DIAG,midi_gap` **32.692-152.781 ms** (median **101.382 ms**), `idle_maint` **32.691-152.759 ms** (median **101.358 ms**), `persist_save` **0.001-0.188 ms** (median **0.001 ms**).
+  - Compared with [`233633`](../../captures/session_20260820_233633.log): skipped windows removed (**2 -> 0**) and first post-stop gap max reduced (**850.101 -> 152.781 ms**).
+- Remaining run-wide multi-second outliers in [`235214`](../../captures/session_20260820_235214.log) are not post-stop overdub windows: `DIAG,midi_gap` **1908-1910 ms** aligns with `loop_rem,boot_commit` **1632 ms** + `loop_rem,load_frame` **1642 ms** while state is `STOPPED`; keep this as separate non-overdub scheduling follow-up.
+- **Stage D implementation scope (shipped):** defer `StorageManager::processDeferredSaveState` admission while post-overdub drain is active and deferred save work is pending, and skip wrap-pair append in that same stressed drain context, so `idle_maint` + `persist_save` + `idle_append` do not stack in one post-stop drain turn.
+
 **Stage changes shipped:**  
 - `applyPendingHideAndShortenToNotes` now applies `Shorten`/`Hide` transforms by rebuilding the note vector once, avoiding repeated in-place erase scans for each pending change.  
 - `saveNoteEditPass` gained `deferDerivedInvalidate` for batch callsites.  
@@ -142,6 +185,55 @@ Last updated: 2026-08-20 (overdub lag runtime-target alignment)
 - Causality capture [`224752`](../../captures/session_20260820_224752.log) confirms stop-created visual debt in the first PLAYING maintenance turn (`ODUB,stop,debt_handoff=stop_created_debt`, 10/10 stops). Follow-up scheduling trim: while `playingMidiDrainAfterOverdubStopActive()` is true, idle visual cache slices are capped to 1 bar and mixed-dirty long-loop fallback stays neighborhood-bounded (no `UINT32_MAX` distance override in that drain window).
 - Drain-window clamp now applies to all tracks in the same loop turn (via `main()` `postOverdubPlayingMidiDrain` -> `Track::processDeferredIdleMaintenance(..., postOverdubDrainWindowActive)`), so non-owner tracks cannot run broader PLAYING idle visual slices while a post-overdub drain window is active.
 - Drain-window policy now restricts PLAYING idle visual maintenance to the overdub-stop owner track while the post-overdub drain window is armed; non-owner tracks defer their visual idle slices until the owner drain window clears, preventing unrelated pre-existing debt from consuming the same first post-stop MIDI turn.
+- Behavior scope guard: this drain-window policy is stop-only. It is armed by `stopOverdubbing` (`armPlayingMidiDrainAfterOverdubStop`) and reset by `startOverdubbing`; the clamp gate applies only to PLAYING/STOPPED_RECORDING maintenance. OVERDUBBING and overdub-wrap commit paths keep normal note-update processing (`commitOverdubWrapAtSessionStart` still seals companions with source-view update enabled).
+- Added post-stop arbitration gate in `main()` via `MidiServiceDrain::allowDeferredSave`: while the post-overdub drain window is active and deferred save work is pending, `StorageManager::processDeferredSaveState` is deferred for that loop turn so `idle_maint` and `persist_save` do not stack in the same drain-window slot.
+- Added post-stop visual slice append guard in `Track::processDeferredIdleMaintenance`: for the full post-overdub drain window, `Loop::rebuildVisualCacheIdleSlice` runs without wrap-pair append (`allowOverdubWrapAppend=false`) so expensive `idle_append` work does not stack into stressed post-stop runtime windows.
+- Added constrained fallback gather mode for the full post-overdub drain window: `Loop::rebuildVisualCacheIdleSlice(..., constrainFallbackGather=true)` removes pad bars and skips active edit-row projection in fallback gather windows, so post-stop fallback slices stay bounded when prepared windows are unavailable.
+- Added no-progress constrained-slice backoff in `Track::processDeferredIdleMaintenance`: when a constrained fallback slice does not reduce dirty bars, the next constrained slice is deferred for `250 ms` (`overdubDrainFallbackRetryAtMs_`) to prevent repeated high-cost fallback churn in adjacent loop turns.
+- Added non-overdub STOPPED follow-up optimization in `StorageManagerInternal::enqueueRemainingLoopSlotRestores`: boot background-fill now reuses boot-scanned in-RAM slot payload flags and skips per-slot SD reprobe during full enqueue, removing one-turn `SD.exists`/token-scan churn from `boot_commit`/`load_frame`.
+- Further optimized `enqueueRemainingLoopSlotRestores` bulk admission: per-entry priority computation and per-entry queue sort are now deferred during full boot enqueue, then applied once via final `reprioritizeDeferredLoopSlotRestoreEntries()`, reducing boot-commit scheduler churn without changing restore ordering semantics.
+- `enqueueRemainingLoopSlotRestores` now admits background-fill queue entries incrementally across loop turns (`kBootAdmissionEntriesPerTurn=4`) and only finalizes reprioritize/sort after admission completes, so STOPPED boot does not pay full remaining-slot admission in one `boot_commit` / `load_frame` window.
+- Background `LoadLoopJob` stepping now enforces a transport-clock-safe resume policy: Low (non-focus) load jobs are disallowed while global transport clock is running and are parked/deferred for retry later, so slot-load catch-up cannot compete with active MIDI timing service.
+- STOPPED deferred-maintenance scheduling now uses cancel/resume policy in `main()`: when all tracks are STOPPED, run `Track::processDeferredIdleMaintenance` for one track per turn (round-robin), and skip STOPPED maintenance entirely while global transport clock is running.
+- Realtime visual-cache slices now defer wrap-pair append (`idle_append`) while playback/capture states are active; deferred append is resumed in STOPPED idle (`Loop::applyDeferredVisualCacheWrapAppend`) so MIDI service keeps priority during PLAYING/OVERDUBBING while append work restarts later.
+- Realtime visual-cache gather restart cooldown (`activeVisualSliceRetryAtMs_`) was rolled back after reboot evidence in [`012714`](../../captures/session_20260821_012714.log) to remove the newest strict throttle while retaining append defer/resume and post-overdub drain-window guards.
+- New capture attribution from [`010055`](../../captures/session_20260821_010055.log): the two ~500 ms active-window outliers are deferred-maintenance owners, not stop-path owners — `DIAG,midi_gap=534.305 ms` aligns with `DIAG,idle_maint=519.178 ms`, and `DIAG,midi_gap=564.640 ms` aligns with `DIAG,idle_maint=535.469 ms` + `DIAG,playback_build=85.417 ms`.
+- Follow-up capture [`011853`](../../captures/session_20260821_011853.log) confirms active-window outliers moved away from `idle_append`: the remaining ~500 ms windows align with `idle_gather` + `idle_maint` (`midi_gap=582.155 ms` with `idle_maint=567.506 ms`; `midi_gap=582.887 ms` with `idle_maint=568.300 ms`), while the only >500 ms `idle_append` (`949.485 ms`) occurs in STOPPED with immediate `VCACHE,append_resume`.
+- Added resumable window traversal in `CommittedEventRange::appendWindowBudgeted` (cursor + per-slice event budget) and rewired fallback gather in `Loop::rebuildVisualCacheIdleSlice` to use a Loop-owned gather session keyed by `(windowStart, windowLength, playbackRevision, includeActiveEditRows)`.
+- Fallback gather now has explicit invalidation semantics: any window/revision/mode mismatch resets the session; cache invalidation/rebuild paths call `resetFallbackGatherSession`; incomplete slices return before reconstruction so runtime turns stay bounded.
+- Added active/stopped fallback budgets in `Track::processDeferredIdleMaintenance` (`96` events during post-overdub drain, `192` during other realtime maintenance, `768` in STOPPED idle) and capture diagnostics (`DIAG,lcr,vch,gather_progress|gather_sort|gather_edit`) for phase-cost attribution.
+- RAM1 remained within budget after this slice by reusing cold sort helpers and removing additional `std::sort` template instantiations from the realtime path (`teensy41-capture-serial` locals headroom restored).
+- Validation capture [`015645`](../../captures/session_20260821_015645.log) confirms bounded overdub-stop owners and isolates one active fallback-gather churn outlier:
+  - Overdub stop (7 published cycles): `ODUB,stop,display` **20.700-33.276 ms** (median **25.352 ms**), `ODUB,stop,seal` **11.567-21.813 ms** (median **14.569 ms**), `seal_publish_span_cache_restamp` **3.410-5.500 ms**, `seal_fx_seal_pending_changes` **1.310-1.935 ms**.
+  - Active (`PLAYING`/`OVERDUBBING`) `DIAG,midi_gap`: **28.734-827.234 ms** (median **34.755 ms**); single long outlier `827.234 ms` maps to `DIAG,idle_maint=826.425 ms` + `DIAG,load_frame=23.535 ms` in `PLAYING` (`#CAP,31432460` report block).
+  - Outlier window proof (`#CAP,30217106` → `#CAP,31417617`): **122** consecutive `DIAG,lcr,vch,gather_progress,ev=192,total=192,done=0,resume=0` lines immediately precede the outlier, with no `gather_sort`/`gather_edit` completion in that suffix, proving active-window fallback gather restart/no-resume churn under the current session key.
+- Follow-up owner fix attempt (in-flight session window hold) was reverted in the same session after startup instability report; keep active behavior on the last known-stable fallback-session semantics while root-causing a safer anti-reset strategy.
+- `applyNoteEditPassSequence` now prefilters `Update/Delete` rows by currently present target `NoteId`s while preserving row order, and maintains the present-id set through `Create/Delete` so fallback gather avoids repeated no-op target scans in dense active edit-row sessions.
+- `applyNoteEditPassSequence` Phase A planner is now active with strict barrier semantics: only contiguous `Update` rows for the same `targetNoteId` + same property collapse, and only for `Velocity`/`Pitch` updates; any other row remains an execution barrier.
+- Added executor-equivalence coverage for the Phase A planner in `test_edit_apply` (`test_sequence_phasea_collapse_contiguous_velocity_and_pitch_equivalence`, `test_sequence_phasea_barrier_with_length_keeps_equivalence`, `test_sequence_phasea_randomized_equivalence_against_baseline`), validated against the non-collapsing baseline executor over deterministic randomized scenarios.
+- `applyNoteEditPassSequence` and `planContiguousCollapsedRows` are now `NOTE_EDIT_MEM` to keep Phase A planner logic out of RAM1/ITCM on Teensy (`teensy41-capture-serial` locals headroom preserved).
+- Phase B cache slice shipped in `applyNoteEditPassSequence`: added per-sequence NoteOn index reuse (`NoteOnIndexLookupCache`) with conservative invalidation semantics. Cache entries are positional indices and are cleared after structural row actions (`Create`, `Delete`, `NoteRange`, `Length`) and after any cache-stale skip path, so reuse is limited to ordering-safe windows (`Pitch`/`Velocity` updates and unchanged vector topology).
+- Internal note-apply helpers now use cache-aware lookup (`findNoteOnByIdCached`) while preserving public behavior (`findNoteOnById` remains linear and unchanged for external callers); structural helpers also clear cache after in-function erase/sort paths (`applyDeleteNoteById`, `applyMoveNoteById`, `applyChangeLengthById`, `applyAddNote`).
+- Added Phase B targeted equivalence coverage in `test_edit_apply` (`test_sequence_phaseb_length_then_same_note_update_equivalence`, `test_sequence_phaseb_length_with_interleaved_note_updates_equivalence`) to pin length-mutation invalidation safety before and after interleaved note updates.
+- Validation capture [`082858`](../../captures/session_20260821_082858.log) confirms stop owners remain bounded after Phase A while active fallback edit work remains the outlier owner:
+  - Overdub stop (11 published cycles): `ODUB,stop,display` **17.031-28.116 ms** (median **22.602 ms**), `ODUB,stop,seal` **9.855-17.730 ms** (median **14.207 ms**), `seal_publish_span_cache_restamp` **3.292-6.048 ms**, `seal_fx_seal_pending_changes` **0.440-1.999 ms**, `seal_fx_mark_display_ranges` **3.189-6.092 ms**.
+  - Active (`PLAYING` + `OVERDUBBING`) `DIAG,midi_gap`: **29.052-856.062 ms** (median **73.630 ms**). Peak active report `#CAP,90758349` maps to `DIAG,idle_maint=854.985 ms` and `DIAG,lcr,vch,gather_edit,us=826242`.
+  - Second active outlier `#CAP,95758554` (`midi_gap=600.711 ms`) maps to `DIAG,idle_maint=585.338 ms` with concurrent deferred work (`persist_save=11.345 ms`).
+  - Phase A reduces worst `gather_edit` from **1,083,993 us** (`015645`) to **826,242 us** (`082858`), but `gather_edit` remains large enough to dominate active runtime stalls; cache-oriented Phase B remains required.
+  - Non-active outliers stay outside the overdub-stop owner boundary (`midi_gap=23,391,338 us` at `#CAP,35316786` aligns with boot/load `loop_rem,boot_commit` and `loop_rem,load_frame` in STOPPED startup windows).
+- Validation capture [`084213`](../../captures/session_20260821_084213.log) confirms the Phase B cache slice shifts fallback edit cost out of active runtime windows:
+  - Overdub stop (10 published cycles): `ODUB,stop,display` **17.509-47.266 ms** (median **23.202 ms**), `ODUB,stop,seal` **9.558-36.016 ms** (median **13.686 ms**), `seal_publish_span_cache_restamp` **2.826-5.960 ms**, `seal_fx_seal_pending_changes` **1.149-2.038 ms**.
+  - Active (`PLAYING` + `OVERDUBBING`) `DIAG,midi_gap`: **26.828-79.941 ms** (median **37.399 ms**, 21 samples), down from `082858` active max **856.062 ms** and median **73.630 ms**.
+  - The two largest `DIAG,lcr,vch,gather_edit` events (`1,070,494 us` at `#CAP,164959999`; `464,307 us` at `#CAP,163097840`) occur in `STOPPED` state and map to `DIAG,loop_rem,idle_gather` / `DIAG,loop_rem,idle_maint`, not active MIDI-service windows.
+  - The largest active `midi_gap` windows (`#CAP,90939663` at **79.941 ms**, `#CAP,75906773` at **78.345 ms**) show `persist_save` + `load_frame` stacking while `DIAG,idle_maint` stays low (about **5.3 ms**), and do not include active `gather_edit` outliers.
+  - One stop-cycle display outlier (`ODUB,stop,display=47.266 ms`) is attributed to synchronous stop sub-stage `seal_fx_mark_display_ranges=26.886 ms` in the same cycle (`#CAP,111344311` series).
+- Validation capture [`085458`](../../captures/session_20260821_085458.log) shows stop-path owners remain bounded but active runtime regressed back to idle-maintenance ownership:
+  - Overdub stop (7 published cycles): `ODUB,stop,display` **20.501-33.291 ms** (median **24.063 ms**), `ODUB,stop,seal` **11.776-21.663 ms** (median **13.630 ms**), `seal_publish_span_cache_restamp` **4.019-6.123 ms**, `seal_fx_seal_pending_changes` **0.621-2.038 ms**.
+  - Active (`PLAYING` + `OVERDUBBING`) `DIAG,midi_gap`: **23.825-2,893.664 ms** (median **36.546 ms**, 18 samples), vs `084213` active max **79.941 ms**.
+  - Largest active windows map to `idle_maint` (not persist-save stacking): `#CAP,44306112` `midi_gap=2,893.664 ms` with `idle_maint=2,864.114 ms`, `load_frame=30.239 ms`, `persist_save=0.234 ms`; `#CAP,44282997` `midi_gap=2,865.744 ms` with `idle_maint=2,864.092 ms`, `load_frame=26.220 ms`, `persist_save=0.197 ms`.
+  - OVERDUBBING outliers also map to fallback gather/edit cost: `#CAP,60224592` `midi_gap=842.661 ms` aligns with `idle_maint=840.200 ms`; immediately preceding owner lines show `DIAG,lcr,vch,gather_edit,us=813088` (`#CAP,58974437`) and `DIAG,loop_rem,idle_gather=817.671 ms`.
+  - Additional active gather/edit spikes are present in OVERDUBBING (`gather_edit` up to **813.088 ms** and **753.577 ms**) with paired `loop_rem,idle_gather` / `loop_rem,idle_maint` windows, confirming the remaining owner is active fallback gather-edit churn.
+- Active owner follow-up shipped: `main()` now gates `StorageManager::processDeferredSaveState` behind same-turn `load_frame` duration (`MidiServiceDrain::allowDeferredSaveAfterLoadFrame`) so timing-critical turns defer save when `load_frame >= 15 ms`; existing post-overdub drain-window save gate remains in effect. Native + `teensy41-capture-serial` build passed; recapture pending.
 - Overdub-stop companion sealing now skips source-view mutation in the stop owner path (`sealPendingNoteChangesToEditPasses(!overdubStop)`), preserving the same persisted companions while avoiding source-view/spancache projection work during synchronous stop handoff.
 - `sealPendingNoteChangesToEditPasses` is explicitly `LOOP_COLD_MEM` so this stop-only companion owner stays out of RAM1/ITCM budget.
 - `commitPendingCapturePass` wrap-pair restamp guard now prefilters with head/tail window key sets before fallback scan, and missing-id collection batches then deduplicates once before reconstruction, reducing restamp bookkeeping churn in `seal_publish_span_cache_restamp`.
@@ -149,8 +241,9 @@ Last updated: 2026-08-20 (overdub lag runtime-target alignment)
 - `Loop::commitCapturePass`, `Loop::sealCapture`, and `Loop::finalizeCaptureWrapWindowAtStop` are explicitly `LOOP_COLD_MEM` to keep overdub-stop owner code on flash and restore RAM1 headroom in `teensy41-capture-serial`.
 - `Track::stopOverdubbing` and the in-edit `handleNoteEditFold` stop path now use `SC_REC_FLUSH_PENDING_REVTS(128)` with Tier-A ODUB stop markers, preserving stop-stage observability without reintroducing broad flush churn in the synchronous owner path.
 - `CaptureLineTier::isTierALine` now treats `ODUB,stop` lines as Tier-A so stop-stage telemetry remains visible even with deterministic `flush(8)` stop budgets under ring pressure.
+- Companion-only projection fast path shipped in `Loop` window consumers: `copyEffectiveCommittedEventsInRange` and `advanceFallbackGatherSession` now use a `playbackRevision`-keyed projection cache when all active note rows are overdub companions, and fall back to legacy ordered replay whenever any non-companion note row is active.
 
-**Status:** Native **1397/1397** and `teensy41-capture-serial` build **PASS**. New baseline capture [`210319`](../../captures/session_20260820_210319.log) replaces older stop-lag envelopes for planning.
+**Status:** Native **1399/1399** and `teensy41-capture-serial` build **PASS**. New baseline capture [`210319`](../../captures/session_20260820_210319.log) replaces older stop-lag envelopes for planning.
 
 ### Overdub-start begin-capture long-delay restoration — validated
 

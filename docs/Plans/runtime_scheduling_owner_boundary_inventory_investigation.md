@@ -1069,6 +1069,118 @@ state (with full `eventOrder` + note metadata + stable IDs) and consume it in
 projection/materialization paths instead of replaying full companion history on
 every projection call.
 
+## 33. Boot title stall — remove committed display resolve from `boot_commit`
+
+This slice is independent of the companion-projection cache. The regression is
+present on the pre-addition path after `b4a8a70` and is owned by the boot
+load-frame gate, not by `applyNoteEditPassSequence` itself.
+
+### Capture anchors
+
+| Capture | Owner | Numbers |
+|---|---|---|
+| [`115535`](../../captures/session_20260821_115535.log) | `loop_rem,boot_commit` | `67510398` us; `disp_win=67240538`; `cer_range=66596898`; `rows=1876` |
+| [`111733`](../../captures/session_20260821_111733.log) | same family | 49 s-class `boot_commit` |
+
+`BOOT,scan,done` arrives quickly. Title remains because `runDeferredLoadAndDisplayFrame`
+calls `displayManager.finishBootSetup()` then immediately `displayManager.update()`.
+After `bootSetupComplete_` is true, `DisplayManager::update()` leaves the title
+early-return and runs `resolveDisplayNotesCommitted` → `rebuildDisplayNotesInWindow`
+→ `copyEffectiveCommittedEventsInRange` + `applyNoteEditPassSequence`.
+
+### Fix shipped
+
+In `runDeferredLoadAndDisplayFrame`:
+
+- `boot_commit` still runs `finishBootSetup`, `beginUsbHost`, LED refresh, and
+  `onBootSlotLoadComplete`.
+- It no longer calls `displayManager.update()` and no longer stamps
+  `lastDisplayUpdate`.
+- First-commit `Track::ensurePlaybackMergedEventsForSlot` is deferred while
+  `bootSlotLoadRefreshPending` and runs on the first post-boot load-frame turn.
+- Post-boot same-frame prewarm is unchanged (000659).
+
+Display projection, companion history, persistence, and undo are unchanged.
+
+### Host gates
+
+- `pio test -e native -f test_runtime_timing_telemetry` PASS
+- `pio test -e native -f test_committed_event_range` PASS
+- `pio test -e native -f test_edit_apply` PASS
+- `pio test -e native` PASS (`1425/1425`)
+- `pio run -e teensy41-capture-serial` PASS (`RAM1` code `425740` / locals `4640`)
+
+### Device capture
+
+[`145953`](../../captures/session_20260821_145953.log) after the `boot_commit` display removal:
+
+| Marker | Time / duration |
+|---|---|
+| `BOOT,scan,done` / setup done | ~8.2 s |
+| `loop_rem,idle_gather` | **136084342** us (9.5 s → 145.7 s) |
+| `DisplayManager: Boot setup complete` | 147.283 s |
+| `loop_rem,boot_commit` | **242233** us (no longer the title owner) |
+| first `disp_win` after USB | 136820430 us (`gather=136222448`) |
+
+Title drain was blocked by the first STOPPED idle-maintenance turn: `runDeferredIdleMaintenance` ran before `setBootTitleLoadDrain(true)` in the load frame, so `rebuildVisualCacheIdleSlice` paid the full companion gather while OSTINATIX was still up.
+
+Follow-up from [`151555`](../../captures/session_20260821_151555.log):
+
+- Idle-drain skip reached `Boot setup complete` at 8.6 s.
+- `finishBootSetup()` OLED blank left a black panel because `boot_commit` no longer painted.
+- Restored `displayManager.update()` in `boot_commit`.
+- Removed post-`b4a8a70` display/load-frame attribution telemetry (`disp_*`, `lframe_*`, `disp_win`, `disp_full`). Companion projection and idle-drain skip remain.
+
+Success criteria: title drain reaches `Boot setup complete` without multi-minute `idle_gather`, and the main piano roll paints instead of staying black.
+
+## 32. Companion-only projection cache in window consumers
+
+This stage implements the first owner-local production slice for the companion
+projection boundary in `Loop` projection consumers.
+
+### Scope implemented
+
+- Added a projection-only companion cache in `Loop` keyed by `playbackRevision`.
+- Added a companion-only fast-path gate:
+  - active note rows must all be overdub companions
+    (`editPassIndex == kOverdubCompanionEditPassIndex`)
+  - if any non-companion note row is active, the path falls back to existing
+    ordered replay behavior.
+- `Loop::copyEffectiveCommittedEventsInRange` now attempts this fast path
+  before legacy chunk-window + replay.
+- `Loop::advanceFallbackGatherSession` now attempts the same fast path before
+  budgeted traversal/replay.
+
+### Behavior contract preserved in this stage
+
+- Companion/non-companion semantics and row ordering are unchanged.
+- Undo/persistence/state-machine behavior is unchanged.
+- When companion-only gate does not hold, replay remains exactly on the legacy
+  path.
+
+### Added native coverage
+
+In `test/test_effective_event_store/test_effective_event_store.cpp`:
+
+- `test_companion_projection_window_matches_legacy_replay`
+- `test_companion_projection_falls_back_with_non_companion_note_rows`
+
+Both tests assert the new path produces the same window result as the legacy
+window+replay reference for the covered fixtures.
+
+### Validation
+
+- `pio test -e native -f test_effective_event_store` PASS (9/9)
+- `pio test -e native -f test_edit_apply` PASS (68/68)
+- `pio run -e teensy41-capture-serial` PASS
+  - RAM1: `variables:93664, code:425740, padding:244, free:4640`
+
+### Notes
+
+- The first implementation uses a projection-only effective event cache for the
+  companion-only gate and keeps the legacy replay fallback for all mixed-row
+  windows.
+
 ## 30. Final remaining slices batch: start/end tick requirements + final full native gate
 
 This batch completed the remaining straightforward context-necessity slices in

@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "LoopContentResolution.h"
 #include "LoopEventStore.h"
+#include "LoopInternal.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
@@ -205,7 +206,10 @@ LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNote
 }
 
 LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
-                                                     uint32_t maxBarDistanceFromPriority) {
+                                                     uint32_t maxBarDistanceFromPriority,
+                                                     bool allowOverdubWrapAppend,
+                                                     bool constrainFallbackGather,
+                                                     size_t fallbackGatherEventBudget) {
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
     return;
   }
@@ -240,9 +244,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     ++endBar;
   }
 
-  constexpr uint32_t kPadBars = 1;
-  const uint32_t eventStartBar = startBar > kPadBars ? startBar - kPadBars : 0;
-  const uint32_t eventEndBar = std::min(endBar + kPadBars, totalBars - 1);
+  const uint32_t padBars = constrainFallbackGather ? 0u : 1u;
+  const uint32_t eventStartBar = startBar > padBars ? startBar - padBars : 0;
+  const uint32_t eventEndBar = std::min(endBar + padBars, totalBars - 1);
   const uint32_t windowStart = eventStartBar * Config::TICKS_PER_BAR;
   const uint32_t windowEndTick =
       std::min((eventEndBar + 1) * Config::TICKS_PER_BAR, loopLengthTicks);
@@ -270,14 +274,27 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     gatherStartUs = micros();
   }
 #endif
+  bool fallbackGatherComplete = true;
   if (!usedPrepared) {
-    gatherCommittedEventsInWindow(flat, windowStart, windowLength);
+    const bool includeActiveEditRows = !constrainFallbackGather;
+    if (fallbackGatherEventBudget == 0) {
+      resetFallbackGatherSession();
+      gatherCommittedEventsInWindow(flat, windowStart, windowLength, includeActiveEditRows);
+    } else {
+      fallbackGatherComplete = advanceFallbackGatherSession(
+          fallbackGatherEventBudget, windowStart, windowLength, includeActiveEditRows, flat);
+    }
+  } else {
+    resetFallbackGatherSession();
   }
 #if defined(SESSION_CAPTURE)
   if (!usedPrepared) {
     RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);
   }
 #endif
+  if (!usedPrepared && !fallbackGatherComplete) {
+    return;
+  }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_gathered,ev,"));
   Serial.println(static_cast<unsigned>(flat.size()));
@@ -298,19 +315,25 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   // same-pitch body exists (021218). Do not use wrap pairing on the merged flat
   // (015618 stretches record). Fill that gap only on slices that keep bar 0 or
   // the last bar. Interior slices — prepared or unprepared — use the window only.
-  const bool appendOverdub = startBar == 0 || endBar + 1 >= totalBars;
+  const bool wrapEdgeSlice = (startBar == 0 || endBar + 1 >= totalBars);
+  const bool appendOverdub = wrapEdgeSlice && !usedPrepared;
 #if defined(SESSION_CAPTURE)
   const uint32_t appendStartUs = micros();
 #endif
-  if (appendOverdub && !usedPrepared) {
-    appendOverdubPassWrapPairedNotes(sliceNotes);
+  if (appendOverdub) {
+    if (allowOverdubWrapAppend) {
+      appendOverdubPassWrapPairedNotes(sliceNotes);
+      deferredVisualCacheWrapAppendPending_ = false;
+    } else {
+      deferredVisualCacheWrapAppendPending_ = true;
+    }
   }
 #if defined(SESSION_CAPTURE)
-  if (appendOverdub) {
+  if (appendOverdub && allowOverdubWrapAppend) {
     RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
   }
 #endif
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   if (usedPrepared) {
     const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
@@ -354,6 +377,161 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 }
 
+LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
+  if (!deferredVisualCacheWrapAppendPending_) {
+    return;
+  }
+  if (loopLengthTicks == 0) {
+    deferredVisualCacheWrapAppendPending_ = false;
+    return;
+  }
+#if defined(SESSION_CAPTURE)
+  const uint32_t appendStartUs = micros();
+#endif
+  appendOverdubPassWrapPairedNotes(visualCache.notes);
+#if defined(SESSION_CAPTURE)
+  RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
+#endif
+  deferredVisualCacheWrapAppendPending_ = false;
+  ++visualCache.revision;
+  emitVisualCacheState("append_resume", -1);
+}
+
+LOOP_COLD_MEM void Loop::resetFallbackGatherSession() {
+  fallbackGatherSessionActive_ = false;
+  fallbackGatherSessionWindowStart_ = 0;
+  fallbackGatherSessionWindowLength_ = 0;
+  fallbackGatherSessionPlaybackRevision_ = 0;
+  fallbackGatherSessionIncludeActiveEditRows_ = true;
+  fallbackGatherSessionTraversalComplete_ = false;
+  CommittedEventRange::resetWindowTraversalCursor(fallbackGatherSessionCursor_);
+  fallbackGatherSessionEvents_.clear();
+}
+
+LOOP_COLD_MEM bool Loop::fallbackGatherSessionMatches(uint32_t windowStart, uint32_t windowLength,
+                                                      uint32_t revision,
+                                                      bool includeActiveEditRows) const {
+  return fallbackGatherSessionActive_ &&
+         fallbackGatherSessionWindowStart_ == windowStart &&
+         fallbackGatherSessionWindowLength_ == windowLength &&
+         fallbackGatherSessionPlaybackRevision_ == revision &&
+         fallbackGatherSessionIncludeActiveEditRows_ == includeActiveEditRows;
+}
+
+LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
+    size_t eventBudget, uint32_t windowStart, uint32_t windowLength,
+    bool includeActiveEditRows, SessionMidiEventVec& out) {
+  if (includeActiveEditRows &&
+      tryCopyCompanionProjectedWindow(out, windowStart, windowLength)) {
+    resetFallbackGatherSession();
+    return true;
+  }
+
+  if (!fallbackGatherSessionMatches(windowStart, windowLength, playbackRevision,
+                                    includeActiveEditRows)) {
+    resetFallbackGatherSession();
+    fallbackGatherSessionActive_ = true;
+    fallbackGatherSessionWindowStart_ = windowStart;
+    fallbackGatherSessionWindowLength_ = windowLength;
+    fallbackGatherSessionPlaybackRevision_ = playbackRevision;
+    fallbackGatherSessionIncludeActiveEditRows_ = includeActiveEditRows;
+    fallbackGatherSessionTraversalComplete_ = false;
+  }
+
+  if (!fallbackGatherSessionTraversalComplete_) {
+    const std::vector<const CommittedChunkIdList*> lists = [&]() {
+      std::vector<const CommittedChunkIdList*> refs;
+      if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+          !passes.recordPass.committedChunkIds.empty()) {
+        refs.push_back(&passes.recordPass.committedChunkIds);
+      }
+      std::vector<const OverdubPass*> activeOverdubs;
+      for (const OverdubPass& pass : passes.overdubPasses) {
+        if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+          auto insertAt = activeOverdubs.begin();
+          while (insertAt != activeOverdubs.end() &&
+                 (*insertAt)->mergeSequence <= pass.mergeSequence) {
+            ++insertAt;
+          }
+          activeOverdubs.insert(insertAt, &pass);
+        }
+      }
+      for (const OverdubPass* pass : activeOverdubs) {
+        refs.push_back(&pass->committedChunkIds);
+      }
+      return refs;
+    }();
+
+    const CommittedEventRange::WindowTraversalResult traversal =
+        CommittedEventRange::appendWindowBudgeted(
+            lists.data(), lists.size(), loopLengthTicks, windowStart, windowLength, eventBudget,
+            fallbackGatherSessionCursor_, fallbackGatherSessionEvents_);
+    fallbackGatherSessionTraversalComplete_ = traversal.complete;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    char line[224];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,vch,gather_progress,ev=%u,total=%u,done=%u,resume=%u",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned>(traversal.eventsAppended),
+             static_cast<unsigned>(fallbackGatherSessionEvents_.size()),
+             fallbackGatherSessionTraversalComplete_ ? 1u : 0u,
+             traversal.resumed ? 1u : 0u);
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+    if (!fallbackGatherSessionTraversalComplete_) {
+      out.clear();
+      return false;
+    }
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    const uint32_t sortStartUs = micros();
+#endif
+    sortSessionEventsByTick(fallbackGatherSessionEvents_);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    {
+      const uint32_t sortUs = micros() - sortStartUs;
+      char line[224];
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,lcr,vch,gather_sort,us=%lu,ev=%u",
+               static_cast<unsigned long>(micros()),
+               static_cast<unsigned long>(sortUs),
+               static_cast<unsigned>(fallbackGatherSessionEvents_.size()));
+      DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
+
+    if (fallbackGatherSessionIncludeActiveEditRows_) {
+      EditPassVec activeRows;
+      for (const EditPass& editPass : passes.editPasses) {
+        if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+          activeRows.push_back(editPass);
+        }
+      }
+      if (!activeRows.empty()) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        const uint32_t editStartUs = micros();
+#endif
+        applyNoteEditPassSequence(fallbackGatherSessionEvents_, activeRows, loopLengthTicks);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        const uint32_t editUs = micros() - editStartUs;
+        char line[224];
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,lcr,vch,gather_edit,us=%lu,rows=%u,ev=%u",
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned long>(editUs),
+                 static_cast<unsigned>(activeRows.size()),
+                 static_cast<unsigned>(fallbackGatherSessionEvents_.size()));
+        DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+      }
+    }
+  }
+
+  out = std::move(fallbackGatherSessionEvents_);
+  resetFallbackGatherSession();
+  return true;
+}
+
 LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes) const {
   if (loopLengthTicks == 0) {
     return;
@@ -395,6 +573,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
   appendOverdubPassWrapPairedNotes(rebuiltNotes);
+  resetFallbackGatherSession();
+  deferredVisualCacheWrapAppendPending_ = false;
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
@@ -473,6 +653,8 @@ LOOP_COLD_MEM void Loop::ensureVisualCacheBuilt() {
 LOOP_COLD_MEM void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
   visualCacheDirty = true;
+  resetFallbackGatherSession();
+  deferredVisualCacheWrapAppendPending_ = false;
   markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   emitVisualCacheState("stale_all", -1);
 }
@@ -616,7 +798,9 @@ LOOP_COLD_MEM void Loop::invalidateDisplayCaches() {
   if (noteCache_) {
     noteCache_->invalidate();
   }
+  resetFallbackGatherSession();
   visualCache.notes.clear();
   visualCache.dirtyBars.clear();
   visualCacheDirty = true;
+  deferredVisualCacheWrapAppendPending_ = false;
 }

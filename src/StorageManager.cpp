@@ -215,6 +215,10 @@ void STORAGE_PERSIST_MEM StorageManager::setBootTitleLoadDrain(bool enabled) {
     StorageManagerInternal::setBootTitleLoadDrain(enabled);
 }
 
+bool STORAGE_PERSIST_MEM StorageManager::isBootTitleLoadDrain() {
+    return StorageManagerInternal::getBootTitleLoadDrain();
+}
+
 bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;

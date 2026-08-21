@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
 #include "Utils/DebugSessionCapture.h"
 #include <Arduino.h>
 #endif
@@ -25,7 +25,7 @@
 
 namespace {
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
 // Which branch of applyChangeLengthById runs. Only the lengthen branch calls
 // NoteUtils::reconstructNotes over the whole event vector; the shorten branch returns early.
 uint32_t g_lengthenPathCount = 0;
@@ -405,21 +405,21 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   }
 
   if (newEnd == refEnd) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
     ++g_noOpPathCount;
 #endif
     return;
   }
 
   if (newEnd < refEnd) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
     ++g_shortenPathCount;
 #endif
     shortenNoteEndById(events, noteId, newEnd, cache);
     return;
   }
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   ++g_lengthenPathCount;
   const uint32_t reconstructStartUs = micros();
 #endif
@@ -428,7 +428,7 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
 
   const std::vector<NoteUtils::DisplayNote> allNotes =
       reconstructNotesForPitch(events, onEvt.data.noteData.note, loopLength);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   g_reconstructUs += micros() - reconstructStartUs;
 #endif
   std::vector<NoteUtils::DisplayNote> notesToDelete;
@@ -731,7 +731,7 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
   // stable NoteId they doubled as the span lookup key and a later row had to be re-pointed at
   // an earlier row's span; carrying that rewrite forward overwrote the payload of a second row
   // for the same note.
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   // Which executed applies actually cost the time. Duplicate Hide rows are already skipped by
   // the presentNoteIds guard, so the population count alone does not predict cost
   // (session_20260821_110842: 1694 rows, 45.4 s).
@@ -752,14 +752,14 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
   std::vector<const EditPass*> plannedRows;
   uint32_t rowsCollapsed = 0;
   planContiguousCollapsedRows(rows, plannedRows, rowsCollapsed);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   planUs = micros() - phaseStartUs;
   phaseStartUs = micros();
 #endif
 
   std::vector<NoteId> presentNoteIds;
   collectPresentNoteIds(events, presentNoteIds);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   collectUs = micros() - phaseStartUs;
 #endif
   NoteOnIndexLookupCache noteOnLookupCache;
@@ -772,7 +772,7 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
     const EditPass& row = *rowPtr;
     if (row.actionType == EditActionType::Delete ||
         row.actionType == EditActionType::Update) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
       const uint32_t guardStartUs = micros();
       const bool targetPresent = containsPresentNoteId(presentNoteIds, row.targetNoteId);
       guardUs += micros() - guardStartUs;
@@ -788,11 +788,11 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
       }
 #endif
     }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
     const uint32_t applyStartUs = micros();
 #endif
     applyNoteEditPassWithLookupCache(events, row, loopLengthTicks, &noteOnLookupCache);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
     {
       const uint32_t applyUs = micros() - applyStartUs;
       if (row.actionType == EditActionType::Delete) {
@@ -825,7 +825,12 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
   }
   (void)rowsCollapsed;
   (void)rowsExecuted;
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  (void)planUs;
+  (void)collectUs;
+  (void)guardUs;
+  (void)otherUs;
+  (void)rowsSkipped;
   {
     const uint32_t sequenceUs = micros() - sequenceStartUs;
     if (sequenceUs >= kSequenceReportUs) {
@@ -851,21 +856,21 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
 
 NOTE_EDIT_MEM void applyNoteEditPassSequence(SessionMidiEventVec& events, const EditPassVec& rows,
                                              uint32_t loopLengthTicks) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   const uint32_t wrapStartUs = micros();
 #endif
   MidiEventVec scratch(events.begin(), events.end());
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   const uint32_t copyInUs = micros() - wrapStartUs;
   const uint32_t coreStartUs = micros();
 #endif
   applyNoteEditPassSequence(scratch, rows, loopLengthTicks);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   const uint32_t coreUs = micros() - coreStartUs;
   const uint32_t copyOutStartUs = micros();
 #endif
   events.assign(scratch.begin(), scratch.end());
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   {
     const uint32_t copyOutUs = micros() - copyOutStartUs;
     const uint32_t wrapUs = micros() - wrapStartUs;

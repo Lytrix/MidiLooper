@@ -694,7 +694,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   if (updateOverdubSourceView && !pendingNoteChanges_.empty()) {
     applyPendingNoteChangesToOverdubSourceView();
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   const uint32_t companionSealStartUs = micros();
   (void)companionSealStartUs;
   uint32_t companionRowsLogged = 0;
@@ -733,7 +733,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
                                            EditPassType::Note, true, batchHeapReserveAdmitted);
     if (id != kInvalidEditPassId) {
       sealedIds.push_back(id);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
       if (companionRowsLogged < kMaxCompanionRowsLogged) {
         char line[128];
         const char* kind =
@@ -749,7 +749,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
 #endif
     }
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   if (companionRowsToSeal > 0) {
     char line[160];
     snprintf(line, sizeof(line),

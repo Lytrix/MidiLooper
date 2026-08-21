@@ -919,6 +919,7 @@ void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
     }
   } else {
     clearOverdubSourceView();
+    clearCompanionProjectionCache();
   }
 }
 
@@ -932,6 +933,7 @@ void Loop::discardCapture() {
   capturePreview.clear();
   captureDedupEventsDropped_ = 0;
   clearOverdubSourceView();
+  clearCompanionProjectionCache();
   clearPendingNoteChanges();
 }
 

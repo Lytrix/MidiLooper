@@ -48,7 +48,13 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,39819493,DIAG,lframe_reclaim,8200,513"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,35897060,DIAG,disp_win,us=26727786,gather=26368771,recon=44867,append=313376,"
-      "filter=772,ev=2093,notes=1094,ws=0,wl=13824"));
+      "filter=772,ev=2093,notes=1094,ws=0,wl=13824,cap=1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,35897060,DIAG,cer_range,us=34568381,collect=40,append=12000,sort=900,lists=106,"
+      "evout=2087"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,35897060,DIAG,cer_cap,us=34568381,committed=12000,sort=34000000,copy=400000,"
+      "filter=9000,merge=1200,capflat=98000,capwin=2087,evout=2087"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,35897060,DIAG,disp_full,us=12000,gather=11000,recon=800,tails=200,ev=2093,notes=1094,"
       "len=52224"));

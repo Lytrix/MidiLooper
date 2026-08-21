@@ -70,6 +70,8 @@ public:
     static bool isFocusedLoopSlotRestoreWork();
     /// Boot title playback drain: disable demote/park so parked jobs cannot block title clear.
     static void setBootTitleLoadDrain(bool enabled);
+    /// True while OSTINATIX title drain is active (set in setup, cleared at boot_commit).
+    static bool isBootTitleLoadDrain();
     /// True when a slot payload is not committed, not queued, and not actively loading.
     static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
     /// True when boot restore queue is empty and no SlotLoadSession is active.

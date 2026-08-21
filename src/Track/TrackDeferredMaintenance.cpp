@@ -686,8 +686,8 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 #endif
 }
 
-void Track::processDeferredIdleMaintenance(uint32_t nowMs,
-                                           bool postOverdubDrainWindowActive) {
+TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
+                                                          bool postOverdubDrainWindowActive) {
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
   // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).
@@ -714,12 +714,26 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs,
     Loop& loop = activeLoop;
     const bool postOverdubDrainWindow =
         postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
+    if (!postOverdubDrainWindow) {
+      overdubDrainFallbackRetryAtMs_ = 0;
+    }
+    const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
+    const bool constrainedFallbackRequested = postOverdubDrainWindow;
+    if (!constrainedFallbackRequested) {
+      overdubDrainFallbackRetryAtMs_ = 0;
+    }
+    const bool constrainedFallbackCooldownActive =
+        constrainedFallbackRequested && overdubDrainFallbackRetryAtMs_ != 0 &&
+        nowMs < overdubDrainFallbackRetryAtMs_;
+    const bool constrainFallbackGather =
+        constrainedFallbackRequested && !constrainedFallbackCooldownActive;
     const bool overdubDrainOwnerTrack = playingMidiDrainAfterOverdubStopActive();
     const bool allowVisualMaintenanceSlice =
-        !postOverdubDrainWindow || overdubDrainOwnerTrack;
+        (!postOverdubDrainWindow || overdubDrainOwnerTrack) &&
+        !constrainedFallbackCooldownActive;
     if (allowVisualMaintenanceSlice && loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
-      if (StorageManager::hasDeferredSaveWork()) {
+      if (deferredSavePending) {
         barsPerSlice = 2;
       }
       if (postOverdubDrainWindow && barsPerSlice > 1) {
@@ -767,9 +781,28 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs,
           }
         }
       }
-      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar, maxBarDistanceFromPriority);
+      // Runtime-priority policy: defer wrap-pair append while realtime playback/capture
+      // states are active; resume in STOPPED idle maintenance.
+      const bool allowOverdubWrapAppend = false;
+      constexpr size_t kRealtimeFallbackGatherEventBudget = 192;
+      constexpr size_t kPostOverdubDrainFallbackGatherEventBudget = 96;
+      const size_t fallbackGatherEventBudget =
+          postOverdubDrainWindow ? kPostOverdubDrainFallbackGatherEventBudget
+                                 : kRealtimeFallbackGatherEventBudget;
+      loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar,
+                                       maxBarDistanceFromPriority, allowOverdubWrapAppend,
+                                       constrainFallbackGather, fallbackGatherEventBudget);
       idleVisualSliceRan = true;
       idleVisualDirtyAfter = countVisualCacheDirtyBars(loop);
+      if (constrainFallbackGather) {
+        constexpr uint32_t kOverdubDrainFallbackRetryDelayMs = 250;
+        if (idleVisualDirtyAfter >= idleVisualDirtyBefore) {
+          overdubDrainFallbackRetryAtMs_ =
+              nowMs + kOverdubDrainFallbackRetryDelayMs;
+        } else {
+          overdubDrainFallbackRetryAtMs_ = 0;
+        }
+      }
     }
   }
 
@@ -793,13 +826,16 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs,
         // One idle slice per call. Do not ensureVisualCacheBuilt here — short
         // loops use the same resumable owner as long loops (Slice 4c).
         const uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
-        loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
+        // 2fd209a STOPPED idle: one 4-bar window gather, no fallback budget.
+        // 768-event fallback plus span-cache prewarm after slice_clean is what
+        // hung 160519 after the first piano-roll frame.
+        loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0, UINT32_MAX, true, false, 0);
+      }
+      if (!loop.visualCacheDirty && loop.hasDeferredVisualCacheWrapAppend()) {
+        loop.applyDeferredVisualCacheWrapAppend();
       }
       maybeLogStoredNoteCount();
       maybeQueueContentResolutionDeviceGate();
-      if (!loop.visualCacheDirty) {
-        loop.prewarmOverdubSourceSpanCache();
-      }
     }
   }
 

@@ -49,6 +49,26 @@ EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t
   return row;
 }
 
+EditPass makeLengthRow(NoteId targetNoteId, uint32_t start, uint32_t newEnd) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Update;
+  row.propertyType = EditPropertyType::Length;
+  row.targetNoteId = targetNoteId;
+  row.startTick = start;
+  row.endTick = newEnd;
+  return row;
+}
+
+EditPass makeDeleteRow(NoteId targetNoteId) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Delete;
+  row.propertyType = EditPropertyType::None;
+  row.targetNoteId = targetNoteId;
+  return row;
+}
+
 bool eventsEqual(const SessionMidiEventVec& a, const SessionMidiEventVec& b) {
   if (a.size() != b.size()) {
     return false;
@@ -60,6 +80,35 @@ bool eventsEqual(const SessionMidiEventVec& a, const SessionMidiEventVec& b) {
     }
   }
   return true;
+}
+
+bool eventsStrictEqual(const SessionMidiEventVec& a, const SessionMidiEventVec& b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (a[i].tick != b[i].tick || a[i].type != b[i].type || a[i].channel != b[i].channel ||
+        a[i].noteId != b[i].noteId ||
+        a[i].data.noteData.note != b[i].data.noteData.note ||
+        a[i].data.noteData.velocity != b[i].data.noteData.velocity) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void gatherLegacyWindowReplay(const Loop& loop, uint32_t windowStart, uint32_t windowLength,
+                              SessionMidiEventVec& out) {
+  loop.copyEffectiveCommittedEventsInRange(out, windowStart, windowLength, false);
+  EditPassVec activeRows;
+  for (const EditPass& editPass : loop.passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+    }
+  }
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(out, activeRows, loop.loopLengthTicks);
+  }
 }
 
 }  // namespace
@@ -278,6 +327,88 @@ void test_undo_pass_toggle_rebuilds_effective_store() {
   TEST_ASSERT_TRUE(eventsEqual(expected, restored));
 }
 
+void test_companion_projection_window_matches_legacy_replay() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 120, 1, 62, 90, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(180, 1, 62, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 250, 1, 60, 80, 3));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(320, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+
+  const EditPassId companionDeleteId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, makeDeleteRow(2));
+  const EditPassId companionLengthId = loop.saveNoteEditPass(
+      kOverdubCompanionEditPassIndex, makeLengthRow(3, 250, 286));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, companionDeleteId);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, companionLengthId);
+
+  SessionMidiEventVec expected;
+  gatherLegacyWindowReplay(loop, 0, kLoopLen, expected);
+
+  SessionMidiEventVec stopped;
+  loop.gatherCommittedEventsInWindow(stopped, 0, kLoopLen, true);
+  TEST_ASSERT_TRUE(eventsStrictEqual(expected, stopped));
+
+  loop.beginCapture(CapturePhase::Overdub);
+  SessionMidiEventVec actual;
+  loop.gatherCommittedEventsInWindow(actual, 0, kLoopLen, true);
+  TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
+
+  SessionMidiEventVec replayed;
+  loop.gatherCommittedEventsInWindow(replayed, 0, kLoopLen, true);
+  TEST_ASSERT_TRUE(eventsStrictEqual(expected, replayed));
+
+  const uint32_t windowAStart = 0;
+  const uint32_t windowALen = 2u * Config::TICKS_PER_BAR;
+  SessionMidiEventVec expectedWindowA;
+  SessionMidiEventVec actualWindowA;
+  gatherLegacyWindowReplay(loop, windowAStart, windowALen, expectedWindowA);
+  loop.gatherCommittedEventsInWindow(actualWindowA, windowAStart, windowALen, true);
+  TEST_ASSERT_TRUE(eventsStrictEqual(expectedWindowA, actualWindowA));
+
+  const uint32_t windowBStart = 7u * Config::TICKS_PER_BAR;
+  const uint32_t windowBLen = 2u * Config::TICKS_PER_BAR;
+  SessionMidiEventVec expectedWindowB;
+  SessionMidiEventVec actualWindowB;
+  gatherLegacyWindowReplay(loop, windowBStart, windowBLen, expectedWindowB);
+  loop.gatherCommittedEventsInWindow(actualWindowB, windowBStart, windowBLen, true);
+  TEST_ASSERT_TRUE(eventsStrictEqual(expectedWindowB, actualWindowB));
+}
+
+void test_companion_projection_falls_back_with_non_companion_note_rows() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 20, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(80, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 140, 1, 64, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(220, 1, 64, 0)));
+  loop.seedRecordPassFromStore(store);
+
+  const EditPassId companionDeleteId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, makeDeleteRow(2));
+  const EditPassId noteEditPitchId = loop.saveNoteEditPass(0, makePitchRow(1, 20, 80, 67));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, companionDeleteId);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, noteEditPitchId);
+
+  SessionMidiEventVec expected;
+  gatherLegacyWindowReplay(loop, 0, kLoopLen, expected);
+
+  SessionMidiEventVec actual;
+  loop.gatherCommittedEventsInWindow(actual, 0, kLoopLen, true);
+  TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_effective_store_matches_materialize_after_seed);
@@ -287,5 +418,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_entry_uses_windowed_source_on_long_loop);
   RUN_TEST(test_mark_affected_display_cache_ranges_dirties_sparse_bars);
   RUN_TEST(test_undo_pass_toggle_rebuilds_effective_store);
+  RUN_TEST(test_companion_projection_window_matches_legacy_replay);
+  RUN_TEST(test_companion_projection_falls_back_with_non_companion_note_rows);
   return UNITY_END();
 }
