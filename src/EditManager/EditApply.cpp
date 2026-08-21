@@ -145,19 +145,13 @@ NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex)
   // Tick-sorted wrap capture (195941: Off@96 then On@2592) hits the off while the stack is
   // empty, so LIFO never pairs it. After the linear walk, pair a still-open on to its wrap
   // off (tick < on.tick) — tagged NoteId first, else the unique unpaired wrap off.
-  // Both the walk and the paired flags only ever cover this channel + pitch, so size them to that
-  // subset instead of the whole vector: reserving events.size() cost a 21 KB heap block and the
-  // flags a full-length zero fill on every call, and this runs once per delete and twice per
-  // length apply — several thousand times per boot replay.
-  size_t pitchEventCount = 0;
-  for (const MidiEvent& evt : events) {
-    if (evt.channel == channel && evt.data.noteData.note == note &&
-        (evt.isNoteOn() || evt.isNoteOff())) {
-      ++pitchEventCount;
-    }
-  }
+  // What costs here is the number of full passes over the event vector, not allocation size:
+  // MidiEventVec is InternalHeapFirstAllocator and spills to external memory once the internal
+  // heap is gone, so at boot sizes each pass is expensive. One pass collects the walked
+  // channel + pitch; the wrap-off scan below then reuses that list instead of walking every event
+  // a second time. Do not add a counting pass to size this exactly — an exact reserve costs more
+  // than the geometric growth it saves (session_20260821_114927: +15 % per delete).
   std::vector<size_t> pitchIndices;
-  pitchIndices.reserve(pitchEventCount);
   for (size_t i = 0; i < events.size(); ++i) {
     const MidiEvent& evt = events[i];
     if (evt.channel == channel && evt.data.noteData.note == note &&

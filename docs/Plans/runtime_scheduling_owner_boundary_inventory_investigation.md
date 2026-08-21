@@ -862,3 +862,30 @@ Behavior-preserving: `pitchIndices` holds exactly the events the old filters adm
 **Still out of scope and unmeasured:** `findWrapHeadOffForOnIndex` also runs per delete, with an inner `isPreferredWrapTailForHeadOff` full scan gated by `isHeadTailWrappedPair`, and `findNoteOnByIdCached` is always linear because the lookup cache is cleared after every delete. Neither was touched.
 
 Native **1406/1406**, including the randomized planner parity guard and `test_noteutils_reconstruct`.
+
+### Per-call tuning is not the lever — measured neutral
+
+The scratch-sizing change in §16 was committed before device validation. That was wrong: it **regressed** per-delete cost by 11 %, because the counting pass added to size the allocation exactly cost more than the two allocations it saved.
+
+Boot totals are **not** comparable across these captures — the edit-row population differs per session (`ndel` 1131 → 1216, `nlen` 219 → 316). Only windows matching on both `ev` and `ndel` are valid:
+
+| Version | `ev=250`, `ndel=175` | Per delete |
+|---|---|---|
+| [`113813`](../../captures/session_20260821_113813.log) — two passes (baseline) | `del=9092` | 51.95 µs |
+| [`114927`](../../captures/session_20260821_114927.log) — three passes | `del=10085` | 57.63 µs |
+| [`115535`](../../captures/session_20260821_115535.log) — one pass | `del=9060` | **51.77 µs** |
+
+One pass recovered the regression and gained nothing beyond it. **Pass count and allocation size are not what makes a delete cost ~11 ms at boot**, and nothing measured so far explains what does. The one-pass shape is kept because it is strictly less work, not because it is faster.
+
+The §15 reconstruct fix continues to hold: `recon=1 734 568` over `lgth=83` is **21 ms** per lengthen call versus 576 ms before. `ulen` is still 52.9 s, so ~638 ms per lengthen call remains the nested delete loop.
+
+### Behavior-preserving options are exhausted
+
+Making each delete cheaper does not work. Every remaining lever removes delete *calls* and changes replay output:
+
+| Lever | Blocker |
+|---|---|
+| Batch the lengthen branch's nested deletes into one sweep | Same-pitch LIFO pairing shifts as each note is erased, so it is not equivalent as written — though using the reconstruction's own pairing for all of them is arguably more self-consistent than re-deriving it after every erase |
+| Revive the parked last-wins dedupe (§15) | Fails the randomized planner parity guard |
+
+Both reduce to one **open decision**: should replaying a stale companion row apply overlap side effects to its neighbours, or is only the newest generation's geometry real? Not resolvable from the code. Nothing further should be implemented on this path until it is answered.
