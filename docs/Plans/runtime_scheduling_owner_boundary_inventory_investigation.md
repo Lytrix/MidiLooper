@@ -826,3 +826,39 @@ This also removes the superlinearity rather than just scaling it down: `tryPairW
 **Not** the `del` owner. `ndel=1131` is 1131 *distinct* notes deleted — the `presentNoteIds` guard already skips repeats — so **10.67 s (20.9 %) survives this fix** and is the next lever. Each call is 9.4 ms for what is a find-on / find-off / erase pair over 2513 events; batching the deletions into one sweep instead of 1131 O(n) erases is the obvious shape, but it reorders apply semantics and needs the same behavior decision as dedupe.
 
 Native **1406/1406**, `test_edit_apply` 51/51 including the randomized parity guard. RAM1 unchanged at **4640** bytes.
+
+---
+
+## 16. The reconstruct was 4 % of it — `applyDeleteNoteById` owns the rest (Stage O)
+
+### Measured after the pitch-scoped reconstruct — [`113813`](../../captures/session_20260821_113813.log)
+
+```
+#CAP,66383954,DIAG,cer_edit,us=54056103,del=11560194,ulen=42316496,recon=1562250,
+              ndel=1131,nlen=219,lgth=70,shrt=126,noop=8,ev=2660
+```
+
+The fix worked on its target: per-lengthen-call reconstruct went **576 ms → 22 ms** at boot, and **9.98 ms → 1.66 ms** at `ev≈800`. Total `recon` is now **1.56 s**.
+
+**But `ulen` stayed at 42.3 s**, so 40.7 s of it was never in `reconstructNotes`. §14's inference that `recon ≈ ulen` was drawn from small untruncated windows and does not hold at boot — in this capture `recon` is only **18 %** of `ulen` even at `ev=773`.
+
+### Where the 40.7 s is, by elimination from measured numbers
+
+| Step | Derivation | Result |
+|---|---|---|
+| One `applyDeleteNoteById` | `del=11 560 194 / ndel=1131` | **10.2 ms** |
+| `findNoteOffForOnIndex` upper bound | dominates that call | **≤ 10 ms** |
+| All 126 shorten calls | two of those each | **~2.5 s** — cannot explain 40.7 s |
+| Remaining owner | lengthen branch's `notesToDelete` loop calls `applyDeleteNoteById` per swallowed same-pitch note | ~580 ms per call ≈ **57 nested deletes** |
+
+So `applyDeleteNoteById` owns roughly **52 s of the 54 s** — the 10.7 s of top-level `del` rows and the 40.7 s of nested deletes are the same primitive.
+
+### Fix shipped — stop sizing the pairing scratch to the whole vector
+
+`findNoteOffForOnIndex` built `walkOrder` with `reserve(events.size())` (a 21 KB heap block at `ev=2660`) and `offPaired(events.size(), 0)` (a full-length zero fill), both on the **global** heap rather than `MidiEventVec`'s `InternalHeapFirstAllocator`. Both only ever cover the walked channel + pitch. They are now sized to that subset, with the paired flags indexed by position in an ascending `pitchIndices` list.
+
+Behavior-preserving: `pitchIndices` holds exactly the events the old filters admitted, in ascending order, so the wrap-off scan is the same traversal — same order, same `break`, same `untaggedWrapOffCount`. Scan count is unchanged at two O(n) passes; what is removed is two large per-call allocations, on a call made several thousand times per replay.
+
+**Still out of scope and unmeasured:** `findWrapHeadOffForOnIndex` also runs per delete, with an inner `isPreferredWrapTailForHeadOff` full scan gated by `isHeadTailWrappedPair`, and `findNoteOnByIdCached` is always linear because the lookup cache is cleared after every delete. Neither was touched.
+
+Native **1406/1406**, including the randomized planner parity guard and `test_noteutils_reconstruct`.
