@@ -1020,6 +1020,54 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 30. Final remaining slices batch: start/end tick requirements + final full native gate
+
+This batch completed the remaining straightforward context-necessity slices in
+one pass and then ran the requested single full native sweep.
+
+### Added tests (`test/test_edit_apply/test_edit_apply.cpp`)
+
+- `test_incremental_companion_projection_start_tick_ablation_requirement`
+- `test_incremental_companion_projection_end_tick_ablation_requirement`
+- `test_incremental_companion_projection_pitch_ablation_requirement`
+- `test_incremental_companion_projection_same_tick_order_divergence_boundary`
+
+### Proven in this batch
+
+1. Start-tick ablation diverges immediately (generation `0`) on mixed-metadata
+   fixtures.
+2. End-tick ablation diverges immediately (generation `0`) on mixed-metadata
+   fixtures.
+3. Pitch ablation diverges immediately (generation `0`) on mixed-metadata
+   fixtures.
+4. Same-tick-only ordering diverges with a deterministic boundary on seeded
+   randomized histories.
+5. The same mismatching histories continue to pass under full paired state.
+
+### Validation
+
+- Focused gate during iteration: `pio test -e native -f test_edit_apply`
+  (suite expanded to 68 cases and stayed green).
+- Final full native sweep after all slices were in place:
+  **1423/1423** passed.
+
+### Net conclusion after all slices
+
+The smallest currently proven-equivalent effective representation for companion
+delta replay remains:
+
+- paired note spans,
+- explicit full `eventOrder` tokens,
+- stable `noteId`,
+- `pitch`,
+- `channel`,
+- `velocity`,
+- `startTick` and `endTick`,
+- refreshed after each applied companion delta.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 29. Pitch ablation requirement (mixed-metadata fixture)
 
 This stage tests whether pitch can be removed from the paired candidate while
