@@ -1020,6 +1020,40 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 22. Span-only ablation (drop explicit event ordering context)
+
+The next reduction stage removes explicit event-order context from the paired
+candidate while preserving paired note spans:
+
+- Candidate `L(history)` keeps only `CompanionEventSpan` entries and
+  rematerializes as contiguous On/Off pairs per span order.
+- Oracle comparison remains against `R(history)` (ordered
+  `applyNoteEditPassSequence()`).
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_span_only_randomized_divergence_boundary`
+
+This test proves three facts in one fixture:
+
+1. A fixed-seed randomized history exists where span-only diverges.
+2. The same history still passes with the paired state (`eventOrder` retained).
+3. The divergence has a deterministic boundary (`prefix N-1` equivalent,
+   `prefix N` divergent for the same history).
+
+Native result: **1414/1414**.
+
+Conclusion:
+
+- Explicit event-order context remains required for parity under the current
+  companion replay contract.
+- The smallest proven-equivalent candidate in this investigation remains the
+  paired state that refreshes both note spans and event-order tokens after each
+  delta.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 20. Paired companion state candidate (adds note on/off pairing context)
 
 The third native experiment adds context beyond minimal display geometry:

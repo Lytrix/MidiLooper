@@ -879,12 +879,12 @@ bool companionEventSpanEqual(const CompanionEventSpan& a, const CompanionEventSp
          a.velocity == b.velocity && a.startTick == b.startTick && a.endTick == b.endTick;
 }
 
-bool pairedCompanionStateEquivalent(const MidiEventVec& expectedEvents,
-                                    const PairedCompanionState& pairedState) {
+bool companionEventSpansEquivalent(const MidiEventVec& expectedEvents,
+                                   const std::vector<CompanionEventSpan>& actualSpans) {
   const std::vector<CompanionEventSpan> expected =
       canonicalCompanionEventSpans(PairedCompanionState::fromEvents(expectedEvents).spans);
   const std::vector<CompanionEventSpan> actual =
-      canonicalCompanionEventSpans(pairedState.spans);
+      canonicalCompanionEventSpans(actualSpans);
   if (expected.size() != actual.size()) return false;
   for (size_t i = 0; i < expected.size(); ++i) {
     if (!companionEventSpanEqual(expected[i], actual[i])) {
@@ -892,6 +892,11 @@ bool pairedCompanionStateEquivalent(const MidiEventVec& expectedEvents,
     }
   }
   return true;
+}
+
+bool pairedCompanionStateEquivalent(const MidiEventVec& expectedEvents,
+                                    const PairedCompanionState& pairedState) {
+  return companionEventSpansEquivalent(expectedEvents, pairedState.spans);
 }
 
 bool pairedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
@@ -944,6 +949,60 @@ bool pairedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
         *mismatchGenerationOut = static_cast<uint32_t>(cursor + 1);
       }
       return false;
+    }
+  }
+  return true;
+}
+
+struct SpanOnlyCompanionState {
+  std::vector<CompanionEventSpan> spans;
+
+  static SpanOnlyCompanionState fromEvents(const MidiEventVec& events) {
+    SpanOnlyCompanionState state;
+    state.spans = PairedCompanionState::fromEvents(events).spans;
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    events.reserve(spans.size() * 2u);
+    for (const CompanionEventSpan& span : spans) {
+      events.push_back(
+          sequenceNoteOnWithId(span.startTick, span.channel, span.pitch, span.velocity, span.noteId));
+      events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    spans = PairedCompanionState::fromEvents(events).spans;
+  }
+};
+
+bool spanOnlyCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                        const EditPassVec& history,
+                                        uint32_t loopLengthTicks,
+                                        uint32_t* mismatchGenerationOut = nullptr) {
+  SpanOnlyCompanionState spanOnly = SpanOnlyCompanionState::fromEvents(initialEvents);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!companionEventSpansEquivalent(expectedEvents, spanOnly.spans)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      spanOnly.applyCompanionDelta(history[cursor], loopLengthTicks);
     }
   }
   return true;
@@ -3245,6 +3304,55 @@ void test_incremental_companion_projection_paired_state_scenario51_generation13_
                                                     &mismatchGeneration));
 }
 
+void test_incremental_companion_projection_span_only_randomized_divergence_boundary() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  std::mt19937 rng(0xA11CEu);
+
+  uint32_t mismatchScenarios = 0;
+  uint32_t firstMismatchGeneration = UINT32_MAX;
+  EditPassVec firstMismatchHistory;
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    const EditPassVec history = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(19000 + scenario * 64));
+    uint32_t mismatchGeneration = UINT32_MAX;
+    if (!spanOnlyCompanionHistoryEquivalent(initialEvents, history,
+                                            kCompanionProjectionLoopLength,
+                                            &mismatchGeneration)) {
+      ++mismatchScenarios;
+      if (firstMismatchGeneration == UINT32_MAX) {
+        firstMismatchGeneration = mismatchGeneration;
+        firstMismatchHistory = history;
+      }
+    }
+  }
+
+  TEST_ASSERT_TRUE(mismatchScenarios > 0u);
+  TEST_ASSERT_TRUE(firstMismatchGeneration > 0u);
+  TEST_ASSERT_TRUE(!firstMismatchHistory.empty());
+
+  uint32_t pairedMismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, firstMismatchHistory,
+                                                    kCompanionProjectionLoopLength,
+                                                    &pairedMismatchGeneration));
+
+  const EditPassVec prefixBefore =
+      companionHistoryPrefix(firstMismatchHistory, firstMismatchGeneration - 1u);
+  uint32_t spanOnlyMismatch = UINT32_MAX;
+  TEST_ASSERT_TRUE(spanOnlyCompanionHistoryEquivalent(initialEvents, prefixBefore,
+                                                      kCompanionProjectionLoopLength,
+                                                      &spanOnlyMismatch));
+
+  const EditPassVec prefixAt =
+      companionHistoryPrefix(firstMismatchHistory, firstMismatchGeneration);
+  spanOnlyMismatch = UINT32_MAX;
+  TEST_ASSERT_FALSE(spanOnlyCompanionHistoryEquivalent(initialEvents, prefixAt,
+                                                       kCompanionProjectionLoopLength,
+                                                       &spanOnlyMismatch));
+  TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, spanOnlyMismatch);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -3305,5 +3413,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_paired_state_operation_matrix);
   RUN_TEST(test_incremental_companion_projection_paired_state_randomized_history_and_undo_redo);
   RUN_TEST(test_incremental_companion_projection_paired_state_scenario51_generation13_equivalent);
+  RUN_TEST(test_incremental_companion_projection_span_only_randomized_divergence_boundary);
   return UNITY_END();
 }
