@@ -82,6 +82,16 @@ struct Snapshot {
   uint32_t loadFrameOverCount = 0;
   uint32_t persistSaveMaxUs = 0;
   uint32_t persistSaveOverCount = 0;
+  uint32_t dispTotalMaxUs = 0;
+  uint32_t dispTotalOverCount = 0;
+  uint32_t dispResolveMaxUs = 0;
+  uint32_t dispResolveOverCount = 0;
+  uint32_t dispResolveCommittedMaxUs = 0;
+  uint32_t dispResolveCommittedOverCount = 0;
+  uint32_t dispDrawMaxUs = 0;
+  uint32_t dispDrawOverCount = 0;
+  uint32_t dispTransferMaxUs = 0;
+  uint32_t dispTransferOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
   uint32_t lateOnMaxUs = 0;
@@ -213,6 +223,21 @@ void noteLoadFrame(uint32_t durationUs);
 /** Post-BAR remainder: StorageManager::processDeferredSaveState. */
 void notePersistSave(uint32_t durationUs);
 
+/** DisplayManager::update end to end, including resolve, draw, and panel transfer. */
+void noteDisplayTotal(uint32_t durationUs);
+
+/** Display resolve phase: live-capture and edit-session display note projection. */
+void noteDisplayResolve(uint32_t durationUs);
+
+/** Display resolve phase: committed playback projection (plain PLAYING path). */
+void noteDisplayResolveCommitted(uint32_t durationUs);
+
+/** Display draw phase: framebuffer composition before the panel transfer. */
+void noteDisplayDraw(uint32_t durationUs);
+
+/** Display transfer phase: blocking SPI push of the framebuffer to the panel. */
+void noteDisplayTransfer(uint32_t durationUs);
+
 /** Emit a one-shot remainder line when a span exceeds this duration. */
 constexpr uint32_t kLoopRemainderOneShotUs = 50000u;
 
@@ -297,6 +322,16 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_IDLE_MAINT(durationUs) RuntimeTimingTelemetry::noteIdleMaint(durationUs)
 #define RUNTIME_TIMING_NOTE_LOAD_FRAME(durationUs) RuntimeTimingTelemetry::noteLoadFrame(durationUs)
 #define RUNTIME_TIMING_NOTE_PERSIST_SAVE(durationUs) RuntimeTimingTelemetry::notePersistSave(durationUs)
+#define RUNTIME_TIMING_NOTE_DISPLAY_TOTAL(durationUs) \
+  RuntimeTimingTelemetry::noteDisplayTotal(durationUs)
+#define RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE(durationUs) \
+  RuntimeTimingTelemetry::noteDisplayResolve(durationUs)
+#define RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE_COMMITTED(durationUs) \
+  RuntimeTimingTelemetry::noteDisplayResolveCommitted(durationUs)
+#define RUNTIME_TIMING_NOTE_DISPLAY_DRAW(durationUs) \
+  RuntimeTimingTelemetry::noteDisplayDraw(durationUs)
+#define RUNTIME_TIMING_NOTE_DISPLAY_TRANSFER(durationUs) \
+  RuntimeTimingTelemetry::noteDisplayTransfer(durationUs)
 #define RUNTIME_TIMING_MAYBE_EMIT(nowUs) RuntimeTimingTelemetry::maybeEmit(nowUs)
 #else
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) ((void)0)
@@ -334,5 +369,10 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_IDLE_MAINT(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_LOAD_FRAME(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_PERSIST_SAVE(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_DISPLAY_TOTAL(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE_COMMITTED(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_DISPLAY_DRAW(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_DISPLAY_TRANSFER(durationUs) ((void)0)
 #define RUNTIME_TIMING_MAYBE_EMIT(nowUs) ((void)0)
 #endif

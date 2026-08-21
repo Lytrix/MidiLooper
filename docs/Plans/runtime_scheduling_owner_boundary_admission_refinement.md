@@ -143,6 +143,8 @@ Do not start firmware until this choice is recorded (plan section or DEC).
 
 ### R1C — Remaining owner inventory
 
+**Inventory research:** [`runtime_scheduling_owner_boundary_inventory_investigation.md`](runtime_scheduling_owner_boundary_inventory_investigation.md) — 20 owners classified (11 unbounded), interval floor derivation, and design gates G9–G11. Research only; authorizes no firmware.
+
 Classify every remaining path as structurally bounded, empirically bounded with overrun policy, or unbounded/unknown / cold-excluded / included in `handleMidiInput()` duration telemetry.
 
 Required rows (in addition to contract Appendix A):
