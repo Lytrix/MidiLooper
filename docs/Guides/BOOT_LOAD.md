@@ -60,7 +60,7 @@ sequenceDiagram
 | Step | Gate | Notes |
 |------|-------|-------|
 | Boot slot restore | `bootSlotLoadRefreshPending` && idle && turn free | **Boot playback set only** — `DeferredJobScheduler::runFrame(BootTitleRestoreUs)`; demote/park **disabled** until title clears. `setBootTitleLoadDrain(true)` still prevents LoadLoopJob park during drain; idle visual slices run. |
-| Idle maintenance | focus track first while title drain is armed | `161804`: 4-bar `idle_gather` builds the 68-bar focus cache (`slice_clean` 2638 notes at 10.9 s) before `boot_commit`. |
+| Idle maintenance | focus track first while title drain is armed | `161804`: 4-bar `idle_gather` builds the 68-bar focus cache (`slice_clean` 2638 notes at 10.9 s) before `boot_commit`. Do not call `prewarmOverdubSourceSpanCache` in that `slice_clean` turn (`160519`). |
 | Post-boot slot restore | after ready + holdoff; PLAYING allows focus/`LoadLoopJob` only | `FocusRestoreUs` / `BackgroundRestoreUs`; demote parks one in-flight job |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
 | **finishBootSetup + USB Host** | `bootInteractiveReady()` and focus visual cache clean | `161804`: USB 11.484 s, first `DISP` visual=2638, `boot_commit=288557`. Do not call `invalidateForSlotChange` from `onBootSlotLoadComplete`. |

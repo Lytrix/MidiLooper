@@ -149,9 +149,9 @@ struct Loop {
   void ensureEffectiveEventStoreCurrent() const;
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
   /// Range query of committed content (chunk window + optional edit projection).
-  /// Does not flatten the loop. Full companion projection rebuild is admitted
-  /// only while `capture.phase == CapturePhase::Overdub`; STOPPED/boot uses the
-  /// windowed apply path.
+  /// Does not flatten the loop. Companion fast path copies a ready Overdub
+  /// projection cache only; a miss uses the windowed apply path. Full companion
+  /// rebuild is not admitted from this gather.
   void copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
                                            uint32_t windowLength,
                                            bool includeActiveEditRows = true) const;
@@ -270,6 +270,7 @@ struct Loop {
   void clearCommittedPlaybackNoteOnIdentities();
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
+  bool companionProjectionCacheReadyForTest() const { return companionProjectionReady_; }
 #endif
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
