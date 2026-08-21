@@ -506,3 +506,28 @@ Adding these five tags first cost **4096 bytes** of RAM1 stack headroom (4640 �
 **Rule for any further telemetry:** new emit tags go through `RT_TAG`. A plain literal is not a free addition here, and the RAM1 figure is alignment-sensitive, so a 40-byte change can swing headroom by 4 KB in either direction. Measure `pio run -e teensy41-capture-serial` RAM1 before and after.
 
 Native **1406/1406**.
+
+### Measured results — [`100726`](../../captures/session_20260821_100726.log)
+
+18 windows. `load_frame` now reconciles against `disp_total` plus the five children to within **0.0–0.3 ms** in every window where the transport-idle block ran. (Windows t=42 and t=47 reconcile to a small negative because each tag reports a per-window maximum from a possibly different frame; maxima are not additive within a window. This is a property of the accumulator, not a missing child.)
+
+| Tag | Owner | Max | Over 5 ms | Classification |
+|---|---|---|---|---|
+| `lframe_reclaim` | `reclaimUnreferencedDisabledPasses` | **8.2 ms** | **513** | **unbounded — the residual owner** |
+| `lframe_job` | `DeferredJobScheduler::runFrame` | **25.7 ms** | 237 | budgeted but **overruns its budget** |
+| `lframe_undo` | `processDeferredUndoSnapshots` | **52.1 ms** | 7 | **unbounded**, rare |
+| `lframe_autosave` | `processEditAutosave` | 0.3 ms | 0 | empirically bounded, negligible |
+| `lframe_enqueue` | `enqueueRemainingLoopSlotRestoresFromSd` | 0.0 ms | 0 | negligible |
+
+**The 7.6–8.0 ms residual is `TrackManager::reclaimUnreferencedDisabledPasses`.** At t=118 `load_frame` 34.8 ms minus `disp_total` 26.3 ms is 8.5 ms against `lframe_reclaim` 8.2 ms; at t=52 the 7.0 ms gap is 6.8 ms reclaim plus 0.2 ms autosave. It is present at 6.4–8.2 ms in every transport-idle turn and crosses the soft ceiling 513 times — the most *frequent* over-ceiling owner found so far, as opposed to the largest.
+
+Two owners neither the inventory nor §10 predicted:
+
+- **`processDeferredUndoSnapshots` peaks at 52.1 ms** — comparable to the worst persistence step (56.5 ms) and on a path with no budget at all.
+- **`DeferredJobScheduler::runFrame` peaks at 25.7 ms** despite being budgeted by `LoadLoopBudget`. The budget exists and is exceeded, which is the same "budget correct, steps too coarse" shape as L7 rather than a missing budget.
+
+This capture also contains a second multi-second committed resolve: `load_frame` 22 659.8 ms with `disp_total` 22 406.5 ms at t=34, confirming the §10 finding is reproducible and not specific to one boot.
+
+**Revised §5 classification.** Of the three owners missing from the inventory, one is negligible (`processEditAutosave`), one is trivial (`enqueueRemainingLoopSlotRestoresFromSd`), and one is unbounded (`processDeferredUndoSnapshots`). Adding `reclaimUnreferencedDisabledPasses` and `DeferredJobScheduler::runFrame` as separately measured owners, the count of unbounded or over-budget owners rises from 11 to **14**.
+
+**Stage O is now closed for the `load_frame` span.** Every child is named and measured; nothing above 0.3 ms is unattributed.
