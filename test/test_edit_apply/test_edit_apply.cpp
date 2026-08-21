@@ -1100,6 +1100,85 @@ bool tickOrderedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
   return true;
 }
 
+struct NoteIdAblatedCompanionState {
+  std::vector<CompanionEventSpan> spans;
+  std::vector<uint32_t> eventOrder;
+  bool renumberAfterDelta = true;
+
+  static void renumberSpans(std::vector<CompanionEventSpan>& spans, NoteId firstId = 50000) {
+    NoteId nextId = firstId;
+    for (CompanionEventSpan& span : spans) {
+      span.noteId = nextId++;
+    }
+  }
+
+  static NoteIdAblatedCompanionState fromEvents(const MidiEventVec& events, bool renumber) {
+    NoteIdAblatedCompanionState state;
+    const PairedCompanionState paired = PairedCompanionState::fromEvents(events);
+    state.spans = paired.spans;
+    state.eventOrder = paired.eventOrder;
+    if (renumber) {
+      renumberSpans(state.spans);
+    }
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    events.reserve(spans.size() * 2u);
+    for (const uint32_t token : eventOrder) {
+      const size_t spanIndex = static_cast<size_t>(token / 2u);
+      if (spanIndex >= spans.size()) {
+        continue;
+      }
+      const CompanionEventSpan& span = spans[spanIndex];
+      if ((token & 1u) != 0u) {
+        events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+      } else {
+        events.push_back(sequenceNoteOnWithId(span.startTick, span.channel, span.pitch, span.velocity,
+                                              span.noteId));
+      }
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    NoteIdAblatedCompanionState nextState =
+        NoteIdAblatedCompanionState::fromEvents(events, renumberAfterDelta);
+    spans = std::move(nextState.spans);
+    eventOrder = std::move(nextState.eventOrder);
+  }
+};
+
+bool noteIdAblatedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                             const EditPassVec& history,
+                                             uint32_t loopLengthTicks,
+                                             uint32_t* mismatchGenerationOut = nullptr) {
+  NoteIdAblatedCompanionState candidate = NoteIdAblatedCompanionState::fromEvents(initialEvents, false);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!companionEventSpansEquivalent(expectedEvents, candidate.spans)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      candidate.applyCompanionDelta(history[cursor], loopLengthTicks);
+    }
+  }
+  return true;
+}
+
 struct ContextAblatedCompanionState {
   std::vector<CompanionEventSpan> spans;
   std::vector<uint32_t> eventOrder;
@@ -3641,6 +3720,50 @@ void test_incremental_companion_projection_tick_ordered_materialize_divergence_b
   TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, mismatchGeneration);
 }
 
+void test_incremental_companion_projection_note_id_ablation_divergence_boundary() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  std::mt19937 rng(0xA11CEu);
+
+  uint32_t firstMismatchGeneration = UINT32_MAX;
+  EditPassVec firstMismatchHistory;
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    const EditPassVec history = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(25000 + scenario * 64));
+    uint32_t mismatchGeneration = UINT32_MAX;
+    if (!noteIdAblatedCompanionHistoryEquivalent(initialEvents, history,
+                                                 kCompanionProjectionLoopLength,
+                                                 &mismatchGeneration)) {
+      firstMismatchGeneration = mismatchGeneration;
+      firstMismatchHistory = history;
+      break;
+    }
+  }
+
+  TEST_ASSERT_TRUE(!firstMismatchHistory.empty());
+  TEST_ASSERT_TRUE(firstMismatchGeneration > 0u);
+
+  uint32_t pairedMismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, firstMismatchHistory,
+                                                    kCompanionProjectionLoopLength,
+                                                    &pairedMismatchGeneration));
+
+  const EditPassVec prefixBefore =
+      companionHistoryPrefix(firstMismatchHistory, firstMismatchGeneration - 1u);
+  uint32_t mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(noteIdAblatedCompanionHistoryEquivalent(initialEvents, prefixBefore,
+                                                           kCompanionProjectionLoopLength,
+                                                           &mismatchGeneration));
+
+  const EditPassVec prefixAt = companionHistoryPrefix(firstMismatchHistory, firstMismatchGeneration);
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(noteIdAblatedCompanionHistoryEquivalent(initialEvents, prefixAt,
+                                                            kCompanionProjectionLoopLength,
+                                                            &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, mismatchGeneration);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -3704,5 +3827,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_span_only_randomized_divergence_boundary);
   RUN_TEST(test_incremental_companion_projection_context_ablation_channel_velocity_requirements);
   RUN_TEST(test_incremental_companion_projection_tick_ordered_materialize_divergence_boundary);
+  RUN_TEST(test_incremental_companion_projection_note_id_ablation_divergence_boundary);
   return UNITY_END();
 }
