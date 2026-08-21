@@ -819,6 +819,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
           bootHydrateActive || StorageManager::hasDeferredSaveWork();
       const bool avoidFullVisual =
           loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) || deferHeavyDerivedView;
+      const bool visualCacheCleanAtTurnStart = !loop.visualCacheDirty;
       if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual) {
         loop.materializeEditViewFromPasses();
       }
@@ -831,8 +832,17 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
         // hung 160519 after the first piano-roll frame.
         loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0, UINT32_MAX, true, false, 0);
       }
+      bool ranDeferredWrapAppend = false;
       if (!loop.visualCacheDirty && loop.hasDeferredVisualCacheWrapAppend()) {
         loop.applyDeferredVisualCacheWrapAppend();
+        ranDeferredWrapAppend = true;
+      }
+      // After boot_commit and on a later clean-cache turn only. Same-turn
+      // prewarm after slice_clean hung 160519; 162928 opened notes=0 without
+      // any caller.
+      if (visualCacheCleanAtTurnStart && !loop.visualCacheDirty && !ranDeferredWrapAppend &&
+          !StorageManager::isBootTitleLoadDrain()) {
+        loop.prewarmOverdubSourceSpanCache();
       }
       maybeLogStoredNoteCount();
       maybeQueueContentResolutionDeviceGate();

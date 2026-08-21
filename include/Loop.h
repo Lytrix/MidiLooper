@@ -271,6 +271,7 @@ struct Loop {
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
   bool companionProjectionCacheReadyForTest() const { return companionProjectionReady_; }
+  bool overdubSourceSpanCacheReadyForTest() const { return overdubSourceSpanCacheReady(); }
 #endif
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.

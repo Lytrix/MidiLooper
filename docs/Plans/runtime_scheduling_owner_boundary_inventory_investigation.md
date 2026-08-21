@@ -1290,7 +1290,7 @@ Track switches complete, then the 68-bar loop pays `idle_gather=210883`, `idle_a
 
 ## 36. Authorized firmware slice — companion clock-path admission + budgeted source-span prewarm
 
-**Status:** Authorized. Stage A shipped (native 1425/1425; `teensy41-capture-serial` RAM1 code 425580 / locals 4640). Stage B not shipped.
+**Status:** Authorized. Stage A shipped. Stage B shipped (native). Device re-measure of [`162928`](../../captures/session_20260821_162928.log) still open. Stage C queued.
 **Debugging boundary:** trust §33/§34 boot first-paint and STOPPED undo/track-switch owners. Do not revisit `onBootSlotLoadComplete` wipe. Do not start incremental companion-representation work. Do not admit companion full replay onto STOPPED undo/track-switch.
 
 ### Architecture checkpoint
@@ -1316,13 +1316,15 @@ Native: `test_companion_projection_empty_cache_uses_legacy_window_gather` and `t
 
 ### Stage B — budgeted source-span prewarm restore (second commit)
 
+**Status:** Shipped (native 1427/1427; `teensy41-capture-serial` RAM1 code 425580 / locals 4640). Device re-measure still open.
+
 Owner: `Track::processDeferredIdleMaintenance` calling `Loop::prewarmOverdubSourceSpanCache`.
 
-1. Restore the call only when STOPPED, visual cache is already clean, `bootSlotLoadRefreshPending` is false / `boot_commit` has finished, and the prepared gate is not still building for this loop length (existing defer in `prewarmOverdubSourceSpanCache`).
+1. Restore the call only when STOPPED, visual cache was already clean at turn start, wrap-append did not run this turn, and `StorageManager::isBootTitleLoadDrain()` is false (`boot_commit` finished). Prepared-gate defer stays inside `prewarmOverdubSourceSpanCache`.
 2. Do **not** call it in the same idle turn that reaches `slice_clean`, and do not pass a non-zero fallback gather budget into that visual-cache slice (`160519`).
 3. `rebuildOverdubSourceSpanCache` session fallback stays: no full materialize on the open path. Open must reuse prewarmed notes.
 
-Native: existing source-view tests that require a filled span cache before `openOverdubSession` stay green. Add a host assertion that `prewarmOverdubSourceSpanCache` is reached from STOPPED idle after a clean visual cache, and that `startOverdubbing` open then reports non-zero source-view notes when committed notes exist.
+Native: `test_session_open_without_prewarm_leaves_empty_source_view` and `test_prewarm_span_cache_then_session_open_has_source_notes` in `test_overdub_source_view`.
 
 Device: same 68-bar loop as [`162928`](../../captures/session_20260821_162928.log). Pass when `why=open` has `notes>0`, at least one `consume,select` has `norow=0`, and no Overdub `tracks` / `midi_input` sample in the 100 s class.
 

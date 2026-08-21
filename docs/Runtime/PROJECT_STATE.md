@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-21 (overdub companion admission + source-span prewarm)
+Last updated: 2026-08-21 (source-span prewarm Stage B)
 
 ---
 
@@ -62,7 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Overdub companion admission and source-span prewarm:** Stage A shipped — gather copies a ready companion cache only and does not full-replay on the clock path. Stage B (budgeted prewarm) next. [`162928`](../../captures/session_20260821_162928.log). — [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Overdub companion admission and source-span prewarm:** Stage A and B shipped (native). Gather does not full-replay on the clock path; STOPPED idle prewarms the source-span cache after `boot_commit` on a later clean-cache turn. Device re-measure of [`162928`](../../captures/session_20260821_162928.log) open. Stage C queued. — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Boot title `boot_commit` display stall:** Device PASS [`161804`](../../captures/session_20260821_161804.log) — USB 11.484 s, first `DISP` visual=2638, `boot_commit=288557` (289 ms). Prior gather was `161148` / `154353` (~70–75 s, visual=0) from `onBootSlotLoadComplete` wiping the idle-built cache. Guide: [`BOOT_LOAD.md`](../Guides/BOOT_LOAD.md).
 - **Boot title startup stall hardening:** capture [`161410`](../../captures/session_20260820_161410.log) stops after `DisplayManager: Display buffer displayed` and never reaches boot load logs. `Looper::setup` now uses bounded SD bootstrap retries (`3` attempts, `50 ms` delay) and an explicit empty-runtime fallback when SD stays unavailable, preventing title-screen startup stalls from requiring repeated manual reboots. Native verification pending.
 - **Overdub-stop seal lag optimization:** captures [`163904`](../../captures/session_20260820_163904.log), [`164944`](../../captures/session_20260820_164944.log), [`165534`](../../captures/session_20260820_165534.log), [`165956`](../../captures/session_20260820_165956.log), [`170724`](../../captures/session_20260820_170724.log), [`171246`](../../captures/session_20260820_171246.log), [`171909`](../../captures/session_20260820_171909.log), [`172553`](../../captures/session_20260820_172553.log), [`173206`](../../captures/session_20260820_173206.log), and [`174941`](../../captures/session_20260820_174941.log) keep the stop owner on `companion_seal` while `mark_range` remains low. Deterministic follow-up landed: overdub-stop path uses `SC_REC_FLUSH_PENDING_REVTS(8)` in `Track::stopOverdubbing` and in-edit `handleNoteEditFold`, removing variable USB serial flush work from the critical path before display refresh. Telemetry-visibility follow-up landed: `ODUB,stop` lines are Tier-A in `CaptureLineTier` so stop-stage lines remain visible under ring pressure with `flush(8)`. Display-specific follow-ups are reverted per user request. Native **1397/1397** and `teensy41-capture-serial` build pass (`RAM1 code 425084 / locals 4768`); HITL re-measure pending — [CURRENT_WORK.md](CURRENT_WORK.md)
