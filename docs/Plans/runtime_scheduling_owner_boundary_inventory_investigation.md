@@ -1,15 +1,15 @@
 # Runtime scheduling — owner-boundary inventory and MIDI service interval floor
 
-**Status:** Research / investigation. **Authorizes no firmware.**
+**Status:** Research / investigation. **§36 authorizes one firmware slice** (companion clock-path admission + budgeted source-span prewarm restore). All other sections still authorize no firmware.
 **Date:** 2026-08-21
 **Kind:** investigation
 **Question:** what has to change architecturally so the interval between MIDI service opportunities is bounded at **25–30 ms** instead of the observed 500–2900 ms.
 
 **Contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) — this document supplies **Stage R1C** (remaining owner inventory) evidence and **Stage C** ceiling-derivation input. It does not replace the contract and does not start Stage A.
 **Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
-**Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Overdub lag plan (P1–P4)
+**Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Overdub companion admission and source-span prewarm
 
-**Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log)
+**Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log), [`161804`](../../captures/session_20260821_161804.log) (STOPPED undo + large-loop track switch; §34), [`162928`](../../captures/session_20260821_162928.log) (Overdub empty source view + 136 s `tracks` freeze; §35)
 
 ---
 
@@ -221,7 +221,7 @@ void SSD1322_API::display() {
   }
 ```
 
-This is `O(passes × loop_events)` plus `O(produced × cached)` with no cap. It is the `idle_append` 797–949 ms class. The current mitigation only *moves* it: `allowOverdubWrapAppend=false` during active states sets `deferredVisualCacheWrapAppendPending_`, and `applyDeferredVisualCacheWrapAppend` then runs the identical unbounded work in STOPPED idle. Deferral changes *when*, not *how much*.
+This is `O(passes × loop_events)` plus `O(produced × cached)` with no cap. It is the `idle_append` 797–949 ms class. [`161804`](../../captures/session_20260821_161804.log) measures the same owner after one STOPPED undo: `idle_append=905880` inside `idle_maint=1154362` (§34). The current mitigation only *moves* it: `allowOverdubWrapAppend=false` during active states sets `deferredVisualCacheWrapAppendPending_`, and `applyDeferredVisualCacheWrapAppend` then runs the identical unbounded work in STOPPED idle. Deferral changes *when*, not *how much*.
 
 ### C4 — Playback-window rebuild on the clock path
 
@@ -1133,6 +1133,210 @@ Follow-up from [`151555`](../../captures/session_20260821_151555.log):
 
 Success criteria: title drain reaches `Boot setup complete` without multi-minute `idle_gather`, and the main piano roll paints instead of staying black.
 
+## 34. STOPPED undo and large-loop track switch — same idle visual-cache owner ([`161804`](../../captures/session_20260821_161804.log))
+
+Boot first paint on this image is Device PASS: focus `slice_clean` 2638 notes at 10.9 s; first `DISP` visual=2638; `boot_commit=288557`. The same capture then proves two later hangs that share the STOPPED idle visual-cache path, not `boot_commit`.
+
+This section authorizes no firmware.
+
+### Finding 1 — one overdub undo occupies MIDI service and display
+
+At 182.955 s: `MIDI: Undo (entries=147)` → `Undo applied: kind=1` (`OverdubPassAdded`) → `Overdub undone`.
+
+`TrackUndo::applyUndoEntry` calls `Loop::refreshVisualCacheAfterPassStateChange()`. On a loop longer than 16 bars that function marks every bar dirty and returns. Immediate lines:
+
+| Marker | State |
+|---|---|
+| `VCACHE,stale` | notes=2638, dirty=1 |
+| `VCACHE,stale_all` | 68 bars dirty (`dsz=68,dcnt=68`) |
+| `PERS,request` | `loop:4` persist queued |
+
+STOPPED idle then runs `Track::processDeferredIdleMaintenance` → `Loop::rebuildVisualCacheIdleSlice` with `fallbackGatherEventBudget=0` and `allowOverdubWrapAppend=true`:
+
+| Marker | Duration |
+|---|---|
+| `idle_gather` | 215826 µs |
+| `idle_append` | **905880 µs** (`appendOverdubPassWrapPairedNotes`, C3 / owner #9) |
+| `idle_maint` (that turn) | **1154362 µs** |
+| later STOPPED `idle_gather` | 573307 / 497305 / 348454 / 261825 / 159181 µs |
+| first post-undo `DIAG,midi_gap` | **1193147 µs** (max child `idle_maint=1154362`) |
+
+Display and USB Host MIDI share that turn:
+
+- Last `DFRAME` before undo: 182.610 s. Next `DFRAME`: 186.656 s. No piano-roll frame for 4.0 s.
+- `hosttask` / `hostdrain` are not serviced during the gap.
+- Next Note36 at 185.112 s is delayed and expires as Play, not a second undo.
+
+After Play + overdub start (188.779 s) the capture hits `#CAPTURE_RECONNECT` and the board reboots. Repeating undo on this loop re-enters `refreshVisualCacheAfterPassStateChange()` → `stale_all` on all 68 bars → the same unbounded gather + wrap-append.
+
+### Finding 2 — track switch onto a large loop completes selection, then the display hangs
+
+`MidiButtonActions::handleSelectTrack` → `TrackManager::setSelectedTrack` → `DisplayManager::invalidateForSlotChange` → `Loop::invalidateDisplayCaches()`, which **clears `visualCache.notes`**. Boot no longer calls that wipe (`onBootSlotLoadComplete`). Track switch still does.
+
+Selection itself completes. In the second boot of [`161804`](../../captures/session_20260821_161804.log):
+
+| Time | Action | Immediate result |
+|---|---|---|
+| 24.581 s | switch → track 2 | 3 bars; first `DISP` visual=0 then `slice_clean` 64 notes |
+| 28.716 s | switch → track 3 | 4 bars; first `DISP` visual=0 then `slice_clean` 32 notes |
+| 29.284 s | switch → track 4 | 5 bars; first `DISP` visual=0 |
+| 29.903 s | switch → track 5 | 2 bars; first `DISP` visual=0 then `slice_clean` 4 notes |
+| 30.516 s | switch → track 6 | 4 bars; first `DISP` visual=0 then `slice_clean` 44 notes |
+| 31.189 s | switch → track 7 | **66 bars / 50688 ticks**; first `DISP` visual=**0**, 397 window notes; `cer_win=12566` µs |
+| 31.937 s | switch → track 8 | empty; `DISP` 0 notes |
+| 33.121 s | switch → track 1 | **68 bars / 52224 ticks**; `Switched to next track: 1`; 68-bar CC feedback |
+
+The 66-bar switch is the first long-loop case: first paint is a bounded window gather (`cer_win=12.5 ms`) with `visual=0`. There is no `slice_clean` before leaving that track. Small-track switches first-paint in tens of milliseconds once idle fills a few bars.
+
+The 68-bar switch at 33.121 s completes the same selection path (track index, LEDs, loop-length CC, `LOOP_EDIT` refresh). Observed device behavior: the switch is accepted, then the piano roll takes a long time and the display hangs. That hang is the same STOPPED owner already measured on this loop in Finding 1: empty visual cache after `invalidateDisplayCaches` + `rebuildVisualCacheIdleSlice` (`fallbackGatherEventBudget=0`, wrap-append on). Boot first paint avoided this wipe; track switch does not.
+
+Every switch also queues `requestWorkspaceFooterPersistWhenSafe` / `requestDeferredSaveState`. After the 66-bar switch the next `midi_gap` is 122943 µs (`persist_save=32640`). That is extra main-loop time, not the multi-second freeze.
+
+### Shared classification
+
+| Item | Owner | Class |
+|---|---|---|
+| Undo stale | `Loop::refreshVisualCacheAfterPassStateChange` → `markDisplayCachesStale` | invalidation; 68-bar `stale_all` |
+| Track-switch wipe | `DisplayManager::invalidateForSlotChange` → `Loop::invalidateDisplayCaches` | invalidation; clears `visualCache.notes` |
+| Hang | STOPPED `rebuildVisualCacheIdleSlice` (`idle_gather` + `idle_append`) | C2 + C3; unbounded (owners #7–#9, #19) |
+| Symptom | `midi_gap` + missing `DFRAME` + unserviced `hosttask`/`hostdrain` | one main-loop turn; not a second MIDI-host owner |
+
+Companion full projection remains Overdub-only and is not in these STOPPED windows.
+
+## 35. Companion admission and missing source-span prewarm ([`162928`](../../captures/session_20260821_162928.log))
+
+This section records the device failure after §32 companion-only projection shipped and after `754db31` repaired boot first-paint. It does not reopen §34's STOPPED undo/track-switch owner; that path is queued as §36 Stage C.
+
+### Session shape
+
+Transport start at 101.557 s on the 68-bar focus loop (`loopLength` 52224, `DISP` visual=2638). Overdub starts at 103.173 s. The capture is PLAYING → OVERDUBBING, not a STOPPED undo.
+
+### Finding 1 — overdub open hydrates an empty source view
+
+```
+ODUB,stage,begin_capture,88,…,ok
+DIAG,lcr,src,why=open,from=cache,win=0,proj=2,tot=2,ev=0,notes=0,bars=16,live=52224,prep=52224
+```
+
+`from=cache` is hardcoded in `Loop::rebuildOverdubSourceView` after the optional rebuild. It does not mean idle prewarm ran. `proj` / `tot` are `filterUs` (2 µs), not note counts.
+
+`Track::startOverdubbing` opens the session before capture:
+
+1. `Loop::openOverdubSession` sets `playheadPhaseTick`, so `hasOverdubSession()` is already true
+2. `Loop::beginCapture` → `establishOverdubSourceView` → `rebuildOverdubSourceSpanCache` when the cache is not ready
+
+`rebuildOverdubSourceSpanCache` then takes the session fallback: if prepared spans are unavailable and prior notes are empty, it **does not** full-materialize. It still sets `overdubSourceSpanCacheValid_ = true`. `begin_capture=88 µs` plus `notes=0` is that empty fallback, not a 2638-note materialize.
+
+### Finding 2 — occupy never selects for the rest of the overdub
+
+Every `DIAG,consume,select` in the run is `idsel=0` and `norow=ids`. Ledger has the notes (`led=2/6/5/…`); occupy stays `a=0`. Stop reports `Overdub stopped: events=0`. Musical overlap cannot be evaluated on this image.
+
+### Finding 3 — 136.77 s freeze inside `updateAllTracks`
+
+Last live tick before the hole is 1456 (105.348 s). Next tick is 1568 (242.327 s): about 112 ticks of music, 136 s of wall time.
+
+| Marker at 242.327 s | Value |
+|---|---|
+| `midi_input` / `clk` / `tracks` | **136769807 / 136769777 / 136769752 µs** |
+| `midi_gap` | 36 ms (remainder is not the owner) |
+| `playback_build` after resume | 2.8 ms (`768,1536`) |
+| USB Host | drain hit batch cap 128 |
+| `late_event,off` | 136609007 µs |
+
+This is C4 (clock-path). This log does not carry a `playback_build=136s` line, so the 136 s is not pinned to that one timer. The admission defect below is in the call chain regardless.
+
+### Finding 4 — companion full replay is now reachable from the clock-path gather
+
+`Loop::rebuildCompanionProjectionForCurrentRevision` still does a full-loop `mergeActiveCapturePasses` + `applyNoteEditPassSequence`. Boot already measured that replay at **66 s** (`cer_range` in §33).
+
+`gatherCommittedEventsInWindow` defaults `includeActiveEditRows=true`. `ensurePlaybackMergedMidiEventsBuilt` calls it from `playCommittedLoopMidi` for long loops (2-bar window). PLAYING stays on the legacy window (`playback_build=3.5 ms` at 101.690 s) because the companion gate is Overdub-only. The first Overdub-phase miss enters `tryCopyCompanionProjectedWindow`.
+
+`tryCopyCompanionProjectedWindow` returns true when companion-only rows exist, including when `companionProjectionEvents_` is empty. `copyEffectiveCommittedEventsInRange` and `advanceFallbackGatherSession` then skip legacy windowed gather.
+
+§32's fast path therefore did not replace the slow rebuild. It moved the same unbounded replay onto Overdub and can return empty and still suppress the legacy path.
+
+### Finding 5 — idle source-span prewarm was removed by the boot first-paint repair
+
+`Loop::prewarmOverdubSourceSpanCache` still exists. Nothing in `src/` calls it.
+
+`754db31` deleted the only call site from STOPPED idle in `Track::processDeferredIdleMaintenance`:
+
+```cpp
+if (!loop.visualCacheDirty) {
+  loop.prewarmOverdubSourceSpanCache();
+}
+```
+
+The replacement comment names `160519`: 768-event fallback plus span-cache prewarm after `slice_clean` hung the first piano-roll frame. That removal was intentional for boot first-paint. It broke the overdub-open contract that Finding 1 depends on: the session path refuses full materialize and expects prior cache notes from idle prewarm.
+
+`onBootSlotLoadComplete` no longer calling `invalidateForSlotChange` did not clear the span cache. The missing piece is this idle call.
+
+Do **not** restore the call on the same STOPPED turn after `slice_clean`. That is the `160519` hang.
+
+### Finding 6 — after stop, §34's STOPPED owner still has no prioritization
+
+Track switches complete, then the 68-bar loop pays `idle_gather=210883`, `idle_append=682853`, `idle_maint=5474511`, `midi_gap=5.56 s`. Same invalidation + unbounded idle owner as §34. Companion projection is Overdub-only and is not in that window. Fixing it by turning companion full replay on for STOPPED would move the 136 s freeze there.
+
+### Shared classification
+
+| Item | Owner | Class |
+|---|---|---|
+| Empty `why=open` | `rebuildOverdubSourceSpanCache` session fallback after `openOverdubSession` | correctness; prior notes empty because prewarm has no caller |
+| Occupy `norow` | source view `notes=0` | consequence of empty open |
+| 136 s freeze | `updateAllTracks` / clock-path gather | C4; companion full replay now reachable from `gatherCommittedEventsInWindow` |
+| Empty companion success | `tryCopyCompanionProjectedWindow` | skips legacy gather |
+| Missing prewarm | `Track::processDeferredIdleMaintenance` after `754db31` | call removed; function remains |
+| Post-stop hang | §34 visual-cache idle | queued; not this slice's first owner |
+
+## 36. Authorized firmware slice — companion clock-path admission + budgeted source-span prewarm
+
+**Status:** Authorized. Stage A shipped (native 1425/1425; `teensy41-capture-serial` RAM1 code 425580 / locals 4640). Stage B not shipped.
+**Debugging boundary:** trust §33/§34 boot first-paint and STOPPED undo/track-switch owners. Do not revisit `onBootSlotLoadComplete` wipe. Do not start incremental companion-representation work. Do not admit companion full replay onto STOPPED undo/track-switch.
+
+### Architecture checkpoint
+
+1. **Ownership change?** NO. Extend `tryCopyCompanionProjectedWindow`, `rebuildCompanionProjectionForCurrentRevision`, `copyEffectiveCommittedEventsInRange`, and `Track::processDeferredIdleMaintenance`. Restore the existing `Loop::prewarmOverdubSourceSpanCache` caller.
+2. **State transition change?** NO. Overdub open/stop and boot `boot_commit` transitions stay as they are. Prewarm changes *when* idle work runs, not when a session enters or leaves.
+
+### Invariant
+
+An Overdub companion miss must not block MIDI, must not count as a successful gather when projected events are empty, and first overdub open on a committed loop must hydrate a non-empty source view from a cache filled after boot first-paint — not from a same-turn `slice_clean` prewarm.
+
+### Stage A — companion gather admission (first commit)
+
+**Status:** Shipped (native). Device re-measure still open for Stage B.
+
+Owner: `Loop::tryCopyCompanionProjectedWindow` as consumed by `copyEffectiveCommittedEventsInRange` and `advanceFallbackGatherSession`.
+
+1. Clock-path gather (`ensurePlaybackMergedMidiEventsBuilt` → `gatherCommittedEventsInWindow`) keeps the existing 2-bar windowed gather. It must not call the full companion rebuild.
+2. `tryCopyCompanionProjectedWindow` returns false when the projection cache is not ready or `companionProjectionEvents_` is empty so legacy gather still runs.
+3. `tryCopyCompanionProjectedWindow` does not call `rebuildCompanionProjectionForCurrentRevision`. Clock-path and idle gather both miss to windowed apply.
+
+Native: `test_companion_projection_empty_cache_uses_legacy_window_gather` and `test_companion_projection_clock_path_window_does_not_rebuild` in `test_effective_event_store`.
+
+### Stage B — budgeted source-span prewarm restore (second commit)
+
+Owner: `Track::processDeferredIdleMaintenance` calling `Loop::prewarmOverdubSourceSpanCache`.
+
+1. Restore the call only when STOPPED, visual cache is already clean, `bootSlotLoadRefreshPending` is false / `boot_commit` has finished, and the prepared gate is not still building for this loop length (existing defer in `prewarmOverdubSourceSpanCache`).
+2. Do **not** call it in the same idle turn that reaches `slice_clean`, and do not pass a non-zero fallback gather budget into that visual-cache slice (`160519`).
+3. `rebuildOverdubSourceSpanCache` session fallback stays: no full materialize on the open path. Open must reuse prewarmed notes.
+
+Native: existing source-view tests that require a filled span cache before `openOverdubSession` stay green. Add a host assertion that `prewarmOverdubSourceSpanCache` is reached from STOPPED idle after a clean visual cache, and that `startOverdubbing` open then reports non-zero source-view notes when committed notes exist.
+
+Device: same 68-bar loop as [`162928`](../../captures/session_20260821_162928.log). Pass when `why=open` has `notes>0`, at least one `consume,select` has `norow=0`, and no Overdub `tracks` / `midi_input` sample in the 100 s class.
+
+### Stage C — queued, not this slice's first commit
+
+STOPPED undo / track-switch first-paint (§34): boot-style bounded window, do not wipe `visualCache.notes` on track switch, do not run `rebuildVisualCacheIdleSlice` with `fallbackGatherEventBudget=0` and wrap-append on. Do **not** route those paths through companion full replay.
+
+### Out of scope
+
+- Incremental companion paired-state / ablation work (§18–§30)
+- Changing `openOverdubSession` / `beginCapture` order
+- Re-enabling full materialize on the overdub-start path
+- Interval reservation / extra MIDI polls
+
 ## 32. Companion-only projection cache in window consumers
 
 This stage implements the first owner-local production slice for the companion
@@ -1180,6 +1384,9 @@ window+replay reference for the covered fixtures.
 - The first implementation uses a projection-only effective event cache for the
   companion-only gate and keeps the legacy replay fallback for all mixed-row
   windows.
+- Device follow-up: this path is reachable from clock-path
+  `gatherCommittedEventsInWindow` and can succeed with an empty event vector.
+  See §35 / authorized fix §36.
 
 ## 30. Final remaining slices batch: start/end tick requirements + final full native gate
 

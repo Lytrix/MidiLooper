@@ -222,7 +222,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::rebuildCompanionProjectionFor
 
   companionProjectionReady_ = true;
   companionProjectionCompanionOnlyRows_ = true;
-  return true;
+  return !companionProjectionEvents_.empty();
 }
 
 LOOP_COLD_MEM __attribute__((noinline)) bool Loop::tryCopyCompanionProjectedWindow(
@@ -233,7 +233,12 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::tryCopyCompanionProjectedWind
   if (loopLengthTicks == 0 || windowLength == 0) {
     return false;
   }
-  if (!rebuildCompanionProjectionForCurrentRevision()) {
+  // Copy a ready cache only. Rebuilding here is a full-loop
+  // applyNoteEditPassSequence and is reachable from clock-path
+  // gatherCommittedEventsInWindow (session_20260821_162928).
+  if (!companionProjectionReady_ ||
+      companionProjectionPlaybackRevision_ != playbackRevision ||
+      !companionProjectionCompanionOnlyRows_ || companionProjectionEvents_.empty()) {
     return false;
   }
   DisplayWindowUtils::filterMidiEventsToWindow(companionProjectionEvents_, out, windowStart,
