@@ -242,6 +242,36 @@ void test_disable_edit_pass_rebuild_restores_pre_edit_display() {
   TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 70, 64));
 }
 
+void test_session_open_without_prewarm_leaves_empty_source_view() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+}
+
+void test_prewarm_span_cache_then_session_open_has_source_notes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
+  loop.prewarmOverdubSourceSpanCache();
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+}
+
 void test_overdub_start_establishes_source_view() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2701,6 +2731,8 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
   RUN_TEST(test_disable_edit_pass_rebuild_restores_pre_edit_display);
+  RUN_TEST(test_session_open_without_prewarm_leaves_empty_source_view);
+  RUN_TEST(test_prewarm_span_cache_then_session_open_has_source_notes);
   RUN_TEST(test_overdub_start_establishes_source_view);
   RUN_TEST(test_overdub_enter_rebuilds_source_view_not_visual_cache);
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
