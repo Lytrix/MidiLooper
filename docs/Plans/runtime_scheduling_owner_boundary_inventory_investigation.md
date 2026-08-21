@@ -1020,6 +1020,39 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 25. NoteId ablation (renumbered identity vs stable identity)
+
+This stage tests whether stable `noteId` identity can be removed from the
+paired candidate while retaining all other proven-required context.
+
+Candidate:
+
+- `NoteIdAblatedCompanionState` keeps paired spans + `eventOrder` + channel +
+  velocity, but renumbers note IDs after each applied delta.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_note_id_ablation_divergence_boundary`
+
+Proven assertions:
+
+1. Seeded randomized histories contain deterministic divergence when note IDs
+   are renumbered after deltas.
+2. The same mismatching history remains equivalent under full paired state.
+3. The divergence has a deterministic boundary (`prefix N-1` equivalent,
+   `prefix N` divergent).
+
+Native result: **1417/1417**.
+
+Conclusion:
+
+- Stable note identity is required context for exact companion replay parity.
+- Removing or rewriting note IDs in the effective paired representation breaks
+  equivalence even when event-order, channel, and velocity are retained.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 24. Tick-ordered materialization ablation (derived order vs stored order)
 
 This stage tests whether explicit `eventOrder` tokens can be removed and
