@@ -1555,6 +1555,86 @@ bool contextAblatedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
   return true;
 }
 
+struct PitchAblatedCompanionState {
+  std::vector<CompanionEventSpan> spans;
+  std::vector<uint32_t> eventOrder;
+  bool keepPitch = true;
+
+  static void normalizeSpanPitch(CompanionEventSpan& span, bool keepPitchValue) {
+    if (!keepPitchValue) {
+      span.pitch = 60;
+    }
+  }
+
+  static PitchAblatedCompanionState fromEvents(const MidiEventVec& events, bool keepPitchValue) {
+    PitchAblatedCompanionState state;
+    state.keepPitch = keepPitchValue;
+    const PairedCompanionState paired = PairedCompanionState::fromEvents(events);
+    state.spans = paired.spans;
+    state.eventOrder = paired.eventOrder;
+    for (CompanionEventSpan& span : state.spans) {
+      normalizeSpanPitch(span, keepPitchValue);
+    }
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    events.reserve(spans.size() * 2u);
+    for (const uint32_t token : eventOrder) {
+      const size_t spanIndex = static_cast<size_t>(token / 2u);
+      if (spanIndex >= spans.size()) {
+        continue;
+      }
+      const CompanionEventSpan& span = spans[spanIndex];
+      if ((token & 1u) != 0u) {
+        events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+      } else {
+        events.push_back(sequenceNoteOnWithId(span.startTick, span.channel, span.pitch, span.velocity,
+                                              span.noteId));
+      }
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    PitchAblatedCompanionState nextState = PitchAblatedCompanionState::fromEvents(events, keepPitch);
+    spans = std::move(nextState.spans);
+    eventOrder = std::move(nextState.eventOrder);
+  }
+};
+
+bool pitchAblatedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                            const EditPassVec& history,
+                                            uint32_t loopLengthTicks,
+                                            bool keepPitch,
+                                            uint32_t* mismatchGenerationOut = nullptr) {
+  PitchAblatedCompanionState candidate =
+      PitchAblatedCompanionState::fromEvents(initialEvents, keepPitch);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!companionEventSpansEquivalent(expectedEvents, candidate.spans)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      candidate.applyCompanionDelta(history[cursor], loopLengthTicks);
+    }
+  }
+  return true;
+}
+
 std::vector<NoteId> collectChangedCompanionNoteIds(const ReducedCompanionState& before,
                                                    const ReducedCompanionState& after) {
   const NoteId ids[] = {
@@ -3941,6 +4021,33 @@ void test_incremental_companion_projection_context_ablation_channel_velocity_req
   TEST_ASSERT_EQUAL_UINT32(0u, mismatchGeneration);
 }
 
+void test_incremental_companion_projection_pitch_ablation_requirement() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionMixedChannelVelocityInitialEvents();
+
+  EditPassVec history = {
+      makeCompanionLengthRow(kCompanionMixedTargetNoteId, 600),
+      makeCompanionDeleteRow(kCompanionMixedOverlapNoteId),
+      makeCompanionLengthRow(kCompanionMixedWrapNoteId, 64),
+      makeCompanionLengthRow(kCompanionMixedTargetNoteId, 220),
+      makeCompanionDeleteRow(kCompanionMixedDifferentPitchNoteId),
+  };
+  assignCompanionHistoryIds(history, 22000);
+
+  uint32_t mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, history,
+                                                    kCompanionProjectionLoopLength,
+                                                    &mismatchGeneration));
+
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(pitchAblatedCompanionHistoryEquivalent(initialEvents, history,
+                                                           kCompanionProjectionLoopLength,
+                                                           false,
+                                                           &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(0u, mismatchGeneration);
+}
+
 void test_incremental_companion_projection_tick_ordered_materialize_divergence_boundary() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4245,6 +4352,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_paired_state_scenario51_generation13_equivalent);
   RUN_TEST(test_incremental_companion_projection_span_only_randomized_divergence_boundary);
   RUN_TEST(test_incremental_companion_projection_context_ablation_channel_velocity_requirements);
+  RUN_TEST(test_incremental_companion_projection_pitch_ablation_requirement);
   RUN_TEST(test_incremental_companion_projection_tick_ordered_materialize_divergence_boundary);
   RUN_TEST(test_incremental_companion_projection_note_id_ablation_divergence_boundary);
   RUN_TEST(test_incremental_companion_projection_derived_key_order_divergence_boundary);

@@ -1020,6 +1020,43 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 29. Pitch ablation requirement (mixed-metadata fixture)
+
+This stage tests whether pitch can be removed from the paired candidate while
+keeping all other proven-required context.
+
+Candidate:
+
+- `PitchAblatedCompanionState` keeps paired spans + `eventOrder` + stable
+  `noteId` + channel + velocity, but normalizes pitch in candidate state.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_pitch_ablation_requirement`
+
+Fixture details:
+
+- Uses `makeCompanionProjectionMixedChannelVelocityInitialEvents` (mixed pitch,
+  channel, and velocity metadata) and companion `Length`/`Delete` operations.
+
+Proven assertions:
+
+1. Full paired state remains equivalent on the same fixture/history.
+2. Pitch-ablated candidate diverges at generation `0`.
+
+Native status for this stage:
+
+- Focused gate: `pio test -e native -f test_edit_apply` passed.
+
+Conclusion:
+
+- Pitch is required context for exact replay parity in the paired candidate.
+- Removing pitch from stored effective state breaks equivalence immediately on
+  mixed-metadata fixtures.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 28. Same-tick-order ablation (tick buckets + intra-tick order only)
 
 This stage tests whether full explicit `eventOrder` can be reduced to:
