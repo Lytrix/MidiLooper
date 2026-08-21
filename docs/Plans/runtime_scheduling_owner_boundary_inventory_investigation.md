@@ -1037,37 +1037,38 @@ Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
 - `test_incremental_companion_projection_paired_state_operation_matrix`
 - `test_incremental_companion_projection_paired_state_randomized_divergence`
 
-Native result: **1412/1412**.
+Native result: **1413/1413**.
 
 Observed behavior:
 
-- The paired candidate matches `R(history)` on the deterministic operation
-  matrix.
-- The paired candidate still diverges on randomized replay with the fixed-seed
-  fixture (`first mismatch: scenario 51, generation 13`).
+- The paired candidate (`CompanionEventSpan` + `eventOrder`) matches `R(history)`
+  on the deterministic operation matrix.
+- After correcting `PairedCompanionState::applyCompanionDelta` to refresh both
+  `spans` and `eventOrder` from rematerialized events, the paired candidate also
+  matches the seeded randomized histories.
 
 Conclusion:
 
-- Adding per-note on/off pairing plus note-event ordering is still not
-  sufficient to preserve full ordered companion replay semantics across broader
-  histories.
-- The remaining semantics require additional context beyond this paired state
-  if replay is to be replaced while keeping behavior bit-for-bit.
+- The previously reported randomized divergence was caused by stale
+  `eventOrder` in the test candidate state, not by a semantic mismatch in
+  ordered companion replay.
+- With refreshed ordering state, this paired representation preserves
+  `R(history)` equivalence for the current deterministic + randomized + undo/redo
+  oracle coverage.
 
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
-## 21. Isolated deterministic divergence fixture (scenario 51 / generation 13)
+## 21. Deterministic scenario-51 regression fixture
 
-To isolate the randomized paired-state divergence into a deterministic oracle,
-the test suite now constructs the fixed-seed paired scenario directly and
-pins the exact divergence boundary:
+The fixed-seed scenario fixture is retained as a regression guard for the
+paired-state ordering correction:
 
-- `test_incremental_companion_projection_paired_state_scenario51_generation13_fixture`
+- `test_incremental_companion_projection_paired_state_scenario51_generation13_equivalent`
 - Seed: `0xA11CE`, scenario index: `51`
-- Boundary:
+- Boundary assertions:
   - prefix through generation `12`: equivalent
-  - prefix through generation `13`: divergent
+  - prefix through generation `13`: equivalent
 
 Implementation detail:
 
@@ -1079,11 +1080,10 @@ Native result: **1413/1413**.
 
 Conclusion:
 
-- The previously observed paired-state divergence is now reproducible with a
-  single deterministic fixture.
-- The replay condition is isolated to the generation-13 transition of that
-  fixed scenario, giving a stable target for deeper root-cause decomposition in
-  the next stage.
+- The fixed scenario now proves that generation-13 parity holds after the
+  ordering-state refresh fix.
+- This fixture guards against reintroducing stale ordering state in the paired
+  candidate while preserving deterministic reproducibility.
 
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.

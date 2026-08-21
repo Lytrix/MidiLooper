@@ -853,7 +853,9 @@ struct PairedCompanionState {
     }
     MidiEventVec events = materializeEvents();
     applyNoteEditPass(events, row, loopLengthTicks);
-    spans = PairedCompanionState::fromEvents(events).spans;
+    const PairedCompanionState nextState = PairedCompanionState::fromEvents(events);
+    spans = nextState.spans;
+    eventOrder = nextState.eventOrder;
   }
 };
 
@@ -3193,15 +3195,12 @@ void test_incremental_companion_projection_paired_state_operation_matrix() {
                  makeCompanionLengthRow(kCompanionTargetNoteId, 600)});
 }
 
-void test_incremental_companion_projection_paired_state_randomized_divergence() {
+void test_incremental_companion_projection_paired_state_randomized_history_and_undo_redo() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
   std::mt19937 rng(0xA11CEu);
 
-  uint32_t mismatchScenarios = 0;
-  uint32_t firstMismatchScenario = UINT32_MAX;
-  uint32_t firstMismatchGeneration = UINT32_MAX;
   for (uint32_t scenario = 0; scenario < 128; ++scenario) {
     const EditPassVec history = makeCompanionRandomizedHistoryScenario(
         rng, static_cast<EditPassId>(17000 + scenario * 64));
@@ -3209,20 +3208,17 @@ void test_incremental_companion_projection_paired_state_randomized_divergence() 
     const bool equivalent = pairedCompanionHistoryEquivalent(
         initialEvents, history, kCompanionProjectionLoopLength, &mismatchGeneration);
     if (!equivalent) {
-      ++mismatchScenarios;
-      if (firstMismatchScenario == UINT32_MAX) {
-        firstMismatchScenario = scenario;
-        firstMismatchGeneration = mismatchGeneration;
-      }
+      char message[176];
+      snprintf(message, sizeof(message),
+               "paired randomized companion history %u mismatch generation=%u",
+               static_cast<unsigned>(scenario),
+               static_cast<unsigned>(mismatchGeneration));
+      TEST_FAIL_MESSAGE(message);
     }
   }
-
-  TEST_ASSERT_TRUE(mismatchScenarios > 0u);
-  TEST_ASSERT_EQUAL_UINT32(51u, firstMismatchScenario);
-  TEST_ASSERT_EQUAL_UINT32(13u, firstMismatchGeneration);
 }
 
-void test_incremental_companion_projection_paired_state_scenario51_generation13_fixture() {
+void test_incremental_companion_projection_paired_state_scenario51_generation13_equivalent() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
@@ -3244,10 +3240,9 @@ void test_incremental_companion_projection_paired_state_scenario51_generation13_
 
   const EditPassVec prefix13 = companionHistoryPrefix(scenarioHistory, 13);
   mismatchGeneration = UINT32_MAX;
-  TEST_ASSERT_FALSE(pairedCompanionHistoryEquivalent(initialEvents, prefix13,
-                                                     kCompanionProjectionLoopLength,
-                                                     &mismatchGeneration));
-  TEST_ASSERT_EQUAL_UINT32(13u, mismatchGeneration);
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, prefix13,
+                                                    kCompanionProjectionLoopLength,
+                                                    &mismatchGeneration));
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -3308,7 +3303,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_reduced_state_minimal_geometry_diverges);
   RUN_TEST(test_incremental_companion_projection_reduced_state_randomized_divergence);
   RUN_TEST(test_incremental_companion_projection_paired_state_operation_matrix);
-  RUN_TEST(test_incremental_companion_projection_paired_state_randomized_divergence);
-  RUN_TEST(test_incremental_companion_projection_paired_state_scenario51_generation13_fixture);
+  RUN_TEST(test_incremental_companion_projection_paired_state_randomized_history_and_undo_redo);
+  RUN_TEST(test_incremental_companion_projection_paired_state_scenario51_generation13_equivalent);
   return UNITY_END();
 }
