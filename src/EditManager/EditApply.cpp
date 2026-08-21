@@ -8,9 +8,109 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <vector>
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#include "Utils/DebugSessionCapture.h"
+#include <Arduino.h>
+#endif
+
+// Keep diagnostic format strings out of DTCM .rodata — see RT_TAG in RuntimeTimingTelemetry.
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define EDIT_DIAG_FMT(literal) PSTR(literal)
+#else
+#define EDIT_DIAG_FMT(literal) literal
+#endif
+
 namespace {
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+// Which branch of applyChangeLengthById runs. Only the lengthen branch calls
+// NoteUtils::reconstructNotes over the whole event vector; the shorten branch returns early.
+uint32_t g_lengthenPathCount = 0;
+uint32_t g_shortenPathCount = 0;
+uint32_t g_noOpPathCount = 0;
+uint32_t g_reconstructUs = 0;
+
+void resetLengthPathCounters() {
+  g_lengthenPathCount = 0;
+  g_shortenPathCount = 0;
+  g_noOpPathCount = 0;
+  g_reconstructUs = 0;
+}
+#endif
+
+struct NoteOnIndexLookupCache {
+  std::vector<std::pair<NoteId, int>> entries;
+};
+
+void clearNoteOnIndexLookupCache(NoteOnIndexLookupCache* cache) {
+  if (cache != nullptr) {
+    cache->entries.clear();
+  }
+}
+
+bool lookupNoteOnIndexFromCache(const MidiEventVec& events, NoteId noteId,
+                                NoteOnIndexLookupCache* cache, int& outIndex) {
+  if (cache == nullptr || noteId == kInvalidNoteId || cache->entries.empty()) {
+    return false;
+  }
+  auto it = std::lower_bound(
+      cache->entries.begin(), cache->entries.end(), noteId,
+      [](const std::pair<NoteId, int>& entry, NoteId id) { return entry.first < id; });
+  if (it == cache->entries.end() || it->first != noteId) {
+    return false;
+  }
+  const int cachedIndex = it->second;
+  if (cachedIndex >= 0 && static_cast<size_t>(cachedIndex) < events.size() &&
+      events[static_cast<size_t>(cachedIndex)].isNoteOn() &&
+      events[static_cast<size_t>(cachedIndex)].noteId == noteId) {
+    outIndex = cachedIndex;
+    return true;
+  }
+  cache->entries.erase(it);
+  return false;
+}
+
+void storeNoteOnIndexInCache(NoteId noteId, int index, NoteOnIndexLookupCache* cache) {
+  if (cache == nullptr || noteId == kInvalidNoteId || index < 0) {
+    return;
+  }
+  auto it = std::lower_bound(
+      cache->entries.begin(), cache->entries.end(), noteId,
+      [](const std::pair<NoteId, int>& entry, NoteId id) { return entry.first < id; });
+  if (it != cache->entries.end() && it->first == noteId) {
+    it->second = index;
+    return;
+  }
+  cache->entries.insert(it, std::make_pair(noteId, index));
+}
+
+int findNoteOnByIdLinear(const MidiEventVec& events, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (events[i].isNoteOn() && events[i].noteId == noteId) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+int findNoteOnByIdCached(const MidiEventVec& events, NoteId noteId,
+                         NoteOnIndexLookupCache* cache) {
+  int cachedIndex = -1;
+  if (lookupNoteOnIndexFromCache(events, noteId, cache, cachedIndex)) {
+    return cachedIndex;
+  }
+  const int resolvedIndex = findNoteOnByIdLinear(events, noteId);
+  if (resolvedIndex >= 0) {
+    storeNoteOnIndexInCache(noteId, resolvedIndex, cache);
+  }
+  return resolvedIndex;
+}
 
 uint32_t inferLoopLength(const MidiEventVec& events, uint32_t hint) {
   if (hint > 0) {
@@ -179,8 +279,9 @@ void eraseEventIndices(MidiEventVec& events, std::vector<int> indices) {
   }
 }
 
-void applyDeleteNoteById(MidiEventVec& events, NoteId noteId, uint32_t loopLength) {
-  const int onIndex = findNoteOnById(events, noteId);
+void applyDeleteNoteById(MidiEventVec& events, NoteId noteId, uint32_t loopLength,
+                         NoteOnIndexLookupCache* cache) {
+  const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   if (onIndex < 0) {
     return;
   }
@@ -195,11 +296,12 @@ void applyDeleteNoteById(MidiEventVec& events, NoteId noteId, uint32_t loopLengt
     remove.push_back(wrapOff);
   }
   eraseEventIndices(events, remove);
+  clearNoteOnIndexLookupCache(cache);
 }
 
 void applyMoveNoteById(MidiEventVec& events, NoteId noteId, uint32_t newStart, uint32_t newEnd,
-                       uint32_t loopLength) {
-  const int onIndex = findNoteOnById(events, noteId);
+                       uint32_t loopLength, NoteOnIndexLookupCache* cache) {
+  const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   if (onIndex < 0) {
     return;
   }
@@ -217,11 +319,12 @@ void applyMoveNoteById(MidiEventVec& events, NoteId noteId, uint32_t newStart, u
   if (wrapOff >= 0 && lifoOff >= 0 && lifoOff != wrapOff) {
     eraseEventIndices(events, {lifoOff});
   }
+  clearNoteOnIndexLookupCache(cache);
 }
 
 void applyChangePitchById(MidiEventVec& events, NoteId noteId, uint8_t newPitch,
-                          uint32_t loopLength) {
-  const int onIndex = findNoteOnById(events, noteId);
+                          uint32_t loopLength, NoteOnIndexLookupCache* cache) {
+  const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   if (onIndex < 0) {
     return;
   }
@@ -236,24 +339,44 @@ void applyChangePitchById(MidiEventVec& events, NoteId noteId, uint8_t newPitch,
   }
 }
 
-void applyChangeVelocityById(MidiEventVec& events, NoteId noteId, uint8_t newVelocity) {
-  const int onIndex = findNoteOnById(events, noteId);
+void applyChangeVelocityById(MidiEventVec& events, NoteId noteId, uint8_t newVelocity,
+                             NoteOnIndexLookupCache* cache) {
+  const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   if (onIndex >= 0) {
     events[static_cast<size_t>(onIndex)].data.noteData.velocity = newVelocity;
   }
 }
 
-void shortenNoteEndById(MidiEventVec& events, NoteId noteId, uint32_t newEndTick) {
-  const int onIndex = findNoteOnById(events, noteId);
+void shortenNoteEndById(MidiEventVec& events, NoteId noteId, uint32_t newEndTick,
+                        NoteOnIndexLookupCache* cache) {
+  const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   const int offIndex = findNoteOffForOnIndex(events, onIndex);
   if (offIndex >= 0) {
     events[static_cast<size_t>(offIndex)].tick = newEndTick;
   }
 }
 
+// The lengthen branch only inspects reconstructed notes that share the edited note's pitch, and
+// reconstruction is pitch-local end to end: pairing keys on activeNoteStacks[pitch], projection is
+// span-local, and dedupe keys on (note, startTick, endTick). Reconstructing every pitch is
+// therefore discarded work, and it is superlinear — an unpaired note-off sends
+// tryPairWrappedTailOn back over the whole event vector — so a full reconstruct cost ~576 ms per
+// call at 2513 events (session_20260821_112151: 70 calls, 40.3 s of a 51.1 s replay).
+NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> reconstructNotesForPitch(
+    const MidiEventVec& events, uint8_t pitch, uint32_t loopLength) {
+  MidiEventVec pitchEvents;
+  pitchEvents.reserve(events.size());
+  for (const MidiEvent& evt : events) {
+    if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == pitch) {
+      pitchEvents.push_back(evt);
+    }
+  }
+  return NoteUtils::reconstructNotes(pitchEvents, loopLength, false);
+}
+
 void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
-                           uint32_t loopLength) {
-  const int onIndex = findNoteOnById(events, noteId);
+                           uint32_t loopLength, NoteOnIndexLookupCache* cache) {
+  const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   if (onIndex < 0) {
     return;
   }
@@ -268,19 +391,32 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   }
 
   if (newEnd == refEnd) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    ++g_noOpPathCount;
+#endif
     return;
   }
 
   if (newEnd < refEnd) {
-    shortenNoteEndById(events, noteId, newEnd);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    ++g_shortenPathCount;
+#endif
+    shortenNoteEndById(events, noteId, newEnd, cache);
     return;
   }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  ++g_lengthenPathCount;
+  const uint32_t reconstructStartUs = micros();
+#endif
   const uint32_t newStart = refStart;
   const uint32_t displayNewEnd = (newEnd > loopLength) ? (newEnd % loopLength) : newEnd;
 
   const std::vector<NoteUtils::DisplayNote> allNotes =
-      NoteUtils::reconstructNotes(events, loopLength, false);
+      reconstructNotesForPitch(events, onEvt.data.noteData.note, loopLength);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  g_reconstructUs += micros() - reconstructStartUs;
+#endif
   std::vector<NoteUtils::DisplayNote> notesToDelete;
   std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
 
@@ -332,13 +468,13 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   }
 
   for (const auto& [note, shortenedEnd] : notesToShorten) {
-    shortenNoteEndById(events, note.noteId, shortenedEnd);
+    shortenNoteEndById(events, note.noteId, shortenedEnd, cache);
   }
   for (const NoteUtils::DisplayNote& note : notesToDelete) {
-    applyDeleteNoteById(events, note.noteId, loopLength);
+    applyDeleteNoteById(events, note.noteId, loopLength, cache);
   }
 
-  const int refreshedOnIndex = findNoteOnById(events, noteId);
+  const int refreshedOnIndex = findNoteOnByIdCached(events, noteId, cache);
   const int refreshedOffIndex = findNoteOffForOnIndex(events, refreshedOnIndex);
   if (refreshedOffIndex >= 0) {
     events[static_cast<size_t>(refreshedOffIndex)].tick = newEnd;
@@ -351,28 +487,107 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   NoteUtils::orderSamePitchNoteOffsForLifo(events, onEvt.channel, onEvt.data.noteData.note);
   std::stable_sort(events.begin(), events.end(),
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  clearNoteOnIndexLookupCache(cache);
 }
 
-void applyAddNote(MidiEventVec& events, const MidiEventVec& addedEvents) {
+void applyAddNote(MidiEventVec& events, const MidiEventVec& addedEvents,
+                  NoteOnIndexLookupCache* cache) {
   for (const MidiEvent& evt : addedEvents) {
     events.push_back(evt);
   }
   std::sort(events.begin(), events.end(),
             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  clearNoteOnIndexLookupCache(cache);
+}
+
+void collectPresentNoteIds(const MidiEventVec& events, std::vector<NoteId>& noteIds) {
+  noteIds.clear();
+  noteIds.reserve(events.size());
+  for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
+      continue;
+    }
+    noteIds.push_back(evt.noteId);
+  }
+  std::sort(noteIds.begin(), noteIds.end());
+  noteIds.erase(std::unique(noteIds.begin(), noteIds.end()), noteIds.end());
+}
+
+bool containsPresentNoteId(const std::vector<NoteId>& noteIds, NoteId noteId) {
+  if (noteId == kInvalidNoteId || noteIds.empty()) {
+    return false;
+  }
+  return std::binary_search(noteIds.begin(), noteIds.end(), noteId);
+}
+
+void insertPresentNoteId(std::vector<NoteId>& noteIds, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return;
+  }
+  const auto it = std::lower_bound(noteIds.begin(), noteIds.end(), noteId);
+  if (it == noteIds.end() || *it != noteId) {
+    noteIds.insert(it, noteId);
+  }
+}
+
+void erasePresentNoteId(std::vector<NoteId>& noteIds, NoteId noteId) {
+  if (noteId == kInvalidNoteId || noteIds.empty()) {
+    return;
+  }
+  const auto it = std::lower_bound(noteIds.begin(), noteIds.end(), noteId);
+  if (it != noteIds.end() && *it == noteId) {
+    noteIds.erase(it);
+  }
+}
+
+bool isContiguousCollapsibleUpdate(const EditPass& row) {
+  if (row.actionType != EditActionType::Update || row.targetNoteId == kInvalidNoteId) {
+    return false;
+  }
+  return row.propertyType == EditPropertyType::Velocity ||
+         row.propertyType == EditPropertyType::Pitch;
+}
+
+NOTE_EDIT_MEM void planContiguousCollapsedRows(const EditPassVec& rows,
+                                               std::vector<const EditPass*>& plannedRows,
+                                               uint32_t& rowsCollapsedOut) {
+  plannedRows.clear();
+  plannedRows.reserve(rows.size());
+  rowsCollapsedOut = 0;
+  size_t i = 0;
+  while (i < rows.size()) {
+    const EditPass& row = rows[i];
+    if (!isContiguousCollapsibleUpdate(row)) {
+      plannedRows.push_back(&row);
+      ++i;
+      continue;
+    }
+
+    size_t last = i;
+    size_t j = i + 1;
+    while (j < rows.size()) {
+      const EditPass& candidate = rows[j];
+      if (!isContiguousCollapsibleUpdate(candidate)) {
+        break;
+      }
+      if (candidate.targetNoteId != row.targetNoteId ||
+          candidate.propertyType != row.propertyType) {
+        break;
+      }
+      last = j;
+      ++j;
+    }
+
+    plannedRows.push_back(&rows[last]);
+    rowsCollapsedOut += static_cast<uint32_t>(last - i);
+    i = j;
+  }
 }
 
 }  // namespace
 
 int findNoteOnById(const MidiEventVec& events, NoteId noteId) {
-  if (noteId == kInvalidNoteId) {
-    return -1;
-  }
-  for (size_t i = 0; i < events.size(); ++i) {
-    if (events[i].isNoteOn() && events[i].noteId == noteId) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
+  return findNoteOnByIdLinear(events, noteId);
 }
 
 PersistIdentityResolve resolvePersistIdentityForExistingNote(
@@ -450,31 +665,40 @@ PersistIdentityReconcileResult reconcileMoverPersistIdentity(
 }
 
 void deleteNoteById(MidiEventVec& events, NoteId noteId) {
-  applyDeleteNoteById(events, noteId, 0);
+  applyDeleteNoteById(events, noteId, 0, nullptr);
 }
 
-void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks) {
+void applyNoteEditPassWithLookupCache(MidiEventVec& events, const EditPass& editPass,
+                                      uint32_t loopLengthTicks,
+                                      NoteOnIndexLookupCache* lookupCache) {
   switch (editPass.actionType) {
     case EditActionType::Delete:
-      applyDeleteNoteById(events, editPass.targetNoteId, loopLengthTicks);
+      applyDeleteNoteById(events, editPass.targetNoteId, loopLengthTicks, lookupCache);
+      // Positional cache entries become unsafe after structural mutations.
+      clearNoteOnIndexLookupCache(lookupCache);
       break;
     case EditActionType::Create:
-      applyAddNote(events, editPass.addedEvents);
+      applyAddNote(events, editPass.addedEvents, lookupCache);
+      clearNoteOnIndexLookupCache(lookupCache);
       break;
     case EditActionType::Update:
       switch (editPass.propertyType) {
         case EditPropertyType::NoteRange:
           applyMoveNoteById(events, editPass.targetNoteId, editPass.startTick, editPass.endTick,
-                            loopLengthTicks);
+                            loopLengthTicks, lookupCache);
+          clearNoteOnIndexLookupCache(lookupCache);
           break;
         case EditPropertyType::Length:
-          applyChangeLengthById(events, editPass.targetNoteId, editPass.endTick, loopLengthTicks);
+          applyChangeLengthById(events, editPass.targetNoteId, editPass.endTick, loopLengthTicks,
+                                lookupCache);
+          clearNoteOnIndexLookupCache(lookupCache);
           break;
         case EditPropertyType::Pitch:
-          applyChangePitchById(events, editPass.targetNoteId, editPass.pitch, loopLengthTicks);
+          applyChangePitchById(events, editPass.targetNoteId, editPass.pitch, loopLengthTicks,
+                               lookupCache);
           break;
         case EditPropertyType::Velocity:
-          applyChangeVelocityById(events, editPass.targetNoteId, editPass.velocity);
+          applyChangeVelocityById(events, editPass.targetNoteId, editPass.velocity, lookupCache);
           break;
         default:
           break;
@@ -483,20 +707,163 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
   }
 }
 
-void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
-                               uint32_t loopLengthTicks) {
+void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks) {
+  applyNoteEditPassWithLookupCache(events, editPass, loopLengthTicks, nullptr);
+}
+
+NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
+                                             uint32_t loopLengthTicks) {
   // Rows locate their note by targetNoteId, so startTick / endTick are payload only. Before
   // stable NoteId they doubled as the span lookup key and a later row had to be re-pointed at
   // an earlier row's span; carrying that rewrite forward overwrote the payload of a second row
   // for the same note.
-  for (const EditPass& row : rows) {
-    applyNoteEditPass(events, row, loopLengthTicks);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  // Which executed applies actually cost the time. Duplicate Hide rows are already skipped by
+  // the presentNoteIds guard, so the population count alone does not predict cost
+  // (session_20260821_110842: 1694 rows, 45.4 s).
+  constexpr uint32_t kSequenceReportUs = 10000u;
+  const uint32_t sequenceStartUs = micros();
+  uint32_t phaseStartUs = sequenceStartUs;
+  uint32_t planUs = 0;
+  uint32_t collectUs = 0;
+  uint32_t guardUs = 0;
+  uint32_t deleteUs = 0;
+  uint32_t lengthUs = 0;
+  uint32_t otherUs = 0;
+  uint32_t rowsSkipped = 0;
+  uint32_t deletesExecuted = 0;
+  uint32_t lengthsExecuted = 0;
+  resetLengthPathCounters();
+#endif
+  std::vector<const EditPass*> plannedRows;
+  uint32_t rowsCollapsed = 0;
+  planContiguousCollapsedRows(rows, plannedRows, rowsCollapsed);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  planUs = micros() - phaseStartUs;
+  phaseStartUs = micros();
+#endif
+
+  std::vector<NoteId> presentNoteIds;
+  collectPresentNoteIds(events, presentNoteIds);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  collectUs = micros() - phaseStartUs;
+#endif
+  NoteOnIndexLookupCache noteOnLookupCache;
+  noteOnLookupCache.entries.reserve(plannedRows.size());
+  uint32_t rowsExecuted = 0;
+  for (const EditPass* rowPtr : plannedRows) {
+    if (rowPtr == nullptr) {
+      continue;
+    }
+    const EditPass& row = *rowPtr;
+    if (row.actionType == EditActionType::Delete ||
+        row.actionType == EditActionType::Update) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      const uint32_t guardStartUs = micros();
+      const bool targetPresent = containsPresentNoteId(presentNoteIds, row.targetNoteId);
+      guardUs += micros() - guardStartUs;
+      if (!targetPresent) {
+        ++rowsSkipped;
+        clearNoteOnIndexLookupCache(&noteOnLookupCache);
+        continue;
+      }
+#else
+      if (!containsPresentNoteId(presentNoteIds, row.targetNoteId)) {
+        clearNoteOnIndexLookupCache(&noteOnLookupCache);
+        continue;
+      }
+#endif
+    }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    const uint32_t applyStartUs = micros();
+#endif
+    applyNoteEditPassWithLookupCache(events, row, loopLengthTicks, &noteOnLookupCache);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    {
+      const uint32_t applyUs = micros() - applyStartUs;
+      if (row.actionType == EditActionType::Delete) {
+        deleteUs += applyUs;
+        ++deletesExecuted;
+      } else if (row.actionType == EditActionType::Update &&
+                 row.propertyType == EditPropertyType::Length) {
+        lengthUs += applyUs;
+        ++lengthsExecuted;
+      } else {
+        otherUs += applyUs;
+      }
+    }
+#endif
+    ++rowsExecuted;
+    switch (row.actionType) {
+      case EditActionType::Delete:
+        erasePresentNoteId(presentNoteIds, row.targetNoteId);
+        break;
+      case EditActionType::Create:
+        for (const MidiEvent& evt : row.addedEvents) {
+          if (evt.isNoteOn()) {
+            insertPresentNoteId(presentNoteIds, evt.noteId);
+          }
+        }
+        break;
+      case EditActionType::Update:
+        break;
+    }
   }
+  (void)rowsCollapsed;
+  (void)rowsExecuted;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  {
+    const uint32_t sequenceUs = micros() - sequenceStartUs;
+    if (sequenceUs >= kSequenceReportUs) {
+      // Must fit kMaxCaptureTextBytes (192) including the #CAP prefix — a longer line is
+      // silently clipped by queueCaptureTextLine. plan/collect/guard/other and the
+      // planned/exec/skip/present counts are already measured and negligible.
+      char line[192];
+      snprintf(line, sizeof(line),
+               EDIT_DIAG_FMT("#CAP,%lu,DIAG,cer_edit,us=%lu,del=%lu,ulen=%lu,recon=%lu,ndel=%u,"
+                             "nlen=%u,lgth=%u,shrt=%u,noop=%u,ev=%u"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(sequenceUs),
+               static_cast<unsigned long>(deleteUs), static_cast<unsigned long>(lengthUs),
+               static_cast<unsigned long>(g_reconstructUs),
+               static_cast<unsigned>(deletesExecuted), static_cast<unsigned>(lengthsExecuted),
+               static_cast<unsigned>(g_lengthenPathCount),
+               static_cast<unsigned>(g_shortenPathCount),
+               static_cast<unsigned>(g_noOpPathCount), static_cast<unsigned>(events.size()));
+      DebugSessionCapture::appendCaptureTextLine(line);
+    }
+  }
+#endif
 }
 
-void applyNoteEditPassSequence(SessionMidiEventVec& events, const EditPassVec& rows,
-                               uint32_t loopLengthTicks) {
+NOTE_EDIT_MEM void applyNoteEditPassSequence(SessionMidiEventVec& events, const EditPassVec& rows,
+                                             uint32_t loopLengthTicks) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t wrapStartUs = micros();
+#endif
   MidiEventVec scratch(events.begin(), events.end());
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t copyInUs = micros() - wrapStartUs;
+  const uint32_t coreStartUs = micros();
+#endif
   applyNoteEditPassSequence(scratch, rows, loopLengthTicks);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const uint32_t coreUs = micros() - coreStartUs;
+  const uint32_t copyOutStartUs = micros();
+#endif
   events.assign(scratch.begin(), scratch.end());
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  {
+    const uint32_t copyOutUs = micros() - copyOutStartUs;
+    const uint32_t wrapUs = micros() - wrapStartUs;
+    if (wrapUs >= 10000u) {
+      char line[224];
+      snprintf(line, sizeof(line),
+               EDIT_DIAG_FMT("#CAP,%lu,DIAG,cer_copy,us=%lu,copyin=%lu,core=%lu,copyout=%lu,ev=%u"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(wrapUs),
+               static_cast<unsigned long>(copyInUs), static_cast<unsigned long>(coreUs),
+               static_cast<unsigned long>(copyOutUs), static_cast<unsigned>(events.size()));
+      DebugSessionCapture::appendCaptureTextLine(line);
+    }
+  }
+#endif
 }

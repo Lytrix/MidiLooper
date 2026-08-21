@@ -598,3 +598,231 @@ DIAG,cer_win,us=…,span=…,copy=…,filter=…,lists=…,chunks=…,nospan=…
 This separates the three per-chunk calls (`span` = `chunkTickSpan` plus the intersect test, `copy` = `appendChunkRefEvent`, `filter` = `filterMidiEventsToWindow`) and reports the traversal shape: lists collected, chunks visited, chunks rejected for missing span, chunks rejected as outside the window, chunks copied, events copied pre-filter, events emitted. Those counts decide between the remaining candidates — a chunk population far larger than the emitted event count, versus a per-event memory cost — without further guessing.
 
 `DIAG,cer_` added to the `CaptureLineTier` Tier-A prefixes with coverage in `test_capture_line_tier`, alongside the `disp_win` / `disp_full` / `disp_res_cmt` / `lframe_reclaim` cases that had no test. Format strings route through `CER_DIAG_FMT`; RAM1 unchanged at **4640** bytes. Native **1406/1406**.
+
+### Measured results — [`103826`](../../captures/session_20260821_103826.log)
+
+**The traversal is not the owner either.** 29 `cer_win` lines, and the largest in the entire capture is **62 213 µs**. The boot resolve in the same capture:
+
+```
+DIAG,disp_win,us=34951148,gather=34568381,recon=44730,append=337210,filter=827,ev=2087,notes=1079,ws=0,wl=13824
+```
+
+`gather` is **34 568 381 µs**. The `cer_win` line before it is at 13.518 s and the next is at 48.715 s, so across the entire 34.6 s gather `appendWindowBudgeted` **never crossed the 10 ms threshold once**. The traversal is therefore not where the time goes.
+
+Traversal shape in steady state, for the record: `lists` **105–106**, `chunks` 48–115, `nospan` **0** in every line, `outside` 29–97, `copied` 15–85, `evcopy` 778–5436, `evout` 507–4590, with `span` 1.1–3.7 ms, `copy` 1.7–7.9 ms, `filter` 0.9–3.3 ms. The three sub-phases account for the whole `us` in every line, so the traversal is internally consistent and bounded at tens of milliseconds. Its real problem is `lists=106` — 106 active committed passes walked per paint — not the per-chunk work.
+
+**Where the 34.6 s must be.** `gather` calls exactly one of two entry points, and `cer_win` excludes the traversal inside both. The remaining unmeasured code is:
+
+- `copyEffectiveCommittedEventsInRange` siblings — `collectActiveCommittedChunkLists` and the `std::sort` over the emitted events. Reading both: the collect is a linear pass over `passes.overdubPasses` plus a sort of 106 pointers, and the event sort covers 2087 entries. Neither is seconds.
+- `gatherCommittedEventsInWindowWithCapture`'s capture tail, which `rebuildDisplayNotesInWindow` reaches because it passes `includeActiveCapture = true`. This path was never read in §12 and is **unwindowed**: `ensureCaptureEventsSorted()` then `capture.store.copyEventsTo(captureFlat)` copies the **entire** capture store before `filterMidiEventsToWindow` reduces it to the window.
+
+**Correction to §12 and its measured results.** Two owner attributions have now been withdrawn — first `appendOverdubPassDisplayNotes` (1.2 %), then `CommittedEventRange::appendWindowBudgeted` (≤ 62 ms against 34.6 s). Both were narrowed by measurement rather than reasoning, and in both cases reading the call graph had suggested the wrong answer. The remaining candidate set is small enough that the next capture closes it.
+
+### Instrumentation shipped for full `gather` attribution
+
+- `DIAG,cer_range,us=…,collect=…,append=…,sort=…,lists=…,evout=…` — splits `copyEffectiveCommittedEventsInRange` into collect, traversal, and event sort.
+- `DIAG,cer_cap,us=…,committed=…,sort=…,copy=…,filter=…,merge=…,capflat=…,capwin=…,evout=…` — splits the capture tail into the committed gather, `ensureCaptureEventsSorted`, `copyEventsTo`, window filter, and `std::merge`, emitted at **every** early return so a tail that exits before the merge still reports.
+- `cap=0|1` added to `disp_win` to record which entry point `gather` took, removing the last ambiguity about which of the two paths ran.
+
+Both new tags fall under the existing `DIAG,cer_` Tier-A prefix. `capflat` is the decisive count: it reports how many events `copyEventsTo` moved before the window filter, which is what distinguishes an unwindowed full-store copy from a bounded one. RAM1 unchanged at **4640** bytes. Native **1406/1406**.
+
+Note this slice edits `LoopMaterialization.cpp`, which carries uncommitted in-progress work; the instrumentation is additive and `#if`-gated, but the file is shared with that refactor.
+
+### Measured results — [`104301`](../../captures/session_20260821_104301.log)
+
+```
+DIAG,disp_win,us=38017312,gather=37624998,recon=44405,append=347068,filter=840,ev=2120,notes=1091,ws=0,wl=13824,cap=0
+```
+
+`cap=0` — the capture tail was **not** taken, so `gatherCommittedEventsInWindowWithCapture` is eliminated and `DIAG,cer_cap` is correctly absent. `gather` is **37 624 998 µs**. Yet only two `cer_range` lines exist, the larger being 83 904 µs (`collect` 168, `append` 62 694, `sort` 21 040, `lists` 112, `evout` 4734), and the largest `cer_win` is 62 362 µs.
+
+**The owner is `applyNoteEditPassSequence`.** The `cer_range` emit was placed after the `std::sort` but *before* the `includeActiveEditRows` block, so it excluded the edit projection. The display path calls the three-argument `gatherCommittedEventsInWindow`, and the in-flight refactor defaults `includeActiveEditRows` to **`true`** — so every windowed committed gather on the paint path runs the full note-edit projection. With `collect`, `append`, `sort` and the capture tail all measured and bounded, the edit block is the only remaining statement in the call.
+
+**Correction: §12's elimination of the gather tail was wrong.** §12 stated that `includeActiveEditRows` defaults false on the display call and used that as independent confirmation that the multi-second resolve was not the `advanceFallbackGatherSession` tail. The default is `true`. Both paths converge on the *same* owner: `applyNoteEditPassSequence`, which §10 measured as the unbudgeted `gather_edit` phase at 0.60–1.11 s. The original L3 attribution was right; three intermediate attributions (`appendOverdubPassDisplayNotes`, `appendWindowBudgeted`, the capture tail) were not.
+
+**Why it reaches tens of seconds.** The display path passes a `SessionMidiEventVec`, so it enters the overload that copies the entire vector into a `MidiEventVec` scratch, applies the rows, and copies back. Inside, each planned row runs `applyNoteEditPassWithLookupCache` over the whole event vector, and `collectPresentNoteIds` / `containsPresentNoteId` add linear scans per row. Cost therefore grows with row count × event count, with vector mutation inside the inner apply. §10 measured 1.11 s at `rows` 1534 / `ev` 518; this window carries 2120 events, and `rows=` on the next capture pins the multiplier.
+
+### Instrumentation correction shipped
+
+`cer_range` now brackets the edit block and reports `edit=` and `rows=`:
+
+```
+DIAG,cer_range,us=…,collect=…,append=…,sort=…,edit=…,lists=…,rows=…,evout=…
+```
+
+Every microsecond of `gather` is now attributed on both entry points. RAM1 unchanged at **4640** bytes. Native **1406/1406**.
+
+### Bound problems now confirmed on the paint path
+
+1. **Unbudgeted edit projection per paint.** `applyNoteEditPassSequence` runs inside the windowed display gather because `includeActiveEditRows` defaults true, and it is bounded by neither the paint window nor an event budget.
+2. **`lists` is 105–112.** Every windowed gather walks over a hundred active committed passes. This does not cause the multi-second span but is unbounded in pass count.
+3. **The edit projection is not windowed.** It is applied to the gathered window output, but its per-row work scans the whole vector rather than the window.
+
+### Confirmed — [`105032`](../../captures/session_20260821_105032.log)
+
+```
+DIAG,disp_win,us=38010808,gather=37613411,...,ev=2192,notes=1104,ws=0,wl=13824,cap=0
+DIAG,cer_range,us=37613373,collect=169,append=61659,sort=21113,edit=37530431,lists=108,rows=1694,evout=2192
+```
+
+`edit` is **37 530 431 µs = 99.78 %** of the range call, and `cer_range` reconciles with `disp_win`'s `gather` to within **38 µs**. `applyNoteEditPassSequence` is the confirmed owner of the multi-second committed resolve. Every intermediate attribution is now closed out and the §10 / L3 owner stands.
+
+**Scale.** 37.53 s over `rows` 1694 is **22.15 ms per row**; against the 2192-event window that is **10.1 µs per row-event pair**, roughly 6000 cycles — consistent with per-row vector mutation in `applyNoteEditPassWithLookupCache` plus the per-row `containsPresentNoteId` linear scan, executing on `SessionMidiEventVec` in external memory after the scratch copy in and out.
+
+**This is not boot-only.** All 30 `cer_range` lines show `edit` dominating:
+
+| Phase | Steady-state range across 30 windows |
+|---|---|
+| `edit` | **1.9 ms – 367 ms** (boot: 37 530 ms) |
+| `append` (traversal) | 7.7 – 61.7 ms |
+| `sort` | 0.1 – 21.1 ms |
+| `collect` | ≤ 0.2 ms |
+
+The edit projection is the **top display cost continuously**, not merely a boot spike; boot is simply the window carrying 2192 events instead of the typical 135–330.
+
+**Two unbounded counts, both monotonic.** `rows` is **1694 and constant** for the whole session — active note-edit rows are never pruned or collapsed for projection purposes, so every paint replays all of them. `lists` climbs **108 → 115** across the same session, so active committed passes accumulate. Neither count is bounded by the paint window.
+
+## 13. Why the row population is 1694 (Stage O)
+
+The row count is the multiplier on the confirmed owner, so it decides whether the fix belongs in the projection or upstream in edit-pass lifecycle. Two facts are already established from capture:
+
+- `rows=1694` is present in the **first** `cer_range` at 7.05 s, before any user input in the session, and never changes. The rows therefore arrive with loaded loop state.
+- `overlap_hold` in the same session reports `shorten=0` and `hide=0` with `add` 2–35, so this session's overlap evaluation did not create them.
+
+Expected scale from the user: ~4 notes/bar over 68 bars is ~272 notes, and "around the hundreds" of rows. 1694 is ~6.2× the note count.
+
+### Code-path findings (read-only trace)
+
+`EditPassState` has only **`Active`** and **`Disabled`** — there is no sealed or baked state, and edit rows are never folded into committed chunk content. Every production append goes through `Loop::saveNoteEditPass`, from three triggers: NOTE_EDIT commits (`EditManager::commitEditAction`, `bakeNoteEditSessionStoreToPasses`), overdub overlap sealing (`Loop::sealPendingNoteChangesToEditPasses`), and SD restore (`readPersistedEditsTail`). Edit rows **are** persisted with their state in the v6 loop body under the `EPT3` tail and restored as `Active`, which is consistent with 1694 rows existing 7 s after boot with no user input.
+
+Two structural properties explain how the population can exceed the note count:
+
+1. **`sealPendingNoteChangesToEditPasses` runs per seal event** — every overdub loop wrap (`Track::commitOverdubWrapAtSessionStart`) and every overdub stop — and assigns **new** row ids without disabling prior companion rows for the same `targetNoteId`. Pending Hide/Shorten upserts per note *within* one window, so a single window cannot multiply; successive seal generations can.
+2. **`planContiguousCollapsedRows` cannot fold companions.** It only merges contiguous runs of `Update` rows whose `propertyType` is `Pitch` or `Velocity` with a matching `targetNoteId`. Overdub companions are `Delete` (Hide) and `Update` + `Length` (Shorten), so collapse is a no-op for them. `applyNoteEditPassSequence` still visits every planned row even when `containsPresentNoteId` skips the apply, so stale no-op rows cost a full iteration each.
+
+The only edit-row reclaim, `Loop::reclaimUnreferencedDisabledEditPasses`, erases **`Disabled`** rows not pinned by undo. Active rows are never pruned and `saveNoteEditPass` admission is bounded only by `Config::HEAP_RESERVE_BYTES` — there is no maximum row count.
+
+### Instrumentation shipped to close it
+
+Reading gives a consistent account but not proof of composition, so `DIAG,cer_rows` reports the actual population whenever `cer_range` emits (computed only on emit, so no steady-state cost):
+
+```
+DIAG,cer_rows,active=…,disabled=…,comp=…,ne=…,del=…,crt=…,ulen=…,upit=…,uvel=…,urng=…
+```
+
+`comp` counts active rows at `kOverdubCompanionEditPassIndex` (255) versus `ne` for NOTE_EDIT indices, and the action/property split separates what `planContiguousCollapsedRows` *can* fold (`upit`, `uvel`) from what it cannot (`del`, `ulen`, `urng`, `crt`). This distinguishes the two candidate causes directly: a `comp`-dominated population with high `del` + `ulen` confirms cumulative overdub companion sealing, whereas an `ne`-dominated one points at NOTE_EDIT commit accumulation instead. `disabled` also shows whether reclaim is keeping up. Tag falls under the existing `DIAG,cer_` Tier-A prefix. RAM1 unchanged at **4640** bytes. Native **1406/1406**.
+
+### Confirmed composition — [`110842`](../../captures/session_20260821_110842.log)
+
+All 29 `cer_rows` lines are byte-identical:
+
+```
+DIAG,cer_rows,active=1694,disabled=0,comp=1694,ne=0,del=1378,crt=0,ulen=316,upit=0,uvel=0,urng=0
+```
+
+| Field | Value | Meaning |
+|---|---|---|
+| `comp` / `ne` | **1694 / 0** | **Every** row is an overdub overlap companion; zero NOTE_EDIT rows |
+| `del` | **1378** | Hide companions (`Delete`) |
+| `ulen` | **316** | Shorten companions (`Update` + `Length`) |
+| `upit` + `uvel` | **0** | Rows `planContiguousCollapsedRows` is able to fold |
+| `crt` / `urng` | 0 / 0 | No creates, no NOTE_EDIT range moves |
+| `disabled` | **0** | No companion row has ever been disabled |
+
+**Cause confirmed: cumulative overdub companion sealing.** The NOTE_EDIT hypothesis is eliminated outright by `ne=0`.
+
+**Correction.** §13 said `planContiguousCollapsedRows` "runs every call but cannot reduce a population dominated by" companions. The measured population is not merely dominated by them — it is **100 %** of them, and the count of collapse-eligible rows is exactly **0**. Collapse is structurally incapable of helping here, not merely ineffective.
+
+`disabled=0` also shows supersession never happens: sealing a newer Hide/Shorten for a note does not disable the older row for the same `targetNoteId`, and no undo disabled any of them. Against ~272 notes, `del=1378` is ~5.1 Hide rows per note — roughly five seal generations retained in full.
+
+**The cost is superlinear in window size, independent of row count.** Two boot windows with `rows` fixed at 1694:
+
+| Capture | `evout` | `edit` |
+|---|---|---|
+| [`105032`](../../captures/session_20260821_105032.log) | 2192 | 37 530 431 µs |
+| [`110842`](../../captures/session_20260821_110842.log) | 2339 | 45 393 105 µs |
+
+A **6.7 %** increase in events produced a **21 %** increase in time. Bounding the row population alone therefore does not fix the growth shape — the per-row apply over the whole event vector has to be addressed too.
+
+**Durability consequence.** These rows are persisted `Active` in the v6 `EPT3` tail, so existing saved loops already carry them. A projection-side fix changes paint cost but does not shrink stored state; shrinking that needs supersession-disable at seal time or a migration.
+
+## 14. The cost is 219 Shorten applies, not 1694 rows (Stage O)
+
+Decision from the design question: fix the **paint-path cost** first, via **last-wins dedupe at projection** — no persistence change, no state-transition change.
+
+### Measured — [`111733`](../../captures/session_20260821_111733.log)
+
+```
+DIAG,cer_edit,us=48755056,plan=405,collect=3860,guard=1586,del=10519044,ulen=38071317,other=0,
+              planned=1694,exec=1350,skip=344,ndel=1131,nlen=219,ev=2483,present=1370
+DIAG,cer_copy,us=48777653,copyin=18413,core=48755116,copyout=4124,ev=2483
+```
+
+| Phase | Total | Calls | Per call |
+|---|---|---|---|
+| `ulen` — `applyChangeLengthById` | **38 071 317 µs (78.1 %)** | **219** | **173.8 ms** |
+| `del` — `applyDeleteNoteById` | 10 519 044 µs (21.6 %) | 1131 | 9.3 ms |
+| `plan` + `collect` + `guard` | 5 851 µs | — | negligible |
+| `copyin` + `copyout` | 22 537 µs | — | negligible |
+
+**Corrections to §13's reasoning.** Two claims made from reading were wrong:
+
+1. "Duplicate Hide rows are already skipped by the guard, so dedupe won't help." The guard skips only **344** of 1694 rows; **1350 execute**. Row skipping is not the dominant behavior.
+2. The cost is not spread across the population. **219 Shorten applies carry 78 % of a 49-second stall.** Row count is not the cost driver — per-apply cost is.
+
+**Mechanism.** `applyChangeLengthById` has two branches. When `newEnd < refEnd` it delegates to `shortenNoteEndById` and returns. When `newEnd > refEnd` it calls **`NoteUtils::reconstructNotes(events, loopLength, false)`** — a full reconstruction over the entire event vector — then scans every reconstructed note for same-pitch overlap. 173.8 ms per call at 2483 events (≈70 µs per event) is consistent with that reconstruction being quadratic in event count, and the per-call cost is superlinear across windows: **2.73 ms** at `ev=227`, **9.98 ms** at `ev=808`, **173.8 ms** at `ev=2483` — tripling events made each call 17× slower.
+
+**Why a Shorten companion would ever lengthen.** Companion rows for one note accumulate across seal generations with different end ticks and are replayed in stored order. Once a note has been shortened to a newer, shorter end, a later row carrying an **older, longer** end satisfies `newEnd > refEnd` and takes the reconstruct branch. This is the same ordering property that makes **last-wins dedupe** the correct fix: keeping only the final Length row per `targetNoteId` removes the out-of-order lengthen, so the reconstruct branch is never entered from companion replay. Dedupe is therefore effective for a different reason than row-count reduction.
+
+### Instrumentation shipped to validate the fix before implementing it
+
+`cer_edit` now reports which branch runs, plus the reconstruction cost in isolation:
+
+```
+…,lgth=<lengthen-branch calls>,shrt=<shorten-branch calls>,noop=<newEnd==refEnd>,recon=<µs in reconstructNotes>
+```
+
+This is the pre-implementation check for the chosen dedupe: if `lgth` accounts for the 219 Shorten applies and `recon` for the bulk of `ulen`, then last-wins dedupe eliminates the dominant cost. If instead `shrt` dominates, the cost is inside `shortenNoteEndById` and dedupe would **not** fix it — in which case the fix has to target the apply itself. RAM1 unchanged at **4640** bytes. Native **1406/1406**.
+
+### Confirmed — [`112151`](../../captures/session_20260821_112151.log)
+
+```
+DIAG,cer_edit,us=51131076,del=10669888,ulen=40293621,recon=<clipped>,ndel=1131,nlen=219,lgth=70,shr…
+```
+
+| Owner | Cost | Share | Calls |
+|---|---|---|---|
+| `ulen` — lengthen branch | **40 293 621 µs** | **78.8 %** | `lgth=70` |
+| `del` — `applyDeleteNoteById` | 10 669 888 µs | 20.9 % | `ndel=1131` |
+
+The boot line clipped at `recon`, but every untruncated smaller-window line puts `recon` at **93–99 % of `ulen`** (`ulen=33506/recon=33142`, `ulen=25454/recon=25092`, `ulen=27780/recon=26398`). So **70 lengthen calls**, each paying one full `NoteUtils::reconstructNotes`, are essentially the whole 40.3 s — ≈576 ms per call at `ev=2513`.
+
+`shrt` and `noop` carry no measurable cost. The pre-implementation check in the previous section resolves to: **the cost is the reconstruct, not the apply**.
+
+---
+
+## 15. Fix shipped — pitch-scoped reconstruction, not row dedupe (Stage O)
+
+### Last-wins dedupe was implemented and rejected on evidence
+
+Dedupe of superseded `Length` rows (keep the newest per `targetNoteId`, barrier at `Create` / `Delete` / `NoteRange`) does remove the out-of-order lengthen: with one row per note the note is at committed length when the row applies, so `newEnd < refEnd` always holds. It was implemented and it **failed `test_sequence_phasea_randomized_equivalence_against_baseline`** (scenario 5, index 6) — the planner's strict parity guard against naive row-by-row replay.
+
+The failure is real, not a test artifact. The lengthen branch has **side effects on other notes** (`notesToDelete`, `notesToShorten`). Dropping an intermediate `Length` row also drops the overlap side effects it applied to same-pitch neighbours, so replay output changes in the general case. Whether those side effects are replay artifacts of stale companion rows or intended semantics is an **open behavior decision**, not something to settle by weakening the parity test. Dedupe is parked pending that decision.
+
+### What shipped instead
+
+`applyChangeLengthById`'s lengthen branch only ever inspects reconstructed notes matching the edited note's own pitch — every other reconstructed note is discarded by its `note.note != onEvt` filter. `reconstructNotesForPitch` now reconstructs **only that pitch**.
+
+Exactly equivalent, verified against the code rather than assumed:
+
+| Stage | Why pitch-local |
+|---|---|
+| Pairing | `appendCanonicalSpansFromMidiRange` keys on `activeNoteStacks[pitch]`; `tryPairWrappedTailOn` / `noteIdAtOnTick` match pitch + channel |
+| Projection | `IntervalProjection::projectDisplayNotes` projects each span in isolation — no cross-span reference |
+| Dedupe | `dedupeProjectedDisplayNoteVec` keys on `(note, startTick, endTick)`; filtering preserves relative index order |
+
+This also removes the superlinearity rather than just scaling it down: `tryPairWrappedTailOn` rescans the whole event vector from inside the per-event loop, so the discarded pitches were a quadratic term.
+
+**Not** the `del` owner. `ndel=1131` is 1131 *distinct* notes deleted — the `presentNoteIds` guard already skips repeats — so **10.67 s (20.9 %) survives this fix** and is the next lever. Each call is 9.4 ms for what is a find-on / find-off / erase pair over 2513 events; batching the deletions into one sweep instead of 1131 O(n) erases is the obvious shape, but it reorders apply semantics and needs the same behavior decision as dedupe.
+
+Native **1406/1406**, `test_edit_apply` 51/51 including the randomized parity guard. RAM1 unchanged at **4640** bytes.
