@@ -429,6 +429,46 @@ EditPassVec companionHistoryPrefix(const EditPassVec& history, size_t count) {
   return prefix;
 }
 
+EditPassVec makeCompanionRandomizedHistoryScenario(std::mt19937& rng, EditPassId firstId) {
+  const NoteId targetIds[] = {
+      kCompanionTargetNoteId,
+      kCompanionOverlapNoteId,
+      kCompanionDistantOverlapNoteId,
+      kCompanionDifferentPitchNoteId,
+      kCompanionWrapNoteId,
+  };
+  std::uniform_int_distribution<int> targetDist(0, 4);
+  std::uniform_int_distribution<int> actionDist(0, 99);
+  std::uniform_int_distribution<int> endTickDist(
+      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
+  std::uniform_int_distribution<int> rowCountDist(8, 32);
+
+  EditPassVec history;
+  history.reserve(40);
+  history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
+  history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
+  history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
+  history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
+  history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
+  history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
+  history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
+  history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
+
+  const int randomRowCount = rowCountDist(rng);
+  for (int i = 0; i < randomRowCount; ++i) {
+    const NoteId targetId = targetIds[targetDist(rng)];
+    if (actionDist(rng) < 28) {
+      history.push_back(makeCompanionDeleteRow(targetId));
+    } else {
+      history.push_back(
+          makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
+    }
+  }
+
+  assignCompanionHistoryIds(history, firstId);
+  return history;
+}
+
 struct CompanionNoteState {
   bool present = false;
   uint8_t pitch = 0;
@@ -2942,47 +2982,11 @@ void test_incremental_companion_projection_randomized_history_and_undo_redo() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
-  const NoteId targetIds[] = {
-      kCompanionTargetNoteId,
-      kCompanionOverlapNoteId,
-      kCompanionDistantOverlapNoteId,
-      kCompanionDifferentPitchNoteId,
-      kCompanionWrapNoteId,
-  };
   std::mt19937 rng(0xC0A11u);
-  std::uniform_int_distribution<int> targetDist(0, 4);
-  std::uniform_int_distribution<int> actionDist(0, 99);
-  std::uniform_int_distribution<int> endTickDist(
-      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
-  std::uniform_int_distribution<int> rowCountDist(8, 32);
 
   for (uint32_t scenario = 0; scenario < 128; ++scenario) {
-    EditPassVec history;
-    history.reserve(40);
-
-    // Keep the first generations deterministic so every randomized scenario
-    // contains overlap, wrap, Hide/Shorten ordering, and repeated targets.
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
-    history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
-    history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
-    history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
-    history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
-    history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
-
-    const int randomRowCount = rowCountDist(rng);
-    for (int i = 0; i < randomRowCount; ++i) {
-      const NoteId targetId = targetIds[targetDist(rng)];
-      if (actionDist(rng) < 28) {
-        history.push_back(makeCompanionDeleteRow(targetId));
-      } else {
-        history.push_back(
-            makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
-      }
-    }
-
-    assignCompanionHistoryIds(history, 2000 + scenario * 64);
+    const EditPassVec history = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(2000 + scenario * 64));
     char context[96];
     snprintf(context, sizeof(context), "randomized companion history %u",
              static_cast<unsigned>(scenario));
@@ -3112,46 +3116,13 @@ void test_incremental_companion_projection_reduced_state_randomized_divergence()
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
-  const NoteId targetIds[] = {
-      kCompanionTargetNoteId,
-      kCompanionOverlapNoteId,
-      kCompanionDistantOverlapNoteId,
-      kCompanionDifferentPitchNoteId,
-      kCompanionWrapNoteId,
-  };
   std::mt19937 rng(0x5EEDC0DEu);
-  std::uniform_int_distribution<int> targetDist(0, 4);
-  std::uniform_int_distribution<int> actionDist(0, 99);
-  std::uniform_int_distribution<int> endTickDist(
-      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
-  std::uniform_int_distribution<int> rowCountDist(8, 32);
   uint32_t mismatchScenarios = 0;
   uint32_t firstMismatchGeneration = UINT32_MAX;
 
   for (uint32_t scenario = 0; scenario < 128; ++scenario) {
-    EditPassVec history;
-    history.reserve(40);
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
-    history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
-    history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
-    history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
-    history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
-    history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
-
-    const int randomRowCount = rowCountDist(rng);
-    for (int i = 0; i < randomRowCount; ++i) {
-      const NoteId targetId = targetIds[targetDist(rng)];
-      if (actionDist(rng) < 28) {
-        history.push_back(makeCompanionDeleteRow(targetId));
-      } else {
-        history.push_back(
-            makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
-      }
-    }
-
-    assignCompanionHistoryIds(history, 12000 + scenario * 64);
+    const EditPassVec history = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(12000 + scenario * 64));
     uint32_t mismatchGeneration = UINT32_MAX;
     if (!reducedCompanionHistoryEquivalent(initialEvents, history,
                                            kCompanionProjectionLoopLength,
@@ -3226,47 +3197,14 @@ void test_incremental_companion_projection_paired_state_randomized_divergence() 
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
-  const NoteId targetIds[] = {
-      kCompanionTargetNoteId,
-      kCompanionOverlapNoteId,
-      kCompanionDistantOverlapNoteId,
-      kCompanionDifferentPitchNoteId,
-      kCompanionWrapNoteId,
-  };
   std::mt19937 rng(0xA11CEu);
-  std::uniform_int_distribution<int> targetDist(0, 4);
-  std::uniform_int_distribution<int> actionDist(0, 99);
-  std::uniform_int_distribution<int> endTickDist(
-      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
-  std::uniform_int_distribution<int> rowCountDist(8, 32);
 
   uint32_t mismatchScenarios = 0;
   uint32_t firstMismatchScenario = UINT32_MAX;
   uint32_t firstMismatchGeneration = UINT32_MAX;
   for (uint32_t scenario = 0; scenario < 128; ++scenario) {
-    EditPassVec history;
-    history.reserve(40);
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
-    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
-    history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
-    history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
-    history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
-    history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
-    history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
-
-    const int randomRowCount = rowCountDist(rng);
-    for (int i = 0; i < randomRowCount; ++i) {
-      const NoteId targetId = targetIds[targetDist(rng)];
-      if (actionDist(rng) < 28) {
-        history.push_back(makeCompanionDeleteRow(targetId));
-      } else {
-        history.push_back(
-            makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
-      }
-    }
-
-    assignCompanionHistoryIds(history, 17000 + scenario * 64);
+    const EditPassVec history = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(17000 + scenario * 64));
     uint32_t mismatchGeneration = UINT32_MAX;
     const bool equivalent = pairedCompanionHistoryEquivalent(
         initialEvents, history, kCompanionProjectionLoopLength, &mismatchGeneration);
@@ -3282,6 +3220,34 @@ void test_incremental_companion_projection_paired_state_randomized_divergence() 
   TEST_ASSERT_TRUE(mismatchScenarios > 0u);
   TEST_ASSERT_EQUAL_UINT32(51u, firstMismatchScenario);
   TEST_ASSERT_EQUAL_UINT32(13u, firstMismatchGeneration);
+}
+
+void test_incremental_companion_projection_paired_state_scenario51_generation13_fixture() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  std::mt19937 rng(0xA11CEu);
+
+  EditPassVec scenarioHistory;
+  for (uint32_t scenario = 0; scenario <= 51; ++scenario) {
+    scenarioHistory = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(17000 + scenario * 64));
+  }
+
+  TEST_ASSERT_TRUE(scenarioHistory.size() >= 13u);
+
+  const EditPassVec prefix12 = companionHistoryPrefix(scenarioHistory, 12);
+  uint32_t mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, prefix12,
+                                                    kCompanionProjectionLoopLength,
+                                                    &mismatchGeneration));
+
+  const EditPassVec prefix13 = companionHistoryPrefix(scenarioHistory, 13);
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(pairedCompanionHistoryEquivalent(initialEvents, prefix13,
+                                                     kCompanionProjectionLoopLength,
+                                                     &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(13u, mismatchGeneration);
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -3343,5 +3309,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_reduced_state_randomized_divergence);
   RUN_TEST(test_incremental_companion_projection_paired_state_operation_matrix);
   RUN_TEST(test_incremental_companion_projection_paired_state_randomized_divergence);
+  RUN_TEST(test_incremental_companion_projection_paired_state_scenario51_generation13_fixture);
   return UNITY_END();
 }

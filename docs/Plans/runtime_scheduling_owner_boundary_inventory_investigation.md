@@ -1056,3 +1056,34 @@ Conclusion:
 
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
+
+## 21. Isolated deterministic divergence fixture (scenario 51 / generation 13)
+
+To isolate the randomized paired-state divergence into a deterministic oracle,
+the test suite now constructs the fixed-seed paired scenario directly and
+pins the exact divergence boundary:
+
+- `test_incremental_companion_projection_paired_state_scenario51_generation13_fixture`
+- Seed: `0xA11CE`, scenario index: `51`
+- Boundary:
+  - prefix through generation `12`: equivalent
+  - prefix through generation `13`: divergent
+
+Implementation detail:
+
+- Shared helper `makeCompanionRandomizedHistoryScenario(...)` now builds one
+  deterministic scenario from the seeded RNG stream so all companion randomized
+  tests consume identical scenario generation logic.
+
+Native result: **1413/1413**.
+
+Conclusion:
+
+- The previously observed paired-state divergence is now reproducible with a
+  single deterministic fixture.
+- The replay condition is isolated to the generation-13 transition of that
+  fixed scenario, giving a stable target for deeper root-cause decomposition in
+  the next stage.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
