@@ -2700,6 +2700,50 @@ void test_source_view_includes_seven_finished_opens_covering_64() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_long_loop_pass_state_change_keeps_notes_and_stays_dirty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kSixtyEightBars = Config::TICKS_PER_BAR * 68;
+  loop.loopLengthTicks = kSixtyEightBars;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.rebuildVisualCacheFromPasses();
+  const size_t notesBefore = loop.visualCache.notes.size();
+  TEST_ASSERT_TRUE(notesBefore > 0);
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  loop.refreshVisualCacheAfterPassStateChange();
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+}
+
+void test_budgeted_idle_slice_defers_wrap_append_then_resumes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedWrapHeldOverdubLoop(loop);
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  loop.markDisplayCachesStale();
+  uint8_t slices = 0;
+  while (loop.visualCacheDirty && slices < 16) {
+    loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 192);
+    ++slices;
+  }
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_TRUE(loop.hasDeferredVisualCacheWrapAppend());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+  loop.applyDeferredVisualCacheWrapAppend();
+  TEST_ASSERT_FALSE(loop.hasDeferredVisualCacheWrapAppend());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2777,6 +2821,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
   RUN_TEST(test_retire_superseded_pitch_drops_home_when_settled_present);
   RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);
+  RUN_TEST(test_long_loop_pass_state_change_keeps_notes_and_stays_dirty);
+  RUN_TEST(test_budgeted_idle_slice_defers_wrap_append_then_resumes);
   RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo);

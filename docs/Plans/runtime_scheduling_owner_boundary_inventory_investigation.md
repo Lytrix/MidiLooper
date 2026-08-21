@@ -1,15 +1,15 @@
 # Runtime scheduling — owner-boundary inventory and MIDI service interval floor
 
-**Status:** Research / investigation. **§36 authorizes one firmware slice** (companion clock-path admission + budgeted source-span prewarm restore). All other sections still authorize no firmware.
+**Status:** Research / investigation. **§36 Stage A+B device PASS** ([`165107`](../../captures/session_20260821_165107.log)). **§36 Stage C is the authorized firmware slice** (STOPPED undo / track-switch first-paint). All other sections still authorize no firmware.
 **Date:** 2026-08-21
 **Kind:** investigation
 **Question:** what has to change architecturally so the interval between MIDI service opportunities is bounded at **25–30 ms** instead of the observed 500–2900 ms.
 
 **Contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) — this document supplies **Stage R1C** (remaining owner inventory) evidence and **Stage C** ceiling-derivation input. It does not replace the contract and does not start Stage A.
 **Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
-**Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § Overdub companion admission and source-span prewarm
+**Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § STOPPED undo / track-switch first-paint
 
-**Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log), [`161804`](../../captures/session_20260821_161804.log) (STOPPED undo + large-loop track switch; §34), [`162928`](../../captures/session_20260821_162928.log) (Overdub empty source view + 136 s `tracks` freeze; §35)
+**Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log), [`161804`](../../captures/session_20260821_161804.log) (STOPPED undo + large-loop track switch; §34), [`162928`](../../captures/session_20260821_162928.log) (Overdub empty source view + 136 s `tracks` freeze; §35), [`165107`](../../captures/session_20260821_165107.log) (Stage A+B device PASS; residual §34 `idle_maint` 850 ms)
 
 ---
 
@@ -1282,16 +1282,16 @@ Track switches complete, then the 68-bar loop pays `idle_gather=210883`, `idle_a
 | Item | Owner | Class |
 |---|---|---|
 | Empty `why=open` | `rebuildOverdubSourceSpanCache` session fallback after `openOverdubSession` | correctness; prior notes empty because prewarm has no caller |
-| Occupy `norow` | source view `notes=0` | consequence of empty open |
-| 136 s freeze | `updateAllTracks` / clock-path gather | C4; companion full replay now reachable from `gatherCommittedEventsInWindow` |
-| Empty companion success | `tryCopyCompanionProjectedWindow` | skips legacy gather |
-| Missing prewarm | `Track::processDeferredIdleMaintenance` after `754db31` | call removed; function remains |
-| Post-stop hang | §34 visual-cache idle | queued; not this slice's first owner |
+| Occupy `norow` | source view `notes=0` | consequence of empty open — **closed** on [`165107`](../../captures/session_20260821_165107.log) (`idsel>0` on 34/34). Residual `norow` 1–4 with working select is a different class; parked |
+| 136 s freeze | `updateAllTracks` / clock-path gather | C4; companion full replay now reachable from `gatherCommittedEventsInWindow` — **closed** on [`165107`](../../captures/session_20260821_165107.log) (max `tracks` 190 ms) |
+| Empty companion success | `tryCopyCompanionProjectedWindow` | skips legacy gather — Stage A shipped |
+| Missing prewarm | `Track::processDeferredIdleMaintenance` after `754db31` | call restored on a later clean-cache turn after `boot_commit` — Stage B device PASS |
+| Post-stop / STOPPED undo hang | §34 visual-cache idle | **Stage C** — this slice |
 
 ## 36. Authorized firmware slice — companion clock-path admission + budgeted source-span prewarm
 
-**Status:** Authorized. Stage A shipped. Stage B shipped (native). Device re-measure of [`162928`](../../captures/session_20260821_162928.log) still open. Stage C queued.
-**Debugging boundary:** trust §33/§34 boot first-paint and STOPPED undo/track-switch owners. Do not revisit `onBootSlotLoadComplete` wipe. Do not start incremental companion-representation work. Do not admit companion full replay onto STOPPED undo/track-switch.
+**Status:** Stage A device PASS. Stage B device PASS ([`165107`](../../captures/session_20260821_165107.log)). Stage C authorized (STOPPED undo / track-switch first-paint).
+**Debugging boundary:** trust §33 boot first-paint and Stage A+B Overdub admission/prewarm. Do not revisit `onBootSlotLoadComplete` wipe. Do not start incremental companion-representation work. Do not admit companion full replay onto STOPPED undo/track-switch. Residual consume `norow` with `idsel>0` is parked; not this slice.
 
 ### Architecture checkpoint
 
@@ -1304,7 +1304,7 @@ An Overdub companion miss must not block MIDI, must not count as a successful ga
 
 ### Stage A — companion gather admission (first commit)
 
-**Status:** Shipped (native). Device re-measure still open for Stage B.
+**Status:** Shipped. Device PASS [`165107`](../../captures/session_20260821_165107.log): max Overdub `midi_input` **189868 µs**, max `tracks` **189845 µs**. No 100 s class.
 
 Owner: `Loop::tryCopyCompanionProjectedWindow` as consumed by `copyEffectiveCommittedEventsInRange` and `advanceFallbackGatherSession`.
 
@@ -1316,7 +1316,7 @@ Native: `test_companion_projection_empty_cache_uses_legacy_window_gather` and `t
 
 ### Stage B — budgeted source-span prewarm restore (second commit)
 
-**Status:** Shipped (native 1427/1427; `teensy41-capture-serial` RAM1 code 425580 / locals 4640). Device re-measure still open.
+**Status:** Shipped. Device PASS [`165107`](../../captures/session_20260821_165107.log) (native 1427/1427; `teensy41-capture-serial` RAM1 code 425580 / locals 4640).
 
 Owner: `Track::processDeferredIdleMaintenance` calling `Loop::prewarmOverdubSourceSpanCache`.
 
@@ -1326,11 +1326,73 @@ Owner: `Track::processDeferredIdleMaintenance` calling `Loop::prewarmOverdubSour
 
 Native: `test_session_open_without_prewarm_leaves_empty_source_view` and `test_prewarm_span_cache_then_session_open_has_source_notes` in `test_overdub_source_view`.
 
-Device: same 68-bar loop as [`162928`](../../captures/session_20260821_162928.log). Pass when `why=open` has `notes>0`, at least one `consume,select` has `norow=0`, and no Overdub `tracks` / `midi_input` sample in the 100 s class.
+Device: same 68-bar loop as [`162928`](../../captures/session_20260821_162928.log).
 
-### Stage C — queued, not this slice's first commit
+| Gate | Written criterion | [`165107`](../../captures/session_20260821_165107.log) |
+|---|---|---|
+| Source view | `why=open` `notes>0` | **PASS** — 5/5 opens, 1319–1394 notes, `begin_capture` 2.9–15.3 ms |
+| Occupy dead | `idsel>0` (proxy: empty-open `norow=ids`) | **PASS** — 34/34 `idsel>0` |
+| Clock path | no 100 s `tracks` / `midi_input` | **PASS** — max 190 ms |
+| Residual `norow=0` | written as “at least one `norow=0`” | **not this slice** — 0/34 `norow=0` while select works. Parked consume-id class |
 
-STOPPED undo / track-switch first-paint (§34): boot-style bounded window, do not wipe `visualCache.notes` on track switch, do not run `rebuildVisualCacheIdleSlice` with `fallbackGatherEventBudget=0` and wrap-append on. Do **not** route those paths through companion full replay.
+The written `norow=0` line was a proxy for empty-open occupy. Stage B’s invariant is `notes>0` plus `idsel>0`.
+
+### Stage C — STOPPED undo / track-switch first-paint
+
+**Status:** Shipped (native). Device re-measure open.
+**Evidence:** [`161804`](../../captures/session_20260821_161804.log), [`165107`](../../captures/session_20260821_165107.log) (undo at 54.1 s / 60.5 s, `idle_maint` **850 ms**).
+
+#### Architecture checkpoint
+
+1. **Ownership change?** NO. `DisplayManager::invalidateForSlotChange` still owns slot-change invalidation. `Loop` still owns `visualCache`. `Track::processDeferredIdleMaintenance` still owns STOPPED idle slices. `Loop::refreshVisualCacheAfterPassStateChange` still owns post-undo stale mark.
+2. **State transition change?** NO. Undo still applies then refreshes the visual cache. Track switch still calls `setSelectedTrack` → `invalidateForSlotChange`. STOPPED idle still calls `rebuildVisualCacheIdleSlice`. No new enter/leave.
+
+#### Invariant
+
+STOPPED undo and track switch first-paint like boot: keep `visualCache.notes` when the loop already has them, mark dirty, and fill through budgeted idle slices with wrap-append deferred. Do not wipe notes. Do not run one STOPPED turn as unbounded gather plus wrap-append. Do not route STOPPED through companion full replay.
+
+#### Implementation
+
+1. `DisplayManager::invalidateForSlotChange` — when transport is STOPPED, call `Loop::markDisplayCachesStale()` for the focus slot instead of `invalidateDisplayCaches()`. Live display cache still invalidates so another loop’s frame cannot paint. PLAYING slot-switch wipe stays.
+2. `Track::processDeferredIdleMaintenance` STOPPED block — call `rebuildVisualCacheIdleSlice` with `allowOverdubWrapAppend=false` and a non-zero fallback gather budget (`192`, same as PLAYING realtime). Existing later-turn `applyDeferredVisualCacheWrapAppend` remains the wrap-append owner. Stage B prewarm gate stays: later clean-cache turn after `boot_commit`, not in `slice_clean` or wrap-append turn.
+3. `Loop::refreshVisualCacheAfterPassStateChange` — no change. Long loops already mark stale and return; first paint filters kept notes.
+
+#### Native
+
+- Long loop (`>16` bars): `refreshVisualCacheAfterPassStateChange` keeps notes and stays dirty.
+- Budgeted wrap-edge slice with `allowOverdubWrapAppend=false` sets deferred wrap-append; `applyDeferredVisualCacheWrapAppend` restores wrap-held notes.
+- `pio test -e native` **1429/1429**. `teensy41-capture-serial` RAM1 code 425580 / locals 4640.
+
+#### Device
+
+Same 68-bar loop as [`161804`](../../captures/session_20260821_161804.log) / [`165107`](../../captures/session_20260821_165107.log).
+
+- After STOPPED undo: `VCACHE,stale` / `stale_all` keep `notes>0` (no wipe). First `idle_maint` is not the 850 ms class.
+- After track switch onto that loop: first `DISP` `visual>0` when that slot already had notes.
+- No STOPPED `tracks` / `midi_input` in the 100 s class. No companion full replay.
+
+#### Pre-implementation review
+
+### Ready
+- Owners traced: `invalidateForSlotChange` → `invalidateDisplayCaches` (wipe) vs `markDisplayCachesStale` (keep notes). STOPPED also calls `Track::invalidateCaches` → `Loop::invalidateCaches`, which does **not** clear notes.
+- Hang owner: STOPPED `rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, true, false, 0)` — unbounded gather plus wrap-append on the bar-0 edge slice (`idle_append` 682–906 ms).
+- Boot already skipped `invalidateForSlotChange` in `onBootSlotLoadComplete`. `resolveDisplayNotesCommitted` filters a non-empty dirty cache for long-loop windows.
+- Stage B prewarm remains gated off the `slice_clean` turn.
+
+### Resolved (user / code)
+| Topic | Decision |
+|---|---|
+| PLAYING slot-switch wipe | Keep. Stage C changes STOPPED only. |
+| Undo function | No change to `refreshVisualCacheAfterPassStateChange`. Idle budgeting is the hang owner. |
+| Companion replay on STOPPED | Forbidden. Windowed / budgeted gather only. |
+| Residual `norow` | Parked. Not Stage C. |
+| Gather budget | `192` events — same as PLAYING realtime. |
+
+### Open before coding
+1. Device-only: confirm first post-undo `idle_maint` drops out of the 850 ms class on the 68-bar loop.
+
+### Proceed?
+- YES — no blockers. Open item is the device gate.
 
 ### Out of scope
 

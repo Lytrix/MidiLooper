@@ -823,14 +823,17 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
       if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual) {
         loop.materializeEditViewFromPasses();
       }
-      if (loop.visualCacheDirty) {
+        if (loop.visualCacheDirty) {
         // One idle slice per call. Do not ensureVisualCacheBuilt here — short
         // loops use the same resumable owner as long loops (Slice 4c).
         const uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
-        // 2fd209a STOPPED idle: one 4-bar window gather, no fallback budget.
-        // 768-event fallback plus span-cache prewarm after slice_clean is what
-        // hung 160519 after the first piano-roll frame.
-        loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0, UINT32_MAX, true, false, 0);
+        // 161804 / 165107: budget=0 plus wrap-append on the bar-0 edge paid
+        // idle_append 682–906 ms in one STOPPED turn. PLAYING already budgets
+        // gather and defers wrap-append; STOPPED uses the same pair. Prewarm
+        // stays on a later clean-cache turn (160519 / Stage B).
+        constexpr size_t kStoppedFallbackGatherEventBudget = 192;
+        loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0, UINT32_MAX, false, false,
+                                         kStoppedFallbackGatherEventBudget);
       }
       bool ranDeferredWrapAppend = false;
       if (!loop.visualCacheDirty && loop.hasDeferredVisualCacheWrapAppend()) {

@@ -2,21 +2,31 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-21 (source-span prewarm Stage B)
+Last updated: 2026-08-21 (Stage C STOPPED undo / track-switch first-paint)
 
 ---
 
 ## Now implementing
 
+### STOPPED undo / track-switch first-paint
+
+**Evidence:** [`161804`](../../captures/session_20260821_161804.log), [`165107`](../../captures/session_20260821_165107.log) — Stage A+B Overdub gates PASS; STOPPED undo still pays `idle_maint` **850 ms**. Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](../Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §34 / §36 Stage C.
+
+**Owner:** `DisplayManager::invalidateForSlotChange` / `Track::processDeferredIdleMaintenance` → `Loop::rebuildVisualCacheIdleSlice`
+
+**Invariant:** STOPPED undo and track switch keep `visualCache.notes` and fill through budgeted idle slices with wrap-append deferred. No wipe. No unbounded gather-plus-append in one STOPPED turn. No companion full replay on STOPPED.
+
+**Status:** Shipped (native 1429/1429). Device re-measure open on the 68-bar loop.
+
 ### Overdub companion admission and source-span prewarm
 
-**Evidence:** [`162928`](../../captures/session_20260821_162928.log) — `why=open,from=cache,notes=0`; every `consume,select` is `norow=ids`; `tracks` / `midi_input` **136.77 s** during Overdub; after stop, 68-bar track return pays `idle_maint=5.47 s` (§34). Prewarm call removed by `754db31` (`160519` same-turn hang). Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](../Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §35–§36.
+**Evidence:** [`162928`](../../captures/session_20260821_162928.log) empty open + 136.77 s freeze. Device PASS [`165107`](../../captures/session_20260821_165107.log): 5/5 opens `notes` 1319–1394; 34/34 consume `idsel>0`; max `tracks` **190 ms**. Residual `norow` 1–4 with working select is parked.
 
-**Owner:** `Loop::tryCopyCompanionProjectedWindow` / `rebuildCompanionProjectionForCurrentRevision` / `Track::processDeferredIdleMaintenance` → `Loop::prewarmOverdubSourceSpanCache`
+**Owner:** `Loop::tryCopyCompanionProjectedWindow` / `Track::processDeferredIdleMaintenance` → `Loop::prewarmOverdubSourceSpanCache`
 
 **Invariant:** Clock-path gather must not run full companion replay. Empty companion projection is not a successful gather. First overdub open hydrates a non-empty source view from a cache filled after boot first-paint, not from a same-turn `slice_clean` prewarm.
 
-**Status:** Stage A shipped. Stage B shipped (native) — STOPPED idle calls `prewarmOverdubSourceSpanCache` on a later clean-cache turn after `boot_commit`, not in the `slice_clean` turn. Device re-measure of [`162928`](../../captures/session_20260821_162928.log) open. Stage C queued.
+**Status:** Stage A+B device PASS [`165107`](../../captures/session_20260821_165107.log). Stage C is the remaining §36 slice.
 
 ### Boot title `boot_commit` display stall
 
@@ -352,7 +362,7 @@ Occupy source-view resolver geometry ([`overdub_occupy_source_view_keeps_resolve
 
 **Invariant:** Source-view rebuild and long-loop note-off hold hydration both read the source span cache (`from=cache`) with prepared spans when available and full-loop resolved spans otherwise; source-view path no longer calls `resolveWindow`.
 
-**Status:** Native **1387/1387**. Baseline cost anchor [`202256`](../../captures/session_20260819_202256.log) (32× `from=win`, `merged=0`). Device check [`221834`](../../captures/session_20260819_221834.log): hold path `from=cache` with no `hold,miss`. Overdub-entry stall RC: companion sealing now restamps source-span cache revision only for active overdub sessions with full companion seal success, preventing stale-stamp rebuilds on the next overdub entry while preserving non-session rebuild behavior. Cold-start mitigation originally called `Loop::prewarmOverdubSourceSpanCache` from STOPPED idle after visual cache cleanup. `754db31` removed that caller because same-turn prewarm after `slice_clean` hung [`160519`](../../captures/session_20260820_160519.log). Stage B restores the caller on a later clean-cache turn after `boot_commit`. [`162928`](../../captures/session_20260821_162928.log) opened `notes=0` without it.
+**Status:** Native **1387/1387**. Baseline cost anchor [`202256`](../../captures/session_20260819_202256.log) (32× `from=win`, `merged=0`). Device check [`221834`](../../captures/session_20260819_221834.log): hold path `from=cache` with no `hold,miss`. Overdub-entry stall RC: companion sealing now restamps source-span cache revision only for active overdub sessions with full companion seal success, preventing stale-stamp rebuilds on the next overdub entry while preserving non-session rebuild behavior. Cold-start mitigation originally called `Loop::prewarmOverdubSourceSpanCache` from STOPPED idle after visual cache cleanup. `754db31` removed that caller because same-turn prewarm after `slice_clean` hung [`160519`](../../captures/session_20260820_160519.log). Stage B restores the caller on a later clean-cache turn after `boot_commit`. Device PASS [`165107`](../../captures/session_20260821_165107.log) after [`162928`](../../captures/session_20260821_162928.log) opened `notes=0` without it.
 
 ### Consume id-resolution completeness — FROZEN (Stages 1–2)
 
