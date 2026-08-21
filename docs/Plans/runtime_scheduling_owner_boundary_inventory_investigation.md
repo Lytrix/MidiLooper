@@ -1,6 +1,6 @@
 # Runtime scheduling — owner-boundary inventory and MIDI service interval floor
 
-**Status:** Research / investigation. **§36 Stage A+B device PASS** ([`165107`](../../captures/session_20260821_165107.log)). **§36 Stage C is the authorized firmware slice** (STOPPED undo / track-switch first-paint). All other sections still authorize no firmware.
+**Status:** Research / investigation. **§36 Stage A+B+C device PASS** ([`165107`](../../captures/session_20260821_165107.log), [`183229`](../../captures/session_20260821_183229.log)). All other sections still authorize no firmware.
 **Date:** 2026-08-21
 **Kind:** investigation
 **Question:** what has to change architecturally so the interval between MIDI service opportunities is bounded at **25–30 ms** instead of the observed 500–2900 ms.
@@ -9,7 +9,7 @@
 **Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
 **Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § STOPPED undo / track-switch first-paint
 
-**Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log), [`161804`](../../captures/session_20260821_161804.log) (STOPPED undo + large-loop track switch; §34), [`162928`](../../captures/session_20260821_162928.log) (Overdub empty source view + 136 s `tracks` freeze; §35), [`165107`](../../captures/session_20260821_165107.log) (Stage A+B device PASS; residual §34 `idle_maint` 850 ms)
+**Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log), [`161804`](../../captures/session_20260821_161804.log) (STOPPED undo + large-loop track switch; §34), [`162928`](../../captures/session_20260821_162928.log) (Overdub empty source view + 136 s `tracks` freeze; §35), [`165107`](../../captures/session_20260821_165107.log) (Stage A+B device PASS), [`183229`](../../captures/session_20260821_183229.log) (Stage C device PASS)
 
 ---
 
@@ -1290,7 +1290,7 @@ Track switches complete, then the 68-bar loop pays `idle_gather=210883`, `idle_a
 
 ## 36. Authorized firmware slice — companion clock-path admission + budgeted source-span prewarm
 
-**Status:** Stage A device PASS. Stage B device PASS ([`165107`](../../captures/session_20260821_165107.log)). Stage C authorized (STOPPED undo / track-switch first-paint).
+**Status:** Stage A+B device PASS ([`165107`](../../captures/session_20260821_165107.log)). Stage C device PASS ([`183229`](../../captures/session_20260821_183229.log)).
 **Debugging boundary:** trust §33 boot first-paint and Stage A+B Overdub admission/prewarm. Do not revisit `onBootSlotLoadComplete` wipe. Do not start incremental companion-representation work. Do not admit companion full replay onto STOPPED undo/track-switch. Residual consume `norow` with `idsel>0` is parked; not this slice.
 
 ### Architecture checkpoint
@@ -1339,8 +1339,8 @@ The written `norow=0` line was a proxy for empty-open occupy. Stage B’s invari
 
 ### Stage C — STOPPED undo / track-switch first-paint
 
-**Status:** Shipped (native). Device re-measure open.
-**Evidence:** [`161804`](../../captures/session_20260821_161804.log), [`165107`](../../captures/session_20260821_165107.log) (undo at 54.1 s / 60.5 s, `idle_maint` **850 ms**).
+**Status:** Shipped. Device PASS [`183229`](../../captures/session_20260821_183229.log).
+**Evidence:** [`161804`](../../captures/session_20260821_161804.log), [`165107`](../../captures/session_20260821_165107.log) (undo `idle_maint` **850 ms**), [`183229`](../../captures/session_20260821_183229.log).
 
 #### Architecture checkpoint
 
@@ -1365,11 +1365,16 @@ STOPPED undo and track switch first-paint like boot: keep `visualCache.notes` wh
 
 #### Device
 
-Same 68-bar loop as [`161804`](../../captures/session_20260821_161804.log) / [`165107`](../../captures/session_20260821_165107.log).
+Same 68-bar loop as [`161804`](../../captures/session_20260821_161804.log) / [`165107`](../../captures/session_20260821_165107.log). **PASS** [`183229`](../../captures/session_20260821_183229.log):
 
-- After STOPPED undo: `VCACHE,stale` / `stale_all` keep `notes>0` (no wipe). First `idle_maint` is not the 850 ms class.
-- After track switch onto that loop: first `DISP` `visual>0` when that slot already had notes.
-- No STOPPED `tracks` / `midi_input` in the 100 s class. No companion full replay.
+| Gate | [`161804`](../../captures/session_20260821_161804.log) / [`165107`](../../captures/session_20260821_165107.log) | [`183229`](../../captures/session_20260821_183229.log) |
+|---|---|---|
+| STOPPED undo keeps notes | wipe / `idle_maint` 850 ms–1.15 s | `stale_all` **notes=2988**; first `DISP` visual=**2988**; first post-undo `idle_maint` **224 ms** |
+| Track switch onto 68-bar | first `DISP` visual=0 | `stale_all` **notes=3040**; first `DISP` visual=**3040**; first `idle_maint` **241 ms** |
+| 66-bar switch | first `DISP` visual=0 | `stale_all` **notes=1429**; first `DISP` visual=**1429** |
+| 100 s STOPPED stall | — | max `tracks` **181 ms**; max `midi_input` **182 ms** |
+
+Remaining outside this slice: deferred wrap-append later paid `idle_append=1122618` (44.5 s); `idle_maint=5028348` at 49.7 s between track 6 and 7 has no `idle_gather` / `idle_append` child. Residual consume `norow` parked.
 
 #### Pre-implementation review
 

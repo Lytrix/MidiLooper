@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-21 (Stage C STOPPED undo / track-switch first-paint)
+Last updated: 2026-08-21 (Stage C device PASS 183229)
 
 ---
 
@@ -62,7 +62,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **STOPPED undo / track-switch first-paint:** Stage C of §36 — keep `visualCache.notes` on STOPPED switch; budget STOPPED idle gather and defer wrap-append. A+B device PASS [`165107`](../../captures/session_20260821_165107.log). — [CURRENT_WORK.md](CURRENT_WORK.md)
+- **STOPPED undo / track-switch first-paint:** Stage C device PASS [`183229`](../../captures/session_20260821_183229.log) — undo keeps notes=2988, 68-bar switch first `DISP` visual=3040. — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Overdub companion admission and source-span prewarm:** Stage A+B device PASS [`165107`](../../captures/session_20260821_165107.log) — open `notes` 1319–1394, occupy `idsel>0`, max Overdub `tracks` 190 ms. Residual `norow` parked. — [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Boot title `boot_commit` display stall:** Device PASS [`161804`](../../captures/session_20260821_161804.log) — USB 11.484 s, first `DISP` visual=2638, `boot_commit=288557` (289 ms). Prior gather was `161148` / `154353` (~70–75 s, visual=0) from `onBootSlotLoadComplete` wiping the idle-built cache. Guide: [`BOOT_LOAD.md`](../Guides/BOOT_LOAD.md).
 - **Boot title startup stall hardening:** capture [`161410`](../../captures/session_20260820_161410.log) stops after `DisplayManager: Display buffer displayed` and never reaches boot load logs. `Looper::setup` now uses bounded SD bootstrap retries (`3` attempts, `50 ms` delay) and an explicit empty-runtime fallback when SD stays unavailable, preventing title-screen startup stalls from requiring repeated manual reboots. Native verification pending.

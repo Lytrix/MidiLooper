@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-21 (Stage C STOPPED undo / track-switch first-paint)
+Last updated: 2026-08-21 (Stage C device PASS 183229)
 
 ---
 
@@ -10,13 +10,13 @@ Last updated: 2026-08-21 (Stage C STOPPED undo / track-switch first-paint)
 
 ### STOPPED undo / track-switch first-paint
 
-**Evidence:** [`161804`](../../captures/session_20260821_161804.log), [`165107`](../../captures/session_20260821_165107.log) — Stage A+B Overdub gates PASS; STOPPED undo still pays `idle_maint` **850 ms**. Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](../Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §34 / §36 Stage C.
+**Evidence:** [`183229`](../../captures/session_20260821_183229.log) device PASS. Prior fail [`161804`](../../captures/session_20260821_161804.log) / [`165107`](../../captures/session_20260821_165107.log) undo `idle_maint` 850 ms. Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](../Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §34 / §36 Stage C.
 
 **Owner:** `DisplayManager::invalidateForSlotChange` / `Track::processDeferredIdleMaintenance` → `Loop::rebuildVisualCacheIdleSlice`
 
 **Invariant:** STOPPED undo and track switch keep `visualCache.notes` and fill through budgeted idle slices with wrap-append deferred. No wipe. No unbounded gather-plus-append in one STOPPED turn. No companion full replay on STOPPED.
 
-**Status:** Shipped (native 1429/1429). Device re-measure open on the 68-bar loop.
+**Status:** Device PASS [`183229`](../../captures/session_20260821_183229.log) — undo `stale_all` notes=2988, first `DISP` visual=2988, first post-undo `idle_maint` 224 ms; 68-bar switch notes=3040 / visual=3040. Native **1429/1429**. Deferred wrap-append later still 1.13 s; 5.03 s `idle_maint` at 49.7 s is outside this slice.
 
 ### Overdub companion admission and source-span prewarm
 
