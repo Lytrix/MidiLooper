@@ -28,7 +28,10 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
             return;
         }
         Loop& loop = track.getLoop(slot);
-        if (slot == newSlot || (playbackActive && slot == activeSlot)) {
+        // STOPPED track/slot switch must not wipe visualCache.notes (161804 / 165107).
+        // Boot already skipped this wipe. PLAYING still clears so a live preview
+        // cannot keep another slot's note list as authority.
+        if (playbackActive && (slot == newSlot || slot == activeSlot)) {
             loop.invalidateDisplayCaches();
         } else {
             loop.markDisplayCachesStale();
@@ -41,7 +44,8 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
     if (editManager.isNoteEditActive()) {
         track.invalidateCaches();
     } else if (!playbackActive) {
-        // Stopped: full cache invalidate on focus change is fine.
+        // Stopped: derived/playback caches only. Loop::invalidateCaches does not
+        // clear visualCache.notes; slot display above already marked stale.
         track.invalidateCaches();
     }
     // Playing + LOOP_EDIT preview: slot display caches already updated above — do not

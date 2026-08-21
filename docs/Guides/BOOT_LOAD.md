@@ -63,7 +63,7 @@ sequenceDiagram
 | Idle maintenance | focus track first while title drain is armed | `161804`: 4-bar `idle_gather` builds the 68-bar focus cache (`slice_clean` 2638 notes at 10.9 s) before `boot_commit`. Do not call `prewarmOverdubSourceSpanCache` in that `slice_clean` turn (`160519`). After `boot_commit`, a later clean-cache STOPPED turn prewarms the source-span cache. |
 | Post-boot slot restore | after ready + holdoff; PLAYING allows focus/`LoadLoopJob` only | `FocusRestoreUs` / `BackgroundRestoreUs`; demote parks one in-flight job |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
-| **finishBootSetup + USB Host** | `bootInteractiveReady()` and focus visual cache clean | `161804`: USB 11.484 s, first `DISP` visual=2638, `boot_commit=288557`. Do not call `invalidateForSlotChange` from `onBootSlotLoadComplete`. |
+| **finishBootSetup + USB Host** | `bootInteractiveReady()` and focus visual cache clean | `161804`: USB 11.484 s, first `DISP` visual=2638, `boot_commit=288557`. Do not call `invalidateForSlotChange` from `onBootSlotLoadComplete`. STOPPED track switch / undo must not wipe `visualCache.notes` either (`invalidateForSlotChange` marks stale; idle uses a budgeted gather and defers wrap-append). |
 | First-commit playback prewarm | same load-frame as first slot commit | `154353` `first_commit=128693` during boot. Deferring it until after the first piano roll hung `160519`. |
 | DROID LED refresh | after `beginUsbHost` | `clearLeds`, note 100 flash, `onBootSlotLoadComplete` |
 | Mid-pass persistence | idle transport | `PERS,mid_pass` during/after restore |
