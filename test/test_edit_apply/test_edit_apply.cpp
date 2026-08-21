@@ -720,6 +720,193 @@ bool reducedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
   return true;
 }
 
+struct CompanionEventSpan {
+  NoteId noteId = kInvalidNoteId;
+  uint8_t channel = 1;
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+};
+
+struct PairedCompanionState {
+  std::vector<CompanionEventSpan> spans;
+  std::vector<uint32_t> eventOrder;
+
+  static PairedCompanionState fromEvents(const MidiEventVec& events) {
+    PairedCompanionState state;
+    state.spans.reserve(events.size() / 2u);
+    std::vector<int32_t> onToSpan(events.size(), -1);
+    std::vector<int32_t> offToSpan(events.size(), -1);
+    for (size_t i = 0; i < events.size(); ++i) {
+      const MidiEvent& event = events[i];
+      if (!event.isNoteOn()) {
+        continue;
+      }
+      const int onIndex = static_cast<int>(i);
+      const int offIndex = findNoteOffForOnIndex(events, onIndex);
+      const MidiEvent* offEvent =
+          (offIndex >= 0) ? &events[static_cast<size_t>(offIndex)] : nullptr;
+      CompanionEventSpan span;
+      span.noteId = event.noteId;
+      span.channel = event.channel;
+      span.pitch = event.data.noteData.note;
+      span.velocity = event.data.noteData.velocity;
+      span.startTick = event.tick;
+      span.endTick = (offEvent != nullptr) ? offEvent->tick : event.tick;
+      const int32_t spanIndex = static_cast<int32_t>(state.spans.size());
+      state.spans.push_back(span);
+      onToSpan[i] = spanIndex;
+      if (offIndex >= 0) {
+        offToSpan[static_cast<size_t>(offIndex)] = spanIndex;
+      }
+    }
+    state.eventOrder.reserve(state.spans.size() * 2u);
+    for (size_t i = 0; i < events.size(); ++i) {
+      const int32_t onSpan = onToSpan[i];
+      if (onSpan >= 0) {
+        state.eventOrder.push_back(static_cast<uint32_t>(onSpan) * 2u);
+        continue;
+      }
+      const int32_t offSpan = offToSpan[i];
+      if (offSpan >= 0) {
+        state.eventOrder.push_back(static_cast<uint32_t>(offSpan) * 2u + 1u);
+      }
+    }
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    const size_t maxEventCount = spans.size() * 2u;
+    events.reserve(maxEventCount);
+    if (!eventOrder.empty()) {
+      for (const uint32_t token : eventOrder) {
+        const size_t spanIndex = static_cast<size_t>(token / 2u);
+        if (spanIndex >= spans.size()) {
+          continue;
+        }
+        const CompanionEventSpan& span = spans[spanIndex];
+        const bool isOff = (token & 1u) != 0u;
+        if (isOff) {
+          events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+        } else {
+          events.push_back(sequenceNoteOnWithId(span.startTick, span.channel, span.pitch,
+                                                span.velocity, span.noteId));
+        }
+      }
+    } else {
+      for (const CompanionEventSpan& span : spans) {
+        events.push_back(sequenceNoteOnWithId(span.startTick, span.channel, span.pitch,
+                                              span.velocity, span.noteId));
+        events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+      }
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    spans = PairedCompanionState::fromEvents(events).spans;
+  }
+};
+
+std::vector<CompanionEventSpan> canonicalCompanionEventSpans(
+    const std::vector<CompanionEventSpan>& spans) {
+  std::vector<CompanionEventSpan> canonical = spans;
+  std::stable_sort(canonical.begin(), canonical.end(),
+                   [](const CompanionEventSpan& a, const CompanionEventSpan& b) {
+                     if (a.noteId != b.noteId) return a.noteId < b.noteId;
+                     if (a.pitch != b.pitch) return a.pitch < b.pitch;
+                     if (a.startTick != b.startTick) return a.startTick < b.startTick;
+                     if (a.endTick != b.endTick) return a.endTick < b.endTick;
+                     if (a.velocity != b.velocity) return a.velocity < b.velocity;
+                     return a.channel < b.channel;
+                   });
+  return canonical;
+}
+
+bool companionEventSpanEqual(const CompanionEventSpan& a, const CompanionEventSpan& b) {
+  return a.noteId == b.noteId && a.channel == b.channel && a.pitch == b.pitch &&
+         a.velocity == b.velocity && a.startTick == b.startTick && a.endTick == b.endTick;
+}
+
+bool pairedCompanionStateEquivalent(const MidiEventVec& expectedEvents,
+                                    const PairedCompanionState& pairedState) {
+  const std::vector<CompanionEventSpan> expected =
+      canonicalCompanionEventSpans(PairedCompanionState::fromEvents(expectedEvents).spans);
+  const std::vector<CompanionEventSpan> actual =
+      canonicalCompanionEventSpans(pairedState.spans);
+  if (expected.size() != actual.size()) return false;
+  for (size_t i = 0; i < expected.size(); ++i) {
+    if (!companionEventSpanEqual(expected[i], actual[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool pairedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                      const EditPassVec& history,
+                                      uint32_t loopLengthTicks,
+                                      uint32_t* mismatchGenerationOut = nullptr) {
+  PairedCompanionState paired = PairedCompanionState::fromEvents(initialEvents);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!pairedCompanionStateEquivalent(expectedEvents, paired)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      paired.applyCompanionDelta(history[cursor], loopLengthTicks);
+    }
+  }
+
+  std::vector<PairedCompanionState> generationStates;
+  generationStates.reserve(history.size() + 1);
+  generationStates.push_back(PairedCompanionState::fromEvents(initialEvents));
+  for (const EditPass& row : history) {
+    PairedCompanionState nextState = generationStates.back();
+    nextState.applyCompanionDelta(row, loopLengthTicks);
+    generationStates.push_back(std::move(nextState));
+  }
+
+  for (size_t cursor = history.size(); cursor > 0; --cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor - 1);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!pairedCompanionStateEquivalent(expectedEvents, generationStates[cursor - 1])) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor - 1);
+      }
+      return false;
+    }
+  }
+
+  for (size_t cursor = 0; cursor < history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor + 1);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!pairedCompanionStateEquivalent(expectedEvents, generationStates[cursor + 1])) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor + 1);
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 std::vector<NoteId> collectChangedCompanionNoteIds(const ReducedCompanionState& before,
                                                    const ReducedCompanionState& after) {
   const NoteId ids[] = {
@@ -2980,6 +3167,123 @@ void test_incremental_companion_projection_reduced_state_randomized_divergence()
   TEST_ASSERT_EQUAL_UINT32(1u, firstMismatchGeneration);
 }
 
+void test_incremental_companion_projection_paired_state_operation_matrix() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+
+  const auto assertHistory = [&](const char* context,
+                                 std::initializer_list<EditPass> rows) {
+    EditPassVec history;
+    history.reserve(rows.size());
+    for (const EditPass& row : rows) {
+      history.push_back(row);
+    }
+    assignCompanionHistoryIds(history, 15000);
+    uint32_t mismatchGeneration = UINT32_MAX;
+    const bool equivalent = pairedCompanionHistoryEquivalent(
+        initialEvents, history, kCompanionProjectionLoopLength, &mismatchGeneration);
+    if (!equivalent) {
+      char message[160];
+      snprintf(message, sizeof(message), "%s mismatch generation=%u", context,
+               static_cast<unsigned>(mismatchGeneration));
+      TEST_FAIL_MESSAGE(message);
+    }
+  };
+
+  assertHistory("paired-single-hide", {makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  assertHistory("paired-repeated-hide",
+                {makeCompanionDeleteRow(kCompanionTargetNoteId),
+                 makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  assertHistory("paired-repeated-shorten-decreasing",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 300),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 200)});
+  assertHistory("paired-shorten-increase-decrease",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 600),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 220)});
+  assertHistory("paired-hide-after-shorten",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  assertHistory("paired-shorten-after-hide",
+                {makeCompanionDeleteRow(kCompanionTargetNoteId),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 240)});
+  assertHistory("paired-wrap-companion",
+                {makeCompanionLengthRow(kCompanionWrapNoteId, 64),
+                 makeCompanionLengthRow(kCompanionWrapNoteId, 128),
+                 makeCompanionDeleteRow(kCompanionWrapNoteId)});
+  assertHistory("paired-multiple-generations",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionDeleteRow(kCompanionOverlapNoteId),
+                 makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300),
+                 makeCompanionDeleteRow(kCompanionDifferentPitchNoteId),
+                 makeCompanionLengthRow(kCompanionWrapNoteId, 64),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 600)});
+}
+
+void test_incremental_companion_projection_paired_state_randomized_divergence() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  const NoteId targetIds[] = {
+      kCompanionTargetNoteId,
+      kCompanionOverlapNoteId,
+      kCompanionDistantOverlapNoteId,
+      kCompanionDifferentPitchNoteId,
+      kCompanionWrapNoteId,
+  };
+  std::mt19937 rng(0xA11CEu);
+  std::uniform_int_distribution<int> targetDist(0, 4);
+  std::uniform_int_distribution<int> actionDist(0, 99);
+  std::uniform_int_distribution<int> endTickDist(
+      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
+  std::uniform_int_distribution<int> rowCountDist(8, 32);
+
+  uint32_t mismatchScenarios = 0;
+  uint32_t firstMismatchScenario = UINT32_MAX;
+  uint32_t firstMismatchGeneration = UINT32_MAX;
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    EditPassVec history;
+    history.reserve(40);
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
+    history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
+    history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
+    history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
+    history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
+    history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
+
+    const int randomRowCount = rowCountDist(rng);
+    for (int i = 0; i < randomRowCount; ++i) {
+      const NoteId targetId = targetIds[targetDist(rng)];
+      if (actionDist(rng) < 28) {
+        history.push_back(makeCompanionDeleteRow(targetId));
+      } else {
+        history.push_back(
+            makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
+      }
+    }
+
+    assignCompanionHistoryIds(history, 17000 + scenario * 64);
+    uint32_t mismatchGeneration = UINT32_MAX;
+    const bool equivalent = pairedCompanionHistoryEquivalent(
+        initialEvents, history, kCompanionProjectionLoopLength, &mismatchGeneration);
+    if (!equivalent) {
+      ++mismatchScenarios;
+      if (firstMismatchScenario == UINT32_MAX) {
+        firstMismatchScenario = scenario;
+        firstMismatchGeneration = mismatchGeneration;
+      }
+    }
+  }
+
+  TEST_ASSERT_TRUE(mismatchScenarios > 0u);
+  TEST_ASSERT_EQUAL_UINT32(51u, firstMismatchScenario);
+  TEST_ASSERT_EQUAL_UINT32(13u, firstMismatchGeneration);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -3037,5 +3341,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_randomized_history_and_undo_redo);
   RUN_TEST(test_incremental_companion_projection_reduced_state_minimal_geometry_diverges);
   RUN_TEST(test_incremental_companion_projection_reduced_state_randomized_divergence);
+  RUN_TEST(test_incremental_companion_projection_paired_state_operation_matrix);
+  RUN_TEST(test_incremental_companion_projection_paired_state_randomized_divergence);
   return UNITY_END();
 }

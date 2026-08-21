@@ -1019,3 +1019,40 @@ Conclusion:
 
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
+
+## 20. Paired companion state candidate (adds note on/off pairing context)
+
+The third native experiment adds context beyond minimal display geometry:
+
+- `K(history)` stores paired note spans derived from note events
+  (`noteId`, channel, pitch, velocity, start tick, end tick) and preserves
+  note-event ordering.
+- For each newly sealed companion, `K` rematerializes note events from this
+  paired state, applies `applyNoteEditPass()`, and re-extracts paired spans.
+- The oracle compares `K` against `R(history)` (ordered
+  `applyNoteEditPassSequence()`) at every generation and undo/redo prefix.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_paired_state_operation_matrix`
+- `test_incremental_companion_projection_paired_state_randomized_divergence`
+
+Native result: **1412/1412**.
+
+Observed behavior:
+
+- The paired candidate matches `R(history)` on the deterministic operation
+  matrix.
+- The paired candidate still diverges on randomized replay with the fixed-seed
+  fixture (`first mismatch: scenario 51, generation 13`).
+
+Conclusion:
+
+- Adding per-note on/off pairing plus note-event ordering is still not
+  sufficient to preserve full ordered companion replay semantics across broader
+  histories.
+- The remaining semantics require additional context beyond this paired state
+  if replay is to be replaced while keeping behavior bit-for-bit.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
