@@ -2,6 +2,8 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include <unity.h>
+#include <cstdio>
+#include <random>
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -227,6 +229,18 @@ EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t
   return row;
 }
 
+EditPass makeVelocityRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t velocity) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Update;
+  row.propertyType = EditPropertyType::Velocity;
+  row.targetNoteId = targetNoteId;
+  row.startTick = start;
+  row.endTick = end;
+  row.velocity = velocity;
+  return row;
+}
+
 EditPass makeNoteRangeRow(NoteId targetNoteId, uint32_t baseStart, uint32_t baseEnd,
                           uint32_t newStart, uint32_t newEnd) {
   EditPass row{};
@@ -267,6 +281,98 @@ int countMatching(const std::vector<MidiEvent, Alloc>& flat, bool wantOn, uint8_
     }
   }
   return n;
+}
+
+MidiEvent sequenceNoteOnWithId(uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
+                               NoteId noteId) {
+  MidiEvent evt = MidiEvent::NoteOn(tick, channel, pitch, velocity);
+  evt.noteId = noteId;
+  return evt;
+}
+
+EditPass makeCreateRow(NoteId noteId, uint32_t startTick, uint32_t endTick, uint8_t channel,
+                       uint8_t pitch, uint8_t velocity) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Create;
+  row.propertyType = EditPropertyType::None;
+  row.targetNoteId = noteId;
+  row.addedEvents.push_back(sequenceNoteOnWithId(startTick, channel, pitch, velocity, noteId));
+  row.addedEvents.push_back(MidiEvent::NoteOff(endTick, channel, pitch, 0));
+  return row;
+}
+
+MidiEventVec makeSequenceParityFixtureEvents() {
+  MidiEventVec events;
+  events.push_back(sequenceNoteOnWithId(96, 1, 60, 90, 10));
+  events.push_back(MidiEvent::NoteOff(192, 1, 60, 0));
+  events.push_back(sequenceNoteOnWithId(256, 1, 62, 88, 20));
+  events.push_back(MidiEvent::NoteOff(352, 1, 62, 0));
+  events.push_back(sequenceNoteOnWithId(448, 1, 64, 86, 30));
+  events.push_back(MidiEvent::NoteOff(560, 1, 64, 0));
+  return events;
+}
+
+void applyNoteEditPassSequenceBaselineNoCollapse(MidiEventVec& events, const EditPassVec& rows,
+                                                 uint32_t loopLengthTicks) {
+  std::vector<NoteId> presentNoteIds;
+  collectPresentNoteIds(events, presentNoteIds);
+  for (const EditPass& row : rows) {
+    if (row.actionType == EditActionType::Delete ||
+        row.actionType == EditActionType::Update) {
+      if (!containsPresentNoteId(presentNoteIds, row.targetNoteId)) {
+        continue;
+      }
+    }
+    applyNoteEditPass(events, row, loopLengthTicks);
+    switch (row.actionType) {
+      case EditActionType::Delete:
+        erasePresentNoteId(presentNoteIds, row.targetNoteId);
+        break;
+      case EditActionType::Create:
+        for (const MidiEvent& evt : row.addedEvents) {
+          if (evt.isNoteOn()) {
+            insertPresentNoteId(presentNoteIds, evt.noteId);
+          }
+        }
+        break;
+      case EditActionType::Update:
+        break;
+    }
+  }
+}
+
+bool midiEventEquivalentForTest(const MidiEvent& a, const MidiEvent& b) {
+  if (a.type != b.type || a.channel != b.channel || a.tick != b.tick || a.noteId != b.noteId) {
+    return false;
+  }
+  if (a.isNoteOn() || a.isNoteOff()) {
+    return a.data.noteData.note == b.data.noteData.note &&
+           a.data.noteData.velocity == b.data.noteData.velocity;
+  }
+  if (a.type == midi::ControlChange) {
+    return a.data.ccData.cc == b.data.ccData.cc &&
+           a.data.ccData.value == b.data.ccData.value;
+  }
+  return true;
+}
+
+void assertMidiEventVecEquivalent(const MidiEventVec& expected, const MidiEventVec& actual,
+                                  const char* context) {
+  if (expected.size() != actual.size()) {
+    char msg[192];
+    snprintf(msg, sizeof(msg), "%s: size mismatch expected=%u actual=%u", context,
+             static_cast<unsigned>(expected.size()), static_cast<unsigned>(actual.size()));
+    TEST_FAIL_MESSAGE(msg);
+  }
+  for (size_t i = 0; i < expected.size(); ++i) {
+    if (!midiEventEquivalentForTest(expected[i], actual[i])) {
+      char msg[192];
+      snprintf(msg, sizeof(msg), "%s: mismatch at index %u", context,
+               static_cast<unsigned>(i));
+      TEST_FAIL_MESSAGE(msg);
+    }
+  }
 }
 
 }  // namespace
@@ -2001,6 +2107,146 @@ void test_reconcile_already_present_session_id_does_not_retarget() {
   TEST_ASSERT_EQUAL(280, rows[0].targetNoteId);
 }
 
+void test_sequence_phasea_collapse_contiguous_velocity_and_pitch_equivalence() {
+  constexpr uint32_t kLoopLength = 3072;
+  MidiEventVec baseline = makeSequenceParityFixtureEvents();
+  MidiEventVec optimized = baseline;
+
+  EditPassVec rows;
+  rows.push_back(makeVelocityRow(10, 96, 192, 70));
+  rows.push_back(makeVelocityRow(10, 96, 192, 80));
+  rows.push_back(makeVelocityRow(10, 96, 192, 96));  // collapses into this row
+  rows.push_back(makePitchRow(20, 256, 352, 67));    // barrier
+  rows.push_back(makeVelocityRow(10, 96, 192, 64));  // must stay after barrier
+
+  applyNoteEditPassSequenceBaselineNoCollapse(baseline, rows, kLoopLength);
+  applyNoteEditPassSequence(optimized, rows, kLoopLength);
+
+  assertMidiEventVecEquivalent(baseline, optimized,
+                               "contiguous velocity/pitch collapse equivalence");
+}
+
+void test_sequence_phasea_barrier_with_length_keeps_equivalence() {
+  constexpr uint32_t kLoopLength = 3072;
+  MidiEventVec baseline = makeSequenceParityFixtureEvents();
+  MidiEventVec optimized = baseline;
+
+  EditPassVec rows;
+  rows.push_back(makeVelocityRow(10, 96, 192, 72));
+  rows.push_back(makeLengthRow(10, 96, 192, 288));   // barrier with overlap side effects
+  rows.push_back(makeVelocityRow(10, 96, 288, 73));
+  rows.push_back(makeVelocityRow(10, 96, 288, 74));  // collapses into this row only
+
+  applyNoteEditPassSequenceBaselineNoCollapse(baseline, rows, kLoopLength);
+  applyNoteEditPassSequence(optimized, rows, kLoopLength);
+
+  assertMidiEventVecEquivalent(baseline, optimized, "length barrier equivalence");
+}
+
+void test_sequence_phasea_randomized_equivalence_against_baseline() {
+  constexpr uint32_t kLoopLength = 3072;
+  std::mt19937 rng(0xC0FFEEu);
+  std::uniform_int_distribution<int> rowCountDist(10, 40);
+  std::uniform_int_distribution<int> actionDist(0, 99);  // create/delete/update mix
+  std::uniform_int_distribution<int> pitchDist(36, 84);
+  std::uniform_int_distribution<int> velocityDist(1, 127);
+  std::uniform_int_distribution<int> tickDist(0, static_cast<int>(kLoopLength - 32));
+  std::uniform_int_distribution<int> lenDist(8, 192);
+  std::uniform_int_distribution<int> propertyDist(0, 3);  // noteRange/length/pitch/velocity
+
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    MidiEventVec baseline = makeSequenceParityFixtureEvents();
+    MidiEventVec optimized = baseline;
+    EditPassVec rows;
+    rows.reserve(48);
+
+    NoteId nextNoteId = 100;
+    const int rowCount = rowCountDist(rng);
+    for (int i = 0; i < rowCount; ++i) {
+      const int actionPick = actionDist(rng);
+      const NoteId targetNoteId =
+          static_cast<NoteId>(1 + static_cast<int>(nextNoteId) + (actionDist(rng) % 8) - 4);
+      if (actionPick < 20) {  // create
+        const uint32_t startTick = static_cast<uint32_t>(tickDist(rng));
+        const uint32_t endTick = std::min<uint32_t>(
+            startTick + static_cast<uint32_t>(lenDist(rng)), kLoopLength - 1);
+        rows.push_back(
+            makeCreateRow(nextNoteId, startTick, endTick, 1, static_cast<uint8_t>(pitchDist(rng)),
+                          static_cast<uint8_t>(velocityDist(rng))));
+        ++nextNoteId;
+      } else if (actionPick < 32) {  // delete
+        rows.push_back(makeDeleteRow(targetNoteId));
+      } else {  // update
+        switch (propertyDist(rng)) {
+          case 0: {
+            const uint32_t startTick = static_cast<uint32_t>(tickDist(rng));
+            const uint32_t endTick = std::min<uint32_t>(
+                startTick + static_cast<uint32_t>(lenDist(rng)), kLoopLength - 1);
+            rows.push_back(makeNoteRangeRow(targetNoteId, 0, 0, startTick, endTick));
+            break;
+          }
+          case 1: {
+            const uint32_t newEndTick = static_cast<uint32_t>(tickDist(rng));
+            rows.push_back(makeLengthRow(targetNoteId, 0, 0, newEndTick));
+            break;
+          }
+          case 2: {
+            rows.push_back(makePitchRow(targetNoteId, 0, 0, static_cast<uint8_t>(pitchDist(rng))));
+            break;
+          }
+          default: {
+            rows.push_back(
+                makeVelocityRow(targetNoteId, 0, 0, static_cast<uint8_t>(velocityDist(rng))));
+            break;
+          }
+        }
+      }
+    }
+
+    applyNoteEditPassSequenceBaselineNoCollapse(baseline, rows, kLoopLength);
+    applyNoteEditPassSequence(optimized, rows, kLoopLength);
+
+    char context[96];
+    snprintf(context, sizeof(context), "randomized scenario %u", static_cast<unsigned>(scenario));
+    assertMidiEventVecEquivalent(baseline, optimized, context);
+  }
+}
+
+void test_sequence_phaseb_length_then_same_note_update_equivalence() {
+  constexpr uint32_t kLoopLength = 3072;
+  MidiEventVec baseline = makeSequenceParityFixtureEvents();
+  MidiEventVec optimized = baseline;
+
+  EditPassVec rows;
+  rows.push_back(makeLengthRow(10, 96, 192, 288));    // structural mutation barrier
+  rows.push_back(makePitchRow(10, 96, 288, 72));      // same note after length mutation
+  rows.push_back(makeVelocityRow(10, 96, 288, 111));  // same note continued
+
+  applyNoteEditPassSequenceBaselineNoCollapse(baseline, rows, kLoopLength);
+  applyNoteEditPassSequence(optimized, rows, kLoopLength);
+
+  assertMidiEventVecEquivalent(baseline, optimized,
+                               "phaseb length then same-note updates equivalence");
+}
+
+void test_sequence_phaseb_length_with_interleaved_note_updates_equivalence() {
+  constexpr uint32_t kLoopLength = 3072;
+  MidiEventVec baseline = makeSequenceParityFixtureEvents();
+  MidiEventVec optimized = baseline;
+
+  EditPassVec rows;
+  rows.push_back(makeLengthRow(10, 96, 192, 304));    // structural mutation barrier
+  rows.push_back(makeVelocityRow(20, 256, 352, 109)); // another note
+  rows.push_back(makePitchRow(10, 96, 304, 69));      // original note again
+  rows.push_back(makeVelocityRow(10, 96, 304, 112));  // contiguous same target/property collapse
+
+  applyNoteEditPassSequenceBaselineNoCollapse(baseline, rows, kLoopLength);
+  applyNoteEditPassSequence(optimized, rows, kLoopLength);
+
+  assertMidiEventVecEquivalent(baseline, optimized,
+                               "phaseb length interleaved updates equivalence");
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -2049,5 +2295,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_reconcile_zero_match_at_commit_baseline_does_not_retarget);
   RUN_TEST(test_reconcile_ambiguous_geometry_does_not_retarget);
   RUN_TEST(test_reconcile_already_present_session_id_does_not_retarget);
+  RUN_TEST(test_sequence_phasea_collapse_contiguous_velocity_and_pitch_equivalence);
+  RUN_TEST(test_sequence_phasea_barrier_with_length_keeps_equivalence);
+  RUN_TEST(test_sequence_phasea_randomized_equivalence_against_baseline);
+  RUN_TEST(test_sequence_phaseb_length_then_same_note_update_equivalence);
+  RUN_TEST(test_sequence_phaseb_length_with_interleaved_note_updates_equivalence);
   return UNITY_END();
 }
