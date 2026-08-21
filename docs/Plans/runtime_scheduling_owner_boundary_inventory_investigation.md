@@ -853,11 +853,14 @@ The fix worked on its target: per-lengthen-call reconstruct went **576 ms → 22
 
 So `applyDeleteNoteById` owns roughly **52 s of the 54 s** — the 10.7 s of top-level `del` rows and the 40.7 s of nested deletes are the same primitive.
 
-### Fix shipped — stop sizing the pairing scratch to the whole vector
+### Attempted fix — stop sizing the pairing scratch to the whole vector
 
-`findNoteOffForOnIndex` built `walkOrder` with `reserve(events.size())` (a 21 KB heap block at `ev=2660`) and `offPaired(events.size(), 0)` (a full-length zero fill), both on the **global** heap rather than `MidiEventVec`'s `InternalHeapFirstAllocator`. Both only ever cover the walked channel + pitch. They are now sized to that subset, with the paired flags indexed by position in an ascending `pitchIndices` list.
+> **Superseded by the next section.** The hypothesis below (allocation size is the cost) was
+> **disproved on device.** Kept for the reasoning trail; do not treat it as a shipped win.
 
-Behavior-preserving: `pitchIndices` holds exactly the events the old filters admitted, in ascending order, so the wrap-off scan is the same traversal — same order, same `break`, same `untaggedWrapOffCount`. Scan count is unchanged at two O(n) passes; what is removed is two large per-call allocations, on a call made several thousand times per replay.
+`findNoteOffForOnIndex` built `walkOrder` with `reserve(events.size())` (a 21 KB heap block at `ev=2660`) and `offPaired(events.size(), 0)` (a full-length zero fill), both on the **global** heap rather than `MidiEventVec`'s `InternalHeapFirstAllocator`. Both only ever cover the walked channel + pitch, so they were resized to that subset with the paired flags indexed by position in an ascending `pitchIndices` list.
+
+Behavior-preserving: `pitchIndices` holds exactly the events the old filters admitted, in ascending order, so the wrap-off scan is the same traversal — same order, same `break`, same `untaggedWrapOffCount`. That property still holds in the shipped one-pass version.
 
 **Still out of scope and unmeasured:** `findWrapHeadOffForOnIndex` also runs per delete, with an inner `isPreferredWrapTailForHeadOff` full scan gated by `isHeadTailWrappedPair`, and `findNoteOnByIdCached` is always linear because the lookup cache is cleared after every delete. Neither was touched.
 
@@ -889,3 +892,51 @@ Making each delete cheaper does not work. Every remaining lever removes delete *
 | Revive the parked last-wins dedupe (§15) | Fails the randomized planner parity guard |
 
 Both reduce to one **open decision**: should replaying a stale companion row apply overlap side effects to its neighbours, or is only the newest generation's geometry real? Not resolvable from the code. Nothing further should be implemented on this path until it is answered.
+
+---
+
+## 17. Stage O closeout — what is proven, what is not
+
+### Shipped
+
+| Commit | Change | Result |
+|---|---|---|
+| `7d8c513` | `reconstructNotesForPitch` — lengthen branch reconstructs only the edited note's pitch | **576 ms → 21 ms** per lengthen call. Real, exactly behavior-preserving, holds across three captures |
+| `210d387` | Pairing scratch sized to the walked pitch, via a counting pass | **Regressed 11 %** per delete. Committed before device validation — the process error of this stage |
+| `cc891c7` | Same without the counting pass — one full pass instead of two | **Neutral** (51.77 vs 51.95 µs). Kept because it is strictly less work, not because it is faster |
+
+Native **1406/1406** throughout, including the randomized planner parity guard.
+
+### Proven
+
+- The lengthen branch's full-loop reconstruct was real, and pitch-scoping removed it. Reconstruction is pitch-local end to end (`activeNoteStacks[pitch]`, span-local projection, `(note, startTick, endTick)` dedupe), so the candidate set is unchanged.
+- `applyDeleteNoteById` owns the bulk of the replay — both the top-level `del` rows and the lengthen branch's nested deletes are the same primitive.
+- Per-call scanning and allocation inside that primitive are **not** the cost. Two, three, and one full passes over the event vector measured 51.95, 57.63, and 51.77 µs per delete at a matched window.
+
+### Not explained
+
+**A single `applyDeleteNoteById` costs ~11 ms at boot sizes and nothing measured accounts for it.** It is not the scanning removed in `cc891c7`, and no operation count derivable from `findNoteOnByIdCached` + `findNoteOffForOnIndex` + `findWrapHeadOffForOnIndex` + `eraseEventIndices` approaches that figure at `ev≈2700`. Per-delete cost also scales far worse than the event count (~170 µs at `ev≈800`, ~11 ms at `ev≈2700` — 80× for 3.5×), which no counted term explains either.
+
+Candidate explanations, **none measured, none to be acted on before instrumenting**:
+
+- `MidiEventVec` is `InternalHeapFirstAllocator` and spills to external memory when the internal heap is exhausted, so boot-size vectors may be scanned in PSRAM while `ev≈800` ones are not.
+- `findWrapHeadOffForOnIndex`'s inner `isPreferredWrapTailForHeadOff` full scan, gated by `isHeadTailWrappedPair`, is quadratic whenever the gate opens. Never instrumented.
+- `findNoteOnByIdCached` degrades to a linear scan on every call, because the lookup cache is cleared after each delete.
+
+### Method corrections to carry forward
+
+1. **Do not infer a ratio measured in small windows onto the boot window.** §14 concluded `recon ≈ ulen` from untruncated small lines; at boot `recon` is 4 % of it, and 18 % even at `ev=773`. That single inference sent the first fix at 4 % of the problem.
+2. **Do not compare boot totals across captures.** The edit-row population differs per session (`ndel` 1131 → 1216, `nlen` 219 → 316). Only windows matching on **both** `ev` and `ndel` are comparable — the `ev=250, ndel=175` window is the reliable anchor.
+3. **Do not commit a performance change before device validation.** `210d387` put a regression in HEAD; it was fixed forward per [Multi-Stage-Bugfix-Workflow](../../.cursor/rules/Multi-Stage-Bugfix-Workflow.mdc), not amended.
+4. **A truncated capture line is not evidence.** `kMaxCaptureTextBytes` is 192; the boot `cer_edit` line clipped at `recon` and the missing field was the one that mattered.
+
+### Two candidate directions — neither started
+
+**A. Remove the delete calls.** Both options change replay output and share one open decision: should replaying a stale companion row apply overlap side effects to its neighbours, or is only the newest generation's geometry real?
+
+| Lever | Blocker |
+|---|---|
+| Batch the nested deletes into one sweep | Same-pitch LIFO pairing shifts as each note is erased |
+| Revive the parked last-wins dedupe (§15) | Fails the randomized planner parity guard |
+
+**B. Question the replay itself.** Boot replays **1216 deletes and 316 length rows** to paint a loop the user recorded four notes per bar into (§13 established row accumulation comes from cumulative overdub companion sealing without supersession disable). Making that replay faster may be the wrong frame; not replaying it at boot is the alternative. This path does not depend on the decision in A.
