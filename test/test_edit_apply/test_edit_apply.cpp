@@ -571,6 +571,195 @@ void printCompanionAffectedGeometry(const char* operation, NoteId targetNoteId,
   std::printf("\n");
 }
 
+CompanionNoteState companionNoteState(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+  CompanionNoteState state;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId != noteId) {
+      continue;
+    }
+    state.present = true;
+    state.pitch = note.note;
+    state.velocity = note.velocity;
+    state.startTick = note.startTick;
+    state.endTick = note.endTick;
+    break;
+  }
+  return state;
+}
+
+struct ReducedCompanionState {
+  NoteUtils::DisplayNoteVec notes;
+
+  static ReducedCompanionState fromEvents(const MidiEventVec& events, uint32_t loopLengthTicks) {
+    ReducedCompanionState state;
+    state.notes = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false, false);
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    events.reserve(notes.size() * 2u);
+    constexpr uint8_t kChannel = 1;
+    for (const NoteUtils::DisplayNote& note : notes) {
+      if (note.noteId == kInvalidNoteId) {
+        continue;
+      }
+      events.push_back(
+          sequenceNoteOnWithId(note.startTick, kChannel, note.note, note.velocity, note.noteId));
+      events.push_back(MidiEvent::NoteOff(note.endTick, kChannel, note.note, 0));
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    notes = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false, false);
+  }
+};
+
+NoteUtils::DisplayNoteVec canonicalCompanionGeometry(const NoteUtils::DisplayNoteVec& notes) {
+  NoteUtils::DisplayNoteVec canonical;
+  canonical.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    canonical.push_back(note);
+  }
+  std::stable_sort(canonical.begin(), canonical.end(),
+                   [](const NoteUtils::DisplayNote& a, const NoteUtils::DisplayNote& b) {
+                     if (a.noteId != b.noteId) return a.noteId < b.noteId;
+                     if (a.note != b.note) return a.note < b.note;
+                     if (a.startTick != b.startTick) return a.startTick < b.startTick;
+                     if (a.endTick != b.endTick) return a.endTick < b.endTick;
+                     return a.velocity < b.velocity;
+                   });
+  return canonical;
+}
+
+bool reducedCompanionGeometryEquivalent(const MidiEventVec& expectedEvents,
+                                        const ReducedCompanionState& reducedState,
+                                        uint32_t loopLengthTicks) {
+  const NoteUtils::DisplayNoteVec expected = canonicalCompanionGeometry(
+      NoteUtils::reconstructDisplayNotes(expectedEvents, loopLengthTicks, false, false));
+  const NoteUtils::DisplayNoteVec actual = canonicalCompanionGeometry(reducedState.notes);
+  if (expected.size() != actual.size()) return false;
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const NoteUtils::DisplayNote& expectedNote = expected[i];
+    const NoteUtils::DisplayNote& actualNote = actual[i];
+    if (expectedNote.noteId != actualNote.noteId || expectedNote.note != actualNote.note ||
+        expectedNote.velocity != actualNote.velocity ||
+        expectedNote.startTick != actualNote.startTick ||
+        expectedNote.endTick != actualNote.endTick) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool reducedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                       const EditPassVec& history,
+                                       uint32_t loopLengthTicks,
+                                       uint32_t* mismatchGenerationOut = nullptr) {
+  ReducedCompanionState reduced = ReducedCompanionState::fromEvents(initialEvents, loopLengthTicks);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!reducedCompanionGeometryEquivalent(expectedEvents, reduced, loopLengthTicks)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      reduced.applyCompanionDelta(history[cursor], loopLengthTicks);
+    }
+  }
+
+  std::vector<ReducedCompanionState> generationStates;
+  generationStates.reserve(history.size() + 1);
+  generationStates.push_back(ReducedCompanionState::fromEvents(initialEvents, loopLengthTicks));
+  for (const EditPass& row : history) {
+    ReducedCompanionState nextState = generationStates.back();
+    nextState.applyCompanionDelta(row, loopLengthTicks);
+    generationStates.push_back(std::move(nextState));
+  }
+
+  for (size_t cursor = history.size(); cursor > 0; --cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor - 1);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!reducedCompanionGeometryEquivalent(expectedEvents, generationStates[cursor - 1],
+                                            loopLengthTicks)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor - 1);
+      }
+      return false;
+    }
+  }
+
+  for (size_t cursor = 0; cursor < history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor + 1);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!reducedCompanionGeometryEquivalent(expectedEvents, generationStates[cursor + 1],
+                                            loopLengthTicks)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor + 1);
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
+std::vector<NoteId> collectChangedCompanionNoteIds(const ReducedCompanionState& before,
+                                                   const ReducedCompanionState& after) {
+  const NoteId ids[] = {
+      kCompanionTargetNoteId,         kCompanionOverlapNoteId,
+      kCompanionDistantOverlapNoteId, kCompanionDifferentPitchNoteId,
+      kCompanionWrapNoteId,
+  };
+  std::vector<NoteId> changed;
+  for (const NoteId noteId : ids) {
+    if (!companionNoteStateEquals(companionNoteState(before.notes, noteId),
+                                  companionNoteState(after.notes, noteId))) {
+      changed.push_back(noteId);
+    }
+  }
+  std::sort(changed.begin(), changed.end());
+  return changed;
+}
+
+void assertChangedCompanionNoteIds(const std::vector<NoteId>& actual,
+                                   std::initializer_list<NoteId> expected,
+                                   const char* context) {
+  std::vector<NoteId> expectedSorted(expected.begin(), expected.end());
+  std::sort(expectedSorted.begin(), expectedSorted.end());
+  if (actual.size() != expectedSorted.size()) {
+    char message[192];
+    snprintf(message, sizeof(message), "%s: changed-note count mismatch expected=%u actual=%u",
+             context, static_cast<unsigned>(expectedSorted.size()),
+             static_cast<unsigned>(actual.size()));
+    TEST_FAIL_MESSAGE(message);
+  }
+  for (size_t i = 0; i < actual.size(); ++i) {
+    if (actual[i] != expectedSorted[i]) {
+      char message[192];
+      snprintf(message, sizeof(message), "%s: changed-note mismatch index=%u", context,
+               static_cast<unsigned>(i));
+      TEST_FAIL_MESSAGE(message);
+    }
+  }
+}
+
 }  // namespace
 
 // Regression: a note lengthened to share its end tick with another same-pitch note must
@@ -2615,6 +2804,182 @@ void test_incremental_companion_projection_randomized_history_and_undo_redo() {
   }
 }
 
+void test_incremental_companion_projection_reduced_state_minimal_geometry_diverges() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+
+  uint32_t mismatchCount = 0;
+  uint32_t firstMismatchGeneration = UINT32_MAX;
+  const auto observeHistory = [&](const char* context,
+                                  std::initializer_list<EditPass> rows) {
+    EditPassVec history;
+    history.reserve(rows.size());
+    for (const EditPass& row : rows) {
+      history.push_back(row);
+    }
+    assignCompanionHistoryIds(history, 9000);
+    uint32_t mismatchGeneration = UINT32_MAX;
+    const bool equivalent = reducedCompanionHistoryEquivalent(
+        initialEvents, history, kCompanionProjectionLoopLength, &mismatchGeneration);
+    if (!equivalent) {
+      ++mismatchCount;
+      if (firstMismatchGeneration == UINT32_MAX) {
+        firstMismatchGeneration = mismatchGeneration;
+      }
+      (void)context;
+    }
+  };
+
+  observeHistory("reduced-single-hide", {makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  observeHistory("reduced-repeated-hide",
+                 {makeCompanionDeleteRow(kCompanionTargetNoteId),
+                  makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  observeHistory("reduced-repeated-shorten-decreasing",
+                 {makeCompanionLengthRow(kCompanionTargetNoteId, 300),
+                  makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                  makeCompanionLengthRow(kCompanionTargetNoteId, 200)});
+  observeHistory("reduced-shorten-increase-decrease",
+                 {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                  makeCompanionLengthRow(kCompanionTargetNoteId, 600),
+                  makeCompanionLengthRow(kCompanionTargetNoteId, 220)});
+  observeHistory("reduced-hide-after-shorten",
+                 {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                  makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  observeHistory("reduced-shorten-after-hide",
+                 {makeCompanionDeleteRow(kCompanionTargetNoteId),
+                  makeCompanionLengthRow(kCompanionTargetNoteId, 240)});
+  observeHistory("reduced-wrap-companion",
+                 {makeCompanionLengthRow(kCompanionWrapNoteId, 64),
+                  makeCompanionLengthRow(kCompanionWrapNoteId, 128),
+                  makeCompanionDeleteRow(kCompanionWrapNoteId)});
+  observeHistory("reduced-multiple-generations",
+                 {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                  makeCompanionDeleteRow(kCompanionOverlapNoteId),
+                  makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300),
+                  makeCompanionDeleteRow(kCompanionDifferentPitchNoteId),
+                  makeCompanionLengthRow(kCompanionWrapNoteId, 64),
+                  makeCompanionLengthRow(kCompanionTargetNoteId, 600)});
+
+  TEST_ASSERT_TRUE(mismatchCount > 0u);
+  TEST_ASSERT_EQUAL_UINT32(1u, firstMismatchGeneration);
+
+  {
+    ReducedCompanionState before = ReducedCompanionState::fromEvents(
+        initialEvents, kCompanionProjectionLoopLength);
+    ReducedCompanionState after = before;
+    after.applyCompanionDelta(makeCompanionLengthRow(kCompanionTargetNoteId, 600),
+                              kCompanionProjectionLoopLength);
+    assertChangedCompanionNoteIds(collectChangedCompanionNoteIds(before, after),
+                                  {kCompanionTargetNoteId, kCompanionOverlapNoteId,
+                                   kCompanionDistantOverlapNoteId, kCompanionWrapNoteId},
+                                  "reduced-lengthen-affected-region");
+  }
+
+  {
+    ReducedCompanionState before = ReducedCompanionState::fromEvents(
+        initialEvents, kCompanionProjectionLoopLength);
+    ReducedCompanionState after = before;
+    after.applyCompanionDelta(makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                              kCompanionProjectionLoopLength);
+    assertChangedCompanionNoteIds(collectChangedCompanionNoteIds(before, after),
+                                  {kCompanionTargetNoteId, kCompanionWrapNoteId},
+                                  "reduced-shorten-affected-region");
+  }
+
+  {
+    ReducedCompanionState before = ReducedCompanionState::fromEvents(
+        initialEvents, kCompanionProjectionLoopLength);
+    ReducedCompanionState after = before;
+    after.applyCompanionDelta(makeCompanionDeleteRow(kCompanionTargetNoteId),
+                              kCompanionProjectionLoopLength);
+    assertChangedCompanionNoteIds(collectChangedCompanionNoteIds(before, after),
+                                  {kCompanionTargetNoteId, kCompanionWrapNoteId},
+                                  "reduced-hide-affected-region");
+  }
+
+  {
+    ReducedCompanionState before = ReducedCompanionState::fromEvents(
+        initialEvents, kCompanionProjectionLoopLength);
+    ReducedCompanionState after = before;
+    after.applyCompanionDelta(makeCompanionLengthRow(kCompanionWrapNoteId, 192),
+                              kCompanionProjectionLoopLength);
+    assertChangedCompanionNoteIds(collectChangedCompanionNoteIds(before, after), {},
+                                  "reduced-wrap-affected-region");
+  }
+
+  {
+    ReducedCompanionState before = ReducedCompanionState::fromEvents(
+        initialEvents, kCompanionProjectionLoopLength);
+    before.applyCompanionDelta(makeCompanionDeleteRow(kCompanionTargetNoteId),
+                               kCompanionProjectionLoopLength);
+    ReducedCompanionState after = before;
+    after.applyCompanionDelta(makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                              kCompanionProjectionLoopLength);
+    assertChangedCompanionNoteIds(collectChangedCompanionNoteIds(before, after), {},
+                                  "reduced-shorten-after-hide-no-op");
+  }
+}
+
+void test_incremental_companion_projection_reduced_state_randomized_divergence() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  const NoteId targetIds[] = {
+      kCompanionTargetNoteId,
+      kCompanionOverlapNoteId,
+      kCompanionDistantOverlapNoteId,
+      kCompanionDifferentPitchNoteId,
+      kCompanionWrapNoteId,
+  };
+  std::mt19937 rng(0x5EEDC0DEu);
+  std::uniform_int_distribution<int> targetDist(0, 4);
+  std::uniform_int_distribution<int> actionDist(0, 99);
+  std::uniform_int_distribution<int> endTickDist(
+      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
+  std::uniform_int_distribution<int> rowCountDist(8, 32);
+  uint32_t mismatchScenarios = 0;
+  uint32_t firstMismatchGeneration = UINT32_MAX;
+
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    EditPassVec history;
+    history.reserve(40);
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
+    history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
+    history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
+    history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
+    history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
+    history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
+
+    const int randomRowCount = rowCountDist(rng);
+    for (int i = 0; i < randomRowCount; ++i) {
+      const NoteId targetId = targetIds[targetDist(rng)];
+      if (actionDist(rng) < 28) {
+        history.push_back(makeCompanionDeleteRow(targetId));
+      } else {
+        history.push_back(
+            makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
+      }
+    }
+
+    assignCompanionHistoryIds(history, 12000 + scenario * 64);
+    uint32_t mismatchGeneration = UINT32_MAX;
+    if (!reducedCompanionHistoryEquivalent(initialEvents, history,
+                                           kCompanionProjectionLoopLength,
+                                           &mismatchGeneration)) {
+      ++mismatchScenarios;
+      if (firstMismatchGeneration == UINT32_MAX) {
+        firstMismatchGeneration = mismatchGeneration;
+      }
+    }
+  }
+
+  TEST_ASSERT_TRUE(mismatchScenarios > 0u);
+  TEST_ASSERT_EQUAL_UINT32(1u, firstMismatchGeneration);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -2670,5 +3035,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sequence_phaseb_length_with_interleaved_note_updates_equivalence);
   RUN_TEST(test_incremental_companion_projection_operation_matrix);
   RUN_TEST(test_incremental_companion_projection_randomized_history_and_undo_redo);
+  RUN_TEST(test_incremental_companion_projection_reduced_state_minimal_geometry_diverges);
+  RUN_TEST(test_incremental_companion_projection_reduced_state_randomized_divergence);
   return UNITY_END();
 }

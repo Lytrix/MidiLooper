@@ -980,3 +980,42 @@ enough same-pitch and wrap-aware geometry for the next companion delta.
 
 No production firmware, EditPass state, ordering, undo, persistence, NoteId,
 scheduler, or playback-state-machine behavior was changed.
+
+## 19. Reduced-state candidate (minimal geometry) divergence experiment
+
+The second native experiment tests a stricter candidate:
+
+- `J(history)` retains only per-note effective geometry
+  (`NoteId`, pitch, velocity, start tick, end tick) as reconstructed
+  `DisplayNote` rows.
+- For each newly sealed companion, `J` rematerializes a transient event vector
+  from that reduced state, applies `applyNoteEditPass()`, then reconstructs
+  reduced geometry again.
+- The oracle compares `J` against `R(history)` (ordered
+  `applyNoteEditPassSequence()`) at every generation and undo/redo prefix.
+
+Coverage is implemented in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_reduced_state_minimal_geometry_diverges`
+- `test_incremental_companion_projection_reduced_state_randomized_divergence`
+
+Native result: **1410/1410**.
+
+Observed behavior:
+
+- The reduced geometry candidate diverges from `R(history)` at generation 1 in
+  deterministic and randomized histories (single Hide is sufficient).
+- The reduced-state affected-geometry checks also show wrap-coupled mutations:
+  target-note Hide/Shorten/Lengthen operations can change
+  `kCompanionWrapNoteId` geometry in this replay contract.
+
+Conclusion:
+
+- Minimal per-`NoteId` geometry is **not** sufficient to preserve current
+  ordered replay semantics bit-for-bit.
+- Any bounded projection that replaces full historical replay must retain
+  additional same-pitch and wrap-aware pairing context (or explicitly redefine
+  semantics with a separate effective-state contract).
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
