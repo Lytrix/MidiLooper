@@ -22,6 +22,7 @@
 #include "Loop.h"
 #include "LoopPasses.h"
 #include "LoopEventBuffer.h"
+#include "PendingNoteChange.h"
 #include "EditSession.h"
 #include "OverlapNoteIdObservation.h"
 #include "NoteEditCurrentState.h"
@@ -373,6 +374,201 @@ void assertMidiEventVecEquivalent(const MidiEventVec& expected, const MidiEventV
       TEST_FAIL_MESSAGE(msg);
     }
   }
+}
+
+constexpr uint32_t kCompanionProjectionLoopLength = 1024;
+constexpr NoteId kCompanionTargetNoteId = 101;
+constexpr NoteId kCompanionOverlapNoteId = 102;
+constexpr NoteId kCompanionDistantOverlapNoteId = 103;
+constexpr NoteId kCompanionDifferentPitchNoteId = 104;
+constexpr NoteId kCompanionWrapNoteId = 105;
+
+void appendCompanionProjectionNote(MidiEventVec& events, NoteId noteId, uint32_t startTick,
+                                   uint32_t endTick, uint8_t pitch) {
+  events.push_back(sequenceNoteOnWithId(startTick, 1, pitch, 100, noteId));
+  events.push_back(MidiEvent::NoteOff(endTick, 1, pitch, 0));
+}
+
+MidiEventVec makeCompanionProjectionInitialEvents() {
+  MidiEventVec events;
+  appendCompanionProjectionNote(events, kCompanionTargetNoteId, 96, 320, 60);
+  appendCompanionProjectionNote(events, kCompanionOverlapNoteId, 224, 448, 60);
+  appendCompanionProjectionNote(events, kCompanionDistantOverlapNoteId, 400, 560, 60);
+  appendCompanionProjectionNote(events, kCompanionDifferentPitchNoteId, 128, 352, 64);
+  appendCompanionProjectionNote(events, kCompanionWrapNoteId, 880, 80, 60);
+  return events;
+}
+
+EditPass makeCompanionDeleteRow(NoteId targetNoteId) {
+  EditPass row = makeDeleteRow(targetNoteId);
+  row.editPassIndex = kOverdubCompanionEditPassIndex;
+  return row;
+}
+
+EditPass makeCompanionLengthRow(NoteId targetNoteId, uint32_t newEndTick) {
+  EditPass row = makeLengthRow(targetNoteId, 0, 0, newEndTick);
+  row.editPassIndex = kOverdubCompanionEditPassIndex;
+  return row;
+}
+
+void assignCompanionHistoryIds(EditPassVec& rows, EditPassId firstId = 1000) {
+  EditPassId nextId = firstId;
+  for (EditPass& row : rows) {
+    row.id = nextId++;
+    row.editPassIndex = kOverdubCompanionEditPassIndex;
+    row.state = EditPassState::Active;
+  }
+}
+
+EditPassVec companionHistoryPrefix(const EditPassVec& history, size_t count) {
+  EditPassVec prefix;
+  prefix.reserve(count);
+  for (size_t i = 0; i < count && i < history.size(); ++i) {
+    prefix.push_back(history[i]);
+  }
+  return prefix;
+}
+
+struct CompanionNoteState {
+  bool present = false;
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+};
+
+CompanionNoteState companionNoteState(const MidiEventVec& events, NoteId noteId) {
+  CompanionNoteState state;
+  const int onIndex = findNoteOnById(events, noteId);
+  if (onIndex < 0) {
+    return state;
+  }
+  state.present = true;
+  const MidiEvent& on = events[static_cast<size_t>(onIndex)];
+  state.pitch = on.data.noteData.note;
+  state.velocity = on.data.noteData.velocity;
+  state.startTick = on.tick;
+  const int offIndex = findNoteOffForOnIndex(events, onIndex);
+  state.endTick =
+      (offIndex >= 0) ? events[static_cast<size_t>(offIndex)].tick : state.startTick;
+  return state;
+}
+
+bool companionNoteStateEquals(const CompanionNoteState& expected,
+                              const CompanionNoteState& actual) {
+  return expected.present == actual.present && expected.pitch == actual.pitch &&
+         expected.velocity == actual.velocity && expected.startTick == actual.startTick &&
+         expected.endTick == actual.endTick;
+}
+
+void assertCompanionEffectiveStateEquivalent(const MidiEventVec& expected,
+                                             const MidiEventVec& actual, uint32_t loopLengthTicks,
+                                             const char* context) {
+  assertMidiEventVecEquivalent(expected, actual, context);
+
+  const NoteUtils::DisplayNoteVec expectedNotes =
+      NoteUtils::reconstructDisplayNotes(expected, loopLengthTicks, false, false);
+  const NoteUtils::DisplayNoteVec actualNotes =
+      NoteUtils::reconstructDisplayNotes(actual, loopLengthTicks, false, false);
+  if (expectedNotes.size() != actualNotes.size()) {
+    char message[192];
+    snprintf(message, sizeof(message), "%s: display geometry size mismatch expected=%u actual=%u",
+             context, static_cast<unsigned>(expectedNotes.size()),
+             static_cast<unsigned>(actualNotes.size()));
+    TEST_FAIL_MESSAGE(message);
+  }
+  for (size_t i = 0; i < expectedNotes.size(); ++i) {
+    const NoteUtils::DisplayNote& expectedNote = expectedNotes[i];
+    const NoteUtils::DisplayNote& actualNote = actualNotes[i];
+    if (expectedNote.noteId != actualNote.noteId || expectedNote.note != actualNote.note ||
+        expectedNote.velocity != actualNote.velocity ||
+        expectedNote.startTick != actualNote.startTick ||
+        expectedNote.endTick != actualNote.endTick) {
+      char message[192];
+      snprintf(message, sizeof(message), "%s: display geometry mismatch at index %u", context,
+               static_cast<unsigned>(i));
+      TEST_FAIL_MESSAGE(message);
+    }
+  }
+}
+
+void assertCompanionHistoryIncrementalEquivalence(const MidiEventVec& initialEvents,
+                                                  const EditPassVec& history,
+                                                  uint32_t loopLengthTicks,
+                                                  const char* context) {
+  MidiEventVec incrementalState = initialEvents;
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec historicalState = initialEvents;
+    applyNoteEditPassSequence(historicalState, prefix, loopLengthTicks);
+
+    if (cursor > 0) {
+      applyNoteEditPass(incrementalState, history[cursor - 1], loopLengthTicks);
+    }
+
+    char stepContext[192];
+    snprintf(stepContext, sizeof(stepContext), "%s generation=%u", context,
+             static_cast<unsigned>(cursor));
+    assertCompanionEffectiveStateEquivalent(historicalState, incrementalState, loopLengthTicks,
+                                            stepContext);
+  }
+
+  // The incremental state is also retained at each generation so undo/redo can be
+  // checked without changing the content rows or replay contract.
+  std::vector<MidiEventVec> generationStates;
+  generationStates.reserve(history.size() + 1);
+  generationStates.push_back(initialEvents);
+  for (const EditPass& row : history) {
+    MidiEventVec nextState = generationStates.back();
+    applyNoteEditPass(nextState, row, loopLengthTicks);
+    generationStates.push_back(std::move(nextState));
+  }
+
+  for (size_t cursor = history.size(); cursor > 0; --cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor - 1);
+    MidiEventVec historicalState = initialEvents;
+    applyNoteEditPassSequence(historicalState, prefix, loopLengthTicks);
+    char stepContext[192];
+    snprintf(stepContext, sizeof(stepContext), "%s undo-to-generation=%u", context,
+             static_cast<unsigned>(cursor - 1));
+    assertCompanionEffectiveStateEquivalent(historicalState, generationStates[cursor - 1],
+                                            loopLengthTicks, stepContext);
+  }
+
+  for (size_t cursor = 0; cursor < history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor + 1);
+    MidiEventVec historicalState = initialEvents;
+    applyNoteEditPassSequence(historicalState, prefix, loopLengthTicks);
+    char stepContext[192];
+    snprintf(stepContext, sizeof(stepContext), "%s redo-to-generation=%u", context,
+             static_cast<unsigned>(cursor + 1));
+    assertCompanionEffectiveStateEquivalent(historicalState, generationStates[cursor + 1],
+                                            loopLengthTicks, stepContext);
+  }
+}
+
+void printCompanionAffectedGeometry(const char* operation, NoteId targetNoteId,
+                                    const MidiEventVec& before, const MidiEventVec& after) {
+  const NoteId noteIds[] = {
+      kCompanionTargetNoteId,          kCompanionOverlapNoteId,
+      kCompanionDistantOverlapNoteId,  kCompanionDifferentPitchNoteId,
+      kCompanionWrapNoteId,
+  };
+  std::printf("companion_delta,operation=%s,target=%lu,affected=",
+              operation, static_cast<unsigned long>(targetNoteId));
+  bool first = true;
+  for (const NoteId noteId : noteIds) {
+    if (companionNoteStateEquals(companionNoteState(before, noteId),
+                                 companionNoteState(after, noteId))) {
+      continue;
+    }
+    if (!first) {
+      std::printf("|");
+    }
+    std::printf("%lu", static_cast<unsigned long>(noteId));
+    first = false;
+  }
+  std::printf("\n");
 }
 
 }  // namespace
@@ -2247,6 +2443,178 @@ void test_sequence_phaseb_length_with_interleaved_note_updates_equivalence() {
                                "phaseb length interleaved updates equivalence");
 }
 
+void test_incremental_companion_projection_operation_matrix() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+
+  const auto assertHistory = [&](const char* context,
+                                 std::initializer_list<EditPass> rows) {
+    EditPassVec history;
+    history.reserve(rows.size());
+    for (const EditPass& row : rows) {
+      history.push_back(row);
+    }
+    assignCompanionHistoryIds(history);
+    assertCompanionHistoryIncrementalEquivalence(
+        initialEvents, history, kCompanionProjectionLoopLength, context);
+  };
+
+  assertHistory("single-hide", {makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  assertHistory("repeated-hide",
+                {makeCompanionDeleteRow(kCompanionTargetNoteId),
+                 makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  assertHistory("repeated-shorten-decreasing",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 300),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 200)});
+  assertHistory("shorten-increase-decrease",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 600),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 220)});
+  assertHistory("hide-after-shorten",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionDeleteRow(kCompanionTargetNoteId)});
+  assertHistory("shorten-after-hide",
+                {makeCompanionDeleteRow(kCompanionTargetNoteId),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 240)});
+  assertHistory("wrap-companion",
+                {makeCompanionLengthRow(kCompanionWrapNoteId, 64),
+                 makeCompanionLengthRow(kCompanionWrapNoteId, 128),
+                 makeCompanionDeleteRow(kCompanionWrapNoteId)});
+  assertHistory("multiple-overdub-generations",
+                {makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                 makeCompanionDeleteRow(kCompanionOverlapNoteId),
+                 makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300),
+                 makeCompanionDeleteRow(kCompanionDifferentPitchNoteId),
+                 makeCompanionLengthRow(kCompanionWrapNoteId, 64),
+                 makeCompanionLengthRow(kCompanionTargetNoteId, 600)});
+
+  {
+    MidiEventVec before = initialEvents;
+    MidiEventVec after = before;
+    applyNoteEditPass(after, makeCompanionLengthRow(kCompanionTargetNoteId, 600),
+                      kCompanionProjectionLoopLength);
+    printCompanionAffectedGeometry("lengthen", kCompanionTargetNoteId, before, after);
+    TEST_ASSERT_FALSE(companionNoteStateEquals(companionNoteState(before, kCompanionTargetNoteId),
+                                               companionNoteState(after, kCompanionTargetNoteId)));
+    TEST_ASSERT_FALSE(companionNoteStateEquals(companionNoteState(before, kCompanionOverlapNoteId),
+                                               companionNoteState(after, kCompanionOverlapNoteId)));
+    TEST_ASSERT_FALSE(companionNoteStateEquals(
+        companionNoteState(before, kCompanionDistantOverlapNoteId),
+        companionNoteState(after, kCompanionDistantOverlapNoteId)));
+    TEST_ASSERT_TRUE(companionNoteStateEquals(
+        companionNoteState(before, kCompanionDifferentPitchNoteId),
+        companionNoteState(after, kCompanionDifferentPitchNoteId)));
+  }
+
+  {
+    MidiEventVec before = initialEvents;
+    MidiEventVec after = before;
+    applyNoteEditPass(after, makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                      kCompanionProjectionLoopLength);
+    printCompanionAffectedGeometry("shorten", kCompanionTargetNoteId, before, after);
+    TEST_ASSERT_FALSE(companionNoteStateEquals(companionNoteState(before, kCompanionTargetNoteId),
+                                               companionNoteState(after, kCompanionTargetNoteId)));
+    TEST_ASSERT_TRUE(companionNoteStateEquals(
+        companionNoteState(before, kCompanionOverlapNoteId),
+        companionNoteState(after, kCompanionOverlapNoteId)));
+    TEST_ASSERT_TRUE(companionNoteStateEquals(
+        companionNoteState(before, kCompanionDistantOverlapNoteId),
+        companionNoteState(after, kCompanionDistantOverlapNoteId)));
+  }
+
+  {
+    MidiEventVec before = initialEvents;
+    MidiEventVec after = before;
+    applyNoteEditPass(after, makeCompanionDeleteRow(kCompanionTargetNoteId),
+                      kCompanionProjectionLoopLength);
+    printCompanionAffectedGeometry("hide", kCompanionTargetNoteId, before, after);
+    TEST_ASSERT_FALSE(companionNoteStateEquals(companionNoteState(before, kCompanionTargetNoteId),
+                                               companionNoteState(after, kCompanionTargetNoteId)));
+    TEST_ASSERT_TRUE(companionNoteStateEquals(
+        companionNoteState(before, kCompanionOverlapNoteId),
+        companionNoteState(after, kCompanionOverlapNoteId)));
+    TEST_ASSERT_TRUE(companionNoteStateEquals(
+        companionNoteState(before, kCompanionDifferentPitchNoteId),
+        companionNoteState(after, kCompanionDifferentPitchNoteId)));
+  }
+
+  {
+    MidiEventVec before = initialEvents;
+    applyNoteEditPass(before, makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                      kCompanionProjectionLoopLength);
+    MidiEventVec after = before;
+    applyNoteEditPass(after, makeCompanionDeleteRow(kCompanionTargetNoteId),
+                      kCompanionProjectionLoopLength);
+    printCompanionAffectedGeometry("hide-after-shorten", kCompanionTargetNoteId, before, after);
+  }
+
+  {
+    MidiEventVec before = initialEvents;
+    applyNoteEditPass(before, makeCompanionDeleteRow(kCompanionTargetNoteId),
+                      kCompanionProjectionLoopLength);
+    MidiEventVec after = before;
+    applyNoteEditPass(after, makeCompanionLengthRow(kCompanionTargetNoteId, 240),
+                      kCompanionProjectionLoopLength);
+    printCompanionAffectedGeometry("shorten-after-hide", kCompanionTargetNoteId, before, after);
+    assertMidiEventVecEquivalent(before, after, "shorten after hide is a no-op");
+  }
+}
+
+void test_incremental_companion_projection_randomized_history_and_undo_redo() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  const NoteId targetIds[] = {
+      kCompanionTargetNoteId,
+      kCompanionOverlapNoteId,
+      kCompanionDistantOverlapNoteId,
+      kCompanionDifferentPitchNoteId,
+      kCompanionWrapNoteId,
+  };
+  std::mt19937 rng(0xC0A11u);
+  std::uniform_int_distribution<int> targetDist(0, 4);
+  std::uniform_int_distribution<int> actionDist(0, 99);
+  std::uniform_int_distribution<int> endTickDist(
+      1, static_cast<int>(kCompanionProjectionLoopLength - 1));
+  std::uniform_int_distribution<int> rowCountDist(8, 32);
+
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    EditPassVec history;
+    history.reserve(40);
+
+    // Keep the first generations deterministic so every randomized scenario
+    // contains overlap, wrap, Hide/Shorten ordering, and repeated targets.
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 300));
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 600));
+    history.push_back(makeCompanionLengthRow(kCompanionTargetNoteId, 220));
+    history.push_back(makeCompanionLengthRow(kCompanionWrapNoteId, 64));
+    history.push_back(makeCompanionDeleteRow(kCompanionOverlapNoteId));
+    history.push_back(makeCompanionLengthRow(kCompanionOverlapNoteId, 500));
+    history.push_back(makeCompanionLengthRow(kCompanionDistantOverlapNoteId, 300));
+    history.push_back(makeCompanionDeleteRow(kCompanionDistantOverlapNoteId));
+
+    const int randomRowCount = rowCountDist(rng);
+    for (int i = 0; i < randomRowCount; ++i) {
+      const NoteId targetId = targetIds[targetDist(rng)];
+      if (actionDist(rng) < 28) {
+        history.push_back(makeCompanionDeleteRow(targetId));
+      } else {
+        history.push_back(
+            makeCompanionLengthRow(targetId, static_cast<uint32_t>(endTickDist(rng))));
+      }
+    }
+
+    assignCompanionHistoryIds(history, 2000 + scenario * 64);
+    char context[96];
+    snprintf(context, sizeof(context), "randomized companion history %u",
+             static_cast<unsigned>(scenario));
+    assertCompanionHistoryIncrementalEquivalence(
+        initialEvents, history, kCompanionProjectionLoopLength, context);
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -2300,5 +2668,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sequence_phasea_randomized_equivalence_against_baseline);
   RUN_TEST(test_sequence_phaseb_length_then_same_note_update_equivalence);
   RUN_TEST(test_sequence_phaseb_length_with_interleaved_note_updates_equivalence);
+  RUN_TEST(test_incremental_companion_projection_operation_matrix);
+  RUN_TEST(test_incremental_companion_projection_randomized_history_and_undo_redo);
   return UNITY_END();
 }
