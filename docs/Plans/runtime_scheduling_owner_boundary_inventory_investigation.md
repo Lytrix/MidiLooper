@@ -1020,6 +1020,41 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 27. Split-order ablation (separate On/Off order streams)
+
+This stage tests a lighter ordering representation than full `eventOrder`:
+
+- `SplitOrderCompanionState` stores paired spans plus two order vectors:
+  - `onOrder` for NoteOn ordering
+  - `offOrder` for NoteOff ordering
+- Materialization merges these two ordered streams by tick.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_split_order_divergence_boundary`
+
+Proven assertions:
+
+1. Seeded randomized histories contain deterministic divergence under split
+   On/Off ordering.
+2. The same mismatching history remains equivalent under full paired state.
+3. Divergence has a deterministic boundary (`prefix N-1` equivalent,
+   `prefix N` divergent).
+
+Native status for this stage:
+
+- Focused gate: `pio test -e native -f test_edit_apply` passed.
+
+Conclusion:
+
+- Splitting order into independent On/Off streams is not sufficient to preserve
+  full replay semantics.
+- Full explicit event-order tokens are still required in the smallest
+  proven-equivalent candidate.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 26. Derived-key ordering ablation (rich deterministic key vs stored order)
 
 This stage strengthens the ordering test by replacing stored `eventOrder`
