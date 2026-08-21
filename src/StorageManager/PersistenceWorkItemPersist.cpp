@@ -59,18 +59,63 @@ STORAGE_PERSIST_MEM void formatPersistKeyLabel(const PersistKey& key, char* out,
   }
 }
 
+#if defined(SESSION_CAPTURE)
+STORAGE_PERSIST_MEM const char* deferredLoopWriteStageName(DeferredLoopWriteStage stage) {
+  switch (stage) {
+    case DeferredLoopWriteStage::Header:
+      return "Header";
+    case DeferredLoopWriteStage::CapturePassHeader:
+      return "CapturePassHeader";
+    case DeferredLoopWriteStage::CapturePassChunk:
+      return "CapturePassChunk";
+    case DeferredLoopWriteStage::EditTail:
+      return "EditTail";
+  }
+  return "Unknown";
+}
+
+STORAGE_PERSIST_MEM const char* deferredLoopFinalizeStageName(DeferredLoopFinalizeStage stage) {
+  switch (stage) {
+    case DeferredLoopFinalizeStage::Idle:
+      return "Idle";
+    case DeferredLoopFinalizeStage::WriteToken:
+      return "WriteToken";
+    case DeferredLoopFinalizeStage::EpochCrcBody:
+      return "EpochCrcBody";
+    case DeferredLoopFinalizeStage::EpochCrcHeader:
+      return "EpochCrcHeader";
+    case DeferredLoopFinalizeStage::VerifyAndRename:
+      return "VerifyAndRename";
+  }
+  return "Unknown";
+}
+
+// Wall-clock start of the current processDeferredSaveState step, so every PERS,work line carries
+// the elapsed microseconds of the slice that produced it. Without this, a 60 ms persist_save
+// outlier could not be attributed to one of thousands of identically labelled slices.
+uint32_t persistenceSliceStartUs = 0;
+#endif
+
 STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& item, const char* phase,
                                     const char* outcome) {
 #if defined(SESSION_CAPTURE)
   if (strcmp(phase, "bundle_slice") == 0) {
     return;
   }
-  char detail[64];
+  char detail[96];
   char keyLabel[24];
   formatPersistKeyLabel(item.key, keyLabel, sizeof(keyLabel));
-  std::snprintf(detail, sizeof(detail), "%s,%s,%s,%s", persistWorkTypeName(item.type), keyLabel,
-                phase, outcome);
-  SC_PERSIST("work", 0, 0, 0, detail);
+  if (item.type == PersistWorkType::LoopPersist) {
+    std::snprintf(detail, sizeof(detail), "%s,%s,%s,%s,write=%s,finalize=%s",
+                  persistWorkTypeName(item.type), keyLabel, phase, outcome,
+                  deferredLoopWriteStageName(storageSession.currentWorkspaceSave.loopWriteStage),
+                  deferredLoopFinalizeStageName(
+                      storageSession.currentWorkspaceSave.loopFinalizeStage));
+  } else {
+    std::snprintf(detail, sizeof(detail), "%s,%s,%s,%s", persistWorkTypeName(item.type), keyLabel,
+                  phase, outcome);
+  }
+  SC_PERSIST("work", micros() - persistenceSliceStartUs, 0, 0, detail);
 #else
   (void)item;
   (void)phase;
@@ -235,14 +280,14 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
                                                                 static_cast<LoopId>(job.slotIndex),
                                                                 loopDone);
     if (!loopWriteOk) {
-      return completePersistenceWorkItem(job, "slice", false);
+      return completePersistenceWorkItem(job, "payload_slice", false);
     }
     if (!loopDone) {
-      emitPersistenceWorkTelemetry(job.item, "slice", "ok");
+      emitPersistenceWorkTelemetry(job.item, "payload_slice", "ok");
       return true;
     }
     beginDeferredLoopSlotFinalize();
-    emitPersistenceWorkTelemetry(job.item, "slice", "ok");
+    emitPersistenceWorkTelemetry(job.item, "payload_done", "ok");
     return true;
   }
 
@@ -251,7 +296,7 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
     return completePersistenceWorkItem(job, "finalize", false);
   }
   if (!finalizeDone) {
-    emitPersistenceWorkTelemetry(job.item, "slice", "ok");
+    emitPersistenceWorkTelemetry(job.item, "finalize_slice", "ok");
     return true;
   }
 
@@ -401,6 +446,9 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
   (void)state;
   return true;
 #else
+#if defined(SESSION_CAPTURE)
+  persistenceSliceStartUs = micros();
+#endif
   maybeAdmitFinalizeWorkspaceAfterDrain();
 
   if (PersistenceWorkQueue::queueDepth() == 0 && PersistenceWorkQueue::writingWorkItemCount() == 0 &&

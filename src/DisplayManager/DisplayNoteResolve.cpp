@@ -10,6 +10,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/SlotFocusDisplay.h"
 #include <Arduino.h>
 #include <algorithm>
@@ -70,7 +71,17 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         }
         return liveDisplayNotes;
     }
+#if RUNTIME_TIMING_ENABLED
+    // Separate the plain-PLAYING committed projection from the live-capture and NOTE_EDIT paths,
+    // which return above and are covered by disp_resolve alone.
+    const uint32_t committedStartUs = micros();
+    const DisplayNoteVec& committedNotes =
+        resolveDisplayNotesCommitted(track, displaySlot, currentTick);
+    RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE_COMMITTED(micros() - committedStartUs);
+    return committedNotes;
+#else
     return resolveDisplayNotesCommitted(track, displaySlot, currentTick);
+#endif
 }
 
 DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,

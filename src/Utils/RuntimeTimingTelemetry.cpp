@@ -81,6 +81,11 @@ struct State {
   Accumulator idleMaint;
   Accumulator loadFrame;
   Accumulator persistSave;
+  Accumulator dispTotal;
+  Accumulator dispResolve;
+  Accumulator dispResolveCommitted;
+  Accumulator dispDraw;
+  Accumulator dispTransfer;
   Accumulator lateOn;
   Accumulator lateOff;
   Accumulator lateClk;
@@ -159,6 +164,11 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.idleMaint = Accumulator{};
   s.loadFrame = Accumulator{};
   s.persistSave = Accumulator{};
+  s.dispTotal = Accumulator{};
+  s.dispResolve = Accumulator{};
+  s.dispResolveCommitted = Accumulator{};
+  s.dispDraw = Accumulator{};
+  s.dispTransfer = Accumulator{};
   s.lateOn = Accumulator{};
   s.lateOff = Accumulator{};
   s.lateClk = Accumulator{};
@@ -191,6 +201,15 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("persist_save", s.persistSave.maxUs,
                                              s.persistSave.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("disp_total", s.dispTotal.maxUs,
+                                             s.dispTotal.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("disp_resolve", s.dispResolve.maxUs,
+                                             s.dispResolve.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("disp_res_cmt", s.dispResolveCommitted.maxUs,
+                                             s.dispResolveCommitted.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("disp_draw", s.dispDraw.maxUs, s.dispDraw.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("disp_xfer", s.dispTransfer.maxUs,
+                                             s.dispTransfer.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_on", s.lateOn.maxUs, s.lateOn.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_off", s.lateOff.maxUs, s.lateOff.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_clk", s.lateClk.maxUs, s.lateClk.overCount);
@@ -436,6 +455,26 @@ RT_FLASHMEM_FN void notePersistSave(uint32_t durationUs) {
   recordSample(state().persistSave, durationUs);
 }
 
+RT_FLASHMEM_FN void noteDisplayTotal(uint32_t durationUs) {
+  recordSample(state().dispTotal, durationUs);
+}
+
+RT_FLASHMEM_FN void noteDisplayResolve(uint32_t durationUs) {
+  recordSample(state().dispResolve, durationUs);
+}
+
+RT_FLASHMEM_FN void noteDisplayResolveCommitted(uint32_t durationUs) {
+  recordSample(state().dispResolveCommitted, durationUs);
+}
+
+RT_FLASHMEM_FN void noteDisplayDraw(uint32_t durationUs) {
+  recordSample(state().dispDraw, durationUs);
+}
+
+RT_FLASHMEM_FN void noteDisplayTransfer(uint32_t durationUs) {
+  recordSample(state().dispTransfer, durationUs);
+}
+
 RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   State& s = state();
 #if defined(SESSION_CAPTURE)
@@ -630,6 +669,16 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.loadFrameOverCount = s.loadFrame.overCount;
   out.persistSaveMaxUs = s.persistSave.maxUs;
   out.persistSaveOverCount = s.persistSave.overCount;
+  out.dispTotalMaxUs = s.dispTotal.maxUs;
+  out.dispTotalOverCount = s.dispTotal.overCount;
+  out.dispResolveMaxUs = s.dispResolve.maxUs;
+  out.dispResolveOverCount = s.dispResolve.overCount;
+  out.dispResolveCommittedMaxUs = s.dispResolveCommitted.maxUs;
+  out.dispResolveCommittedOverCount = s.dispResolveCommitted.overCount;
+  out.dispDrawMaxUs = s.dispDraw.maxUs;
+  out.dispDrawOverCount = s.dispDraw.overCount;
+  out.dispTransferMaxUs = s.dispTransfer.maxUs;
+  out.dispTransferOverCount = s.dispTransfer.overCount;
   out.lateOnMaxUs = s.lateOn.maxUs;
   out.lateOnCount = s.lateOn.overCount;
   out.lateOffMaxUs = s.lateOff.maxUs;

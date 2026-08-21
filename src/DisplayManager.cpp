@@ -20,6 +20,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "TrackStateMachine.h"
 #include "MidiButtonManager.h"
@@ -130,27 +131,60 @@ void DisplayManager::update() {
 
     applyWorkspaceDisplayRefreshPending(currentTick);
 
+#if RUNTIME_TIMING_ENABLED
+    // Phase attribution for the load_frame owner: resolve, draw, and panel transfer are measured
+    // separately so an over-interval frame names its own dominant phase.
+    uint32_t drawAccumulatedUs = 0;
+    uint32_t phaseStartUs = micros();
+#endif
     _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
 
     if (loadSaveActive) {
         drawLoadSaveView(now);
+#if RUNTIME_TIMING_ENABLED
+        RUNTIME_TIMING_NOTE_DISPLAY_DRAW(micros() - phaseStartUs);
+        phaseStartUs = micros();
+#endif
         _display.api.display();
+#if RUNTIME_TIMING_ENABLED
+        RUNTIME_TIMING_NOTE_DISPLAY_TRANSFER(micros() - phaseStartUs);
+        RUNTIME_TIMING_NOTE_DISPLAY_TOTAL(micros() - telemetryStartUs);
+#endif
         HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(micros() - telemetryStartUs);
         DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
         return;
     }
 
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
+#if RUNTIME_TIMING_ENABLED
+    drawAccumulatedUs += micros() - phaseStartUs;
+    phaseStartUs = micros();
+#endif
     const DisplayNoteVec& frameNotes = resolveDisplayNotes(selTrack, displaySlot, displayTick);
+#if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE(micros() - phaseStartUs);
+#endif
 #if defined(SESSION_CAPTURE)
     maybeEmitDisplayCaptureOnChange(selTrack, displaySlot, displayTick, frameNotes);
+#endif
+#if RUNTIME_TIMING_ENABLED
+    phaseStartUs = micros();
 #endif
     drawPianoRoll(displayTick, selTrack, displaySlot, frameNotes);
     drawSidebar(selTrack, displaySlot);
     drawInfoArea(displayTick, selTrack, displaySlot, now);
     drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
+#if RUNTIME_TIMING_ENABLED
+    drawAccumulatedUs += micros() - phaseStartUs;
+    RUNTIME_TIMING_NOTE_DISPLAY_DRAW(drawAccumulatedUs);
+    phaseStartUs = micros();
+#endif
 
    _display.api.display();
+#if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_NOTE_DISPLAY_TRANSFER(micros() - phaseStartUs);
+    RUNTIME_TIMING_NOTE_DISPLAY_TOTAL(micros() - telemetryStartUs);
+#endif
 #if defined(SESSION_CAPTURE)
     {
         static uint32_t dframeCounter = 0;
