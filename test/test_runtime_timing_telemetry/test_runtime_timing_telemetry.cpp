@@ -192,6 +192,11 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.dispResolveCommittedMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.dispDrawMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.dispTransferMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameJobMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameUndoSnapshotsMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameEditAutosaveMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadFramePassReclaimMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.loadFrameRestoreEnqueueMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.clockPulses);
   TEST_ASSERT_EQUAL_UINT32(0, after.lateOnMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.lateOnCount);
@@ -232,6 +237,24 @@ void test_display_phase_spans_accumulate_independently() {
   TEST_ASSERT_EQUAL_UINT32(2400, snap.dispResolveCommittedMaxUs);
   TEST_ASSERT_EQUAL_UINT32(3100, snap.dispDrawMaxUs);
   TEST_ASSERT_EQUAL_UINT32(6200, snap.dispTransferMaxUs);
+}
+
+void test_load_frame_child_spans_accumulate_independently() {
+  RuntimeTimingTelemetry::noteLoadFrameJob(2100);
+  RuntimeTimingTelemetry::noteLoadFrameUndoSnapshots(4300);
+  RuntimeTimingTelemetry::noteLoadFrameUndoSnapshots(1100);
+  RuntimeTimingTelemetry::noteLoadFrameEditAutosave(6200);
+  RuntimeTimingTelemetry::noteLoadFramePassReclaim(900);
+  RuntimeTimingTelemetry::noteLoadFrameRestoreEnqueue(150);
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(2100, snap.loadFrameJobMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(4300, snap.loadFrameUndoSnapshotsMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.loadFrameUndoSnapshotsOverCount);
+  TEST_ASSERT_EQUAL_UINT32(6200, snap.loadFrameEditAutosaveMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.loadFrameEditAutosaveOverCount);
+  TEST_ASSERT_EQUAL_UINT32(900, snap.loadFramePassReclaimMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(150, snap.loadFrameRestoreEnqueueMaxUs);
 }
 
 void test_idle_maint_child_rem_is_callable() {
@@ -344,6 +367,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
   RUN_TEST(test_loop_remainder_spans_accumulate_independently);
   RUN_TEST(test_display_phase_spans_accumulate_independently);
+  RUN_TEST(test_load_frame_child_spans_accumulate_independently);
   RUN_TEST(test_idle_maint_child_rem_is_callable);
   RUN_TEST(test_emit_interval_constant);
   RUN_TEST(test_note_send_within_tick_is_on_time);
