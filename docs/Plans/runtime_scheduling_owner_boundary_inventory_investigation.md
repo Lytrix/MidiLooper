@@ -1020,6 +1020,55 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 31. Implementation gate decision
+
+The investigation now has a complete proof boundary for the effective-state
+representation used by companion replay.
+
+### Proven minimum equivalent state
+
+Across deterministic, randomized, wrap, and undo/redo-prefix oracles, exact
+parity with ordered `applyNoteEditPassSequence()` requires:
+
+- paired note spans,
+- explicit full `eventOrder` tokens,
+- stable `noteId`,
+- `pitch`, `channel`, `velocity`,
+- `startTick`, `endTick`,
+- state refresh after every applied companion delta.
+
+All attempted reductions outside that set are disproven by deterministic tests
+in `test/test_edit_apply/test_edit_apply.cpp`.
+
+### Representation boundary decision
+
+- Keep companion `EditPass` rows as canonical history/persistence/undo inputs.
+- Build and maintain a separate effective paired state for projection consumers.
+- Update that state incrementally per newly sealed companion delta.
+
+### First implementation scope (owner-local)
+
+Apply this only to committed/projection consumers that currently replay the full
+active edit-row set:
+
+- `Loop::materializeToEventVector` in `src/Loop/LoopMaterialization.cpp`
+- fallback projection paths in `src/Loop/LoopVisualCache.cpp`
+- related projection call sites that currently invoke
+  `applyNoteEditPassSequence()` on full active companion history
+
+Do not change:
+
+- companion row semantics/order,
+- undo and persistence behavior,
+- scheduler or playback state machine.
+
+### Decision
+
+IMPLEMENTATION JUSTIFIED: introduce a projection-only paired effective companion
+state (with full `eventOrder` + note metadata + stable IDs) and consume it in
+projection/materialization paths instead of replaying full companion history on
+every projection call.
+
 ## 30. Final remaining slices batch: start/end tick requirements + final full native gate
 
 This batch completed the remaining straightforward context-necessity slices in
