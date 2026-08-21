@@ -3,6 +3,7 @@
 
 #include <unity.h>
 #include <cstdio>
+#include <map>
 #include <random>
 
 #include "../../src/Logger.cpp"
@@ -1265,6 +1266,110 @@ bool splitOrderCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
                                           uint32_t loopLengthTicks,
                                           uint32_t* mismatchGenerationOut = nullptr) {
   SplitOrderCompanionState candidate = SplitOrderCompanionState::fromEvents(initialEvents);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!companionEventSpansEquivalent(expectedEvents, candidate.spans)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      candidate.applyCompanionDelta(history[cursor], loopLengthTicks);
+    }
+  }
+  return true;
+}
+
+struct TickBucketOrder {
+  uint32_t tick = 0;
+  std::vector<uint32_t> tokens;
+};
+
+struct SameTickOrderCompanionState {
+  std::vector<CompanionEventSpan> spans;
+  std::vector<TickBucketOrder> buckets;
+
+  static uint32_t tokenTick(const CompanionEventSpan& span, uint32_t token) {
+    return ((token & 1u) != 0u) ? span.endTick : span.startTick;
+  }
+
+  static SameTickOrderCompanionState fromEvents(const MidiEventVec& events) {
+    SameTickOrderCompanionState state;
+    const PairedCompanionState paired = PairedCompanionState::fromEvents(events);
+    state.spans = paired.spans;
+
+    std::map<uint32_t, size_t> tickToBucket;
+    for (const uint32_t token : paired.eventOrder) {
+      const size_t spanIndex = static_cast<size_t>(token / 2u);
+      if (spanIndex >= state.spans.size()) {
+        continue;
+      }
+      const uint32_t tick = tokenTick(state.spans[spanIndex], token);
+      auto it = tickToBucket.find(tick);
+      if (it == tickToBucket.end()) {
+        const size_t newIndex = state.buckets.size();
+        tickToBucket[tick] = newIndex;
+        TickBucketOrder bucket;
+        bucket.tick = tick;
+        bucket.tokens.push_back(token);
+        state.buckets.push_back(std::move(bucket));
+      } else {
+        state.buckets[it->second].tokens.push_back(token);
+      }
+    }
+    std::sort(state.buckets.begin(), state.buckets.end(),
+              [](const TickBucketOrder& a, const TickBucketOrder& b) {
+                return a.tick < b.tick;
+              });
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    size_t tokenCount = 0;
+    for (const TickBucketOrder& bucket : buckets) tokenCount += bucket.tokens.size();
+    events.reserve(tokenCount);
+
+    for (const TickBucketOrder& bucket : buckets) {
+      for (const uint32_t token : bucket.tokens) {
+        const size_t spanIndex = static_cast<size_t>(token / 2u);
+        if (spanIndex >= spans.size()) {
+          continue;
+        }
+        const CompanionEventSpan& span = spans[spanIndex];
+        if ((token & 1u) != 0u) {
+          events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+        } else {
+          events.push_back(sequenceNoteOnWithId(span.startTick, span.channel, span.pitch,
+                                                span.velocity, span.noteId));
+        }
+      }
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    SameTickOrderCompanionState nextState = SameTickOrderCompanionState::fromEvents(events);
+    spans = std::move(nextState.spans);
+    buckets = std::move(nextState.buckets);
+  }
+};
+
+bool sameTickOrderCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                             const EditPassVec& history,
+                                             uint32_t loopLengthTicks,
+                                             uint32_t* mismatchGenerationOut = nullptr) {
+  SameTickOrderCompanionState candidate = SameTickOrderCompanionState::fromEvents(initialEvents);
   for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
     const EditPassVec prefix = companionHistoryPrefix(history, cursor);
     MidiEventVec expectedEvents = initialEvents;
@@ -4034,6 +4139,50 @@ void test_incremental_companion_projection_split_order_divergence_boundary() {
   TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, mismatchGeneration);
 }
 
+void test_incremental_companion_projection_same_tick_order_divergence_boundary() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionInitialEvents();
+  std::mt19937 rng(0xA11CEu);
+
+  uint32_t firstMismatchGeneration = UINT32_MAX;
+  EditPassVec firstMismatchHistory;
+  for (uint32_t scenario = 0; scenario < 128; ++scenario) {
+    const EditPassVec history = makeCompanionRandomizedHistoryScenario(
+        rng, static_cast<EditPassId>(31000 + scenario * 64));
+    uint32_t mismatchGeneration = UINT32_MAX;
+    if (!sameTickOrderCompanionHistoryEquivalent(initialEvents, history,
+                                                 kCompanionProjectionLoopLength,
+                                                 &mismatchGeneration)) {
+      firstMismatchGeneration = mismatchGeneration;
+      firstMismatchHistory = history;
+      break;
+    }
+  }
+
+  TEST_ASSERT_TRUE(!firstMismatchHistory.empty());
+  TEST_ASSERT_TRUE(firstMismatchGeneration > 0u);
+
+  uint32_t pairedMismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, firstMismatchHistory,
+                                                    kCompanionProjectionLoopLength,
+                                                    &pairedMismatchGeneration));
+
+  const EditPassVec prefixBefore =
+      companionHistoryPrefix(firstMismatchHistory, firstMismatchGeneration - 1u);
+  uint32_t mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(sameTickOrderCompanionHistoryEquivalent(initialEvents, prefixBefore,
+                                                           kCompanionProjectionLoopLength,
+                                                           &mismatchGeneration));
+
+  const EditPassVec prefixAt = companionHistoryPrefix(firstMismatchHistory, firstMismatchGeneration);
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(sameTickOrderCompanionHistoryEquivalent(initialEvents, prefixAt,
+                                                            kCompanionProjectionLoopLength,
+                                                            &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, mismatchGeneration);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -4100,5 +4249,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_note_id_ablation_divergence_boundary);
   RUN_TEST(test_incremental_companion_projection_derived_key_order_divergence_boundary);
   RUN_TEST(test_incremental_companion_projection_split_order_divergence_boundary);
+  RUN_TEST(test_incremental_companion_projection_same_tick_order_divergence_boundary);
   return UNITY_END();
 }
