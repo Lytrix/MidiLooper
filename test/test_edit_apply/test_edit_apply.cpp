@@ -382,11 +382,21 @@ constexpr NoteId kCompanionOverlapNoteId = 102;
 constexpr NoteId kCompanionDistantOverlapNoteId = 103;
 constexpr NoteId kCompanionDifferentPitchNoteId = 104;
 constexpr NoteId kCompanionWrapNoteId = 105;
+constexpr NoteId kCompanionMixedTargetNoteId = 201;
+constexpr NoteId kCompanionMixedOverlapNoteId = 202;
+constexpr NoteId kCompanionMixedDifferentPitchNoteId = 203;
+constexpr NoteId kCompanionMixedWrapNoteId = 204;
+
+void appendCompanionProjectionNoteDetailed(MidiEventVec& events, NoteId noteId, uint32_t startTick,
+                                           uint32_t endTick, uint8_t channel, uint8_t pitch,
+                                           uint8_t velocity) {
+  events.push_back(sequenceNoteOnWithId(startTick, channel, pitch, velocity, noteId));
+  events.push_back(MidiEvent::NoteOff(endTick, channel, pitch, 0));
+}
 
 void appendCompanionProjectionNote(MidiEventVec& events, NoteId noteId, uint32_t startTick,
                                    uint32_t endTick, uint8_t pitch) {
-  events.push_back(sequenceNoteOnWithId(startTick, 1, pitch, 100, noteId));
-  events.push_back(MidiEvent::NoteOff(endTick, 1, pitch, 0));
+  appendCompanionProjectionNoteDetailed(events, noteId, startTick, endTick, 1, pitch, 100);
 }
 
 MidiEventVec makeCompanionProjectionInitialEvents() {
@@ -396,6 +406,16 @@ MidiEventVec makeCompanionProjectionInitialEvents() {
   appendCompanionProjectionNote(events, kCompanionDistantOverlapNoteId, 400, 560, 60);
   appendCompanionProjectionNote(events, kCompanionDifferentPitchNoteId, 128, 352, 64);
   appendCompanionProjectionNote(events, kCompanionWrapNoteId, 880, 80, 60);
+  return events;
+}
+
+MidiEventVec makeCompanionProjectionMixedChannelVelocityInitialEvents() {
+  MidiEventVec events;
+  appendCompanionProjectionNoteDetailed(events, kCompanionMixedTargetNoteId, 96, 320, 1, 60, 100);
+  appendCompanionProjectionNoteDetailed(events, kCompanionMixedOverlapNoteId, 224, 448, 2, 60, 84);
+  appendCompanionProjectionNoteDetailed(events, kCompanionMixedDifferentPitchNoteId, 128, 352, 3, 64,
+                                        112);
+  appendCompanionProjectionNoteDetailed(events, kCompanionMixedWrapNoteId, 880, 80, 2, 60, 72);
   return events;
 }
 
@@ -1003,6 +1023,95 @@ bool spanOnlyCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
     }
     if (cursor < history.size()) {
       spanOnly.applyCompanionDelta(history[cursor], loopLengthTicks);
+    }
+  }
+  return true;
+}
+
+struct ContextAblatedCompanionState {
+  std::vector<CompanionEventSpan> spans;
+  std::vector<uint32_t> eventOrder;
+  bool keepChannel = true;
+  bool keepVelocity = true;
+
+  static void normalizeSpan(CompanionEventSpan& span, bool keepChannelValue,
+                            bool keepVelocityValue) {
+    if (!keepChannelValue) {
+      span.channel = 1;
+    }
+    if (!keepVelocityValue) {
+      span.velocity = 100;
+    }
+  }
+
+  static ContextAblatedCompanionState fromEvents(const MidiEventVec& events, bool keepChannelValue,
+                                                 bool keepVelocityValue) {
+    ContextAblatedCompanionState state;
+    state.keepChannel = keepChannelValue;
+    state.keepVelocity = keepVelocityValue;
+    const PairedCompanionState paired = PairedCompanionState::fromEvents(events);
+    state.spans = paired.spans;
+    state.eventOrder = paired.eventOrder;
+    for (CompanionEventSpan& span : state.spans) {
+      normalizeSpan(span, keepChannelValue, keepVelocityValue);
+    }
+    return state;
+  }
+
+  MidiEventVec materializeEvents() const {
+    MidiEventVec events;
+    events.reserve(spans.size() * 2u);
+    for (const uint32_t token : eventOrder) {
+      const size_t spanIndex = static_cast<size_t>(token / 2u);
+      if (spanIndex >= spans.size()) {
+        continue;
+      }
+      const CompanionEventSpan& span = spans[spanIndex];
+      if ((token & 1u) != 0u) {
+        events.push_back(MidiEvent::NoteOff(span.endTick, span.channel, span.pitch, 0));
+      } else {
+        events.push_back(sequenceNoteOnWithId(span.startTick, span.channel, span.pitch, span.velocity,
+                                              span.noteId));
+      }
+    }
+    return events;
+  }
+
+  void applyCompanionDelta(const EditPass& row, uint32_t loopLengthTicks) {
+    if (row.actionType != EditActionType::Delete &&
+        !(row.actionType == EditActionType::Update &&
+          row.propertyType == EditPropertyType::Length)) {
+      return;
+    }
+    MidiEventVec events = materializeEvents();
+    applyNoteEditPass(events, row, loopLengthTicks);
+    ContextAblatedCompanionState nextState =
+        ContextAblatedCompanionState::fromEvents(events, keepChannel, keepVelocity);
+    spans = std::move(nextState.spans);
+    eventOrder = std::move(nextState.eventOrder);
+  }
+};
+
+bool contextAblatedCompanionHistoryEquivalent(const MidiEventVec& initialEvents,
+                                              const EditPassVec& history,
+                                              uint32_t loopLengthTicks,
+                                              bool keepChannel,
+                                              bool keepVelocity,
+                                              uint32_t* mismatchGenerationOut = nullptr) {
+  ContextAblatedCompanionState candidate =
+      ContextAblatedCompanionState::fromEvents(initialEvents, keepChannel, keepVelocity);
+  for (size_t cursor = 0; cursor <= history.size(); ++cursor) {
+    const EditPassVec prefix = companionHistoryPrefix(history, cursor);
+    MidiEventVec expectedEvents = initialEvents;
+    applyNoteEditPassSequence(expectedEvents, prefix, loopLengthTicks);
+    if (!companionEventSpansEquivalent(expectedEvents, candidate.spans)) {
+      if (mismatchGenerationOut != nullptr) {
+        *mismatchGenerationOut = static_cast<uint32_t>(cursor);
+      }
+      return false;
+    }
+    if (cursor < history.size()) {
+      candidate.applyCompanionDelta(history[cursor], loopLengthTicks);
     }
   }
   return true;
@@ -3353,6 +3462,47 @@ void test_incremental_companion_projection_span_only_randomized_divergence_bound
   TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, spanOnlyMismatch);
 }
 
+void test_incremental_companion_projection_context_ablation_channel_velocity_requirements() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEventVec initialEvents = makeCompanionProjectionMixedChannelVelocityInitialEvents();
+
+  EditPassVec history = {
+      makeCompanionLengthRow(kCompanionMixedTargetNoteId, 600),
+      makeCompanionDeleteRow(kCompanionMixedOverlapNoteId),
+      makeCompanionLengthRow(kCompanionMixedWrapNoteId, 64),
+      makeCompanionLengthRow(kCompanionMixedTargetNoteId, 220),
+      makeCompanionDeleteRow(kCompanionMixedDifferentPitchNoteId),
+  };
+  assignCompanionHistoryIds(history, 21000);
+
+  uint32_t mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_TRUE(pairedCompanionHistoryEquivalent(initialEvents, history,
+                                                    kCompanionProjectionLoopLength,
+                                                    &mismatchGeneration));
+
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(contextAblatedCompanionHistoryEquivalent(initialEvents, history,
+                                                             kCompanionProjectionLoopLength,
+                                                             false, true,
+                                                             &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(0u, mismatchGeneration);
+
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(contextAblatedCompanionHistoryEquivalent(initialEvents, history,
+                                                             kCompanionProjectionLoopLength,
+                                                             true, false,
+                                                             &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(0u, mismatchGeneration);
+
+  mismatchGeneration = UINT32_MAX;
+  TEST_ASSERT_FALSE(contextAblatedCompanionHistoryEquivalent(initialEvents, history,
+                                                             kCompanionProjectionLoopLength,
+                                                             false, false,
+                                                             &mismatchGeneration));
+  TEST_ASSERT_EQUAL_UINT32(0u, mismatchGeneration);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
@@ -3414,5 +3564,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incremental_companion_projection_paired_state_randomized_history_and_undo_redo);
   RUN_TEST(test_incremental_companion_projection_paired_state_scenario51_generation13_equivalent);
   RUN_TEST(test_incremental_companion_projection_span_only_randomized_divergence_boundary);
+  RUN_TEST(test_incremental_companion_projection_context_ablation_channel_velocity_requirements);
   return UNITY_END();
 }

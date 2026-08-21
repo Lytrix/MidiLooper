@@ -1020,6 +1020,41 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 23. Context ablation: channel and velocity requirements
+
+To continue shrinking the paired candidate, this stage ablates channel and
+velocity context independently while keeping paired spans + event-order tokens.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_context_ablation_channel_velocity_requirements`
+
+Fixture details:
+
+- Mixed initial events (`makeCompanionProjectionMixedChannelVelocityInitialEvents`)
+  with heterogeneous channel/velocity values.
+- Companion operations include both `Length` and `Delete` rows.
+
+Proven assertions:
+
+1. Full paired state remains equivalent on this fixture.
+2. Dropping channel context diverges at generation `0`.
+3. Dropping velocity context diverges at generation `0`.
+4. Dropping both diverges at generation `0`.
+
+Native result: **1415/1415**.
+
+Conclusion:
+
+- Channel and velocity are both required context for exact replay parity when
+  fixtures include heterogeneous note metadata.
+- The current smallest proven-equivalent candidate remains:
+  paired note spans + event-order tokens + channel + velocity, refreshed after
+  each applied companion delta.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 22. Span-only ablation (drop explicit event ordering context)
 
 The next reduction stage removes explicit event-order context from the paired
