@@ -1020,6 +1020,42 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 24. Tick-ordered materialization ablation (derived order vs stored order)
+
+This stage tests whether explicit `eventOrder` tokens can be removed and
+replaced by deterministic tick-sorting rules derived from paired spans.
+
+Candidate family:
+
+- `TickOrderedCompanionState` (keeps paired spans, drops stored order tokens)
+- Materialization policy A: same-tick **On before Off**
+- Materialization policy B: same-tick **Off before On**
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_tick_ordered_materialize_divergence_boundary`
+
+Proven assertions:
+
+1. At least one deterministic tick-order policy diverges from
+   `R(history)` on seeded randomized histories.
+2. The same mismatching history still passes under full paired state
+   (`eventOrder` retained).
+3. For the first mismatching policy/history pair, divergence has a deterministic
+   boundary (`prefix N-1` equivalent when `N>0`; `prefix N` divergent).
+
+Native result: **1416/1416**.
+
+Conclusion:
+
+- Derived tick ordering is not a complete replacement for stored event-order
+  tokens under the current replay contract.
+- Explicit `eventOrder` context remains part of the smallest proven-equivalent
+  companion representation.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 23. Context ablation: channel and velocity requirements
 
 To continue shrinking the paired candidate, this stage ablates channel and
