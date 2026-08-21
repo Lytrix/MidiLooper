@@ -17,6 +17,15 @@
 #define RT_FLASHMEM_FN
 #endif
 
+// Ordinary string literals become .rodata, which the Teensy 4 linker places in DTCM on the
+// _VectorsRam 1 KB align edge — ten added tags cost 4 KB of RAM1 stack headroom. Keep emit tags
+// in flash, same reason as the PSTR spans in recordMidiLedHelperRem.
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define RT_TAG(literal) PSTR(literal)
+#else
+#define RT_TAG(literal) literal
+#endif
+
 namespace RuntimeTimingTelemetry {
 namespace {
 
@@ -86,6 +95,11 @@ struct State {
   Accumulator dispResolveCommitted;
   Accumulator dispDraw;
   Accumulator dispTransfer;
+  Accumulator loadFrameJob;
+  Accumulator loadFrameUndoSnapshots;
+  Accumulator loadFrameEditAutosave;
+  Accumulator loadFramePassReclaim;
+  Accumulator loadFrameRestoreEnqueue;
   Accumulator lateOn;
   Accumulator lateOff;
   Accumulator lateClk;
@@ -169,6 +183,11 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.dispResolveCommitted = Accumulator{};
   s.dispDraw = Accumulator{};
   s.dispTransfer = Accumulator{};
+  s.loadFrameJob = Accumulator{};
+  s.loadFrameUndoSnapshots = Accumulator{};
+  s.loadFrameEditAutosave = Accumulator{};
+  s.loadFramePassReclaim = Accumulator{};
+  s.loadFrameRestoreEnqueue = Accumulator{};
   s.lateOn = Accumulator{};
   s.lateOff = Accumulator{};
   s.lateClk = Accumulator{};
@@ -201,15 +220,30 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("persist_save", s.persistSave.maxUs,
                                              s.persistSave.overCount);
-  DebugSessionCapture::runtimeTimingTelemetry("disp_total", s.dispTotal.maxUs,
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("disp_total"), s.dispTotal.maxUs,
                                              s.dispTotal.overCount);
-  DebugSessionCapture::runtimeTimingTelemetry("disp_resolve", s.dispResolve.maxUs,
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("disp_resolve"), s.dispResolve.maxUs,
                                              s.dispResolve.overCount);
-  DebugSessionCapture::runtimeTimingTelemetry("disp_res_cmt", s.dispResolveCommitted.maxUs,
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("disp_res_cmt"), s.dispResolveCommitted.maxUs,
                                              s.dispResolveCommitted.overCount);
-  DebugSessionCapture::runtimeTimingTelemetry("disp_draw", s.dispDraw.maxUs, s.dispDraw.overCount);
-  DebugSessionCapture::runtimeTimingTelemetry("disp_xfer", s.dispTransfer.maxUs,
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("disp_draw"), s.dispDraw.maxUs,
+                                             s.dispDraw.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("disp_xfer"), s.dispTransfer.maxUs,
                                              s.dispTransfer.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("lframe_job"), s.loadFrameJob.maxUs,
+                                             s.loadFrameJob.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("lframe_undo"),
+                                             s.loadFrameUndoSnapshots.maxUs,
+                                             s.loadFrameUndoSnapshots.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("lframe_autosave"),
+                                             s.loadFrameEditAutosave.maxUs,
+                                             s.loadFrameEditAutosave.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("lframe_reclaim"),
+                                             s.loadFramePassReclaim.maxUs,
+                                             s.loadFramePassReclaim.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry(RT_TAG("lframe_enqueue"),
+                                             s.loadFrameRestoreEnqueue.maxUs,
+                                             s.loadFrameRestoreEnqueue.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_on", s.lateOn.maxUs, s.lateOn.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_off", s.lateOff.maxUs, s.lateOff.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_clk", s.lateClk.maxUs, s.lateClk.overCount);
@@ -475,6 +509,26 @@ RT_FLASHMEM_FN void noteDisplayTransfer(uint32_t durationUs) {
   recordSample(state().dispTransfer, durationUs);
 }
 
+RT_FLASHMEM_FN void noteLoadFrameJob(uint32_t durationUs) {
+  recordSample(state().loadFrameJob, durationUs);
+}
+
+RT_FLASHMEM_FN void noteLoadFrameUndoSnapshots(uint32_t durationUs) {
+  recordSample(state().loadFrameUndoSnapshots, durationUs);
+}
+
+RT_FLASHMEM_FN void noteLoadFrameEditAutosave(uint32_t durationUs) {
+  recordSample(state().loadFrameEditAutosave, durationUs);
+}
+
+RT_FLASHMEM_FN void noteLoadFramePassReclaim(uint32_t durationUs) {
+  recordSample(state().loadFramePassReclaim, durationUs);
+}
+
+RT_FLASHMEM_FN void noteLoadFrameRestoreEnqueue(uint32_t durationUs) {
+  recordSample(state().loadFrameRestoreEnqueue, durationUs);
+}
+
 RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   State& s = state();
 #if defined(SESSION_CAPTURE)
@@ -679,6 +733,16 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.dispDrawOverCount = s.dispDraw.overCount;
   out.dispTransferMaxUs = s.dispTransfer.maxUs;
   out.dispTransferOverCount = s.dispTransfer.overCount;
+  out.loadFrameJobMaxUs = s.loadFrameJob.maxUs;
+  out.loadFrameJobOverCount = s.loadFrameJob.overCount;
+  out.loadFrameUndoSnapshotsMaxUs = s.loadFrameUndoSnapshots.maxUs;
+  out.loadFrameUndoSnapshotsOverCount = s.loadFrameUndoSnapshots.overCount;
+  out.loadFrameEditAutosaveMaxUs = s.loadFrameEditAutosave.maxUs;
+  out.loadFrameEditAutosaveOverCount = s.loadFrameEditAutosave.overCount;
+  out.loadFramePassReclaimMaxUs = s.loadFramePassReclaim.maxUs;
+  out.loadFramePassReclaimOverCount = s.loadFramePassReclaim.overCount;
+  out.loadFrameRestoreEnqueueMaxUs = s.loadFrameRestoreEnqueue.maxUs;
+  out.loadFrameRestoreEnqueueOverCount = s.loadFrameRestoreEnqueue.overCount;
   out.lateOnMaxUs = s.lateOn.maxUs;
   out.lateOnCount = s.lateOn.overCount;
   out.lateOffMaxUs = s.lateOff.maxUs;

@@ -92,6 +92,16 @@ struct Snapshot {
   uint32_t dispDrawOverCount = 0;
   uint32_t dispTransferMaxUs = 0;
   uint32_t dispTransferOverCount = 0;
+  uint32_t loadFrameJobMaxUs = 0;
+  uint32_t loadFrameJobOverCount = 0;
+  uint32_t loadFrameUndoSnapshotsMaxUs = 0;
+  uint32_t loadFrameUndoSnapshotsOverCount = 0;
+  uint32_t loadFrameEditAutosaveMaxUs = 0;
+  uint32_t loadFrameEditAutosaveOverCount = 0;
+  uint32_t loadFramePassReclaimMaxUs = 0;
+  uint32_t loadFramePassReclaimOverCount = 0;
+  uint32_t loadFrameRestoreEnqueueMaxUs = 0;
+  uint32_t loadFrameRestoreEnqueueOverCount = 0;
   uint32_t clockPulses = 0;
   uint32_t windowElapsedUs = 0;
   uint32_t lateOnMaxUs = 0;
@@ -238,6 +248,17 @@ void noteDisplayDraw(uint32_t durationUs);
 /** Display transfer phase: blocking SPI push of the framebuffer to the panel. */
 void noteDisplayTransfer(uint32_t durationUs);
 
+/**
+ * Children of the load_frame span other than DisplayManager::update, which disp_total covers.
+ * The child one-shot only fires past kLoopRemainderOneShotUs, so single-digit-millisecond
+ * children need window accumulators to be attributable at all.
+ */
+void noteLoadFrameJob(uint32_t durationUs);
+void noteLoadFrameUndoSnapshots(uint32_t durationUs);
+void noteLoadFrameEditAutosave(uint32_t durationUs);
+void noteLoadFramePassReclaim(uint32_t durationUs);
+void noteLoadFrameRestoreEnqueue(uint32_t durationUs);
+
 /** Emit a one-shot remainder line when a span exceeds this duration. */
 constexpr uint32_t kLoopRemainderOneShotUs = 50000u;
 
@@ -332,6 +353,16 @@ Snapshot peek(uint32_t nowUs = 0);
   RuntimeTimingTelemetry::noteDisplayDraw(durationUs)
 #define RUNTIME_TIMING_NOTE_DISPLAY_TRANSFER(durationUs) \
   RuntimeTimingTelemetry::noteDisplayTransfer(durationUs)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_JOB(durationUs) \
+  RuntimeTimingTelemetry::noteLoadFrameJob(durationUs)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_UNDO_SNAPSHOTS(durationUs) \
+  RuntimeTimingTelemetry::noteLoadFrameUndoSnapshots(durationUs)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_EDIT_AUTOSAVE(durationUs) \
+  RuntimeTimingTelemetry::noteLoadFrameEditAutosave(durationUs)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_PASS_RECLAIM(durationUs) \
+  RuntimeTimingTelemetry::noteLoadFramePassReclaim(durationUs)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_RESTORE_ENQUEUE(durationUs) \
+  RuntimeTimingTelemetry::noteLoadFrameRestoreEnqueue(durationUs)
 #define RUNTIME_TIMING_MAYBE_EMIT(nowUs) RuntimeTimingTelemetry::maybeEmit(nowUs)
 #else
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) ((void)0)
@@ -374,5 +405,10 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_DISPLAY_RESOLVE_COMMITTED(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_DISPLAY_DRAW(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_DISPLAY_TRANSFER(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_JOB(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_UNDO_SNAPSHOTS(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_EDIT_AUTOSAVE(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_PASS_RECLAIM(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_LOAD_FRAME_RESTORE_ENQUEUE(durationUs) ((void)0)
 #define RUNTIME_TIMING_MAYBE_EMIT(nowUs) ((void)0)
 #endif

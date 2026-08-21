@@ -227,6 +227,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     DeferredJobScheduler::runFrame(budgetUs);
 #if defined(SESSION_CAPTURE)
     RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(1, loadJobStartUs);
+    RUNTIME_TIMING_NOTE_LOAD_FRAME_JOB(micros() - loadJobStartUs);
 #endif
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
@@ -245,9 +246,23 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
         !SlotLoadSession::isActive()) {
+#if RUNTIME_TIMING_ENABLED
+      uint32_t childStartUs = micros();
+#endif
       StorageManager::processDeferredUndoSnapshots();
+#if RUNTIME_TIMING_ENABLED
+      RUNTIME_TIMING_NOTE_LOAD_FRAME_UNDO_SNAPSHOTS(micros() - childStartUs);
+      childStartUs = micros();
+#endif
       StorageManager::processEditAutosave(looperState.getLooperState());
+#if RUNTIME_TIMING_ENABLED
+      RUNTIME_TIMING_NOTE_LOAD_FRAME_EDIT_AUTOSAVE(micros() - childStartUs);
+      childStartUs = micros();
+#endif
       trackManager.reclaimUnreferencedDisabledPasses();
+#if RUNTIME_TIMING_ENABLED
+      RUNTIME_TIMING_NOTE_LOAD_FRAME_PASS_RECLAIM(micros() - childStartUs);
+#endif
     }
   }
 
@@ -291,6 +306,53 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #if defined(SESSION_CAPTURE)
     RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(3, bootCommitStartUs);
 #endif
+  }
+
+  // Continue incremental background-fill queue admission across loop turns after title clear.
+  if (!bootSlotLoadRefreshPending) {
+#if RUNTIME_TIMING_ENABLED
+    const uint32_t enqueueStartUs = micros();
+#endif
+    StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
+#if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_NOTE_LOAD_FRAME_RESTORE_ENQUEUE(micros() - enqueueStartUs);
+#endif
+  }
+}
+
+// Keep STOPPED idle-maintenance admission policy out of ITCM.
+FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
+    uint32_t now, bool postOverdubPlayingMidiDrain) {
+  bool anyRealtimeTrackActive = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isPlaying() || t.isRecording() || t.isOverdubbing() || t.isStoppedRecording()) {
+      anyRealtimeTrackActive = true;
+      break;
+    }
+  }
+  const bool allTracksStopped = !anyRealtimeTrackActive;
+  const bool deferStoppedIdleForClock = allTracksStopped && clockManager.isClockRunning();
+  if (deferStoppedIdleForClock) {
+    return;
+  }
+  if (allTracksStopped) {
+    // STOPPED catch-up can run longer; process one track per turn and resume next turn.
+    static uint8_t sStoppedIdleTrackCursor = 0;
+    const uint8_t trackCount = trackManager.getTrackCount();
+    if (trackCount == 0) {
+      return;
+    }
+    if (sStoppedIdleTrackCursor >= trackCount) {
+      sStoppedIdleTrackCursor = 0;
+    }
+    trackManager.getTrack(sStoppedIdleTrackCursor)
+        .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
+    sStoppedIdleTrackCursor = static_cast<uint8_t>((sStoppedIdleTrackCursor + 1) % trackCount);
+    return;
+  }
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
   }
 }
 
@@ -463,9 +525,7 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   uint32_t remainderStartUs = micros();
 #endif
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    trackManager.getTrack(i).processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
-  }
+  runDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
   RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
@@ -487,9 +547,10 @@ void loop() {
 
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
+  const uint32_t loadFrameStartUs = micros();
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
+  const uint32_t loadFrameUs = micros() - loadFrameStartUs;
 #if defined(SESSION_CAPTURE)
-  const uint32_t loadFrameUs = micros() - remainderStartUs;
   RUNTIME_TIMING_NOTE_LOAD_FRAME(loadFrameUs);
   DebugSessionCapture::recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
@@ -518,7 +579,13 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveStartUs = micros();
 #endif
-  StorageManager::processDeferredSaveState(looperState.getLooperState());
+  const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
+  const bool allowDeferredSaveAfterLoadFrame = MidiServiceDrain::allowDeferredSaveAfterLoadFrame(
+      timingCriticalTrackActive, loadFrameUs);
+  if (allowDeferredSaveAfterLoadFrame &&
+      MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending)) {
+    StorageManager::processDeferredSaveState(looperState.getLooperState());
+  }
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;
   RUNTIME_TIMING_NOTE_PERSIST_SAVE(persistSaveUs);

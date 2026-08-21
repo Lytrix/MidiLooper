@@ -478,3 +478,31 @@ The budgeted slices behave: `finalize_slice` ran 751 times at a mean of 110 µs,
 #### Open residual (new, not previously visible)
 
 In the tail windows (t=149–194) `load_frame` is 19.6–20.8 ms while `disp_total` is 11.9–12.8 ms, leaving **7.6–8.0 ms** inside `runDeferredLoadAndDisplayFrame` but outside `DisplayManager::update`. At t=68–78 the same residual is 0.3 ms. The `loop_rem` child one-shot only fires above `kLoopRemainderOneShotUs` (50 ms), so no child line names it at this magnitude. This residual is unattributed and is a candidate for the next measurement pass; do not assume a child until it is measured.
+
+---
+
+## 11. `load_frame` child attribution (Stage O / R1C)
+
+The residual above is measured only where the transport-idle block runs, and three of that block's four calls were absent from the §5 inventory entirely. Instrumented, same observation-only class as §10:
+
+| Tag | Owner |
+|---|---|
+| `lframe_job` | `DeferredJobScheduler::runFrame` (budgeted by `LoadLoopBudget`) |
+| `lframe_undo` | `StorageManager::processDeferredUndoSnapshots` |
+| `lframe_autosave` | `StorageManager::processEditAutosave` |
+| `lframe_reclaim` | `TrackManager::reclaimUnreferencedDisabledPasses` |
+| `lframe_enqueue` | `StorageManager::enqueueRemainingLoopSlotRestoresFromSd` |
+
+The first four run only under `allowDeferredSlotRestore && !timingCriticalTrackActive && !SlotLoadSession::isActive()`, which is the same condition that separates the 7.6–8.0 ms tail residual from the 0.3 ms active-transport residual. `DIAG,lframe_` is Tier-A. Window accumulators rather than the child one-shot, because the one-shot cannot fire below 50 ms.
+
+**§5 inventory correction:** `processDeferredUndoSnapshots`, `processEditAutosave`, and `enqueueRemainingLoopSlotRestoresFromSd` were missing from the 20-owner inventory. They run inside the `load_frame` span on every transport-idle turn and their bound is not yet established — treat the inventory as **23 owners** pending the next capture, and do not classify these three until measured.
+
+### RAM1 constraint: emit tags must be `PSTR`
+
+Adding these five tags first cost **4096 bytes** of RAM1 stack headroom (4640 → **544 free**) for 40 bytes of accumulator state. The linker map shows why: `.bss` carries `.dmabuffers` input sections with two `*fill*` runs of 3392 bytes, and ordinary string literals become `.rodata`, which the Teensy 4 linker places in DTCM on the `_VectorsRam` 1 KB align edge. Ten added tag literals crossed that edge.
+
+`recordMidiLedHelperRem` already documents this and already uses `PSTR` for exactly this reason. Routing the tags in `emitWindow` through a `RT_TAG` macro (`PSTR` on device, plain literal for host tests) returned RAM1 to **4640 free** — the §10 display tags included, so the net RAM1 cost of both telemetry slices is now **zero**.
+
+**Rule for any further telemetry:** new emit tags go through `RT_TAG`. A plain literal is not a free addition here, and the RAM1 figure is alignment-sensitive, so a 40-byte change can swing headroom by 4 KB in either direction. Measure `pio run -e teensy41-capture-serial` RAM1 before and after.
+
+Native **1406/1406**.
