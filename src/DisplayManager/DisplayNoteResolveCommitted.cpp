@@ -22,6 +22,13 @@
 #define DISP_CAPTURE_MEM
 #endif
 
+// Keep diagnostic format strings out of DTCM .rodata — see RT_TAG in RuntimeTimingTelemetry.
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define DISP_DIAG_FMT(literal) PSTR(literal)
+#else
+#define DISP_DIAG_FMT(literal) literal
+#endif
+
 using namespace DisplayManagerInternal;
 
 DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommitted(const Track& track, uint8_t displaySlot, uint32_t currentTick) {
@@ -196,6 +203,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         }
     }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    // Unwindowed committed fallback — silent before this slice. Same threshold rationale
+    // as DIAG,disp_win in rebuildDisplayNotesInWindow.
+    constexpr uint32_t kFullRebuildReportUs = 10000u;
+    const uint32_t fullStartUs = micros();
+    uint32_t fullPhaseStartUs = fullStartUs;
+    uint32_t fullGatherUs = 0;
+    uint32_t fullReconstructUs = 0;
+#endif
     if (loop.visualCacheDirty || liveDisplayEventBuffer.empty() ||
         liveMergePlaybackRevision_ != loop.playbackRevision ||
         liveMergeCaptureRevision_ != loop.captureDisplayRevision) {
@@ -211,6 +227,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    fullGatherUs = micros() - fullPhaseStartUs;
+    fullPhaseStartUs = micros();
+#endif
 
     // Prefer visualCache when fresh — after invalidation fall through to merged events.
     if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
@@ -223,6 +243,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     } else {
         liveDisplayNotes.clear();
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    fullReconstructUs = micros() - fullPhaseStartUs;
+    fullPhaseStartUs = micros();
+#endif
 
     if (!liveDisplayEventBuffer.empty()) {
         const std::vector<NoteUtils::OpenNoteOn> openNotes =
@@ -236,5 +260,23 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     }
     livePlaybackDisplaySlot_ = displaySlot;
     livePlaybackDisplayTrack_ = trackIndex;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    const uint32_t fullTailUs = micros() - fullPhaseStartUs;
+    const uint32_t fullUs = micros() - fullStartUs;
+    if (fullUs >= kFullRebuildReportUs) {
+        char line[224];
+        snprintf(line, sizeof(line),
+                 DISP_DIAG_FMT("#CAP,%lu,DIAG,disp_full,us=%lu,gather=%lu,recon=%lu,tails=%lu,"
+                               "ev=%u,notes=%u,len=%lu"),
+                 static_cast<unsigned long>(micros()), static_cast<unsigned long>(fullUs),
+                 static_cast<unsigned long>(fullGatherUs),
+                 static_cast<unsigned long>(fullReconstructUs),
+                 static_cast<unsigned long>(fullTailUs),
+                 static_cast<unsigned>(liveDisplayEventBuffer.size()),
+                 static_cast<unsigned>(liveDisplayNotes.size()),
+                 static_cast<unsigned long>(loopLength));
+        DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
     return liveDisplayNotes;
 }

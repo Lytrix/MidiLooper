@@ -531,3 +531,29 @@ This capture also contains a second multi-second committed resolve: `load_frame`
 **Revised §5 classification.** Of the three owners missing from the inventory, one is negligible (`processEditAutosave`), one is trivial (`enqueueRemainingLoopSlotRestoresFromSd`), and one is unbounded (`processDeferredUndoSnapshots`). Adding `reclaimUnreferencedDisabledPasses` and `DeferredJobScheduler::runFrame` as separately measured owners, the count of unbounded or over-budget owners rises from 11 to **14**.
 
 **Stage O is now closed for the `load_frame` span.** Every child is named and measured; nothing above 0.3 ms is unattributed.
+
+## 12. The multi-second resolve is not the gather tail (Stage O)
+
+§10 and §11 both measured a multi-second `disp_res_cmt` but neither established *which* call inside it runs. Before designing L1 or L3 around it, that had to be settled, because L3 targets the `advanceFallbackGatherSession` tail and the attribution was an assumption.
+
+**It is not the gather tail.** In [`100726`](../../captures/session_20260821_100726.log) the 22.4 s span runs from 12.562 s to 34.959 s between two *consecutive* capture lines — it emits **zero** log lines. Every `advanceFallbackGatherSession` edit phase emits `DIAG,lcr,vch,gather_edit`; those lines appear at 10.2 s, 11.3 s, 36.1 s, 37.2 s, 70.6 s and 71.6 s (0.60–1.11 s each) and **none** falls inside the gap. The window's own split confirms the containment: `disp_total` 22 406.5 ms, `disp_resolve` 22 386.8 ms, `disp_res_cmt` 22 386.8 ms, against `disp_draw` 8.7 ms and `disp_xfer` 4.5 ms.
+
+So the largest single gap in the system sits in a path that emits nothing. Reading `resolveDisplayNotesCommitted`, this is structural rather than accidental: two heavy paths carry only `DIAG_TIMING_RECORD(DisplayBuild, …)`, which surfaces solely through `emitArchitectureMetricsSnapshot` — established in §3 as never emitting in steady state. Both are therefore invisible in every capture taken so far:
+
+1. `resolveWindowedDisplayNotes` → `rebuildDisplayNotesInWindow` — reached when `visualCache.notes` is empty, which is the cold-boot state. The 68-bar loop in this window (`loopLength` 52224, 1123 notes) exceeds `kMaxDetailedWindowBars`, so `syncDetailedPaintWindow` succeeds and this is the path the boot commit takes.
+2. The unwindowed committed tail block in `resolveDisplayNotesCommitted` — reached when `syncDetailedPaintWindow` returns false.
+
+**Structural defect found by reading, independent of timing.** `rebuildDisplayNotesInWindow` receives `windowStart`/`windowLength` and passes them to `gatherCommittedEventsInWindow`, but then calls `mutLoop.appendOverdubPassDisplayNotes(outNotes)` — which takes no window argument. The windowed resolver calls a **full-loop** append and only discards the out-of-window rows afterwards, in the `std::remove_if` that follows. This is the C3 / L4 owner family reached from the *windowed* path, meaning the window bound does not actually bound this phase. The same call appears in the unwindowed tail block.
+
+### Instrumentation shipped for this measurement
+
+Four sub-phases in `rebuildDisplayNotesInWindow` (`gather`, `recon`, `append`, `filter`) and three in the committed tail block (`gather`, `recon`, `tails`), each emitting one threshold-gated line at ≥ 10 ms with the event count, note count and window geometry:
+
+- `DIAG,disp_win,us=…,gather=…,recon=…,append=…,filter=…,ev=…,notes=…,ws=…,wl=…`
+- `DIAG,disp_full,us=…,gather=…,recon=…,tails=…,ev=…,notes=…,len=…`
+
+Threshold-gating rather than accumulators is deliberate: the bounded `visualCache`-filter path in `resolveWindowedDisplayNotes` returns before reaching either site, so any crossing is already the anomaly, and no new `.bss` is introduced. Both tags match the existing `DIAG,disp_` Tier-A prefix, so `CaptureLineTier` needed no change and these lines cannot be dropped under ring pressure.
+
+The `PSTR` rule from §11 applied again and was not optional: with plain format-string literals RAM1 headroom fell **4640 → 544 bytes**, the same alignment edge, restored to **4640** by routing both through `DISP_DIAG_FMT`. Net RAM1 cost of this slice is **zero**. Native **1406/1406**.
+
+`append` is the phase to watch. If it dominates `disp_win`, the multi-second resolve is the non-windowed `appendOverdubPassDisplayNotes` call and L4 — not L1 or L3 — is the owner-boundary fix that removes the largest gap in the system.
