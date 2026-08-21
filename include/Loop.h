@@ -22,6 +22,7 @@
 #include "StorageLoopIo.h"
 #include "EditPass.h"
 #include "LoopPasses.h"
+#include "CommittedEventRange.h"
 #include "VisualCache.h"
 #include "TrackState.h"
 #include "Utils/NoteUtils.h"
@@ -81,6 +82,7 @@ struct Loop {
   bool hasPendingCapturePass_ = false;
   PendingCapturePass pendingCapturePass_;
   VisualCache visualCache;
+  bool deferredVisualCacheWrapAppendPending_ = false;
   CapturePreview capturePreview;
   VisualCacheDelta pendingVisualDelta;
   bool visualCacheDirty = true;
@@ -123,10 +125,13 @@ struct Loop {
   static void resetCommittedPitchQueryWork();
   static uint32_t committedEventsFullMaterializeCount();
   /// Windowed committed gathering — wrap-aware chunk skip + event filter.
+  /// `includeActiveEditRows` controls whether active note edit rows are projected.
   void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                     uint32_t windowLength) const;
+                                     uint32_t windowLength,
+                                     bool includeActiveEditRows = true) const;
   void gatherCommittedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
-                                     uint32_t windowLength) const;
+                                     uint32_t windowLength,
+                                     bool includeActiveEditRows = true) const;
   /// Committed window plus live capture.store events in the same window.
   void gatherCommittedEventsInWindowWithCapture(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
@@ -143,9 +148,13 @@ struct Loop {
   /// Lazy full flatten for edit/MIDI paths that still require the entire loop.
   void ensureEffectiveEventStoreCurrent() const;
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
-  /// Range query of committed content (chunk window + edit rows). Does not flatten the loop.
+  /// Range query of committed content (chunk window + optional edit projection).
+  /// Does not flatten the loop. Full companion projection rebuild is admitted
+  /// only while `capture.phase == CapturePhase::Overdub`; STOPPED/boot uses the
+  /// windowed apply path.
   void copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
-                                           uint32_t windowLength) const;
+                                           uint32_t windowLength,
+                                           bool includeActiveEditRows = true) const;
   uint32_t effectiveEventStoreRevision() const { return effectiveEventStoreRevision_; }
 
   SessionMidiEventVec& midiEvents();
@@ -321,8 +330,18 @@ struct Loop {
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
   /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.
+  /// `allowOverdubWrapAppend` controls whether wrap-pair append is allowed in this slice.
+  /// `constrainFallbackGather` applies a bounded fallback mode for post-stop drain windows.
   void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
-                                   uint32_t maxBarDistanceFromPriority = UINT32_MAX);
+                                   uint32_t maxBarDistanceFromPriority = UINT32_MAX,
+                                   bool allowOverdubWrapAppend = true,
+                                   bool constrainFallbackGather = false,
+                                   size_t fallbackGatherEventBudget = 0);
+  /// Resume wrap-pair append that was deferred during runtime-priority idle slices.
+  void applyDeferredVisualCacheWrapAppend();
+  bool hasDeferredVisualCacheWrapAppend() const {
+    return deferredVisualCacheWrapAppendPending_;
+  }
   /// After pass-state change: mark stale and fill short loops via idle slices (same oracle
   /// as PLAYING). Long loops stay idle-deferred — no `VCACHE,full` flatten+append.
   void refreshVisualCacheAfterPassStateChange();
@@ -409,10 +428,19 @@ struct Loop {
   PassesMaterializedEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
   uint32_t effectiveEventStoreRevision_ = 0;
+  /// Full-loop companion projection. Built only during CapturePhase::Overdub.
+  mutable SessionMidiEventVec companionProjectionEvents_;
+  mutable uint32_t companionProjectionPlaybackRevision_ = UINT32_MAX;
+  mutable bool companionProjectionReady_ = false;
+  mutable bool companionProjectionCompanionOnlyRows_ = false;
 
   /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
   void notifyCommittedContentChanged();
   void rebuildEffectiveEventStore() const;
+  bool rebuildCompanionProjectionForCurrentRevision() const;
+  bool tryCopyCompanionProjectedWindow(SessionMidiEventVec& out, uint32_t windowStart,
+                                       uint32_t windowLength) const;
+  void clearCompanionProjectionCache() const;
   void rebuildOverdubSourceSpanCache();
   bool overdubSourceSpanCacheReady() const;
   uint32_t overdubSourceWindowLengthTicks() const;
@@ -431,6 +459,14 @@ struct Loop {
   bool overdubSourceSpanCacheValid_ = false;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
+  bool fallbackGatherSessionActive_ = false;
+  uint32_t fallbackGatherSessionWindowStart_ = 0;
+  uint32_t fallbackGatherSessionWindowLength_ = 0;
+  uint32_t fallbackGatherSessionPlaybackRevision_ = 0;
+  bool fallbackGatherSessionIncludeActiveEditRows_ = true;
+  CommittedEventRange::WindowTraversalCursor fallbackGatherSessionCursor_{};
+  SessionMidiEventVec fallbackGatherSessionEvents_;
+  bool fallbackGatherSessionTraversalComplete_ = false;
   /// Non-owning. Null means the identity filter is inactive. Points at
   /// `LoopPlaybackRuntime::mergedMidiEvents` after a full-loop rebuild.
   const PlaybackMergedMidiEvents* committedPlaybackMergedForIdentity_ = nullptr;
@@ -445,6 +481,13 @@ struct Loop {
 
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
+  void resetFallbackGatherSession();
+  bool fallbackGatherSessionMatches(uint32_t windowStart, uint32_t windowLength,
+                                    uint32_t playbackRevision,
+                                    bool includeActiveEditRows) const;
+  bool advanceFallbackGatherSession(size_t eventBudget, uint32_t windowStart,
+                                    uint32_t windowLength, bool includeActiveEditRows,
+                                    SessionMidiEventVec& out);
   /// RC-E attribution: cached note coverage vs loop bars at a rebuild or staleness boundary.
   void emitVisualCacheState(const char* phase, int32_t gatheredEvents) const;
 

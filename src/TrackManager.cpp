@@ -151,7 +151,9 @@ uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
 void TrackManager::onBootSlotLoadComplete() {
   const uint8_t trackIdx = selectedTrack;
   const uint8_t previewSlot = getPreviewSlotIndex(trackIdx);
-  displayManager.invalidateForSlotChange(trackIdx, previewSlot, previewSlot);
+  // Do not call invalidateForSlotChange here. It runs invalidateDisplayCaches()
+  // (clears visualCache.notes) and STOPPED Track::invalidateCaches. 154353 and
+  // 161148 then first-painted with DISP visual=0 and paid ~70 s gather+apply.
   editManager.reenterEditSessionForFocusChange(tracks[trackIdx], previewSlot);
   forceMidiLedUpdate(clockManager.getCurrentTick());
 }

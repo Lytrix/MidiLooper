@@ -93,6 +93,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   }
   playingMidiDrainAfterOverdubStop_ = false;
   playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+  overdubDrainFallbackRetryAtMs_ = 0;
   loopPrefixMeasureAfterUndo_ = false;
   loopPrefixMeasureAfterUndoNoted_ = false;
   overdubStopDebtProbeArmed_ = false;
@@ -239,6 +240,7 @@ void Track::notePlayingMidiDrainAfterOverdubStopIdle() {
   playingMidiDrainAfterOverdubStopIdleNoted_ = true;
   if (!isPlaying() || !loopsAllocated() || !getActiveLoop().visualCacheDirty) {
     playingMidiDrainAfterOverdubStop_ = false;
+    overdubDrainFallbackRetryAtMs_ = 0;
   }
 }
 

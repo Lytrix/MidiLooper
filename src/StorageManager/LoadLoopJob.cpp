@@ -18,6 +18,8 @@
 #include <Arduino.h>
 #include <SD.h>
 
+extern bool sequencerRunning;
+
 namespace StorageManagerInternal {
 
 /// LoadLoopJob: read SD payload in timed slices, parse under budget into a staging
@@ -202,6 +204,11 @@ STORAGE_PERSIST_MEM bool loadLoopJobIsFocusSlot() {
 STORAGE_PERSIST_MEM bool canRunBackgroundLoadLoopNow() {
     if (bootTitleLoadDrain_) {
         return true;
+    }
+    // Background slot-load work must not compete with active transport clock service.
+    // If transport clock is running, park/defer Low job work and retry later.
+    if (sequencerRunning) {
+        return false;
     }
     for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
         const Track& t = trackManager.getTrack(i);
@@ -620,8 +627,15 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
     if (!loadLoopJob_.active) {
         return;
     }
-    if (!LoadLoopSelectionPolicy::shouldStepLoadLoopJob(loadLoopJobIsFocusSlot(),
-                                                        canRunBackgroundLoadLoopNow())) {
+    const bool jobIsFocus = loadLoopJobIsFocusSlot();
+    const bool backgroundAllowed = canRunBackgroundLoadLoopNow();
+    if (!jobIsFocus && !backgroundAllowed) {
+        if (!bootTitleLoadDrain_) {
+            parkActiveLoadLoopJob();
+        }
+        return;
+    }
+    if (!LoadLoopSelectionPolicy::shouldStepLoadLoopJob(jobIsFocus, backgroundAllowed)) {
         return;
     }
     if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {

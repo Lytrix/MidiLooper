@@ -156,6 +156,20 @@ FLASHMEM __attribute__((noinline)) static void runLoopPrefixAfterBar(uint32_t no
   }
 }
 
+// Keep first-commit playback prewarm out of ITCM — same owner as the load-frame site.
+FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlot(
+    uint8_t trackIndex, uint8_t slotIndex) {
+  Track& prewarmTrackRef = trackManager.getTrack(trackIndex);
+#if defined(SESSION_CAPTURE)
+  const uint32_t firstCommitStartUs = micros();
+#endif
+  prewarmTrackRef.ensurePlaybackMergedEventsForSlot(slotIndex);
+#if defined(SESSION_CAPTURE)
+  RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(2, firstCommitStartUs);
+#endif
+  displayManager.invalidateLiveDisplayCache();
+}
+
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
@@ -227,42 +241,20 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     DeferredJobScheduler::runFrame(budgetUs);
 #if defined(SESSION_CAPTURE)
     RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(1, loadJobStartUs);
-    RUNTIME_TIMING_NOTE_LOAD_FRAME_JOB(micros() - loadJobStartUs);
 #endif
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       skipDisplayAfterFocusCommit = true;
-      // Same-frame windowed prewarm — buffer already freed at commit_armed; trySlot is
-      // fail-soft. Deferring to next frame raced save/reclaim (000659).
-      Track& prewarmTrackRef = trackManager.getTrack(focusTrack);
-#if defined(SESSION_CAPTURE)
-      const uint32_t firstCommitStartUs = micros();
-#endif
-      prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
-#if defined(SESSION_CAPTURE)
-      RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(2, firstCommitStartUs);
-#endif
-      displayManager.invalidateLiveDisplayCache();
+      // 2fd209a / 154353: first-commit prewarm stays on the load-frame that
+      // committed the slot (128 ms). Deferring it until after the first piano
+      // roll hung 160519 immediately after that frame.
+      prewarmPlaybackMergedEventsForSlot(focusTrack, focusSlot);
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
         !SlotLoadSession::isActive()) {
-#if RUNTIME_TIMING_ENABLED
-      uint32_t childStartUs = micros();
-#endif
       StorageManager::processDeferredUndoSnapshots();
-#if RUNTIME_TIMING_ENABLED
-      RUNTIME_TIMING_NOTE_LOAD_FRAME_UNDO_SNAPSHOTS(micros() - childStartUs);
-      childStartUs = micros();
-#endif
       StorageManager::processEditAutosave(looperState.getLooperState());
-#if RUNTIME_TIMING_ENABLED
-      RUNTIME_TIMING_NOTE_LOAD_FRAME_EDIT_AUTOSAVE(micros() - childStartUs);
-      childStartUs = micros();
-#endif
       trackManager.reclaimUnreferencedDisabledPasses();
-#if RUNTIME_TIMING_ENABLED
-      RUNTIME_TIMING_NOTE_LOAD_FRAME_PASS_RECLAIM(micros() - childStartUs);
-#endif
     }
   }
 
@@ -282,7 +274,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
+  const Loop& focusLoop = trackManager.getTrack(focusTrack).getLoop(focusSlot);
+  const bool focusVisualCacheReady =
+      !focusLoop.hasCommittedPasses() ||
+      (!focusLoop.visualCacheDirty && !focusLoop.visualCache.notes.empty());
+  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady() &&
+      focusVisualCacheReady) {
 #if defined(SESSION_CAPTURE)
     const uint32_t bootCommitStartUs = micros();
 #endif
@@ -310,13 +307,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 
   // Continue incremental background-fill queue admission across loop turns after title clear.
   if (!bootSlotLoadRefreshPending) {
-#if RUNTIME_TIMING_ENABLED
-    const uint32_t enqueueStartUs = micros();
-#endif
     StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
-#if RUNTIME_TIMING_ENABLED
-    RUNTIME_TIMING_NOTE_LOAD_FRAME_RESTORE_ENQUEUE(micros() - enqueueStartUs);
-#endif
   }
 }
 
@@ -337,12 +328,20 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     return;
   }
   if (allTracksStopped) {
-    // STOPPED catch-up can run longer; process one track per turn and resume next turn.
-    static uint8_t sStoppedIdleTrackCursor = 0;
     const uint8_t trackCount = trackManager.getTrackCount();
     if (trackCount == 0) {
       return;
     }
+    // Boot title drain: keep idle on the focus track until its visual cache is
+    // clean. 161148 round-robined small slots first and first-painted the
+    // 68-bar focus slot with an empty cache (boot_commit=70 s).
+    if (StorageManager::isBootTitleLoadDrain()) {
+      const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+      trackManager.getTrack(focusTrack)
+          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
+      return;
+    }
+    static uint8_t sStoppedIdleTrackCursor = 0;
     if (sStoppedIdleTrackCursor >= trackCount) {
       sStoppedIdleTrackCursor = 0;
     }
@@ -424,6 +423,10 @@ void setup() {
   trackManager.setup();
   displayManager.beginBootOled();
   displayManager.drawBootScreen();
+  // Arm before loop(): idle maintenance runs before the load-frame setter.
+  // 145953 paid idle_gather=136084342 on the first STOPPED turn while the flag
+  // was still false, so title drain never reached boot_commit.
+  StorageManager::setBootTitleLoadDrain(true);
   looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.

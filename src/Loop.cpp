@@ -14,6 +14,7 @@ void Loop::notifyCommittedContentChanged() {
 
 void Loop::markPassDerivedStale() {
   passesMaterializedStoreStale_ = true;
+  clearCompanionProjectionCache();
   playbackOrderDirty = true;
   visualCacheDirty = true;
   invalidatePlaybackCaches();
@@ -53,6 +54,7 @@ void Loop::resetPassTimeline() {
   passesMaterializedStore_.mutStore().clear();
   passesMaterializedStore_.discardEventsCache();
   passesMaterializedStoreStale_ = true;
+  clearCompanionProjectionCache();
   clearOverdubSourceView();
   clearCommittedPlaybackNoteOnIdentities();
   clearPendingNoteChanges();
@@ -67,6 +69,7 @@ void Loop::invalidateCaches() {
   visualCacheDirty = true;
   playbackOrderDirty = true;
   passesMaterializedStoreStale_ = true;
+  clearCompanionProjectionCache();
 }
 
 void Loop::invalidatePlaybackCaches() {

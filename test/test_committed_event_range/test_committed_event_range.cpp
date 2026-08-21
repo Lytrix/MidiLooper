@@ -89,11 +89,93 @@ void test_committed_event_range_full_includes_all() {
   TEST_ASSERT_EQUAL(2u, out.size());
 }
 
+void test_window_budgeted_matches_one_shot() {
+  resetStore();
+  LoopEventStore listA;
+  LoopEventStore listB;
+  const uint32_t loopLength = 64u * Config::TICKS_PER_BAR;
+  const uint32_t windowStart = 0;
+  const uint32_t windowLength = 16u * Config::TICKS_PER_BAR;
+
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(100)));
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(200)));
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(30u * Config::TICKS_PER_BAR)));  // filtered out
+  TEST_ASSERT_TRUE(listB.append(noteOnAt(150)));
+  TEST_ASSERT_TRUE(listB.append(noteOnAt(250)));
+
+  CommittedChunkIdList idsA;
+  CommittedChunkIdList idsB;
+  TEST_ASSERT_TRUE(listA.detachChunksToCommittedChunkIds(idsA));
+  TEST_ASSERT_TRUE(listB.detachChunksToCommittedChunkIds(idsB));
+  const CommittedChunkIdList* lists[] = {&idsA, &idsB};
+
+  SessionMidiEventVec oneShot;
+  CommittedEventRange::inWindow(lists, 2, loopLength, windowStart, windowLength).appendTo(oneShot);
+
+  SessionMidiEventVec chunked;
+  CommittedEventRange::WindowTraversalCursor cursor{};
+  CommittedEventRange::resetWindowTraversalCursor(cursor);
+  bool complete = false;
+  uint16_t guard = 0;
+  while (!complete && guard < 64) {
+    const auto result = CommittedEventRange::appendWindowBudgeted(
+        lists, 2, loopLength, windowStart, windowLength, 2, cursor, chunked);
+    complete = result.complete;
+    ++guard;
+  }
+  TEST_ASSERT_TRUE(complete);
+  TEST_ASSERT_TRUE(guard <= 64);
+  TEST_ASSERT_EQUAL_UINT32(oneShot.size(), chunked.size());
+  for (size_t i = 0; i < oneShot.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oneShot[i].tick, chunked[i].tick);
+  }
+}
+
+void test_window_budgeted_resume_budget_one() {
+  resetStore();
+  LoopEventStore listA;
+  const uint32_t loopLength = 64u * Config::TICKS_PER_BAR;
+  const uint32_t windowStart = 0;
+  const uint32_t windowLength = 16u * Config::TICKS_PER_BAR;
+
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(100)));
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(120)));
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(140)));
+  TEST_ASSERT_TRUE(listA.append(noteOnAt(160)));
+
+  CommittedChunkIdList idsA;
+  TEST_ASSERT_TRUE(listA.detachChunksToCommittedChunkIds(idsA));
+  const CommittedChunkIdList* lists[] = {&idsA};
+
+  SessionMidiEventVec oneShot;
+  CommittedEventRange::inWindow(lists, 1, loopLength, windowStart, windowLength).appendTo(oneShot);
+
+  SessionMidiEventVec chunked;
+  CommittedEventRange::WindowTraversalCursor cursor{};
+  CommittedEventRange::resetWindowTraversalCursor(cursor);
+  bool complete = false;
+  uint16_t guard = 0;
+  while (!complete && guard < 128) {
+    const auto result = CommittedEventRange::appendWindowBudgeted(
+        lists, 1, loopLength, windowStart, windowLength, 1, cursor, chunked);
+    complete = result.complete;
+    ++guard;
+  }
+  TEST_ASSERT_TRUE(complete);
+  TEST_ASSERT_TRUE(guard <= 128);
+  TEST_ASSERT_EQUAL_UINT32(oneShot.size(), chunked.size());
+  for (size_t i = 0; i < oneShot.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oneShot[i].tick, chunked[i].tick);
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_chunk_intersects_window_linear);
   RUN_TEST(test_chunk_intersects_window_wrap_span);
   RUN_TEST(test_committed_event_range_window_skips_out_of_range_chunks);
   RUN_TEST(test_committed_event_range_full_includes_all);
+  RUN_TEST(test_window_budgeted_matches_one_shot);
+  RUN_TEST(test_window_budgeted_resume_budget_one);
   return UNITY_END();
 }

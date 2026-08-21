@@ -64,13 +64,17 @@ LOOP_INTERNAL_MEM const char* capturePhaseLabel(CapturePhase phase) {
 LOOP_INTERNAL_MEM void sortCaptureStoreByTick(LoopEventStore& store, uint32_t* lastTickOut) {
   SessionMidiEventVec sorted;
   store.copyEventsTo(sorted);
-  std::stable_sort(sorted.begin(), sorted.end(),
-                   [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  sortSessionEventsByTick(sorted);
   if (lastTickOut != nullptr) {
     *lastTickOut = sorted.empty() ? 0 : sorted.back().tick;
   }
   store.clear();
   store.loadFromEvents(sorted);
+}
+
+LOOP_INTERNAL_MEM void sortSessionEventsByTick(SessionMidiEventVec& events) {
+  std::stable_sort(events.begin(), events.end(),
+                   [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
 }
 
 LOOP_INTERNAL_MEM void markPreviewSpan(CapturePreview& preview, uint32_t startTick, uint32_t endTick,

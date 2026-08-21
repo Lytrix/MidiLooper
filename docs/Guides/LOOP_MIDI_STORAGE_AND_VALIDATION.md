@@ -268,6 +268,17 @@ Playback/materialize from committed passes uses the same **paired on/off** model
 
 **Owner:** `Track::finalizePendingNotes`
 
+#### Post-overdub drain-window scope (scheduling guard)
+
+This policy is **stop-only scheduling**, not an overdub/wrap mutation rule:
+
+- Armed only by `Track::stopOverdubbing` (`armPlayingMidiDrainAfterOverdubStop`), then cleared on `Track::startOverdubbing`.
+- Applied only in deferred maintenance while a track is in PLAYING/STOPPED_RECORDING (`processDeferredIdleMaintenance` post-stop drain gate).
+- While OVERDUBBING (including wrap commits), no drain-window clamp applies to note-update ownership.
+- Overdub wrap processing remains unchanged: `Track::commitOverdubWrapAtSessionStart` still commits wrap capture, seals companions via `sealPendingNoteChangesToEditPasses()` (source-view update enabled), publishes prepared overdub pass, and rebuilds source view.
+
+Use this guard to avoid false regressions: post-stop latency tuning must not be interpreted as a change to continuous overdub/wrap note processing.
+
 When overdubbing, a performer can re-trigger a pitch that already has a published note sounding
 and then stop overdub before the performer release arrives. If stop-finalize blindly appends a
 synthetic `NoteOff` at the stop tick, canonical LIFO pairing will close the *earlier* published
@@ -414,8 +425,13 @@ GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `
 |-----|---------|
 | `teensy41` | Default firmware |
 | `teensy41-capture-serial` | HITL / capture: `SESSION_CAPTURE=1`, `#CAP` serial lines |
+| `teensy41-capture-serial-investigation-diag` | Opt-in high-volume owner diagnostics (`SESSION_CAPTURE_INVESTIGATION_DIAG=1`) |
 | `teensy41-capture` | Silent production-style capture build (no session serial) |
 | `teensy41-capture-bypass` | Adds `BYPASS_STOP_UNDO_SAVE=1` — skips undo snapshot push and `saveState` on stop (diagnostic only) |
+
+`teensy41-capture-serial` keeps investigation-heavy `DIAG` families disabled by default
+(`SESSION_CAPTURE_INVESTIGATION_DIAG=0`) to avoid capture-ring/formatting overhead in normal
+validation runs. Enable those lines only in the dedicated investigation target above.
 
 **Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — deferred save runs only when **no** track is recording/overdubbing, and can continue during **PLAYING**; deferred full validate runs only when the track is not **PLAYING**, **RECORDING**, or **OVERDUBBING**. **`TrackManager::prewarmPlaybackRuntime()`** runs after early loop allocation and successful **`loadState`** so first playback tick does not allocate runtime.
 

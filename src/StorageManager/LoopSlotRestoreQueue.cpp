@@ -35,6 +35,12 @@ bool loopSlotRestoreAttempted_[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]{
 std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     loopSlotPayloadOnSdInRam_{};
 
+// Incremental boot background-fill admission state.
+bool bootBackgroundFillAdmissionStarted_ = false;
+bool bootBackgroundFillAdmissionComplete_ = false;
+uint8_t bootBackgroundFillTrackCursor_ = 0;
+uint8_t bootBackgroundFillSlotCursor_ = 0;
+
 namespace {
 
 bool probeLoopSlotPayloadOnSdFromSd(uint8_t trackIndex, uint8_t slotIndex) {
@@ -69,19 +75,24 @@ uint16_t currentDeferredRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
                                           Config::MAX_LOOPS_PER_TRACK);
 }
 
-}  // namespace
-
-STORAGE_PERSIST_MEM void queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
-    StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
+void queueDeferredLoopSlotRestoreWithPayloadSource(uint8_t trackIndex, uint8_t slotIndex,
+                                                   bool refreshPayloadFromSd,
+                                                   bool deferPriorityAndSort) {
+    if (refreshPayloadFromSd) {
+        StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
+    }
     if (!StorageManager::hasLoopSlotPayloadOnSdInRam(trackIndex, slotIndex)) {
         return;
     }
-    const uint16_t restorePriority = currentDeferredRestorePriority(trackIndex, slotIndex);
+    const uint16_t restorePriority =
+        deferPriorityAndSort ? 0 : currentDeferredRestorePriority(trackIndex, slotIndex);
     for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
         DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
         if (pending.track == trackIndex && pending.slot == slotIndex) {
-            pending.restorePriority = restorePriority;
-            sortPendingLoopSlotRestoresByPriority();
+            if (!deferPriorityAndSort) {
+                pending.restorePriority = restorePriority;
+                sortPendingLoopSlotRestoresByPriority();
+            }
             return;
         }
     }
@@ -93,19 +104,55 @@ STORAGE_PERSIST_MEM void queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_
     }
     pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
                                                                           restorePriority};
-    sortPendingLoopSlotRestoresByPriority();
+    if (!deferPriorityAndSort) {
+        sortPendingLoopSlotRestoresByPriority();
+    }
 }
 
-/// Enqueue every HEADER_READY SD payload for background fill (adjacent/track/forward priority).
+}  // namespace
+
+STORAGE_PERSIST_MEM void queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
+    queueDeferredLoopSlotRestoreWithPayloadSource(trackIndex, slotIndex, true, false);
+}
+
+/// Incrementally enqueue HEADER_READY SD payloads for background fill.
+/// Admission is sliced across loop turns to keep STOPPED boot windows bounded.
 STORAGE_PERSIST_MEM void enqueueRemainingLoopSlotRestores() {
-    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            queueDeferredLoopSlotRestore(t, s);
+    if (bootBackgroundFillAdmissionComplete_) {
+        return;
+    }
+    if (!bootBackgroundFillAdmissionStarted_) {
+        bootBackgroundFillAdmissionStarted_ = true;
+        bootBackgroundFillTrackCursor_ = 0;
+        bootBackgroundFillSlotCursor_ = 0;
+    }
+
+    constexpr uint16_t kBootAdmissionEntriesPerTurn = 4;
+    uint16_t admittedThisTurn = 0;
+    while (bootBackgroundFillTrackCursor_ < Config::NUM_TRACKS &&
+           admittedThisTurn < kBootAdmissionEntriesPerTurn) {
+        // Boot scan already populated loopSlotPayloadOnSdInRam_ for every slot.
+        // Avoid repeating SD.exists/token probes for all slots in one turn.
+        // Bulk enqueue: defer per-entry priority/sort and do one reprioritize at completion.
+        queueDeferredLoopSlotRestoreWithPayloadSource(
+            bootBackgroundFillTrackCursor_, bootBackgroundFillSlotCursor_, false, true);
+        ++admittedThisTurn;
+        ++bootBackgroundFillSlotCursor_;
+        if (bootBackgroundFillSlotCursor_ >= Config::MAX_LOOPS_PER_TRACK) {
+            bootBackgroundFillSlotCursor_ = 0;
+            ++bootBackgroundFillTrackCursor_;
         }
     }
+
+    if (bootBackgroundFillTrackCursor_ < Config::NUM_TRACKS) {
+        return;
+    }
+
     reprioritizeDeferredLoopSlotRestoreEntries();
     // Give transport/UI a quiet window after title clears before SD fill resumes.
     armBackgroundRestoreHoldoff(2000);
+    bootBackgroundFillAdmissionComplete_ = true;
+    bootBackgroundFillAdmissionStarted_ = false;
 }
 
 bool readLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex) {
@@ -234,6 +281,10 @@ void reprioritizeDeferredLoopSlotRestoreEntries() {
 
 void clearPendingLoopSlotRestoresAtBoot() {
     pendingLoopSlotRestores_.count = 0;
+    bootBackgroundFillAdmissionStarted_ = false;
+    bootBackgroundFillAdmissionComplete_ = false;
+    bootBackgroundFillTrackCursor_ = 0;
+    bootBackgroundFillSlotCursor_ = 0;
 }
 
 void resetAllLoopSlotRestoreAttempted() {

@@ -16,4 +16,18 @@ inline bool afterDeferredDisplay(bool captureActive, bool postOverdubPlayingDrai
   return captureActive || postOverdubPlayingDrain;
 }
 
+inline bool allowDeferredSave(bool postOverdubPlayingDrain, bool deferredSavePending) {
+  // During the post-overdub drain window, do not stack pending save work into the same
+  // PLAYING turn that is already draining idle maintenance debt.
+  return !postOverdubPlayingDrain || !deferredSavePending;
+}
+
+inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
+                                            uint32_t loadFrameDurationUs) {
+  // In active timing windows, defer save when the same-turn load_frame slice is already
+  // heavy. This keeps save work resumable and avoids avoidable load+save stacking gaps.
+  constexpr uint32_t kActiveLoadFrameSaveDeferThresholdUs = 15000u;
+  return !timingCriticalTrackActive || loadFrameDurationUs < kActiveLoadFrameSaveDeferThresholdUs;
+}
+
 }  // namespace MidiServiceDrain
