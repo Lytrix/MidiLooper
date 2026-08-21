@@ -7,7 +7,7 @@
 
 **Contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md) — this document supplies **Stage R1C** (remaining owner inventory) evidence and **Stage C** ceiling-derivation input. It does not replace the contract and does not start Stage A.
 **Roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
-**Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) § STOPPED undo / track-switch first-paint
+**Active scope linkage:** [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) — §36 closed; later tasks parked (§37)
 
 **Evidence:** [`084213`](../../captures/session_20260821_084213.log) (best steady state to date), [`085458`](../../captures/session_20260821_085458.log) (regression run), [`082858`](../../captures/session_20260821_082858.log), [`015645`](../../captures/session_20260821_015645.log), [`161804`](../../captures/session_20260821_161804.log) (STOPPED undo + large-loop track switch; §34), [`162928`](../../captures/session_20260821_162928.log) (Overdub empty source view + 136 s `tracks` freeze; §35), [`165107`](../../captures/session_20260821_165107.log) (Stage A+B device PASS), [`183229`](../../captures/session_20260821_183229.log) (Stage C device PASS)
 
@@ -1137,7 +1137,7 @@ Success criteria: title drain reaches `Boot setup complete` without multi-minute
 
 Boot first paint on this image is Device PASS: focus `slice_clean` 2638 notes at 10.9 s; first `DISP` visual=2638; `boot_commit=288557`. The same capture then proves two later hangs that share the STOPPED idle visual-cache path, not `boot_commit`.
 
-This section authorizes no firmware.
+This section authorizes no firmware. **Stage C shipped** — first-paint keep-notes + budgeted STOPPED idle. Findings below are the pre-fix [`161804`](../../captures/session_20260821_161804.log) capture. Device PASS [`183229`](../../captures/session_20260821_183229.log). Later: deferred wrap-append bound, 5 s idle attribution (§37).
 
 ### Finding 1 — one overdub undo occupies MIDI service and display
 
@@ -1205,7 +1205,7 @@ Companion full projection remains Overdub-only and is not in these STOPPED windo
 
 ## 35. Companion admission and missing source-span prewarm ([`162928`](../../captures/session_20260821_162928.log))
 
-This section records the device failure after §32 companion-only projection shipped and after `754db31` repaired boot first-paint. It does not reopen §34's STOPPED undo/track-switch owner; that path is queued as §36 Stage C.
+This section records the device failure after §32 companion-only projection shipped and after `754db31` repaired boot first-paint. Stage A+B shipped ([`165107`](../../captures/session_20260821_165107.log)). Stage C shipped ([`183229`](../../captures/session_20260821_183229.log)). Findings below are the pre-fix [`162928`](../../captures/session_20260821_162928.log) capture.
 
 ### Session shape
 
@@ -1394,10 +1394,19 @@ Remaining outside this slice: deferred wrap-append later paid `idle_append=11226
 | Gather budget | `192` events — same as PLAYING realtime. |
 
 ### Open before coding
-1. Device-only: confirm first post-undo `idle_maint` drops out of the 850 ms class on the 68-bar loop.
+1. Device gate closed on [`183229`](../../captures/session_20260821_183229.log).
 
 ### Proceed?
-- YES — no blockers. Open item is the device gate.
+- YES — Stage C closed. Later tasks in §37.
+
+### Documentation closeout
+
+- Behavior: [`DerivedViews.md`](../Authority/Architecture/DerivedViews.md), [`Display.md`](../Authority/Architecture/Display.md), [`BOOT_LOAD.md`](../Guides/BOOT_LOAD.md), [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md)
+- OpenSpec: not applicable
+- Architecture: incremental-build / STOPPED first-paint policy only; no ownership transfer
+- DECISION_LOG: unchanged (no new DEC)
+- CURRENT_WORK / PROJECT_STATE / DELIVERABLE_TRACKING: updated
+- GitHub: no Issue for this slice
 
 ### Out of scope
 
@@ -1405,6 +1414,20 @@ Remaining outside this slice: deferred wrap-append later paid `idle_append=11226
 - Changing `openOverdubSession` / `beginCapture` order
 - Re-enabling full materialize on the overdub-start path
 - Interval reservation / extra MIDI polls
+- Bounding `applyDeferredVisualCacheWrapAppend` (§37)
+- Attributing the 5 s STOPPED `idle_maint` (§37)
+
+## 37. Later tasks — not authorized
+
+**Status:** Queued. Authorizes no firmware until a later slice is opened.
+
+Evidence: [`183229`](../../captures/session_20260821_183229.log). Do not mix these into §36.
+
+| Later | Owner | Evidence | Note |
+|---|---|---|---|
+| Bound deferred wrap-append | `Loop::applyDeferredVisualCacheWrapAppend` | `idle_append=1122618` at 44.5 s | Stage C moved wrap-append off the undo/switch turn. The later turn is still unbounded. |
+| Attribute 5 s STOPPED idle | unknown until attributed | `idle_maint=5028348` at 49.7 s between track 6 and 7 | No `idle_gather` / `idle_append` child on that line. Investigation first. |
+| Residual consume `norow` | consume id resolution | 9/9 `idsel>0` with `norow` 1–3 | Parked. Not empty-open occupy. |
 
 ## 32. Companion-only projection cache in window consumers
 

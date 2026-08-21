@@ -2,11 +2,13 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-21 (Stage C device PASS 183229)
+Last updated: 2026-08-21 (§36 closeout; later tasks parked)
 
 ---
 
 ## Now implementing
+
+No authorized firmware. §36 Stage A+B+C is closed. Later tasks are parked below — do not start the 1.13 s wrap-append bound or the 5 s idle attribution until a new slice is opened.
 
 ### STOPPED undo / track-switch first-paint
 
@@ -16,7 +18,7 @@ Last updated: 2026-08-21 (Stage C device PASS 183229)
 
 **Invariant:** STOPPED undo and track switch keep `visualCache.notes` and fill through budgeted idle slices with wrap-append deferred. No wipe. No unbounded gather-plus-append in one STOPPED turn. No companion full replay on STOPPED.
 
-**Status:** Device PASS [`183229`](../../captures/session_20260821_183229.log) — undo `stale_all` notes=2988, first `DISP` visual=2988, first post-undo `idle_maint` 224 ms; 68-bar switch notes=3040 / visual=3040. Native **1429/1429**. Deferred wrap-append later still 1.13 s; 5.03 s `idle_maint` at 49.7 s is outside this slice.
+**Status:** Device PASS [`183229`](../../captures/session_20260821_183229.log) — undo `stale_all` notes=2988, first `DISP` visual=2988, first post-undo `idle_maint` 224 ms; 68-bar switch notes=3040 / visual=3040. Native **1429/1429**. Closed.
 
 ### Overdub companion admission and source-span prewarm
 
@@ -26,7 +28,7 @@ Last updated: 2026-08-21 (Stage C device PASS 183229)
 
 **Invariant:** Clock-path gather must not run full companion replay. Empty companion projection is not a successful gather. First overdub open hydrates a non-empty source view from a cache filled after boot first-paint, not from a same-turn `slice_clean` prewarm.
 
-**Status:** Stage A+B device PASS [`165107`](../../captures/session_20260821_165107.log). Stage C is the remaining §36 slice.
+**Status:** Stage A+B device PASS [`165107`](../../captures/session_20260821_165107.log). §36 closed.
 
 ### Boot title `boot_commit` display stall
 
@@ -1175,6 +1177,18 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 ---
 
 ## Parked
+
+### Later — bound deferred wrap-append ([`183229`](../../captures/session_20260821_183229.log))
+
+**Owner:** `Loop::applyDeferredVisualCacheWrapAppend`  
+**Evidence:** `idle_append=1122618` at 44.5 s. Stage C moved wrap-append off the undo/switch turn; the later turn is still unbounded.  
+**Plan:** [`runtime_scheduling_owner_boundary_inventory_investigation.md`](../Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §37. Do not start until a new slice is opened.
+
+### Later — attribute 5 s STOPPED idle ([`183229`](../../captures/session_20260821_183229.log))
+
+**Owner:** unknown until attributed.  
+**Evidence:** `idle_maint=5028348` at 49.7 s between track 6 and 7; no `idle_gather` / `idle_append` child. Investigation first.  
+**Plan:** §37. Do not start until a new slice is opened.
 
 ### Tagged for investigation — occupy id resolves to no source-view note (`norow`) — superseded
 
