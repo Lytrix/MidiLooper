@@ -1020,6 +1020,42 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 28. Same-tick-order ablation (tick buckets + intra-tick order only)
+
+This stage tests whether full explicit `eventOrder` can be reduced to:
+
+- tick-bucket ordering (ticks ascending), plus
+- explicit order only within each tick bucket.
+
+Candidate:
+
+- `SameTickOrderCompanionState` keeps paired spans and per-tick token order but
+  does not preserve any additional cross-tick ordering context.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_same_tick_order_divergence_boundary`
+
+Proven assertions:
+
+1. Seeded randomized histories contain deterministic divergence under this
+   same-tick-only ordering representation.
+2. The same mismatching history remains equivalent under full paired state.
+3. Divergence has a deterministic boundary (`prefix N-1` equivalent,
+   `prefix N` divergent).
+
+Native status for this stage:
+
+- Focused gate: `pio test -e native -f test_edit_apply` passed.
+
+Conclusion:
+
+- Preserving only same-tick ordering is not sufficient; replay parity still
+  requires full explicit event-order tokens.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 27. Split-order ablation (separate On/Off order streams)
 
 This stage tests a lighter ordering representation than full `eventOrder`:
