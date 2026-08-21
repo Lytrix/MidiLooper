@@ -1020,6 +1020,42 @@ Conclusion:
 No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
 identity, scheduler, or playback-state-machine behavior was changed.
 
+## 26. Derived-key ordering ablation (rich deterministic key vs stored order)
+
+This stage strengthens the ordering test by replacing stored `eventOrder`
+tokens with a richer deterministic event sort key during materialization.
+
+Candidate:
+
+- `DerivedKeyOrderedCompanionState` keeps paired spans + stable note IDs +
+  channel + velocity, but derives order via:
+  `tick`, then event type (On before Off), then `pitch`, `channel`,
+  `velocity`, `noteId`.
+
+Coverage in `test/test_edit_apply/test_edit_apply.cpp`:
+
+- `test_incremental_companion_projection_derived_key_order_divergence_boundary`
+
+Proven assertions:
+
+1. Seeded randomized histories still contain deterministic divergence under this
+   richer derived-order policy.
+2. The same mismatching history remains equivalent under full paired state.
+3. The divergence has a deterministic boundary (`prefix N-1` equivalent,
+   `prefix N` divergent).
+
+Native result: **1418/1418**.
+
+Conclusion:
+
+- Even a rich deterministic key is not a complete substitute for explicit
+  stored order tokens in the current replay contract.
+- `eventOrder` remains required context in the smallest proven-equivalent
+  companion representation.
+
+No production firmware, `EditPass` semantics/order, undo, persistence, NoteId
+identity, scheduler, or playback-state-machine behavior was changed.
+
 ## 25. NoteId ablation (renumbered identity vs stable identity)
 
 This stage tests whether stable `noteId` identity can be removed from the
