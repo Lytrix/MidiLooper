@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-21 (§36 closeout)
+Last updated: 2026-08-22 (paired companion consume reverted; DEC-043 execution bound class gated)
 
 ---
 

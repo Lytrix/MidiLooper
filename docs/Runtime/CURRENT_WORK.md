@@ -2,13 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-21 (§36 closeout; later tasks parked)
+Last updated: 2026-08-22 (paired companion consume reverted; §36 closeout retained)
+
+Authority hygiene (does **not** change § Now implementing): execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is now a hard stop. No firmware, no scheduler, no interval reservation.
 
 ---
 
 ## Now implementing
 
 No authorized firmware. §36 Stage A+B+C is closed. Later tasks are parked below — do not start the 1.13 s wrap-append bound or the 5 s idle attribution until a new slice is opened.
+
+### Paired companion consume reverted
+
+**Evidence (from the reverted branch):** [`163135`](../../captures/session_20260822_163135.log) — gather served `from=paired_proj` **0** times and `from=win_apply` **33** times; `idle_gather` median 1.61 s / max 7.75 s; `midi_gap` max 7.82 s; one `#CAPTURE_RECONNECT`. The `LoopContentResolution` device gate spent 331 s in `prep` and never completed, ending `DIAG,lcr,skip,dirty`. In [`155153`](../../captures/session_20260822_155153.log) the same gate advanced its `idx` phase at **13.5 events/s** and also never completed. Those `paired_proj` / `win_apply` gather tags were part of the reverted work and are **not** emitted on this branch.
+
+**Decision:** `PairedCompanionState` and its gather consume, suffix catch-up, and PLAYING-idle advance are reverted. Retained tip is `ce9961c`; the reverted commits remain on `feature/overdub-start-stop-lag-optimizations` for reference. The subsystem never served a gather on device, so the revert removes no measured capability.
+
+**Invariant:** There is one derived authority for effective committed notes. A second cache that wipes on undo must not be wired to the playback-window build while a cache that survives undo exists.
+
+**Current behavior on this branch:** every `copyEffectiveCommittedEventsInRange` call with `includeActiveEditRows` replays active companion rows through `applyNoteEditPassSequence`. `tryCopyCompanionProjectedWindow` is copy-only and its cache is never populated — `rebuildCompanionProjectionForCurrentRevision` has no callers, so `companionProjectionEvents_` is dead scaffolding. This is the predictable-but-slow baseline, not a regression.
+
+**Direction (not authorized firmware):** `LoopContentResolution` spans / checkpoints become the single derived authority — it already carries incremental wrap append (`publishPreparedOverdubPass`), in-place undo patch with query-time restore (`setPreparedCapturePassState` / `setPreparedEditPassState`, `eraseDisabledSounding`, `restoreDisabledCompanions`), and present-at-tick (`tryCollectPreparedPresentNoteIdsAtTick`). Blocker before any consumer wiring: the prepare grain. Plan: [`loop_content_resolution_span_consume_refinement.md`](../Plans/loop_content_resolution_span_consume_refinement.md).
+
+**Status:** Native **1429/1429**. Overlap resolution is unchanged — it reads `ActiveNoteLedger` at note-on and `overdubSourceViewNotes_` at note-off, neither of which touched the paired projection.
 
 ### STOPPED undo / track-switch first-paint
 

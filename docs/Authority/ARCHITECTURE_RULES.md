@@ -8,6 +8,8 @@ Module naming reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 
 **Runtime data flow** (storage → representations → interval → consumers): [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md).
 
+**Runtime execution bounds** (interval path, bound class, owner inventory): [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md).
+
 **Default:** [continue implementation](#progress-bias-and-decision-ladder). Governance detects **structural** change — not approval for normal extension work.
 
 ---
@@ -56,6 +58,24 @@ Each row is the **single owner** for lifecycle and mutation of that scope. Calle
 **Cross-cutting:** `MidiHandler` routes MIDI I/O; it does not own domain state. `main.cpp` wires update order (clock → tracks → display → deferred save).
 
 Ownership is **not frozen** — it may evolve via the [Ownership transfer protocol](#ownership-transfer-protocol) below. Adapters and shadow owners are not a shortcut around that protocol.
+
+---
+
+## Execution bound rules
+
+Ownership answers *who* mutates state. **Bound class** answers *how much work* an owner may do on the **interval path** (work between consecutive `handleMidiInput()` entries).
+
+Maintained inventory and class definitions: [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md). Vocabulary: [NAMING.md](NAMING.md) § Timing-critical MIDI Input. Decision: [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property).
+
+| Rule | Meaning |
+|------|---------|
+| **Declare** | An owner that executes on the interval path must have a declared bound class in [ExecutionBounds.md](Architecture/ExecutionBounds.md). |
+| **Structural or empirical+policy** | Only **structurally bounded** units, or **empirically bounded** units with an explicit overrun guard and failure policy, may be treated as timing guarantees. |
+| **No new unbounded owners** | Adding or extending an **unbounded** owner on the interval path is a design session — same weight as an ownership or state-transition change. |
+| **Local budget ≠ structural bound** | A µs budget checked *between* steps does not bound an indivisible step. |
+| **No scheduling class** | Do not introduce `RuntimeWorkBudget::admit(WorkClass)` or a new Manager for scheduling. `DeferredJobScheduler` remains the non-realtime load-frame owner (DEC-027). |
+
+Bound class is **not frozen**. Reclassify a row in the same commit as the firmware that enforces the new class. Interval reservation is **not authorized** by these rules.
 
 ---
 
@@ -166,6 +186,7 @@ Global app mode uses the enum name **`LooperState`**; the manager class is **`Lo
 | **Full flatten on stop** | Breaks pool-budget and stop-path latency | `finalizeLoopAtStop`, `mergeActiveCapturePasses`, `LoopPasses::materialize` for read paths |
 | **Shallow undo snapshots** | Corrupts chunk-backed storage | `shareForSnapshot()` + `restoreFromSnapshot` always `cloneShared()` |
 | **New top-level domain nouns** | Naming drift | Reuse vocabulary in [NAMING.md](NAMING.md); ask user if no fit |
+| **New unbounded owner on the interval path** | Hidden stalls between `handleMidiInput()` entries | Bound or convert to a resumable unit first; design session if the work stays unbounded — [ExecutionBounds.md](Architecture/ExecutionBounds.md) |
 
 ---
 
