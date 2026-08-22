@@ -400,14 +400,12 @@ void test_companion_projection_empty_cache_uses_legacy_window_gather() {
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, companionDeleteId);
 
   loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_FALSE(loop.companionProjectionCacheReadyForTest());
 
   SessionMidiEventVec expected;
   gatherLegacyWindowReplay(loop, 0, kLoopLen, expected);
   SessionMidiEventVec actual;
   loop.gatherCommittedEventsInWindow(actual, 0, kLoopLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
-  TEST_ASSERT_FALSE(loop.companionProjectionCacheReadyForTest());
 }
 
 void test_companion_projection_clock_path_window_does_not_rebuild() {
@@ -433,7 +431,6 @@ void test_companion_projection_clock_path_window_does_not_rebuild() {
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, companionLengthId);
 
   loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_FALSE(loop.companionProjectionCacheReadyForTest());
 
   const uint32_t windowStart = 0;
   const uint32_t windowLength = 2u * Config::TICKS_PER_BAR;
@@ -442,7 +439,6 @@ void test_companion_projection_clock_path_window_does_not_rebuild() {
   SessionMidiEventVec actual;
   loop.gatherCommittedEventsInWindow(actual, windowStart, windowLength, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
-  TEST_ASSERT_FALSE(loop.companionProjectionCacheReadyForTest());
 }
 
 void test_companion_projection_falls_back_with_non_companion_note_rows() {

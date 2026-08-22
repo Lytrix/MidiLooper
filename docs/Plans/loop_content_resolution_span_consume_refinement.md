@@ -1,8 +1,8 @@
 # LoopContentResolution span consume refinement
 
-**Status:** Architectural review and direction. **Authorizes no firmware.**
-**Scope:** Establish `LoopContentResolution` spans / checkpoints as the single derived authority for effective committed notes around the current tick, replacing the reverted paired-companion gather consume.
-**Supersedes:** `paired_companion_suffix_catchup_refinement.md`, `paired_companion_playback_event_reuse_and_naming_refinement.md`, `paired_companion_length_last_wins_refinement.md` — all reverted with `PairedCompanionState`.
+**Status:** **Absorbed / superseded for execution** by [`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md) (Owner-Boundary Gate under runtime scheduling). Keep this file as background rationale only — do not implement from it.
+**Former scope:** Establish `LoopContentResolution` spans / checkpoints as the single derived authority for effective committed notes around the current tick, replacing the reverted paired-companion gather consume.
+**Supersedes (historical):** `paired_companion_suffix_catchup_refinement.md`, `paired_companion_playback_event_reuse_and_naming_refinement.md`, `paired_companion_length_last_wins_refinement.md` — all reverted with `PairedCompanionState`.
 
 ---
 
