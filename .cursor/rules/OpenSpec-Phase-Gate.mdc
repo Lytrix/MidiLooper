@@ -34,11 +34,12 @@ Copy the phase's **Architecture gate** table from `ARCHITECTURE-REVIEW.md` and a
 | **Primary invariant** | One sentence from ARCHITECTURE-REVIEW north star or design |
 | **Ownership change?** | YES / NO — if YES without user-approved phase → **stop** (design session) |
 | **State transition change?** | YES / NO — if YES without user-approved phase → **stop** |
+| **Execution bound change?** | YES / NO — if YES (adds or extends an unbounded owner on the interval path) without user-approved phase → **stop** (design session). Inventory: [`docs/Authority/Architecture/ExecutionBounds.md`](docs/Authority/Architecture/ExecutionBounds.md) |
 | **Behavior-preserving?** | YES / NO for this phase (Phases marked preserving must stay preserving) |
 | **Reuse decision** | YES — extend `<owner>.<method>` OR NO — cite DEC-### + rationale |
 | **Phase scope** | Phase N only — list files you will touch |
 
-Also answer the two [architecture-checkpoint](architecture-checkpoint-bugfix.mdc) questions when the edit touches capture stop, commit, persistence gating, or deferred FSM paths.
+Also answer the three [architecture-checkpoint](architecture-checkpoint-bugfix.mdc) questions when the edit touches capture stop, commit, persistence gating, deferred FSM paths, or the MIDI interval path.
 
 **Do not** edit firmware until this block is posted (unless user explicitly requests investigation-only / read-only).
 
@@ -88,6 +89,7 @@ Builder sessions must include:
 - Invariant: ...
 - Ownership change: NO | YES (approved Phase N)
 - Transition change: NO | YES (approved Phase N)
+- Execution bound change: NO | YES (approved Phase N)
 - Reuse: YES — extend ... | NO — DEC-###
 
 ## Tests
@@ -101,7 +103,7 @@ Builder sessions must include:
 
 - **One OpenSpec phase per session** unless user explicitly approves multiple phases.
 - Do not mix active changes (e.g. DEC-023 Phase 1 + DEC-020 Phase 5) in one implementation pass without user confirmation.
-- Symptom fixes outside the active phase → investigate and report; do not patch unless user approves scope expansion or a dedicated bugfix with checkpoint both **no**.
+- Symptom fixes outside the active phase → investigate and report; do not patch unless user approves scope expansion or a dedicated bugfix with checkpoint all **no**.
 
 ---
 

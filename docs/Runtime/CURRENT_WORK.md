@@ -2,7 +2,9 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
+Last updated: 2026-08-22 (DEC-043 execution bound class gated)
+
+Authority hygiene (does **not** change § Now implementing): execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is now a hard stop. No firmware, no scheduler, no interval reservation.
 
 ---
 

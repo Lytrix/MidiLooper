@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property) | 2026-08-22 | Execution bound class is a gated architectural property; `admit(WorkClass)` stays rejected | Accepted |
 | [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; nested HITL MET [`095902`](../captures/session_20260819_095902.log); extra-open is catch-up stack RC |
 | [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
 | [DEC-040](#dec-040-skip-playingstoppedmuted-overdub-participant-hitl) | 2026-08-18 | Skip PLAYING/STOPPED/MUTED overdub participant HITL | Accepted |
@@ -57,7 +58,32 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-043 -->
+<!-- Append new entries below (newest first). Next ID: DEC-044 -->
+
+## DEC-043 — Execution bound class is a gated architectural property
+
+**Date:** 2026-08-22  
+**Status:** Accepted  
+**Owner:** `main.cpp::loop()` (service order); domain owners stay Track / Loop / StorageManager / DisplayManager / `DeferredJobScheduler`  
+**Authority:** [ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) § Execution bound rules; [Architecture/ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md)  
+**Contract:** [runtime_scheduling_admission_model_architecture.md](Plans/runtime_scheduling_admission_model_architecture.md) invariants N and O  
+**Does not supersede:** DEC-027 (`DeferredJobScheduler` north star); DEC-016 (four-layer data flow)
+
+**Context:** Ownership already has rules, a transfer protocol, a checkpoint question, and a DEC requirement. Bound class lived only in a research inventory marked as authorizing no firmware. Local slice budgets (`LoadLoopBudget`, `PersistenceBudget`) exist and remain necessary. A proposed `RuntimeWorkBudget::admit(WorkClass)` was rejected because class admission cannot bound nested or indivisible work (contract B1; cause class C6).
+
+**Decision:**
+
+1. **Bound class is a gated architectural property** alongside ownership. Every owner on the interval path must declare structurally bounded, empirically bounded, or unbounded in [ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md).
+2. **Adding or extending an unbounded owner on the interval path is a design session** — architecture-checkpoint question 3, same weight as ownership and state-transition changes.
+3. **`RuntimeWorkBudget::admit(WorkClass)` remains rejected.** Do not introduce a scheduling class, a new Manager, or interval reservation from this decision.
+4. **Local owner budgets stay.** They do not replace a declared bound class and do not make an indivisible step structurally bounded.
+5. **Inventory home:** classification is maintained in `ExecutionBounds.md`. Measurements and capture citations stay in the R1C research doc.
+
+**Consequences:** Hygiene and bugfix work on idle maintenance, persistence, display resolve, load, and playback/clock paths must answer checkpoint question 3. Reclassify a row in the same commit as the firmware that enforces the new class. Owner-Boundary Gate (L1–L7) is unchanged and still does not authorize Stage A.
+
+**References:** [ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md), [runtime_scheduling_owner_boundary_admission_refinement.md](Plans/runtime_scheduling_owner_boundary_admission_refinement.md), DEC-027.
+
+---
 
 ## DEC-042 — Same-pitch active-note identity is a cardinality problem, not an Off-identity problem
 

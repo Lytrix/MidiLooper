@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-20 (overdub-stop deterministic flush stage)
+Last updated: 2026-08-22 (DEC-043 execution bound class gated)
 
 ---
 
