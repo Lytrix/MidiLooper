@@ -126,28 +126,6 @@ void collectActiveCommittedChunkLists(const LoopPasses& passes,
   }
 }
 
-LOOP_COLD_MEM bool isActiveCompanionEditRow(const EditPass& editPass) {
-  return editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note &&
-         editPass.editPassIndex == kOverdubCompanionEditPassIndex;
-}
-
-LOOP_COLD_MEM bool collectActiveCompanionRows(const EditPassVec& editPasses,
-                                              EditPassVec& companionRows) {
-  companionRows.clear();
-  bool sawActiveNoteRow = false;
-  for (const EditPass& editPass : editPasses) {
-    if (editPass.state != EditPassState::Active || editPass.passType != EditPassType::Note) {
-      continue;
-    }
-    sawActiveNoteRow = true;
-    if (!isActiveCompanionEditRow(editPass)) {
-      return false;
-    }
-    companionRows.push_back(editPass);
-  }
-  return sawActiveNoteRow && !companionRows.empty();
-}
-
 }  // namespace
 
 void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
@@ -186,67 +164,6 @@ void Loop::ensureEffectiveEventStoreCurrent() const {
   rebuildEffectiveEventStore();
 }
 
-LOOP_COLD_MEM void Loop::clearCompanionProjectionCache() const {
-  companionProjectionEvents_.clear();
-  companionProjectionPlaybackRevision_ = UINT32_MAX;
-  companionProjectionReady_ = false;
-  companionProjectionCompanionOnlyRows_ = false;
-}
-
-LOOP_COLD_MEM __attribute__((noinline)) bool Loop::rebuildCompanionProjectionForCurrentRevision()
-    const {
-  if (capture.phase != CapturePhase::Overdub) {
-    clearCompanionProjectionCache();
-    return false;
-  }
-  if (companionProjectionReady_ && companionProjectionPlaybackRevision_ == playbackRevision) {
-    return companionProjectionCompanionOnlyRows_;
-  }
-
-  clearCompanionProjectionCache();
-  companionProjectionPlaybackRevision_ = playbackRevision;
-
-  EditPassVec companionRows;
-  if (!collectActiveCompanionRows(passes.editPasses, companionRows)) {
-    companionProjectionReady_ = true;
-    companionProjectionCompanionOnlyRows_ = false;
-    return false;
-  }
-
-  SessionMidiEventVec projectedEvents;
-  mergeActiveCapturePasses(projectedEvents);
-  if (!projectedEvents.empty()) {
-    applyNoteEditPassSequence(projectedEvents, companionRows, loopLengthTicks);
-  }
-  companionProjectionEvents_ = std::move(projectedEvents);
-
-  companionProjectionReady_ = true;
-  companionProjectionCompanionOnlyRows_ = true;
-  return !companionProjectionEvents_.empty();
-}
-
-LOOP_COLD_MEM __attribute__((noinline)) bool Loop::tryCopyCompanionProjectedWindow(
-    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength) const {
-  if (capture.phase != CapturePhase::Overdub) {
-    return false;
-  }
-  if (loopLengthTicks == 0 || windowLength == 0) {
-    return false;
-  }
-  // Copy a ready cache only. Rebuilding here is a full-loop
-  // applyNoteEditPassSequence and is reachable from clock-path
-  // gatherCommittedEventsInWindow (session_20260821_162928).
-  if (!companionProjectionReady_ ||
-      companionProjectionPlaybackRevision_ != playbackRevision ||
-      !companionProjectionCompanionOnlyRows_ || companionProjectionEvents_.empty()) {
-    return false;
-  }
-  DisplayWindowUtils::filterMidiEventsToWindow(companionProjectionEvents_, out, windowStart,
-                                               windowLength,
-                                               loopLengthTicks);
-  return true;
-}
-
 void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
   ensureEffectiveEventStoreCurrent();
   const SessionMidiEventVec& events = passesMaterializedStore_.readEvents();
@@ -264,10 +181,6 @@ LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec
   if (windowLength >= loopLengthTicks) {
     windowStart = 0;
     windowLength = loopLengthTicks;
-  }
-  if (includeActiveEditRows &&
-      tryCopyCompanionProjectedWindow(out, windowStart, windowLength)) {
-    return;
   }
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG

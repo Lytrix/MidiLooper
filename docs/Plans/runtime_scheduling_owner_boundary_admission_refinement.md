@@ -288,7 +288,11 @@ MIDI dispatch → button actions → stop/start; USB-host callbacks; loop-edit `
 
 ## Current execution
 
-Immediate firmware, if any, remains the work named in [`docs/Runtime/CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md), including the active overdub-lag baseline-reset stages.
+**Active child plan:** [`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md) — Slice **0** + Slice **1A** only (cooperative prepare experiment). Named in [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md).
+
+**Reusable principle (before optimizing expensive work):** preserve semantics; expose persistent progress; divide into bounded work units; yield/resume without repeating completed work. Do not optimize or redesign in that first step — expose as a resumable state machine and measure.
+
+Immediate firmware remains only what CURRENT_WORK names. Historical overdub-lag baseline-reset linkage below is retained for evidence context:
 
 Current linkage from active overdub-lag work to this roadmap:
 

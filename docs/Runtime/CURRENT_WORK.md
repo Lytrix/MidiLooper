@@ -2,29 +2,41 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-22 (paired companion consume reverted; §36 closeout retained)
+Last updated: 2026-08-22 (playback window Owner-Boundary Gate — Slice 0)
 
-Authority hygiene (does **not** change § Now implementing): execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is now a hard stop. No firmware, no scheduler, no interval reservation.
+Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
 ---
 
 ## Now implementing
 
-No authorized firmware. §36 Stage A+B+C is closed. Later tasks are parked below — do not start the 1.13 s wrap-append bound or the 5 s idle attribution until a new slice is opened.
+**Authorized next:** Slice **1A** only (cooperative LCR prepare experiment). Stop after the 1A measurement gate. Do **not** start 1B–5 without a new CURRENT_WORK pin. Slice **0** shipped.
 
-### Paired companion consume reverted
+**Plan:** [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)  
+**Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md)  
+**Absorbs direction of:** [`loop_content_resolution_span_consume_refinement.md`](../Plans/loop_content_resolution_span_consume_refinement.md) (superseded for execution)
 
-**Evidence (from the reverted branch):** [`163135`](../../captures/session_20260822_163135.log) — gather served `from=paired_proj` **0** times and `from=win_apply` **33** times; `idle_gather` median 1.61 s / max 7.75 s; `midi_gap` max 7.82 s; one `#CAPTURE_RECONNECT`. The `LoopContentResolution` device gate spent 331 s in `prep` and never completed, ending `DIAG,lcr,skip,dirty`. In [`155153`](../../captures/session_20260822_155153.log) the same gate advanced its `idx` phase at **13.5 events/s** and also never completed. Those `paired_proj` / `win_apply` gather tags were part of the reverted work and are **not** emitted on this branch.
+**Baseline:** [`174758`](../../captures/session_20260822_174758.log) on `feature/overdub-stop-lag-stage-c` — Stage-C-like; residual every-2-bar `playback_build` ~74–136 ms.
 
-**Decision:** `PairedCompanionState` and its gather consume, suffix catch-up, and PLAYING-idle advance are reverted. Retained tip is `ce9961c`; the reverted commits remain on `feature/overdub-start-stop-lag-optimizations` for reference. The subsystem never served a gather on device, so the revert removes no measured capability.
+### Slice 0 — docs + scaffolding delete
 
-**Invariant:** There is one derived authority for effective committed notes. A second cache that wipes on undo must not be wired to the playback-window build while a cache that survives undo exists.
+**Owner:** docs + `Loop` companion-projection members (`companionProjectionEvents_`, `rebuildCompanionProjectionForCurrentRevision`, `tryCopyCompanionProjectedWindow`, `clearCompanionProjectionCache`)
 
-**Current behavior on this branch:** every `copyEffectiveCommittedEventsInRange` call with `includeActiveEditRows` replays active companion rows through `applyNoteEditPassSequence`. `tryCopyCompanionProjectedWindow` is copy-only and its cache is never populated — `rebuildCompanionProjectionForCurrentRevision` has no callers, so `companionProjectionEvents_` is dead scaffolding. This is the predictable-but-slow baseline, not a regression.
+**Invariant:** Dead paired-projection scaffolding is gone. Interval gather still uses windowed `applyNoteEditPassSequence` (predictable-but-slow baseline). One derived-authority direction is documented; no second consumer cache.
 
-**Direction (not authorized firmware):** `LoopContentResolution` spans / checkpoints become the single derived authority — it already carries incremental wrap append (`publishPreparedOverdubPass`), in-place undo patch with query-time restore (`setPreparedCapturePassState` / `setPreparedEditPassState`, `eraseDisabledSounding`, `restoreDisabledCompanions`), and present-at-tick (`tryCollectPreparedPresentNoteIdsAtTick`). Blocker before any consumer wiring: the prepare grain. Plan: [`loop_content_resolution_span_consume_refinement.md`](../Plans/loop_content_resolution_span_consume_refinement.md).
+**Status:** Shipped — native **1429/1429**. Dead scaffolding removed; gather still windowed `applyNoteEditPassSequence`.
 
-**Status:** Native **1429/1429**. Overlap resolution is unchanged — it reads `ActiveNoteLedger` at note-on and `overdubSourceViewNotes_` at note-off, neither of which touched the paired projection.
+### Slice 1A — cooperative prepare (next)
+
+**Owner:** existing LCR device-gate prepare path only.
+
+**Invariant:** Same prepare semantics; persistent progress; bounded work units; yield/resume without repeating completed work. Instrument `prepare,slice,*`. If F1–F7 cannot be subdivided without algorithm decomposition, **stop and report** (failure is valid).
+
+**Do not in 1A:** optimize prepare, redesign algorithm, add cache, wire playback consume, enforce 60% × T_clock timer.
+
+### Paired companion consume reverted (closed context)
+
+**Evidence:** [`163135`](../../captures/session_20260822_163135.log) — `paired_proj` **0** / `win_apply` **33**; multi-second `idle_gather`; USB reconnect. Decision: `PairedCompanionState` reverted; tip cut at Stage C. Overlap never used paired projection (`ActiveNoteLedger` / `overdubSourceViewNotes_`).
 
 ### STOPPED undo / track-switch first-paint
 
@@ -40,7 +52,7 @@ No authorized firmware. §36 Stage A+B+C is closed. Later tasks are parked below
 
 **Evidence:** [`162928`](../../captures/session_20260821_162928.log) empty open + 136.77 s freeze. Device PASS [`165107`](../../captures/session_20260821_165107.log): 5/5 opens `notes` 1319–1394; 34/34 consume `idsel>0`; max `tracks` **190 ms**. Residual `norow` 1–4 with working select is parked.
 
-**Owner:** `Loop::tryCopyCompanionProjectedWindow` / `Track::processDeferredIdleMaintenance` → `Loop::prewarmOverdubSourceSpanCache`
+**Owner:** `Track::processDeferredIdleMaintenance` → `Loop::prewarmOverdubSourceSpanCache` (Stage A empty-projection gather path removed with dead companion-projection scaffolding)
 
 **Invariant:** Clock-path gather must not run full companion replay. Empty companion projection is not a successful gather. First overdub open hydrates a non-empty source view from a cache filled after boot first-paint, not from a same-turn `slice_clean` prewarm.
 

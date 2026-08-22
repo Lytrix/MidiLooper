@@ -421,12 +421,6 @@ LOOP_COLD_MEM bool Loop::fallbackGatherSessionMatches(uint32_t windowStart, uint
 LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
     size_t eventBudget, uint32_t windowStart, uint32_t windowLength,
     bool includeActiveEditRows, SessionMidiEventVec& out) {
-  if (includeActiveEditRows &&
-      tryCopyCompanionProjectedWindow(out, windowStart, windowLength)) {
-    resetFallbackGatherSession();
-    return true;
-  }
-
   if (!fallbackGatherSessionMatches(windowStart, windowLength, playbackRevision,
                                     includeActiveEditRows)) {
     resetFallbackGatherSession();

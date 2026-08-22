@@ -270,7 +270,6 @@ struct Loop {
   void clearCommittedPlaybackNoteOnIdentities();
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
-  bool companionProjectionCacheReadyForTest() const { return companionProjectionReady_; }
   bool overdubSourceSpanCacheReadyForTest() const { return overdubSourceSpanCacheReady(); }
 #endif
 
@@ -430,19 +429,10 @@ struct Loop {
   PassesMaterializedEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
   uint32_t effectiveEventStoreRevision_ = 0;
-  /// Full-loop companion projection. Built only during CapturePhase::Overdub.
-  mutable SessionMidiEventVec companionProjectionEvents_;
-  mutable uint32_t companionProjectionPlaybackRevision_ = UINT32_MAX;
-  mutable bool companionProjectionReady_ = false;
-  mutable bool companionProjectionCompanionOnlyRows_ = false;
 
   /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
   void notifyCommittedContentChanged();
   void rebuildEffectiveEventStore() const;
-  bool rebuildCompanionProjectionForCurrentRevision() const;
-  bool tryCopyCompanionProjectedWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                       uint32_t windowLength) const;
-  void clearCompanionProjectionCache() const;
   void rebuildOverdubSourceSpanCache();
   bool overdubSourceSpanCacheReady() const;
   uint32_t overdubSourceWindowLengthTicks() const;
