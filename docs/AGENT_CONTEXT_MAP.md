@@ -79,6 +79,7 @@ Always load first:
 - [plans/consumer_window_budget_ownership_architecture.md](Plans/consumer_window_budget_ownership_architecture.md) — per-consumer horizon/budget; `kMaxDetailedWindowBars` must not govern overdub source/hold; no WindowManager
 - [plans/overdub_participant_loop_content_architecture.md](Plans/overdub_participant_loop_content_architecture.md) — overdub participants from notes present at tick `S`; `PresentNote` C++ type; NOTE_EDIT overlap sibling (selected/mover LinearSpan); not MIDI send / mute; Phase 1–2a HITL; Phase 3 note-on occupy from present-at-S (device HITL open); hydrate firmware not authorized
 - [plans/playback_gather_lcr_consume_enhancement.md](Plans/playback_gather_lcr_consume_enhancement.md) — Stage 1 hooks on device; 2-bar gather not the 64-bar overdub stall
+- [Authority/Architecture/ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md) — interval-path bound class inventory (DEC-043)
 - [plans/runtime_scheduling_admission_model_architecture.md](Plans/runtime_scheduling_admission_model_architecture.md) — MIDI Input Gap is interval/contention; per-event lateness is product correctness when hooked
 
 **Optional**
@@ -97,6 +98,7 @@ Always load first:
 **Required**
 
 - [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) — StorageManager ownership
+- [Authority/Architecture/ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md) — deferred-save bound class (DEC-043)
 - [Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md](Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md) — unified RAM + SD model; continuous persistence proposal
 - [Guides/DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md)
 - Active OpenSpec: `set-revision-persistence/`, `workspace-session-persistence/` (check `tasks.md`). Archived: `loop-content-history-persistence` (DEC-035 Layer A, 2026-08-14)
@@ -122,6 +124,7 @@ Always load first:
 - [Authority/Architecture/RuntimeArchitecture.md](Authority/Architecture/RuntimeArchitecture.md)
 - [Authority/Architecture/Display.md](Authority/Architecture/Display.md)
 - [Authority/Architecture/DerivedViews.md](Authority/Architecture/DerivedViews.md) — representation vs interval
+- [Authority/Architecture/ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md) — display resolve/draw bound class (DEC-043)
 - [Guides/control-surface/Display.md](Guides/control-surface/Display.md)
 - [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) — DisplayManager ownership
 - `DisplayManager` for draw entry points
@@ -201,6 +204,7 @@ Always load first:
 
 - `ClockManager`
 - [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md)
+- [Authority/Architecture/ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md) — clock dispatch is on the interval path (DEC-043)
 
 **Optional**
 

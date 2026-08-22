@@ -49,6 +49,10 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
 | **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress (`handleMidiInput`) | Control-surface motor path (Outbound); **MIDI service** (not a domain noun or owner) |
+| **Interval path** | Work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap), including clock dispatch that consumes that interval | One `loop()` iteration; persist `admit*` |
+| **Structurally bounded** | Code enforces a fixed maximum amount of work and storage | A measured typical cost; a µs budget checked only *between* steps |
+| **Empirically bounded** | Measurements provide an engineering limit, but code does not enforce it | A structural cap; a reservation guarantee without an overrun policy |
+| **Unbounded owner** | Owner that scans, drains, allocates, sorts, or loops on a content-dependent condition without an enforced cap | A structurally bounded slice; an empirically bounded unit with an explicit overrun policy |
 | **Manager** | Domain owner coordinating lifecycle over a scope | Controller (not used); thin routing (Handler) |
 | **Capture** | Live record or overdub append buffer until stop | Committed timeline rows |
 | **pass** / **passes** | Bounded capture or edit stretch ending in commit; canonical timeline on `LoopPasses` | Moving note range; single-note focus lifecycle |
@@ -101,6 +105,12 @@ MIDI Input is timing-critical. The owner is `MidiHandler`; the operation is `han
 | **MIDI deadline lateness** | `lateness_us = sendMidiEvent() − scheduled_deadline` for each required note-on, note-off, and MIDI clock (scored independently). Equality is on time. This is **product correctness**, not a synonym for MIDI Input Gap |
 | **RuntimeTimingTelemetry** | Instrumentation for MIDI Input Gap, `handleMidiInput()` duration, and (when hooked) MIDI deadline lateness — not a MIDI owner |
 | **Runtime admission** | Future coordinator of which bounded runtime units may execute between MIDI Input handling opportunities |
+| **Interval path** | Work between consecutive `handleMidiInput()` entries, including clock dispatch that runs inside that gap |
+| **Structurally bounded** | Code enforces a fixed maximum amount of work and storage |
+| **Empirically bounded** | Measurements provide an engineering limit, but code does not enforce it |
+| **Unbounded owner** | Scans, drains, allocates, sorts, or loops on a content-dependent condition without an enforced cap |
+
+Maintained owner inventory and gate: [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md), [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Execution bound rules. Do not use **scheduling class** or `admit(WorkClass)` as a substitute for a declared bound class.
 
 Historical captures (2026-08-12) emit `DIAG,msi` / `DIAG,midisvc` for the same two measurements. Do not rename `MidiHandler` or `handleMidiInput()` to fit scheduling prose.
 
@@ -439,6 +449,7 @@ Use during code review, OpenSpec implementation review, and before merge:
 - [ ] This document updated if a new architectural concept is approved
 - [ ] Pipeline / Queue / Flow not used for synchronous deterministic algorithms (use **Resolution**)
 - [ ] Loop history queries use `LoopContentResolution`, not `NoteGeometryResolver` or a generic `Resolver`
+- [ ] Interval-path work uses **structurally bounded** / **empirically bounded** / **unbounded owner** — not a scheduling class or `admit(WorkClass)`
 - [ ] New top-level domain nouns have user approval and `DEC-###` entry
 
 Referenced from [docs/Agents/reviewer.md](../Agents/reviewer.md).

@@ -76,7 +76,7 @@ Use the artifact that owns the resulting truth.
 | Change                                                    | Primary record                                                                     |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Accepted normative requirement                            | `openspec/specs/`                                                                  |
-| Architecture / ownership                                  | [`docs/Authority/`](README.md) + [DECISION_LOG.md](../DECISION_LOG.md)             |
+| Architecture / ownership / execution bounds               | [`docs/Authority/`](README.md) + [DECISION_LOG.md](../DECISION_LOG.md); interval-path class changes also update [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md) |
 | Current behavior / how-to                                 | [`docs/Guides/`](../Guides/)                                                       |
 | Overdub overlap-resolve evaluations                       | [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — update in the same change as resolver / pending / seal / source-view covering identities |
 | Overdub ledger evaluations                                | [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — update in the same change as ledger / occupy catch-up / playback-order |
