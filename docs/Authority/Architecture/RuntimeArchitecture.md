@@ -6,6 +6,8 @@
 
 **Naming:** [NAMING.md](../NAMING.md) — architectural vocabulary and concept boundaries.
 
+**Execution bounds** (interval path, not data flow): [ExecutionBounds.md](ExecutionBounds.md).
+
 ---
 
 ## Four layers

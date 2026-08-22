@@ -143,6 +143,8 @@ Do not start firmware until this choice is recorded (plan section or DEC).
 
 ### R1C — Remaining owner inventory
 
+**Maintained classification:** [`docs/Authority/Architecture/ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md) (DEC-043).
+
 Classify every remaining path as structurally bounded, empirically bounded with overrun policy, or unbounded/unknown / cold-excluded / included in `handleMidiInput()` duration telemetry.
 
 Required rows (in addition to contract Appendix A):

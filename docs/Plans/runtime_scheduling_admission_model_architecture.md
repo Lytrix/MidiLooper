@@ -131,6 +131,8 @@ Each unit is classified as:
 
 Only structurally bounded units, or empirically bounded units with an explicit overrun guard and failure policy, may be reserved as timing guarantees.
 
+**Maintained inventory:** [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md) (DEC-043). Bound class is a gated architectural property. This contract still does not authorize interval reservation.
+
 ---
 
 ## 4. Scheduling layers (existing owners)

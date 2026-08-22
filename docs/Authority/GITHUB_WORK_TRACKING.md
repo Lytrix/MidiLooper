@@ -529,7 +529,7 @@ A PR/commit does not need a mechanical `closes #123` in every case, but the work
 
 ### Owner-Boundary Gate at maintenance time
 
-When touching **runtime scheduling**, **deferred idle maintenance**, **persistence save**, **display resolve**, or **overdub/playback hot paths** — even for small fixes or hygiene — skim [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md) and the [scheduling investigation log](../Plans/archive/refinements/runtime_scheduling_timing_envelope_investigation.md). Ask whether the change adds or extends an unbounded owner before interval reservation is authorized. This is a **maintenance-run checkpoint**, not a NOW board card.
+When touching **runtime scheduling**, **deferred idle maintenance**, **persistence save**, **display resolve**, or **overdub/playback hot paths** — even for small fixes or hygiene — run the architecture checkpoint, including question 3 (unbounded owner on the interval path). Authority: [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Execution bound rules and [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md). Adding or extending an unbounded owner on that path is a design session. Interval reservation remains unauthorized until the Owner-Boundary Gate exits ([runtime_scheduling_owner_boundary_admission_refinement.md](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md)). This is a **maintenance-run checkpoint**, not a NOW board card.
 
 Before substantial or behavior-changing implementation:
 
