@@ -132,7 +132,13 @@ track-tick, or `CommitReason::OverdubWrap` (wrap only records a pass id).
 | **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root and idle/drain stores it |
 | **Overrun / failure** | `failed_`; `freeze()` returns null | Discard the candidate; keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay as committed |
 
-A local timer is not the bound. First-record construction uses a constructed
+A local timer is not the bound. Measured first-record idle `step(1)` vs
+`MI`/`MO` note gaps: [`233308`](../../captures/session_20260825_233308.log)
+tables in
+[`loop_pass_snapshot_effective_state_refinement.md`](../../Plans/loop_pass_snapshot_effective_state_refinement.md)
+and
+[`runtime_scheduling_owner_boundary_admission_refinement.md`](../../Plans/runtime_scheduling_owner_boundary_admission_refinement.md).
+First-record construction uses a constructed
 empty parent object, not a null parent. Overdub and NOTE_EDIT publication
 require an already published parent; they do not invent content from
 `materializeToEventVector()`. Playback uses the stale-snapshot fallback until
