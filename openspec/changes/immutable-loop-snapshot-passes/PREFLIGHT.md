@@ -226,6 +226,13 @@ it is behind `playbackRevision`. Unpublished overdub session / pending-publish
 passes and their companions overlay through windowed CER. Compatibility
 full-list gather remains only when no published root exists.
 
+### Amendment (2026-08-25) — OVERDUBBING idle skips visual reconstruct
+
+`Track::processDeferredIdleMaintenance` does not run visual-cache slices
+while OVERDUBBING. Only an in-flight row-21 construction may `step`.
+[`230556`](../../../captures/session_20260825_230556.log) `idle_reconstruct`
+was 241–278 ms when snapshot step had no in-flight work.
+
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
 ordering, candidate alias safety, resumable progress, and failed-candidate
