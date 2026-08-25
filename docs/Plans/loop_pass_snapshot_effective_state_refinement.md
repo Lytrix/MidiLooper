@@ -333,10 +333,37 @@ free time between MIDI boundaries:
   `115.7 ms`, respectively. They are not valid bounds for snapshot successor
   construction.
 
-Before runtime publication is authorized, measure the selected representation’s
-successor-construction unit on the device. Any numeric N-candidate quantum is a
-measurement hypothesis only. A failure requires changing the candidate quantum
-or construction representation before publication work proceeds.
+Before later-phase successor construction is re-admitted to PLAYING /
+OVERDUBBING idle, treat the [`233308`](../../captures/session_20260825_233308.log)
+first-record idle-step numbers below as the device reference. They measure
+`LoopSnapshotConstruction::step(1)` on idle (`DIAG,snapshot_idle`), not
+immutable path-copy publication of a full change-set on the button path.
+
+### Device measurement — first-record idle step vs note MIDI ([`233308`](../../captures/session_20260825_233308.log))
+
+Method: each `snapshot_idle` line is logged **after** the step. Work window is
+`[t − us, t]`. MIDI boundaries are `#CAP` `MI` / `MO` note lines. Firmware
+does not log per-pulse MIDI clock (`0xF8`). BAR lines in this capture were too
+sparse for per-bar snap counts (two BAR gaps covered the whole live
+construction). Tempo in later PLAYING was 119.966–120.049; one MIDI clock at
+120 BPM is `20.83 ms` (`60 / (120 × 24)`).
+
+First publish at **97.50 s** during OD1 (`pending=0`). **No** `snapshot_idle`
+from that publish until STOPPED at 301.5 s. STOPPED then ran 81 successor
+steps (no further notes).
+
+| Stretch | Steps | Step µs min / p50 / mean / max | Enclosing `MI`/`MO` gap p50 | Slack after previous note p50 | Slack before next note p50 | Steps overlapping a note timestamp |
+|---------|------:|--------------------------------|----------------------------:|------------------------------:|---------------------------:|-----------------------------------:|
+| PLAYING after record | 366 | 523 / 2825 / 2880 / 7273 | 246300 µs | 95106 µs | 90825 µs | 0 |
+| OD1 until publish | 243 | 1644 / 3333 / 4076 / 7649 | 123707 µs | 51748 µs | 54260 µs | 0 |
+| After publish → STOPPED | 0 | — | — | — | — | — |
+| STOPPED | 81 | 2106 / 10016 / 9293 / 32391 | n/a (no following notes) | — | — | 0 |
+
+Live step histogram (PLAYING + OD1 until publish, 609 steps): 0–1 ms 27; 1–2 ms 105; 2–3 ms 190; 3–4 ms 110; 4–5 ms 45; 5–6 ms 60; 6–7 ms 56; 7–8 ms 16; ≥8 ms 0.
+
+Time between consecutive live `snapshot_idle` logs: min 1755 µs, p50 4793 µs, mean 6502 µs, max 53387 µs (608 intervals).
+
+Contrast [`232329`](../../captures/session_20260825_232329.log): one publish at 80.27 s, then 3631 `pending=1` steps during later PLAYING/OVERDUB; OD2 BPM 57–280, OD4 47–291. Successor construction after the first root is held off PLAYING/OVERDUB idle (`DEC-045`).
 
 ## Invariants and exclusions
 

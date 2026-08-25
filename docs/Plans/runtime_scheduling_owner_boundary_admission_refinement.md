@@ -317,4 +317,22 @@ Target-aligned runtime baseline used by this linkage (same sample + values as [`
 - Carryover scheduler target check in the same run: run-wide `DIAG,midi_gap` max **2.855 s** (3 windows over 1 s)
 - Carryover lateness gate check in the same run: `late_on` non-zero in 5 windows (23 events, max lateness **42.458 ms**), `late_off` non-zero in 4 windows (13 events, max lateness **29.551 ms**), `late_clk` zero events
 
+### Row 21 idle snapshot step vs note MIDI ([`233308`](../../captures/session_20260825_233308.log))
+
+First-record `LoopSnapshotConstruction::step(1)` on
+`Track::processDeferredIdleMaintenance`. Same method as
+[`loop_pass_snapshot_effective_state_refinement.md`](loop_pass_snapshot_effective_state_refinement.md)
+§ Device measurement: work window `[t − us, t]` from `DIAG,snapshot_idle`
+(logged after the step); MIDI boundaries are `MI` / `MO` note lines, not clock
+pulses. Device PASS for idle hold after first publish (`DEC-045`).
+
+| Stretch | Steps | Step µs min / p50 / mean / max | Enclosing `MI`/`MO` gap p50 | Overlap note timestamps |
+|---------|------:|--------------------------------|----------------------------:|------------------------:|
+| PLAYING after record | 366 | 523 / 2825 / 2880 / 7273 | 246300 µs | 0 |
+| OD1 until first publish (97.50 s) | 243 | 1644 / 3333 / 4076 / 7649 | 123707 µs | 0 |
+| After publish → STOPPED | 0 | — | — | — |
+| STOPPED successor | 81 | 2106 / 10016 / 9293 / 32391 | n/a | 0 |
+
+Live histogram (609 steps): none ≥8 ms; 16 steps in 7–8 ms; 190 in 2–3 ms. Consecutive live logs p50 **4793 µs**. PLAY4 BPM **119.966–120.049**. Clock period at 120 BPM is **20.83 ms** (arithmetic). Contrast [`232329`](../../captures/session_20260825_232329.log): 3631 post-publish `pending=1` steps; OD2 BPM 57–280; OD4 47–291.
+
 This roadmap does **not** move interval reservation or R1A/R1B firmware into “now implementing.”
