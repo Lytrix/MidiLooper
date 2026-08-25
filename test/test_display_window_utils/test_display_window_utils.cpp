@@ -361,6 +361,28 @@ void test_expand_window_with_margin_clamps_to_loop() {
   TEST_ASSERT_EQUAL_UINT32(18u * bar, gatherLength);
 }
 
+void test_expand_window_with_margin_includes_short_loop_tail() {
+  // 002634: 20-bar loop, 16-bar window, 2-bar margin must include the last 2 bars.
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t margin = 2u * bar;
+  uint32_t gatherStart = 0;
+  uint32_t gatherLength = 0;
+  DisplayWindowUtils::expandWindowWithMargin(0, 16u * bar, 20u * bar, margin, gatherStart,
+                                             gatherLength);
+  TEST_ASSERT_EQUAL_UINT32(0u, gatherStart);
+  TEST_ASSERT_EQUAL_UINT32(20u * bar, gatherLength);
+
+  DisplayWindowUtils::expandWindowWithMargin(0, 16u * bar, 21u * bar, margin, gatherStart,
+                                             gatherLength);
+  TEST_ASSERT_EQUAL_UINT32(0u, gatherStart);
+  TEST_ASSERT_EQUAL_UINT32(21u * bar, gatherLength);
+
+  DisplayWindowUtils::expandWindowWithMargin(0, 16u * bar, 24u * bar, margin, gatherStart,
+                                             gatherLength);
+  TEST_ASSERT_EQUAL_UINT32(0u, gatherStart);
+  TEST_ASSERT_EQUAL_UINT32(18u * bar, gatherLength);
+}
+
 void test_format_loop_length_bars_info_strip() {
   char lenStr[8];
   const uint32_t bar = Config::TICKS_PER_BAR;
@@ -524,6 +546,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_visual_cache_covers_window_follow_lookahead_requires_next_bar);
   RUN_TEST(test_follow_window_filter_includes_newly_exposed_bars);
   RUN_TEST(test_expand_window_with_margin_clamps_to_loop);
+  RUN_TEST(test_expand_window_with_margin_includes_short_loop_tail);
   RUN_TEST(test_adopt_partial_visual_cache_marks_uncovered_bars_dirty);
   RUN_TEST(test_adopt_partial_visual_cache_clears_dirty_when_loop_fits_window);
   RUN_TEST(test_overview_band_mask_marks_every_bar_the_note_spans);

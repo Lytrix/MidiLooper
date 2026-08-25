@@ -170,6 +170,8 @@ inline bool paintWindowInsideGather(uint32_t windowStart, uint32_t windowLength,
 }
 
 /// Widen a paint window by `marginTicks` on each side, clamped to `[0, loopLength)`.
+/// A trailing remainder of at most two margins is included so a 16-bar window on
+/// a 20- or 21-bar loop does not omit the last bars (`002634`).
 void expandWindowWithMargin(uint32_t windowStart, uint32_t windowLength, uint32_t loopLength,
                             uint32_t marginTicks, uint32_t& outStart, uint32_t& outLength);
 

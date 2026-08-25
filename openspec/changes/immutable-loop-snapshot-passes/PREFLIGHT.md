@@ -226,7 +226,10 @@ paint window stays inside the last gather. Follow exit or wrap
 invalidate snapshot-gathers once. Per-frame snapshot gather during
 overdub is not allowed
 ([`001048`](../../../captures/session_20260826_001048.log),
-[`001907`](../../../captures/session_20260826_001907.log)). After overdub
+[`001907`](../../../captures/session_20260826_001907.log)).
+`expandWindowWithMargin` includes a remainder of at most two margins so a
+20-bar loop’s last 2 bars are in the first gather
+([`002634`](../../../captures/session_20260826_002634.log)). After overdub
 stop, a dirty visual-cache prefix does not keep an incomplete first-window
 handoff.
 

@@ -276,6 +276,13 @@ DWU_COLD void expandWindowWithMargin(uint32_t windowStart, uint32_t windowLength
   if (gatherEnd > loopLength) {
     gatherEnd = loopLength;
   }
+  // A 16-bar window plus one margin is 18 bars. On a 20-bar loop that leaves a
+  // 2-bar tail; follow then snapshot-gathers on the MIDI path to paint it
+  // (session_20260826_002634: last 2 bars late, DisplayResolve 81-196 ms).
+  // Fold a remainder of at most two margins into this gather.
+  if (gatherEnd < loopLength && (loopLength - gatherEnd) <= marginTicks * 2u) {
+    gatherEnd = loopLength;
+  }
   if (outStart > gatherEnd) {
     outStart = 0;
   }
