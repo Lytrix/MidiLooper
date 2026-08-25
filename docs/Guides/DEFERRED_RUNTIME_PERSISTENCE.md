@@ -142,7 +142,8 @@ flowchart TB
 
 ## Scheduler rules (`processDeferredSaveState`)
 
-1. **Cooperative budget during capture** — when any track is `RECORDING` or `OVERDUBBING`, persistence runs with `Config::maxPersistenceMicrosActive` (~300 µs) per main-loop call instead of a transport hard block (DEC-020 Phase 3). At most one finite-state-machine sub-step per call while capture is active.
+1. **Cooperative budget during capture** — when any track is `RECORDING` or `OVERDUBBING`, persistence runs with `Config::maxPersistenceMicrosActive` (~300 µs) per main-loop call instead of a transport hard block (DEC-020 Phase 3). At most one finite-state-machine sub-step per call while capture is active. A 300 µs budget checked between steps does not bound `LoopPersist` `VerifyAndRename` (`atomicRenameTempFile`).
+1b. **Playback dispatch grace** — `deferWorkspaceSaveDispatchDuringPlayback(Config::playbackSaveDispatchGraceMs)` after record/overdub stop to PLAYING and after overdub start. `deferFlushForTransport` holds work-item steps (including urgent stop-path LoopPersist) until that timestamp. Sync `saveState()` drain and undo `requestDeferredSaveState(..., true)` without a later grace call still run immediately. The rename step itself is unchanged.
 2. **Admission** — before `dispatch`, checks **current** `getInternalHeapFreeBytes()` via `hasInternalHeapHeadroomForNonCriticalWork`. The optional stop-path `admissionHeap` from `requestDeferredSaveState` is **telemetry only** (`PERS,request`, `PERS,defer`, `PERS,dispatch`). Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
 3. **One logical step per call** — each invocation advances at most one sub-step (header field, one chunk batch, one undo entry fragment, etc.).
 4. **Display** — `isDeferredSaveActive()` reflects active SD-I/O windows in the current slice, not whole-job queued/in-progress state.

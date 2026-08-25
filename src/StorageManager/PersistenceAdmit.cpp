@@ -313,6 +313,8 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint
     return;
 #endif
     if (isUrgentRequest) {
+        // Clears any prior grace. PLAYING stop / overdub-start callers that need
+        // the playback hold must call deferWorkspaceSaveDispatchDuringPlayback after this.
         storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
     }
     const bool alreadyPending = storageSession.currentWorkspaceSave.pending;

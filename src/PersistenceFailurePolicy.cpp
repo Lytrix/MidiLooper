@@ -31,6 +31,14 @@ bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
   return workQueueDepth > 0 || writingWorkItemCount > 0 || workItemActive;
 }
 
+bool shouldDeferTransportFlush(bool savePending, bool transportActive, uint32_t nowMs,
+                               uint32_t deferUntilMs) {
+  if (!savePending) {
+    return false;
+  }
+  return transportActive && nowMs < deferUntilMs;
+}
+
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
                                         bool otherSdIoActive) {
   return (queueDepth > 0 || writingWorkItemCount > 0) && !otherSdIoActive;

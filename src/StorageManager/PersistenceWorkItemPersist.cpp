@@ -6,6 +6,7 @@
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
 #include "Loop.h"
+#include "PersistenceFailurePolicy.h"
 #include "PersistenceLayout.h"
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "TrackManager.h"
@@ -138,15 +139,9 @@ STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& 
 }
 
 STORAGE_PERSIST_MEM bool deferFlushForTransport() {
-  if (storageSession.currentWorkspaceSave.urgentRequested) {
-    return false;
-  }
-  if (!storageSession.currentWorkspaceSave.pending) {
-    return false;
-  }
-  const uint32_t nowMs = millis();
-  return isTransportActiveForPersistence() &&
-         nowMs < storageSession.currentWorkspaceSave.deferDispatchUntilMs;
+  return PersistenceFailurePolicy::shouldDeferTransportFlush(
+      storageSession.currentWorkspaceSave.pending, isTransportActiveForPersistence(), millis(),
+      storageSession.currentWorkspaceSave.deferDispatchUntilMs);
 }
 
 STORAGE_PERSIST_MEM bool ensureWorkItemLoopDirectories() {
@@ -457,6 +452,9 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
   }
 
   PersistenceWorkItemJob& job = storageSession.persistenceWorkItem;
+  if (deferFlushForTransport()) {
+    return true;
+  }
   if (!job.itemActive) {
     if (!beginPersistenceWorkItem(job, state)) {
       return false;

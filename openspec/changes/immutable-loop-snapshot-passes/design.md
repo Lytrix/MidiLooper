@@ -669,18 +669,20 @@ behavior, and wrap plus same-tick cases. If the measured unit does not fit the
 declared bound, the candidate quantum or construction representation must change
 before runtime publication is implemented.
 
-## Parked — post-stop MIDI stability (not selected)
+## Post-stop MIDI stability
 
-Device [`003459`](../../../captures/session_20260826_003459.log): PLAYING after
-first publish is 8.5–9.6 ms `midi_gap`. Selected now: hold the composed
-overdub-stop frame so `ODUB,stop,display` does not snapshot-gather (97–154 ms
-on that capture). Tasks `4b.1` and `4b.2` stay parked:
+Device [`004934`](../../../captures/session_20260826_004934.log): overdub-stop
+display hold is PASS (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first
+publish is 7.4–8.4 ms. **Selected now:** `4b.1` — hold work-item persist for
+`playbackSaveDispatchGraceMs` after record/overdub stop to PLAYING and after
+overdub start. `LoopPersist` `VerifyAndRename` (`atomicRenameTempFile`) stays
+one SD step; 4b.1 postpones it and does not split it.
 
-- Deferred `persist_save` on the first PLAYING idle after record/overdub stop
-  (46–57 ms). Owner: `StorageManager::processDeferredSaveState`.
-- First-record `snapshot_idle` until the first publish (92.993–101.082 s on
-  `003459`). `DEC-045` first-publish on PLAYING idle is unchanged until
-  selected.
+Parked until selected:
+
+- `4b.2` first-record `snapshot_idle` until the first publish
+- `4b.3` post-overdub-stop PLAYING `usbdisp` / `load_frame` / `late_on`
+- `4b.4` OVERDUBBING `DisplayResolveLiveCapture` (58 ms on `004934`)
 
 ## Open Questions
 
