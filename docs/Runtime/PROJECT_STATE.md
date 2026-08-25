@@ -2,13 +2,17 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-22 (playback window Owner-Boundary Gate — Slice 0 scaffolding delete)
+Last updated: 2026-08-25 (immutable loop snapshot architecture branch)
 
 ---
 
 ## Current branch
 
-**`feature/overdub-stop-lag-stage-c`** — Stage C tip; paired companion consume reverted. Active Owner-Boundary child: [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md) (Slice 0 + 1A only). See CURRENT_WORK.
+**`feature/immutable-loop-snapshot-passes`** — forked from
+`546169f66658b87c54e6166b79eba74628aa3d1e` for the immutable loop snapshot
+architecture proposal. The maintained-LCR continuation from
+`feature/overdub-stop-lag-stage-c` is not pursued on this branch. See
+[`CURRENT_WORK.md`](CURRENT_WORK.md).
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
@@ -119,10 +123,16 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## Active OpenSpec
 
+This branch's active scope is the design-only
+[`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
+change. The maintained-LCR changes below are retained as historical base context
+and are not implementation scope here.
+
 | Change | Focus |
 |--------|--------|
-| **`loop-content-resolution`** | **DEC-037 prototype** — 6C/6D closed [`205928`](../captures/session_20260815_205928.log)/[`210508`](../captures/session_20260815_210508.log); 6.3 moved to [`playback_gather_lcr_consume_enhancement.md`](../Plans/playback_gather_lcr_consume_enhancement.md); 6.4 Editor consume moved to [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md) |
-| **`loop-effective-event-source`** | DEC-036 D1+D2+3b **closeout done** — overdub entry PASS; successor is `loop-content-resolution` |
+| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; no firmware edits authorized |
+| `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
+| `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed**; Phase 5 recovery **parked** (see firmware ownership review) |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |

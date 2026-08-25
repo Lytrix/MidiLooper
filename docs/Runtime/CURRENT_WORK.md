@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-22 (playback window Owner-Boundary Gate — Slice 0)
+Last updated: 2026-08-25 (immutable loop snapshot architecture branch)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,24 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Authorized next:** Slice **1A** only (cooperative LCR prepare experiment). Stop after the 1A measurement gate. Do **not** start 1B–5 without a new CURRENT_WORK pin. Slice **0** shipped.
+**Now:** OpenSpec Phase 0 — architecture and specification for complete immutable
+loop snapshots. No firmware edits are authorized in this phase.
 
-**Plan:** [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)  
-**Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](../Plans/runtime_scheduling_owner_boundary_admission_refinement.md)  
-**Absorbs direction of:** [`loop_content_resolution_span_consume_refinement.md`](../Plans/loop_content_resolution_span_consume_refinement.md) (superseded for execution)
+**Branch:** `feature/immutable-loop-snapshot-passes`, forked from
+`546169f66658b87c54e6166b79eba74628aa3d1e`.
 
-**Baseline:** [`174758`](../../captures/session_20260822_174758.log) on `feature/overdub-stop-lag-stage-c` — Stage-C-like; residual every-2-bar `playback_build` ~74–136 ms.
+**OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
+**Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
+
+The maintained `LoopContentResolution` lifecycle and its playback-readiness
+continuation are not pursued on this branch. The existing `LoopContentResolution`
+prototype remains historical compatibility context only; the proposed snapshot
+model must not create a replacement maintained effective-state owner.
+
+## Historical base work
+
+The sections below record work present at the fork point. They are not the active
+execution queue for this branch and require explicit reauthorization before use.
 
 ### Slice 0 — docs + scaffolding delete
 
