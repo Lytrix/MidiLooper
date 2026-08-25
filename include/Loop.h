@@ -323,6 +323,13 @@ struct Loop {
   void resetPassTimeline();
   PassId lastCommittedPassId() const { return lastCommittedPassId_; }
   ImmutableLoopSnapshotRef publishedSnapshot() const;
+  /// Non-owning identity of the published root, or nullptr when none is selected.
+  const void* publishedSnapshotIdentity() const;
+  /// Fill `out` from published snapshot event membership in
+  /// `[windowStart, windowStart + windowLength)`. Returns false when no
+  /// published snapshot is selected so the caller can use compatibility gather.
+  bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
+                                                uint32_t windowLength) const;
   /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.
   bool tryPublishSessionExitSnapshot(CommitReason reason,
                                      const EditPassIdList& companionIds = {});

@@ -208,3 +208,20 @@ runtime construction-bound classification in `ExecutionBounds.md`.
 
 Phase 2 verification is complete. Phase 3 (direct consumers) remains
 separately gated.
+
+### Phase 3 implementation review (4.1–4.2 only)
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership, transition, and execution-bound checkpoint answered.
+- [x] Native invariant/parity checks pass without a new test architecture.
+- [x] Capture-serial build passes with RAM1 locals at 4640.
+- [ ] HITL gate not run in this slice; 4.5 remains open.
+- [x] Playback uses existing row 2 owner; no new unbounded owner.
+- [x] Cursor, order, ledger, and horizon stay on `Track` / `LoopPlaybackRuntime`.
+- [x] Compatibility gather remains the fallback when no snapshot is selected.
+- [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
+      `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
+
+Tasks 4.3–4.6 remain open. LCR conversion, display/NOTE_EDIT/analysis
+migration, HITL, and identity recording on those remaining representations
+are not authorized by this slice.

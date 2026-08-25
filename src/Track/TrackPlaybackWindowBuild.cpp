@@ -89,9 +89,10 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
   // playback order + MIDI send. Playback mergedMidiEvents is committed-only (224719):
   // live capture must not fold into this representation. NOTE_EDIT uses session store
-  // (Tier 2) — full replace, no materialized underlay. Outside NOTE_EDIT, chunk-ref
-  // merge of committed passes only (DEC-016). Long loops use windowed gather — full-loop
-  // gather after LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
+  // (Tier 2) — full replace, no materialized underlay. Outside NOTE_EDIT, the published
+  // LoopSnapshot is the committed source when selected; otherwise chunk-ref merge of
+  // committed passes (DEC-016). Long loops use windowed gather — full-loop gather after
+  // LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
   static bool mergedMidiEventsBuildInProgress = false;
   if (mergedMidiEventsBuildInProgress) {
     return false;
@@ -100,6 +101,8 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                                &track == &trackManager.getSelectedTrack();
   const uint32_t windowRevision = noteEditPreview ? editManager.sessionPlaybackPreviewRevision()
                                                     : loop.playbackRevision;
+  const void* snapshotIdentity =
+      noteEditPreview ? nullptr : loop.publishedSnapshotIdentity();
   const bool longLoop = loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
   uint32_t playhead = 0;
   if (loop.loopLengthTicks > 0) {
@@ -108,11 +111,13 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   }
 
   if (!longLoop) {
-    if (runtime.mergedMidiEvents.builtFromRevision == windowRevision) {
+    if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
+        runtime.mergedMidiEvents.builtFromSnapshotIdentity == snapshotIdentity) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
       return false;
     }
   } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
+             runtime.mergedMidiEvents.builtFromSnapshotIdentity == snapshotIdentity &&
              !runtime.mergedMidiEvents.empty() &&
              runtime.mergedMidiEvents.windowLengthTicks > 0) {
     const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
@@ -129,6 +134,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   const uint32_t playbackBuildStartUs = micros();
 #endif
   DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
+  const void* usedSnapshotIdentity = nullptr;
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.mergedMidiEvents.mergedEvents.assign(preview.begin(), preview.end());
@@ -142,15 +148,26 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     if (winStart + winLen > loop.loopLengthTicks) {
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
-    loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
+    if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents,
+                                                      winStart, winLen)) {
+      usedSnapshotIdentity = snapshotIdentity;
+    } else {
+      loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
+    }
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
   } else {
-    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
+    if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, 0,
+                                                      loop.loopLengthTicks)) {
+      usedSnapshotIdentity = snapshotIdentity;
+    } else {
+      loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
+    }
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
+  runtime.mergedMidiEvents.builtFromSnapshotIdentity = usedSnapshotIdentity;
   loop.playbackOrderDirty = true;
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
   const uint32_t playbackBuildUs = micros() - playbackBuildStartUs;

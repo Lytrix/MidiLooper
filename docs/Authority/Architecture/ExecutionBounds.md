@@ -82,7 +82,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | # | Owner | Where | Bound | Class |
 |---|-------|-------|-------|-------|
 | 1 | `TrackManager::updateAllTracks` from clock dispatch | `ClockManager::onMidiClockPulse` | none | **Unbounded** |
-| 2 | `Track::ensurePlaybackMergedMidiEventsBuilt` | `TrackPlaybackWindowBuild.cpp` | none | **Unbounded** |
+| 2 | `Track::ensurePlaybackMergedMidiEventsBuilt` | `TrackPlaybackWindowBuild.cpp` | selected playback window (2 bars on long loops; full loop on short) | **Unbounded** |
 | 3 | `DisplayManager::update` — resolve phase | `resolveDisplayNotes` | 5000 µs measurement only | **Unbounded** |
 | 4 | `DisplayManager::update` — draw + transfer | `_display.api.display()` | fixed frame size | **Structurally bounded** (size), **blocking** |
 | 5 | `Loop::advanceFallbackGatherSession` traversal | `LoopVisualCache.cpp` | 96 / 192 / 768 events | **Structurally bounded** |
@@ -125,6 +125,18 @@ not introduce a scheduler. First-record construction uses a constructed empty
 parent object, not a null parent. Overdub and NOTE_EDIT publication require an
 already published parent; they do not invent content from
 `materializeToEventVector()`.
+
+### Playback snapshot read (row 2)
+
+Phase 3 playback preparation uses the existing row 2 owner. When a published
+snapshot is selected, `Loop::tryGatherPublishedSnapshotEventsInWindow` walks
+only the bars that intersect the already selected playback window and copies
+those bar membership events. When no snapshot is selected, the owner keeps
+the compatibility gather. Snapshot identity is recorded on
+`PlaybackMergedMidiEvents` for freshness. This does not add a new interval
+owner and does not convert row 2 to a bounded class: short-loop full gather
+and the compatibility fallback remain content-sized. `playbackEventPhase`
+stays the clock-facing scalar.
 
 ---
 

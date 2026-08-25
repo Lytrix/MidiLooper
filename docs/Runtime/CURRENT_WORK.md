@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (Phase 2 tasks 3.1–3.4 complete)
+Last updated: 2026-08-25 (Phase 3 tasks 4.1–4.2 implemented)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,10 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** OpenSpec Phase 2 is complete (tasks 3.1–3.4). `Loop` publishes one
-complete `LoopSnapshot` at record/overdub session-exit and NOTE_EDIT close.
-Wraps and in-session `E:` prefixes stay provisional. Playback still uses
-compatibility sources. Phase 3 (tasks 4.1–4.6) is **not selected**.
+**Now:** OpenSpec Phase 3 tasks 4.1–4.2 are complete. Playback preparation
+reads the published `LoopSnapshot` through `ensurePlaybackMergedMidiEventsBuilt`,
+records snapshot identity for freshness, and falls back to compatibility
+gather when no snapshot is selected. Cursor, order, ledger, and horizon stay
+on `Track` / `LoopPlaybackRuntime`. `playbackEventPhase` stays the hot-path
+scalar. Tasks 4.3–4.6 (LCR conversion, remaining consumers, HITL, identity on
+every migrated representation) are **not selected**.
 
 **Authorized exception:** queued-destination visual-cache invalidation — port of the
 repair authorized on `feature/overdub-stop-lag-stage-c`. Owner:
@@ -26,7 +29,7 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
-**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are selected.
+**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are complete. Phase 3 playback snapshot reads (4.1–4.2) are selected.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on

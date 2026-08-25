@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include <algorithm>
 #include <unity.h>
 
 #include "../../src/Logger.cpp"
@@ -405,6 +406,105 @@ void test_failed_edit_publish_preserves_parent_snapshot() {
   TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
 }
 
+void sortEventsForCompare(SessionMidiEventVec& events) {
+  std::sort(events.begin(), events.end(), [](const MidiEvent& left, const MidiEvent& right) {
+    if (left.tick != right.tick) {
+      return left.tick < right.tick;
+    }
+    if (left.type != right.type) {
+      return static_cast<uint8_t>(left.type) < static_cast<uint8_t>(right.type);
+    }
+    if (left.isNoteOn() || left.isNoteOff()) {
+      return left.data.noteData.note < right.data.noteData.note;
+    }
+    return false;
+  });
+}
+
+void assertGatheredEventsMatch(const SessionMidiEventVec& snapshotEvents,
+                               const SessionMidiEventVec& compatibilityEvents) {
+  TEST_ASSERT_EQUAL(compatibilityEvents.size(), snapshotEvents.size());
+  for (size_t i = 0; i < snapshotEvents.size(); ++i) {
+    TEST_ASSERT_EQUAL(compatibilityEvents[i].tick, snapshotEvents[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<uint8_t>(compatibilityEvents[i].type),
+                      static_cast<uint8_t>(snapshotEvents[i].type));
+    if (snapshotEvents[i].isNoteOn() || snapshotEvents[i].isNoteOff()) {
+      TEST_ASSERT_EQUAL(compatibilityEvents[i].data.noteData.note,
+                        snapshotEvents[i].data.noteData.note);
+      TEST_ASSERT_EQUAL(compatibilityEvents[i].data.noteData.velocity,
+                        snapshotEvents[i].data.noteData.velocity);
+    } else if (snapshotEvents[i].type == midi::ControlChange) {
+      TEST_ASSERT_EQUAL(compatibilityEvents[i].data.ccData.cc, snapshotEvents[i].data.ccData.cc);
+      TEST_ASSERT_EQUAL(compatibilityEvents[i].data.ccData.value, snapshotEvents[i].data.ccData.value);
+    }
+  }
+}
+
+void test_playback_gather_reads_published_snapshot_with_fallback() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+
+  SessionMidiEventVec emptySnapshot;
+  TEST_ASSERT_FALSE(loop.tryGatherPublishedSnapshotEventsInWindow(emptySnapshot, 0, 3072));
+  TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
+
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(120, 1, 7, 64)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(900, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(980, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 980));
+
+  const void* afterRecordIdentity = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_NOT_NULL(afterRecordIdentity);
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshot().get(), afterRecordIdentity);
+
+  SessionMidiEventVec snapshotFull;
+  SessionMidiEventVec compatibilityFull;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotFull, 0, 3072));
+  loop.gatherCommittedEventsInWindow(compatibilityFull, 0, 3072, false);
+  sortEventsForCompare(snapshotFull);
+  sortEventsForCompare(compatibilityFull);
+  assertGatheredEventsMatch(snapshotFull, compatibilityFull);
+  TEST_ASSERT_EQUAL(5u, snapshotFull.size());
+
+  SessionMidiEventVec snapshotWindow;
+  SessionMidiEventVec compatibilityWindow;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotWindow, 0, 768));
+  loop.gatherCommittedEventsInWindow(compatibilityWindow, 0, 768, false);
+  sortEventsForCompare(snapshotWindow);
+  sortEventsForCompare(compatibilityWindow);
+  assertGatheredEventsMatch(snapshotWindow, compatibilityWindow);
+  TEST_ASSERT_EQUAL(3u, snapshotWindow.size());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 67, 80)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(460, 1, 67, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 460));
+  TEST_ASSERT_TRUE(loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIdentity() != afterRecordIdentity);
+
+  SessionMidiEventVec snapshotAfterOverdub;
+  SessionMidiEventVec compatibilityAfterOverdub;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(snapshotAfterOverdub, 0, 3072));
+  loop.gatherCommittedEventsInWindow(compatibilityAfterOverdub, 0, 3072, false);
+  sortEventsForCompare(snapshotAfterOverdub);
+  sortEventsForCompare(compatibilityAfterOverdub);
+  assertGatheredEventsMatch(snapshotAfterOverdub, compatibilityAfterOverdub);
+
+  loop.resetPassTimeline();
+  TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
+  SessionMidiEventVec afterReset;
+  TEST_ASSERT_FALSE(loop.tryGatherPublishedSnapshotEventsInWindow(afterReset, 0, 3072));
+}
+
 void test_overdub_without_parent_does_not_invent_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -456,6 +556,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_stop_publishes_successor_from_parent);
   RUN_TEST(test_note_edit_close_replaces_published_note);
   RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
+  RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();
 }

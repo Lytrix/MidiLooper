@@ -192,6 +192,20 @@ content from `materializeToEventVector()`. Compatibility pass records remain.
 
 Phase 3 consumer selection is not authorized by this result.
 
+### Phase 3 playback result (4.1–4.2)
+
+`ensurePlaybackMergedMidiEventsBuilt` reads published snapshot event
+membership for the already selected playback window (2 bars on long loops;
+full loop on short). Snapshot identity is recorded on
+`PlaybackMergedMidiEvents` and participates in freshness. When no snapshot
+is selected (undo/load/`resetPassTimeline`, first-record before publish),
+the owner keeps compatibility gather. NOTE_EDIT preview still replaces from
+`sessionMidiEvents()`. Cursor, order, ledger, and horizon stay on
+`Track` / `LoopPlaybackRuntime`. `playbackEventPhase` remains the hot-path
+scalar. Row 2 stays unbounded; this slice does not convert it.
+
+Tasks 4.3–4.6 are not authorized by this result.
+
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
 ordering, candidate alias safety, resumable progress, and failed-candidate
