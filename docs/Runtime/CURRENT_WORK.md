@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (immutable loop snapshot architecture branch)
+Last updated: 2026-08-25 (queued-dest visual-cache keep + snapshot Phase 0)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,7 +11,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Now:** OpenSpec Phase 0 — architecture and specification for complete immutable
-loop snapshots. No firmware edits are authorized in this phase.
+loop snapshots. No snapshot-model firmware is authorized in this phase.
+
+**Authorized exception:** queued-destination visual-cache invalidation — port of the
+repair authorized on `feature/overdub-stop-lag-stage-c`. Owner:
+`DisplayManager::invalidateForSlotChange`. Plan:
+[`playback_preparation_queued_destination_visual_cache_invalidation_bugfix.md`](../Plans/playback_preparation_queued_destination_visual_cache_invalidation_bugfix.md).
+Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **Branch:** `feature/immutable-loop-snapshot-passes`, forked from
 `546169f66658b87c54e6166b79eba74628aa3d1e`.
