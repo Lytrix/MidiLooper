@@ -692,8 +692,17 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                                                           bool postOverdubDrainWindowActive) {
   Loop& snapshotLoop = getActiveLoop();
   bool snapshotIdleUnitRan = false;
-  const bool snapshotIdleAllowed = !isRecording() &&
-                                   (!isOverdubbing() || snapshotLoop.hasInFlightSnapshotConstruction());
+  // After record stop the snapshot queue is pending and would consume every
+  // PLAYING idle turn. Visual cache stays empty then, and display falls back
+  // to a 16-bar window (session_20260825_231632: RECORDING 653 events, first
+  // PLAYING 288 notes, visualCache notes=0 through the following overdub).
+  const bool visualCacheNeedsFirstPaint =
+      snapshotLoop.hasCommittedPasses() && snapshotLoop.visualCacheDirty &&
+      snapshotLoop.visualCache.notes.empty();
+  const bool snapshotIdleAllowed =
+      !isRecording() &&
+      (!isOverdubbing() || snapshotLoop.hasInFlightSnapshotConstruction()) &&
+      !(visualCacheNeedsFirstPaint && !isOverdubbing());
   if (snapshotLoop.hasPendingSnapshotPublish() && snapshotIdleAllowed) {
 #if defined(SESSION_CAPTURE)
     const uint32_t snapshotIdleStartUs = micros();

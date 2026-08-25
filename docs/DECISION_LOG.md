@@ -122,6 +122,12 @@ reconstruct. When snapshot step has no in-flight construction, that turn ends.
 [`230556`](../captures/session_20260825_230556.log) `idle_reconstruct`
 241–278 ms. Visual slices resume on PLAYING / STOPPED_RECORDING.
 
+**Amendment (2026-08-25):** PLAYING / STOPPED_RECORDING idle gives an empty
+dirty visual cache the turn before `stepPendingSnapshotPublish`. Snapshot
+publish after record stop must not starve first paint.
+[`231632`](../captures/session_20260825_231632.log) RECORDING 653 events,
+first PLAYING 288 notes, `visualCache` notes=0.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

@@ -231,7 +231,9 @@ full-list gather remains only when no published root exists.
 `Track::processDeferredIdleMaintenance` does not run visual-cache slices
 while OVERDUBBING. Only an in-flight row-21 construction may `step`.
 [`230556`](../../../captures/session_20260825_230556.log) `idle_reconstruct`
-was 241–278 ms when snapshot step had no in-flight work.
+was 241–278 ms when snapshot step had no in-flight work. PLAYING /
+STOPPED_RECORDING give an empty dirty visual cache that turn before snapshot
+`step` ([`231632`](../../../captures/session_20260825_231632.log)).
 
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
