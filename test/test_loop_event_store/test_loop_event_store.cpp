@@ -3,10 +3,56 @@
 
 #include <unity.h>
 
+#include <algorithm>
+#include <cstdio>
+#include <memory>
+#include <vector>
+
 #include "../../src/LoopEventStore.cpp"
 #include "LoopEventStore.h"
 #include "LoopEventBuffer.h"
 #include "MidiEvent.h"
+
+namespace {
+
+constexpr size_t kDirectoryMeasurementPageCapacity = 32;
+constexpr size_t kDirectoryMeasurementBarCount = 1024;
+
+struct MeasurementMembership {
+  std::vector<uint32_t> references;
+};
+
+struct MeasurementPage {
+  std::vector<std::shared_ptr<const MeasurementMembership>> memberships;
+};
+
+struct MeasurementPagedDirectory {
+  std::vector<std::shared_ptr<const MeasurementPage>> pages;
+};
+
+MeasurementPagedDirectory makeMeasurementPagedDirectory(size_t barCount) {
+  MeasurementPagedDirectory directory;
+  const size_t pageCount =
+      (barCount + kDirectoryMeasurementPageCapacity - 1) /
+      kDirectoryMeasurementPageCapacity;
+  directory.pages.reserve(pageCount);
+  for (size_t pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+    auto page = std::make_shared<MeasurementPage>();
+    const size_t firstBar = pageIndex * kDirectoryMeasurementPageCapacity;
+    const size_t pageBarCount =
+        std::min(kDirectoryMeasurementPageCapacity, barCount - firstBar);
+    page->memberships.resize(pageBarCount);
+    for (size_t barOffset = 0; barOffset < pageBarCount; ++barOffset) {
+      auto membership = std::make_shared<MeasurementMembership>();
+      membership->references.push_back(static_cast<uint32_t>(firstBar + barOffset));
+      page->memberships[barOffset] = std::move(membership);
+    }
+    directory.pages.push_back(std::move(page));
+  }
+  return directory;
+}
+
+}  // namespace
 
 void test_append_fills_chunks_without_realloc_pattern() {
   LoopEventStore::resetPoolForTests();
@@ -269,6 +315,53 @@ void test_first_index_for_bar_skips_empty_bar() {
   TEST_ASSERT_EQUAL(1u, store.firstIndexForBar(1));  // bar 1 empty -> next event is bar 2
 }
 
+void test_measure_paged_directory_successor_locality() {
+  const MeasurementPagedDirectory parent =
+      makeMeasurementPagedDirectory(kDirectoryMeasurementBarCount);
+  const size_t dirtyBar = 513;
+  const size_t dirtyPageIndex =
+      dirtyBar / kDirectoryMeasurementPageCapacity;
+  const auto& parentPage = parent.pages[dirtyPageIndex];
+
+  MeasurementPagedDirectory successor = parent;
+  auto copiedPage = std::make_shared<MeasurementPage>(*parentPage);
+  auto copiedMembership =
+      std::make_shared<MeasurementMembership>(*parentPage->memberships[
+          dirtyBar % kDirectoryMeasurementPageCapacity]);
+  copiedMembership->references.push_back(9001);
+  copiedPage->memberships[dirtyBar % kDirectoryMeasurementPageCapacity] =
+      std::move(copiedMembership);
+  successor.pages[dirtyPageIndex] = std::move(copiedPage);
+
+  size_t flatCopiedReferences = 0;
+  for (const auto& page : parent.pages) {
+    for (const auto& membership : page->memberships) {
+      flatCopiedReferences += membership->references.size();
+    }
+  }
+
+  const size_t pagedCopiedDirectoryEntries = successor.pages.size();
+  const size_t pagedCopiedMembershipReferences =
+      successor.pages[dirtyPageIndex]
+          ->memberships[dirtyBar % kDirectoryMeasurementPageCapacity]
+          ->references.size();
+  std::printf("snapshot-directory-measurement bars=%zu flat_refs=%zu "
+              "paged_directory_entries=%zu paged_dirty_refs=%zu\n",
+              kDirectoryMeasurementBarCount, flatCopiedReferences,
+              pagedCopiedDirectoryEntries, pagedCopiedMembershipReferences);
+
+  TEST_ASSERT_EQUAL(1u, parentPage->memberships[dirtyBar % kDirectoryMeasurementPageCapacity]
+                             ->references.size());
+  TEST_ASSERT_EQUAL(2u, successor.pages[dirtyPageIndex]
+                              ->memberships[dirtyBar % kDirectoryMeasurementPageCapacity]
+                              ->references.size());
+  TEST_ASSERT_TRUE(pagedCopiedDirectoryEntries < flatCopiedReferences);
+  TEST_ASSERT_TRUE(pagedCopiedMembershipReferences < flatCopiedReferences);
+  TEST_ASSERT_EQUAL(1u, parent.pages[dirtyPageIndex]
+                             ->memberships[dirtyBar % kDirectoryMeasurementPageCapacity]
+                             ->references.size());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_append_fills_chunks_without_realloc_pattern);
@@ -287,5 +380,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_detach_chunks_to_committed_seals_and_transfers);
   RUN_TEST(test_deep_clone_committed_chunk_ids_duplicates_pool);
   RUN_TEST(test_assign_missing_note_ids_in_chunks);
+  RUN_TEST(test_measure_paged_directory_successor_locality);
   return UNITY_END();
 }

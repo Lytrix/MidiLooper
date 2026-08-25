@@ -146,6 +146,19 @@ orchestration, or derived-representation storage.
 | 4 — undo/load/persistence | Approve storage version/layout and local handle rebuild; preserve latest-saved-only reboot semantics and deferred `StorageManager` ownership |
 | 5 — compatibility retirement | Prove each caller migration and rollback gate before removing its compatibility source |
 
+### Phase 1 measurement checkpoint
+
+The native locality check in
+`test_loop_event_store::test_measure_paged_directory_successor_locality`
+passed for a 1024-bar directory with one dirty bar. The flat baseline copies
+1024 reference entries; the fixed-capacity paged candidate copies 32 directory
+entries and the dirty membership entries while retaining the remaining pages
+by reference. This selects a sparse fixed-capacity paged directory as the
+Phase 1 physical implementation experiment. Page capacity remains a measured
+parameter, and this native result does not establish Teensy memory safety.
+Successor peak temporary memory, allocator behavior, and reclamation remain
+required measurements before the implementation is accepted.
+
 ## Files affected
 
 Expected later implementation scope is phase-specific and must not be combined

@@ -85,7 +85,7 @@ later implementation phase.
 | Question | Required |
 |---|---|
 | **Owner module** | `Loop` / `LoopPasses` |
-| **Primary invariant** | A new snapshot cannot mutate objects or references reachable from an older snapshot; unchanged references are reused |
+| **Primary invariant** | Each candidate or published root is complete and self-contained; it cannot mutate objects or references reachable from an older snapshot, and unchanged references are reused |
 | **Ownership change?** | YES — only after Phase 0 approval |
 | **State transition change?** | NO — no production publication wiring |
 | **Execution bound change?** | NO — native/offline model |
@@ -93,9 +93,15 @@ later implementation phase.
 | **Reuse decision** | YES — no new manager |
 | **Phase scope** | Snapshot objects, selected reference collection, builder, and invariant-protecting native checks |
 
-Phase 1 remains unselected in `CURRENT_WORK.md`. When selected, it may
-implement the approved logical indexes, but it must first choose and measure
-the physical directory.
+Phase 1 is selected in `CURRENT_WORK.md`. Its native locality checkpoint
+selects a sparse fixed-capacity paged directory as the physical implementation
+experiment; page capacity, allocator behavior, peak temporary memory, and
+reclamation remain measured parameters. Native candidate construction may
+freeze, validate, and retain a candidate identity, but it must not make that
+candidate active or wire publication into runtime paths.
+`LoopPasses::materializeToEventVector()` remains an independent parity oracle
+and is not a construction dependency. Candidate reads must not consult a
+parent snapshot for missing content.
 
 ### Phase 2 — Commit publication adapters
 
