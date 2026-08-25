@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (PLAYING empty visual cache wins the idle turn)
+Last updated: 2026-08-25 (no snapshot step on PLAYING/OVERDUB after first publish)
 
 ---
 
@@ -16,10 +16,10 @@ architecture proposal. The maintained-LCR continuation from
 publication queue at stop and step from idle (`DEC-045`). OVERDUBBING idle
 advances an in-flight construction only. Playback reads a stale published
 window plus unpublished session passes. OVERDUBBING idle does not run visual
-reconstruct. PLAYING idle fills an empty visual cache before snapshot `step`.
-NOTE_EDIT close stays synchronous.
-Capture [`231632`](../../captures/session_20260825_231632.log) first PLAYING
-after record: 288 notes, `visualCache` empty.
+reconstruct. After the first published root exists, PLAYING and OVERDUBBING
+do not step successor snapshot construction. NOTE_EDIT close stays synchronous.
+Capture [`232329`](../../captures/session_20260825_232329.log): one publish at
+80.27 s, then successor construction stalled MIDI on later overdubs.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:

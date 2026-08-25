@@ -102,7 +102,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
 | 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and idle `Loop::stepPendingSnapshotPublish(1)` | one dirty bar of the in-flight note or event change, soonest playhead arrival first | **Empirically bounded** |
-| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one row-21 unit (OVERDUBBING: in-flight only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
+| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one row-21 unit (no published root: OVERDUBBING in-flight only; after a root exists: STOPPED / STOPPED_RECORDING only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
 
@@ -113,12 +113,15 @@ Phase 2 publication is admitted at NOTE_EDIT close and idle
 stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. An idle turn that applies one
 snapshot unit does not also run a visual-cache slice. While OVERDUBBING, idle
-only applies row 21 to an already started construction. Visual-cache idle
-slices do not run on that turn. PLAYING / STOPPED_RECORDING give an empty
-dirty visual cache the idle turn before row 21. Starting the next
-pass change-set stays on PLAYING / STOPPED_RECORDING / STOPPED. Wrap-ahead
-enqueue and `startNextPendingConstruction` stay off the OVERDUBBING idle
-turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,
+only applies row 21 to an already started construction, and only when no
+published root exists yet (first-record publish). After a published root
+exists, PLAYING and OVERDUBBING do not apply row 21. PLAYING visual slices
+also stay off unless the visual cache is empty. PLAYING / STOPPED_RECORDING
+give an empty dirty visual cache the idle turn before row 21 when no root
+exists yet. Starting the next pass change-set stays on PLAYING /
+STOPPED_RECORDING / STOPPED only while no root exists, then on STOPPED /
+STOPPED_RECORDING. Wrap-ahead enqueue and `startNextPendingConstruction`
+stay off the OVERDUBBING idle turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,
 track-tick, or `CommitReason::OverdubWrap` (wrap only records a pass id).
 
 | Property | Row 21 `step` | Row 22 publish |
