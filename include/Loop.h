@@ -343,8 +343,10 @@ struct Loop {
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
   /// Apply at most `maximumChanges` pending snapshot construction units. Idle only.
-  bool stepPendingSnapshotPublish(size_t maximumChanges);
+  /// `allowStartConstruction` false advances an in-flight candidate only.
+  bool stepPendingSnapshotPublish(size_t maximumChanges, bool allowStartConstruction = true);
   bool hasPendingSnapshotPublish() const;
+  bool hasInFlightSnapshotConstruction() const;
   /// Settled NOTE_EDIT close batch. In-session durable checkpoints stay provisional.
   bool tryPublishNoteEditSnapshot(const EditPassIdList& editPassIds);
   bool captureActive() const;

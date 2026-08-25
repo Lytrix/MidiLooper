@@ -88,11 +88,15 @@ compatibility gather.
    while PLAYING / OVERDUBBING / STOPPED_RECORDING and when STOPPED tracks are
    serviced. That is the interval-path owner; the unit remains one row-21
    `step`, not a local timer.
-3. During OVERDUBBING idle, committed wrap passes may apply onto an unpublished
-   working candidate. `storePublishedSnapshot` waits until session-exit is
-   queued and the candidate is complete.
-4. Record session-exit and NOTE_EDIT close stay synchronous. Native tests keep
-   `tryPublishSessionExitSnapshot` as queue-then-drain.
+3. During OVERDUBBING idle, only an already in-flight
+   `LoopSnapshotConstruction` may `step(1)`. Do not
+   `startNextPendingConstruction` or `enqueueLiveOverdubPasses` on that turn.
+   PLAYING / STOPPED_RECORDING / STOPPED may start the next pass change-set.
+   `storePublishedSnapshot` waits until session-exit is queued and the
+   candidate is complete.
+4. Record and overdub session-exit queue at stop. NOTE_EDIT close stays
+   synchronous. Native tests keep `tryPublishSessionExitSnapshot` as
+   queue-then-drain.
 5. Failure discards the candidate and keeps the previous published root. Do not
    publish a prefix.
 

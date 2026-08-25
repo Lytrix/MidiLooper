@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (record snapshot publish also queued; idle unit not stacked on visual)
+Last updated: 2026-08-25 (overdub idle advances in-flight snapshot only)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** Record and overdub session-exit snapshot publication both queue at
-stop and step from idle. [`221147`](../../captures/session_20260825_221147.log)
-record `RECS,stage,publish` was **10.204 s** for 628 events before PLAYING;
-overdub stop itself was 17 ms, then PLAYING idle stacked snapshot `step` on
-visual reconstruct (`idle_maint` 90–152 ms). Idle now runs one snapshot unit
-or a visual slice, not both. NOTE_EDIT close stays synchronous. Tasks 4.3–4.6
-are **not selected**.
+**Now:** Snapshot idle continues during OVERDUBBING only for an in-flight
+candidate (`step(1)`, no pass reconstruct). PLAYING may start the next
+construction. [`221852`](../../captures/session_20260825_221852.log) record
+stop→PLAYING is **18 ms**; later overdubs spent **3.8 s** / **7.1 s** in
+`snapshot_idle` (max **151 ms**) because idle also reconstructed the next
+pass. NOTE_EDIT close stays synchronous. Tasks 4.3–4.6 are **not selected**.
 
 Phase 3 tasks 4.1–4.2 remain complete. Playback preparation reads the
 published `LoopSnapshot` through `ensurePlaybackMergedMidiEventsBuilt`,

@@ -102,7 +102,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
 | 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and idle `Loop::stepPendingSnapshotPublish(1)` | one settled note or event change; dirty bars = that change's membership | **Empirically bounded** |
-| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Overdub stop queues only; idle steps one row-21 unit; record/NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
+| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one row-21 unit (OVERDUBBING: in-flight only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
 
@@ -112,10 +112,12 @@ Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
 stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. An idle turn that applies one
-snapshot unit does not also run a visual-cache slice. Wrap-ahead may apply committed
-overdub passes onto an unpublished candidate during OVERDUBBING idle. It is
-**not** admitted to `handleMidiInput()`, clock dispatch, track-tick, or
-`CommitReason::OverdubWrap` (wrap only records a pass id).
+snapshot unit does not also run a visual-cache slice. While OVERDUBBING, idle
+only applies row 21 to an already started construction. Starting the next
+pass change-set stays on PLAYING / STOPPED_RECORDING / STOPPED. Wrap-ahead
+enqueue and `startNextPendingConstruction` stay off the OVERDUBBING idle
+turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,
+track-tick, or `CommitReason::OverdubWrap` (wrap only records a pass id).
 
 | Property | Row 21 `step` | Row 22 publish |
 |----------|---------------|----------------|
