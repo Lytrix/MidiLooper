@@ -251,6 +251,24 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
     return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
                                      loop.nextNoteId_, 1);
   }
+  if (loop.passes.hasRecordPass()) {
+    for (const PassId passId : box.queuedPassIds) {
+      if (passId == loop.passes.recordPass.id) {
+        return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                         loop.nextNoteId_, 1);
+      }
+    }
+    for (const PassId passId : box.appliedPassIds) {
+      if (passId == loop.passes.recordPass.id) {
+        return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                         loop.nextNoteId_, 1);
+      }
+    }
+    if (box.constructionPassId == loop.passes.recordPass.id) {
+      return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                       loop.nextNoteId_, 1);
+    }
+  }
   return {};
 }
 
@@ -362,7 +380,14 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
     return false;
   }
   if (isOverdubSessionExit(reason) && !publishedSnapshot()) {
-    return false;
+    const bool recordPublishInFlight =
+        pendingSnapshotPublishBox_ &&
+        (pendingSnapshotPublishBox_->construction ||
+         !pendingSnapshotPublishBox_->queuedPassIds.empty() ||
+         pendingSnapshotPublishBox_->unpublishedCandidate);
+    if (!recordPublishInFlight) {
+      return false;
+    }
   }
 
   if (!pendingSnapshotPublishBox_) {
@@ -418,8 +443,13 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges) {
 
   size_t remaining = maximumChanges;
   while (remaining > 0) {
-    if (!box.construction && !startNextPendingConstruction(*this, box)) {
-      break;
+    if (!box.construction) {
+      if (!startNextPendingConstruction(*this, box)) {
+        break;
+      }
+      if (maximumChanges <= 1) {
+        break;
+      }
     }
     if (!box.construction) {
       break;

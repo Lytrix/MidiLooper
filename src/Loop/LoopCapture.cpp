@@ -1524,7 +1524,7 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
   if ((reason == CommitReason::RecordStop ||
        reason == CommitReason::RecordStopToStopped) &&
       passes.hasRecordPass() && passes.recordPass.id == lastCommittedPassId_) {
-    tryPublishSessionExitSnapshot(reason, {});
+    queueSessionExitSnapshot(reason, {});
   }
   if (spanCacheCanRestamp) {
     overdubSourceSpanCachePlaybackRevision_ = playbackRevision;

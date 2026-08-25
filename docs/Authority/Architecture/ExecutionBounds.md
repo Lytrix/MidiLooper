@@ -108,10 +108,11 @@ Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (ro
 
 ### Snapshot candidate construction (rows 21–22)
 
-Phase 2 publication is admitted at record session-exit, NOTE_EDIT close, and
-idle `stepPendingSnapshotPublish`. Overdub session-exit **queues** at stop
-(`queueSessionExitSnapshot`) and constructs from
-`Track::processDeferredIdleMaintenance`. Wrap-ahead may apply committed
+Phase 2 publication is admitted at NOTE_EDIT close and idle
+`stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
+stop (`queueSessionExitSnapshot`) and construct from
+`Track::processDeferredIdleMaintenance`. An idle turn that applies one
+snapshot unit does not also run a visual-cache slice. Wrap-ahead may apply committed
 overdub passes onto an unpublished candidate during OVERDUBBING idle. It is
 **not** admitted to `handleMidiInput()`, clock dispatch, track-tick, or
 `CommitReason::OverdubWrap` (wrap only records a pass id).
