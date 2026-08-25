@@ -11,7 +11,7 @@
 | Item | Value |
 |------|--------|
 | **Setting** | **`noteMinLengthTicks`** (threshold) + **`noteMinLengthRemoveEnabled`** (on/off) |
-| **Defaults** | **12 ticks** + **enabled** |
+| **Defaults** | **8 ticks** + **enabled** |
 | **Disable** | Set **`noteMinLengthRemoveEnabled = false`** — hot stop skips short-pair removal (flams/grace preserved) |
 | **When** | **Hot stop** (`sealCapture` on record and overdub **stop**; not `CommitReason::OverdubWrap`) |
 | **What** | Remove **completed pairs** (on+off) with linear span **&lt; `noteMinLengthTicks`** |
@@ -78,7 +78,7 @@ Each overdub pass is sealed independently; record and earlier overdub passes are
 
 | Symbol | Role |
 |--------|------|
-| `Config::DEFAULT_NOTE_MIN_LENGTH_TICKS` | Compile-time default threshold (12) |
+| `Config::DEFAULT_NOTE_MIN_LENGTH_TICKS` | Compile-time default threshold (8) |
 | `Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED` | Compile-time default **on** |
 | `noteMinLengthTicks` | Runtime threshold; **`loadConfig` / `saveConfig`** when persistence wired |
 | `noteMinLengthRemoveEnabled` | Runtime **enable** — `false` disables removal entirely |

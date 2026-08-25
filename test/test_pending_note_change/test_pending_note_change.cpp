@@ -1547,7 +1547,7 @@ void test_overdub_stop_still_removes_pairs_shorter_than_min_length() {
   seedLongSourceNote(loop, 1, 48, 72, 72, kLoopLenTicks);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(0, 1, kPitch, 90, kShortId)));
-  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(8, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(7, 1, kPitch, 0)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(64, 1, kPitch, 90, kKeptId)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(416, 1, kPitch, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 0));
