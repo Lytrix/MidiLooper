@@ -36,7 +36,7 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Position** | Hardware or protocol position — fader motor, `sendSongPosition`, GPIO position buttons | Note-edit geometry |
 | **State** | Mutable ownership — live session, transport mode, persistence queue fields | Immutable captured copies |
 | **Snapshot** | The act or role of capturing immutable state of some owner (undo snapshot, display snapshot, share-for-snapshot) | The Loop’s published complete state (that object is **LoopSnapshot**); live mutable owner |
-| **LoopSnapshot** | Complete immutable published loop object: current LoopGeometry, allocator counters, and **NoteRef** / **EventRef** lists grouped by pass type. Self-contained — a consumer does not read another LoopSnapshot for missing content. Shared objects are referenced, not copied into a flattened event vector. Absent until the first record, overdub-stop, or note-edit commit. | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers |
+| **LoopSnapshot** | Complete immutable effective-state object: LoopGeometry, allocator counters, and an immutable **reference root** of **NoteRef** / **EventRef** links to immutable event objects. Self-contained — a consumer does not read another LoopSnapshot for missing content. Unchanged objects keep the same references; changed content allocates new immutable objects. The reference root itself is structurally shared. Absent until the first published snapshot. | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers |
 | **Deferred** | Work intentionally postponed to idle or budget drain — `processDeferredSaveState` | Queued user intent; synchronous algorithms |
 | **Pending** | Queued intent not yet committed — `hasPendingCapturePass`, `pendingOutboundTrigger_` | Idle-deferred maintenance work |
 | **Scheduled** | Work placed on an explicit schedule or queue for later execution — `PersistenceWorkQueue` | Synchronous resolution; generic “later” |
@@ -82,7 +82,7 @@ Do **not** use because several functions execute sequentially in one call stack.
 
 Use **Snapshot** for the *act or role* of capturing immutable state (`shareForSnapshot`, undo snapshot, display snapshot).
 
-Use **LoopSnapshot** for the Loop’s complete immutable published object: LoopGeometry plus **NoteRef** / **EventRef** lists, grouped by pass type. `Loop` publishes it only at session exit (record stop, overdub stop, note-edit close), by reading the previous LoopSnapshot as const and writing a new root. There is no mutable LoopSnapshot during a session. It is not a `LoopPass` and not a flattened `materialize` vector.
+Use **LoopSnapshot** for the Loop’s complete immutable effective-state object: LoopGeometry plus an immutable **NoteRef** / **EventRef** reference root. `Loop` publishes a global snapshot at session exit (record stop, overdub stop, note-edit close) by reading the previous LoopSnapshot as const and writing a new root. A session may also hold playable **provisional** snapshots that are not global undo entries. There is no mutable LoopSnapshot during a session. It is not a `LoopPass` and not a flattened `materialize` vector.
 
 Spelling is **LoopSnapshot** (one word Snapshot), matching `PersistedLoopSnapshot` and `LoopSnapshotRef`. `PersistedLoopSnapshot` remains the transitional file/undo DTO of geometry plus deep-cloned `LoopPasses`. Do not store raw C++ pointers. The verb prefix `handle*` stays hardware/MIDI ingress.
 
@@ -181,7 +181,7 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 | **Loop** | Slot container |
 | **Capture** | Live record/overdub append buffer |
 | **Snapshot** | Act or role of capturing immutable state of some owner |
-| **LoopSnapshot** | Complete published loop object (LoopGeometry, allocator counters, per-pass note/event references) |
+| **LoopSnapshot** | Complete published effective-state object (LoopGeometry, allocator counters, immutable NoteRef / EventRef root) |
 | **passes** | **LoopPasses** — **recordPass**, **overdubPasses[]**, **editPasses[]** |
 | **editPass** | One **saveNoteEditPass** row in **passes.editPasses[]** |
 | **EditChange** | One atomic change inside an **editPass** |

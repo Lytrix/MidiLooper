@@ -2,7 +2,9 @@
 
 At the selected base commit, `LoopPasses` stores chunk-backed capture passes and edit rows, and `LoopPasses::materializeToEventVector()` derives effective MIDI. `PersistedLoopSnapshot` exists, but `Loop::sharePassesSnapshot()` uses `deepClonePasses()`; it is not a structurally shared immutable effective-state snapshot. The maintained-LCR lifecycle added after this base is deliberately not carried into this feature branch.
 
-The target is a complete immutable snapshot at each committed state boundary. Snapshots contain immutable note and non-note event objects through loop-scoped stable handles. Playback retains mutable cursor, execution order, ledger, and horizon ownership. Existing capture finalization, overlap/pairing, NOTE_EDIT geometry, and deferred persistence owners remain unchanged until separately approved migration phases.
+The target is a complete immutable `LoopSnapshot` at each published state boundary. A snapshot contains an immutable reference root over immutable note and non-note event objects through loop-scoped stable handles. Playback retains mutable cursor, execution order, ledger, and horizon ownership. Existing capture finalization, overlap/pairing, NOTE_EDIT geometry, and deferred persistence owners remain unchanged until separately approved migration phases.
+
+`LoopPass` remains the historical/compatibility operation record (`RecordPass`, `OverdubPass`, `EditPass`). It is not the effective-state object.
 
 The existing commit boundaries are not automatically outside the timing-critical
 path. `Track::stopRecording` and `Track::stopOverdubbing` can commit from input
@@ -18,7 +20,10 @@ timing-critical input work and must satisfy
 **Goals:**
 
 - Make snapshots self-contained and directly selectable.
+- Keep `LoopPass` and `LoopSnapshot` as distinct objects.
 - Preserve logical `NoteId` across immutable object versions.
+- Reuse unchanged event-object references; allocate new objects only for added or modified content.
+- Use a persistent / structurally-shared reference root so changing a bounded number of references does not copy the complete snapshot reference set.
 - Separate semantic commit boundaries from candidate construction: construct a
   complete candidate in bounded resumable units where required, then atomically
   publish it at the existing boundary.
@@ -30,13 +35,39 @@ timing-critical input work and must satisfy
 **Non-Goals:**
 
 - No firmware implementation in the architecture phase.
+- No selection of a concrete persistent reference structure in Phase 0; Phase 0 compares candidates and records the measurement gate.
 - No maintained LCR owner, new scheduler, or new interval-path owner.
 - No change to horizon size, projection math, cursor, ledger, or MIDI deadline behavior.
 - No raw pointer persistence.
-- No decision here on persistent sequence structure, reclamation, exact storage layout, or deduplication.
+- No decision here on exact storage layout, optional indexes, or object-pool implementation.
 - No removal of visual cache, capture preview, overdub source-view storage, or playback scratch state.
 - No content-sized candidate construction may run as one indivisible operation
   from `handleMidiInput()`, clock dispatch, or a track-tick path.
+- No new testing architecture or broad test campaign.
+
+### Specification hierarchy
+
+```text
+Core architecture
+    1. Snapshot object model
+    2. Persistent reference structure
+    3. Candidate mutation
+    4. Publication
+    5. Selection
+    6. Lifetime
+
+Integration contracts
+    7. Capture
+    8. NOTE_EDIT
+    9. Undo/redo
+   10. Playback
+   11. Persistence
+
+Migration gates
+   12. LCR retirement
+   13. Compatibility materialization removal
+   14. Derived-view migration
+```
 
 ### The four-layer runtime boundary remains intact
 
@@ -57,17 +88,84 @@ windows, analyze indexes, LED queries, or deferred persistence.
 
 ## Decisions
 
+### `LoopSnapshot` is the effective-state object; `LoopPass` is not
+
+`LoopSnapshot` is the complete immutable effective-state reference root.
+
+`LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) is the historical and
+compatibility operation record stored on `LoopPasses` during migration.
+
+A settled commit may produce both:
+
+```text
+OverdubPass          +          LoopSnapshot
+compatibility record            immutable effective-state root
+```
+
+Calling both objects `LoopPass` is rejected. Undo selects `LoopSnapshot`
+identities. Compatibility pass rows remain until their caller gates pass.
+
+**Alternative:** treat each committed `LoopPass` as the complete snapshot.
+Rejected because pass history and effective-state roots have different
+lifetime, undo, and persistence semantics.
+
 ### `Loop` publishes and `LoopPasses` stores snapshots
 
-`Loop` owns active selection, candidate publication, and immutable object allocation. `LoopPasses` owns snapshot records and reference roots without becoming a semantic manager. This preserves the existing content ownership boundary.
+`Loop` owns active selection, candidate publication, and immutable object allocation. `LoopPasses` owns snapshot records and reference roots without becoming a semantic manager. Compatibility pass rows remain on `LoopPasses` until retirement. This preserves the existing content ownership boundary.
 
 **Alternative:** make `LoopContentResolution` the snapshot owner. Rejected because it would retain the duplicate derived-state ownership this branch is intended to avoid.
 
 ### Stable handles reference immutable objects
 
-Snapshot references are loop-scoped handles, not persisted addresses. Editing a note creates a new immutable version with the same logical `NoteId`; older snapshots retain their original version.
+Snapshot references are loop-scoped handles (`NoteRef` / `EventRef`), not persisted addresses. Editing a note creates a new immutable version with the same logical `NoteId`; older snapshots retain their original version.
 
 **Alternative:** raw pointers. Rejected because addresses are not persistent identity and make reclamation implicit.
+
+### The reference root is persistent, not merely the event objects
+
+A snapshot SHALL represent effective content as an immutable collection of
+references to immutable event objects. Creating a successor snapshot SHALL reuse
+unchanged references and SHALL allocate new event objects only for added or
+modified content. Snapshot construction SHALL NOT copy or mutate unchanged event
+objects.
+
+The reference collection itself SHALL use a persistent / structurally-shared
+representation such that changing a bounded number of references does not
+require copying the complete snapshot reference set.
+
+```text
+Snapshot N                 Snapshot N+1
+[ ptr A ]                  [ ptr A ]     reused
+[ ptr B ]                  [ ptr B ]     reused
+[ ptr C ]                  [ ptr C' ]    new object
+[ ptr D ]                  [ ptr D ]     reused
+[ ptr E ]                  [ ptr E ]     reused
+```
+
+A flat copy of the complete reference array on every successor satisfies
+“shared event objects” but fails this invariant.
+
+Phase 0 does not select the concrete structure. Before Phase 2, compare:
+
+| Candidate | Update cost | Range iteration | Allocation | Risk |
+|-----------|-------------|-----------------|------------|------|
+| Flat reference vector | Copy of N references per successor | Sequential scan | One vector per snapshot | Fails the no-full-copy invariant |
+| Persistent chunked / reference-directory | Copy changed chunks plus directory path | Chunk-local then directory walk | Chunk + directory nodes | Must still declare max copied nodes |
+| Path-copy ordered tree | Copy path of depth | Tree walk / in-order range | Path nodes only | Lookup and iteration must stay consumer-bounded |
+
+Compare those candidates against:
+
+- reference update complexity and path-copy depth;
+- bounded range iteration for playback, display, and analyze consumers;
+- Teensy internal-heap and external-memory-pool allocation behavior ([`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md));
+- loop-scoped handle identity and reclamation;
+- serialization and migration shape;
+- maximum indivisible construction step and overrun policy.
+
+The selected representation must provide structural sharing. “Structurally
+shared” without a selected representation is not an implementation constraint.
+
+**Alternative:** copy a complete `NoteRef` / `EventRef` vector per snapshot while sharing event objects. Rejected because successor construction would remain O(N) in snapshot size.
 
 ### `LoopSnapshot` supplies content; `IntervalProjection` supplies coordinates
 
@@ -90,6 +188,9 @@ if one canonical span crosses multiple loop lengths, the number of candidates
 can grow with that span. Any runtime caller must therefore define a maximum
 candidate count or use the empirically bounded class with an explicit guard and
 failure policy under `ExecutionBounds.md`.
+
+That projection-candidate count is a consumer-side `IntervalProjection` bound.
+It is not a `LoopSnapshot` architectural unit.
 
 **Alternative:** store projected windows in `LoopSnapshot`. Rejected because it
 couples immutable content lifetime to mutable consumer contexts and duplicates
@@ -119,22 +220,40 @@ built. Snapshot publication or selection invalidates representations by that
 identity; it does not require all representations to rebuild synchronously.
 While bounded rebuilding is pending, the consumer follows its existing
 freshness policy and must not perform a full-loop rebuild on a timing-critical
-path. `LoopPasses` and materialized compatibility data may remain as parity or
-fallback sources until the individual consumer migration gate passes.
+path. Compatibility `LoopPass` records and materialized data may remain as
+parity or fallback sources until the individual consumer migration gate passes.
 
 **Alternative:** make `LoopSnapshot` the owner of all derived representations.
 Rejected because it would couple immutable content publication to consumer
 lifecycles and create a new cross-consumer owner.
 
-### Construction applies existing semantic mutations
+### Construction applies existing semantic mutations as named operations
 
 At an existing commit boundary, the existing semantic owner supplies a settled
 mutation. Candidate construction reads the active snapshot as const and applies
-that mutation to a structurally shared collection. If the work is larger than
-one admissible runtime unit, construction uses persistent progress and yields
-between bounded units; it does not block until a complete candidate is
-available. The candidate is frozen and published atomically only after it is
-complete.
+that mutation to a structurally shared collection.
+
+Construction is not one unnamed “apply mutation” step. Before runtime
+publication, each of the following operations must have a declared complexity
+and `ExecutionBounds.md` class:
+
+1. Locate affected references.
+2. Remove obsolete references.
+3. Allocate replacement event objects.
+4. Insert new references.
+5. Construct the new persistent reference root.
+6. Retain the new root and release unreacheable prior roots when allowed.
+7. Update optional disposable indexes, if any are justified.
+8. Freeze the candidate.
+9. Publish the candidate atomically.
+
+If the work is larger than one admissible runtime unit, construction uses
+persistent progress and yields between bounded units; it does not block until a
+complete candidate is available. The candidate is frozen and published atomically
+only after it is complete.
+
+A path-copy tree bounds steps 1–5 by path depth. A flat vector makes step 5
+O(N) and is therefore not admissible as the selected structure.
 
 **Alternative:** let snapshot storage replay or resolve edits. Rejected because it creates a second semantic owner.
 
@@ -164,25 +283,133 @@ unchanged, publishes no partial candidate, and follows the phase's explicit
 retry, defer, or rejection policy without silently losing the settled
 mutation.
 
-### Undo and playback select snapshots directly
+### Provisional session snapshots versus global undo snapshots
 
-Undo entries retain before/after snapshot identities. Undo, redo, and clear-slot restore select complete snapshots without replaying intervening history. Playback derives execution order from a const active snapshot while retaining runtime cursor, ledger, and horizon ownership.
+Intermediate complete prefixes during an open session are playable provisional
+revisions. They are not global undo entries.
 
-**Alternative:** disable rows and replay to reconstruct. Rejected because it preserves history-proportional work.
+```text
+S10  session anchor (global before)
+S11  provisional prefix
+S12  provisional prefix
+S13  current provisional
+        |
+        | session commit
+        v
+S13  becomes the global after snapshot
+```
 
-### Persistence is a separate physical design
+- Record: completed-event prefixes may publish provisional snapshots so playback
+  and deferred persistence can read a latest complete snapshot while recording
+  is active. Only the final record-stop transition enters global undo.
+- Overdub: wrap-level publication stays at
+  `Track::commitOverdubWrapAtSessionStart()`. Those wrap snapshots are
+  provisional / session (`O:`) revisions. One `OverdubPassAdded` global undo
+  unit is recorded at overdub stop.
+- NOTE_EDIT: each complete `EditSessionActions` batch may publish a provisional
+  session (`E:`) snapshot. One `NoteEditPassClosed` global undo unit is recorded
+  at the existing close/commit boundary.
 
-The runtime model requires serialization of immutable objects and snapshot
-structure in a future format. Exact layout, reclamation, active-tip encoding,
+**Alternative:** every completed prefix is a global snapshot revision. Rejected
+because record and wrap prefixes would inflate global undo and persistence
+history.
+
+### Snapshot lifetime is reachability from named roots
+
+A snapshot or immutable event object is reclaimable only when no named root and
+no reachable snapshot reference collection still references it.
+
+Named roots:
+
+```text
+- active snapshot
+- global undo before/after roots on the live branch
+- session anchor
+- session current provisional
+- E: / O: session roots
+- persistence staging
+- consumer staging
+- pending candidate parent
+```
+
+Retention examples:
+
+- After record commit, `S13` is the global after snapshot. `S10` remains if a
+  global undo entry retains it. `S11` and `S12` are reclaimable once no session,
+  consumer, or persistence root still names them.
+- After `A → B → C`, undo to `B`, then commit `D`, the redo branch to `C` is
+  cleared from active history. `C` remains readable only while a consumer,
+  persistence, or other root still holds it. It is not a redo target.
+
+### Undo and redo select snapshots and clear the redo branch
+
+Undo and redo select existing complete snapshot identities. They do not replay
+history and they do not persist a runtime undo stack.
+
+```text
+A → B → C
+      ^
+     undo
+      v
+      B
+      |
+      v
+      D
+```
+
+Result:
+
+```text
+A → B → C     C is an abandoned branch, not a redo target
+      \
+       D      D is the new active tip
+```
+
+`C` is not rewritten. It becomes unreachable from the active branch. Redo is
+empty after `D` publishes. Reclamation follows the reachability model above.
+
+**Alternative:** keep abandoned branches as persisted redo history. Rejected
+because this change does not persist undo/redo and does not grow disk history
+for abandoned runtime branches.
+
+### Persistence loads the latest saved snapshot only
+
+The runtime model requires serialization of immutable objects and the latest
+complete snapshot in a future format. Exact layout, reclamation implementation,
 and old-format migration are separate decisions. Migration uses the existing
 `StorageManager` deferred owner; any unit that executes between
 `handleMidiInput()` entries still requires an admissible
 `ExecutionBounds.md` classification.
 
+Distinguish:
+
+```text
+runtime undo stack
+    NOT persisted
+
+persistent snapshot content
+    latest saved complete snapshot only
+```
+
 The storage boundary is content-only: the future format stores immutable
-objects, stable logical references, snapshot roots, loop metadata, and the
-serialized active branch tip. It does not store runtime addresses, derived
-representations, playback cursor/order, active ledgers, or undo history.
+objects, stable logical references, the selected snapshot root, loop metadata,
+and the serialized latest complete snapshot. It does not store runtime
+addresses, derived representations, playback cursor/order, active ledgers,
+undo history, or abandoned-branch lineage sufficient to restore post-reboot
+undo.
+
+After load or unplanned reboot:
+
+```text
+load latest saved complete snapshot
+runtime undo depth = 0
+redo = empty
+unsaved session tails and unresolved candidates are discarded
+```
+
+This change does not promise post-reboot undo. If a later storage design wants
+persisted snapshot lineage, that is a separate decision.
+
 `StorageManager` serializes and loads this content; `Loop` rebuilds local
 handles and owns runtime snapshot selection.
 
@@ -194,16 +421,28 @@ and previously valid persisted state when a unit cannot fit, overruns, or fails.
 The phase must define retention/retry/rejection behavior without silently
 discarding pending content.
 
+### Undo and playback select snapshots directly
+
+Undo entries retain before/after snapshot identities while those entries remain
+on the live runtime stack. Undo, redo, and clear-slot restore select complete
+snapshots without replaying intervening history. Playback derives execution
+order from a const active snapshot while retaining runtime cursor, ledger, and
+horizon ownership.
+
+**Alternative:** disable rows and replay to reconstruct. Rejected because it preserves history-proportional work.
+
 ## Risks / Trade-offs
 
 - **[Memory overhead]** Immutable versions retain history → measure object/reference pools and admission before firmware.
 - **[Construction cost]** Mutations may be content-dependent → classify the
   owner in `ExecutionBounds.md`, use bounded resumable units, and define an
   explicit overrun policy before runtime publication.
+- **[Reference structure]** Selecting a flat vector would fail the no-full-copy
+  invariant; the comparison/measurement gate must finish before Phase 2.
 - **[Projection cost]** A requested window does not cap the number of
   `generateEquivalentIntervals` candidates for a span crossing multiple loop
   lengths → bound the source span range and candidate count before runtime
-  projection.
+  projection. That bound is not a snapshot-architecture unit.
 - **[Parity]** Snapshot output may diverge → compare against current materialization for overlap, pairing, wrap, ordering, and non-note events.
 - **[Lifetime]** Retained snapshots may leak or alias mutable data → test reachability, loop scope, and older-snapshot stability.
 - **[Compatibility]** Storage changes may reject existing files → retain old readers until migration and round-trip gates pass.
@@ -211,12 +450,13 @@ discarding pending content.
 ## Migration Plan
 
 1. Complete formal architecture reassessment and record approval before firmware work.
-2. Implement immutable objects, stable handles, shared reference storage, and native tests with current consumers unchanged.
-3. Define and verify candidate construction bounds, progress, and overrun behavior before runtime publication.
-4. Adapt capture and NOTE_EDIT commit boundaries while retaining compatibility pass records; publication may occur only after a complete candidate is ready.
-5. Migrate playback and other consumers independently, using snapshot identity and parity gates.
-6. Migrate undo/load/persistence after physical format approval.
-7. Remove replay/materialized compatibility paths only after all caller-specific gates pass.
+2. Complete the persistent-reference comparison and measurement gate; select the structure before Phase 2.
+3. Implement immutable objects, stable handles, shared reference storage, and invariant-protecting native checks with current consumers unchanged.
+4. Define and verify candidate construction bounds, progress, and overrun behavior before runtime publication.
+5. Adapt capture and NOTE_EDIT commit boundaries while retaining compatibility pass records; publication may occur only after a complete candidate is ready.
+6. Migrate playback and other consumers independently, using snapshot identity and existing verification gates.
+7. Migrate undo/load/persistence after physical format approval.
+8. Remove replay/materialized compatibility paths only after all caller-specific gates pass.
 
 Rollback keeps the prior representation active and discards any failed candidate. Existing storage readers remain until the new reader and migration are proven.
 
@@ -228,8 +468,8 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
 ### Complete content and LCR role
 
 - A published `LoopSnapshot` is complete effective canonical content. Structural
-  sharing is permitted, but consumers never traverse a parent snapshot for
-  missing content.
+  sharing is required for the reference root, but consumers never traverse a
+  parent snapshot for missing content.
 - LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
   ownership. LCR is not the maintained effective-state authority.
 - Heavy preparation may advance through existing LCR preparation opportunities.
@@ -275,14 +515,17 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
 - NOTE_EDIT publishes after each complete `EditSessionActions` batch produced by
   `NoteGeometryResolver`. `NoteEditCurrentState` remains the mutable NOTE_EDIT
   buffer; `EditSession.store` remains its projected content state. No separate
-  NOTE_EDIT action buffer is introduced.
+  NOTE_EDIT action buffer is introduced. Batch snapshots are provisional `E:`
+  revisions until the existing close/commit records one global undo unit.
 - Overdub publishes after the existing wrap-level settled boundary:
   `Track::commitOverdubWrapAtSessionStart()` seals the overdub pass and companion
   changes before candidate publication. Raw incomplete note events are not
-  published as snapshots.
+  published as snapshots. Wrap snapshots are provisional `O:` revisions until
+  overdub stop records one global undo unit.
 - Record uses the same direct-publication model for completed events so a latest
   complete snapshot is available for deferred persistence while recording is
-  active.
+  active. Those prefixes are provisional session revisions. Only the final
+  record-stop transition is a global undo snapshot.
 - `capture.store` remains the capture buffer. Once a processed prefix is
   published, live playback reads the active snapshot plus only the unprocessed
   capture suffix.
@@ -303,9 +546,8 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
   other slots may continue.
 - If pending work cannot complete after its retry policy, the latest complete
   prefix remains the result and the remaining mutation is explicitly rejected.
-- Snapshot retention is limited to the session anchor, current revision, E:/O:
-  entries, and persistence staging. Record releases older event-prefix roots once
-  the next complete snapshot publishes.
+- Snapshot retention follows the named-root reachability model. Record releases
+  older event-prefix roots once they are no longer named by a root.
 - Pending candidate work normally belongs to the focused slot. Queued-slot
   preparation remains the normal opportunity for making the next complete
   snapshot ready before a switch.
@@ -317,10 +559,12 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
 ### Persistence and reboot
 
 - `StorageManager` may persist the latest complete snapshot through its existing
-  deferred units while a session is active. Open session state and unresolved
-  candidate work are not serialized.
-- After an unplanned reboot, the latest saved complete snapshot is restored and
-  the unsaved session tail is discarded.
+  deferred units while a session is active. Open session state, unresolved
+  candidate work, the runtime undo stack, and abandoned redo branches are not
+  serialized.
+- After an unplanned reboot, the latest saved complete snapshot is restored.
+  Runtime undo depth is 0, redo is empty, and the unsaved session tail is
+  discarded. Post-reboot undo is not a requirement of this change.
 
 ### Execution boundary
 
@@ -328,14 +572,14 @@ Post-exit candidate work resumes through existing
 `Track::processDeferredIdleMaintenance()` opportunities after MIDI service.
 Candidate construction is not introduced as an unbounded operation in
 `handleMidiInput()`, clock dispatch, or `TrackManager::updateAllTracks()`.
-The implementation phase must still classify the direct candidate delta and the
-LCR preparation units under `ExecutionBounds.md`; preparation readiness does not
-replace the indivisible-step bound.
+The implementation phase must still classify each named construction operation
+and any reused LCR preparation units under `ExecutionBounds.md`; preparation
+readiness does not replace the indivisible-step bound.
 
-### Timing evidence and falsification gate
+### Timing evidence and measurement hypothesis
 
 Existing runtime measurements provide a sizing reference, not a guaranteed
-maintenance reservation:
+maintenance reservation, and not a snapshot-architecture unit:
 
 - At 170 BPM, one MIDI clock interval is `14.71 ms` (`60 / (170 × 24)`).
 - The runtime scheduling plan uses `8.82 ms` (`60%` of that interval) as an
@@ -347,25 +591,26 @@ maintenance reservation:
   immutable snapshot path-copy publication.
 - Existing LCR preparation slices measured `63–121 ms` for index work and up to
   `115.7 ms` for reconstruction. These operations are not admissible references
-  for an 8-candidate snapshot update.
+  for snapshot successor construction.
 
-The proposed eight-candidate LCR unit therefore requires a separate
-device-backed measurement. Its p95 uninterrupted duration should initially fit
-within the `8.82 ms` experimental target; any unit above `25 ms` is an
-investigation failure. Neither threshold is a hard MIDI guarantee. The
-measurement must include path-copy construction, `NoteId` index updates,
-replacement/tombstone records, allocation behavior, and the worst-case
-same-tick and wrap candidate geometry. If the measured unit does not fit, the
-candidate quantum or construction representation must change before runtime
-publication is implemented.
+Any numeric “N-candidate” construction quantum, including a previously discussed
+eight-candidate LCR unit, is an implementation measurement hypothesis only. It
+is not part of the snapshot architecture and must not become an implicit
+architectural unit. Before runtime publication, measure the selected
+representation’s successor-construction unit on device, including path-copy or
+equivalent structural sharing, `NoteId` index updates if present, allocation
+behavior, and wrap plus same-tick cases. If the measured unit does not fit the
+declared bound, the candidate quantum or construction representation must change
+before runtime publication is implemented.
 
 ## Open Questions
 
-- Which persistent reference structure and reclamation policy meet memory and lifetime requirements?
+- Which persistent reference structure from the Phase 0 comparison meets memory,
+  iteration, and lifetime requirements?
 - What exact storage version/layout and compatibility migration are required?
 - Which optional indexes are justified without becoming a second authority?
 - What execution-bound class, unit cap, progress state, and overrun policy
-  will candidate construction use on each runtime path?
+  will each named candidate-construction operation use on each runtime path?
 - Which existing owner holds an incomplete candidate and its continuation, and
   how is a stale candidate discarded if the active snapshot changes?
 - Which phase and work identity authorize each consumer migration?

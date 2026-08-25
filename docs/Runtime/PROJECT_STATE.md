@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (MIDI protocol guide + snapshot Phase 0)
+Last updated: 2026-08-25 (snapshot Phase 0 reference-root refinement)
 
 ---
 
@@ -134,7 +134,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; no firmware edits authorized |
+| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; `LoopSnapshot` vs `LoopPass` and persistent reference-root gates recorded; no firmware edits authorized |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

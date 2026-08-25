@@ -12,7 +12,8 @@
 
 Before snapshot migration, `Loop::passes` and live `Capture` provide the
 runtime content boundary. The target authoritative content is the selected
-complete immutable `LoopSnapshot`. Everything downstream remains derived;
+complete immutable `LoopSnapshot`, not a `LoopPass` compatibility record.
+Everything downstream remains derived;
 consumers must not treat materialized or display lists as canonical.
 
 ---
@@ -56,15 +57,15 @@ rebuilds.
 
 `StorageManager` owns serialization, deferred save work, load, and compatibility
 migration. A future storage version serializes immutable note and non-note
-objects, stable logical references, snapshot roots, loop metadata, and the
-serialized active branch tip. It does not serialize runtime addresses,
-derived representations, playback cursor/order, active ledgers, or undo
-history.
+objects, stable logical references, the selected snapshot root, loop metadata,
+and the latest saved complete snapshot. It does not serialize runtime addresses,
+derived representations, playback cursor/order, active ledgers, undo history,
+or abandoned-branch lineage sufficient to restore post-reboot undo.
 
-Loading rebuilds loop-local handles and selects the serialized complete
-snapshot. The loaded snapshot is self-contained; a consumer does not traverse
-older snapshots to obtain missing content. `Loop` remains the runtime
-publication and selection owner.
+Loading rebuilds loop-local handles and selects the latest saved complete
+snapshot. Runtime undo depth starts at 0 and redo is empty. The loaded snapshot
+is self-contained; a consumer does not traverse older snapshots to obtain
+missing content. `Loop` remains the runtime publication and selection owner.
 
 ## Large-loop save and load
 

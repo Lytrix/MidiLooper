@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) | 2026-08-25 | Immutable loop snapshots replace maintained LCR as the effective-state direction on the feature branch | Accepted — design phase |
+| [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) | 2026-08-25 | Immutable loop snapshots replace maintained LCR as the effective-state direction on the feature branch | Accepted — design phase; amended for LoopPass vs LoopSnapshot, persistent reference root, provisional/global snapshots, and latest-saved reboot |
 | [DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property) | 2026-08-22 | Execution bound class is a gated architectural property; `admit(WorkClass)` stays rejected | Accepted |
 | [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; nested HITL MET [`095902`](../captures/session_20260819_095902.log); extra-open is catch-up stack RC |
 | [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
@@ -103,6 +103,29 @@ sharing. The current branch's maintained-LCR playback and load behavior is not
 carried forward. Compatibility parity tests, storage design, lifetime policy,
 and consumer migration remain required before removal of materialization or any
 old representation.
+
+**Amendment (2026-08-25) — Phase 0 reference-root refinement:**
+
+8. `LoopSnapshot` is the complete immutable effective-state object. `LoopPass`
+   (`RecordPass`, `OverdubPass`, `EditPass`) is the historical/compatibility
+   operation record. A commit may produce both; they are not interchangeable.
+9. A successor snapshot reuses unchanged event-object references and allocates
+   new immutable objects only for added or modified content. The reference root
+   itself must be persistent / structurally shared so a bounded number of
+   reference changes does not copy the complete snapshot reference set. Phase 0
+   compares a flat vector, a chunked/reference-directory, and a path-copy tree;
+   it does not select the structure. Phase 2 is blocked until that selection.
+10. Intermediate record prefixes, overdub wraps, and NOTE_EDIT batches are
+    playable provisional snapshots, not global undo entries. The session-exit
+    commit is the global undo transition.
+11. After undo from C to B and a new commit D, C is an abandoned branch and not
+    a redo target. Reclamation follows named-root reachability.
+12. Persistence stores the latest saved complete snapshot only. Reboot loads
+    that snapshot, starts with undo depth 0 and redo empty, and discards unsaved
+    session tails. This change does not persist undo history or promise
+    post-reboot undo.
+13. Later verification uses existing gates plus invariant-protecting checks
+    only. This change does not add a new test architecture.
 
 **References:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
 [`loop_pass_snapshot_effective_state_refinement.md`](Plans/loop_pass_snapshot_effective_state_refinement.md),

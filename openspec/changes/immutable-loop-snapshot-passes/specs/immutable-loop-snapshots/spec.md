@@ -1,8 +1,25 @@
 ## ADDED Requirements
 
+### Requirement: LoopSnapshot is distinct from LoopPass
+
+The system SHALL treat `LoopSnapshot` as the complete immutable effective-state object and `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) as the historical/compatibility operation record. A commit MAY produce both a compatibility pass record and a `LoopSnapshot`. Those objects SHALL NOT be interchangeable.
+
+#### Scenario: Commit produces distinct objects
+
+- **WHEN** an overdub or note-edit commit is accepted during migration
+- **THEN** the system may retain a compatibility `LoopPass` record
+- **AND** it publishes a separate complete `LoopSnapshot`
+- **AND** consumers read the `LoopSnapshot`, not the pass record, for effective state
+
+#### Scenario: Terminology does not collapse the objects
+
+- **WHEN** documentation or APIs name committed effective state
+- **THEN** they use `LoopSnapshot`
+- **AND** they do not call the snapshot a `LoopPass`
+
 ### Requirement: Complete immutable loop snapshot
 
-Each committed `LoopPass` snapshot SHALL be a complete immutable view of effective musical state at its boundary. Snapshot content SHALL include note and non-note MIDI event objects through stable loop-scoped references. A consumer SHALL NOT traverse a parent snapshot to obtain content.
+Each published `LoopSnapshot` SHALL be a complete immutable view of effective musical state at its boundary. Snapshot content SHALL include note and non-note MIDI event objects through stable loop-scoped references. A consumer SHALL NOT traverse a parent snapshot to obtain content.
 
 #### Scenario: Snapshot is self-contained
 
@@ -15,6 +32,31 @@ Each committed `LoopPass` snapshot SHALL be a complete immutable view of effecti
 - **WHEN** a loop contains CC, pitch bend, program, or system MIDI events
 - **THEN** the selected snapshot retains those events
 - **AND** selection does not reduce the state to notes only
+
+### Requirement: Persistent structurally-shared reference root
+
+A `LoopSnapshot` SHALL represent effective content as an immutable collection of references to immutable event objects. Creating a successor snapshot SHALL reuse unchanged references and SHALL allocate new event objects only for added or modified content. Snapshot construction SHALL NOT copy or mutate unchanged event objects. The reference collection itself SHALL use a persistent / structurally-shared representation such that changing a bounded number of references does not require copying the complete snapshot reference set.
+
+Phase 0 SHALL compare a flat reference vector, a persistent chunked / reference-directory structure, and a path-copy ordered tree against update cost, bounded range iteration, Teensy allocation behavior, handle identity, serialization shape, and the maximum indivisible construction step. Firmware publication SHALL NOT begin until that comparison selects a representation that satisfies this requirement.
+
+#### Scenario: Unchanged objects keep the same references
+
+- **WHEN** a successor snapshot replaces one note and leaves the remaining notes unchanged
+- **THEN** the new snapshot reuses the unchanged event-object references
+- **AND** it allocates a new immutable object only for the changed note
+- **AND** the older snapshot still references the original object
+
+#### Scenario: The reference root is not a full copy
+
+- **WHEN** a successor snapshot changes a bounded number of references
+- **THEN** construction does not copy the complete snapshot reference set
+- **AND** a flat copy of every reference is not an admissible selected representation
+
+#### Scenario: Representation remains unselected until the comparison gate
+
+- **WHEN** Phase 0 records the reference-structure comparison
+- **THEN** the comparison criteria and measurement evidence are specified
+- **AND** no firmware phase treats a concrete structure as already selected
 
 ### Requirement: Immutable note and event versions
 
@@ -36,11 +78,11 @@ Note and non-note event objects SHALL be immutable after construction. A logical
 
 Snapshot publication SHALL occur at an existing capture or edit commit boundary after capture finalization. Candidate construction SHALL read the active snapshot as const and apply a semantic mutation supplied by the existing owner. Construction MAY complete before publication through bounded resumable units, but the complete candidate SHALL be frozen and published atomically. Failure SHALL leave active and historical snapshots unchanged.
 
-#### Scenario: Capture commit publishes one candidate
+#### Scenario: Capture commit publishes one global candidate
 
-- **WHEN** a capture pass is finalized and its mutation is accepted
-- **THEN** one complete candidate snapshot is published at the existing commit boundary
-- **AND** an overdub session with multiple wraps does not create an undo snapshot per wrap
+- **WHEN** a record or overdub session is finalized and its mutation is accepted
+- **THEN** one complete candidate snapshot is published as the global after snapshot at the existing commit boundary
+- **AND** an overdub session with multiple wraps does not create a global undo snapshot per wrap
 
 #### Scenario: Failed candidate preserves active state
 
@@ -48,6 +90,16 @@ Snapshot publication SHALL occur at an existing capture or edit commit boundary 
 - **THEN** the candidate is discarded
 - **AND** the previous complete snapshot remains active
 - **AND** no partial collection is visible
+
+### Requirement: Candidate construction operations have declared bounds
+
+Candidate construction SHALL name the following operations and SHALL declare a complexity and `ExecutionBounds.md` class for each before runtime publication: locate affected references, remove obsolete references, allocate replacement event objects, insert new references, construct the new persistent reference root, retain or release roots, update optional disposable indexes, freeze the candidate, and publish the candidate. A local timer checked only between steps SHALL NOT qualify as an execution bound.
+
+#### Scenario: Named operations are classified before firmware publication
+
+- **WHEN** a later phase introduces runtime candidate construction
+- **THEN** each named operation has a declared complexity and bound class
+- **AND** publication does not hide an unclassified O(N) reference-set copy
 
 ### Requirement: Existing owners supply semantic mutations
 
@@ -67,7 +119,7 @@ Snapshot construction SHALL apply mutations determined by existing capture final
 
 ### Requirement: Loop owns snapshot publication and lifetime
 
-`Loop` SHALL own active selection, candidate publication, and immutable object allocation. `LoopPasses` SHALL own snapshot records and persistent reference roots. Snapshot lifetime SHALL remain valid while reachable from active state, retained history, undo/redo, clear-slot restore, deferred persistence staging, or consumer staging.
+`Loop` SHALL own active selection, candidate publication, and immutable object allocation. `LoopPasses` SHALL own snapshot records and persistent reference roots, and SHALL retain compatibility `LoopPass` rows during migration. Snapshot lifetime SHALL follow the named-root reachability model.
 
 #### Scenario: References are loop-scoped
 
@@ -81,9 +133,48 @@ Snapshot construction SHALL apply mutations determined by existing capture final
 - **THEN** its immutable objects remain readable
 - **AND** reclamation waits until the retaining root is released
 
-### Requirement: Direct snapshot selection for runtime state
+### Requirement: Snapshot reachability and reclamation
 
-Undo, redo, clear-slot restore, and active-state changes SHALL select existing complete snapshot identities. Selecting a snapshot SHALL NOT reconstruct content by replaying intervening history. Snapshot identity SHALL be the consumer freshness key.
+A snapshot or immutable event object SHALL be reclaimable only when no named root and no reachable snapshot reference collection still references it. Named roots SHALL include the active snapshot, global undo before/after roots on the live branch, the session anchor, the session current provisional snapshot, E:/O: session roots, persistence staging, consumer staging, and the pending candidate parent.
+
+#### Scenario: Unnamed prefix snapshots become reclaimable
+
+- **WHEN** a record session publishes provisional prefixes and then commits the final snapshot
+- **THEN** the session anchor remains if a global undo entry retains it
+- **AND** intermediate prefixes are reclaimable once no named root still references them
+
+#### Scenario: Abandoned redo snapshots wait for root release
+
+- **WHEN** undo leaves snapshot C off the active branch and a later commit publishes D
+- **THEN** C is not a redo target
+- **AND** C remains readable only while a remaining named root still references it
+- **AND** C is reclaimable after every such root is released
+
+### Requirement: Provisional session snapshots versus global undo snapshots
+
+Intermediate complete prefixes during an open record, overdub, or NOTE_EDIT session SHALL be playable provisional revisions. They SHALL NOT become separate global undo entries. Only the existing session-exit commit boundary SHALL record the global before/after snapshot transition.
+
+#### Scenario: Record prefixes stay provisional
+
+- **WHEN** recording publishes completed-event prefixes for playback or deferred persistence
+- **THEN** those prefixes are session/provisional snapshots
+- **AND** only the final record-stop transition enters global undo
+
+#### Scenario: Overdub wraps stay session-scoped
+
+- **WHEN** an overdub session publishes wrap-level snapshots
+- **THEN** those snapshots are provisional `O:` revisions
+- **AND** one `OverdubPassAdded` global undo unit is recorded at overdub stop
+
+#### Scenario: NOTE_EDIT batches stay session-scoped until close
+
+- **WHEN** NOTE_EDIT publishes after a complete `EditSessionActions` batch
+- **THEN** that snapshot is a provisional `E:` revision
+- **AND** one `NoteEditPassClosed` global undo unit is recorded at the existing close/commit boundary
+
+### Requirement: Undo/redo branch selection
+
+Undo and redo SHALL select existing complete snapshot identities. After undo from C to B and a new committed operation D, C SHALL be an abandoned branch and SHALL NOT remain a redo target. Selecting a snapshot SHALL NOT reconstruct content by replaying intervening history. Snapshot identity SHALL be the consumer freshness key.
 
 #### Scenario: Undo selects a prior snapshot
 
@@ -93,15 +184,32 @@ Undo, redo, clear-slot restore, and active-state changes SHALL select existing c
 
 #### Scenario: Redo selects the forward snapshot
 
-- **WHEN** redo is available
+- **WHEN** redo is available on the live branch
 - **THEN** the after-snapshot identity becomes active
 - **AND** it is complete before consumers observe it
+
+#### Scenario: New work after undo clears redo
+
+- **WHEN** the live branch is A → B → C, undo selects B, and D is published
+- **THEN** D becomes the active tip
+- **AND** C is not reachable as redo
+- **AND** C is not mutated
 
 #### Scenario: Clear-slot restore is isolated
 
 - **WHEN** `ClearSlot` restores a retained before snapshot
 - **THEN** the active state selects that snapshot directly
 - **AND** later mutations cannot modify its immutable content
+
+### Requirement: Direct snapshot selection for runtime state
+
+Undo, redo, clear-slot restore, and active-state changes SHALL select existing complete snapshot identities. Selecting a snapshot SHALL NOT reconstruct content by replaying intervening history. Snapshot identity SHALL be the consumer freshness key.
+
+#### Scenario: Session undo selects a provisional identity
+
+- **WHEN** E: or O: undo targets the previous session revision
+- **THEN** the previous provisional snapshot identity becomes selected
+- **AND** the session owner restores transient state separately from the snapshot
 
 ### Requirement: Playback separates snapshots from runtime state
 
@@ -125,7 +233,8 @@ The system SHALL keep projection context, projected intervals, and consumer
 windows out of `LoopSnapshot`. Playback, display, and NOTE_EDIT consumers SHALL
 select the relevant canonical span range from the selected snapshot before
 calling `IntervalProjection`. A complete snapshot SHALL NOT authorize
-full-loop projection on a timing-critical path.
+full-loop projection on a timing-critical path. A projection-candidate count
+SHALL NOT become a `LoopSnapshot` architectural unit.
 
 #### Scenario: Projection uses consumer context
 
@@ -145,6 +254,7 @@ full-loop projection on a timing-critical path.
 - **WHEN** `generateEquivalentIntervals` handles a canonical span that crosses multiple loop lengths
 - **THEN** the runtime path applies a structural candidate cap or an empirically bounded overrun guard and failure policy
 - **AND** a projection window alone is not treated as a fixed execution bound
+- **AND** that cap is not treated as part of the snapshot object model
 
 #### Scenario: Full-loop projection is explicit
 
@@ -198,7 +308,7 @@ analyze indexes, or LED queries.
 #### Scenario: Compatibility sources are transitional
 
 - **WHEN** a consumer has not completed its snapshot migration gate
-- **THEN** compatibility `LoopPasses` or materialized data may remain as a parity or fallback source
+- **THEN** compatibility `LoopPass` records or materialized data may remain as a parity or fallback source
 - **AND** it is not introduced as a second normal effective-state authority
 
 ### Requirement: LoopContentResolution is a transitional stateless adapter

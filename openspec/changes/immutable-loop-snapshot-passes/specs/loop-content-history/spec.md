@@ -2,7 +2,7 @@
 
 ### Requirement: Loop persists content records only
 
-The Loop file SHALL persist the ordered immutable content required for complete snapshot state. During compatibility migration this includes existing `RecordPass`, `OverdubPass`, `EditPass`, and `LoopGeometry` records. The new storage version SHALL serialize immutable note and non-note event objects, snapshot/reference structure, and the serialized active branch tip. The system SHALL NOT persist an undo stack, history cursor, history transition, or undo/redo record. NOTE_EDIT session undo (`E:`) SHALL remain pre-commit and outside this persist model.
+The Loop file SHALL persist the ordered immutable content required for the latest complete snapshot state. During compatibility migration this includes existing `RecordPass`, `OverdubPass`, `EditPass`, and `LoopGeometry` records. The new storage version SHALL serialize immutable note and non-note event objects, snapshot/reference structure, and the latest saved complete snapshot. The system SHALL NOT persist an undo stack, history cursor, history transition, undo/redo record, or abandoned-branch lineage sufficient to restore post-reboot undo. NOTE_EDIT session undo (`E:`) SHALL remain pre-commit and outside this persist model.
 
 #### Scenario: Stop does not write undo history
 
@@ -12,7 +12,7 @@ The Loop file SHALL persist the ordered immutable content required for complete 
 
 #### Scenario: Serialized snapshot defines effective state
 
-- **WHEN** a current-format serialized snapshot branch is loaded
+- **WHEN** a current-format serialized snapshot is loaded
 - **THEN** the reconstructed Loop selects the serialized complete snapshot directly
 - **AND** normal loading does not replay intervening records to derive active state
 
@@ -20,10 +20,10 @@ The Loop file SHALL persist the ordered immutable content required for complete 
 
 The system SHALL keep snapshot serialization, deferred save work, loading, and
 compatibility migration owned by `StorageManager`. The storage format SHALL
-persist immutable content, stable logical references, snapshot roots, loop
-metadata, and the serialized active branch tip. It SHALL NOT persist runtime
-addresses, derived representations, playback cursor/order, active ledgers, or
-undo history.
+persist immutable content, stable logical references, the selected snapshot
+root, loop metadata, and the latest saved complete snapshot. It SHALL NOT persist
+runtime addresses, derived representations, playback cursor/order, active
+ledgers, undo history, or snapshot lineage for post-reboot undo.
 
 #### Scenario: Storage does not absorb runtime representation ownership
 
@@ -31,6 +31,13 @@ undo history.
 - **THEN** `StorageManager` serializes or reconstructs snapshot content
 - **AND** `Loop` rebuilds loop-local handles and selects the runtime snapshot
 - **AND** derived representation owners remain responsible for their own rebuilds
+
+#### Scenario: Runtime undo is not a persisted graph
+
+- **WHEN** a loop is saved
+- **THEN** the file contains the latest complete snapshot
+- **AND** it does not contain a runtime undo stack
+- **AND** it does not contain enough abandoned-branch metadata to restore redo
 
 ### Requirement: Large-loop persistence is deferred and bounded
 
@@ -58,27 +65,33 @@ overrun/failure policy.
 
 ### Requirement: Load reconstructs editing state from content
 
-After loading a Loop from disk, the runtime SHALL identify the serialized snapshot tip, reconstruct loop-local stable handles, derive supported runtime undo units, and start with redo empty. An older supported format MAY be migrated through the existing `StorageManager` deferred owner by replaying its records into complete snapshot boundaries. Any migration unit that executes between `handleMidiInput()` entries SHALL satisfy the declared bound and overrun policy in [ExecutionBounds.md](../../../../docs/Authority/Architecture/ExecutionBounds.md). Normal undo and redo SHALL select existing snapshots rather than replay history.
+After loading a Loop from disk, the runtime SHALL identify the latest saved complete snapshot, reconstruct loop-local stable handles, and start with runtime undo depth 0 and redo empty. An older supported format MAY be migrated through the existing `StorageManager` deferred owner by replaying its records into complete snapshot boundaries. Any migration unit that executes between `handleMidiInput()` entries SHALL satisfy the declared bound and overrun policy in [ExecutionBounds.md](../../../../docs/Authority/Architecture/ExecutionBounds.md). Runtime undo and redo after load SHALL exist only when later runtime work creates them; they SHALL select existing snapshots rather than replay history.
 
 #### Scenario: Reboot at the tip
 
-- **WHEN** a Loop is saved at the content tip and loaded after reboot
-- **THEN** the active state is the serialized complete snapshot at that tip
-- **AND** display undo depth equals the derived undo-step count
+- **WHEN** a Loop is saved and loaded after reboot
+- **THEN** the active state is the latest saved complete snapshot
+- **AND** runtime undo depth is 0
 - **AND** redo is empty
-- **AND** undo can select prior retained snapshots
+- **AND** post-reboot undo is not restored from persisted lineage
 
-#### Scenario: Grouped records are one undo unit
+#### Scenario: Unsaved session tail is discarded
 
-- **WHEN** one user operation produced multiple content records
-- **THEN** load derives those records as one undo unit
-- **AND** one undo step selects the complete snapshot before that unit
+- **WHEN** an unplanned reboot occurs during an open session
+- **THEN** the latest saved complete snapshot is restored
+- **AND** unsaved provisional prefixes and unresolved candidates are discarded
+
+#### Scenario: Grouped records are one undo unit only at runtime
+
+- **WHEN** one user operation produced multiple content records before reboot
+- **THEN** load does not reconstruct those records as runtime undo units
+- **AND** later runtime work may create new undo units from new commits
 
 #### Scenario: New work after undo is not required at load
 
 - **WHEN** a Loop is loaded
 - **THEN** the runtime does not restore a mid-session editor cursor
-- **AND** the reconstructed position is the serialized content tip
+- **AND** the reconstructed position is the latest saved complete snapshot
 - **AND** redo is empty until new runtime work creates a redo branch
 
 ## ADDED Requirements
