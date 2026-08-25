@@ -35,17 +35,18 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Geometry** | Note timing, length, pitch, and overlap relationships during edit — `EditedGeometry`, constrained resolution | Motor or fader position; MIDI song position |
 | **Position** | Hardware or protocol position — fader motor, `sendSongPosition`, GPIO position buttons | Note-edit geometry |
 | **State** | Mutable ownership — live session, transport mode, persistence queue fields | Immutable captured copies |
-| **Snapshot** | Immutable captured state — undo clones, display probes, activity snapshots | Live mutable owner |
+| **Snapshot** | The act or role of capturing immutable state of some owner (undo snapshot, display snapshot, share-for-snapshot) | The Loop’s published complete state (that object is **LoopSnapshot**); live mutable owner |
+| **LoopSnapshot** | Complete immutable published loop object: current LoopGeometry, allocator counters, and **NoteRef** / **EventRef** lists grouped by pass type. Self-contained — a consumer does not read another LoopSnapshot for missing content. Shared objects are referenced, not copied into a flattened event vector. Absent until the first record, overdub-stop, or note-edit commit. | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers |
 | **Deferred** | Work intentionally postponed to idle or budget drain — `processDeferredSaveState` | Queued user intent; synchronous algorithms |
 | **Pending** | Queued intent not yet committed — `hasPendingCapturePass`, `pendingOutboundTrigger_` | Idle-deferred maintenance work |
 | **Scheduled** | Work placed on an explicit schedule or queue for later execution — `PersistenceWorkQueue` | Synchronous resolution; generic “later” |
 | **Queue** | Actual pending work held for asynchronous processing | Synchronous multi-step algorithms |
 | **Resolution** | Deterministic synchronous conflict solving | Runtime scheduling; pipeline or queue metaphors; a generic `Resolver` type |
 | **NoteGeometryResolver** | Live NOTE_EDIT overlap Resolution (geometry → actions) | Loop history / playback effective-state queries |
-| **LoopContentResolution** | Query-time effective musical state from active pass set + edit history (`resolveState`, `resolveWindow`; `resolveNotes` is a derived consumer) | `LoopPasses::materialize`; `NoteGeometryResolver`; a generic `Resolver` / `LoopContentResolver` |
+| **LoopContentResolution** | Historical DEC-037 prototype name. New docs do not use it. Callers are **LoopSnapshot** consumers. | A current effective-state owner; `NoteGeometryResolver` |
 | **PresentNote** | LCR query snapshot of notes whose span contains tick S (`resolveState` / `StateCheckpoints::presentAt`). Keyed by `NoteId`; many same-pitch rows allowed. Emitted type has no `endTick` | `ActiveNoteLedger::Entry` (one per `(channel, pitch)` at `currentTick`); `midiHandler.sendMidiEvent` |
 | **ActiveNote** | Runtime slot at `currentTick` until NoteOff — `ActiveNoteLedger::Entry`, one per `(channel, pitch)`. No `length` / `endTick`. Written from **committed** playback (`playbackCursorAdvanceSend` → `applyPlaybackLedgerEvent`). Capture overdub emit (`playbackCursorAdvanceSendCapture`) does not write it. `sendMidiEvent` and `collectOverdubNoteOnParticipantIds` read it. Mute still writes the ledger. Does not mean stored `LoopPasses` are already one-owner | Geometry (`NoteSpan`); LCR `PresentNoteVec`; `midiHandler.sendMidiEvent` (only if `playbackEmitMidiOutput_`) |
-| **Analyze** (consumer role) | Select / overlap / effective-state queries against prepared `LoopContentResolution` around a tick | A new type; piano-roll `visualCache`; playback `mergedEvents` |
+| **Analyze** (consumer role) | Select / overlap / present-at queries against the selected **LoopSnapshot** around a tick | A new owner type; piano-roll `visualCache`; playback `mergedEvents` |
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
 | **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress (`handleMidiInput`) | Control-surface motor path (Outbound); **MIDI service** (not a domain noun or owner) |
@@ -55,14 +56,15 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Unbounded owner** | Owner that scans, drains, allocates, sorts, or loops on a content-dependent condition without an enforced cap | A structurally bounded slice; an empirically bounded unit with an explicit overrun policy |
 | **Manager** | Domain owner coordinating lifecycle over a scope | Controller (not used); thin routing (Handler) |
 | **Capture** | Live record or overdub append buffer until stop | Committed timeline rows |
-| **pass** / **passes** | Bounded capture or edit stretch ending in commit; canonical timeline on `LoopPasses` | Moving note range; single-note focus lifecycle |
+| **pass** / **passes** | One committed content row on `LoopPasses`: a first **recordPass** at record stop, an **overdubPass** at the LoopGeometry wrap in force at that time, or an **editPass** for one note change. | A LoopSnapshot; a session; moving note range; single-note focus lifecycle |
 | **editPass** | One `saveNoteEditPass()` row in `passes.editPasses[]` | Live edit session store |
 | **merge** | Replay active capture passes into a working view | Full timeline replay (use **materialize**) |
 | **materialize** | Full pass replay to a MIDI event vector | Active capture merge (use **merge**) |
-| **content record** | Immutable persisted Loop layer (`RecordPass` / `OverdubPass` / `EditPass` / `LoopGeometry`) | Persisted undo entry; editor history; `stateRaw` |
+| **content record** | Durable Loop history row. After migration a published **LoopSnapshot** is a content record. Capture and edit **pass** rows remain compatibility content until retirement. | Persisted undo entry; editor history; `stateRaw`; undo/redo **Active** / **Disabled** |
 | **content history** | Ordered content records on disk | `GlobalUndoStack`; `LoopUndoHistory`; a Set relink stack |
 | **replay** | Reconstruct current Loop state from content records | Undo/redo derivation (use **editing derivation**) |
 | **editing derivation** | Runtime undo/redo semantics from ordered content plus grouping rules | Persisted undo payload; current notes alone |
+| **Active** / **Disabled** | Current code names (`CapturePassState`, `EditPassState`) for whether a committed pass participates at the current undo/redo position. **Active** = included in derived content; **Disabled** = still stored, skipped by `materialize` / merge. Set by undo/redo traversal (`setCapturePassState` / `setEditPassState`), not by sealing store or Capture. When that pass-state / undo logic is refactored, rename to **Included** / **Excluded**. Do not rename earlier. | `ActiveNote`; active loop; Capture live; a broken or invalid pass |
 
 ---
 
@@ -78,7 +80,11 @@ Do **not** use because several functions execute sequentially in one call stack.
 
 ### Snapshot
 
-Use for **immutable captured state** — undo clones (`shareForSnapshot`), display probes, activity snapshots.
+Use **Snapshot** for the *act or role* of capturing immutable state (`shareForSnapshot`, undo snapshot, display snapshot).
+
+Use **LoopSnapshot** for the Loop’s complete immutable published object: LoopGeometry plus **NoteRef** / **EventRef** lists, grouped by pass type. `Loop` publishes it only at session exit (record stop, overdub stop, note-edit close), by reading the previous LoopSnapshot as const and writing a new root. There is no mutable LoopSnapshot during a session. It is not a `LoopPass` and not a flattened `materialize` vector.
+
+Spelling is **LoopSnapshot** (one word Snapshot), matching `PersistedLoopSnapshot` and `LoopSnapshotRef`. `PersistedLoopSnapshot` remains the transitional file/undo DTO of geometry plus deep-cloned `LoopPasses`. Do not store raw C++ pointers. The verb prefix `handle*` stays hardware/MIDI ingress.
 
 Prefer **State** for the **mutable owner** of live data.
 
@@ -174,10 +180,12 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 |------|---------|
 | **Loop** | Slot container |
 | **Capture** | Live record/overdub append buffer |
+| **Snapshot** | Act or role of capturing immutable state of some owner |
+| **LoopSnapshot** | Complete published loop object (LoopGeometry, allocator counters, per-pass note/event references) |
 | **passes** | **LoopPasses** — **recordPass**, **overdubPasses[]**, **editPasses[]** |
 | **editPass** | One **saveNoteEditPass** row in **passes.editPasses[]** |
 | **EditChange** | One atomic change inside an **editPass** |
-| **pass** | One bounded capture or edit stretch ending in commit |
+| **pass** | One committed content row — record stop, overdub wrap (LoopGeometry), or one note-edit change |
 
 **Do not** use **pass** for: moving note tick range (**moving note range** on focus), or single-note **focus** lifecycle.
 
@@ -185,14 +193,16 @@ Module layout reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md)
 
 | Pass | Ends with | Global undo (when applicable) |
 |------|-----------|-------------------------------|
-| **recordPass** | `commitCapturePass()` → **recordPass** in **passes** | **RecordPassAdded** |
-| **overdubPass** | `commitCapturePass()` → **overdubPass** in **passes** | **OverdubPassAdded** |
-| **noteEditPass** | `closeNoteEditPass()` (boundary flush) | **NoteEditPassClosed** |
+| **recordPass** | `commitCapturePass()` at **record stop** → one **recordPass**. Defines **LoopGeometry** and seals recorded notes as immutable. After that stop, the loop does not enter record again; further notes are **overdubPass** or edit. | **RecordPassAdded** |
+| **overdubPass** | `commitCapturePass()` at the **LoopGeometry** wrap in force at that time → **overdubPass** in **passes** | **OverdubPassAdded** |
+| **noteEditPass** | `closeNoteEditPass()` (boundary flush of one or more **editPass** note changes) | **NoteEditPassClosed** |
 | **controlChangeEditPass** | (future) | **ControlChangeEditPassClosed** (stub) |
 
 A **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEditPassIndex**. Session `editPassIds` are in-session `E:` undo only; commit (or reboot-during-edit durable checkpoint) is one noteEditPass.
 
 Wraps from one overdub session share **overdubSessionIndex** on each `OverdubPass` (same grouping role as **editPassIndex**). Index `0` is ungrouped (legacy cards). Do not call this field session-id.
+
+**`LoopPasses` holds committed pass rows.** Their content is sealed from `NoteEditSession.store` or **Capture** at commit. Those two stay mutable until that commit. **LoopGeometry** is not from store or Capture. **Active** / **Disabled** on a pass is undo/redo traversal, not sealed content: undo sets **Disabled**, redo sets **Active**; the row stays.
 
 ### Loop content history (persistence)
 
@@ -200,29 +210,26 @@ Wraps from one overdub session share **overdubSessionIndex** on each `OverdubPas
 
 | Term | Use | Not this |
 |------|-----|----------|
-| **content record** / **content layer** | Durable Loop history row | `UndoEntry`, `PassStateChange` |
+| **content record** / **content layer** | Durable Loop history row — published **LoopSnapshot** after migration; pass rows while compatibility remains | `UndoEntry`, `PassStateChange` |
 | **editing derivation** | Group content records into undo units | Persist those units |
 | **AvailableData** / **isRangeAvailable** | Runtime predicate over buffered ranges | Stored slot flag; `WINDOW_READY` |
 | **BufferedData** | Materialized runtime subset of Loop content (set of ranges) | The entire Loop content in RAM |
 | **lastUnlinkedSlotLink** | Set last-state for one-step clear relink (Layer B) | Loop undo history |
 | **ContentUndoUnit** | Runtime derivation result from `deriveContentUndoUnits` — not persisted | `UndoEntry`; a persist record |
-| **LoopGeometry** | Persisted loop length/start content record (`LoopGeometry.id`, before and after ticks) | `UndoLoopGeometry` (in-session GUS payload until Stage 3b); `LoopPass` |
+| **LoopGeometry** | Loop length/start metadata (`LoopGeometry.id`, before and after ticks). Length may be shorter than note spans in capture or edit passes. | A LoopSnapshot; note geometry; `UndoLoopGeometry` (in-session GUS payload until Stage 3b) |
 
 **Do not** use **Source** as a domain noun in docs, comments, or types (`ClockSource` already exists). Say **Loop content**.
 
-### Loop content resolution (DEC-037)
+### Loop content resolution (DEC-037, historical)
 
-[DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype): parallel prototype. `LoopPasses` stays content authority. Do not name the owner `Resolver`.
+[DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) named a parallel prototype. New docs and new types do not use **LoopContentResolution**. Committed effective state is the selected **LoopSnapshot**. Do not name a query owner `Resolver`.
 
 | Term | Use | Not this |
 |------|-----|----------|
-| **LoopContentResolution** | Owner of `resolveState` / `resolveWindow` / `resolveNotes` | `NoteGeometryResolver`; `LoopContentResolver` |
-| **RawMidiEvent** | Authoritative recorded MIDI in a pass (`MidiEvent` shape) | Edit rows; resolved output |
-| **EditAction** | `EditPass` row (Create / Delete / ChangeLength / ChangeTick / ChangePitch / …) | Raw MIDI; resolved MIDI |
-| **ResolvedEvent** | Effective MIDI after layer semantics | Raw pass events; `DisplayNote` |
-| **checkpointIntervalTicks** | Measured bound on `resolveState` replay distance | PSRAM chunk size; bar size |
+| **RawMidiEvent** | Authoritative recorded MIDI in a pass (`MidiEvent` shape) | Edit rows; LoopSnapshot note objects |
+| **EditAction** | `EditPass` row (Create / Delete / ChangeLength / ChangeTick / ChangePitch / …) | Raw MIDI; a LoopSnapshot NoteRef |
 
-Committed pass **content** is immutable. Active/Disabled is mutable history state. Physical chunks (`LoopEventStore`) are packing, not resolution boundaries.
+Physical chunks (`LoopEventStore`) are packing, not resolution boundaries. Pass-content immutability is defined under **Pass types** above.
 
 **Do not** persist undo/redo records, a history cursor, or editor history. NOTE_EDIT `E:` session undo is pre-commit and outside this persist model.
 
@@ -236,7 +243,8 @@ Committed pass **content** is immutable. Active/Disabled is mutable history stat
 | **EditPropertyType** | Updated field on **editPass** (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
 | **EditPassId** / **PassId** | Stable id per pass row (unified **nextPassId_**) |
 | **LoopGeometry.id** | Stable id per committed loop-geometry content record (same **nextPassId_**) |
-| **NoteRef** | Stable note target in an **EditChange** |
+| **NoteRef** | Loop-scoped reference to an immutable note object — LoopSnapshot links and **EditChange** targets |
+| **EventRef** | Loop-scoped reference to an immutable non-note event object — LoopSnapshot links |
 
 ### Edit sessions (RAM scope)
 
@@ -266,7 +274,7 @@ Committed pass **content** is immutable. Active/Disabled is mutable history stat
 |------|-----|-------|
 | Active capture pass replay | **merge** (`mergeActiveCapturePasses`, `mergeMaterializedPassesWithCapture`) | flatten |
 | Full pass replay to MIDI vector | **materialize** (`materializeToEventVector`) | flat / flatten |
-| Query-time effective MIDI/state | **resolve** (`LoopContentResolution::resolveState`, `resolveWindow`) | materialize as the normal-path owner (DEC-037 prototype until three gates) |
+| Query-time effective MIDI/state | Selected **LoopSnapshot** (NoteRef / EventRef) | `materialize` as the normal-path owner; **LoopContentResolution** |
 | Note projection of a resolved window | **resolveNotes** (derived consumer) | treating Notes as playback authority |
 | Internal heap (malloc/new) | **internal heap** (`InternalHeapFirstAllocator`, `getInternalHeapFreeBytes`) | RAM2 in new identifiers |
 | External memory pool (EXTMEM/PSRAM) | **external memory pool** (`ExternalMemoryFirstAllocator`, `isInExternalMemoryPool`) | PSRAM in new identifiers |
@@ -448,7 +456,7 @@ Use during code review, OpenSpec implementation review, and before merge:
 - [ ] Public APIs follow established verb conventions
 - [ ] This document updated if a new architectural concept is approved
 - [ ] Pipeline / Queue / Flow not used for synchronous deterministic algorithms (use **Resolution**)
-- [ ] Loop history queries use `LoopContentResolution`, not `NoteGeometryResolver` or a generic `Resolver`
+- [ ] Committed effective-state reads use the selected **LoopSnapshot**, not `NoteGeometryResolver` or a generic `Resolver`. Do not introduce **LoopContentResolution** in new docs
 - [ ] Interval-path work uses **structurally bounded** / **empirically bounded** / **unbounded owner** — not a scheduling class or `admit(WorkClass)`
 - [ ] New top-level domain nouns have user approval and `DEC-###` entry
 
