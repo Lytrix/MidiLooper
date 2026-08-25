@@ -176,8 +176,8 @@ candidate, and leaves the parent unchanged on failure.
 
 ### Phase 2 publication result
 
-`ExecutionBounds.md` rows 21–22 classify dirty-bar `step` and one-candidate
-publication as empirically bounded. Overrun/failure discards the candidate
+`ExecutionBounds.md` classifies dirty-bar `LoopSnapshotConstruction::step`
+and one-candidate publication as empirically bounded. Overrun/failure discards the candidate
 and keeps the previous published snapshot. Construction is not admitted to
 `handleMidiInput()`, clock dispatch, track-tick, or `OverdubWrap`.
 
@@ -213,7 +213,8 @@ Tasks 4.3–4.6 are not authorized by this result.
 
 Overdub and record session-exit no longer complete a candidate on the stop
 path. `Loop::queueSessionExitSnapshot` copies pass ids; idle
-`stepPendingSnapshotPublish(1)` applies one row-21 unit. During OVERDUBBING,
+`stepPendingSnapshotPublish(1)` applies one `LoopSnapshotConstruction::step`.
+During OVERDUBBING,
 idle only advances an in-flight construction (`allowStartConstruction` false).
 One idle unit is one dirty bar, ordered by soonest playhead arrival. PLAYING
 may start the next pass change-set. NOTE_EDIT close remains a synchronous
@@ -229,7 +230,7 @@ full-list gather remains only when no published root exists.
 ### Amendment (2026-08-25) — OVERDUBBING idle skips visual reconstruct
 
 `Track::processDeferredIdleMaintenance` does not run visual-cache slices
-while OVERDUBBING. Only an in-flight row-21 construction may `step`.
+while OVERDUBBING. Only an in-flight `LoopSnapshotConstruction` may `step`.
 [`230556`](../../../captures/session_20260825_230556.log) `idle_reconstruct`
 was 241–278 ms when snapshot step had no in-flight work. PLAYING /
 STOPPED_RECORDING give an empty dirty visual cache that turn before snapshot

@@ -317,7 +317,7 @@ Target-aligned runtime baseline used by this linkage (same sample + values as [`
 - Carryover scheduler target check in the same run: run-wide `DIAG,midi_gap` max **2.855 s** (3 windows over 1 s)
 - Carryover lateness gate check in the same run: `late_on` non-zero in 5 windows (23 events, max lateness **42.458 ms**), `late_off` non-zero in 4 windows (13 events, max lateness **29.551 ms**), `late_clk` zero events
 
-### Row 21 idle snapshot step vs note MIDI ([`233308`](../../captures/session_20260825_233308.log))
+### `LoopSnapshotConstruction::step` idle vs note MIDI ([`233308`](../../captures/session_20260825_233308.log))
 
 First-record `LoopSnapshotConstruction::step(1)` on
 `Track::processDeferredIdleMaintenance`. Same method as

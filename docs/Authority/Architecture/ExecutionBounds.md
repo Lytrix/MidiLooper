@@ -102,31 +102,34 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
 | 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and idle `Loop::stepPendingSnapshotPublish(1)` | one dirty bar of the in-flight note or event change, soonest playhead arrival first | **Empirically bounded** |
-| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one row-21 unit (no published root: OVERDUBBING in-flight only; after a root exists: STOPPED / STOPPED_RECORDING only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
+| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one `LoopSnapshotConstruction::step` unit (no published root: OVERDUBBING in-flight only; after a root exists: STOPPED / STOPPED_RECORDING only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `LoopSnapshotConstruction::step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
 
-### Snapshot candidate construction (rows 21–22)
+### Snapshot candidate construction (`LoopSnapshotConstruction::step` and session-exit publish)
 
 Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
 stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. An idle turn that applies one
 snapshot unit does not also run a visual-cache slice. While OVERDUBBING, idle
-only applies row 21 to an already started construction, and only when no
+only applies `LoopSnapshotConstruction::step` to an already started
+construction, and only when no
 published root exists yet (first-record publish). After a published root
-exists, PLAYING and OVERDUBBING do not apply row 21. PLAYING visual slices
+exists, PLAYING and OVERDUBBING do not apply `LoopSnapshotConstruction::step`.
+PLAYING visual slices
 also stay off unless the visual cache is empty. PLAYING / STOPPED_RECORDING
-give an empty dirty visual cache the idle turn before row 21 when no root
+give an empty dirty visual cache the idle turn before
+`LoopSnapshotConstruction::step` when no root
 exists yet. Starting the next pass change-set stays on PLAYING /
 STOPPED_RECORDING / STOPPED only while no root exists, then on STOPPED /
 STOPPED_RECORDING. Wrap-ahead enqueue and `startNextPendingConstruction`
 stay off the OVERDUBBING idle turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,
 track-tick, or `CommitReason::OverdubWrap` (wrap only records a pass id).
 
-| Property | Row 21 `step` | Row 22 publish |
+| Property | `LoopSnapshotConstruction::step` | Session-exit publish |
 |----------|---------------|----------------|
-| **Unit cap** | One dirty bar of the current `SnapshotNoteChange` or `SnapshotEventChange` | Queue: copy pass ids. Idle: one row-21 unit. Sync drain: remaining units then one store |
+| **Unit cap** | One dirty bar of the current `SnapshotNoteChange` or `SnapshotEventChange` | Queue: copy pass ids. Idle: one `LoopSnapshotConstruction::step`. Sync drain: remaining units then one store |
 | **Maximum indivisible step** | Copy-on-write that bar's dirty page and membership list. Remaining bars of the same change wait for later idle turns, ordered by soonest playhead arrival. Starting a pass still reconstructs that pass's committed events into a change set on the idle/drain owner | Atomic `storePublishedSnapshot` only after the candidate is complete |
 | **Progress** | `nextChangeIndex_`, `complete()`, `failed()` | Pending box queued/applied pass ids; previous published root remains selected until session-exit `freeze()` succeeds |
 | **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root and idle/drain stores it |

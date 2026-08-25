@@ -199,8 +199,8 @@ runtime construction-bound classification in `ExecutionBounds.md`.
 - [x] Native invariant/parity checks pass without a new test architecture.
 - [x] Capture-serial build passes with RAM1 locals at 4640.
 - [x] HITL gate not required; playback/consumers still use compatibility sources.
-- [x] `ExecutionBounds.md` rows 21–22 classify `step` and session-exit /
-      NOTE_EDIT close publication as empirically bounded with
+- [x] `ExecutionBounds.md` classifies `LoopSnapshotConstruction::step` and
+      session-exit / NOTE_EDIT close publication as empirically bounded with
       discard-candidate / keep-previous-published failure.
 - [x] Compatibility `LoopPass` records remain intact.
 - [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
@@ -211,7 +211,8 @@ separately gated.
 
 Amendment (2026-08-25): overdub session-exit publication is queued at stop and
 stepped from idle (`DEC-045`). Record and NOTE_EDIT close remain synchronous.
-This does not add a new unbounded owner; idle uses row 21 `step(1)`.
+This does not add a new unbounded owner; idle uses
+`LoopSnapshotConstruction::step(1)`.
 
 ### Idle-publish implementation review (DEC-045)
 
