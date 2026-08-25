@@ -6,10 +6,12 @@ The current loop model derives effective musical state by replaying capture pass
 
 - Introduce complete immutable `LoopPass` snapshots containing structurally shared references to immutable note and non-note MIDI event objects.
 - Keep `Loop` / `LoopPasses` as the snapshot publication and storage boundary.
+- Keep `StorageManager` as the sole persistence and migration owner; large-loop save/load work uses its existing deferred units and does not synchronously rebuild or serialize the complete loop on timing-critical paths.
 - Keep capture finalization, overlap, note pairing, and NOTE_EDIT geometry semantics in their existing owners.
 - Make undo, redo, and clear-slot restore select existing snapshot identities rather than replay history.
 - Migrate playback, display, NOTE_EDIT, analysis, persistence, and load consumers in separately gated stages.
 - Keep derived representation ownership, revision, invalidation, and build policy with the existing owners defined by [`DerivedViews.md`](../../docs/Authority/Architecture/DerivedViews.md).
+- Keep persistence and compatibility migration with `StorageManager` as defined by [`Storage.md`](../../docs/Authority/Architecture/Storage.md), using deferred bounded units for large loops.
 - **BREAKING**: historical replay and maintained LCR state become compatibility-only and are retired after caller migration gates pass.
 - **BREAKING**: a future storage version is required for immutable objects and snapshot structure; its physical layout is a separate design.
 

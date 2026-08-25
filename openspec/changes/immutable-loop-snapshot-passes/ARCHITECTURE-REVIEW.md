@@ -27,7 +27,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 | **Execution bound change?** | NO — design only; this phase adds the execution-bound gate and does not admit runtime work |
 | **Behavior-preserving?** | YES — no firmware behavior changes |
 | **Reuse decision** | YES — extend `Loop` / `LoopPasses`; retain semantic and playback owners |
-| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, and derived-representation authority |
+| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, derived-representation authority, and storage authority |
 
 ### Phase 1 — Native snapshot model
 
@@ -73,7 +73,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 | Question | Required |
 |---|---|
 | **Owner module** | `TrackUndo` selects; `StorageManager` persists; `Loop` rebuilds local handles |
-| **Primary invariant** | Undo/redo/load/clear select complete snapshots without normal-path replay |
+| **Primary invariant** | Undo/redo/load/clear select complete snapshots without normal-path replay; `StorageManager` performs large-loop save/load through bounded deferred units |
 | **Ownership change?** | NO after Phase 0 approval |
 | **State transition change?** | YES — snapshot selection |
 | **Execution bound change?** | NO new unbounded interval work; storage work must use declared `StorageManager` units, with no content-sized synchronous work in `handleMidiInput()` or clock dispatch |
@@ -107,5 +107,6 @@ Before checking off a phase in `tasks.md`:
 - [ ] No local timer is used as the sole bound for an indivisible operation
 - [ ] Each migrated derived representation records snapshot identity for freshness and retains its existing owner, invalidation, build, and stale/fallback policy
 - [ ] `LoopPasses` and materialized compatibility sources are removed only after the individual representation migration gate passes
+- [ ] Large-loop persistence and migration retain `StorageManager` ownership, use declared deferred units, and do not perform content-sized synchronous work on timing-critical paths
 - [ ] No compatibility path was removed before its caller gate passed
 - [ ] Runtime docs, decision log, and plan reflect the result

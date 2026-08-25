@@ -94,6 +94,22 @@ complete snapshot. Compatibility `LoopPasses` or materialized reads remain
 available only as parity/fallback sources until the corresponding consumer gate
 passes.
 
+## Storage relationship
+
+[`Storage.md`](../Authority/Architecture/Storage.md) remains the persistence
+ownership contract. `StorageManager` serializes and loads the content required
+for a complete `LoopSnapshot`; `Loop` rebuilds loop-local handles and selects
+the runtime snapshot. The storage format does not absorb derived
+representations, playback runtime state, or undo history.
+
+Large-loop save and compatibility migration use existing deferred
+`StorageManager` units. They may increase total completion time, but they must
+not perform content-sized synchronous work at record/overdub stop, inside
+`handleMidiInput()`, during clock dispatch, or on a track-tick path. Each
+interval-path unit requires the `ExecutionBounds.md` class, caps, progress,
+and overrun/failure policy. Existing persisted state and the active snapshot
+remain intact when work cannot complete.
+
 ## Migration stages
 
 1. Complete formal architecture reassessment and record approval.
@@ -107,7 +123,8 @@ passes.
    separate gates; each representation retains its existing owner, source
    identity, invalidation, and bounded build policy.
 5. Migrate undo, clear-slot restore, load, and persistence after the physical
-   storage design is approved.
+   storage design is approved; keep serialization and compatibility migration
+   under `StorageManager` deferred units.
 6. Remove historical replay and compatibility state only after every caller gate
    and rollback trigger is closed.
 
