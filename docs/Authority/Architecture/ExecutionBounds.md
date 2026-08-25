@@ -101,7 +101,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 18 | `processHitlSerialCommands` | capture builds only | none | **Unbounded** |
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
-| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and idle `Loop::stepPendingSnapshotPublish(1)` | one settled note or event change; dirty bars = that change's membership | **Empirically bounded** |
+| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and idle `Loop::stepPendingSnapshotPublish(1)` | one dirty bar of the in-flight note or event change, soonest playhead arrival first | **Empirically bounded** |
 | 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one row-21 unit (OVERDUBBING: in-flight only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
@@ -121,8 +121,8 @@ track-tick, or `CommitReason::OverdubWrap` (wrap only records a pass id).
 
 | Property | Row 21 `step` | Row 22 publish |
 |----------|---------------|----------------|
-| **Unit cap** | One settled `SnapshotNoteChange` or `SnapshotEventChange` | Queue: copy pass ids. Idle: one row-21 unit. Sync drain: remaining units then one store |
-| **Maximum indivisible step** | Apply that change, including copy-on-write of its dirty pages and membership lists. A long or wrap note can touch every intersecting bar. Starting a pass also reconstructs that pass's committed events into a change set on the idle/drain owner | Atomic `storePublishedSnapshot` only after the candidate is complete |
+| **Unit cap** | One dirty bar of the current `SnapshotNoteChange` or `SnapshotEventChange` | Queue: copy pass ids. Idle: one row-21 unit. Sync drain: remaining units then one store |
+| **Maximum indivisible step** | Copy-on-write that bar's dirty page and membership list. Remaining bars of the same change wait for later idle turns, ordered by soonest playhead arrival. Starting a pass still reconstructs that pass's committed events into a change set on the idle/drain owner | Atomic `storePublishedSnapshot` only after the candidate is complete |
 | **Progress** | `nextChangeIndex_`, `complete()`, `failed()` | Pending box queued/applied pass ids; previous published root remains selected until session-exit `freeze()` succeeds |
 | **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root and idle/drain stores it |
 | **Overrun / failure** | `failed_`; `freeze()` returns null | Discard the candidate; keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay as committed |

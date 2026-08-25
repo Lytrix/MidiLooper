@@ -364,12 +364,24 @@ void test_measure_paged_directory_successor_locality() {
                              ->references.size());
 }
 
+bool drainSnapshotConstruction(LoopSnapshotConstruction& construction,
+                               uint32_t playheadPhaseTick = 0) {
+  size_t steps = 0;
+  while (!construction.complete() && !construction.failed() && steps < 10000) {
+    if (!construction.step(1, playheadPhaseTick)) {
+      break;
+    }
+    ++steps;
+  }
+  return construction.complete() && !construction.failed();
+}
+
 std::shared_ptr<const LoopSnapshot> buildSnapshotForTests(
     const LoopSnapshotChangeSet& changes, uint32_t loopLength = 3072) {
   auto empty = std::make_shared<const LoopSnapshot>(
       LoopSnapshot(7, loopLength, 0, 100, 100));
   LoopSnapshotConstruction construction(empty, changes);
-  if (!construction.step(changes.notes.size() + changes.events.size())) {
+  if (!drainSnapshotConstruction(construction)) {
     return {};
   }
   return construction.freeze();
@@ -415,7 +427,7 @@ void test_snapshot_replaces_note_and_shares_unchanged_membership() {
   LoopSnapshotChangeSet changes;
   changes.notes.push_back(replacement);
   LoopSnapshotConstruction construction(parent, changes);
-  TEST_ASSERT_TRUE(construction.step(1));
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
   const auto successor = construction.freeze();
 
   TEST_ASSERT_NOT_NULL(successor.get());
@@ -503,7 +515,7 @@ void test_snapshot_replaces_pitch_and_clears_old_membership() {
   LoopSnapshotChangeSet changes;
   changes.notes.push_back(replacement);
   LoopSnapshotConstruction construction(parent, changes);
-  TEST_ASSERT_TRUE(construction.step(1));
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
   const auto successor = construction.freeze();
   const auto oldPitch = successor->noteMembership(60, 0);
   const size_t oldCount = oldPitch ? oldPitch->references.size() : 0;
@@ -519,6 +531,47 @@ void test_snapshot_find_note_uses_pitch_hint_then_scan() {
   TEST_ASSERT_NOT_NULL(snapshot->findNote(90, 60).get());
   TEST_ASSERT_EQUAL(90u, snapshot->findNote(90, 64)->noteId);
   TEST_ASSERT_NULL(snapshot->findNote(91, 60).get());
+}
+
+void test_snapshot_applies_one_bar_in_playhead_arrival_order() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(70, 60, 0, 3072));
+  auto parent = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(7, 3072, 0, 100, 100));
+  LoopSnapshotConstruction construction(parent, changes);
+  const uint32_t playheadInBarTwo = 2 * Config::TICKS_PER_BAR + 10;
+
+  auto noteCount = [&construction](uint32_t barIndex) -> size_t {
+    const auto membership = construction.candidate().noteMembership(60, barIndex);
+    return membership ? membership->references.size() : 0;
+  };
+
+  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
+  TEST_ASSERT_FALSE(construction.complete());
+  TEST_ASSERT_EQUAL(0u, noteCount(0));
+  TEST_ASSERT_EQUAL(0u, noteCount(1));
+  TEST_ASSERT_EQUAL(1u, noteCount(2));
+  TEST_ASSERT_EQUAL(0u, noteCount(3));
+
+  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
+  TEST_ASSERT_EQUAL(0u, noteCount(0));
+  TEST_ASSERT_EQUAL(0u, noteCount(1));
+  TEST_ASSERT_EQUAL(1u, noteCount(2));
+  TEST_ASSERT_EQUAL(1u, noteCount(3));
+
+  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
+  TEST_ASSERT_EQUAL(1u, noteCount(0));
+  TEST_ASSERT_EQUAL(0u, noteCount(1));
+  TEST_ASSERT_EQUAL(1u, noteCount(2));
+  TEST_ASSERT_EQUAL(1u, noteCount(3));
+
+  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
+  TEST_ASSERT_TRUE(construction.complete());
+  TEST_ASSERT_EQUAL(1u, noteCount(0));
+  TEST_ASSERT_EQUAL(1u, noteCount(1));
+  TEST_ASSERT_EQUAL(1u, noteCount(2));
+  TEST_ASSERT_EQUAL(1u, noteCount(3));
+  TEST_ASSERT_NOT_NULL(construction.freeze().get());
 }
 
 void test_snapshot_failed_candidate_preserves_parent() {
@@ -560,6 +613,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_wrap_membership_uses_one_note_reference);
   RUN_TEST(test_snapshot_event_index_preserves_canonical_order);
   RUN_TEST(test_snapshot_candidate_progress_and_alias_safety);
+  RUN_TEST(test_snapshot_applies_one_bar_in_playhead_arrival_order);
   RUN_TEST(test_snapshot_failed_candidate_preserves_parent);
   RUN_TEST(test_snapshot_replaces_pitch_and_clears_old_membership);
   RUN_TEST(test_snapshot_find_note_uses_pitch_hint_then_scan);

@@ -117,6 +117,8 @@ struct LoopSnapshotChangeSet {
 
 class LoopSnapshot;
 class LoopSnapshotConstruction;
+struct LoopSnapshotNoteBarApply;
+struct LoopSnapshotEventBarApply;
 using ImmutableLoopSnapshotRef = std::shared_ptr<const LoopSnapshot>;
 
 /// Complete immutable effective-state root after construction is frozen.
@@ -147,9 +149,8 @@ class LoopSnapshot {
 
  private:
   friend class LoopSnapshotConstruction;
-
-  bool applyNoteChange(const SnapshotNoteChange& change);
-  bool applyEventChange(const SnapshotEventChange& change);
+  friend struct LoopSnapshotNoteBarApply;
+  friend struct LoopSnapshotEventBarApply;
 
   LoopId loopId_ = kInvalidLoopId;
   uint32_t loopLengthTicks_ = 0;
@@ -166,21 +167,30 @@ class LoopSnapshotConstruction {
  public:
   LoopSnapshotConstruction(std::shared_ptr<const LoopSnapshot> parent,
                             const LoopSnapshotChangeSet& changes);
+  ~LoopSnapshotConstruction();
 
-  bool step(size_t maximumChanges);
-  bool complete() const { return nextChangeIndex_ == totalChangeCount(); }
+  bool step(size_t maximumUnits, uint32_t playheadPhaseTick = 0);
+  bool complete() const {
+    return nextChangeIndex_ == totalChangeCount() && !noteApply_ && !eventApply_;
+  }
   bool failed() const { return failed_; }
   size_t completedChangeCount() const { return nextChangeIndex_; }
+  size_t completedUnitCount() const { return completedUnits_; }
   size_t totalChangeCount() const { return changes_.notes.size() + changes_.events.size(); }
 
   const LoopSnapshot& candidate() const { return candidate_; }
   std::shared_ptr<const LoopSnapshot> freeze() const;
 
  private:
+  bool applyNextBar(uint32_t playheadPhaseTick);
+
   std::shared_ptr<const LoopSnapshot> parent_;
   LoopSnapshot candidate_;
   LoopSnapshotChangeSet changes_;
+  std::unique_ptr<LoopSnapshotNoteBarApply> noteApply_;
+  std::unique_ptr<LoopSnapshotEventBarApply> eventApply_;
   size_t nextChangeIndex_ = 0;
+  size_t completedUnits_ = 0;
   bool failed_ = false;
   mutable std::shared_ptr<const LoopSnapshot> frozenCandidate_;
 };

@@ -5,8 +5,10 @@
 
 #include <Arduino.h>
 
+#include "ClockManager.h"
 #include "EditManager.h"
 #include "Globals.h"
+#include "TickPhase.h"
 #include "Logger.h"
 #include "LoopContentResolution.h"
 #include "LoopEventStore.h"
@@ -696,7 +698,12 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
 #if defined(SESSION_CAPTURE)
     const uint32_t snapshotIdleStartUs = micros();
 #endif
-    snapshotLoop.stepPendingSnapshotPublish(1, !isOverdubbing());
+    const uint32_t playheadPhaseTick =
+        snapshotLoop.loopLengthTicks == 0
+            ? 0
+            : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
+                              snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
+    snapshotLoop.stepPendingSnapshotPublish(1, !isOverdubbing(), playheadPhaseTick);
     snapshotIdleUnitRan = true;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     char snapshotLine[160];

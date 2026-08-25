@@ -104,6 +104,11 @@ compatibility gather.
 until idle finishes the successor root. Stop no longer completes the candidate
 before returning to MIDI service.
 
+**Amendment (2026-08-25):** The idle unit is one dirty bar of the in-flight
+change, not one settled note. Remaining bars are applied on later idle turns,
+ordered by soonest playhead arrival from `playheadPhaseTick`. Starting the next
+pass change-set is unchanged.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25
