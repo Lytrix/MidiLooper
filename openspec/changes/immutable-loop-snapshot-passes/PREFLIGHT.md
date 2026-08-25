@@ -209,6 +209,19 @@ convert it.
 
 Tasks 4.3–4.6 are not authorized by this result.
 
+### Phase 3 display result (4.4 display only)
+
+`rebuildDisplayNotesInWindow`, committed full-loop display gather,
+`rebuildVisualCacheIdleSlice`, and `rebuildVisualCacheFromPasses` read
+published snapshot event membership through
+`tryGatherPublishedSnapshotEventsInWindow` (and
+`tryGatherPublishedSnapshotEventsInWindowWithCapture` when live capture is
+in the paint path). Reconstruction stays on `reconstructDisplayNotes`.
+`visualCache` remains the display list owner. Compatibility gather and LCR
+prepared windows remain only when no published root exists. Task 4.3 is
+skipped. NOTE_EDIT paint still uses `projectedNoteEditDisplayNotes`.
+Analysis, validation, 4.5, and 4.6 identity recording are not authorized.
+
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
 Overdub and record session-exit no longer complete a candidate on the stop

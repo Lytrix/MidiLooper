@@ -246,7 +246,10 @@ redo target. C remains readable only while a remaining root holds it.
    content-sized construction as one timing-critical operation.
 5. Migrate playback, display, NOTE_EDIT, analysis, and validation consumers in
    separate gates; each representation retains its existing owner, source
-   identity, invalidation, and bounded build policy.
+   identity, invalidation, and bounded build policy. Playback (4.1–4.2) and
+   display paint / visual-cache fill (4.4 display only) read published
+   snapshot events. NOTE_EDIT, analysis, and validation remain on
+   compatibility sources.
 6. Migrate undo, clear-slot restore, load, and persistence after the physical
    storage design is approved; keep serialization and compatibility migration
    under `StorageManager` deferred units.

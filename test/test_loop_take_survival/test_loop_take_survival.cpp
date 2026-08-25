@@ -748,6 +748,44 @@ void test_overdub_wrap_ahead_does_not_publish_until_session_exit() {
   TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 67));
 }
 
+void test_visual_cache_reads_published_snapshot_with_fallback() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  SessionMidiEventVec snapshotEvents;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotEvents, 0, 3072));
+  const NoteUtils::DisplayNoteVec expected =
+      NoteUtils::reconstructDisplayNotes(snapshotEvents, 3072, false, false);
+  TEST_ASSERT_EQUAL(1u, expected.size());
+
+  loop.invalidateDisplayCaches();
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  loop.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_EQUAL(expected.size(), loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(expected[0].note, loop.visualCache.notes[0].note);
+  TEST_ASSERT_EQUAL(expected[0].startTick, loop.visualCache.notes[0].startTick);
+  TEST_ASSERT_EQUAL(expected[0].endTick, loop.visualCache.notes[0].endTick);
+
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_EQUAL(expected.size(), loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(expected[0].note, loop.visualCache.notes[0].note);
+  TEST_ASSERT_EQUAL(expected[0].startTick, loop.visualCache.notes[0].startTick);
+  TEST_ASSERT_EQUAL(expected[0].endTick, loop.visualCache.notes[0].endTick);
+
+  Loop noSnapshot;
+  seedCommittedPair(noSnapshot);
+  SessionMidiEventVec missing;
+  TEST_ASSERT_FALSE(noSnapshot.tryGatherPublishedSnapshotEventsInWindow(missing, 0, kLoopLen));
+  noSnapshot.invalidateDisplayCaches();
+  noSnapshot.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
+}
+
 void test_overdub_without_parent_does_not_invent_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -800,6 +838,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_edit_close_replaces_published_note);
   RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
+  RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
   RUN_TEST(test_stale_published_snapshot_gathers_window_without_full_compatibility);
   RUN_TEST(test_stale_snapshot_overlays_unpublished_overdub_pass);
   RUN_TEST(test_stale_snapshot_applies_unpublished_hide_companion);

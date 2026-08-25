@@ -79,6 +79,23 @@ void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out
   }
 }
 
+void mergeCaptureStoreIntoWindowedEvents(const Loop& loop, SessionMidiEventVec& out,
+                                         uint32_t windowStart, uint32_t windowLength) {
+  if (!loop.captureActive() || loop.capture.store.empty()) {
+    return;
+  }
+  const_cast<Loop&>(loop).ensureCaptureEventsSorted();
+  SessionMidiEventVec captureFlat;
+  loop.capture.store.copyEventsTo(captureFlat);
+  SessionMidiEventVec captureWindow;
+  DisplayWindowUtils::filterMidiEventsToWindow(captureFlat, captureWindow, windowStart, windowLength,
+                                               loop.loopLengthTicks);
+  if (captureWindow.empty()) {
+    return;
+  }
+  mergeSortedLoopCaptureLayers(out, std::move(captureWindow));
+}
+
 template <typename MidiEventVector>
 void mergeCaptureStoreIntoMaterializedEvents(const Loop& loop, MidiEventVector& out) {
   if (!loop.captureActive() || loop.capture.store.empty()) {
@@ -480,6 +497,15 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindowWithCapture(SessionMidiEve
 }
 
 #undef LOOP_EMIT_CAPTURE_TAIL
+
+LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindowWithCapture(
+    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength) const {
+  if (!tryGatherPublishedSnapshotEventsInWindow(out, windowStart, windowLength)) {
+    return false;
+  }
+  mergeCaptureStoreIntoWindowedEvents(*this, out, windowStart, windowLength);
+  return true;
+}
 
 LOOP_COLD_MEM bool Loop::shouldAvoidFullVisualRebuild(uint32_t loopLength) const {
   const uint32_t boundedThreshold =

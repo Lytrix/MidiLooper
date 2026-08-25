@@ -336,6 +336,11 @@ struct Loop {
   /// snapshot exists so the caller can use compatibility gather.
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
+  /// Snapshot window plus live `capture.store` events in the same window.
+  /// Returns false only when no published snapshot exists.
+  bool tryGatherPublishedSnapshotEventsInWindowWithCapture(SessionMidiEventVec& out,
+                                                           uint32_t windowStart,
+                                                           uint32_t windowLength) const;
   /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.
   /// Completes construction in this call. Stop/idle paths use `queue` + `step`.
   bool tryPublishSessionExitSnapshot(CommitReason reason,

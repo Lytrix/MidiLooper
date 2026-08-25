@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (233308 device PASS — idle hold after first publish)
+Last updated: 2026-08-25 (4.4 display reads published LoopSnapshot)
 
 ---
 
@@ -20,6 +20,9 @@ reconstruct. After the first published root exists, PLAYING and OVERDUBBING
 do not step successor snapshot construction. NOTE_EDIT close stays synchronous.
 Device PASS [`233308`](../../captures/session_20260825_233308.log): no
 `snapshot_idle` after first publish until STOPPED; PLAY4 BPM 119.966–120.049.
+Display paint fallback and visual-cache fill read published snapshot events
+when a root exists; compatibility gather remains the no-snapshot fallback.
+Task 4.3 stays skipped.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:

@@ -265,17 +265,21 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #endif
   SessionMidiEventVec flat;
   ResolutionCostCounters windowCounters;
-  const bool usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
-      passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
-      &windowCounters);
 #if defined(SESSION_CAPTURE)
-  uint32_t gatherStartUs = 0;
-  if (!usedPrepared) {
-    gatherStartUs = micros();
-  }
+  const uint32_t gatherStartUs = micros();
 #endif
+  const bool usedSnapshot =
+      tryGatherPublishedSnapshotEventsInWindow(flat, windowStart, windowLength);
+  bool usedPrepared = false;
+  if (!usedSnapshot) {
+    usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
+        passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
+        &windowCounters);
+  }
   bool fallbackGatherComplete = true;
-  if (!usedPrepared) {
+  if (usedSnapshot || usedPrepared) {
+    resetFallbackGatherSession();
+  } else {
     const bool includeActiveEditRows = !constrainFallbackGather;
     if (fallbackGatherEventBudget == 0) {
       resetFallbackGatherSession();
@@ -284,11 +288,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
       fallbackGatherComplete = advanceFallbackGatherSession(
           fallbackGatherEventBudget, windowStart, windowLength, includeActiveEditRows, flat);
     }
-  } else {
-    resetFallbackGatherSession();
   }
 #if defined(SESSION_CAPTURE)
-  if (!usedPrepared) {
+  if (usedSnapshot || !usedPrepared) {
     RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);
   }
 #endif
@@ -562,7 +564,9 @@ LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
-  gatherCommittedEvents(flat);
+  if (!tryGatherPublishedSnapshotEventsInWindow(flat, 0, loopLengthTicks)) {
+    gatherCommittedEvents(flat);
+  }
   materializedEventCount_ = flat.size();
   NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
