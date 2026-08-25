@@ -120,8 +120,9 @@ plus the parent refinement and DEC-044 amendment. No firmware.
   as the snapshot root.
 - Keep lifetime, provisional vs global undo, redo-branch, and latest-saved
   reboot text already recorded.
-- Semantic bound for operations 1–5 is affected pitch + dirty bars, not
-  path depth. Path-copy remains allowed only as a directory implementation.
+- Identify/apply/construct have semantic locality bounded by affected pitch
+  + dirty bars. That is not an execution bound. Path-copy remains allowed
+  only as a directory implementation.
 
 ### [`specs/immutable-loop-snapshots/spec.md`](../../openspec/changes/immutable-loop-snapshot-passes/specs/immutable-loop-snapshots/spec.md)
 

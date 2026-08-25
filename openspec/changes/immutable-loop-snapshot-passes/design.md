@@ -19,11 +19,11 @@ timing-critical input work and must satisfy
 
 **Goals:**
 
-- Make snapshots self-contained and directly selectable.
+- Make snapshots self-contained and directly selectable. A snapshot’s logical content is completely determined by its own reference root; resolving a reference or answering a content query never requires consulting a parent snapshot.
 - Keep `LoopPass` and `LoopSnapshot` as distinct objects.
 - Preserve logical `NoteId` across immutable object versions.
 - Reuse unchanged event-object references; allocate new objects only for added or modified content.
-- Index notes as pitch → bar → bar NoteRefs and events as bar → EventRef lists with a canonical tick/order contract. Unchanged pitch/bar membership remains shared; only dirty membership and the minimum directory path to it are newly constructed.
+- Index notes as pitch → bar → bar membership lists of `NoteRef`s and events as bar → `EventRef` lists. The event list is an indexed view of existing event-stream order, not a second ordering authority. Unchanged pitch/bar membership remains shared; only dirty membership and the minimum directory path to it are newly constructed.
 - Separate semantic commit boundaries from candidate construction: construct a
   complete candidate in bounded resumable units where required, then atomically
   publish it at the existing boundary.
@@ -40,7 +40,7 @@ timing-critical input work and must satisfy
 - No change to horizon size, projection math, cursor, ledger, or MIDI deadline behavior.
 - No raw pointer persistence.
 - No decision here on exact storage layout, optional indexes, or object-pool implementation.
-- No removal of visual cache, capture preview, overdub source-view storage, or playback scratch state.
+- `LoopSnapshot` replaces authoritative effective content. Everything else retains its ownership until its migration gate.
 - No content-sized candidate construction may run as one indivisible operation
   from `handleMidiInput()`, clock dispatch, or a track-tick path.
 - No new testing architecture or broad test campaign.
@@ -138,22 +138,23 @@ incoming span
 ```
 
 **Span index (overlap / complete-note lookup).** Keyed by pitch, then by
-canonical 768-tick bar. Each bar holds **bar NoteRefs**: loop-scoped handles
-to complete immutable note objects whose geometry intersects that bar. A note
-that spans several bars appears in each intersecting list; every occurrence
-identifies the same immutable note version and `NoteId`. Candidate sets
-deduplicate by `NoteId`. Overlap remains pitch + tick (`DEC-032`); channel is
-not an index key.
+canonical 768-tick bar. Each bar holds a **membership list of `NoteRef`s**:
+loop-scoped handles to complete immutable note objects whose geometry
+intersects that bar. A note that spans several bars appears in each
+intersecting list; every occurrence identifies the same immutable note
+version and `NoteId`. Candidate sets deduplicate by `NoteId`. Overlap remains
+pitch + tick (`DEC-032`); channel is not an index key.
 
 The span index stores complete semantic notes only. It SHALL NOT store
 unmatched open Ons. Occupy / open-at-S remains `ActiveNoteLedger` /
 `presentAt` at the consumer, not a third snapshot index.
 
 **Event index (playback / display / analyze).** Keyed by the same 1-bar
-granule. Each bar holds an **EventRef** list of note and non-note events
-whose tick falls in that bar. That list SHALL have a defined canonical
-tick/order contract so consumers can iterate in event order. Non-note events
-are points and do not appear in the span index.
+granule. Each bar holds a membership list of `EventRef`s for note and
+non-note events whose tick falls in that bar. Canonical event ordering
+remains the existing event-stream semantics; the bar list is an indexed view
+in that order, not a second ordering authority. Non-note events are points
+and do not appear in the span index.
 
 **Dirty region is semantic, not “incoming bars only.”** For an incoming note:
 
@@ -196,9 +197,11 @@ implementation. Phase 1 / measurement chooses the physical form against
 Teensy allocation, serialization, and the maximum indivisible construction
 step. “Dirty bars” does not automatically solve directory sharing.
 
-The semantic locality bound is **affected pitch + intersecting (dirty) bars**.
-Path depth is an implementation detail of the eventual directory, not an
-architectural bound for operations 1–5.
+Steps that identify and rewrite membership have **semantic locality** bounded
+by the affected pitch and dirty bars. Their execution cost remains dependent
+on the number of intersecting memberships and the selected physical directory
+and therefore requires measurement before runtime publication. Path depth is
+a directory-implementation detail, not that locality.
 
 ```text
 LoopSnapshot N                         LoopSnapshot N+1
@@ -287,37 +290,33 @@ parity or fallback sources until the individual consumer migration gate passes.
 Rejected because it would couple immutable content publication to consumer
 lifecycles and create a new cross-consumer owner.
 
-### Construction applies existing semantic mutations as named operations
+### Construction applies existing semantic mutations
 
 At an existing commit boundary, the existing semantic owner supplies a settled
 mutation. Candidate construction reads the active snapshot as const and applies
 that mutation to the pitch/bar membership indexes.
 
-Construction is not one unnamed “apply mutation” step. Before runtime
-publication, each of the following operations must have a declared complexity
-and `ExecutionBounds.md` class:
+The architectural construction contract is:
 
-1. Locate affected references (same pitch, dirty bars, `NoteId` dedup).
-2. Remove obsolete references.
-3. Allocate replacement event objects.
-4. Insert new references.
-5. Construct the new snapshot root (dirty membership plus minimum directory path).
-6. Retain the new root and release unreacheable prior roots when allowed.
-7. Update optional disposable indexes, if any are justified.
-8. Freeze the candidate.
-9. Publish the candidate atomically.
+1. Identify affected content.
+2. Apply immutable object replacements.
+3. Construct the successor reference root.
+4. Freeze the candidate.
+5. Atomically publish.
+
+Phase 1 decomposes those steps into measured operations (including retain/release
+and any later optional indexes). Those decompositions are not Phase 0 architecture.
 
 If the work is larger than one admissible runtime unit, construction uses
 persistent progress and yields between bounded units; it does not block until a
 complete candidate is available. The candidate is frozen and published atomically
 only after it is complete.
 
-Steps 1–5 are semantically bounded by the affected pitch and dirty bars
-(incoming span plus resolver-returned changed geometries and memberships).
-Path depth is a directory-implementation detail, not the architectural bound.
-A flat full-loop `NoteRef` vector is not admissible as the overlap or
-candidate structure. A long note can still touch every bar it intersects;
-this model does not by itself make construction bounded.
+Identify/apply/construct have semantic locality bounded by the affected pitch
+and dirty bars. Their execution cost remains dependent on intersecting
+memberships and the selected physical directory and therefore requires
+measurement before runtime publication. A long note can still touch every bar
+it intersects; this model does not by itself make construction bounded.
 
 **Alternative:** let snapshot storage replay or resolve edits. Rejected because it creates a second semantic owner.
 
@@ -510,6 +509,7 @@ horizon ownership.
   projection. That bound is not a snapshot-architecture unit.
 - **[Parity]** Snapshot output may diverge → compare against current materialization for overlap, pairing, wrap, ordering, and non-note events.
 - **[Lifetime]** Retained snapshots may leak or alias mutable data → test reachability, loop scope, and older-snapshot stability.
+- **[Record-prefix pressure]** Record-prefix snapshot retention may create substantial temporary reference/object pressure during long recordings and must be measured against the named-root lifetime policy.
 - **[Compatibility]** Storage changes may reject existing files → retain old readers until migration and round-trip gates pass.
 
 ## Migration Plan
@@ -532,14 +532,14 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
 
 ### Complete content and LCR role
 
-- A published `LoopSnapshot` is complete effective canonical content. Unchanged
-  pitch/bar membership remains shared, but consumers never traverse a
-  parent snapshot for missing content.
-- LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
-  ownership. LCR is not the maintained effective-state authority.
-- Heavy preparation may advance through existing LCR preparation opportunities.
-  Semantic resolution publishes a complete candidate directly after its settled
-  boundary; no partial candidate is published.
+- A published `LoopSnapshot` is complete effective canonical content. Its
+  logical content is completely determined by its own reference root. Resolving
+  a reference or answering a content query never requires consulting a parent
+  snapshot. Shared membership nodes are not a parent-walk.
+- Existing LCR preparation mechanisms may be reused temporarily as
+  implementation machinery where they produce data needed to construct a
+  snapshot candidate. They do not own effective state, publication, or
+  snapshot lifetime.
 
 ### MIDI protocol boundary
 
@@ -637,9 +637,10 @@ Post-exit candidate work resumes through existing
 `Track::processDeferredIdleMaintenance()` opportunities after MIDI service.
 Candidate construction is not introduced as an unbounded operation in
 `handleMidiInput()`, clock dispatch, or `TrackManager::updateAllTracks()`.
-The implementation phase must still classify each named construction operation
-and any reused LCR preparation units under `ExecutionBounds.md`; preparation
-readiness does not replace the indivisible-step bound.
+The implementation phase must still classify the architectural construction
+contract and any reused LCR candidate-construction machinery under
+`ExecutionBounds.md`; preparation readiness does not replace the
+indivisible-step bound. LCR machinery still does not own effective state.
 
 ### Timing evidence and measurement hypothesis
 

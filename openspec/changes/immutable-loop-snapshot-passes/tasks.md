@@ -7,9 +7,9 @@ Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are co
 - [ ] 1.3 Keep this change selected in `docs/Runtime/CURRENT_WORK.md` as Phase 0 only and post the phase architecture gate before any firmware edits.
 - [ ] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each later ownership or stop-path implementation phase. Do not start those phases in Phase 0.
 - [x] 1.5 Record the persistent reference-root invariant: successor snapshots reuse unchanged event-object references, allocate new objects only for added or modified content, and must not copy the complete reference set.
-- [x] 1.6 Select the logical reference structure: notes as pitch → bar → bar NoteRefs (span index) and events as bar → EventRef lists with a canonical tick/order contract. Path-copy is rejected as the overlap model. The physical directory representation remains Phase 1 / measurement.
+- [x] 1.6 Select the logical reference structure: notes as pitch → bar → membership lists of `NoteRef`s (span index) and events as bar → membership lists of `EventRef`s (indexed view of existing event-stream order). Path-copy is rejected as the overlap model. The physical directory representation remains Phase 1 / measurement.
 - [x] 1.7 Specify snapshot reachability/reclamation, provisional session snapshots versus global undo snapshots, redo-branch clearing, and latest-saved-snapshot reboot behavior.
-- [x] 1.8 Name the candidate-construction operations and require a declared complexity / `ExecutionBounds.md` class for each before runtime publication. Treat any numeric N-candidate quantum as a measurement hypothesis only.
+- [x] 1.8 Record the architectural construction contract (identify, replace, construct root, freeze, publish) and require an `ExecutionBounds.md` class before runtime publication. Treat any numeric N-candidate quantum as a measurement hypothesis only.
 
 ## 2. Immutable snapshot model
 

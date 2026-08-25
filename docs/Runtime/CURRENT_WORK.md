@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (pitch/bar logical indexes selected)
+Last updated: 2026-08-25 (Phase 0 design trim)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -12,7 +12,8 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Now:** OpenSpec Phase 0 — architecture and specification for complete immutable
 `LoopSnapshot` objects. No snapshot-model firmware is authorized in this phase.
-Logical indexes are selected: pitch → bar → bar NoteRefs, and bar → EventRef.
+Logical indexes are selected: pitch → bar → membership lists of `NoteRef`s,
+and bar → membership lists of `EventRef`s.
 Phase 2 remains blocked until formal reassessment (task 1.1) and an
 `ExecutionBounds.md` row for dirty-bar construction. The physical directory
 is Phase 1 / measurement.

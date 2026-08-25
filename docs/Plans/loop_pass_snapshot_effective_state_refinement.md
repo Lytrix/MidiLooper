@@ -8,9 +8,10 @@
 
 Replace historical pass replay as the normal effective-state mechanism with
 complete immutable `LoopSnapshot` objects. Each published snapshot owns a
-self-contained musical state indexed as pitch → bar → bar NoteRefs and
-bar → EventRef lists over immutable event objects. Consumers select
-the active snapshot directly; they do not walk parent snapshots for content.
+self-contained musical state indexed as pitch → bar → membership lists of
+`NoteRef`s and bar → membership lists of `EventRef`s. A snapshot's logical
+content is completely determined by its own reference root. Consumers select
+the active snapshot directly; they do not consult a parent snapshot for content.
 
 `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) remains the
 historical/compatibility operation record. It is not the effective-state object.
@@ -71,8 +72,10 @@ The **logical** indexes are selected
 ([`loop_snapshot_pitch_bar_span_index_refinement.md`](loop_snapshot_pitch_bar_span_index_refinement.md),
 DEC-044 amendment):
 
-- Span index: pitch → canonical 768-tick bar → bar NoteRefs (complete notes).
-- Event index: bar → EventRef list with a defined tick/order contract.
+- Span index: pitch → canonical 768-tick bar → membership lists of `NoteRef`s
+  (complete notes).
+- Event index: bar → membership lists of `EventRef`s, an indexed view of
+  existing event-stream order.
 - Open-at-S remains the ledger / `presentAt` consumer, not a snapshot index.
 
 Unchanged pitch/bar membership remains shared with the parent. Only dirty
@@ -90,18 +93,19 @@ still touch every intersecting bar.
 
 ## Candidate construction operations
 
-Construction is not one unnamed “apply mutation” step. Before runtime
-publication, declare a complexity and `ExecutionBounds.md` class for:
+The architectural construction contract is:
 
-1. Locate affected references (same pitch, dirty bars, `NoteId` dedup).
-2. Remove obsolete references.
-3. Allocate replacement event objects.
-4. Insert new references.
-5. Construct the new snapshot root (dirty membership plus minimum directory path).
-6. Retain/release roots.
-7. Update optional disposable indexes, if any.
-8. Freeze the candidate.
-9. Publish the candidate atomically.
+1. Identify affected content.
+2. Apply immutable object replacements.
+3. Construct the successor reference root.
+4. Freeze the candidate.
+5. Atomically publish.
+
+Identify/apply/construct have semantic locality bounded by the affected pitch
+and dirty bars. Their execution cost remains dependent on intersecting
+memberships and the selected physical directory and therefore requires
+measurement before runtime publication. Phase 1 decomposes these steps into
+measured operations.
 
 Any numeric N-candidate quantum, including a previously discussed
 eight-candidate LCR unit, is a measurement hypothesis only. It is not part of
@@ -254,11 +258,13 @@ redo target. C remains readable only while a remaining root holds it.
 The active OpenSpec design contains the detailed outcomes. The implementation
 direction agreed during review is:
 
-- `LoopSnapshot` is complete effective content only; unchanged pitch/bar
-  membership is shared, but parent traversal is not allowed.
+- `LoopSnapshot` is complete effective content only. Its logical content is
+  completely determined by its own reference root. Shared membership is not
+  a parent-walk.
 - `LoopPass` remains the compatibility operation record.
-- LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
-  ownership. LCR is not a second effective-state authority.
+- Existing LCR preparation mechanisms may be reused temporarily as
+  implementation machinery to construct a snapshot candidate. They do not
+  own effective state, publication, or snapshot lifetime.
 - NOTE_EDIT publishes after each complete `EditSessionActions` batch.
   `NoteEditCurrentState` is the mutable session buffer and `EditSession.store`
   is the projected content state. Batch snapshots are provisional until close.
