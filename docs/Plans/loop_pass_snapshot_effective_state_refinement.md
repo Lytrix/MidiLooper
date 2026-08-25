@@ -7,27 +7,101 @@
 ## Intent
 
 Replace historical pass replay as the normal effective-state mechanism with
-complete immutable snapshots. Each committed snapshot owns a self-contained
-musical state represented by structurally shared references to immutable note and
-non-note event objects. Consumers select the active snapshot directly; they do
-not walk parent snapshots for content.
+complete immutable `LoopSnapshot` objects. Each published snapshot owns a
+self-contained musical state represented by a persistent / structurally-shared
+reference root over immutable note and non-note event objects. Consumers select
+the active snapshot directly; they do not walk parent snapshots for content.
+
+`LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) remains the
+historical/compatibility operation record. It is not the effective-state object.
+A commit may produce both.
 
 This branch intentionally starts before the maintained `LoopContentResolution`
 lifecycle. That lifecycle is not reintroduced as a new effective-state owner.
 Any compatibility query surface must be stateless and snapshot-based until its
 callers are migrated and the surface is retired.
 
+Phase 0 does not authorize firmware. Phase 2 remains blocked until the
+persistent reference structure is selected against the recorded comparison
+criteria.
+
+## Core invariant
+
+```text
+Immutable event objects
+        ^
+        | references
+┌─────────────────────┐
+│   LoopSnapshot N    │
+│ immutable root      │
+└─────────────────────┘
+        |
+        | successor
+        v
+┌─────────────────────┐
+│   LoopSnapshot N+1  │
+│ new root            │
+└─────────────────────┘
+```
+
+- Unchanged event: same object, reused reference.
+- Changed event: new immutable object, replaced reference.
+- Deleted event: reference removed from the new root.
+- Added event: new immutable object, new reference.
+- The reference root itself must be persistent / structurally shared so a
+  bounded number of reference changes does not copy the complete snapshot
+  reference set.
+
 ## Ownership boundary
 
 - `Loop` owns active snapshot selection, candidate publication, and immutable
   object allocation.
-- `LoopPasses` owns snapshot records and persistent reference roots.
+- `LoopPasses` owns snapshot records, persistent reference roots, and
+  compatibility `LoopPass` rows.
 - Existing capture, overlap, pairing, and NOTE_EDIT owners determine semantic
   mutations; snapshot storage applies those mutations.
 - `Track` / `LoopPlaybackRuntime` owns mutable playback cursor, execution order,
   active ledger, and horizon state.
 - `StorageManager` owns deferred persistence and serializes content, never runtime
   addresses.
+
+## Persistent reference-structure gate
+
+Phase 0 records the invariant and comparison. It does not select a structure.
+
+Compare before Phase 2:
+
+| Candidate | Why it is in the set |
+|-----------|----------------------|
+| Flat reference vector | Simplest; fails the no-full-copy invariant if selected |
+| Persistent chunked / reference-directory | Copy changed chunks plus directory path |
+| Path-copy ordered tree | Copy path of depth only |
+
+Score each against update cost, bounded range iteration, Teensy internal-heap
+and external-memory-pool allocation, handle identity and reclamation,
+serialization/migration shape, and the maximum indivisible construction step.
+
+Firmware publication is not authorized until that comparison selects a
+representation that satisfies the persistent-root invariant.
+
+## Candidate construction operations
+
+Construction is not one unnamed “apply mutation” step. Before runtime
+publication, declare a complexity and `ExecutionBounds.md` class for:
+
+1. Locate affected references.
+2. Remove obsolete references.
+3. Allocate replacement event objects.
+4. Insert new references.
+5. Construct the new persistent reference root.
+6. Retain/release roots.
+7. Update optional disposable indexes, if any.
+8. Freeze the candidate.
+9. Publish the candidate atomically.
+
+Any numeric N-candidate quantum, including a previously discussed
+eight-candidate LCR unit, is a measurement hypothesis only. It is not part of
+the snapshot architecture.
 
 ## Execution-bound refinement for large work
 
@@ -77,7 +151,8 @@ The projection window bounds selected output, not necessarily Stage 1 work:
 window. A span crossing multiple loop lengths can therefore produce a
 content-dependent candidate count. Runtime phases must define a structural
 candidate cap or an empirical overrun guard and failure policy before using
-that operation on a runtime path.
+that operation on a runtime path. That cap is a consumer bound, not a
+`LoopSnapshot` architectural unit.
 
 ## Derived representation relationship
 
@@ -90,17 +165,17 @@ indexes, or LED queries.
 Each existing representation owner retains its own invalidation, bounded build,
 and stale/fallback policy. Snapshot publication or selection invalidates stale
 representations by identity; it does not require synchronous rebuilding of the
-complete snapshot. Compatibility `LoopPasses` or materialized reads remain
+complete snapshot. Compatibility `LoopPass` records or materialized reads remain
 available only as parity/fallback sources until the corresponding consumer gate
 passes.
 
 ## Storage relationship
 
 [`Storage.md`](../Authority/Architecture/Storage.md) remains the persistence
-ownership contract. `StorageManager` serializes and loads the content required
-for a complete `LoopSnapshot`; `Loop` rebuilds loop-local handles and selects
-the runtime snapshot. The storage format does not absorb derived
-representations, playback runtime state, or undo history.
+ownership contract. `StorageManager` serializes and loads the latest complete
+`LoopSnapshot`; `Loop` rebuilds loop-local handles and selects the runtime
+snapshot. The storage format does not absorb derived representations, playback
+runtime state, undo history, or post-reboot undo lineage.
 
 Large-loop save and compatibility migration use existing deferred
 `StorageManager` units. They may increase total completion time, but they must
@@ -110,22 +185,64 @@ interval-path unit requires the `ExecutionBounds.md` class, caps, progress,
 and overrun/failure policy. Existing persisted state and the active snapshot
 remain intact when work cannot complete.
 
+After load or unplanned reboot: restore the latest saved complete snapshot,
+set runtime undo depth to 0, leave redo empty, and discard unsaved session
+tails.
+
+## Lifetime, session, and branch semantics
+
+Named roots:
+
+```text
+- active snapshot
+- global undo before/after roots on the live branch
+- session anchor
+- session current provisional
+- E: / O: session roots
+- persistence staging
+- consumer staging
+- pending candidate parent
+```
+
+A snapshot or event object is reclaimable only when no named root and no
+reachable snapshot reference collection still references it.
+
+Provisional versus global:
+
+- Record prefixes, overdub wraps, and NOTE_EDIT batches are playable
+  provisional revisions.
+- The final record-stop, overdub-stop, or note-edit close is the global undo
+  transition.
+
+Branching:
+
+```text
+A → B → C
+      \
+       D
+```
+
+After undo from C to B and commit of D, C is an abandoned branch and not a
+redo target. C remains readable only while a remaining root holds it.
+
 ## Migration stages
 
 1. Complete formal architecture reassessment and record approval.
-2. Implement immutable objects, loop-scoped handles, shared reference storage,
-   and native stability/parity tests; define candidate construction bounds
+2. Complete the persistent-reference comparison and measurement gate; select the
+   structure before Phase 2.
+3. Implement immutable objects, loop-scoped handles, shared reference storage,
+   and invariant-protecting checks; define candidate construction bounds
    before runtime use.
-3. Publish complete candidates at existing capture and NOTE_EDIT commit
+4. Publish complete candidates at existing capture and NOTE_EDIT commit
    boundaries while retaining compatibility pass records; do not perform
    content-sized construction as one timing-critical operation.
-4. Migrate playback, display, NOTE_EDIT, analysis, and validation consumers in
+5. Migrate playback, display, NOTE_EDIT, analysis, and validation consumers in
    separate gates; each representation retains its existing owner, source
    identity, invalidation, and bounded build policy.
-5. Migrate undo, clear-slot restore, load, and persistence after the physical
+6. Migrate undo, clear-slot restore, load, and persistence after the physical
    storage design is approved; keep serialization and compatibility migration
    under `StorageManager` deferred units.
-6. Remove historical replay and compatibility state only after every caller gate
+7. Remove historical replay and compatibility state only after every caller gate
    and rollback trigger is closed.
 
 ## Design-grilling outcomes — 2026-08-25
@@ -133,16 +250,20 @@ remain intact when work cannot complete.
 The active OpenSpec design contains the detailed outcomes. The implementation
 direction agreed during review is:
 
-- `LoopSnapshot` is complete effective content only; structural sharing is
-  allowed, but parent traversal is not.
+- `LoopSnapshot` is complete effective content only; the reference root is
+  structurally shared, but parent traversal is not allowed.
+- `LoopPass` remains the compatibility operation record.
 - LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
   ownership. LCR is not a second effective-state authority.
 - NOTE_EDIT publishes after each complete `EditSessionActions` batch.
   `NoteEditCurrentState` is the mutable session buffer and `EditSession.store`
-  is the projected content state.
+  is the projected content state. Batch snapshots are provisional until close.
 - Overdub publishes after the settled wrap boundary in
-  `Track::commitOverdubWrapAtSessionStart()`. Record publishes completed events
-  directly so a complete snapshot is available for deferred persistence.
+  `Track::commitOverdubWrapAtSessionStart()`. Wrap snapshots are provisional
+  until overdub stop.
+- Record publishes completed events directly so a complete snapshot is
+  available for deferred persistence. Those prefixes are provisional; only the
+  final record-stop transition is a global undo snapshot.
 - `capture.store` remains the capture buffer; playback consumes the active
   snapshot plus its unprocessed suffix.
 - E: and O: select prior provisional snapshot identities. Session owners restore
@@ -155,9 +276,8 @@ direction agreed during review is:
   without waiting and adopt newer content at a later safe playback boundary.
   Uninterrupted MIDI timing has priority over immediate content freshness.
 - `StorageManager` persists only the latest complete snapshot. Unplanned reboot
-  discards unsaved session tails.
-- Snapshot retention is limited to the session anchor, current revision,
-  session-undo references, and persistence staging.
+  discards unsaved session tails and starts with undo/redo empty.
+- Snapshot retention follows the named-root reachability model.
 - The current wire contract is MIDI 1.0 channel voice. Ordinary Note On/Off
   messages do not carry the loop's internal `NoteId`, so snapshot resolution
   uses internal content identities and does not depend on playback voice
@@ -182,9 +302,9 @@ missing physical NoteOffs. Existing `finalizePendingNotes()` and
 deferred item.
 
 These decisions remain design-only until the formal architecture reassessment
-and approval are complete. The remaining implementation gate is to classify the
-direct candidate delta and LCR preparation units under `ExecutionBounds.md`,
-including their indivisible work and failure behavior.
+and approval are complete. The remaining implementation gate is to select the
+persistent reference structure and classify the named construction operations
+under `ExecutionBounds.md`.
 
 ### Timing evidence and measurement gate
 
@@ -200,16 +320,13 @@ free time between MIDI boundaries:
   `0.75–2.0 ms`, with a `3.6 ms` peak. That measures candidate discovery and
   overlap accumulation, not immutable snapshot path-copy publication.
 - Existing LCR index and reconstruction slices reached `63–121 ms` and
-  `115.7 ms`, respectively. They are not valid bounds for the proposed
-  eight-candidate unit.
+  `115.7 ms`, respectively. They are not valid bounds for snapshot successor
+  construction.
 
-Before runtime publication is authorized, measure one complete eight-candidate
-unit on the device, including immutable path copies, `NoteId` index updates,
-replacement/tombstone records, allocation behavior, and wrap plus same-tick
-cases. The initial falsification rule is p95 below `8.82 ms`; any indivisible
-unit above `25 ms` fails investigation. These are engineering gates, not hard
-MIDI guarantees. A failure requires changing the candidate quantum or
-construction representation before publication work proceeds.
+Before runtime publication is authorized, measure the selected representation’s
+successor-construction unit on the device. Any numeric N-candidate quantum is a
+measurement hypothesis only. A failure requires changing the candidate quantum
+or construction representation before publication work proceeds.
 
 ## Invariants and exclusions
 
@@ -217,6 +334,9 @@ construction representation before publication work proceeds.
   commits.
 - Undo and redo select existing snapshots; they do not reconstruct state by
   replaying intervening history.
+- New work after undo clears the redo branch.
+- Intermediate session prefixes are provisional, not global undo entries.
+- Reboot loads the latest saved complete snapshot and starts with undo/redo empty.
 - Snapshot construction remains off the MIDI interval path until an approved phase
   defines a structural bound or an empirical bound with an overrun policy.
 - No raw C++ pointers are persisted.
@@ -226,15 +346,21 @@ construction representation before publication work proceeds.
 - A complete `LoopSnapshot` does not authorize full-loop projection on a
   timing-critical path; consumers select bounded span ranges before
   `IntervalProjection`.
+- This change does not add a new test architecture. Later phases use existing
+  gates plus invariant-protecting checks only.
 
 ## Open decisions
 
-- Persistent reference-collection representation and stable-handle reclamation.
-- Storage version/layout, active-tip encoding, and old-format migration.
+- Persistent reference-collection representation, selected by the recorded
+  comparison/measurement gate.
+- Stable-handle reclamation implementation.
+- Storage version/layout and old-format migration.
 - Optional disposable indexes and bounded consumer span access.
-- Candidate construction memory/time bound and overrun behavior.
-- Long-span projection candidate limit and overrun behavior.
-- Phase-specific work identity and verification gates.
+- Candidate construction memory/time bound and overrun behavior for each named
+  operation.
+- Long-span projection candidate limit and overrun behavior (consumer bound).
+- Phase-specific work identity.
 
 Implementation is not authorized until the architecture review in the OpenSpec
-change is approved and this branch is selected in `docs/Runtime/CURRENT_WORK.md`.
+change is approved, the reference-structure gate is complete, and this branch is
+selected in `docs/Runtime/CURRENT_WORK.md`.

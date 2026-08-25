@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (queued-dest visual-cache keep + snapshot Phase 0)
+Last updated: 2026-08-25 (snapshot Phase 0 reference-root refinement)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,7 +11,9 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Now:** OpenSpec Phase 0 — architecture and specification for complete immutable
-loop snapshots. No snapshot-model firmware is authorized in this phase.
+`LoopSnapshot` objects. No snapshot-model firmware is authorized in this phase.
+Phase 2 remains blocked until the persistent reference-structure comparison
+selects a representation that does not copy the complete reference set.
 
 **Authorized exception:** queued-destination visual-cache invalidation — port of the
 repair authorized on `feature/overdub-stop-lag-stage-c`. Owner:
@@ -27,8 +29,11 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on
-M2-104-UM v1.1.2, with a read-only audit of the current MIDI 1.0 logic. No
-firmware behavior changed.
+M2-104-UM v1.1.2, with a read-only audit of the current MIDI 1.0 logic. The
+2026-08-25 reference-root refinement separates `LoopPass` from `LoopSnapshot`,
+requires a persistent reference root, defines reachability and provisional
+versus global snapshots, and loads only the latest saved snapshot after reboot.
+No firmware behavior changed.
 
 The maintained `LoopContentResolution` lifecycle and its playback-readiness
 continuation are not pursued on this branch. The existing `LoopContentResolution`

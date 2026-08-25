@@ -17,8 +17,8 @@ It is **not** the same as a window or interval — one representation can be pro
 In the snapshot target, `LoopSnapshot` is the complete immutable source for
 normal derived representations. `Loop` owns snapshot publication and identity;
 each derived-representation owner keeps its own storage, revision,
-invalidation, and build policy. `LoopPasses` remains a compatibility source
-until its caller migration gates pass.
+invalidation, and build policy. Compatibility `LoopPass` records on
+`LoopPasses` remain a fallback source until their caller migration gates pass.
 
 ---
 
