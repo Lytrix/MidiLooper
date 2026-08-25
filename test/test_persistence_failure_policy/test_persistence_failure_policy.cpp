@@ -71,6 +71,13 @@ void test_capture_pressure_prioritizes_persistence_at_reserve() {
                         static_cast<uint16_t>(reserve + reserve + 1), reserve, true, true)));
 }
 
+void test_should_defer_transport_flush_honors_grace_and_ignores_empty_pending() {
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldDeferTransportFlush(false, true, 1000, 3000));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldDeferTransportFlush(true, false, 1000, 3000));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldDeferTransportFlush(true, true, 3000, 3000));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldDeferTransportFlush(true, true, 1000, 3000));
+}
+
 void test_queue_depth_alarm_threshold() {
   TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldEmitQueueDepthAlarm(
       PersistenceFailurePolicy::kQueueDepthAlarmThreshold - 1, true));
@@ -119,6 +126,7 @@ int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_should_run_mid_pass_writer_when_queue_non_empty);
   RUN_TEST(test_should_run_persistence_work_item_writer);
+  RUN_TEST(test_should_defer_transport_flush_honors_grace_and_ignores_empty_pending);
   RUN_TEST(test_has_persistence_slice_headroom);
   RUN_TEST(test_capture_pressure_prioritizes_persistence_at_reserve);
   RUN_TEST(test_queue_depth_alarm_threshold);

@@ -232,8 +232,9 @@ overdub is not allowed
 ([`002634`](../../../captures/session_20260826_002634.log)). Overdub-stop
 paint holds the composed frame; `ODUB,stop,display` must not snapshot-gather
 ([`003459`](../../../captures/session_20260826_003459.log) display 97–154 ms).
-Parked (not selected): `tasks.md` 4b.1 deferred `persist_save` during
-`playingMidiDrainAfterOverdubStop`; 4b.2 first-record `snapshot_idle` bound.
+Parked (not selected): `tasks.md` 4b.2 first-record `snapshot_idle` bound;
+4b.3 post-stop `usbdisp` / `load_frame` / `late_on`; 4b.4 OVERDUBBING
+`DisplayResolveLiveCapture`. Selected: 4b.1 playback-save grace on LoopPersist.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 

@@ -58,8 +58,8 @@ public:
     static bool loadCurrentWorkspaceFromSd(LooperState& state);
     static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX,
                                          bool isUrgentRequest = false);
-    /// @deprecated Domain code: use admit* + requestDeferredSaveState only at transition boundaries.
-    /// Keep save queued but do not start full workspace dispatch until grace elapses (PLAYING path).
+    /// Hold work-item persist until `now + graceMs` while transport is active.
+    /// Call after `requestDeferredSaveState` on PLAYING stop paths — urgent request clears this.
     static void deferWorkspaceSaveDispatchDuringPlayback(uint32_t graceMs);
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();

@@ -40,26 +40,40 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, and active-capture separation with existing HITL and native gates.
 - [ ] 4.6 Update each migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy; verify no full-loop rebuild is introduced on a timing-critical path.
 
-## 4b. Parked post-stop MIDI stability (not selected)
+## 4b. Post-stop MIDI stability
 
-Recorded from [`003459`](../../../captures/session_20260826_003459.log) after
-the 4.4 display tail-gather fix. PLAYING after first publish is 8.5–9.6 ms
-`midi_gap`. These two owners are the remaining stop-adjacent spikes. Do **not**
-implement with the current 4.4 display slice. Stop-display hold (no gather on
-`ODUB,stop,display`) is the selected stop-path slice.
+Stop-display hold is device PASS
+[`004934`](../../../captures/session_20260826_004934.log)
+(`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first publish is
+7.4–8.4 ms. Remaining spikes are separate owners. **Now:** 4b.1 only.
 
-- [ ] 4b.1 Cap or postpone `StorageManager::processDeferredSaveState` while
-      `playingMidiDrainAfterOverdubStop` is active, or otherwise keep the first
-      PLAYING idle window after record/overdub stop from running a 46–57 ms
-      `persist_save`. Evidence: `003459` `persist_save=46561` at 94.871 s after
-      record stop; `persist_save=57154` at 180.730 s / 184.958 s on second
-      overdub start. Owner stays `StorageManager`. Do not move save onto the
-      stop commit path.
+- [ ] 4b.1 Hold `StorageManager::processDeferredSaveState` work items for
+      `Config::playbackSaveDispatchGraceMs` after record/overdub stop to
+      PLAYING and after overdub start, including urgent stop-path LoopPersist.
+      Owner stays `StorageManager` via `deferFlushForTransport`. Do not move
+      save onto the stop commit path. Do not convert
+      `DeferredLoopFinalizeStage::VerifyAndRename` (`atomicRenameTempFile`).
+      Evidence: `004934` `PERS,work,80883` LoopPersist `done` at 64.650 s
+      after record stop; `PERS,work,48809` LoopPersist `done` at 126.729 s
+      on second overdub start (1 ms after `PLAYING→OVERDUBBING`). `003459`
+      `persist_save=46561` / `57154`.
 - [ ] 4b.2 Bound first-record `snapshot_idle` construction so PLAYING immediately
-      after record stop stays near the 8.5–9.6 ms PLAYING gap. Evidence:
-      `003459` `pending=1` from 92.993 s to 101.082 s. `DEC-045` first-publish
-      on PLAYING idle is unchanged until this task is selected. Do not step
-      successor construction during OVERDUBBING.
+      after record stop stays near the 7.4–8.4 ms PLAYING gap. Evidence:
+      `004934` `pending=1` from 64.418 s to 68.243 s (`midi_gap` 90.2 ms at
+      68.891 s). `003459` `pending=1` from 92.993 s to 101.082 s. `DEC-045`
+      first-publish on PLAYING idle is unchanged until this task is selected.
+      Do not step successor construction during OVERDUBBING.
+- [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
+      `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not
+      `ODUB,stop,display`. Evidence: `004934` 67.4 ms at 113.911 s
+      (`usbdisp=60134`, `late_on=57719`, `load_frame=17575`; display was
+      8.8 ms) and 152.3 ms at 168.952 s (`usbdisp=93249`, `late_on=103564`,
+      `load_frame=27039`; display was 12.2 ms). Do not implement with 4b.1.
+- [ ] 4b.4 Bound `DisplayResolveLiveCapture` during OVERDUBBING so a live
+      compose does not take a 50 ms class slice. Evidence: `004934`
+      `timing_max,DisplayResolveLiveCapture,58188` at 150.535 s. Owner stays
+      `rebuildOverdubCommittedDisplayLayer`. Do not CER-gather on overdub
+      paint. Do not implement with 4b.1.
 
 ## 5. Undo, load, and persistence
 

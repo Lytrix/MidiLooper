@@ -26,6 +26,12 @@ bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
                                         uint16_t workQueueDepth, uint16_t writingWorkItemCount,
                                         bool workItemActive);
 
+/// True when a transport-active flush must wait for `deferDispatchUntilMs`.
+/// Urgent does not bypass — stop-path saves set the grace after `requestDeferredSaveState`.
+/// Sync drain sets `deferUntilMs` to 0 so this stays false.
+bool shouldDeferTransportFlush(bool savePending, bool transportActive, uint32_t nowMs,
+                               uint32_t deferUntilMs);
+
 /// True when the semantic work-item writer may take one budgeted deferred slice.
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
                                         bool otherSdIoActive);
