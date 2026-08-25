@@ -14,6 +14,12 @@ A derived representation is **not** owned by a consumer. It has an owner, revisi
 
 It is **not** the same as a window or interval — one representation can be projected onto many intervals.
 
+In the snapshot target, `LoopSnapshot` is the complete immutable source for
+normal derived representations. `Loop` owns snapshot publication and identity;
+each derived-representation owner keeps its own storage, revision,
+invalidation, and build policy. `LoopPasses` remains a compatibility source
+until its caller migration gates pass.
+
 ---
 
 ## Consumers — play, display, analyze, LEDs
@@ -22,11 +28,16 @@ Hot-path work stays a **short window** of data, not the whole loop. Each consume
 
 ```mermaid
 flowchart TB
-  P[LoopPasses]
-  P --> Play
-  P --> Display
-  P --> Analyze
-  P --> LEDs
+  S[LoopSnapshot — target immutable source]
+  C[LoopPasses — compatibility during migration]
+  S --> Play
+  S --> Display
+  S --> Analyze
+  S --> LEDs
+  C -. parity / fallback .-> Play
+  C -. parity / fallback .-> Display
+  C -. parity / fallback .-> Analyze
+  C -. parity / fallback .-> LEDs
 
   subgraph Play
     CT["currentTick"]
@@ -42,7 +53,7 @@ flowchart TB
 
   subgraph Analyze
     ST["selectedTick / currentTick"]
-    LCR["LoopContentResolution indexes"]
+    LCR["Snapshot-based analyze indexes"]
     ST --> LCR --> Q["select / overlap identities"]
   end
 
@@ -53,12 +64,21 @@ flowchart TB
   end
 ```
 
+The diagram shows the target source boundary. The rows below describe current
+consumer reads while snapshot migration is incomplete.
+
 | Consumer | Origin | Reads | Does not read |
 |----------|--------|-------|----------------|
 | **Play** | `currentTick` | `LoopPlaybackRuntime.mergedEvents` (MIDI events) | `visualCache` |
 | **Display** | paint window | `visualCache.notes` / `capturePreview.notes` (`DisplayNote`s) | `mergedEvents` |
 | **Analyze** | `selectedTick` (NOTE_EDIT) or `currentTick` (overdub overlap) | Prepared `LoopContentResolution` (`tickEvents`, `spanBoundaries`, `resolveState`, `resolveWindow`) | A reconstructed whole-loop `DisplayNote` list |
 | **LEDs** | current bar / 16th | `visualCache.notes` (committed presence) + `loop.capture.store` when capture is active | `mergedEvents`; LCR; a gather into a private LED list |
+
+**Snapshot target:** normal consumers read the selected complete `LoopSnapshot`
+through their existing representation owner. The snapshot identity is the
+source revision for invalidation. A stale representation may remain available
+under its consumer policy while bounded rebuilding completes; snapshot
+selection never requires a full-loop rebuild on a timing-critical path.
 
 **Play today:** `Track::playMidiEvents` phases `currentTick`, then walks `mergedEvents` in `playbackOrder`. `ensurePlaybackMergedMidiEventsBuilt` fills that list from pass gather (`gatherCommittedEventsInWindow` = 2 bars on long loops; full gather on short). Live overdub also walks `loop.capture.store`. NOTE_EDIT still full-replaces `mergedEvents` from `sessionMidiEvents()` — target is the play window plus settled overlay `NoteId`s (DEC-037 Editor amendment).
 
@@ -72,18 +92,18 @@ flowchart TB
 
 ---
 
-## Pipeline
+## Representation pipeline
 
 ```
-Capture Storage
+LoopSnapshot (target immutable source)
         │
         ▼
-Derived Event Representation
+Derived representations
         │
         ├──────────────┬──────────────┬──────────────┐
         ▼              ▼              ▼              ▼
    Play window    Display list    Analyze indexes  LED pads
-   mergedEvents   visualCache     LoopContentResolution
+   mergedEvents   visualCache     snapshot analyze indexes
         │              │              │              │
         ▼              ▼              ▼              ▼
    playMidiEvents  DisplayManager  select / overlap  MidiLedManager
@@ -94,6 +114,12 @@ Derived Event Representation
 ---
 
 ## Owner table (brownfield)
+
+The table below records the current implementation. In the snapshot target,
+`LoopSnapshot` replaces `LoopPasses` as the source of the event and analyze
+representations; the representation owners and their consumer-specific build
+policies remain in place. `LoopContentResolution` is retained only as a
+snapshot-based compatibility adapter until its caller gates pass.
 
 | Representation | Owner | Storage (today) | Revision | Build policy | Consumers |
 |----------------|-------|-----------------|----------|--------------|-----------|
@@ -137,9 +163,10 @@ TickInterval bars 8–24
 
 ## Invalidation rules
 
-1. **Storage mutation** → invalidate event representation → cascade to display + playback representations.
-2. **Consumer** checks revision; if stale, **asks owner** to rebuild (or accepts deferred staleness per policy).
-3. **Consumers must not** call `ensureVisualCacheBuilt()` / `materializeToEventVector()` on hot paths (PLAYING, per-CC fader) — owner schedules on idle or explicit refresh.
+1. **LoopSnapshot publication or selection** → invalidate representations by snapshot identity → cascade to display + playback representations.
+2. During compatibility migration, pass/materialized revisions may still trigger the same invalidation path; they are not a second normal authority.
+3. **Consumer** checks source and representation revision; if stale, **asks owner** to rebuild (or accepts deferred staleness per policy).
+4. **Consumers must not** call `ensureVisualCacheBuilt()` / `materializeToEventVector()` on hot paths (PLAYING, per-CC fader) — owner schedules on idle or explicit refresh.
 
 ---
 

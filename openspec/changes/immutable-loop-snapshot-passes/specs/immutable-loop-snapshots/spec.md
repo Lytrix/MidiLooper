@@ -152,6 +152,33 @@ full-loop projection on a timing-critical path.
 - **THEN** it runs outside timing-critical playback and input paths
 - **AND** its work unit and storage are classified under `ExecutionBounds.md`
 
+### Requirement: Snapshot-backed derived representations retain owner policies
+
+The system SHALL use the selected `LoopSnapshot` as the source for normal
+derived representations. Existing representation owners SHALL retain
+ownership of their representation storage, source and representation revisions,
+invalidation, bounded build policy, and consumer-specific freshness behavior.
+`LoopSnapshot` SHALL NOT own `mergedEvents`, `visualCache`, playback order,
+analyze indexes, or LED queries.
+
+#### Scenario: Snapshot identity is the source revision
+
+- **WHEN** a new snapshot is published or another snapshot is selected
+- **THEN** derived representations built from the previous snapshot are identified as stale by snapshot identity
+- **AND** each representation owner decides when and how its bounded rebuild occurs
+
+#### Scenario: Pending representation rebuild does not block timing
+
+- **WHEN** a large-loop representation is stale and its rebuild is pending
+- **THEN** the consumer follows its existing stale, fallback, or deferred-freshness policy
+- **AND** it does not synchronously rebuild the complete snapshot on a timing-critical path
+
+#### Scenario: Compatibility sources are transitional
+
+- **WHEN** a consumer has not completed its snapshot migration gate
+- **THEN** compatibility `LoopPasses` or materialized data may remain as a parity or fallback source
+- **AND** it is not introduced as a second normal effective-state authority
+
 ### Requirement: LoopContentResolution is a transitional stateless adapter
 
 During migration, `LoopContentResolution` SHALL provide stateless queries over one explicit complete snapshot. It SHALL NOT maintain a second historical effective-state representation, traverse parents for content, or make replay the normal consumer path. Its maintained-history state SHALL be removed only after caller migration gates pass.
