@@ -323,11 +323,16 @@ struct Loop {
   void resetPassTimeline();
   PassId lastCommittedPassId() const { return lastCommittedPassId_; }
   ImmutableLoopSnapshotRef publishedSnapshot() const;
-  /// Non-owning identity of the published root, or nullptr when none is selected.
+  /// True when the published root was stored at the current `playbackRevision`.
+  bool publishedSnapshotIsCurrent() const;
+  /// Non-owning identity of the current published root, or nullptr when none is
+  /// selected or the published root is stale versus `playbackRevision`.
   const void* publishedSnapshotIdentity() const;
   /// Fill `out` from published snapshot event membership in
   /// `[windowStart, windowStart + windowLength)`. Returns false when no
-  /// published snapshot is selected so the caller can use compatibility gather.
+  /// current published snapshot is selected so the caller can use compatibility
+  /// gather. A published root whose store revision is behind `playbackRevision`
+  /// is treated as stale.
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
   /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.

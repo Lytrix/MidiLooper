@@ -188,19 +188,34 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
   return true;
 }
 
-LOOP_COLD_MEM bool appendCompanionChanges(const Loop& loop, const LoopSnapshot& parent,
+LOOP_COLD_MEM void appendCompanionChanges(const Loop& loop, const LoopSnapshot& parent,
                                           const EditPassIdList& companionIds,
                                           LoopSnapshotChangeSet& changes) {
   for (const EditPassId id : companionIds) {
     const EditPass* row = findActiveEditPass(loop, id);
     if (row == nullptr) {
-      return false;
+      continue;
     }
-    if (!appendEditRowChange(parent, *row, loop.loopId, loop.loopLengthTicks, changes)) {
-      return false;
-    }
+    appendEditRowChange(parent, *row, loop.loopId, loop.loopLengthTicks, changes);
   }
-  return true;
+}
+
+LOOP_COLD_MEM void appendCommittedPassChanges(const Loop& loop, PassId passId,
+                                              EventId& nextEventId,
+                                              uint32_t& nextCanonicalOrder,
+                                              LoopSnapshotChangeSet& changes) {
+  bool isOverdubPass = false;
+  const CommittedChunkIdList* chunks = committedChunksForPass(loop, passId, isOverdubPass);
+  if (chunks == nullptr) {
+    return;
+  }
+  MidiEventVec events;
+  LoopEventStore::appendChunkRefEvents(*chunks, events);
+  const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
+      events, loop.loopLengthTicks, false, true, isOverdubPass);
+  appendMergedPassNotes(notes, loop.loopId, loop.loopLengthTicks, changes);
+  appendPassEvents(events, loop.loopId, loop.loopLengthTicks, nextEventId, nextCanonicalOrder,
+                   changes);
 }
 
 }  // namespace
@@ -223,22 +238,33 @@ LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
   }
 
   LoopSnapshotChangeSet changes;
-  bool isOverdubPass = false;
-  const CommittedChunkIdList* chunks =
-      committedChunksForPass(*this, lastCommittedPassId_, isOverdubPass);
-  if (chunks != nullptr) {
-    MidiEventVec events;
-    LoopEventStore::appendChunkRefEvents(*chunks, events);
-    const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
-        events, loopLengthTicks, false, true, isOverdubPass);
-    appendMergedPassNotes(notes, loopId, loopLengthTicks, changes);
-    EventId nextEventId = parent->nextEventId();
-    uint32_t nextCanonicalOrder = parent->nextEventId();
-    appendPassEvents(events, loopId, loopLengthTicks, nextEventId, nextCanonicalOrder, changes);
+  std::vector<PassId> passIds;
+  if (isOverdubSessionExit(reason)) {
+    for (const PassId passId : overdubSessionPassIds_) {
+      if (passId != kInvalidPassId) {
+        passIds.push_back(passId);
+      }
+    }
   }
-  if (isOverdubSessionExit(reason) &&
-      !appendCompanionChanges(*this, *parent, companionIds, changes)) {
-    return false;
+  if (lastCommittedPassId_ != kInvalidPassId) {
+    bool alreadyPresent = false;
+    for (const PassId passId : passIds) {
+      if (passId == lastCommittedPassId_) {
+        alreadyPresent = true;
+        break;
+      }
+    }
+    if (!alreadyPresent) {
+      passIds.push_back(lastCommittedPassId_);
+    }
+  }
+  EventId nextEventId = parent->nextEventId();
+  uint32_t nextCanonicalOrder = parent->nextEventId();
+  for (const PassId passId : passIds) {
+    appendCommittedPassChanges(*this, passId, nextEventId, nextCanonicalOrder, changes);
+  }
+  if (isOverdubSessionExit(reason)) {
+    appendCompanionChanges(*this, *parent, companionIds, changes);
   }
   if (changes.notes.empty() && changes.events.empty()) {
     return false;

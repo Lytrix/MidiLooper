@@ -1434,12 +1434,6 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
   pendingCapturePass_ = PendingCapturePass{};
   hasPendingCapturePass_ = false;
 
-  if ((reason == CommitReason::RecordStop ||
-       reason == CommitReason::RecordStopToStopped) &&
-      passes.hasRecordPass() && passes.recordPass.id == lastCommittedPassId_) {
-    tryPublishSessionExitSnapshot(reason, {});
-  }
-
 #if defined(SESSION_CAPTURE)
   const uint32_t spanCacheRestampStartUs = traceMicros();
 #endif
@@ -1527,6 +1521,11 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
   const uint32_t finalizeStateStartUs = traceMicros();
 #endif
   ++playbackRevision;
+  if ((reason == CommitReason::RecordStop ||
+       reason == CommitReason::RecordStopToStopped) &&
+      passes.hasRecordPass() && passes.recordPass.id == lastCommittedPassId_) {
+    tryPublishSessionExitSnapshot(reason, {});
+  }
   if (spanCacheCanRestamp) {
     overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
   }

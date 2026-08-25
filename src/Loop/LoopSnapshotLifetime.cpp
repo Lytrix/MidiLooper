@@ -9,6 +9,7 @@
 
 struct PublishedSnapshotBox {
   ImmutableLoopSnapshotRef snapshot;
+  uint32_t revision = 0;
 };
 
 LOOP_COLD_MEM Loop::Loop() {}
@@ -20,10 +21,13 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef Loop::publishedSnapshot() const {
                                : ImmutableLoopSnapshotRef{};
 }
 
+LOOP_COLD_MEM bool Loop::publishedSnapshotIsCurrent() const {
+  return publishedSnapshotBox_ && publishedSnapshotBox_->snapshot &&
+         publishedSnapshotBox_->revision == playbackRevision;
+}
+
 LOOP_COLD_MEM const void* Loop::publishedSnapshotIdentity() const {
-  return publishedSnapshotBox_ && publishedSnapshotBox_->snapshot
-             ? publishedSnapshotBox_->snapshot.get()
-             : nullptr;
+  return publishedSnapshotIsCurrent() ? publishedSnapshotBox_->snapshot.get() : nullptr;
 }
 
 LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
@@ -39,4 +43,5 @@ LOOP_COLD_MEM void Loop::storePublishedSnapshot(ImmutableLoopSnapshotRef snapsho
     publishedSnapshotBox_ = std::make_unique<PublishedSnapshotBox>();
   }
   publishedSnapshotBox_->snapshot = std::move(snapshot);
+  publishedSnapshotBox_->revision = playbackRevision;
 }
