@@ -67,7 +67,10 @@ Immutable event objects
 
 ## Persistent reference-structure gate
 
-Phase 0 records the invariant and comparison. It does not select a structure.
+Phase 0 recorded the invariant and comparison. The proposed selection is
+pitch → bar → `NoteRef` in
+[`loop_snapshot_pitch_bar_span_index_refinement.md`](loop_snapshot_pitch_bar_span_index_refinement.md).
+That selection is not in the OpenSpec until that plan is applied.
 
 Compare before Phase 2:
 
@@ -351,8 +354,10 @@ or construction representation before publication work proceeds.
 
 ## Open decisions
 
-- Persistent reference-collection representation, selected by the recorded
-  comparison/measurement gate.
+- Persistent reference-collection representation: proposed selection is pitch →
+  bar → `NoteRef` in
+  [`loop_snapshot_pitch_bar_span_index_refinement.md`](loop_snapshot_pitch_bar_span_index_refinement.md).
+  Not applied to OpenSpec until that plan is executed.
 - Stable-handle reclamation implementation.
 - Storage version/layout and old-format migration.
 - Optional disposable indexes and bounded consumer span access.
