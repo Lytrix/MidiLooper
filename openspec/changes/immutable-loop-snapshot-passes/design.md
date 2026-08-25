@@ -52,6 +52,32 @@ Snapshot references are loop-scoped handles, not persisted addresses. Editing a 
 
 **Alternative:** raw pointers. Rejected because addresses are not persistent identity and make reclamation implicit.
 
+### `LoopSnapshot` supplies content; `IntervalProjection` supplies coordinates
+
+`LoopSnapshot` stores complete canonical immutable note and non-note content
+through loop-scoped references. It does not store projected intervals, playback
+windows, display windows, or edit windows because those depend on consumer
+context such as playhead, viewport, loop origin, queued start, and selected
+tick.
+
+Consumers select the relevant canonical span range from the selected snapshot
+before calling `IntervalProjection`. `IntervalProjection` remains the
+orthogonal pure-math owner: `playbackEventPhase` serves scalar playback
+projection, while display and edit projection operate on caller-selected span
+ranges. A full-snapshot projection is an explicit non-normal path and is not
+admissible on a timing-critical path for a large loop.
+
+The requested projection window does not alone establish a structural bound.
+`generateEquivalentIntervals` calculates a `k` range from the span and window;
+if one canonical span crosses multiple loop lengths, the number of candidates
+can grow with that span. Any runtime caller must therefore define a maximum
+candidate count or use the empirically bounded class with an explicit guard and
+failure policy under `ExecutionBounds.md`.
+
+**Alternative:** store projected windows in `LoopSnapshot`. Rejected because it
+couples immutable content lifetime to mutable consumer contexts and duplicates
+playback/display/edit representation ownership.
+
 ### Construction applies existing semantic mutations
 
 At an existing commit boundary, the existing semantic owner supplies a settled
@@ -111,6 +137,10 @@ and old-format migration are separate decisions. Migration uses the existing
 - **[Construction cost]** Mutations may be content-dependent → classify the
   owner in `ExecutionBounds.md`, use bounded resumable units, and define an
   explicit overrun policy before runtime publication.
+- **[Projection cost]** A requested window does not cap the number of
+  `generateEquivalentIntervals` candidates for a span crossing multiple loop
+  lengths → bound the source span range and candidate count before runtime
+  projection.
 - **[Parity]** Snapshot output may diverge → compare against current materialization for overlap, pairing, wrap, ordering, and non-note events.
 - **[Lifetime]** Retained snapshots may leak or alias mutable data → test reachability, loop scope, and older-snapshot stability.
 - **[Compatibility]** Storage changes may reject existing files → retain old readers until migration and round-trip gates pass.

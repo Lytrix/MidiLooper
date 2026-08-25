@@ -11,6 +11,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 - **Ownership:** effective state moves from historical replay to immutable snapshots owned by `Loop` / `LoopPasses`.
 - **State transitions:** commit, undo, redo, load, and clear-slot select snapshot identities.
 - **Execution bounds:** candidate construction is not admissible on the MIDI interval or timing-critical input path until its owner, unit cap, maximum indivisible step, progress state, bound class, and overrun policy are defined under [`ExecutionBounds.md`](../../../docs/Authority/Architecture/ExecutionBounds.md).
+- **Projection:** `IntervalProjection` remains a pure consumer-side math owner; a large-loop snapshot consumer must select a bounded span range before projection, and long-span `k` candidate generation requires its own bound or overrun policy.
 - **Persistence:** immutable objects and snapshot structure require a separate storage decision.
 
 ## Per-phase gates
@@ -59,7 +60,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 | Question | Required |
 |---|---|
 | **Owner module** | `Loop` publishes; `Track` / `LoopPlaybackRuntime` consumes; LCR is transitional only |
-| **Primary invariant** | Consumers use one complete snapshot identity while cursor, ledger, order, and horizon ownership remain unchanged |
+| **Primary invariant** | Consumers use one complete snapshot identity while cursor, ledger, order, horizon ownership, and bounded projection access remain unchanged |
 | **Ownership change?** | NO — existing boundaries are extended |
 | **State transition change?** | YES — snapshot identity is the freshness boundary |
 | **Execution bound change?** | NO new unbounded owner; snapshot selection and any new preparation work must use an existing declared owner boundary |

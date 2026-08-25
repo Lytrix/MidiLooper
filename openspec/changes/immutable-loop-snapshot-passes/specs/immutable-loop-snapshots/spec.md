@@ -119,6 +119,39 @@ Playback consumers SHALL read a const active snapshot and derive execution range
 - **THEN** stale preparation is rejected or invalidated by identity
 - **AND** the clock-facing consumer retains bounded fallback behavior
 
+### Requirement: Snapshot projection remains consumer-bounded
+
+The system SHALL keep projection context, projected intervals, and consumer
+windows out of `LoopSnapshot`. Playback, display, and NOTE_EDIT consumers SHALL
+select the relevant canonical span range from the selected snapshot before
+calling `IntervalProjection`. A complete snapshot SHALL NOT authorize
+full-loop projection on a timing-critical path.
+
+#### Scenario: Projection uses consumer context
+
+- **WHEN** a consumer projects content from an active snapshot
+- **THEN** the consumer supplies its own `ProjectionContext`
+- **AND** the snapshot remains unchanged when playhead, viewport, loop origin, queued start, or selected tick changes
+
+#### Scenario: Large-loop playback and display use bounded source ranges
+
+- **WHEN** playback or windowed display consumes a large loop
+- **THEN** it selects a bounded canonical span range before projection
+- **AND** playback uses the scalar `playbackEventPhase` path without allocating projection candidates
+- **AND** the consumer does not project the complete snapshot as one timing-critical operation
+
+#### Scenario: Long-span candidate generation has an execution bound
+
+- **WHEN** `generateEquivalentIntervals` handles a canonical span that crosses multiple loop lengths
+- **THEN** the runtime path applies a structural candidate cap or an empirically bounded overrun guard and failure policy
+- **AND** a projection window alone is not treated as a fixed execution bound
+
+#### Scenario: Full-loop projection is explicit
+
+- **WHEN** a display or edit operation intentionally requests full-loop projection
+- **THEN** it runs outside timing-critical playback and input paths
+- **AND** its work unit and storage are classified under `ExecutionBounds.md`
+
 ### Requirement: LoopContentResolution is a transitional stateless adapter
 
 During migration, `LoopContentResolution` SHALL provide stateless queries over one explicit complete snapshot. It SHALL NOT maintain a second historical effective-state representation, traverse parents for content, or make replay the normal consumer path. Its maintained-history state SHALL be removed only after caller migration gates pass.
