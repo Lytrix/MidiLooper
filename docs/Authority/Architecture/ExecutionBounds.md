@@ -101,8 +101,30 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 18 | `processHitlSerialCommands` | capture builds only | none | **Unbounded** |
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
+| 21 | `LoopSnapshotConstruction::step` | Record session-exit (`commitPendingCapturePass` after a record pass), overdub session-exit (`Loop::tryPublishSessionExitSnapshot` after companion seal), and NOTE_EDIT `closeNoteEditPass` only | one settled note or event change; dirty bars = that change's membership | **Empirically bounded** |
+| 22 | `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Same owners as row 21; one candidate completed or failed in that invocation | `step(totalChangeCount)` then atomic `freeze`, or failure | **Empirically bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+
+### Snapshot candidate construction (rows 21–22)
+
+Phase 2 publication is admitted only at the existing session-exit and NOTE_EDIT
+close owners. It is **not** admitted to `handleMidiInput()`, clock dispatch,
+track-tick, or `CommitReason::OverdubWrap`.
+
+| Property | Row 21 `step` | Row 22 publish |
+|----------|---------------|----------------|
+| **Unit cap** | One settled `SnapshotNoteChange` or `SnapshotEventChange` | One complete candidate for the settled mutation |
+| **Maximum indivisible step** | Apply that change, including copy-on-write of its dirty pages and membership lists. A long or wrap note can touch every intersecting bar. | Run remaining `step` units through completion, then one atomic `publishedSnapshot_` store |
+| **Progress** | `nextChangeIndex_`, `complete()`, `failed()` | Previous published root remains selected until `freeze()` succeeds |
+| **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root |
+| **Overrun / failure** | `failed_`; `freeze()` returns null | Discard the candidate; keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay as committed |
+
+A local timer is not the bound. Phase 2 does not yield mid-publish and does
+not introduce a scheduler. First-record construction uses a constructed empty
+parent object, not a null parent. Overdub and NOTE_EDIT publication require an
+already published parent; they do not invent content from
+`materializeToEventVector()`.
 
 ---
 

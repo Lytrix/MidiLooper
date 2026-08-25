@@ -124,6 +124,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditPass(Track& track) {
     const EditPassIdList idsToPush =
         collectEditPassIdsPendingDurableCheckpoint(editSession.editPassIds,
                                                    editSession.durableCheckpointedEditPassIds);
+    if (!editSession.editPassIds.empty()) {
+        Loop& loop = trackManager.getSelectedLoop(track);
+        loop.tryPublishNoteEditSnapshot(editSession.editPassIds);
+    }
     if (!idsToPush.empty()) {
         TrackUndo::pushNoteEditPassClosed(track, editSession.editPassIndex, idsToPush);
         logger.log(CAT_TRACK, LOG_INFO, "NoteEditPassClosed editPass=%u edits=%u",

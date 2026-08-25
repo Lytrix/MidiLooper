@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (Phase 1 tasks 2.1–2.4 implemented and verified)
+Last updated: 2026-08-25 (Phase 2 publication adapters implemented and verified)
 
 ---
 

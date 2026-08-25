@@ -3,6 +3,7 @@
  * LoopContentResolution.cpp: TRACK_COLD_MEM covers named functions; STL template
  * bodies land in per-symbol .text.* and default to ITCM. Route that object file's
  * .text* to FLASH so flexRAM ITCM banks are not crossed.
+ * LoopSnapshot.cpp / LoopSnapshotPublish.cpp: same STL/shared_ptr template leak.
  */
 MEMORY
 {
@@ -31,6 +32,7 @@ SECTIONS
 		*(.flashmem*)
 		*LoopContentResolution*.o(.text .text.*)
 		*LoopOverdubSession*.o(.text .text.*)
+		*LoopSnapshot*.o(.text .text.*)
 		*TrackOverdubWrap*.o(.text .text.*)
 		*TrackUndo*.o(.text .text.*)
 		. = ALIGN(4);
@@ -52,7 +54,7 @@ SECTIONS
 	.text.itcm : {
 		. = . + 32; /* MPU to trap NULL pointer deref */
 		*(.fastrun)
-		EXCLUDE_FILE (*LoopContentResolution* *LoopOverdubSession* *TrackOverdubWrap* *TrackUndo*) *(.text*)
+		EXCLUDE_FILE (*LoopContentResolution* *LoopOverdubSession* *LoopSnapshot* *TrackOverdubWrap* *TrackUndo*) *(.text*)
 		. = ALIGN(16);
 	} > ITCM  AT> FLASH
 

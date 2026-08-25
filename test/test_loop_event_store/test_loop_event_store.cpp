@@ -491,6 +491,36 @@ void test_snapshot_candidate_progress_and_alias_safety() {
   TEST_ASSERT_EQUAL(0u, parent->noteMembership(60, 0).get() == nullptr ? 0 : 1);
 }
 
+void test_snapshot_replaces_pitch_and_clears_old_membership() {
+  LoopSnapshotChangeSet initialChanges;
+  initialChanges.notes.push_back(addSnapshotNote(41, 60, 100, 200));
+  const auto parent = buildSnapshotForTests(initialChanges);
+  SnapshotNoteChange replacement{};
+  replacement.kind = SnapshotChangeKind::Replace;
+  replacement.previous = parent->findNote(41, 60);
+  replacement.next = *replacement.previous;
+  replacement.next.pitch = 67;
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(replacement);
+  LoopSnapshotConstruction construction(parent, changes);
+  TEST_ASSERT_TRUE(construction.step(1));
+  const auto successor = construction.freeze();
+  const auto oldPitch = successor->noteMembership(60, 0);
+  const size_t oldCount = oldPitch ? oldPitch->references.size() : 0;
+  TEST_ASSERT_EQUAL(0u, oldCount);
+  TEST_ASSERT_EQUAL(1u, successor->noteMembership(67, 0)->references.size());
+  TEST_ASSERT_EQUAL(41u, successor->noteMembership(67, 0)->references[0]->noteId);
+}
+
+void test_snapshot_find_note_uses_pitch_hint_then_scan() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(90, 60, 100, 200));
+  const auto snapshot = buildSnapshotForTests(changes);
+  TEST_ASSERT_NOT_NULL(snapshot->findNote(90, 60).get());
+  TEST_ASSERT_EQUAL(90u, snapshot->findNote(90, 64)->noteId);
+  TEST_ASSERT_NULL(snapshot->findNote(91, 60).get());
+}
+
 void test_snapshot_failed_candidate_preserves_parent() {
   LoopSnapshotChangeSet initialChanges;
   initialChanges.notes.push_back(addSnapshotNote(80, 60, 100, 200));
@@ -531,5 +561,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_event_index_preserves_canonical_order);
   RUN_TEST(test_snapshot_candidate_progress_and_alias_safety);
   RUN_TEST(test_snapshot_failed_candidate_preserves_parent);
+  RUN_TEST(test_snapshot_replaces_pitch_and_clears_old_membership);
+  RUN_TEST(test_snapshot_find_note_uses_pitch_hint_then_scan);
   return UNITY_END();
 }

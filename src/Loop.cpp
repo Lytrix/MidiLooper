@@ -44,6 +44,7 @@ void Loop::resetPassTimeline() {
   nextOverdubSessionIndex_ = 1;
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   lastCommittedPassId_ = kInvalidPassId;
+  clearPublishedSnapshot();
   playbackRevision = 0;
   editStateDirty_ = false;
   visualCache.clear();

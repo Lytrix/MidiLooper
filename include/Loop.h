@@ -41,6 +41,8 @@ struct PlaybackMergedMidiEvents;
 
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
 
+struct PublishedSnapshotBox;
+
 /// Overdub-session totals for `#CAP,DIAG,overlap_hold`. Incremented on note-off; emitted at stop.
 struct OverlapHoldTotals {
   uint32_t noteOffs = 0;
@@ -66,6 +68,11 @@ struct OverlapHoldTotals {
 };
 
 struct Loop {
+  Loop();
+  ~Loop();
+  Loop(const Loop&) = delete;
+  Loop& operator=(const Loop&) = delete;
+
   Capture capture;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
@@ -315,6 +322,12 @@ struct Loop {
   bool setCapturePassState(PassId id, CapturePassState state);
   void resetPassTimeline();
   PassId lastCommittedPassId() const { return lastCommittedPassId_; }
+  ImmutableLoopSnapshotRef publishedSnapshot() const;
+  /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.
+  bool tryPublishSessionExitSnapshot(CommitReason reason,
+                                     const EditPassIdList& companionIds = {});
+  /// Settled NOTE_EDIT close batch. In-session durable checkpoints stay provisional.
+  bool tryPublishNoteEditSnapshot(const EditPassIdList& editPassIds);
   bool captureActive() const;
   size_t liveEventCount() const;
   /// Committed pass event count + active capture size; builds visual cache if needed. Display/LED only.
@@ -487,6 +500,10 @@ struct Loop {
   std::unique_ptr<PlaybackOrderVec> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
+  std::unique_ptr<PublishedSnapshotBox> publishedSnapshotBox_;
+
+  void clearPublishedSnapshot();
+  void storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot);
 };
 
 #endif  // LOOP_H
