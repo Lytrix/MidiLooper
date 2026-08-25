@@ -29,13 +29,45 @@ callers are migrated and the surface is retired.
 - `StorageManager` owns deferred persistence and serializes content, never runtime
   addresses.
 
+## Execution-bound refinement for large work
+
+The [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md)
+classification applies to snapshot construction, not only to clock dispatch.
+The existing commit boundaries are reachable from timing-sensitive paths:
+`Track::stopRecording` and `Track::stopOverdubbing` can be invoked by input
+actions, `Track::commitOverdubWrapAtSessionStart` runs during
+`TrackManager::updateAllTracks`, and NOTE_EDIT close is reachable from input
+dispatch. “Off-clock”, deferred placement, or cold/flash placement therefore
+does not make content-sized construction safe.
+
+Before any phase introduces runtime candidate construction:
+
+- classify the `Loop` / `LoopPasses` owner in the maintained inventory;
+- define the input and storage cap for one unit, the maximum indivisible step,
+  persistent progress, and completion state;
+- use a structurally bounded unit, or an empirically bounded unit with an
+  explicit overrun guard and failure policy;
+- keep total completion time proportional to loop content while keeping each
+  unit independent of total loop length; and
+- preserve the active snapshot and settled mutation when a unit cannot fit,
+  overruns, or allocation fails. No partial candidate may be published.
+
+A local timer checked only between steps is not a bound on an indivisible scan,
+allocation, sort, or nested operation. A complete candidate may be built over
+multiple bounded opportunities, but publication remains one atomic operation
+after completion. The phase must name the existing owner that holds progress
+and the policy for stale or failed construction; no new scheduler or parallel
+semantic owner is introduced by this refinement.
+
 ## Migration stages
 
 1. Complete formal architecture reassessment and record approval.
 2. Implement immutable objects, loop-scoped handles, shared reference storage,
-   candidate construction, and native stability/parity tests.
-3. Publish candidates at existing capture and NOTE_EDIT commit boundaries while
-   retaining compatibility pass records.
+   and native stability/parity tests; define candidate construction bounds
+   before runtime use.
+3. Publish complete candidates at existing capture and NOTE_EDIT commit
+   boundaries while retaining compatibility pass records; do not perform
+   content-sized construction as one timing-critical operation.
 4. Migrate playback, display, NOTE_EDIT, analysis, and validation consumers in
    separate gates.
 5. Migrate undo, clear-slot restore, load, and persistence after the physical

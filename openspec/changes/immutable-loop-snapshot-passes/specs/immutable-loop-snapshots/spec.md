@@ -34,7 +34,7 @@ Note and non-note event objects SHALL be immutable after construction. A logical
 
 ### Requirement: Atomic snapshot construction and publication
 
-Snapshot construction SHALL occur at an existing capture or edit commit boundary after capture finalization. The builder SHALL read the active snapshot as const, apply a semantic mutation supplied by the existing owner, freeze a complete candidate, and publish it atomically. Failure SHALL leave active and historical snapshots unchanged.
+Snapshot publication SHALL occur at an existing capture or edit commit boundary after capture finalization. Candidate construction SHALL read the active snapshot as const and apply a semantic mutation supplied by the existing owner. Construction MAY complete before publication through bounded resumable units, but the complete candidate SHALL be frozen and published atomically. Failure SHALL leave active and historical snapshots unchanged.
 
 #### Scenario: Capture commit publishes one candidate
 
@@ -135,18 +135,47 @@ During migration, `LoopContentResolution` SHALL provide stateless queries over o
 - **THEN** maintained LCR replay and old materialization dependencies may be removed
 - **AND** compatibility fallback is not removed before those gates pass
 
-### Requirement: Snapshot construction has an off-clock policy
+### Requirement: Snapshot construction has an execution-bound policy
 
-Snapshot construction SHALL remain at an existing off-clock commit boundary unless a later approved phase defines a bounded unit and overrun policy. It SHALL NOT introduce a new scheduler, interval-path owner, or content-dependent unbounded operation.
+The system SHALL apply an execution-bound policy to any candidate construction
+that executes from `handleMidiInput()`, input-dispatched actions, clock
+dispatch, or a track-tick path. Such construction SHALL have a declared row in
+the maintained
+[ExecutionBounds.md](../../../../docs/Authority/Architecture/ExecutionBounds.md)
+inventory before runtime implementation. Large construction SHALL be divided
+into units with an enforced input and storage cap, a maximum indivisible step,
+persistent progress, and a completion condition. An empirically bounded unit
+SHALL additionally have an explicit overrun guard and failure policy. A local
+timer checked only between steps SHALL NOT qualify as an execution bound.
 
-#### Scenario: Commit construction stays off the MIDI interval path
+#### Scenario: Existing commit boundaries do not bypass bound review
 
-- **WHEN** a capture or edit commit constructs a candidate
-- **THEN** construction runs at the existing commit boundary
-- **AND** it adds no scan, allocation, sort, or drain work between `handleMidiInput()` entries
+- **WHEN** a capture or edit commit is reached from input dispatch, clock dispatch, or a track-tick path
+- **THEN** candidate construction is classified as timing-critical or interval-path work
+- **AND** the existing commit boundary does not make content-sized construction admissible
 
-#### Scenario: Unbounded construction is not admitted silently
+#### Scenario: Large construction progresses in bounded units
+
+- **WHEN** a complete candidate requires more work than one admissible unit
+- **THEN** the construction resumes from persistent progress across work opportunities
+- **AND** one unit's work and storage do not grow with total loop length
+- **AND** the active snapshot remains selected until the candidate is complete
+
+#### Scenario: Publication is the atomic completion step
+
+- **WHEN** all bounded construction units complete
+- **THEN** one complete candidate is frozen and published atomically
+- **AND** publication does not perform the deferred content-sized construction
+
+#### Scenario: Empirical overrun preserves state
+
+- **WHEN** an empirically bounded unit reaches its overrun guard or cannot fit
+- **THEN** no partial candidate is published
+- **AND** the active and historical snapshots remain unchanged
+- **AND** the phase-specific retry, defer, or rejection policy retains the settled mutation without silent loss
+
+#### Scenario: Unbounded construction is not admitted
 
 - **WHEN** construction is content-dependent without an enforced bound
-- **THEN** it is not moved onto the interval path
-- **AND** a separate architecture phase defines the bound and overrun policy
+- **THEN** it is not introduced on the interval path or timing-critical input path
+- **AND** a separate approved phase defines the bound, progress, and overrun policy before runtime publication
