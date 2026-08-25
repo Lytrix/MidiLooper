@@ -30,4 +30,28 @@ inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
   return !timingCriticalTrackActive || loadFrameDurationUs < kActiveLoadFrameSaveDeferThresholdUs;
 }
 
+/// While PLAYING or OVERDUBBING and both persist and first-record snapshot are pending, they take turns.
+/// When only one is pending, that owner always runs.
+inline bool shouldRunSnapshotOnPostStopLane(bool snapshotPending, bool persistPending,
+                                            bool persistLane) {
+  if (!snapshotPending) {
+    return false;
+  }
+  if (!persistPending) {
+    return true;
+  }
+  return !persistLane;
+}
+
+inline bool shouldRunPersistOnPostStopLane(bool snapshotPending, bool persistPending,
+                                           bool persistLane) {
+  if (!persistPending) {
+    return false;
+  }
+  if (!snapshotPending) {
+    return true;
+  }
+  return persistLane;
+}
+
 }  // namespace MidiServiceDrain

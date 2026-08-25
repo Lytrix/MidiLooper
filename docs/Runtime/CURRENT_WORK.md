@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.1 persist playback-save grace)
+Last updated: 2026-08-26 (4b.1 persist/snapshot post-stop turn-taking)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** OpenSpec task **4b.1** only. After record/overdub stop to PLAYING
-and after overdub start, `StorageManager` holds work-item persist for
-`Config::playbackSaveDispatchGraceMs` so `LoopPersist` `VerifyAndRename`
-does not run on those first turns. Urgent stop-path saves still queue
-immediately; the grace is set after `requestDeferredSaveState`. Undo
-urgent request without a later grace call still flushes now. Do **not**
-split `atomicRenameTempFile`. Tasks **4b.2** (first-record `snapshot_idle`),
-**4b.3** (post-stop `usbdisp` / `load_frame` / `late_on`), and **4b.4**
-(OVERDUBBING `DisplayResolveLiveCapture`) stay parked.
+**Now:** OpenSpec task **4b.1** only. Persist and first-record snapshot stay
+on PLAYING and OVERDUBBING idle, but not on the same turn. The 2 s
+playback-save grace is withdrawn — [`010505`](../../captures/session_20260826_010505.log)
+stacked persist `done=46697` with snapshot on first OD. Do **not** split
+`atomicRenameTempFile`. Tasks **4b.2**–**4b.4** stay parked.
 
 Phase 3 task **4.4 display** remains in tree (not closed). Paint and visual-cache fill read
 published `LoopSnapshot` events through

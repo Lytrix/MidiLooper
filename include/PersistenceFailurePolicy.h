@@ -27,7 +27,6 @@ bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
                                         bool workItemActive);
 
 /// True when a transport-active flush must wait for `deferDispatchUntilMs`.
-/// Urgent does not bypass — stop-path saves set the grace after `requestDeferredSaveState`.
 /// Sync drain sets `deferUntilMs` to 0 so this stays false.
 bool shouldDeferTransportFlush(bool savePending, bool transportActive, uint32_t nowMs,
                                uint32_t deferUntilMs);

@@ -673,10 +673,10 @@ before runtime publication is implemented.
 
 Device [`004934`](../../../captures/session_20260826_004934.log): overdub-stop
 display hold is PASS (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first
-publish is 7.4–8.4 ms. **Selected now:** `4b.1` — hold work-item persist for
-`playbackSaveDispatchGraceMs` after record/overdub stop to PLAYING and after
-overdub start. `LoopPersist` `VerifyAndRename` (`atomicRenameTempFile`) stays
-one SD step; 4b.1 postpones it and does not split it.
+publish is 7.4–8.4 ms. **Selected now:** `4b.1` — persist and first-record snapshot stay on PLAYING
+and OVERDUBBING idle, but not on the same turn. `VerifyAndRename` stays one
+SD step. The 2 s overdub-start grace is withdrawn
+([`010505`](../../../captures/session_20260826_010505.log)).
 
 Parked until selected:
 

@@ -145,7 +145,6 @@ void Track::startOverdubbing(uint32_t currentTick) {
                                        static_cast<uint32_t>(TrackUndo::getUndoCount(*this)));
   SC_ODUB_STAGE("complete", micros() - telemetryStartUs, DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
-  StorageManager::deferWorkspaceSaveDispatchDuringPlayback(Config::playbackSaveDispatchGraceMs);
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 

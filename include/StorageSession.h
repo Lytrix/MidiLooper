@@ -183,6 +183,8 @@ struct CurrentWorkspaceSaveJob {
   uint32_t failedAtMs = 0;
   /// While millis() < this value, skip starting a new full workspace save during transport.
   uint32_t deferDispatchUntilMs = 0;
+  /// After stop, persist and snapshot take turns while both are pending. True = persist's turn.
+  bool postStopPersistLane = true;
   std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> midiBatch;
   uint16_t loopSlotsWritten = 0;
   uint16_t loopSlotsSkipped = 0;

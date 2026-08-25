@@ -16,6 +16,7 @@
 #include "StorageManager.h"
 #include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/MidiServiceDrain.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopEventValidation.h"
@@ -705,13 +706,22 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   // window. Successor construction copies the span root per note-bar unit and
   // did not finish after OD1 in session_20260825_232329 (3631 pending=1
   // steps; OD2 BPM 57; OD4 BPM 46). Do not step that work on PLAYING /
-  // OVERDUBBING once a root exists. First-record publish is unchanged.
+  // OVERDUBBING once a root exists. First-record publish stays on PLAYING
+  // and OVERDUBBING idle, but not on the same turn as persist
+  // (session_20260826_010505 stacked both on first OD).
   const bool snapshotIdleAllowed =
       !isRecording() &&
       !(havePublishedSnapshot && (isPlaying() || isOverdubbing())) &&
       (!isOverdubbing() || snapshotLoop.hasInFlightSnapshotConstruction()) &&
       !(visualCacheNeedsFirstPaint && !isOverdubbing());
-  if (snapshotLoop.hasPendingSnapshotPublish() && snapshotIdleAllowed) {
+  const bool persistPending = StorageManager::hasDeferredSaveWork();
+  const bool snapshotPending = snapshotLoop.hasPendingSnapshotPublish();
+  const bool alternateWithPersist = (isPlaying() || isOverdubbing()) && persistPending;
+  const bool snapshotLaneAllowed =
+      !alternateWithPersist ||
+      MidiServiceDrain::shouldRunSnapshotOnPostStopLane(
+          snapshotPending, persistPending, StorageManager::preferPostStopPersistLane());
+  if (snapshotPending && snapshotIdleAllowed && snapshotLaneAllowed) {
 #if defined(SESSION_CAPTURE)
     const uint32_t snapshotIdleStartUs = micros();
 #endif
@@ -722,6 +732,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                               snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
     snapshotLoop.stepPendingSnapshotPublish(1, !isOverdubbing(), playheadPhaseTick);
     snapshotIdleUnitRan = true;
+    if (alternateWithPersist) {
+      StorageManager::notePostStopSnapshotRan();
+    }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     char snapshotLine[160];
     snprintf(snapshotLine, sizeof(snapshotLine),

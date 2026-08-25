@@ -583,11 +583,26 @@ void loop() {
   const uint32_t persistSaveStartUs = micros();
 #endif
   const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
+  bool snapshotPendingOnTransport = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& track = trackManager.getTrack(i);
+    if ((track.isPlaying() || track.isOverdubbing()) && track.loopsAllocated() &&
+        track.getActiveLoop().hasPendingSnapshotPublish()) {
+      snapshotPendingOnTransport = true;
+      break;
+    }
+  }
   const bool allowDeferredSaveAfterLoadFrame = MidiServiceDrain::allowDeferredSaveAfterLoadFrame(
       timingCriticalTrackActive, loadFrameUs);
+  const bool allowPostStopPersistLane = MidiServiceDrain::shouldRunPersistOnPostStopLane(
+      snapshotPendingOnTransport, deferredSavePending, StorageManager::preferPostStopPersistLane());
   if (allowDeferredSaveAfterLoadFrame &&
-      MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending)) {
+      MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending) &&
+      allowPostStopPersistLane) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
+    if (snapshotPendingOnTransport) {
+      StorageManager::notePostStopPersistRan();
+    }
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;

@@ -47,16 +47,13 @@ Stop-display hold is device PASS
 (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first publish is
 7.4–8.4 ms. Remaining spikes are separate owners. **Now:** 4b.1 only.
 
-- [ ] 4b.1 Hold `StorageManager::processDeferredSaveState` work items for
-      `Config::playbackSaveDispatchGraceMs` after record/overdub stop to
-      PLAYING and after overdub start, including urgent stop-path LoopPersist.
-      Owner stays `StorageManager` via `deferFlushForTransport`. Do not move
-      save onto the stop commit path. Do not convert
-      `DeferredLoopFinalizeStage::VerifyAndRename` (`atomicRenameTempFile`).
-      Evidence: `004934` `PERS,work,80883` LoopPersist `done` at 64.650 s
-      after record stop; `PERS,work,48809` LoopPersist `done` at 126.729 s
-      on second overdub start (1 ms after `PLAYING→OVERDUBBING`). `003459`
-      `persist_save=46561` / `57154`.
+- [ ] 4b.1 Persist and first-record snapshot stay on PLAYING and OVERDUBBING
+      idle, but not on the same turn (`shouldRunPersistOnPostStopLane` /
+      `shouldRunSnapshotOnPostStopLane`). Do not move save onto the stop
+      commit path. Do not convert `VerifyAndRename`. The 2 s playback-save
+      grace is withdrawn — [`010505`](../../../captures/session_20260826_010505.log)
+      stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
+      (`midi_gap` 32–51 ms).
 - [ ] 4b.2 Bound first-record `snapshot_idle` construction so PLAYING immediately
       after record stop stays near the 7.4–8.4 ms PLAYING gap. Evidence:
       `004934` `pending=1` from 64.418 s to 68.243 s (`midi_gap` 90.2 ms at
