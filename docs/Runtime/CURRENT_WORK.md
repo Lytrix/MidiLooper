@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (task 1.2 authority alignment complete)
+Last updated: 2026-08-25 (task 1.3 Phase 0 gate complete)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -14,10 +14,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 `LoopSnapshot` objects. No snapshot-model firmware is authorized in this phase.
 Logical indexes are selected: pitch → bar → membership lists of `NoteRef`s,
 and bar → membership lists of `EventRef`s.
-Formal reassessment task 1.1 and authority alignment task 1.2 are complete.
-Phase 0 remains documentation-only. Phase 2 remains blocked until the
-remaining Phase 0 gates and an `ExecutionBounds.md` row for dirty-bar
-construction. The physical directory is Phase 1 / measurement.
+Formal reassessment task 1.1, authority alignment task 1.2, and the Phase 0
+scope gate task 1.3 are complete. Phase 0 remains documentation-only. Phase 2
+remains blocked until the remaining Phase 0 gate, later preflight, and an
+`ExecutionBounds.md` row for dirty-bar construction. The physical directory
+is Phase 1 / measurement.
 
 **Authorized exception:** queued-destination visual-cache invalidation — port of the
 repair authorized on `feature/overdub-stop-lag-stage-c`. Owner:
@@ -42,7 +43,7 @@ The later 2026-08-25 pitch/bar amendment selects the logical indexes and leaves
 the physical directory unselected. Formal reassessment and approval are
 recorded in
 [`ARCHITECTURE-REASSESSMENT.md`](../../openspec/changes/immutable-loop-snapshot-passes/ARCHITECTURE-REASSESSMENT.md);
-task 1.3 and task 1.4 remain open. No firmware behavior changed.
+task 1.4 remains open. No firmware behavior changed.
 
 The maintained `LoopContentResolution` lifecycle and its playback-readiness
 continuation are not pursued on this branch. The existing `LoopContentResolution`
