@@ -13,12 +13,14 @@ Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are co
 
 ## 2. Immutable snapshot model
 
-Blocked until section 1 is complete (formal reassessment 1.1 still open). The logical indexes are selected; the physical directory is not.
+Phase 1 is selected after section 1 completed. The logical indexes are
+selected; the physical directory is a hard measurement gate before its
+production implementation. Candidate construction remains native/offline.
 
-- [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a declared execution-bound class, a memory allocation contract, and canonical span access for projection consumers.
-- [ ] 2.2 Implement the selected pitch/bar membership indexes and complete immutable `LoopSnapshot` records under `Loop` / `LoopPasses`. Choose and measure the physical directory so only dirty membership and the minimum path to it are newly allocated. Keep `LoopPass` as the compatibility operation record.
-- [ ] 2.3 Implement candidate construction from a const active snapshot and an existing semantic mutation with persistent progress, bounded units, atomic publication, and rollback.
-- [ ] 2.4 Verify the architectural invariants with existing native gates plus narrowly scoped checks only: snapshot completeness, unchanged-object sharing, changed-object replacement, non-note preservation, older-snapshot stability, and selection identity. Do not add a new test architecture.
+- [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a memory allocation contract, canonical span access for projection consumers, and a construction-unit measurement contract for later execution-bound classification.
+- [ ] 2.2 After the physical-directory measurement gate, implement the selected pitch/bar membership indexes and complete immutable `LoopSnapshot` records under `Loop` / `LoopPasses`. Allocate only the minimum directory structure required by the selected representation. Keep `LoopPass` as the compatibility operation record.
+- [ ] 2.3 Implement native/offline candidate construction from a const active snapshot and an existing semantic mutation with explicit resumable progress and measured units. Freeze, validate, and retain a complete candidate without making it active; preserve the active snapshot on failure.
+- [ ] 2.4 Verify the architectural invariants with existing native gates plus narrowly scoped checks only: snapshot completeness and self-containment, unchanged-object sharing, changed-object replacement, non-note preservation and ordering, multi-bar/wrap membership, `NoteId` deduplication, snapshot identity stability, alias safety, older-snapshot stability, and failed-candidate preservation. Do not add a new test architecture.
 
 ## 3. Capture and edit publication
 
