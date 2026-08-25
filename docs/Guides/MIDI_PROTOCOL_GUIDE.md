@@ -77,6 +77,13 @@ Consequences:
 - the complete `LoopSnapshot` still needs correct internal note spans for
   persistence, undo, display, and future resolution.
 
+Current source capture retains the existing same-channel/same-pitch
+`pendingNotes` and LIFO behavior. A source-level replace-on-retrigger guard that
+would insert an internal synthetic NoteOff before replacing an open capture
+entry is intentionally deferred; this snapshot change does not alter live MIDI
+capture pairing. Existing record/overdub stop finalization remains responsible
+for closing notes that are still open at stop.
+
 MIDI 2.0 adds per-note controller and per-note management messages for
 independent per-note control of multiple notes with the same note number. That
 is not the same as adding the loop’s internal `NoteId` to ordinary MIDI 1.0
