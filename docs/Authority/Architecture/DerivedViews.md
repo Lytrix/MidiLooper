@@ -88,7 +88,7 @@ source revision for invalidation. A stale representation may remain available
 under its consumer policy while bounded rebuilding completes; snapshot
 selection never requires a full-loop rebuild on a timing-critical path.
 
-**Play today:** `Track::playMidiEvents` phases `currentTick`, then walks `mergedEvents` in `playbackOrder`. `ensurePlaybackMergedMidiEventsBuilt` fills that list from pass gather (`gatherCommittedEventsInWindow` = 2 bars on long loops; full gather on short). Live overdub also walks `loop.capture.store`. NOTE_EDIT still full-replaces `mergedEvents` from `sessionMidiEvents()` — target is the play window plus settled overlay `NoteId`s (DEC-037 Editor amendment).
+**Play today:** `Track::playMidiEvents` phases `currentTick`, then walks `mergedEvents` in `playbackOrder`. `ensurePlaybackMergedMidiEventsBuilt` fills that list from the published `LoopSnapshot` event membership when one is selected (`tryGatherPublishedSnapshotEventsInWindow` = 2 bars on long loops; full gather on short), and from compatibility pass gather otherwise. The window records snapshot identity for freshness. Live overdub also walks `loop.capture.store`. NOTE_EDIT still full-replaces `mergedEvents` from `sessionMidiEvents()` — target is the play window plus settled overlay `NoteId`s (DEC-037 Editor amendment).
 
 **Display today:** OLED filters `visualCache.notes`. Idle `rebuildVisualCacheIdleSlice` fills dirty bars (2–4 bars). When `tryResolvePreparedWindow` matches `playbackRevision`, that slice comes from `resolveWindow`; otherwise gather + reconstruct. Paint is not playback.
 

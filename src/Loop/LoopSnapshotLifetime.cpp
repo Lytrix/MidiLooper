@@ -20,6 +20,12 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef Loop::publishedSnapshot() const {
                                : ImmutableLoopSnapshotRef{};
 }
 
+LOOP_COLD_MEM const void* Loop::publishedSnapshotIdentity() const {
+  return publishedSnapshotBox_ && publishedSnapshotBox_->snapshot
+             ? publishedSnapshotBox_->snapshot.get()
+             : nullptr;
+}
+
 LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
   publishedSnapshotBox_.reset();
 }

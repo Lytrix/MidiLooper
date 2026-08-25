@@ -7,6 +7,9 @@
 /// Scratch merge cache for one loop playback path (not the musical PlaybackWindow domain object).
 struct PlaybackMergedMidiEvents {
   uint32_t builtFromRevision = 0;
+  /// Published `LoopSnapshot` identity used as the gather source, or nullptr
+  /// when the window came from NOTE_EDIT preview or compatibility gather.
+  const void* builtFromSnapshotIdentity = nullptr;
   /// For long loops: tick range covered by `mergedEvents` (windowed gather).
   uint32_t windowStartTick = 0;
   uint32_t windowLengthTicks = 0;
@@ -14,6 +17,7 @@ struct PlaybackMergedMidiEvents {
 
   void clear() {
     builtFromRevision = 0;
+    builtFromSnapshotIdentity = nullptr;
     windowStartTick = 0;
     windowLengthTicks = 0;
     mergedEvents.clear();
