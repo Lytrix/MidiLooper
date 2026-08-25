@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (233308 device PASS — idle hold after first publish)
+Last updated: 2026-08-25 (4.4 display reads published LoopSnapshot)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** After the first published `LoopSnapshot` exists, PLAYING and
-OVERDUBBING idle do not `step` successor construction. PLAYING visual stays
-off unless the cache is empty. First-record publish is unchanged.
-Device PASS [`233308`](../../captures/session_20260825_233308.log): four
-overdubs after record; first publish at 97.50 s; **no** `snapshot_idle` from
-then until STOPPED; PLAY4 BPM 119.966–120.049. Contrast
-[`232329`](../../captures/session_20260825_232329.log) 3631 later
-`pending=1` steps; OD2 BPM 57, OD4 BPM 46.
-NOTE_EDIT close stays a synchronous drain. Tasks 4.3–4.6 are **not selected**.
+**Now:** Phase 3 task **4.4 display only**. Paint fallback
+(`rebuildDisplayNotesInWindow`, committed full gather) and visual-cache fill
+(`rebuildVisualCacheIdleSlice`, `rebuildVisualCacheFromPasses`) read
+published `LoopSnapshot` events through
+`tryGatherPublishedSnapshotEventsInWindow` (plus live capture when needed),
+then `reconstructDisplayNotes`. Compatibility gather remains when no
+published root exists. Task **4.3** stays skipped. NOTE_EDIT, overdub
+analysis, validation, 4.5, 4.6, and Phase 5 are **not selected**.
+
+After the first published `LoopSnapshot` exists, PLAYING and OVERDUBBING idle
+do not `step` successor construction. PLAYING visual stays off unless the
+cache is empty. First-record publish is unchanged. Device PASS
+[`233308`](../../captures/session_20260825_233308.log): four overdubs after
+record; first publish at 97.50 s; **no** `snapshot_idle` from then until
+STOPPED; PLAY4 BPM 119.966–120.049.
 
 Phase 3 tasks 4.1–4.2 remain complete. Playback preparation reads the
 published `LoopSnapshot` through `ensurePlaybackMergedMidiEventsBuilt`,
@@ -38,7 +44,7 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
-**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are complete; overdub publish is idle-stepped (`DEC-045`). Phase 3 playback snapshot reads (4.1–4.2) are complete.
+**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are complete; overdub publish is idle-stepped (`DEC-045`). Phase 3 playback snapshot reads (4.1–4.2) are complete. Phase 3 display snapshot reads (4.4 display only) are in tree; 4.4 remainder is not selected.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on

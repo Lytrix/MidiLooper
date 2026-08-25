@@ -44,10 +44,19 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
                                                NoteUtils::DisplayNoteVec& outNotes,
                                                bool includeActiveCapture) {
     eventBuffer.clear();
-    if (includeActiveCapture && loop.captureActive()) {
-        mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart, windowLength);
-    } else {
-        mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
+    const bool usedSnapshot =
+        includeActiveCapture && loop.captureActive()
+            ? mutLoop.tryGatherPublishedSnapshotEventsInWindowWithCapture(
+                  eventBuffer, windowStart, windowLength)
+            : mutLoop.tryGatherPublishedSnapshotEventsInWindow(eventBuffer, windowStart,
+                                                               windowLength);
+    if (!usedSnapshot) {
+        if (includeActiveCapture && loop.captureActive()) {
+            mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart,
+                                                            windowLength);
+        } else {
+            mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
+        }
     }
     if (!eventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =

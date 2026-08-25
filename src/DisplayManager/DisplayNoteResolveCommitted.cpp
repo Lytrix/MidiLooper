@@ -202,10 +202,18 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayFullRebuild);
         liveDisplayEventBuffer.clear();
-        if (loop.captureActive()) {
-            mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
-        } else {
-            mutLoop.gatherCommittedEvents(liveDisplayEventBuffer);
+        const bool usedSnapshot =
+            loop.captureActive()
+                ? mutLoop.tryGatherPublishedSnapshotEventsInWindowWithCapture(
+                      liveDisplayEventBuffer, 0, loopLength)
+                : mutLoop.tryGatherPublishedSnapshotEventsInWindow(liveDisplayEventBuffer, 0,
+                                                                   loopLength);
+        if (!usedSnapshot) {
+            if (loop.captureActive()) {
+                mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
+            } else {
+                mutLoop.gatherCommittedEvents(liveDisplayEventBuffer);
+            }
         }
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
