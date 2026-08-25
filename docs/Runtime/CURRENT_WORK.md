@@ -41,15 +41,17 @@ M2-104-UM v1.1.2, with a read-only audit of the current MIDI 1.0 logic. The
 2026-08-25 reference-root refinement separates `LoopPass` from `LoopSnapshot`,
 requires a persistent reference root, defines reachability and provisional
 versus global snapshots, and loads only the latest saved snapshot after reboot.
-The later 2026-08-25 pitch/bar amendment selects the logical indexes and leaves
-the physical directory unselected. Formal reassessment and approval are
-recorded in
+The later 2026-08-25 pitch/bar amendment selects the logical indexes. The Phase
+1 native measurement selects the sparse fixed-capacity paged directory
+experiment; page capacity and memory characteristics remain measured
+parameters. Formal reassessment and approval are recorded in
 [`ARCHITECTURE-REASSESSMENT.md`](../../openspec/changes/immutable-loop-snapshot-passes/ARCHITECTURE-REASSESSMENT.md).
 Later-phase gates are recorded in
 [`PREFLIGHT.md`](../../openspec/changes/immutable-loop-snapshot-passes/PREFLIGHT.md)
 and
 [`DECISION_REVIEW.md`](../../openspec/changes/immutable-loop-snapshot-passes/DECISION_REVIEW.md).
-No firmware behavior changed.
+The Phase 1 model is native/offline only; no production runtime behavior or
+consumer selection changed.
 
 The maintained `LoopContentResolution` lifecycle and its playback-readiness
 continuation are not pursued on this branch. The existing `LoopContentResolution`

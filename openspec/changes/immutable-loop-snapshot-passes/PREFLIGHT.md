@@ -159,6 +159,31 @@ parameter, and this native result does not establish Teensy memory safety.
 Successor peak temporary memory, allocator behavior, and reclamation remain
 required measurements before the implementation is accepted.
 
+### Phase 1 implementation result
+
+Phase 1 implements `LoopSnapshot` in `LoopSnapshot.h` /
+`LoopSnapshot.cpp`, exposed through `Loop.h` without adding a runtime snapshot
+field to `Loop` or `LoopPasses`. `LoopSnapshot` owns complete self-contained
+span and event roots. Notes use immutable loop-scoped references keyed by
+`NoteId`; events use immutable loop-scoped references keyed by `EventId` and
+retain canonical event order. The selected physical experiment uses 32-bar
+membership pages, copy-on-write dirty pages, and
+`ExternalMemoryFirstAllocator` for snapshot allocations.
+
+`LoopSnapshotConstruction` copies the active root references, applies settled
+note/event changes with persistent change-index progress, freezes a complete
+candidate, and leaves the parent unchanged on failure. It is not connected to
+capture stop, NOTE_EDIT close, playback, MIDI input, clock dispatch, undo,
+persistence, or consumer selection. No runtime execution-bound class is
+claimed by this phase.
+
+Native checks cover self-containment, unchanged membership sharing, immutable
+object replacement, `NoteId` preservation, wrap membership, canonical event
+ordering, candidate alias safety, resumable progress, and failed-candidate
+preservation. The capture-serial build passed with 4640 RAM1 locals; the full
+native suite passed 1435/1435. These gates do not establish a runtime
+construction bound or persistence compatibility.
+
 ## Files affected
 
 Expected later implementation scope is phase-specific and must not be combined

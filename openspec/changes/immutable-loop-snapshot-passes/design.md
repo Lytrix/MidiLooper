@@ -189,13 +189,13 @@ logical model does **not** by itself make candidate construction bounded.
 minimum directory path required to reach them MAY be newly allocated.
 Unchanged pitch/bar membership remains shared with the parent snapshot.
 
-**Physical directory representation is not selected.** Persistent structural
-sharing MAY implement the pitch/bar directory (sparse directory, path-copy
-directory tree, or another measured form). Path-copy is rejected as the
-*semantic overlap model*; it is not rejected as a possible directory
-implementation. Phase 1 / measurement chooses the physical form against
-Teensy allocation, serialization, and the maximum indivisible construction
-step. “Dirty bars” does not automatically solve directory sharing.
+**Physical directory representation was not selected by Phase 0.** Phase 1
+measurement selected a sparse fixed-capacity paged directory experiment for
+the native model. Path-copy is rejected as the *semantic overlap model*; it
+is not rejected as a possible directory implementation. Page capacity,
+allocator behavior, serialization, reclamation, and the maximum indivisible
+construction step remain measured/runtime-gated properties. “Dirty bars” does
+not automatically solve directory sharing.
 
 Steps that identify and rewrite membership have **semantic locality** bounded
 by the affected pitch and dirty bars. Their execution cost remains dependent

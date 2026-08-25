@@ -22,6 +22,7 @@
 #include "StorageLoopIo.h"
 #include "EditPass.h"
 #include "LoopPasses.h"
+#include "LoopSnapshot.h"
 #include "CommittedEventRange.h"
 #include "VisualCache.h"
 #include "TrackState.h"
