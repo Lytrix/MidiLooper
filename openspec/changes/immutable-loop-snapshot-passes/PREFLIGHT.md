@@ -229,9 +229,11 @@ overdub is not allowed
 [`001907`](../../../captures/session_20260826_001907.log)).
 `expandWindowWithMargin` includes a remainder of at most two margins so a
 20-bar loop’s last 2 bars are in the first gather
-([`002634`](../../../captures/session_20260826_002634.log)). After overdub
-stop, a dirty visual-cache prefix does not keep an incomplete first-window
-handoff.
+([`002634`](../../../captures/session_20260826_002634.log)). Overdub-stop
+paint holds the composed frame; `ODUB,stop,display` must not snapshot-gather
+([`003459`](../../../captures/session_20260826_003459.log) display 97–154 ms).
+Parked (not selected): `tasks.md` 4b.1 deferred `persist_save` during
+`playingMidiDrainAfterOverdubStop`; 4b.2 first-record `snapshot_idle` bound.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
