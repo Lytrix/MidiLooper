@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (Phase 0 design trim)
+Last updated: 2026-08-25 (task 1.1 reassessment complete)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -14,7 +14,8 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 `LoopSnapshot` objects. No snapshot-model firmware is authorized in this phase.
 Logical indexes are selected: pitch → bar → membership lists of `NoteRef`s,
 and bar → membership lists of `EventRef`s.
-Phase 2 remains blocked until formal reassessment (task 1.1) and an
+Formal reassessment task 1.1 is complete with approval pending. Phase 2
+remains blocked until approval, task 1.2 authority alignment, and an
 `ExecutionBounds.md` row for dirty-bar construction. The physical directory
 is Phase 1 / measurement.
 
@@ -38,7 +39,9 @@ M2-104-UM v1.1.2, with a read-only audit of the current MIDI 1.0 logic. The
 requires a persistent reference root, defines reachability and provisional
 versus global snapshots, and loads only the latest saved snapshot after reboot.
 The later 2026-08-25 pitch/bar amendment selects the logical indexes and leaves
-the physical directory unselected. No firmware behavior changed.
+the physical directory unselected. Formal reassessment is recorded in
+[`ARCHITECTURE-REASSESSMENT.md`](../../openspec/changes/immutable-loop-snapshot-passes/ARCHITECTURE-REASSESSMENT.md);
+approval and task 1.2 remain open. No firmware behavior changed.
 
 The maintained `LoopContentResolution` lifecycle and its playback-readiness
 continuation are not pursued on this branch. The existing `LoopContentResolution`
