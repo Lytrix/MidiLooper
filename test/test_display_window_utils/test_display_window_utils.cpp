@@ -263,6 +263,17 @@ void test_visual_cache_covers_window_uses_clean_neighborhood() {
       visualCacheCoversWindow(true, VisualBarVec{}, 0, 16u * bar, loopLength, bar));
 }
 
+void test_visual_cache_covers_window_rejects_first_slice_prefix() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 20u * bar;
+  VisualBarVec dirty(20u, 1);
+  for (uint32_t b = 0; b < 4; ++b) {
+    dirty[b] = 0;
+  }
+  TEST_ASSERT_FALSE(visualCacheCoversWindow(true, dirty, 0, 16u * bar, loopLength, bar));
+  TEST_ASSERT_TRUE(visualCacheCoversWindow(true, dirty, 0, 2u * bar, loopLength, bar));
+}
+
 void test_visual_cache_covers_window_follow_lookahead_requires_next_bar() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const uint32_t loopLength = 66u * bar;
@@ -499,6 +510,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_uses_clean_neighborhood);
+  RUN_TEST(test_visual_cache_covers_window_rejects_first_slice_prefix);
   RUN_TEST(test_visual_cache_covers_window_follow_lookahead_requires_next_bar);
   RUN_TEST(test_follow_window_filter_includes_newly_exposed_bars);
   RUN_TEST(test_expand_window_with_margin_clamps_to_loop);
