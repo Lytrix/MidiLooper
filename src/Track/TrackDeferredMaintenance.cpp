@@ -690,11 +690,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                                                           bool postOverdubDrainWindowActive) {
   Loop& snapshotLoop = getActiveLoop();
   bool snapshotIdleUnitRan = false;
-  if (snapshotLoop.hasPendingSnapshotPublish()) {
+  const bool snapshotIdleAllowed = !isRecording() &&
+                                   (!isOverdubbing() || snapshotLoop.hasInFlightSnapshotConstruction());
+  if (snapshotLoop.hasPendingSnapshotPublish() && snapshotIdleAllowed) {
 #if defined(SESSION_CAPTURE)
     const uint32_t snapshotIdleStartUs = micros();
 #endif
-    snapshotLoop.stepPendingSnapshotPublish(1);
+    snapshotLoop.stepPendingSnapshotPublish(1, !isOverdubbing());
     snapshotIdleUnitRan = true;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     char snapshotLine[160];

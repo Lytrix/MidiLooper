@@ -208,12 +208,12 @@ Tasks 4.3–4.6 are not authorized by this result.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
-Overdub session-exit no longer completes a candidate on the stop path.
-`Loop::queueSessionExitSnapshot` copies pass ids; idle
-`stepPendingSnapshotPublish(1)` applies one row-21 unit. Record and NOTE_EDIT
-close remain synchronous drains. Wrap-ahead may construct onto an unpublished
-candidate during OVERDUBBING idle and must not `storePublishedSnapshot` until
-session-exit is queued. Failure still discards the candidate. See `DEC-045`.
+Overdub and record session-exit no longer complete a candidate on the stop
+path. `Loop::queueSessionExitSnapshot` copies pass ids; idle
+`stepPendingSnapshotPublish(1)` applies one row-21 unit. During OVERDUBBING,
+idle only advances an in-flight construction (`allowStartConstruction` false).
+PLAYING may start the next pass change-set. NOTE_EDIT close remains a
+synchronous drain. Failure still discards the candidate. See `DEC-045`.
 
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event

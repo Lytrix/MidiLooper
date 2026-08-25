@@ -374,6 +374,10 @@ LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
          (box == nullptr || !passAlreadyTracked(*box, lastCommittedPassId_));
 }
 
+LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
+  return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->construction;
+}
+
 LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
                                                   const EditPassIdList& companionIds) {
   if (!isSessionExit(reason) || loopLengthTicks == 0) {
@@ -428,7 +432,8 @@ LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
   return publishedSnapshotIsCurrent();
 }
 
-LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges) {
+LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
+                                                    bool allowStartConstruction) {
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
   }
@@ -439,12 +444,14 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges) {
     pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   }
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
-  enqueueLiveOverdubPasses();
+  if (allowStartConstruction) {
+    enqueueLiveOverdubPasses();
+  }
 
   size_t remaining = maximumChanges;
   while (remaining > 0) {
     if (!box.construction) {
-      if (!startNextPendingConstruction(*this, box)) {
+      if (!allowStartConstruction || !startNextPendingConstruction(*this, box)) {
         break;
       }
       if (maximumChanges <= 1) {
