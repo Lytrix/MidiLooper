@@ -31,8 +31,17 @@ OpenSpec: `openspec/changes/unified-interval-projection/` (archive to `openspec/
 | `CanonicalNoteSpan` | Linear storage span input |
 | `ProjectedNoteInterval` | Output interval in working coordinates |
 
-**Stage 1:** `generateEquivalentIntervals` — k-shift / wrap candidates (bounded by window).  
+**Stage 1:** `generateEquivalentIntervals` — k-shift / wrap candidates for the requested window.
 **Stage 2:** `selectProjectedInterval` / `selectProjectedIntervalsForDisplay` — consumer policy.
+
+The requested window bounds which projected intervals are selected, but it does
+not by itself establish a fixed execution bound for Stage 1. The calculated
+`k` range can grow when a canonical span crosses multiple loop lengths.
+Timing-critical callers must select a bounded span range before projection and
+apply the structural or empirical bound policy from
+[ExecutionBounds.md](ExecutionBounds.md) to candidate generation. A local
+timer checked only between candidates does not bound one candidate-generation
+step.
 
 ---
 
@@ -58,8 +67,8 @@ Do not fork parallel types (`PlaybackInterval` vs `DisplayInterval`) unless a co
 ## Relationship to representations
 
 ```
-Canonical storage (linear pairs)
-        → buildCanonicalSpansFromMidi
+Selected `LoopSnapshot` canonical note/event content
+        → consumer-owned canonical span selection/build
         → IntervalProjection (wrap/select)
         → Derived display representation (DisplayNote list)
         → DisplayWindowUtils (viewport interval filter)
@@ -74,7 +83,7 @@ Display is **two steps**: representation (head/tail, open tails) then interval f
 | API | Heap |
 |-----|------|
 | `playbackEventPhase` | **No** allocation |
-| `generateEquivalentIntervals` | Allowed off hot path; use `ExternalMemoryFirstAllocator` temps |
+| `generateEquivalentIntervals` | No timing guarantee from window selection alone; use `ExternalMemoryFirstAllocator` temps outside the hot path |
 | Sort comparator | **Never** call allocating projection inside `std::sort` |
 
 ---

@@ -59,6 +59,26 @@ after completion. The phase must name the existing owner that holds progress
 and the policy for stale or failed construction; no new scheduler or parallel
 semantic owner is introduced by this refinement.
 
+## IntervalProjection relationship
+
+`LoopSnapshot` supplies complete canonical immutable content. It does not store
+projected intervals or consumer windows. Playback, display, and NOTE_EDIT
+consumers select the relevant canonical span range and then call the existing
+`IntervalProjection` owner with their own `ProjectionContext`.
+
+For large loops, a complete snapshot does not authorize full-loop projection on
+a timing-critical path. `projectDisplayNotes` must use its bounded span-range
+form for windowed consumers; playback keeps scalar `playbackEventPhase` in the
+hot path. Full-loop display or edit projection remains an explicit
+non-timing-critical operation and must still satisfy `ExecutionBounds.md`.
+
+The projection window bounds selected output, not necessarily Stage 1 work:
+`generateEquivalentIntervals` derives a `k` range from each span and the
+window. A span crossing multiple loop lengths can therefore produce a
+content-dependent candidate count. Runtime phases must define a structural
+candidate cap or an empirical overrun guard and failure policy before using
+that operation on a runtime path.
+
 ## Migration stages
 
 1. Complete formal architecture reassessment and record approval.
@@ -87,13 +107,17 @@ semantic owner is introduced by this refinement.
 - Horizon size, projection math, cursor semantics, ledger semantics, capture
   finalization, overlap ownership, and NOTE_EDIT geometry ownership are unchanged
   by this proposal.
+- A complete `LoopSnapshot` does not authorize full-loop projection on a
+  timing-critical path; consumers select bounded span ranges before
+  `IntervalProjection`.
 
 ## Open decisions
 
 - Persistent reference-collection representation and stable-handle reclamation.
 - Storage version/layout, active-tip encoding, and old-format migration.
-- Optional disposable indexes.
+- Optional disposable indexes and bounded consumer span access.
 - Candidate construction memory/time bound and overrun behavior.
+- Long-span projection candidate limit and overrun behavior.
 - Phase-specific work identity and verification gates.
 
 Implementation is not authorized until the architecture review in the OpenSpec

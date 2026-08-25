@@ -7,7 +7,7 @@
 
 ## 2. Immutable snapshot model
 
-- [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a declared execution-bound class, and a memory allocation contract.
+- [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a declared execution-bound class, a memory allocation contract, and canonical span access for projection consumers.
 - [ ] 2.2 Implement structurally shared reference storage and complete immutable snapshot records under `Loop` / `LoopPasses`.
 - [ ] 2.3 Implement candidate construction from a const active snapshot and an existing semantic mutation with persistent progress, bounded units, atomic publication, and rollback.
 - [ ] 2.4 Add native tests for snapshot completeness, unchanged-object sharing, changed-object replacement, non-note preservation, and older-snapshot stability.
@@ -22,11 +22,11 @@
 
 ## 4. Direct consumers
 
-- [ ] 4.1 Make playback preparation read the active snapshot directly and use snapshot identity for freshness while retaining safe fallback.
+- [ ] 4.1 Make playback preparation read the active snapshot directly and use snapshot identity for freshness while retaining safe fallback; select the bounded playback span range before applying projection and keep `playbackEventPhase` scalar in the hot path.
 - [ ] 4.2 Preserve `Track` / `LoopPlaybackRuntime` ownership of cursor, order, ledger, and horizon state; add output parity tests.
 - [ ] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
-- [ ] 4.4 Migrate display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates.
-- [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, and active-capture separation behavior.
+- [ ] 4.4 Migrate display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates; select bounded canonical span ranges before `IntervalProjection` and define long-span `k` candidate limits or empirical overrun policies.
+- [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, and large-loop projection behavior.
 
 ## 5. Undo, load, and persistence
 
