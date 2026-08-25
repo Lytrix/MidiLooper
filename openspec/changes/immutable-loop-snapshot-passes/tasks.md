@@ -7,9 +7,9 @@
 
 ## 2. Immutable snapshot model
 
-- [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references and a measured memory/admission contract.
+- [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a declared execution-bound class, and a memory allocation contract.
 - [ ] 2.2 Implement structurally shared reference storage and complete immutable snapshot records under `Loop` / `LoopPasses`.
-- [ ] 2.3 Implement candidate construction from a const active snapshot and an existing semantic mutation with atomic publication and rollback.
+- [ ] 2.3 Implement candidate construction from a const active snapshot and an existing semantic mutation with persistent progress, bounded units, atomic publication, and rollback.
 - [ ] 2.4 Add native tests for snapshot completeness, unchanged-object sharing, changed-object replacement, non-note preservation, and older-snapshot stability.
 - [ ] 2.5 Add native tests for loop scope, retained roots, clear-slot isolation, and mutable-state aliasing.
 
@@ -18,7 +18,7 @@
 - [ ] 3.1 Adapt `Loop::commitCapturePass` at its existing boundary to publish one snapshot per record or overdub session without changing wrap boundaries.
 - [ ] 3.2 Adapt NOTE_EDIT close/commit to publish one snapshot for a settled edit batch.
 - [ ] 3.3 Retain compatibility pass records and add parity tests for overlap, LIFO pairing, wrap pairs, equal-tick ordering, and non-note events.
-- [ ] 3.4 Keep candidate construction off the MIDI interval path and record an explicit bound and overrun policy.
+- [ ] 3.4 Before runtime publication, classify candidate construction in `ExecutionBounds.md`; define the unit cap, maximum indivisible step, progress state, completion condition, and explicit overrun/failure policy. Do not introduce content-sized construction in `handleMidiInput()`, clock dispatch, or track-tick paths.
 
 ## 4. Direct consumers
 
@@ -32,7 +32,7 @@
 
 - [ ] 5.1 Make `TrackUndo` and clear-slot restore select before/after snapshot identities while preserving strict LIFO and runtime-only undo/redo.
 - [ ] 5.2 Approve the physical storage version/layout for immutable objects, roots, metadata, active tip, and local handle rebuild.
-- [ ] 5.3 Implement the new storage reader/writer and off-MIDI-path compatibility migration with rollback behavior.
+- [ ] 5.3 Implement the new storage reader/writer through existing `StorageManager` deferred units and compatibility migration with rollback behavior; classify any interval-path unit in `ExecutionBounds.md`.
 - [ ] 5.4 Add native tests for round trips, selected snapshot equivalence, grouped undo, clear-slot restore, and old-format migration.
 - [ ] 5.5 Verify deferred persistence remains owned by `StorageManager` without blocking playback or `handleMidiInput()`.
 

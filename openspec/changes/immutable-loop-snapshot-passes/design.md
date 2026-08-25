@@ -4,15 +4,28 @@ At the selected base commit, `LoopPasses` stores chunk-backed capture passes and
 
 The target is a complete immutable snapshot at each committed state boundary. Snapshots contain immutable note and non-note event objects through loop-scoped stable handles. Playback retains mutable cursor, execution order, ledger, and horizon ownership. Existing capture finalization, overlap/pairing, NOTE_EDIT geometry, and deferred persistence owners remain unchanged until separately approved migration phases.
 
+The existing commit boundaries are not automatically outside the timing-critical
+path. `Track::stopRecording` and `Track::stopOverdubbing` can commit from input
+actions, `Track::commitOverdubWrapAtSessionStart` commits during
+`TrackManager::updateAllTracks`, and NOTE_EDIT close is reachable from input
+dispatch. Therefore, “off-clock” is not a sufficient safety claim: candidate
+construction that runs in any of those paths is interval-path work or
+timing-critical input work and must satisfy
+[ExecutionBounds.md](../../docs/Authority/Architecture/ExecutionBounds.md).
+
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Make snapshots self-contained and directly selectable.
 - Preserve logical `NoteId` across immutable object versions.
-- Construct and atomically publish one candidate at existing capture/edit commit boundaries.
+- Separate semantic commit boundaries from candidate construction: construct a
+  complete candidate in bounded resumable units where required, then atomically
+  publish it at the existing boundary.
 - Use snapshot identities for undo, redo, clear-slot restore, and consumer freshness.
 - Use the existing event-stream implementation as a parity oracle during migration.
+- Define the execution-bound classification, progress state, and overrun policy
+  before candidate construction is introduced on a runtime path.
 
 **Non-Goals:**
 
@@ -22,6 +35,8 @@ The target is a complete immutable snapshot at each committed state boundary. Sn
 - No raw pointer persistence.
 - No decision here on persistent sequence structure, reclamation, exact storage layout, or deduplication.
 - No removal of visual cache, capture preview, overdub source-view storage, or playback scratch state.
+- No content-sized candidate construction may run as one indivisible operation
+  from `handleMidiInput()`, clock dispatch, or a track-tick path.
 
 ## Decisions
 
@@ -39,9 +54,41 @@ Snapshot references are loop-scoped handles, not persisted addresses. Editing a 
 
 ### Construction applies existing semantic mutations
 
-At an existing commit boundary, construction reads the active snapshot as const, receives the settled mutation from existing capture/overlap/pairing/NOTE_EDIT owners, applies it to a structurally shared collection, freezes the candidate, and publishes atomically.
+At an existing commit boundary, the existing semantic owner supplies a settled
+mutation. Candidate construction reads the active snapshot as const and applies
+that mutation to a structurally shared collection. If the work is larger than
+one admissible runtime unit, construction uses persistent progress and yields
+between bounded units; it does not block until a complete candidate is
+available. The candidate is frozen and published atomically only after it is
+complete.
 
 **Alternative:** let snapshot storage replay or resolve edits. Rejected because it creates a second semantic owner.
+
+### Large candidate construction follows ExecutionBounds
+
+The maintained inventory in
+[ExecutionBounds.md](../../docs/Authority/Architecture/ExecutionBounds.md) is
+the gate for runtime candidate construction. Each phase that introduces or
+extends this work must identify the `Loop` / `LoopPasses` owner row and declare:
+
+- the input and storage cap for one unit;
+- the maximum indivisible step;
+- persistent progress and completion state;
+- a structural bound, or a measured bound with an explicit overrun guard and
+  failure policy; and
+- the behavior when work does not fit or overruns.
+
+The total completion time may grow with loop content, but one unit's work and
+storage cannot grow with total loop length. A timer checked only between steps
+does not bound an indivisible scan, allocation, sort, or nested operation.
+“Deferred”, “off-clock”, and cold/flash placement do not change this
+classification.
+
+The active snapshot remains available while a candidate is incomplete. An
+overrun or allocation failure leaves the active and historical snapshots
+unchanged, publishes no partial candidate, and follows the phase's explicit
+retry, defer, or rejection policy without silently losing the settled
+mutation.
 
 ### Undo and playback select snapshots directly
 
@@ -51,12 +98,19 @@ Undo entries retain before/after snapshot identities. Undo, redo, and clear-slot
 
 ### Persistence is a separate physical design
 
-The runtime model requires serialization of immutable objects and snapshot structure in a future format. Exact layout, reclamation, active-tip encoding, and old-format migration are separate decisions; migration runs off the MIDI path.
+The runtime model requires serialization of immutable objects and snapshot
+structure in a future format. Exact layout, reclamation, active-tip encoding,
+and old-format migration are separate decisions. Migration uses the existing
+`StorageManager` deferred owner; any unit that executes between
+`handleMidiInput()` entries still requires an admissible
+`ExecutionBounds.md` classification.
 
 ## Risks / Trade-offs
 
 - **[Memory overhead]** Immutable versions retain history → measure object/reference pools and admission before firmware.
-- **[Construction cost]** Mutations may be content-dependent → keep construction off-clock and define an explicit bound or overrun policy.
+- **[Construction cost]** Mutations may be content-dependent → classify the
+  owner in `ExecutionBounds.md`, use bounded resumable units, and define an
+  explicit overrun policy before runtime publication.
 - **[Parity]** Snapshot output may diverge → compare against current materialization for overlap, pairing, wrap, ordering, and non-note events.
 - **[Lifetime]** Retained snapshots may leak or alias mutable data → test reachability, loop scope, and older-snapshot stability.
 - **[Compatibility]** Storage changes may reject existing files → retain old readers until migration and round-trip gates pass.
@@ -65,10 +119,11 @@ The runtime model requires serialization of immutable objects and snapshot struc
 
 1. Complete formal architecture reassessment and record approval before firmware work.
 2. Implement immutable objects, stable handles, shared reference storage, and native tests with current consumers unchanged.
-3. Adapt capture and NOTE_EDIT commit boundaries while retaining compatibility pass records.
-4. Migrate playback and other consumers independently, using snapshot identity and parity gates.
-5. Migrate undo/load/persistence after physical format approval.
-6. Remove replay/materialized compatibility paths only after all caller-specific gates pass.
+3. Define and verify candidate construction bounds, progress, and overrun behavior before runtime publication.
+4. Adapt capture and NOTE_EDIT commit boundaries while retaining compatibility pass records; publication may occur only after a complete candidate is ready.
+5. Migrate playback and other consumers independently, using snapshot identity and parity gates.
+6. Migrate undo/load/persistence after physical format approval.
+7. Remove replay/materialized compatibility paths only after all caller-specific gates pass.
 
 Rollback keeps the prior representation active and discards any failed candidate. Existing storage readers remain until the new reader and migration are proven.
 
@@ -77,5 +132,8 @@ Rollback keeps the prior representation active and discards any failed candidate
 - Which persistent reference structure and reclamation policy meet memory and lifetime requirements?
 - What exact storage version/layout and compatibility migration are required?
 - Which optional indexes are justified without becoming a second authority?
-- What construction memory/time bound and overrun policy are required?
+- What execution-bound class, unit cap, progress state, and overrun policy
+  will candidate construction use on each runtime path?
+- Which existing owner holds an incomplete candidate and its continuation, and
+  how is a stale candidate discarded if the active snapshot changes?
 - Which phase and work identity authorize each consumer migration?

@@ -27,5 +27,10 @@ The current loop model derives effective musical state by replaying capture pass
 
 - Affects `Loop` / `LoopPasses`, playback preparation, `TrackUndo`, `StorageManager`, NOTE_EDIT and display consumers, and `LoopContentResolution`.
 - Requires native parity and lifetime tests, then firmware RAM1, native, and HITL gates for implementation phases.
-- Open decisions: persistent reference structure, reclamation, storage layout/version and migration, optional indexes, and candidate construction bounds.
-- No change is authorized here to horizon size, projection math, cursor or ledger semantics, capture finalization, overlap ownership, NOTE_EDIT geometry ownership, or interval-path scheduling.
+- Open decisions: persistent reference structure, reclamation, storage layout/version and migration, optional indexes, candidate construction bounds, and per-phase overrun behavior.
+- No change is authorized here to horizon size, projection math, cursor or ledger semantics, capture finalization, overlap ownership, NOTE_EDIT geometry ownership, or interval reservation.
+- Any runtime candidate construction must first be classified against
+  [`ExecutionBounds.md`](../../docs/Authority/Architecture/ExecutionBounds.md):
+  a fixed-cap resumable unit, or an empirically bounded unit with an explicit
+  overrun guard and failure policy. “Off-clock” or deferred placement alone is
+  not an execution bound.

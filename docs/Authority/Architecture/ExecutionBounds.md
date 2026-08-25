@@ -32,6 +32,40 @@ A local µs budget checked *between* steps does not make a step structurally bou
 
 ---
 
+## Large-work handling
+
+“Off-clock”, “deferred”, and cold/flash placement are not execution-bound classes.
+They describe when or where code is placed, not how much work one indivisible
+operation can perform.
+
+An operation is still timing-critical when it runs from `handleMidiInput()`, a
+button or transport action dispatched by MIDI input, or clock dispatch through
+`TrackManager::updateAllTracks`. An existing commit boundary does not make
+content-sized candidate construction safe. The caller's bound does not transfer
+to a nested operation.
+
+Before a large operation is introduced or extended on a runtime path, its owner
+must define:
+
+- the input and storage cap for one work unit;
+- the maximum indivisible step within that unit;
+- persistent progress and completion state;
+- the structural bound, or the measured bound plus an explicit overrun guard
+  and failure policy; and
+- the behavior when the unit does not fit or overruns, without losing pending
+  work or publishing partial state.
+
+If a complete result is required, construction may be incremental, but the
+active result remains selected until construction completes. Publication is a
+single atomic operation over the complete result. A local timer checked only
+between steps is not a substitute for the indivisible-step bound.
+
+For any new runtime owner or extended owner, add or update its inventory row in
+the same change that introduces the runtime work. Until that row has an
+admissible class and policy, the work is not admitted to the interval path.
+
+---
+
 ## Rules
 
 1. An owner that executes on the interval path **must** have a declared row in the inventory below.

@@ -18,7 +18,7 @@ The Loop file SHALL persist the ordered immutable content required for complete 
 
 ### Requirement: Load reconstructs editing state from content
 
-After loading a Loop from disk, the runtime SHALL identify the serialized snapshot tip, reconstruct loop-local stable handles, derive supported runtime undo units, and start with redo empty. An older supported format MAY be migrated off the MIDI path by replaying its records into complete snapshot boundaries. Normal undo and redo SHALL select existing snapshots rather than replay history.
+After loading a Loop from disk, the runtime SHALL identify the serialized snapshot tip, reconstruct loop-local stable handles, derive supported runtime undo units, and start with redo empty. An older supported format MAY be migrated through the existing `StorageManager` deferred owner by replaying its records into complete snapshot boundaries. Any migration unit that executes between `handleMidiInput()` entries SHALL satisfy the declared bound and overrun policy in [ExecutionBounds.md](../../../../docs/Authority/Architecture/ExecutionBounds.md). Normal undo and redo SHALL select existing snapshots rather than replay history.
 
 #### Scenario: Reboot at the tip
 
