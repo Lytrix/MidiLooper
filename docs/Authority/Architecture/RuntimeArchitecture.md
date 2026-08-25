@@ -71,6 +71,13 @@ not contain consumer windows or projected intervals; each consumer selects a
 bounded source span before using `IntervalProjection` where coordinate
 projection is required.
 
+The approved Phase 0 logical snapshot indexes are a span index of pitch →
+canonical 768-tick bar → membership lists of `NoteRef`s for complete notes,
+plus an event index of bar → membership lists of `EventRef`s. The event index
+is an indexed view of existing event-stream order, not a second ordering
+authority. A snapshot is self-contained: its content is determined by its own
+reference root and does not come from a parent snapshot.
+
 See [DerivedViews.md](DerivedViews.md) § Runtime requests.
 
 ---

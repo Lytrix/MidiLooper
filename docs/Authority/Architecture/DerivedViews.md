@@ -20,6 +20,14 @@ each derived-representation owner keeps its own storage, revision,
 invalidation, and build policy. Compatibility `LoopPass` records on
 `LoopPasses` remain a fallback source until their caller migration gates pass.
 
+The approved logical source indexes are pitch → canonical 768-tick bar →
+membership lists of `NoteRef`s for complete note spans, and bar → membership
+lists of `EventRef`s for events whose ticks fall in that bar. The event lists
+are indexed views of existing event-stream order, not a second ordering
+authority. A derived representation reads one selected, self-contained
+`LoopSnapshot`; it does not reconstruct missing content by walking a parent
+snapshot.
+
 ---
 
 ## Consumers — play, display, analyze, LEDs

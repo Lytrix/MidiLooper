@@ -1,6 +1,6 @@
 # Architecture review — immutable-loop-snapshot-passes
 
-**Decision:** Reassessment complete; formal approval pending
+**Decision:** Approved for design/specification phase; firmware gated
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../../../docs/Plans/loop_pass_snapshot_effective_state_refinement.md)
 **Reassessment:** [`ARCHITECTURE-REASSESSMENT.md`](ARCHITECTURE-REASSESSMENT.md)
 **North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → membership lists of `NoteRef`s and bar → membership lists of `EventRef`s. Its logical content is completely determined by its own reference root. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
@@ -72,10 +72,10 @@ Phase 0 must complete, before any firmware phase:
 
 Phase 0 **does** select the logical indexes. It does **not** select the physical directory that implements shared membership.
 
-The formal reassessment recommends approving this ownership evolution while
-retaining semantic, playback, undo, persistence, and derived-representation
-owners. Approval and the durable decision record remain separate from the
-completed reassessment.
+The formal reassessment and durable decision record approve this ownership
+evolution while retaining semantic, playback, undo, persistence, and
+derived-representation owners. Runtime publication, physical-directory
+selection, and firmware remain separately gated.
 
 ### Phase 1 — Native snapshot model
 
