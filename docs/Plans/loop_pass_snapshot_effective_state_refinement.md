@@ -172,6 +172,31 @@ and approval are complete. The remaining implementation gate is to classify the
 direct candidate delta and LCR preparation units under `ExecutionBounds.md`,
 including their indivisible work and failure behavior.
 
+### Timing evidence and measurement gate
+
+The existing scheduling evidence gives an operating reference, not guaranteed
+free time between MIDI boundaries:
+
+- At 170 BPM, one MIDI clock interval is `14.71 ms` (`60 / (170 × 24)`).
+- The current experimental maintenance target is `8.82 ms` (`60%` of one
+  clock interval), pending measurement of `T_RT_reserve`.
+- The previously discussed `2 ms` target and `5 ms` ceiling are withdrawn as
+  established contracts.
+- Measured post-optimization overdub note-change accumulation is normally
+  `0.75–2.0 ms`, with a `3.6 ms` peak. That measures candidate discovery and
+  overlap accumulation, not immutable snapshot path-copy publication.
+- Existing LCR index and reconstruction slices reached `63–121 ms` and
+  `115.7 ms`, respectively. They are not valid bounds for the proposed
+  eight-candidate unit.
+
+Before runtime publication is authorized, measure one complete eight-candidate
+unit on the device, including immutable path copies, `NoteId` index updates,
+replacement/tombstone records, allocation behavior, and wrap plus same-tick
+cases. The initial falsification rule is p95 below `8.82 ms`; any indivisible
+unit above `25 ms` fails investigation. These are engineering gates, not hard
+MIDI guarantees. A failure requires changing the candidate quantum or
+construction representation before publication work proceeds.
+
 ## Invariants and exclusions
 
 - Older snapshots and immutable objects remain semantically unchanged after later

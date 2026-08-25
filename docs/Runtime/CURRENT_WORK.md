@@ -56,6 +56,14 @@ execution queue for this branch and require explicit reauthorization before use.
 
 **Do not in 1A:** optimize prepare, redesign algorithm, add cache, wire playback consume, enforce 60% × T_clock timer.
 
+**Timing gate:** At 170 BPM, one MIDI clock interval is **14.71 ms**. The
+**8.82 ms** value (60% of that interval) is only an experimental operating
+target; no guaranteed maintenance reservation has been established. Measure the
+proposed eight-candidate unit separately, including its indivisible path-copy,
+index, replacement/tombstone, and allocation work. Treat p95 above 8.82 ms as
+outside the initial target and any unit above 25 ms as an investigation failure;
+these are not hard MIDI guarantees.
+
 ### Paired companion consume reverted (closed context)
 
 **Evidence:** [`163135`](../../captures/session_20260822_163135.log) — `paired_proj` **0** / `win_apply` **33**; multi-second `idle_gather`; USB reconnect. Decision: `PairedCompanionState` reverted; tip cut at Stage C. Overlap never used paired projection (`ActiveNoteLedger` / `overdubSourceViewNotes_`).

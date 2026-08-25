@@ -316,6 +316,33 @@ The implementation phase must still classify the direct candidate delta and the
 LCR preparation units under `ExecutionBounds.md`; preparation readiness does not
 replace the indivisible-step bound.
 
+### Timing evidence and falsification gate
+
+Existing runtime measurements provide a sizing reference, not a guaranteed
+maintenance reservation:
+
+- At 170 BPM, one MIDI clock interval is `14.71 ms` (`60 / (170 × 24)`).
+- The runtime scheduling plan uses `8.82 ms` (`60%` of that interval) as an
+  experimental operating target until `T_RT_reserve` is measured.
+- The earlier `2 ms` target and `5 ms` ceiling are withdrawn as established
+  scheduling contracts.
+- Post-RC-K1–K3 overdub note-change accumulation measured `0.75–2.0 ms`
+  normally, with a `3.6 ms` observed peak; this is not a measurement of
+  immutable snapshot path-copy publication.
+- Existing LCR preparation slices measured `63–121 ms` for index work and up to
+  `115.7 ms` for reconstruction. These operations are not admissible references
+  for an 8-candidate snapshot update.
+
+The proposed eight-candidate LCR unit therefore requires a separate
+device-backed measurement. Its p95 uninterrupted duration should initially fit
+within the `8.82 ms` experimental target; any unit above `25 ms` is an
+investigation failure. Neither threshold is a hard MIDI guarantee. The
+measurement must include path-copy construction, `NoteId` index updates,
+replacement/tombstone records, allocation behavior, and the worst-case
+same-tick and wrap candidate geometry. If the measured unit does not fit, the
+candidate quantum or construction representation must change before runtime
+publication is implemented.
+
 ## Open Questions
 
 - Which persistent reference structure and reclamation policy meet memory and lifetime requirements?
