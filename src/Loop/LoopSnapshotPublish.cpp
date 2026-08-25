@@ -433,7 +433,8 @@ LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
 }
 
 LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
-                                                    bool allowStartConstruction) {
+                                                    bool allowStartConstruction,
+                                                    uint32_t playheadPhaseTick) {
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
   }
@@ -461,13 +462,13 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     if (!box.construction) {
       break;
     }
-    const size_t before = box.construction->completedChangeCount();
-    box.construction->step(remaining);
+    const size_t before = box.construction->completedUnitCount();
+    box.construction->step(remaining, playheadPhaseTick);
     if (box.construction->failed()) {
       clearPendingSnapshotPublish();
       return false;
     }
-    const size_t after = box.construction->completedChangeCount();
+    const size_t after = box.construction->completedUnitCount();
     if (after <= before) {
       break;
     }
@@ -515,7 +516,12 @@ LOOP_COLD_MEM bool Loop::tryPublishNoteEditSnapshot(const EditPassIdList& editPa
   }
 
   LoopSnapshotConstruction construction(parent, changes);
-  if (!construction.step(construction.totalChangeCount()) || construction.failed()) {
+  while (!construction.complete() && !construction.failed()) {
+    if (!construction.step(64)) {
+      break;
+    }
+  }
+  if (!construction.complete() || construction.failed()) {
     return false;
   }
   ImmutableLoopSnapshotRef frozen = construction.freeze();

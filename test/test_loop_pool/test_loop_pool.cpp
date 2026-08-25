@@ -4,6 +4,7 @@
 #include <unity.h>
 
 #include "../../src/Loop/LoopPool.cpp"
+#include "../../src/Loop/LoopSnapshot.cpp"
 #include "../../src/Loop/LoopSnapshotLifetime.cpp"
 #include "LoopPasses.h"
 #include "Slot.h"

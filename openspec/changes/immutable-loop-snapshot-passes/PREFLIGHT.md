@@ -212,8 +212,9 @@ Overdub and record session-exit no longer complete a candidate on the stop
 path. `Loop::queueSessionExitSnapshot` copies pass ids; idle
 `stepPendingSnapshotPublish(1)` applies one row-21 unit. During OVERDUBBING,
 idle only advances an in-flight construction (`allowStartConstruction` false).
-PLAYING may start the next pass change-set. NOTE_EDIT close remains a
-synchronous drain. Failure still discards the candidate. See `DEC-045`.
+One idle unit is one dirty bar, ordered by soonest playhead arrival. PLAYING
+may start the next pass change-set. NOTE_EDIT close remains a synchronous
+drain. Failure still discards the candidate. See `DEC-045`.
 
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
