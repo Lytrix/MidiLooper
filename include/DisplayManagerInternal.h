@@ -37,6 +37,12 @@ void filterNotesToFollowWindow(const NoteUtils::DisplayNoteVec& source, uint32_t
                                NoteUtils::DisplayNoteVec& outNotes, uint32_t& gatherStart,
                                uint32_t& gatherLength);
 
+/// True when `visualCache` covers the paint window plus follow margin.
+/// A nonempty dirty prefix must not authorize the 16-bar gather
+/// (session_20260825_235954: 20 notes / first 2 bars).
+bool visualCacheCoversFollowWindow(const Loop& loop, uint32_t windowStart, uint32_t windowLength,
+                                   uint32_t loopLength);
+
 uint8_t resolveTrackIndex(const Track& track);
 
 /// `allowWrapContinuation`: false during growing live record and overdub

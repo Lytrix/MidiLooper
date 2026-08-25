@@ -9,6 +9,8 @@
 #include "StorageManager.h"
 #include "Track.h"
 #include "TrackManager.h"
+#include "Utils/DisplayWindowUtils.h"
+#include "VisualCache.h"
 #include <algorithm>
 #include <Arduino.h>
 
@@ -27,6 +29,24 @@ bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength) {
     // ensureVisualCacheBuilt — syncDetailedPaintWindow cannot run below the 16-bar threshold,
     // and after invalidate that left the OLED on an empty roll after the first good paint.
     return loop.shouldAvoidFullVisualRebuild(loopLength);
+}
+
+bool visualCacheCoversFollowWindow(const Loop& loop, uint32_t windowStart, uint32_t windowLength,
+                                   uint32_t loopLength) {
+    if (loop.visualCache.notes.empty()) {
+        return false;
+    }
+    uint32_t gatherStart = 0;
+    uint32_t gatherLength = 0;
+    const uint32_t padBars =
+        kWindowedGatherMarginBars > DisplayWindowUtils::kFollowReadyLookaheadBars
+            ? kWindowedGatherMarginBars
+            : static_cast<uint8_t>(DisplayWindowUtils::kFollowReadyLookaheadBars);
+    DisplayWindowUtils::expandWindowWithMargin(windowStart, windowLength, loopLength,
+                                               padBars * Config::TICKS_PER_BAR, gatherStart,
+                                               gatherLength);
+    return visualCacheCoversWindow(loop.visualCacheDirty, loop.visualCache.dirtyBars, gatherStart,
+                                   gatherLength, loopLength, Config::TICKS_PER_BAR);
 }
 
 bool shouldDeferHeavyDisplayRebuild() {

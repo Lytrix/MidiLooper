@@ -300,9 +300,12 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
 
     if (track.isOverdubbing()) {
-        // Display authority is visualCache when notes exist. Source-view stays consume
-        // ownership and is only a committed-layer fallback when the cache is empty.
-        if (havePaintWindow && !loop.visualCache.notes.empty()) {
+        // Display authority is visualCache only when it covers the paint neighborhood.
+        // Source-view stays consume ownership. A nonempty dirty prefix must not win
+        // (session_20260825_235954: 20 notes after wrap/stop).
+        if (havePaintWindow &&
+            visualCacheCoversFollowWindow(loop, paintWindowStart, paintWindowLength,
+                                          liveLoopLength)) {
             uint32_t gatherStart = 0;
             uint32_t gatherLength = 0;
             DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
@@ -314,6 +317,29 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveWindowGatherLength_ = gatherLength;
             liveWindowGatherLoopLength_ = liveLoopLength;
             liveDisplayCommittedFromWindowGather_ = false;
+            liveCommittedLayerHeldForDirtyCache_ = false;
+            liveOverdubSourceViewNoteCount_ =
+                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (havePaintWindow && loop.publishedSnapshot()) {
+            uint32_t gatherStart = 0;
+            uint32_t gatherLength = 0;
+            const uint32_t marginTicks =
+                static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
+            DisplayWindowUtils::expandWindowWithMargin(paintWindowStart, paintWindowLength,
+                                                       liveLoopLength, marginTicks, gatherStart,
+                                                       gatherLength);
+            DIAG_COUNTER_INC(DisplayCaptureFullGather);
+            rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength, gatherStart, gatherLength,
+                                        liveDisplayEventBuffer, liveDisplayNotes, false);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            liveWindowGatherValid_ = true;
+            liveWindowGatherStart_ = gatherStart;
+            liveWindowGatherLength_ = gatherLength;
+            liveWindowGatherLoopLength_ = liveLoopLength;
+            liveDisplayCommittedFromWindowGather_ = true;
             liveCommittedLayerHeldForDirtyCache_ = false;
             liveOverdubSourceViewNoteCount_ =
                 loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;

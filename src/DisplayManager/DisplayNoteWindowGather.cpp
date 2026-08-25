@@ -73,11 +73,12 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     uint32_t windowStart, uint32_t windowLength) {
     const uint8_t trackIndex = resolveTrackIndex(track);
 
-    // Prefer filtering visualCache over gather+reconstruct when capture is idle and notes exist.
-    // A globally dirty cache may still authorize a clean paint neighborhood, including the
-    // one-bar follow lookahead. Non-empty notes also filter when some window bars are dirty
-    // so auto-follow can show the next bar instead of holding a 16-bar source-view frame.
-    if (!loop.captureActive() && !loop.visualCache.notes.empty()) {
+    // Prefer filtering visualCache over gather+reconstruct when capture is idle and the
+    // cache covers the paint neighborhood. A nonempty dirty prefix must not win — after
+    // record stop the first idle slice left 20 notes and later bars never painted
+    // (session_20260825_235954).
+    if (!loop.captureActive() &&
+        visualCacheCoversFollowWindow(loop, windowStart, windowLength, loopLength)) {
         const bool visualCacheHit =
             liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
             trackIndex == livePlaybackDisplayTrack_ &&

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (4.4 display reads published LoopSnapshot)
+Last updated: 2026-08-26 (4.4 display: partial visualCache must not block snapshot gather)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** Phase 3 task **4.4 display only**. Paint fallback
-(`rebuildDisplayNotesInWindow`, committed full gather) and visual-cache fill
-(`rebuildVisualCacheIdleSlice`, `rebuildVisualCacheFromPasses`) read
+**Now:** Phase 3 task **4.4 display only**. Paint and visual-cache fill read
 published `LoopSnapshot` events through
 `tryGatherPublishedSnapshotEventsInWindow` (plus live capture when needed),
-then `reconstructDisplayNotes`. Compatibility gather remains when no
-published root exists. Task **4.3** stays skipped. NOTE_EDIT, overdub
-analysis, validation, 4.5, 4.6, and Phase 5 are **not selected**.
+then `reconstructDisplayNotes`. A nonempty dirty `visualCache` prefix does
+not authorize the paint window — `visualCacheCoversFollowWindow` must pass
+or the window gathers from the snapshot
+([`235954`](../../captures/session_20260825_235954.log): after stop/wrap,
+20 notes / first 2 bars). Compatibility gather remains when no published
+root exists. Do not CER-gather on the overdub paint path when no snapshot
+exists. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,
+validation, 4.5, 4.6, and Phase 5 are **not selected**.
 
 After the first published `LoopSnapshot` exists, PLAYING and OVERDUBBING idle
 do not `step` successor construction. PLAYING visual stays off unless the
