@@ -1,7 +1,7 @@
 # Formal architecture reassessment — immutable-loop-snapshot-passes
 
 **Date:** 2026-08-25  
-**Status:** Recommendation complete; formal approval pending  
+**Status:** Approved for design/specification phase
 **Scope:** OpenSpec task 1.1, Phase 0 only  
 **Change:** [`immutable-loop-snapshot-passes`](.)  
 **Decision context:** [`DEC-044`](../../../docs/DECISION_LOG.md#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction)
@@ -226,10 +226,10 @@ logical pitch/bar indexes. Keep the physical directory representation,
 candidate-construction bound, storage layout, and optional indexes as later
 measured decisions under the existing owners and phase gates.
 
-**Approval required:** YES, before any firmware phase. Approval does not
-authorize runtime publication by itself; later phases must complete their
-preflight, physical-directory measurement, and execution-bound classification.
+**Approval:** The user approved continuation to task 1.2 on 2026-08-25.
+This approves the design/specification direction, not runtime publication.
+Later phases must complete their preflight, physical-directory measurement,
+and execution-bound classification.
 
-**Decision state:** task 1.1 reassessment is complete as a recommendation.
-Task 1.2 remains responsible for recording the approved decision and aligning
-the durable authority documents after approval.
+**Decision state:** Task 1.1 reassessment and task 1.2 authority alignment are
+complete. Firmware remains unauthorized until the later phase gates pass.

@@ -65,6 +65,10 @@ and the latest saved complete snapshot. It does not serialize runtime addresses,
 derived representations, playback cursor/order, active ledgers, undo history,
 or abandoned-branch lineage sufficient to restore post-reboot undo.
 
+The logical membership is the approved Phase 0 boundary; the physical
+pitch/bar directory that provides structural sharing remains a Phase 1
+measurement decision.
+
 Loading rebuilds loop-local handles and selects the latest saved complete
 snapshot. Runtime undo depth starts at 0 and redo is empty. The loaded snapshot
 is self-contained; a consumer does not traverse older snapshots to obtain

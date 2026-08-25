@@ -1,6 +1,6 @@
 # Loop Pass Snapshot Effective State Refinement
 
-**Status:** Proposed — architecture/specification only
+**Status:** Approved — architecture/specification only
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Base:** `546169f66658b87c54e6166b79eba74628aa3d1e`
 
@@ -22,10 +22,10 @@ lifecycle. That lifecycle is not reintroduced as a new effective-state owner.
 Any compatibility query surface must be stateless and snapshot-based until its
 callers are migrated and the surface is retired.
 
-Phase 0 does not authorize firmware. The logical indexes are selected. Phase 2
-remains blocked until formal reassessment (task 1.1) and an
-`ExecutionBounds.md` row for dirty-bar construction. The physical directory
-is Phase 1 / measurement.
+Phase 0 does not authorize firmware. The logical indexes are selected and the
+formal architecture reassessment is approved. Phase 2 remains blocked until
+the later phase gates and an `ExecutionBounds.md` row for dirty-bar
+construction. The physical directory is Phase 1 / measurement.
 
 ## Core invariant
 
@@ -87,9 +87,9 @@ Path-copy is rejected as the overlap model. It remains allowed as a possible
 physical directory. The physical directory (sparse directory, path-copy
 directory, or another measured form) is Phase 1 / measurement, not Phase 0.
 
-Firmware publication is not authorized until formal reassessment (task 1.1)
-and an `ExecutionBounds.md` row for dirty-bar construction. A long note can
-still touch every intersecting bar.
+Firmware publication is not authorized until the remaining phase gates and an
+`ExecutionBounds.md` row for dirty-bar construction. A long note can still
+touch every intersecting bar.
 
 ## Candidate construction operations
 
@@ -371,6 +371,6 @@ or construction representation before publication work proceeds.
 - Phase-specific work identity.
 
 Implementation is not authorized until the architecture review in the OpenSpec
-change is approved, formal reassessment (task 1.1) is complete, dirty-bar
+change is approved, the remaining Phase 0 gates are complete, dirty-bar
 construction has an `ExecutionBounds.md` class, and this branch is selected in
 `docs/Runtime/CURRENT_WORK.md`.

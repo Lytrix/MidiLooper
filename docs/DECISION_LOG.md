@@ -110,11 +110,11 @@ old representation.
    (`RecordPass`, `OverdubPass`, `EditPass`) is the historical/compatibility
    operation record. A commit may produce both; they are not interchangeable.
 9. A successor snapshot reuses unchanged event-object references and allocates
-   new immutable objects only for added or modified content. The reference root
-   itself must be persistent / structurally shared so a bounded number of
-   reference changes does not copy the complete snapshot reference set. Phase 0
-   compares a flat vector, a chunked/reference-directory, and a path-copy tree;
-   it does not select the structure. Phase 2 is blocked until that selection.
+   new immutable objects only for added or modified content. The logical
+   reference root is pitch → bar membership for notes and bar membership for
+   events; unchanged membership remains shared. The physical directory
+   implementation is selected later through measurement. Phase 2 is blocked
+   until the physical directory and construction bounds are admissible.
 10. Intermediate record prefixes, overdub wraps, and NOTE_EDIT batches are
     playable provisional snapshots, not global undo entries. The session-exit
     commit is the global undo transition.
@@ -167,6 +167,17 @@ old representation.
     effective state, publication, or snapshot lifetime.
 24. Record-prefix snapshot retention is a measured lifetime/memory risk
     against the named-root policy.
+
+**Amendment (2026-08-25) — formal architecture reassessment approval:**
+
+25. The formal reassessment in
+    [`ARCHITECTURE-REASSESSMENT.md`](../openspec/changes/immutable-loop-snapshot-passes/ARCHITECTURE-REASSESSMENT.md)
+    is approved for the design/specification phase. It approves the
+    ownership evolution to `Loop` / `LoopPasses` for complete immutable
+    `LoopSnapshot` state while retaining existing capture, overlap, NOTE_EDIT
+    geometry, playback, undo, persistence, and derived-representation owners.
+    It does not authorize firmware, runtime publication, a physical directory
+    choice, or an execution-bound classification.
 
 **References:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
 [`loop_pass_snapshot_effective_state_refinement.md`](Plans/loop_pass_snapshot_effective_state_refinement.md),

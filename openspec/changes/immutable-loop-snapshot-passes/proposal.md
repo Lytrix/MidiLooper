@@ -58,7 +58,7 @@ The architectural idea is small. Later sections keep integration and migration c
 ## Impact
 
 - Affects `Loop` / `LoopPasses`, playback preparation, `TrackUndo`, `StorageManager`, NOTE_EDIT and display consumers, and `LoopContentResolution`.
-- Phase 0 remains architecture and specification only. The logical indexes are selected. Firmware is not authorized until formal reassessment (task 1.1) and an `ExecutionBounds.md` row for dirty-bar construction pass. The physical directory representation remains a Phase 1 / measurement decision.
+- Phase 0 remains architecture and specification only. The logical indexes are selected and the formal reassessment is approved. Firmware is not authorized until the remaining Phase 0 gates and an `ExecutionBounds.md` row for dirty-bar construction pass. The physical directory representation remains a Phase 1 / measurement decision.
 - Verification for later phases is limited to existing gates plus invariant-protecting checks: old snapshot unchanged, new snapshot complete, unchanged objects shared, changed objects replaced, selection identity, and declared construction bounds. This change does not add a new test architecture.
 - Open decisions: physical pitch/bar directory representation, reclamation implementation, storage layout/version and migration, optional disposable indexes, bounded consumer span access, candidate construction bounds, long-span projection candidate limits, and per-phase overrun behavior.
 - No change is authorized here to horizon size, projection math, cursor or ledger semantics, capture finalization, overlap ownership, NOTE_EDIT geometry ownership, or interval reservation.

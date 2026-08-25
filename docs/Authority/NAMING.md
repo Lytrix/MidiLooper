@@ -86,6 +86,10 @@ Use **LoopSnapshot** for the Loop’s complete immutable effective-state object:
 
 Spelling is **LoopSnapshot** (one word Snapshot), matching `PersistedLoopSnapshot` and `LoopSnapshotRef`. `PersistedLoopSnapshot` remains the transitional file/undo DTO of geometry plus deep-cloned `LoopPasses`. Do not store raw C++ pointers. The verb prefix `handle*` stays hardware/MIDI ingress.
 
+This accepted Phase 0 boundary names the logical indexes only. The physical
+directory that implements their structural sharing remains a later
+measurement decision.
+
 Prefer **State** for the **mutable owner** of live data.
 
 ### Queue
