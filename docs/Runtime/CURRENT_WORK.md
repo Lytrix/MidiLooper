@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (no snapshot step on PLAYING/OVERDUB after first publish)
+Last updated: 2026-08-25 (233308 device PASS — idle hold after first publish)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -13,8 +13,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 **Now:** After the first published `LoopSnapshot` exists, PLAYING and
 OVERDUBBING idle do not `step` successor construction. PLAYING visual stays
 off unless the cache is empty. First-record publish is unchanged.
-[`232329`](../../captures/session_20260825_232329.log) published once at
-80.27 s during OD1, then 3631 `pending=1` steps; OD2 BPM 57, OD4 BPM 46.
+Device PASS [`233308`](../../captures/session_20260825_233308.log): four
+overdubs after record; first publish at 97.50 s; **no** `snapshot_idle` from
+then until STOPPED; PLAY4 BPM 119.966–120.049. Contrast
+[`232329`](../../captures/session_20260825_232329.log) 3631 later
+`pending=1` steps; OD2 BPM 57, OD4 BPM 46.
 NOTE_EDIT close stays a synchronous drain. Tasks 4.3–4.6 are **not selected**.
 
 Phase 3 tasks 4.1–4.2 remain complete. Playback preparation reads the

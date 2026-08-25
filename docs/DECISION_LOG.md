@@ -135,6 +135,8 @@ cache is empty. Successor publish resumes on STOPPED / STOPPED_RECORDING.
 Playback keeps the stale-window overlay.
 [`232329`](../captures/session_20260825_232329.log) one `pending=0` at 80.27 s
 during OD1; 3631 later `pending=1` steps; OD2 BPM 57; OD4 BPM 46.
+Device PASS [`233308`](../captures/session_20260825_233308.log): no
+`snapshot_idle` after first publish until STOPPED; PLAY4 BPM 119.966–120.049.
 
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
