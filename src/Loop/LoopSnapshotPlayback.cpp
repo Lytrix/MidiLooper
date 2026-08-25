@@ -20,6 +20,9 @@ struct OrderedSnapshotEvent {
 
 LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength) const {
+  if (!publishedSnapshotIsCurrent()) {
+    return false;
+  }
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
   if (!snapshot) {
     return false;
