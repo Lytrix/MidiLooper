@@ -196,13 +196,16 @@ Phase 3 consumer selection is not authorized by this result.
 
 `ensurePlaybackMergedMidiEventsBuilt` reads published snapshot event
 membership for the already selected playback window (2 bars on long loops;
-full loop on short). Snapshot identity is recorded on
-`PlaybackMergedMidiEvents` and participates in freshness. When no snapshot
-is selected (undo/load/`resetPassTimeline`, first-record before publish),
-the owner keeps compatibility gather. NOTE_EDIT preview still replaces from
-`sessionMidiEvents()`. Cursor, order, ledger, and horizon stay on
-`Track` / `LoopPlaybackRuntime`. `playbackEventPhase` remains the hot-path
-scalar. Row 2 stays unbounded; this slice does not convert it.
+full loop on short). A stale published root still supplies that window;
+unpublished session / pending-publish passes and their companions overlay
+through windowed CER. Snapshot identity is recorded on
+`PlaybackMergedMidiEvents` and participates in freshness (current root
+only). When no snapshot exists (undo/load/`resetPassTimeline`, first-record
+before publish), the owner keeps compatibility gather. NOTE_EDIT preview
+still replaces from `sessionMidiEvents()`. Cursor, order, ledger, and
+horizon stay on `Track` / `LoopPlaybackRuntime`. `playbackEventPhase`
+remains the hot-path scalar. Row 2 stays unbounded; this slice does not
+convert it.
 
 Tasks 4.3–4.6 are not authorized by this result.
 
@@ -216,11 +219,18 @@ One idle unit is one dirty bar, ordered by soonest playhead arrival. PLAYING
 may start the next pass change-set. NOTE_EDIT close remains a synchronous
 drain. Failure still discards the candidate. See `DEC-045`.
 
+### Amendment (2026-08-25) — stale snapshot window plus unpublished overlay
+
+`tryGatherPublishedSnapshotEventsInWindow` reads a published root even when
+it is behind `playbackRevision`. Unpublished overdub session / pending-publish
+passes and their companions overlay through windowed CER. Compatibility
+full-list gather remains only when no published root exists.
+
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
 ordering, candidate alias safety, resumable progress, and failed-candidate
 preservation. The capture-serial build passed with 4640 RAM1 locals; the full
-native suite passed 1435/1435. These gates do not establish a runtime
+native suite passed 1453/1453. These gates do not establish a runtime
 construction bound or persistence compatibility.
 
 ## Files affected

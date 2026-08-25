@@ -401,7 +401,6 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
   box.sessionExitQueued = true;
   box.sessionExitReason = reason;
   box.companionIds = companionIds;
-  box.companionsApplied = companionIds.empty();
 
   if (isOverdubSessionExit(reason)) {
     for (const PassId passId : overdubSessionPassIds_) {
@@ -409,10 +408,29 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
         box.queuedPassIds.push_back(passId);
       }
     }
+    for (size_t i = 0; i < overdubSessionCursor_ && i < overdubSessionCompanionIds_.size();
+         ++i) {
+      for (const EditPassId companionId : overdubSessionCompanionIds_[i]) {
+        if (companionId == kInvalidEditPassId) {
+          continue;
+        }
+        bool alreadyQueued = false;
+        for (const EditPassId existing : box.companionIds) {
+          if (existing == companionId) {
+            alreadyQueued = true;
+            break;
+          }
+        }
+        if (!alreadyQueued) {
+          box.companionIds.push_back(companionId);
+        }
+      }
+    }
   }
   if (lastCommittedPassId_ != kInvalidPassId && !passAlreadyTracked(box, lastCommittedPassId_)) {
     box.queuedPassIds.push_back(lastCommittedPassId_);
   }
+  box.companionsApplied = box.companionIds.empty();
 
   if (box.construction || !box.queuedPassIds.empty() || box.unpublishedCandidate ||
       !box.companionIds.empty()) {

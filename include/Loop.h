@@ -330,10 +330,10 @@ struct Loop {
   /// selected or the published root is stale versus `playbackRevision`.
   const void* publishedSnapshotIdentity() const;
   /// Fill `out` from published snapshot event membership in
-  /// `[windowStart, windowStart + windowLength)`. Returns false when no
-  /// current published snapshot is selected so the caller can use compatibility
-  /// gather. A published root whose store revision is behind `playbackRevision`
-  /// is treated as stale.
+  /// `[windowStart, windowStart + windowLength)`. A stale published root still
+  /// supplies that window; unpublished session / pending-publish passes and
+  /// their companions overlay on top. Returns false only when no published
+  /// snapshot exists so the caller can use compatibility gather.
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
   /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.

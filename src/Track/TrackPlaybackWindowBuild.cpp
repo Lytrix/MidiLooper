@@ -90,8 +90,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   // playback order + MIDI send. Playback mergedMidiEvents is committed-only (224719):
   // live capture must not fold into this representation. NOTE_EDIT uses session store
   // (Tier 2) — full replace, no materialized underlay. Outside NOTE_EDIT, the published
-  // LoopSnapshot is the committed source when selected; otherwise chunk-ref merge of
-  // committed passes (DEC-016). Long loops use windowed gather — full-loop gather after
+  // LoopSnapshot is the committed source when a published root exists (current or
+  // stale-plus-unpublished overlay); otherwise chunk-ref merge of committed passes
+  // (DEC-016). Long loops use windowed gather — full-loop gather after
   // LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
   static bool mergedMidiEventsBuildInProgress = false;
   if (mergedMidiEventsBuildInProgress) {

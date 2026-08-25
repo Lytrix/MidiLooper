@@ -135,15 +135,18 @@ idle publish stores a current root.
 
 ### Playback snapshot read (row 2)
 
-Phase 3 playback preparation uses the existing row 2 owner. When a published
-snapshot is selected, `Loop::tryGatherPublishedSnapshotEventsInWindow` walks
-only the bars that intersect the already selected playback window and copies
-those bar membership events. When no snapshot is selected, the owner keeps
-the compatibility gather. Snapshot identity is recorded on
-`PlaybackMergedMidiEvents` for freshness. This does not add a new interval
-owner and does not convert row 2 to a bounded class: short-loop full gather
-and the compatibility fallback remain content-sized. `playbackEventPhase`
-stays the clock-facing scalar.
+Phase 3 playback preparation uses the existing row 2 owner.
+`Loop::tryGatherPublishedSnapshotEventsInWindow` walks only the bars that
+intersect the already selected playback window and copies those bar
+membership events. A published root behind `playbackRevision` still supplies
+that window; unpublished overdub session / pending-publish passes and their
+companions overlay through windowed `CommittedEventRange` on those lists
+only. Compatibility gather of every committed chunk list runs only when no
+published snapshot exists. Snapshot identity is recorded on
+`PlaybackMergedMidiEvents` for freshness (current root only). This does not
+add a new interval owner and does not convert row 2 to a bounded class:
+short-loop full gather and the no-snapshot fallback remain content-sized.
+`playbackEventPhase` stays the clock-facing scalar.
 
 ---
 

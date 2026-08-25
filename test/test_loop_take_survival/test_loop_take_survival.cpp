@@ -520,7 +520,7 @@ void test_playback_gather_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_FALSE(loop.tryGatherPublishedSnapshotEventsInWindow(afterReset, 0, 3072));
 }
 
-void test_stale_published_snapshot_falls_back_to_compatibility_gather() {
+void test_stale_published_snapshot_gathers_window_without_full_compatibility() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -536,7 +536,85 @@ void test_stale_published_snapshot_falls_back_to_compatibility_gather() {
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
   SessionMidiEventVec stale;
-  TEST_ASSERT_FALSE(loop.tryGatherPublishedSnapshotEventsInWindow(stale, 0, 3072));
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(stale, 0, 3072));
+  sortEventsForCompare(stale);
+  sortEventsForCompare(fromSnapshot);
+  assertGatheredEventsMatch(stale, fromSnapshot);
+}
+
+void test_stale_snapshot_overlays_unpublished_overdub_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  SessionMidiEventVec snapshotWindow;
+  SessionMidiEventVec compatibilityWindow;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotWindow, 0, 768));
+  loop.gatherCommittedEventsInWindow(compatibilityWindow, 0, 768, false);
+  sortEventsForCompare(snapshotWindow);
+  sortEventsForCompare(compatibilityWindow);
+  assertGatheredEventsMatch(snapshotWindow, compatibilityWindow);
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotWindow, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotWindow, 64));
+}
+
+void test_stale_snapshot_applies_unpublished_hide_companion() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto membership = loop.publishedSnapshot()->noteMembership(60, 0);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_FALSE(membership->references.empty());
+  const NoteId hiddenNoteId = membership->references.front()->noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, hiddenNoteId);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(120, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(180, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 180));
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = hiddenNoteId;
+  hide.pitch = 60;
+  hide.startTick = 100;
+  hide.endTick = 200;
+  const EditPassId hideId = loop.saveNoteEditPass(0, hide);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  EditPassIdList companions;
+  companions.push_back(hideId);
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), companions);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  SessionMidiEventVec snapshotWindow;
+  SessionMidiEventVec compatibilityWindow;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotWindow, 0, 768));
+  loop.gatherCommittedEventsInWindow(compatibilityWindow, 0, 768, true);
+  sortEventsForCompare(snapshotWindow);
+  sortEventsForCompare(compatibilityWindow);
+  assertGatheredEventsMatch(snapshotWindow, compatibilityWindow);
+  TEST_ASSERT_EQUAL(0, countNoteOns(snapshotWindow, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotWindow, 64));
 }
 
 void test_overdub_publish_keeps_pass_events_when_companion_is_missing() {
@@ -722,7 +800,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_edit_close_replaces_published_note);
   RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
-  RUN_TEST(test_stale_published_snapshot_falls_back_to_compatibility_gather);
+  RUN_TEST(test_stale_published_snapshot_gathers_window_without_full_compatibility);
+  RUN_TEST(test_stale_snapshot_overlays_unpublished_overdub_pass);
+  RUN_TEST(test_stale_snapshot_applies_unpublished_hide_companion);
   RUN_TEST(test_overdub_publish_keeps_pass_events_when_companion_is_missing);
   RUN_TEST(test_queue_overdub_snapshot_waits_for_idle_steps);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
