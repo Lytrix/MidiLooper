@@ -167,6 +167,20 @@ direction agreed during review is:
   zero-velocity Note On is not. Equal-tick Note Off-before-Note On remains the
   project presentation-order policy.
 
+### Deferred source-level retrigger pairing
+
+Phase 0 retains the current `Track::recordMidiEvents()` and `pendingNotes`
+behavior. Newly captured same-channel/same-pitch NoteOns therefore retain the
+current LIFO pairing behavior; no source-level synthetic NoteOff is added when
+an open `pendingNotes` entry is replaced.
+
+Replace-on-retrigger remains a deferred future bugfix. That change would append
+an internal synthetic NoteOff before replacing the open capture entry, and
+would need its own decisions for canonical publication, persistence, undo, and
+missing physical NoteOffs. Existing `finalizePendingNotes()` and
+`LoopStopFinalize` stop-time closure is unchanged and is not part of this
+deferred item.
+
 These decisions remain design-only until the formal architecture reassessment
 and approval are complete. The remaining implementation gate is to classify the
 direct candidate delta and LCR preparation units under `ExecutionBounds.md`,

@@ -254,6 +254,22 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
   policy. The protocol boundary does not remove the need to keep the complete
   source geometry correct.
 
+### Deferred source-level retrigger pairing
+
+- Phase 0 retains the current `Track::recordMidiEvents()` and `pendingNotes`
+  behavior as the first source guard. No new replace-on-retrigger guard is
+  introduced by the immutable snapshot design.
+- Current same-channel/same-pitch capture pairing remains the existing LIFO
+  behavior. The source-level change that would append a synthetic NoteOff
+  before replacing an open `pendingNotes` entry is deferred to a separate
+  future bugfix.
+- Existing stop finalization remains separate: `finalizePendingNotes()` and
+  `LoopStopFinalize` already close notes that remain open at record/overdub
+  stop. This deferred item concerns retrigger-time closure during live capture.
+- The future retrigger change must define its canonical event, persistence,
+  undo, and missing-physical-NoteOff behavior before implementation. It is not
+  part of the current snapshot publication scope.
+
 ### Session publication boundaries
 
 - NOTE_EDIT publishes after each complete `EditSessionActions` batch produced by

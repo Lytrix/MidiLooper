@@ -35,6 +35,12 @@ continuation are not pursued on this branch. The existing `LoopContentResolution
 prototype remains historical compatibility context only; the proposed snapshot
 model must not create a replacement maintained effective-state owner.
 
+Source-level replace-on-retrigger pairing is deferred. This branch retains the
+current `Track::recordMidiEvents()` / `pendingNotes` behavior and existing LIFO
+pairing. The deferred future bugfix may add an internal synthetic NoteOff before
+replacing an open same-channel/same-pitch capture entry; it is outside the
+immutable snapshot Phase 0 scope.
+
 ## Historical base work
 
 The sections below record work present at the fork point. They are not the active
