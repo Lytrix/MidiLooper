@@ -31,6 +31,13 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
         // STOPPED track/slot switch must not wipe visualCache.notes (161804 / 165107).
         // Boot already skipped this wipe. PLAYING still clears so a live preview
         // cannot keep another slot's note list as authority.
+        // Queued dest is not getActiveLoop(); idle visual-cache slices never
+        // service it. Leave that cache in place (222539).
+        const bool queuedDestination =
+            playbackActive && (slot == newSlot) && (newSlot != activeSlot);
+        if (queuedDestination) {
+            return;
+        }
         if (playbackActive && (slot == newSlot || slot == activeSlot)) {
             loop.invalidateDisplayCaches();
         } else {

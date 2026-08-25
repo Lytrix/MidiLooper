@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (immutable loop snapshot architecture branch)
+Last updated: 2026-08-25 (queued-dest visual-cache keep + snapshot Phase 0)
 
 ---
 
@@ -13,6 +13,10 @@ Last updated: 2026-08-25 (immutable loop snapshot architecture branch)
 architecture proposal. The maintained-LCR continuation from
 `feature/overdub-stop-lag-stage-c` is not pursued on this branch. See
 [`CURRENT_WORK.md`](CURRENT_WORK.md).
+
+**Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
+destination `visualCache` in place. Firmware in tree; HITL open. Plan:
+[`playback_preparation_queued_destination_visual_cache_invalidation_bugfix.md`](../Plans/playback_preparation_queued_destination_visual_cache_invalidation_bugfix.md).
 
 **Boot title RAM1:** `cccbeaa` margin regression fixed — DMAMEM cold globals + `assignMissingNoteIdsToNoteOnsInChunkIds` in `.cpp`. Device PASS [`161855`](../../captures/session_20260816_161855.log). Investigation frozen: [`boot_title_loadloopjob_idle_slice_investigation.md`](../Plans/boot_title_loadloopjob_idle_slice_investigation.md).
 
