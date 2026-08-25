@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (snapshot idle applies one playhead-ordered dirty bar)
+Last updated: 2026-08-25 (stale snapshot window plus unpublished-pass overlay)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** Snapshot idle applies one dirty bar of the in-flight change per turn,
-soonest playhead arrival first. OVERDUBBING does not start the next pass
-reconstruct. [`222703`](../../captures/session_20260825_222703.log) later
-`snapshot_idle` was **21–29 ms** because one unit still applied every dirty
-bar of a note. NOTE_EDIT close stays a synchronous drain. Tasks 4.3–4.6 are
-**not selected**.
+**Now:** Playback gather uses a published `LoopSnapshot` window even when that
+root is stale versus `playbackRevision`. Unpublished overdub session / pending
+publish passes and their companions overlay through windowed CER. Compatibility
+full-list gather runs only when no published root exists.
+[`225025`](../../captures/session_20260825_225025.log) bar-line `cer_win` was
+`lists=18,chunks=19` because stale snapshot fell through to every committed
+chunk list. Snapshot idle remains one playhead-ordered dirty bar. NOTE_EDIT
+close stays a synchronous drain. Tasks 4.3–4.6 are **not selected**.
 
 Phase 3 tasks 4.1–4.2 remain complete. Playback preparation reads the
 published `LoopSnapshot` through `ensurePlaybackMergedMidiEventsBuilt`,

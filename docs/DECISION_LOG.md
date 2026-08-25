@@ -109,6 +109,14 @@ change, not one settled note. Remaining bars are applied on later idle turns,
 ordered by soonest playhead arrival from `playheadPhaseTick`. Starting the next
 pass change-set is unchanged.
 
+**Amendment (2026-08-25):** Playback no longer walks every committed chunk list
+while a published root exists but is behind `playbackRevision`.
+`tryGatherPublishedSnapshotEventsInWindow` reads that root's window and
+overlays unpublished session / pending-publish passes plus their companions.
+`queueSessionExitSnapshot` copies wrap companions with the stop companions.
+Compatibility gather remains only when no published root exists.
+[`225025`](../captures/session_20260825_225025.log) `cer_win` `lists=18`.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

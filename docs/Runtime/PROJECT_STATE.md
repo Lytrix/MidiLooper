@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (snapshot idle applies one playhead-ordered dirty bar)
+Last updated: 2026-08-25 (stale snapshot window plus unpublished-pass overlay)
 
 ---
 
@@ -14,10 +14,11 @@ architecture proposal. The maintained-LCR continuation from
 `feature/overdub-stop-lag-stage-c` is not pursued on this branch. See
 [`CURRENT_WORK.md`](CURRENT_WORK.md). Record and overdub `LoopSnapshot`
 publication queue at stop and step from idle (`DEC-045`). OVERDUBBING idle
-advances an in-flight construction only. NOTE_EDIT close stays synchronous.
-Capture [`214529`](../../captures/session_20260825_214529.log) showed
-`seal_fx_push_overdub_undo` at 11.67 s / 2.37 s while
-`tryPublishSessionExitSnapshot` ran on the stop path.
+advances an in-flight construction only. Playback reads a stale published
+window plus unpublished session passes instead of walking every committed
+chunk list. NOTE_EDIT close stays synchronous.
+Capture [`225025`](../../captures/session_20260825_225025.log) bar-line
+`cer_win` was `lists=18,chunks=19` on the stale-snapshot fallback.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:
