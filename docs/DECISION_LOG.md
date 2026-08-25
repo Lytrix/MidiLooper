@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) | 2026-08-25 | Immutable loop snapshots replace maintained LCR as the effective-state direction on the feature branch | Accepted — design phase |
 | [DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property) | 2026-08-22 | Execution bound class is a gated architectural property; `admit(WorkClass)` stays rejected | Accepted |
 | [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; nested HITL MET [`095902`](../captures/session_20260819_095902.log); extra-open is catch-up stack RC |
 | [DEC-041](#dec-041-occupy-present-at-s-jit-not-full-loop-lcr-mat) | 2026-08-18 | Occupy present-at-S is JIT; full-loop `lcr,mat` is not occupy readiness | Accepted |
@@ -58,7 +59,57 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-044 -->
+<!-- Append new entries below (newest first). Next ID: DEC-045 -->
+
+## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
+
+**Date:** 2026-08-25
+**Status:** Accepted — design phase
+**Scope:** `feature/immutable-loop-snapshot-passes`, forked from
+`546169f66658b87c54e6166b79eba74628aa3d1e`
+**Authority:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
+[`loop_pass_snapshot_effective_state_refinement.md`](Plans/loop_pass_snapshot_effective_state_refinement.md)
+
+**Context:** The maintained `LoopContentResolution` lifecycle added after the fork
+introduced a second effective-state representation, identity binding, deferred
+history application, playback fill readiness, and first-consume refusal. The
+feature objective is instead a complete immutable snapshot selected directly by
+consumers. The fork point already contains the `Loop` / `LoopPasses` ownership
+boundary and the existing deep-cloned `PersistedLoopSnapshot`, while avoiding the
+maintained-LCR implementation sequence.
+
+**Decision:**
+
+1. Build the immutable complete-snapshot model from the selected fork point rather
+   than reverting the maintained-LCR branch.
+2. `Loop` owns active snapshot selection, candidate publication, and immutable
+   object allocation; `LoopPasses` owns snapshot records and reference roots.
+3. Existing capture, overlap, pairing, NOTE_EDIT geometry, playback runtime, and
+   `StorageManager` owners retain their responsibilities during migration.
+4. `LoopContentResolution` is not pursued as a maintained effective-state owner.
+   Any compatibility query surface is stateless and snapshot-based, and is retired
+   after consumer migration gates pass.
+5. Undo, redo, and clear-slot restore select complete snapshot identities rather
+   than replaying intervening history.
+6. Snapshot construction stays at existing off-clock commit boundaries until a
+   later phase defines an explicit execution bound and overrun policy.
+7. This decision authorizes the OpenSpec design/specification phase only. Firmware
+   implementation requires the phase gates in the change's
+   `ARCHITECTURE-REVIEW.md` and a corresponding `CURRENT_WORK.md` authorization.
+
+**Consequences:** The existing `PersistedLoopSnapshot` is only a starting point;
+it deep-clones mutable `LoopPasses` and does not satisfy immutable structural
+sharing. The current branch's maintained-LCR playback and load behavior is not
+carried forward. Compatibility parity tests, storage design, lifetime policy,
+and consumer migration remain required before removal of materialization or any
+old representation.
+
+**References:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
+[`loop_pass_snapshot_effective_state_refinement.md`](Plans/loop_pass_snapshot_effective_state_refinement.md),
+[`timeline-passes`](../openspec/specs/timeline-passes/),
+[`loop-content-history`](../openspec/specs/loop-content-history/).
+
+---
 
 ## DEC-043 — Execution bound class is a gated architectural property
 

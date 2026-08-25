@@ -45,6 +45,7 @@ Root rule: keep a plan at `docs/Plans/` only if `CURRENT_WORK.md` points to it, 
 
 | Document | Role |
 |----------|------|
+| [loop_pass_snapshot_effective_state_refinement.md](loop_pass_snapshot_effective_state_refinement.md) | Proposed immutable loop snapshot model; maintained LCR continuation is not pursued on its feature branch |
 | [phase-3-multi-loop.md](phase-3-multi-loop.md) | Phase 3 multi-loop requirements (jam capture not shipped) |
 | [loop_layer_history_persistence_architecture.md](loop_layer_history_persistence_architecture.md) | DEC-035 — Loop persists content only; Layer A next |
 | [runtime_scheduling_admission_model_architecture.md](runtime_scheduling_admission_model_architecture.md) | Runtime timing-telemetry contract (interval reservation deferred). Musical gate: per-event MIDI deadline lateness; MIG is interval/contention |
