@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (queued-dest visual-cache keep + snapshot Phase 0)
+Last updated: 2026-08-25 (MIDI protocol guide + snapshot Phase 0)
 
 ---
 

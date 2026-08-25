@@ -6,6 +6,10 @@
 
 How to remap channels, notes, and CCs for your own controller. The looper is **controller-agnostic**; DROID is the reference target, but any MIDI controller can be used if you update the config to match what your hardware sends.
 
+For the MIDI 1.0 wire contract, internal `NoteId` boundary, same-tick event
+ordering, and the current UMP/MIDI 2.0 scope, see
+[`MIDI_PROTOCOL_GUIDE.md`](MIDI_PROTOCOL_GUIDE.md).
+
 ---
 
 ## Config locations

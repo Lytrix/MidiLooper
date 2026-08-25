@@ -220,6 +220,102 @@ discarding pending content.
 
 Rollback keeps the prior representation active and discards any failed candidate. Existing storage readers remain until the new reader and migration are proven.
 
+## Design-grilling outcomes — 2026-08-25
+
+These outcomes sharpen the proposed Phase 0 model. They remain pending the formal
+architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
+
+### Complete content and LCR role
+
+- A published `LoopSnapshot` is complete effective canonical content. Structural
+  sharing is permitted, but consumers never traverse a parent snapshot for
+  missing content.
+- LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
+  ownership. LCR is not the maintained effective-state authority.
+- Heavy preparation may advance through existing LCR preparation opportunities.
+  Semantic resolution publishes a complete candidate directly after its settled
+  boundary; no partial candidate is published.
+
+### MIDI protocol boundary
+
+- The current firmware scope is MIDI 1.0 channel voice over the existing USB,
+  USB Host, and DIN serial paths. UMP, MIDI 2.0 channel voice, Groups, Jitter
+  Reduction timestamps, and MIDI 2.0 per-note messages are out of scope.
+- MIDI 1.0 Note On/Off carries channel, note number, and velocity, not the
+  loop's internal `NoteId`. Snapshot resolution therefore operates on internal
+  content identities and never asks playback to identify a wire-level note.
+- Same-pitch receiver voice behavior is not used as the snapshot identity
+  model. A complete snapshot still updates the source note's effective span,
+  replaces any stale wrapped NoteOff, and stores the incoming note's complete
+  span.
+- MIDI 1.0 zero-velocity Note On is treated as Note Off; this rule must not be
+  applied to MIDI 2.0 Note On messages.
+- Equal-tick Note Off-before-Note On remains the project presentation-order
+  policy. The protocol boundary does not remove the need to keep the complete
+  source geometry correct.
+
+### Session publication boundaries
+
+- NOTE_EDIT publishes after each complete `EditSessionActions` batch produced by
+  `NoteGeometryResolver`. `NoteEditCurrentState` remains the mutable NOTE_EDIT
+  buffer; `EditSession.store` remains its projected content state. No separate
+  NOTE_EDIT action buffer is introduced.
+- Overdub publishes after the existing wrap-level settled boundary:
+  `Track::commitOverdubWrapAtSessionStart()` seals the overdub pass and companion
+  changes before candidate publication. Raw incomplete note events are not
+  published as snapshots.
+- Record uses the same direct-publication model for completed events so a latest
+  complete snapshot is available for deferred persistence while recording is
+  active.
+- `capture.store` remains the capture buffer. Once a processed prefix is
+  published, live playback reads the active snapshot plus only the unprocessed
+  capture suffix.
+
+### Provisional snapshot and undo behavior
+
+- The session-start snapshot is retained as the rollback anchor. Prefix snapshots
+  are playable provisional revisions, not separate global undo entries.
+- E: and O: session undo select the previous provisional snapshot identity
+  directly. Existing session owners restore their transient state separately;
+  `LoopSnapshot` contains no selection, focus, capture, ledger, cursor, or other
+  runtime state.
+- A pending child is valid only while its exact parent snapshot identity remains
+  selected. A parent change causes each existing pending-work handler to discard
+  its stale child/progress; global undo does not own cancellation.
+- UI/session exit may occur while candidate work remains. Same-slot capture or
+  NOTE_EDIT admission is blocked or deferred until that work completes, while
+  other slots may continue.
+- If pending work cannot complete after its retry policy, the latest complete
+  prefix remains the result and the remaining mutation is explicitly rejected.
+- Snapshot retention is limited to the session anchor, current revision, E:/O:
+  entries, and persistence staging. Record releases older event-prefix roots once
+  the next complete snapshot publishes.
+- Pending candidate work normally belongs to the focused slot. Queued-slot
+  preparation remains the normal opportunity for making the next complete
+  snapshot ready before a switch.
+- If a slot switch encounters pending work despite that preparation, switching
+  uses the slot's latest complete snapshot without waiting. The newer snapshot
+  is adopted at a later safe playback boundary; uninterrupted MIDI timing has
+  priority over immediately exposing the newest content.
+
+### Persistence and reboot
+
+- `StorageManager` may persist the latest complete snapshot through its existing
+  deferred units while a session is active. Open session state and unresolved
+  candidate work are not serialized.
+- After an unplanned reboot, the latest saved complete snapshot is restored and
+  the unsaved session tail is discarded.
+
+### Execution boundary
+
+Post-exit candidate work resumes through existing
+`Track::processDeferredIdleMaintenance()` opportunities after MIDI service.
+Candidate construction is not introduced as an unbounded operation in
+`handleMidiInput()`, clock dispatch, or `TrackManager::updateAllTracks()`.
+The implementation phase must still classify the direct candidate delta and the
+LCR preparation units under `ExecutionBounds.md`; preparation readiness does not
+replace the indivisible-step bound.
+
 ## Open Questions
 
 - Which persistent reference structure and reclamation policy meet memory and lifetime requirements?

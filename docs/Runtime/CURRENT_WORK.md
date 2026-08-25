@@ -25,6 +25,11 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
 
+Phase 0 documentation now includes the project-scoped
+[`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on
+M2-104-UM v1.1.2, with a read-only audit of the current MIDI 1.0 logic. No
+firmware behavior changed.
+
 The maintained `LoopContentResolution` lifecycle and its playback-readiness
 continuation are not pursued on this branch. The existing `LoopContentResolution`
 prototype remains historical compatibility context only; the proposed snapshot

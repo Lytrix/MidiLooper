@@ -60,6 +60,7 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 | [**record_overdub_memory_display_timeline_enhancement.md**](Plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
 | [DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Central deferred save routing and chunk-bounded SD writer stages |
 | [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables (**v3 / `dev` default DROID mapping**) |
+| [MIDI_PROTOCOL_GUIDE.md](Guides/MIDI_PROTOCOL_GUIDE.md) | M2-104-UM MIDI 1.0 / UMP / MIDI 2.0 scope, note identity, timing, and logic audit |
 | [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display (**v3 only**) |
 | [LOOP_START_EDITING.md](Guides/LOOP_START_EDITING.md) | Loop start point editing (live / fader) |
 | [FADER_STATE_SYSTEM.md](Guides/FADER_STATE_SYSTEM.md) | Fader state machine; § NOTE_EDIT motor feedback (2026) |

@@ -128,6 +128,50 @@ remain intact when work cannot complete.
 6. Remove historical replay and compatibility state only after every caller gate
    and rollback trigger is closed.
 
+## Design-grilling outcomes — 2026-08-25
+
+The active OpenSpec design contains the detailed outcomes. The implementation
+direction agreed during review is:
+
+- `LoopSnapshot` is complete effective content only; structural sharing is
+  allowed, but parent traversal is not.
+- LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
+  ownership. LCR is not a second effective-state authority.
+- NOTE_EDIT publishes after each complete `EditSessionActions` batch.
+  `NoteEditCurrentState` is the mutable session buffer and `EditSession.store`
+  is the projected content state.
+- Overdub publishes after the settled wrap boundary in
+  `Track::commitOverdubWrapAtSessionStart()`. Record publishes completed events
+  directly so a complete snapshot is available for deferred persistence.
+- `capture.store` remains the capture buffer; playback consumes the active
+  snapshot plus its unprocessed suffix.
+- E: and O: select prior provisional snapshot identities. Session owners restore
+  transient state separately; global undo does not cancel pending work.
+- Pending work is valid only while its exact parent snapshot remains selected.
+  Parent selection changes cause the owning handler to discard stale work.
+- Pending work normally belongs to the focused slot; queued-slot preparation is
+  the normal opportunity to make the next snapshot ready before a switch. If
+  work is still pending during a switch, use the slot's latest complete snapshot
+  without waiting and adopt newer content at a later safe playback boundary.
+  Uninterrupted MIDI timing has priority over immediate content freshness.
+- `StorageManager` persists only the latest complete snapshot. Unplanned reboot
+  discards unsaved session tails.
+- Snapshot retention is limited to the session anchor, current revision,
+  session-undo references, and persistence staging.
+- The current wire contract is MIDI 1.0 channel voice. Ordinary Note On/Off
+  messages do not carry the loop's internal `NoteId`, so snapshot resolution
+  uses internal content identities and does not depend on playback voice
+  handling. UMP, MIDI 2.0, Groups, Jitter Reduction timestamps, and MIDI 2.0
+  per-note messages are outside this change.
+- MIDI 1.0 zero-velocity Note On remains equivalent to Note Off; MIDI 2.0
+  zero-velocity Note On is not. Equal-tick Note Off-before-Note On remains the
+  project presentation-order policy.
+
+These decisions remain design-only until the formal architecture reassessment
+and approval are complete. The remaining implementation gate is to classify the
+direct candidate delta and LCR preparation units under `ExecutionBounds.md`,
+including their indivisible work and failure behavior.
+
 ## Invariants and exclusions
 
 - Older snapshots and immutable objects remain semantically unchanged after later
