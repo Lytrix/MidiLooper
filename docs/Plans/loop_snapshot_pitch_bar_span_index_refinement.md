@@ -1,20 +1,20 @@
 # Loop Snapshot Pitch Bar Span Index Refinement
 
-**Status:** Proposed — OpenSpec Phase 0 documentation only
+**Status:** Applied — OpenSpec Phase 0 documentation only
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Parent:** [`loop_pass_snapshot_effective_state_refinement.md`](loop_pass_snapshot_effective_state_refinement.md)
 **Decision to amend:** [DEC-044](../DECISION_LOG.md#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction)
 
 ## Intent
 
-Close OpenSpec task 1.6 by selecting the persistent reference structure:
+Close OpenSpec task 1.6 by selecting the **logical** reference structure:
 
 ```text
 same pitch
     → bars the incoming span intersects
     → NoteRef list in those bars
     → existing overlap resolve
-    → publish only dirty bars
+    → publish dirty membership + minimum directory path
 ```
 
 Do not implement firmware. Do not add a new OpenSpec change. Patch the existing
@@ -31,7 +31,8 @@ Consumers already work in **bars** (`dirtyBars`, 2-bar playback, 16-bar display)
 A flat `NoteRef` vector copies every reference on successor construction. A
 path-copy tree shares history but does not make same-pitch overlap an array
 index. Pitch-then-bar membership does both: lookup is local, unchanged bars
-are reused.
+remain shared. The physical directory that points at those lists is Phase 1 /
+measurement; dirty bars do not automatically share a 1000-entry directory.
 
 Do **not** name this a tile, lane, bucket, or grid. The time unit is **bar**.
 The handle is **NoteRef**. The object is **LoopSnapshot**.
@@ -52,14 +53,19 @@ pitch 60
     bar 5: [A]
 
 incoming B, pitch 60, bars 4–5
-    candidates = {A, C}          // not the rest of the loop
-    resolve → C' and B
+    candidates = {A, C}          // A occupies bar 4; not the rest of the loop
+    changed objects: C → C'
+    added: B
+    unchanged: A                 // inspected, not replaced
     new bars: 4 [A, C', B], 5 [A, B]
     reuse:    bars 2–3 unchanged
 ```
 
-Wrap-crossing notes keep the existing two linear segments. Each segment
-inserts `NoteRef`s only into the bars it intersects.
+Wrap-crossing notes keep the existing two linear segments
+(`[start, loopEnd)` and `[0, end)`). Each segment inserts `NoteRef`s into
+the bars it intersects; both membership sets share one `NoteId`. A query
+near the loop boundary unions end-side and zero-side bars, then
+deduplicates by `NoteId`.
 
 ### Three indexes stay separate
 
@@ -86,13 +92,15 @@ do not use multi-bar membership.
 ```text
 1. Existing semantic owner supplies settled mutation (or incoming hold span).
 2. Select same pitch.
-3. Select bars the incoming span intersects.
+3. Select bars the incoming span intersects (initial candidate region).
 4. Collect NoteRefs from those bars; dedup by NoteId.
 5. existingNoteOverlapsIncomingHold / resolveConstrainedGeometry.
-6. Allocate new immutable objects only for added or changed notes.
-7. Remove, replace, or insert NoteRefs in the dirty bars only.
-8. Reuse unchanged pitch/bar lists.
-9. Freeze and publish the new LoopSnapshot directory.
+6. Dirty bars = incoming bars ∪ bars of every note whose geometry or
+   membership the resolver changed.
+7. Allocate new immutable objects only for added or changed notes.
+8. Remove, replace, or insert NoteRefs in the dirty membership lists only.
+9. Newly allocate only those lists and the minimum directory path to them.
+10. Freeze and publish the new LoopSnapshot root.
 ```
 
 Each step must keep a declared `ExecutionBounds.md` class before runtime
@@ -112,8 +120,8 @@ plus the parent refinement and DEC-044 amendment. No firmware.
   as the snapshot root.
 - Keep lifetime, provisional vs global undo, redo-branch, and latest-saved
   reboot text already recorded.
-- Bound construction operations 1–5 to “pitch + intersecting bars,” not
-  path depth.
+- Semantic bound for operations 1–5 is affected pitch + dirty bars, not
+  path depth. Path-copy remains allowed only as a directory implementation.
 
 ### [`specs/immutable-loop-snapshots/spec.md`](../../openspec/changes/immutable-loop-snapshot-passes/specs/immutable-loop-snapshots/spec.md)
 
@@ -121,7 +129,8 @@ Add/replace requirements:
 
 - Persistent reference root **is** pitch → bar → `NoteRef` (notes) and bar →
   `EventRef` (non-notes).
-- Successor construction copies only dirty pitch/bar lists.
+- Successor construction newly allocates only dirty membership and the
+  minimum directory path; unchanged membership stays shared.
 - Multi-bar membership for intersecting spans; wrap uses two linear segments.
 - Span index is not the event index and not open-at-S.
 - Incoming mutation selects same pitch, then intersecting bars, before resolve.
@@ -132,10 +141,10 @@ Add/replace requirements:
 [`tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
 
 - Phase 0 north star names this structure.
-- Mark 1.6 done: structure selected; remaining work is formal reassessment
-  (1.1) and later measurement of one dirty-bar successor unit.
+- Mark 1.6 done as **logical** structure selected. Physical directory
+  remains Phase 1 / measurement.
 - Phase 2 stays blocked on 1.1 approval and an `ExecutionBounds.md` row for
-  dirty-bar construction. It is no longer blocked on “pick a structure.”
+  dirty-bar construction. Long notes can still touch many bars.
 
 ### Authority / parent plan
 
@@ -163,11 +172,14 @@ Add/replace requirements:
 ## Exit criteria
 
 - OpenSpec design and specs name pitch → bar → `NoteRef` as the selected
-  reference structure.
+  **logical** reference structure.
 - Overlap is specified as span membership, not On/Off-per-bar pairing.
-- Unchanged bars are reused; dirty bars are the successor copy unit.
+- Unchanged pitch/bar membership remains shared with the parent snapshot;
+  only dirty membership lists and the minimum immutable directory structure
+  required to reach them are newly constructed.
 - Phase 2 is still not authorized.
 - Formal architecture reassessment (task 1.1) remains open.
+- Physical directory representation is not claimed as solved.
 
 ## Apply order
 

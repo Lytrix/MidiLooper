@@ -36,7 +36,7 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Position** | Hardware or protocol position — fader motor, `sendSongPosition`, GPIO position buttons | Note-edit geometry |
 | **State** | Mutable ownership — live session, transport mode, persistence queue fields | Immutable captured copies |
 | **Snapshot** | The act or role of capturing immutable state of some owner (undo snapshot, display snapshot, share-for-snapshot) | The Loop’s published complete state (that object is **LoopSnapshot**); live mutable owner |
-| **LoopSnapshot** | Complete immutable effective-state object: LoopGeometry, allocator counters, and an immutable **reference root** of **NoteRef** / **EventRef** links to immutable event objects. Self-contained — a consumer does not read another LoopSnapshot for missing content. Unchanged objects keep the same references; changed content allocates new immutable objects. The reference root itself is structurally shared. Absent until the first published snapshot. | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers |
+| **LoopSnapshot** | Complete immutable effective-state object: LoopGeometry, allocator counters, a **span index** (pitch → canonical 768-tick bar → **bar NoteRefs** of complete notes intersecting that bar), and an **event index** (bar → **EventRef** list with a defined tick/order contract). Self-contained — a consumer does not read another LoopSnapshot for missing content. Unchanged objects keep the same references; changed content allocates new immutable objects. Unchanged pitch/bar membership remains shared with the parent; only dirty membership and the minimum directory path to it are newly constructed. Absent until the first published snapshot. | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers; Tile / Lane / Bucket / Grid |
 | **Deferred** | Work intentionally postponed to idle or budget drain — `processDeferredSaveState` | Queued user intent; synchronous algorithms |
 | **Pending** | Queued intent not yet committed — `hasPendingCapturePass`, `pendingOutboundTrigger_` | Idle-deferred maintenance work |
 | **Scheduled** | Work placed on an explicit schedule or queue for later execution — `PersistenceWorkQueue` | Synchronous resolution; generic “later” |
@@ -82,7 +82,7 @@ Do **not** use because several functions execute sequentially in one call stack.
 
 Use **Snapshot** for the *act or role* of capturing immutable state (`shareForSnapshot`, undo snapshot, display snapshot).
 
-Use **LoopSnapshot** for the Loop’s complete immutable effective-state object: LoopGeometry plus an immutable **NoteRef** / **EventRef** reference root. `Loop` publishes a global snapshot at session exit (record stop, overdub stop, note-edit close) by reading the previous LoopSnapshot as const and writing a new root. A session may also hold playable **provisional** snapshots that are not global undo entries. There is no mutable LoopSnapshot during a session. It is not a `LoopPass` and not a flattened `materialize` vector.
+Use **LoopSnapshot** for the Loop’s complete immutable effective-state object: LoopGeometry plus a **span index** (pitch → bar → **bar NoteRefs**) and an **event index** (bar → **EventRef** list, canonical tick/order). `Loop` publishes a global snapshot at session exit (record stop, overdub stop, note-edit close) by reading the previous LoopSnapshot as const and writing a new root. A session may also hold playable **provisional** snapshots that are not global undo entries. There is no mutable LoopSnapshot during a session. It is not a `LoopPass` and not a flattened `materialize` vector. Do not name the bar granule a tile, lane, bucket, or grid.
 
 Spelling is **LoopSnapshot** (one word Snapshot), matching `PersistedLoopSnapshot` and `LoopSnapshotRef`. `PersistedLoopSnapshot` remains the transitional file/undo DTO of geometry plus deep-cloned `LoopPasses`. Do not store raw C++ pointers. The verb prefix `handle*` stays hardware/MIDI ingress.
 
@@ -243,8 +243,11 @@ Physical chunks (`LoopEventStore`) are packing, not resolution boundaries. Pass-
 | **EditPropertyType** | Updated field on **editPass** (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
 | **EditPassId** / **PassId** | Stable id per pass row (unified **nextPassId_**) |
 | **LoopGeometry.id** | Stable id per committed loop-geometry content record (same **nextPassId_**) |
-| **NoteRef** | Loop-scoped reference to an immutable note object — LoopSnapshot links and **EditChange** targets |
-| **EventRef** | Loop-scoped reference to an immutable non-note event object — LoopSnapshot links |
+| **NoteRef** | Loop-scoped reference to an immutable note object — LoopSnapshot span-index membership and **EditChange** targets. The same `NoteId` / version MAY appear in multiple bars; candidate sets deduplicate by `NoteId` |
+| **EventRef** | Loop-scoped reference to an immutable MIDI event object whose tick is in a bar — LoopSnapshot event-index membership (note and non-note). The bar list has a defined tick/order contract |
+| **span index** | LoopSnapshot role: pitch → bar → bar NoteRefs of complete notes intersecting that bar. Not a new owner. Not the event index, open-at-S / ledger, or a tile / lane / bucket / grid |
+| **event index** | LoopSnapshot role: bar → EventRef list of events whose tick is in that bar, with a defined tick/order contract. Not the span index and not an unordered set |
+| **bar NoteRefs** | Membership list in one pitch and one bar of the span index. Multiple bars may hold the same `NoteId`; that is one note, not one note per bar |
 
 ### Edit sessions (RAM scope)
 

@@ -7,22 +7,22 @@ Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are co
 - [ ] 1.3 Keep this change selected in `docs/Runtime/CURRENT_WORK.md` as Phase 0 only and post the phase architecture gate before any firmware edits.
 - [ ] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each later ownership or stop-path implementation phase. Do not start those phases in Phase 0.
 - [x] 1.5 Record the persistent reference-root invariant: successor snapshots reuse unchanged event-object references, allocate new objects only for added or modified content, and must not copy the complete reference set.
-- [ ] 1.6 Compare a flat reference vector, a persistent chunked / reference-directory structure, and a path-copy ordered tree against update cost, bounded range iteration, Teensy allocation behavior, handle identity, serialization shape, and the maximum indivisible construction step. Record the measurement evidence required before selecting one. Do not treat a structure as selected in Phase 0.
+- [x] 1.6 Select the logical reference structure: notes as pitch → bar → bar NoteRefs (span index) and events as bar → EventRef lists with a canonical tick/order contract. Path-copy is rejected as the overlap model. The physical directory representation remains Phase 1 / measurement.
 - [x] 1.7 Specify snapshot reachability/reclamation, provisional session snapshots versus global undo snapshots, redo-branch clearing, and latest-saved-snapshot reboot behavior.
 - [x] 1.8 Name the candidate-construction operations and require a declared complexity / `ExecutionBounds.md` class for each before runtime publication. Treat any numeric N-candidate quantum as a measurement hypothesis only.
 
 ## 2. Immutable snapshot model
 
-Blocked until section 1 is complete and a later approved phase selects the persistent reference structure.
+Blocked until section 1 is complete (formal reassessment 1.1 still open). The logical indexes are selected; the physical directory is not.
 
 - [ ] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a declared execution-bound class, a memory allocation contract, and canonical span access for projection consumers.
-- [ ] 2.2 Implement the selected structurally shared reference storage and complete immutable `LoopSnapshot` records under `Loop` / `LoopPasses`. Keep `LoopPass` as the compatibility operation record.
+- [ ] 2.2 Implement the selected pitch/bar membership indexes and complete immutable `LoopSnapshot` records under `Loop` / `LoopPasses`. Choose and measure the physical directory so only dirty membership and the minimum path to it are newly allocated. Keep `LoopPass` as the compatibility operation record.
 - [ ] 2.3 Implement candidate construction from a const active snapshot and an existing semantic mutation with persistent progress, bounded units, atomic publication, and rollback.
 - [ ] 2.4 Verify the architectural invariants with existing native gates plus narrowly scoped checks only: snapshot completeness, unchanged-object sharing, changed-object replacement, non-note preservation, older-snapshot stability, and selection identity. Do not add a new test architecture.
 
 ## 3. Capture and edit publication
 
-Blocked until section 1 is complete and the selected representation plus construction bounds are recorded.
+Blocked until section 1 is complete and dirty-bar construction has a declared `ExecutionBounds.md` class. A long note can still touch every intersecting bar; this gate does not treat that as already bounded.
 
 - [ ] 3.1 Adapt `Loop::commitCapturePass` at its existing boundary to publish one global `LoopSnapshot` per record or overdub session-exit without changing wrap boundaries. Intermediate record prefixes and overdub wraps remain provisional.
 - [ ] 3.2 Adapt NOTE_EDIT close/commit to publish one global `LoopSnapshot` for a settled edit batch. In-session batch snapshots remain provisional `E:` revisions.

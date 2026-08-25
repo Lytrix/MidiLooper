@@ -2,9 +2,9 @@
 
 **Decision:** PENDING formal architecture reassessment and approval
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../../../docs/Plans/loop_pass_snapshot_effective_state_refinement.md)
-**North star:** Each published `LoopSnapshot` is a complete immutable effective-state reference root. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
+**North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → bar NoteRefs and bar → EventRef lists. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
 
-This change is design-only until a phase is approved and named in `docs/Runtime/CURRENT_WORK.md`. Phase 2 firmware is not authorized until Phase 0 selects a persistent reference structure.
+This change is design-only until a phase is approved and named in `docs/Runtime/CURRENT_WORK.md`. Phase 2 firmware is not authorized until formal reassessment (task 1.1) and an `ExecutionBounds.md` row for dirty-bar construction. The logical indexes are selected; the physical directory is not.
 
 ## Formal triggers
 
@@ -38,7 +38,10 @@ Immutable event objects
 - Changed event: new immutable object, replaced reference.
 - Deleted event: reference removed from the new root.
 - Added event: new immutable object, new reference.
-- The reference root itself must be persistent / structurally shared so a bounded number of reference changes does not copy the complete snapshot reference set.
+- Notes are indexed pitch → bar → bar NoteRefs; events are indexed bar → EventRef with a defined tick/order contract.
+- Only dirty pitch/bar membership and the minimum directory path to those lists are newly constructed; unchanged membership remains shared with the parent.
+- Candidate sets deduplicate by `NoteId`. Inspecting a `NoteRef` does not replace it.
+- Dirty bars are the union of the incoming span and every resolver-changed geometry or membership, not the incoming span alone.
 - Consumers never traverse a parent snapshot for missing content.
 
 `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) is not this root. It is the compatibility operation/history record.
@@ -56,17 +59,17 @@ Immutable event objects
 | **Execution bound change?** | NO — design only; this phase adds the execution-bound and representation-selection gates and does not admit runtime work |
 | **Behavior-preserving?** | YES — no firmware behavior changes |
 | **Reuse decision** | YES — extend `Loop` / `LoopPasses`; retain semantic and playback owners |
-| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, parent runtime architecture, derived-representation authority, storage authority, naming, and the persistent-reference comparison/measurement gate |
+| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, parent runtime architecture, derived-representation authority, storage authority, naming, selected logical pitch/bar indexes, and the still-open physical-directory measurement |
 
 Phase 0 must complete, before any firmware phase:
 
 1. `LoopPass` vs `LoopSnapshot` terminology.
-2. Persistent reference-root invariant and representation comparison (flat vector vs chunked/reference-directory vs path-copy tree).
+2. Logical indexes: pitch → bar → NoteRef (span) and bar → EventRef (events). Physical directory representation remains Phase 1 / measurement.
 3. Snapshot reachability, lifetime, and reclamation.
 4. Undo/redo branch semantics.
 5. Provisional session snapshots versus global undo snapshots, plus latest-saved-snapshot reboot behavior.
 
-Phase 0 does **not** select a concrete reference structure. It defines the comparison criteria and measurement evidence required before Phase 2.
+Phase 0 **does** select the logical indexes. It does **not** select the physical directory that implements shared membership.
 
 ### Phase 1 — Native snapshot model
 
@@ -81,7 +84,7 @@ Phase 0 does **not** select a concrete reference structure. It defines the compa
 | **Reuse decision** | YES — no new manager |
 | **Phase scope** | Snapshot objects, selected reference collection, builder, and invariant-protecting native checks |
 
-Blocked until Phase 0 records the representation comparison and the remaining open structure decision is accepted or explicitly deferred with a named owner.
+Blocked until Phase 0 formal reassessment (1.1) is approved. Phase 1 may implement the selected logical indexes; it must still choose and measure the physical directory.
 
 ### Phase 2 — Commit publication adapters
 
@@ -96,7 +99,7 @@ Blocked until Phase 0 records the representation comparison and the remaining op
 | **Reuse decision** | YES — extend existing commit boundaries |
 | **Phase scope** | Commit adapters, publication, and invariant/parity checks; no playback swap |
 
-Blocked until Phase 0 selects, or a later approved design task selects, the persistent reference structure and declares construction-operation bounds.
+Blocked until Phase 0 formal reassessment (1.1) is approved and each named construction operation has an `ExecutionBounds.md` class. The logical indexes are selected; dirty-bar construction is not yet classified as one admissible unit.
 
 ### Phase 3 — Direct consumers
 

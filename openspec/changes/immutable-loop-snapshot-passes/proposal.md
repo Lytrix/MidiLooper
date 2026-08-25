@@ -4,7 +4,7 @@ The current loop model derives effective musical state by replaying capture pass
 
 ## What Changes
 
-- Introduce complete immutable `LoopSnapshot` objects. Each snapshot is an immutable reference root over immutable note and non-note MIDI event objects.
+- Introduce complete immutable `LoopSnapshot` objects. Each snapshot indexes notes as pitch → bar → bar NoteRefs and events as bar → EventRef lists with a canonical tick/order contract.
 - Keep `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) as the historical/compatibility operation record. A commit may produce a compatibility pass record and a `LoopSnapshot`; those are not the same object.
 - Keep `Loop` / `LoopPasses` as the snapshot publication and storage boundary: `Loop` publishes and selects; `LoopPasses` stores snapshot records and compatibility pass rows.
 - Keep `StorageManager` as the sole persistence and migration owner; large-loop save/load work uses its existing deferred units and does not synchronously rebuild or serialize the complete loop on timing-critical paths.
@@ -24,7 +24,7 @@ The architectural idea is small. Later sections keep integration and migration c
 ### Core architecture
 
 1. Snapshot object model (`LoopSnapshot` vs `LoopPass`).
-2. Persistent / structurally-shared reference root.
+2. Pitch/bar logical indexes with shared unchanged membership.
 3. Candidate mutation from a const parent snapshot.
 4. Atomic publication of a complete candidate.
 5. Direct snapshot selection.
@@ -58,9 +58,9 @@ The architectural idea is small. Later sections keep integration and migration c
 ## Impact
 
 - Affects `Loop` / `LoopPasses`, playback preparation, `TrackUndo`, `StorageManager`, NOTE_EDIT and display consumers, and `LoopContentResolution`.
-- Phase 0 remains architecture and specification only. Firmware is not authorized until the persistent reference structure is selected and the phase gates pass.
+- Phase 0 remains architecture and specification only. The logical indexes are selected. Firmware is not authorized until formal reassessment (task 1.1) and an `ExecutionBounds.md` row for dirty-bar construction pass. The physical directory representation remains a Phase 1 / measurement decision.
 - Verification for later phases is limited to existing gates plus invariant-protecting checks: old snapshot unchanged, new snapshot complete, unchanged objects shared, changed objects replaced, selection identity, and declared construction bounds. This change does not add a new test architecture.
-- Open decisions: concrete persistent reference structure (compare then select), reclamation implementation, storage layout/version and migration, optional indexes, bounded consumer span access, candidate construction bounds, long-span projection candidate limits, and per-phase overrun behavior.
+- Open decisions: physical pitch/bar directory representation, reclamation implementation, storage layout/version and migration, optional disposable indexes, bounded consumer span access, candidate construction bounds, long-span projection candidate limits, and per-phase overrun behavior.
 - No change is authorized here to horizon size, projection math, cursor or ledger semantics, capture finalization, overlap ownership, NOTE_EDIT geometry ownership, or interval reservation.
 - Any runtime candidate construction must first be classified against
   [`ExecutionBounds.md`](../../docs/Authority/Architecture/ExecutionBounds.md):

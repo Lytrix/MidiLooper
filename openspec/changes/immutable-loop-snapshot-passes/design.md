@@ -23,7 +23,7 @@ timing-critical input work and must satisfy
 - Keep `LoopPass` and `LoopSnapshot` as distinct objects.
 - Preserve logical `NoteId` across immutable object versions.
 - Reuse unchanged event-object references; allocate new objects only for added or modified content.
-- Use a persistent / structurally-shared reference root so changing a bounded number of references does not copy the complete snapshot reference set.
+- Index notes as pitch → bar → bar NoteRefs and events as bar → EventRef lists with a canonical tick/order contract. Unchanged pitch/bar membership remains shared; only dirty membership and the minimum directory path to it are newly constructed.
 - Separate semantic commit boundaries from candidate construction: construct a
   complete candidate in bounded resumable units where required, then atomically
   publish it at the existing boundary.
@@ -35,7 +35,7 @@ timing-critical input work and must satisfy
 **Non-Goals:**
 
 - No firmware implementation in the architecture phase.
-- No selection of a concrete persistent reference structure in Phase 0; Phase 0 compares candidates and records the measurement gate.
+- No selection of a physical pitch/bar directory representation in Phase 0; Phase 1 / measurement chooses how the immutable directory shares unchanged membership.
 - No maintained LCR owner, new scheduler, or new interval-path owner.
 - No change to horizon size, projection math, cursor, ledger, or MIDI deadline behavior.
 - No raw pointer persistence.
@@ -50,7 +50,7 @@ timing-critical input work and must satisfy
 ```text
 Core architecture
     1. Snapshot object model
-    2. Persistent reference structure
+    2. Pitch/bar logical indexes; physical directory later
     3. Candidate mutation
     4. Publication
     5. Selection
@@ -121,49 +121,109 @@ Snapshot references are loop-scoped handles (`NoteRef` / `EventRef`), not persis
 
 **Alternative:** raw pointers. Rejected because addresses are not persistent identity and make reclamation implicit.
 
-### The reference root is persistent, not merely the event objects
+### Logical indexes: pitch → bar → NoteRef, and bar → EventRef
 
-A snapshot SHALL represent effective content as an immutable collection of
-references to immutable event objects. Creating a successor snapshot SHALL reuse
-unchanged references and SHALL allocate new event objects only for added or
-modified content. Snapshot construction SHALL NOT copy or mutate unchanged event
-objects.
-
-The reference collection itself SHALL use a persistent / structurally-shared
-representation such that changing a bounded number of references does not
-require copying the complete snapshot reference set.
+A snapshot SHALL represent effective content through two logical indexes, not
+one flat reference collection and not a path-copy tree used as the overlap
+model.
 
 ```text
-Snapshot N                 Snapshot N+1
-[ ptr A ]                  [ ptr A ]     reused
-[ ptr B ]                  [ ptr B ]     reused
-[ ptr C ]                  [ ptr C' ]    new object
-[ ptr D ]                  [ ptr D ]     reused
-[ ptr E ]                  [ ptr E ]     reused
+incoming span
+    → same pitch
+    → intersecting 1-bar membership lists
+    → NoteRefs (deduplicated by NoteId)
+    → existing overlap resolver
+    → dirty pitch/bar membership
+    → new LoopSnapshot root
 ```
 
-A flat copy of the complete reference array on every successor satisfies
-“shared event objects” but fails this invariant.
+**Span index (overlap / complete-note lookup).** Keyed by pitch, then by
+canonical 768-tick bar. Each bar holds **bar NoteRefs**: loop-scoped handles
+to complete immutable note objects whose geometry intersects that bar. A note
+that spans several bars appears in each intersecting list; every occurrence
+identifies the same immutable note version and `NoteId`. Candidate sets
+deduplicate by `NoteId`. Overlap remains pitch + tick (`DEC-032`); channel is
+not an index key.
 
-Phase 0 does not select the concrete structure. Before Phase 2, compare:
+The span index stores complete semantic notes only. It SHALL NOT store
+unmatched open Ons. Occupy / open-at-S remains `ActiveNoteLedger` /
+`presentAt` at the consumer, not a third snapshot index.
 
-| Candidate | Update cost | Range iteration | Allocation | Risk |
-|-----------|-------------|-----------------|------------|------|
-| Flat reference vector | Copy of N references per successor | Sequential scan | One vector per snapshot | Fails the no-full-copy invariant |
-| Persistent chunked / reference-directory | Copy changed chunks plus directory path | Chunk-local then directory walk | Chunk + directory nodes | Must still declare max copied nodes |
-| Path-copy ordered tree | Copy path of depth | Tree walk / in-order range | Path nodes only | Lookup and iteration must stay consumer-bounded |
+**Event index (playback / display / analyze).** Keyed by the same 1-bar
+granule. Each bar holds an **EventRef** list of note and non-note events
+whose tick falls in that bar. That list SHALL have a defined canonical
+tick/order contract so consumers can iterate in event order. Non-note events
+are points and do not appear in the span index.
 
-Compare those candidates against:
+**Dirty region is semantic, not “incoming bars only.”** For an incoming note:
 
-- reference update complexity and path-copy depth;
-- bounded range iteration for playback, display, and analyze consumers;
-- Teensy internal-heap and external-memory-pool allocation behavior ([`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md));
-- loop-scoped handle identity and reclamation;
-- serialization and migration shape;
-- maximum indivisible construction step and overrun policy.
+```text
+dirtyPitch = incoming.pitch
+dirtyBars  = union of bars intersected by:
+    the incoming span
+    + every existing note whose geometry changes
+    + every existing note whose membership changes because of resolution
+```
 
-The selected representation must provide structural sharing. “Structurally
-shared” without a selected representation is not an implementation constraint.
+The existing overlap / pairing / NOTE_EDIT geometry owner determines which
+note geometries changed and returns those changed `NoteRef`s and affected
+spans. Snapshot construction translates that mutation into pitch/bar
+membership updates. Snapshot storage SHALL NOT become a second overlap owner.
+
+Candidate selection and object mutation are different: inspecting `A` because
+it occupies a dirty bar does not replace `A`. Only notes the resolver
+replaces allocate a new immutable version.
+
+**Wrap-crossing notes** keep the existing two linear segments
+(`[start, loopEnd)` and `[0, end)`). Each segment contributes membership in
+the bars it intersects; both membership sets point to the same `NoteId`. A
+query near the loop boundary unions end-side bars and zero-side bars, then
+deduplicates by `NoteId`. Wrap notes are not a special index type.
+
+**Long notes.** A note intersecting *B* bars costs *B* `NoteRef` memberships.
+That cost is domain-visible. A 1000-bar note can still touch 1000 bars. This
+logical model does **not** by itself make candidate construction bounded.
+
+**Logical sharing invariant.** Only dirty pitch/bar membership nodes and the
+minimum directory path required to reach them MAY be newly allocated.
+Unchanged pitch/bar membership remains shared with the parent snapshot.
+
+**Physical directory representation is not selected.** Persistent structural
+sharing MAY implement the pitch/bar directory (sparse directory, path-copy
+directory tree, or another measured form). Path-copy is rejected as the
+*semantic overlap model*; it is not rejected as a possible directory
+implementation. Phase 1 / measurement chooses the physical form against
+Teensy allocation, serialization, and the maximum indivisible construction
+step. “Dirty bars” does not automatically solve directory sharing.
+
+The semantic locality bound is **affected pitch + intersecting (dirty) bars**.
+Path depth is an implementation detail of the eventual directory, not an
+architectural bound for operations 1–5.
+
+```text
+LoopSnapshot N                         LoopSnapshot N+1
+  pitch 60                               pitch 60
+    bar 2 [A]          shared              bar 2 [A]
+    bar 3 [A]          shared              bar 3 [A]
+    bar 4 [A, C]       new                 bar 4 [A, C', B]
+    bar 5 [A]          new                 bar 5 [A, B]
+```
+
+Incoming B (pitch 60, bars 4–5) yields candidates `{A, C}` by `NoteId`
+dedup. Resolver may change only C → C' and add B; A is inspected, not
+replaced. Dirty bars are 4 and 5 (and any further bars the resolver reports
+if C's geometry moved).
+
+**Rejected alternatives:**
+
+| Alternative | Why rejected |
+|-------------|--------------|
+| Flat full-loop `NoteRef` vector as the overlap/candidate structure | Successor copies or scans all loop content |
+| Path-copy ordered tree as the overlap/semantic model | Overlap is pitch + tick in bars, not tree-path identity |
+| On/Off events in one bar as the overlap index | Misses notes that occupy the bar without an event in it |
+| Unmatched open Ons in the span index | Span index is complete notes only; ledger owns open-at-S |
+| Two-bar index cells | Playback’s 2-bar window is a consumer, not the index granule |
+| Tile / lane / bucket / grid / TileManager | Bar is the domain time unit; do not invent a partitioning noun |
 
 **Alternative:** copy a complete `NoteRef` / `EventRef` vector per snapshot while sharing event objects. Rejected because successor construction would remain O(N) in snapshot size.
 
@@ -231,17 +291,17 @@ lifecycles and create a new cross-consumer owner.
 
 At an existing commit boundary, the existing semantic owner supplies a settled
 mutation. Candidate construction reads the active snapshot as const and applies
-that mutation to a structurally shared collection.
+that mutation to the pitch/bar membership indexes.
 
 Construction is not one unnamed “apply mutation” step. Before runtime
 publication, each of the following operations must have a declared complexity
 and `ExecutionBounds.md` class:
 
-1. Locate affected references.
+1. Locate affected references (same pitch, dirty bars, `NoteId` dedup).
 2. Remove obsolete references.
 3. Allocate replacement event objects.
 4. Insert new references.
-5. Construct the new persistent reference root.
+5. Construct the new snapshot root (dirty membership plus minimum directory path).
 6. Retain the new root and release unreacheable prior roots when allowed.
 7. Update optional disposable indexes, if any are justified.
 8. Freeze the candidate.
@@ -252,8 +312,12 @@ persistent progress and yields between bounded units; it does not block until a
 complete candidate is available. The candidate is frozen and published atomically
 only after it is complete.
 
-A path-copy tree bounds steps 1–5 by path depth. A flat vector makes step 5
-O(N) and is therefore not admissible as the selected structure.
+Steps 1–5 are semantically bounded by the affected pitch and dirty bars
+(incoming span plus resolver-returned changed geometries and memberships).
+Path depth is a directory-implementation detail, not the architectural bound.
+A flat full-loop `NoteRef` vector is not admissible as the overlap or
+candidate structure. A long note can still touch every bar it intersects;
+this model does not by itself make construction bounded.
 
 **Alternative:** let snapshot storage replay or resolve edits. Rejected because it creates a second semantic owner.
 
@@ -437,8 +501,9 @@ horizon ownership.
 - **[Construction cost]** Mutations may be content-dependent → classify the
   owner in `ExecutionBounds.md`, use bounded resumable units, and define an
   explicit overrun policy before runtime publication.
-- **[Reference structure]** Selecting a flat vector would fail the no-full-copy
-  invariant; the comparison/measurement gate must finish before Phase 2.
+- **[Directory implementation]** Dirty bars do not automatically share the
+  pitch/bar directory. Phase 1 / measurement must choose a physical directory
+  that newly allocates only dirty membership and the minimum path to it.
 - **[Projection cost]** A requested window does not cap the number of
   `generateEquivalentIntervals` candidates for a span crossing multiple loop
   lengths → bound the source span range and candidate count before runtime
@@ -450,7 +515,7 @@ horizon ownership.
 ## Migration Plan
 
 1. Complete formal architecture reassessment and record approval before firmware work.
-2. Complete the persistent-reference comparison and measurement gate; select the structure before Phase 2.
+2. Measure and select the physical pitch/bar directory representation before Phase 2 firmware; the logical indexes are already selected.
 3. Implement immutable objects, stable handles, shared reference storage, and invariant-protecting native checks with current consumers unchanged.
 4. Define and verify candidate construction bounds, progress, and overrun behavior before runtime publication.
 5. Adapt capture and NOTE_EDIT commit boundaries while retaining compatibility pass records; publication may occur only after a complete candidate is ready.
@@ -467,8 +532,8 @@ architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
 
 ### Complete content and LCR role
 
-- A published `LoopSnapshot` is complete effective canonical content. Structural
-  sharing is required for the reference root, but consumers never traverse a
+- A published `LoopSnapshot` is complete effective canonical content. Unchanged
+  pitch/bar membership remains shared, but consumers never traverse a
   parent snapshot for missing content.
 - LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
   ownership. LCR is not the maintained effective-state authority.
@@ -605,8 +670,8 @@ before runtime publication is implemented.
 
 ## Open Questions
 
-- Which persistent reference structure from the Phase 0 comparison meets memory,
-  iteration, and lifetime requirements?
+- Which physical directory representation implements the selected pitch → bar
+  indexes with shared unchanged membership?
 - What exact storage version/layout and compatibility migration are required?
 - Which optional indexes are justified without becoming a second authority?
 - What execution-bound class, unit cap, progress state, and overrun policy

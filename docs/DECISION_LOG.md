@@ -127,8 +127,34 @@ old representation.
 13. Later verification uses existing gates plus invariant-protecting checks
     only. This change does not add a new test architecture.
 
+**Amendment (2026-08-25) — logical pitch/bar indexes:**
+
+14. The logical snapshot indexes are selected. Notes: pitch → canonical 768-tick
+    bar → bar NoteRefs of complete notes intersecting that bar. Events: bar →
+    EventRef list with a defined canonical tick/order contract. Occupy /
+    open-at-S remains `ActiveNoteLedger` / `presentAt`, not a snapshot index.
+    Unmatched open Ons are not stored in the span index.
+15. A `NoteRef` may appear in multiple bar lists in one snapshot; every
+    occurrence identifies the same immutable version and `NoteId`. Candidate
+    sets deduplicate by `NoteId`. Inspecting a candidate is not replacing it.
+16. Dirty pitch is the incoming note's pitch. Dirty bars are the union of bars
+    intersected by the incoming span and every note whose geometry or
+    membership the existing resolver changes. Snapshot construction translates
+    that mutation; it is not a second overlap owner.
+17. Wrap-crossing notes keep two linear segments. Each segment inserts
+    membership in the bars it intersects; both sets share one `NoteId`.
+18. Only dirty pitch/bar membership nodes and the minimum immutable directory
+    path required to reach them may be newly allocated. Unchanged membership
+    remains shared with the parent. Path-copy is rejected as the semantic
+    overlap model and remains allowed as a possible directory implementation.
+    The physical directory is a Phase 1 / measurement decision.
+19. The semantic locality bound is affected pitch plus dirty bars, not path
+    depth. A long note can still touch every intersecting bar. Phase 2 stays
+    blocked on formal reassessment and an `ExecutionBounds.md` row.
+
 **References:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
 [`loop_pass_snapshot_effective_state_refinement.md`](Plans/loop_pass_snapshot_effective_state_refinement.md),
+[`loop_snapshot_pitch_bar_span_index_refinement.md`](Plans/loop_snapshot_pitch_bar_span_index_refinement.md),
 [`timeline-passes`](../openspec/specs/timeline-passes/),
 [`loop-content-history`](../openspec/specs/loop-content-history/).
 
