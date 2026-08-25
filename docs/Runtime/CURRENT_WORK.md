@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4.4 display: keep PLAYING handoff on first overdub)
+Last updated: 2026-08-26 (4.4 display: hold overdub handoff only inside gather)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -17,10 +17,12 @@ then `reconstructDisplayNotes`. A nonempty dirty `visualCache` prefix does
 not authorize the paint window — `visualCacheCoversFollowWindow` must pass
 or the window gathers from the snapshot after capture ends
 ([`235954`](../../captures/session_20260825_235954.log)). Live overdub
-keeps the PLAYING committed handoff and does not snapshot-gather every
-frame ([`001048`](../../captures/session_20260826_001048.log): first
-overdub `frame=0` while `visual=32`; midi_gap 31–113 ms). One snapshot
-gather is allowed after wrap invalidate. Compatibility gather remains
+keeps the PLAYING committed handoff only while the paint window stays
+inside the last gather ([`001048`](../../captures/session_20260826_001048.log)
+`frame=0`; [`001907`](../../captures/session_20260826_001907.log) held the
+first 16-bar slice on a 21-bar loop). Follow exit or wrap invalidate
+snapshot-gathers once. After overdub stop, a dirty visual-cache prefix
+does not keep that incomplete handoff. Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,
 validation, 4.5, 4.6, and Phase 5 are **not selected**.

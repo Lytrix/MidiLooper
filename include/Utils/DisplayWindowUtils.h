@@ -137,6 +137,21 @@ inline bool overdubCommittedWindowCacheReusable(size_t committedNoteCount, size_
   return committedNoteCount > 0 && committedNoteCount <= liveNoteCount;
 }
 
+/// Hold the PLAYING/overdub committed handoff only while the paint window still
+/// sits inside the last gather. A follow exit must snapshot-gather once
+/// (`001907`: 21-bar loop kept the first 16-bar slice for the whole overdub).
+inline bool shouldHoldOverdubCommittedHandoff(bool canHoldCommittedLayer, bool havePaintWindow,
+                                             bool liveWindowGatherValid,
+                                             bool paintWindowInsideGather) {
+  if (!canHoldCommittedLayer) {
+    return false;
+  }
+  if (!havePaintWindow) {
+    return true;
+  }
+  return liveWindowGatherValid && paintWindowInsideGather;
+}
+
 /// Overdub committed layer must switch from window gather to full visualCache when idle
 /// slices finish — otherwise wrap/auto-follow keeps painting a stale ~18-bar gather until stop.
 inline bool shouldPromoteOverdubCommittedToFullVisualCache(bool overdubbing, bool visualCacheDirty,

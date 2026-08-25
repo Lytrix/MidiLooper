@@ -302,9 +302,10 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
     if (track.isOverdubbing()) {
         // Live overdub paint is MIDI-sensitive. Do not snapshot-gather every
         // rebuild (session_20260826_001048 midi_gap 31–113 ms). Keep the PLAYING
-        // handoff when the cache does not cover. Snapshot gather only after
-        // wrap invalidate clears the frame. Source-view is consume ownership
-        // and must not replace a nonempty committed layer.
+        // handoff only while the paint window stays inside the last gather.
+        // Follow exit or wrap invalidate snapshot-gathers once
+        // (session_20260826_001907). Source-view is consume ownership and must
+        // not replace a nonempty committed layer.
         if (havePaintWindow &&
             visualCacheCoversFollowWindow(loop, paintWindowStart, paintWindowLength,
                                           liveLoopLength)) {
@@ -328,13 +329,21 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         const bool canHoldCommittedLayer =
             liveDisplayCacheCommittedNoteCount_ > 0 &&
             liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
-        if (canHoldCommittedLayer) {
+        const bool paintWindowInsideGather =
+            liveWindowGatherValid_ &&
+            DisplayWindowUtils::paintWindowInsideGather(paintWindowStart, paintWindowLength,
+                                                        liveWindowGatherStart_,
+                                                        liveWindowGatherLength_);
+        if (DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(
+                canHoldCommittedLayer, havePaintWindow, liveWindowGatherValid_,
+                paintWindowInsideGather)) {
             liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
             liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
-        if (havePaintWindow && loop.publishedSnapshot() && liveDisplayNotes.empty()) {
+        if (havePaintWindow && loop.publishedSnapshot() &&
+            (liveDisplayNotes.empty() || !paintWindowInsideGather)) {
             uint32_t gatherStart = 0;
             uint32_t gatherLength = 0;
             const uint32_t marginTicks =
@@ -354,6 +363,12 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveCommittedLayerHeldForDirtyCache_ = false;
             liveOverdubSourceViewNoteCount_ =
                 loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (canHoldCommittedLayer) {
+            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }

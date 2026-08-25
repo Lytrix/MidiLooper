@@ -105,23 +105,34 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 uint8_t windowBars = 0;
                 if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
                                             windowLength, windowBars)) {
-                    uint32_t gatherStart = 0;
-                    uint32_t gatherLength = 0;
+                    // A partial dirty visualCache must not lock the first-window
+                    // handoff. Filtering that slice cannot restore the bars the
+                    // 16-bar window later exposes (`001907`: first/last 4 bars).
+                    if (visualCacheCoversFollowWindow(loop, windowStart, windowLength,
+                                                      loopLength)) {
+                        uint32_t gatherStart = 0;
+                        uint32_t gatherLength = 0;
+                        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+                        filterNotesToFollowWindow(liveDisplayNotes, windowStart, windowLength,
+                                                  loopLength, liveDisplayNotes, gatherStart,
+                                                  gatherLength);
+                        liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                        liveWindowGatherValid_ = true;
+                        liveWindowGatherStart_ = gatherStart;
+                        liveWindowGatherLength_ = gatherLength;
+                        liveWindowGatherLoopLength_ = loopLength;
+                        livePlaybackDisplaySlot_ = displaySlot;
+                        livePlaybackDisplayTrack_ = trackIndex;
+                        return liveDisplayNotes;
+                    }
+                } else {
                     DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-                    filterNotesToFollowWindow(liveDisplayNotes, windowStart, windowLength, loopLength,
-                                              liveDisplayNotes, gatherStart, gatherLength);
-                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                    liveWindowGatherValid_ = true;
-                    liveWindowGatherStart_ = gatherStart;
-                    liveWindowGatherLength_ = gatherLength;
-                    liveWindowGatherLoopLength_ = loopLength;
-                    livePlaybackDisplaySlot_ = displaySlot;
-                    livePlaybackDisplayTrack_ = trackIndex;
                     return liveDisplayNotes;
                 }
+            } else {
+                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+                return liveDisplayNotes;
             }
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            return liveDisplayNotes;
         }
         // Window filter is allowed from a non-empty visualCache even while globally dirty, so
         // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes
