@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (OVERDUBBING idle skips visual reconstruct)
+Last updated: 2026-08-25 (PLAYING empty visual cache wins the idle turn)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** OVERDUBBING idle does not run visual-cache reconstruct. Only an
-in-flight snapshot construction may `step`. [`230556`](../../captures/session_20260825_230556.log)
-`idle_reconstruct` was **241–278 ms** (BPM 74–77) when snapshot step had no
-in-flight work and mixed dirty bars lifted the neighborhood cap to the whole
-loop. Playback still reads a stale published window plus unpublished session
-passes. NOTE_EDIT close stays a synchronous drain. Tasks 4.3–4.6 are **not
-selected**.
+**Now:** PLAYING idle gives an empty dirty visual cache the turn before
+snapshot `step`. OVERDUBBING still skips visual reconstruct.
+[`231632`](../../captures/session_20260825_231632.log) cleared slot 3, recorded
+653 live events, then first PLAYING painted **288** notes with
+`visualCache` `notes=0` because snapshot idle consumed every turn. NOTE_EDIT
+close stays a synchronous drain. Tasks 4.3–4.6 are **not selected**.
 
 Phase 3 tasks 4.1–4.2 remain complete. Playback preparation reads the
 published `LoopSnapshot` through `ensurePlaybackMergedMidiEventsBuilt`,

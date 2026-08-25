@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (OVERDUBBING idle skips visual reconstruct)
+Last updated: 2026-08-25 (PLAYING empty visual cache wins the idle turn)
 
 ---
 
@@ -16,9 +16,10 @@ architecture proposal. The maintained-LCR continuation from
 publication queue at stop and step from idle (`DEC-045`). OVERDUBBING idle
 advances an in-flight construction only. Playback reads a stale published
 window plus unpublished session passes. OVERDUBBING idle does not run visual
-reconstruct. NOTE_EDIT close stays synchronous.
-Capture [`230556`](../../captures/session_20260825_230556.log)
-`idle_reconstruct` 241–278 ms during overdub 3.
+reconstruct. PLAYING idle fills an empty visual cache before snapshot `step`.
+NOTE_EDIT close stays synchronous.
+Capture [`231632`](../../captures/session_20260825_231632.log) first PLAYING
+after record: 288 notes, `visualCache` empty.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:

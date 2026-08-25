@@ -114,7 +114,8 @@ stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. An idle turn that applies one
 snapshot unit does not also run a visual-cache slice. While OVERDUBBING, idle
 only applies row 21 to an already started construction. Visual-cache idle
-slices do not run on that turn. Starting the next
+slices do not run on that turn. PLAYING / STOPPED_RECORDING give an empty
+dirty visual cache the idle turn before row 21. Starting the next
 pass change-set stays on PLAYING / STOPPED_RECORDING / STOPPED. Wrap-ahead
 enqueue and `startNextPendingConstruction` stay off the OVERDUBBING idle
 turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,
