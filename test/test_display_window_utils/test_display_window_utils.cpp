@@ -223,6 +223,15 @@ void test_overdub_committed_window_cache_rejects_zero_committed_count() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::overdubCommittedWindowCacheReusable(301u, 300u));
 }
 
+void test_should_hold_overdub_committed_handoff_requires_gather_coverage() {
+  // 001907: hold the first 16-bar PLAYING slice only while follow stays inside it.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(true, false, false, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(true, true, true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(true, true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(true, true, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(false, true, true, true));
+}
+
 void test_overdub_committed_promote_to_full_visual_cache() {
   TEST_ASSERT_TRUE(
       DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(true, false, true, true));
@@ -507,6 +516,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_map_display_note_bar_ticks_frontier_equals_length_stays_at_end);
   RUN_TEST(test_filter_display_notes_to_window_clamps_frontier_equals_length);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
+  RUN_TEST(test_should_hold_overdub_committed_handoff_requires_gather_coverage);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_uses_clean_neighborhood);
