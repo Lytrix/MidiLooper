@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (task 1.2 authority alignment complete)
+Last updated: 2026-08-25 (task 1.3 Phase 0 gate complete)
 
 ---
 
@@ -134,7 +134,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; tasks 1.1–1.2 complete; logical indexes approved; physical directory and firmware not authorized |
+| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; tasks 1.1–1.3 complete; logical indexes approved; physical directory and firmware not authorized |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
