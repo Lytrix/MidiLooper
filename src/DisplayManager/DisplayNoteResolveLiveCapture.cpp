@@ -300,9 +300,11 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
 
     if (track.isOverdubbing()) {
-        // Display authority is visualCache only when it covers the paint neighborhood.
-        // Source-view stays consume ownership. A nonempty dirty prefix must not win
-        // (session_20260825_235954: 20 notes after wrap/stop).
+        // Live overdub paint is MIDI-sensitive. Do not snapshot-gather every
+        // rebuild (session_20260826_001048 midi_gap 31–113 ms). Keep the PLAYING
+        // handoff when the cache does not cover. Snapshot gather only after
+        // wrap invalidate clears the frame. Source-view is consume ownership
+        // and must not replace a nonempty committed layer.
         if (havePaintWindow &&
             visualCacheCoversFollowWindow(loop, paintWindowStart, paintWindowLength,
                                           liveLoopLength)) {
@@ -323,7 +325,16 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
-        if (havePaintWindow && loop.publishedSnapshot()) {
+        const bool canHoldCommittedLayer =
+            liveDisplayCacheCommittedNoteCount_ > 0 &&
+            liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
+        if (canHoldCommittedLayer) {
+            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            liveCommittedLayerHeldForDirtyCache_ = true;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (havePaintWindow && loop.publishedSnapshot() && liveDisplayNotes.empty()) {
             uint32_t gatherStart = 0;
             uint32_t gatherLength = 0;
             const uint32_t marginTicks =
@@ -346,7 +357,25 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
-        if (loop.hasOverdubSourceView()) {
+        if (havePaintWindow && !loop.visualCache.notes.empty()) {
+            uint32_t gatherStart = 0;
+            uint32_t gatherLength = 0;
+            DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+            filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart, paintWindowLength,
+                                      liveLoopLength, liveDisplayNotes, gatherStart, gatherLength);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            liveWindowGatherValid_ = true;
+            liveWindowGatherStart_ = gatherStart;
+            liveWindowGatherLength_ = gatherLength;
+            liveWindowGatherLoopLength_ = liveLoopLength;
+            liveDisplayCommittedFromWindowGather_ = false;
+            liveCommittedLayerHeldForDirtyCache_ = false;
+            liveOverdubSourceViewNoteCount_ =
+                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (loop.hasOverdubSourceView() && !loop.overdubSourceViewNotes().empty()) {
             if (havePaintWindow) {
                 uint32_t gatherStart = 0;
                 uint32_t gatherLength = 0;
@@ -377,9 +406,6 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         // layer, so played notes stop landing (172405: 30 gathers, 70 of 241 frames over
         // budget). Hold the layer we already have; processDeferredIdleMaintenance makes the
         // cache clean in ~0.6-2.3 s and the clean branch then rebuilds it.
-        const bool canHoldCommittedLayer =
-            liveDisplayCacheCommittedNoteCount_ > 0 &&
-            liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
         if (loop.visualCacheDirty && canHoldCommittedLayer) {
             liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
             liveCommittedLayerHeldForDirtyCache_ = true;

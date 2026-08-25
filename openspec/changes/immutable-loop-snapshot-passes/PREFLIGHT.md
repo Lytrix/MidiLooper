@@ -221,6 +221,10 @@ in the paint path). Reconstruction stays on `reconstructDisplayNotes`.
 prepared windows remain only when no published root exists. Task 4.3 is
 skipped. NOTE_EDIT paint still uses `projectedNoteEditDisplayNotes`.
 Analysis, validation, 4.5, and 4.6 identity recording are not authorized.
+Live overdub paint holds the PLAYING committed handoff when
+`visualCacheCoversFollowWindow` fails, and snapshot-gathers only when that
+layer is empty (wrap invalidate). Per-frame snapshot gather during overdub
+is not allowed ([`001048`](../../../captures/session_20260826_001048.log)).
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
