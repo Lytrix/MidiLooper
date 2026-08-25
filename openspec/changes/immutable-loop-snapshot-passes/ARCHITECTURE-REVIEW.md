@@ -173,3 +173,21 @@ Before checking off a phase in `tasks.md`:
 - [ ] Large-loop persistence and migration retain `StorageManager` ownership, use declared deferred units, and do not perform content-sized synchronous work on timing-critical paths
 - [ ] No compatibility path was removed before its caller gate passed
 - [ ] Runtime docs, decision log, and plan reflect the result
+
+### Phase 1 implementation review
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership, transition, and execution-bound checkpoint answered; no
+      production owner or runtime transition was added.
+- [x] Native invariant checks pass without a new test architecture.
+- [x] Capture-serial build passes with RAM1 locals at 4640.
+- [x] HITL gate not required; no capture, playback, or consumer behavior
+      changed.
+- [x] Candidate construction has explicit native/offline progress and failure
+      preservation; runtime admissibility remains unclassified as required.
+- [x] Existing `LoopPass` compatibility paths remain intact.
+- [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
+      `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
+
+Phase 1 verification is complete. Phase 2 remains separately gated by a
+runtime construction-bound classification in `ExecutionBounds.md`.

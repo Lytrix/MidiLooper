@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (Phase 1 tasks 2.1–2.4 selected)
+Last updated: 2026-08-25 (Phase 1 tasks 2.1–2.4 implemented and verified)
 
 ---
 
@@ -134,7 +134,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 1 native immutable snapshot model; tasks 1.1–1.4 complete; tasks 2.1–2.4 selected; production publication and consumer selection not authorized |
+| **`immutable-loop-snapshot-passes`** | Phase 1 native immutable snapshot model; tasks 1.1–1.4 and 2.1–2.4 complete; production publication and consumer selection remain unauthorized |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

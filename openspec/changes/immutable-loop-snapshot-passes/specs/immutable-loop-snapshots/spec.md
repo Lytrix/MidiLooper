@@ -49,7 +49,12 @@ The span index SHALL store complete semantic notes only. It SHALL NOT store unma
 
 Creating a successor SHALL allocate new immutable event objects only for added or modified content and SHALL NOT copy or mutate unchanged event objects. Only dirty pitch/bar membership nodes and the minimum immutable directory structure required to reach them MAY be newly constructed. Unchanged pitch/bar membership SHALL remain shared with the parent snapshot.
 
-The logical model is selected. The physical directory representation (sparse directory, path-copy directory, or another measured form) remains a Phase 1 / measurement decision. Path-copy SHALL NOT be used as the semantic overlap model. A flat full-loop `NoteRef` vector SHALL NOT be the overlap or candidate structure. Firmware publication SHALL NOT treat the physical directory as already selected.
+The logical model is selected. Phase 1 selected a sparse fixed-capacity paged
+directory as the native implementation experiment; page capacity and runtime
+execution classification remain open gates. Path-copy SHALL NOT be used as the
+semantic overlap model. A flat full-loop `NoteRef` vector SHALL NOT be the
+overlap or candidate structure. The Phase 1 implementation does not authorize
+firmware publication or runtime use of the physical directory.
 
 #### Scenario: Unchanged objects keep the same references
 
