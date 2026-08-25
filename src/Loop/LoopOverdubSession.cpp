@@ -52,6 +52,7 @@ LOOP_COLD_MEM void Loop::closeOverdubSession() {
   overdubSessionCursor_ = 0;
   overdubSessionLiveUndoEvents_.clear();
   clearOverdubSourceView();
+  discardUnpublishedSnapshotIfNotSessionExit();
 }
 
 LOOP_COLD_MEM void Loop::armOverdubWrapAfterLeavingStart(uint32_t currentPhase) {

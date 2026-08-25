@@ -209,6 +209,18 @@ runtime construction-bound classification in `ExecutionBounds.md`.
 Phase 2 verification is complete. Phase 3 (direct consumers) remains
 separately gated.
 
+Amendment (2026-08-25): overdub session-exit publication is queued at stop and
+stepped from idle (`DEC-045`). Record and NOTE_EDIT close remain synchronous.
+This does not add a new unbounded owner; idle uses row 21 `step(1)`.
+
+### Idle-publish implementation review (DEC-045)
+
+- [x] Architecture gate posted in the session transcript.
+- [x] Ownership NO; transition YES (user-approved); no new unbounded owner.
+- [x] Native invariant/parity checks pass without a new test architecture.
+- [x] Capture-serial build passes with RAM1 locals at 4640.
+- [ ] Device gate: long-loop overdub stop must not block MIDI/display for seconds.
+
 ### Phase 3 implementation review (4.1–4.2 only)
 
 - [x] Phase architecture gate posted in the session transcript.

@@ -3,6 +3,7 @@
 
 #include "Loop.h"
 
+#include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 
@@ -218,10 +219,145 @@ LOOP_COLD_MEM void appendCommittedPassChanges(const Loop& loop, PassId passId,
                    changes);
 }
 
+bool passIdInList(const std::vector<PassId>& passIds, PassId passId) {
+  for (const PassId id : passIds) {
+    if (id == passId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isCommittedOverdubPass(const Loop& loop, PassId passId) {
+  bool isOverdubPass = false;
+  return committedChunksForPass(loop, passId, isOverdubPass) != nullptr && isOverdubPass;
+}
+
+bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
+  return box.constructionPassId == passId || passIdInList(box.queuedPassIds, passId) ||
+         passIdInList(box.appliedPassIds, passId);
+}
+
+LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
+                                                            const PendingSnapshotPublishBox& box) {
+  if (box.unpublishedCandidate) {
+    return box.unpublishedCandidate;
+  }
+  ImmutableLoopSnapshotRef parent = loop.publishedSnapshot();
+  if (parent) {
+    return parent;
+  }
+  if (isRecordSessionExit(box.sessionExitReason)) {
+    return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                     loop.nextNoteId_, 1);
+  }
+  return {};
+}
+
+LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPublishBox& box) {
+  const ImmutableLoopSnapshotRef parent = resolvePendingParent(loop, box);
+  if (!parent) {
+    return false;
+  }
+
+  while (!box.queuedPassIds.empty()) {
+    const PassId passId = box.queuedPassIds.front();
+    box.queuedPassIds.erase(box.queuedPassIds.begin());
+    LoopSnapshotChangeSet changes;
+    EventId nextEventId = parent->nextEventId();
+    uint32_t nextCanonicalOrder = parent->nextEventId();
+    appendCommittedPassChanges(loop, passId, nextEventId, nextCanonicalOrder, changes);
+    if (changes.notes.empty() && changes.events.empty()) {
+      box.appliedPassIds.push_back(passId);
+      continue;
+    }
+    box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+    box.constructionPassId = passId;
+    box.applyingCompanions = false;
+    return true;
+  }
+
+  if (box.sessionExitQueued && !box.companionsApplied) {
+    box.companionsApplied = true;
+    LoopSnapshotChangeSet changes;
+    appendCompanionChanges(loop, *parent, box.companionIds, changes);
+    if (changes.notes.empty() && changes.events.empty()) {
+      return false;
+    }
+    box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+    box.constructionPassId = kInvalidPassId;
+    box.applyingCompanions = true;
+    return true;
+  }
+  return false;
+}
+
+LOOP_COLD_MEM bool finishPendingConstruction(PendingSnapshotPublishBox& box) {
+  ImmutableLoopSnapshotRef frozen = box.construction->freeze();
+  if (!frozen) {
+    return false;
+  }
+  box.unpublishedCandidate = std::move(frozen);
+  if (box.constructionPassId != kInvalidPassId) {
+    box.appliedPassIds.push_back(box.constructionPassId);
+  }
+  box.construction.reset();
+  box.constructionPassId = kInvalidPassId;
+  box.applyingCompanions = false;
+  return true;
+}
+
 }  // namespace
 
-LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
-                                                       const EditPassIdList& companionIds) {
+LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
+  if (!pendingSnapshotPublishBox_ || !hasOverdubSession() ||
+      pendingSnapshotPublishBox_->sessionExitQueued) {
+    return;
+  }
+  PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  for (const PassId passId : overdubSessionPassIds_) {
+    if (passId != kInvalidPassId && isCommittedOverdubPass(*this, passId) &&
+        !passAlreadyTracked(box, passId)) {
+      box.queuedPassIds.push_back(passId);
+    }
+  }
+  if (lastCommittedPassId_ != kInvalidPassId &&
+      isCommittedOverdubPass(*this, lastCommittedPassId_) &&
+      !passAlreadyTracked(box, lastCommittedPassId_)) {
+    box.queuedPassIds.push_back(lastCommittedPassId_);
+  }
+}
+
+LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
+  if (pendingSnapshotPublishBox_ && !pendingSnapshotPublishBox_->sessionExitQueued) {
+    clearPendingSnapshotPublish();
+  }
+}
+
+LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
+  if (pendingSnapshotPublishBox_) {
+    const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+    if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued) {
+      return true;
+    }
+  }
+  if (!hasOverdubSession()) {
+    return false;
+  }
+  const PendingSnapshotPublishBox* box = pendingSnapshotPublishBox_.get();
+  for (const PassId passId : overdubSessionPassIds_) {
+    if (passId != kInvalidPassId && isCommittedOverdubPass(*this, passId) &&
+        (box == nullptr || !passAlreadyTracked(*box, passId))) {
+      return true;
+    }
+  }
+  return lastCommittedPassId_ != kInvalidPassId &&
+         isCommittedOverdubPass(*this, lastCommittedPassId_) &&
+         (box == nullptr || !passAlreadyTracked(*box, lastCommittedPassId_));
+}
+
+LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
+                                                  const EditPassIdList& companionIds) {
   if (!isSessionExit(reason) || loopLengthTicks == 0) {
     return false;
   }
@@ -229,57 +365,96 @@ LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
     return false;
   }
 
-  ImmutableLoopSnapshotRef parent = publishedSnapshot();
-  if (!parent) {
-    parent = LoopSnapshot::createEmpty(loopId, loopLengthTicks, loopStartTick, nextNoteId_, 1);
+  if (!pendingSnapshotPublishBox_) {
+    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   }
-  if (!parent) {
-    return false;
-  }
+  PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  box.sessionExitQueued = true;
+  box.sessionExitReason = reason;
+  box.companionIds = companionIds;
+  box.companionsApplied = companionIds.empty();
 
-  LoopSnapshotChangeSet changes;
-  std::vector<PassId> passIds;
   if (isOverdubSessionExit(reason)) {
     for (const PassId passId : overdubSessionPassIds_) {
-      if (passId != kInvalidPassId) {
-        passIds.push_back(passId);
+      if (passId != kInvalidPassId && !passAlreadyTracked(box, passId)) {
+        box.queuedPassIds.push_back(passId);
       }
     }
   }
-  if (lastCommittedPassId_ != kInvalidPassId) {
-    bool alreadyPresent = false;
-    for (const PassId passId : passIds) {
-      if (passId == lastCommittedPassId_) {
-        alreadyPresent = true;
-        break;
-      }
-    }
-    if (!alreadyPresent) {
-      passIds.push_back(lastCommittedPassId_);
-    }
-  }
-  EventId nextEventId = parent->nextEventId();
-  uint32_t nextCanonicalOrder = parent->nextEventId();
-  for (const PassId passId : passIds) {
-    appendCommittedPassChanges(*this, passId, nextEventId, nextCanonicalOrder, changes);
-  }
-  if (isOverdubSessionExit(reason)) {
-    appendCompanionChanges(*this, *parent, companionIds, changes);
-  }
-  if (changes.notes.empty() && changes.events.empty()) {
-    return false;
+  if (lastCommittedPassId_ != kInvalidPassId && !passAlreadyTracked(box, lastCommittedPassId_)) {
+    box.queuedPassIds.push_back(lastCommittedPassId_);
   }
 
-  LoopSnapshotConstruction construction(parent, changes);
-  if (!construction.step(construction.totalChangeCount()) || construction.failed()) {
+  if (box.construction || !box.queuedPassIds.empty() || box.unpublishedCandidate ||
+      !box.companionIds.empty()) {
+    return true;
+  }
+  clearPendingSnapshotPublish();
+  return false;
+}
+
+LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
+                                                       const EditPassIdList& companionIds) {
+  if (!queueSessionExitSnapshot(reason, companionIds)) {
     return false;
   }
-  ImmutableLoopSnapshotRef frozen = construction.freeze();
-  if (!frozen) {
+  while (stepPendingSnapshotPublish(64)) {
+  }
+  return publishedSnapshotIsCurrent();
+}
+
+LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges) {
+  if (maximumChanges == 0) {
+    return hasPendingSnapshotPublish();
+  }
+  if (!pendingSnapshotPublishBox_) {
+    if (!hasPendingSnapshotPublish()) {
+      return false;
+    }
+    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  }
+  PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  enqueueLiveOverdubPasses();
+
+  size_t remaining = maximumChanges;
+  while (remaining > 0) {
+    if (!box.construction && !startNextPendingConstruction(*this, box)) {
+      break;
+    }
+    if (!box.construction) {
+      break;
+    }
+    const size_t before = box.construction->completedChangeCount();
+    box.construction->step(remaining);
+    if (box.construction->failed()) {
+      clearPendingSnapshotPublish();
+      return false;
+    }
+    const size_t after = box.construction->completedChangeCount();
+    if (after <= before) {
+      break;
+    }
+    remaining -= (after - before);
+    if (!box.construction->complete()) {
+      break;
+    }
+    if (!finishPendingConstruction(box)) {
+      clearPendingSnapshotPublish();
+      return false;
+    }
+  }
+
+  if (box.sessionExitQueued && !box.construction && box.queuedPassIds.empty() &&
+      box.companionsApplied) {
+    if (!box.unpublishedCandidate) {
+      clearPendingSnapshotPublish();
+      return false;
+    }
+    storePublishedSnapshot(box.unpublishedCandidate);
+    clearPendingSnapshotPublish();
     return false;
   }
-  storePublishedSnapshot(std::move(frozen));
-  return true;
+  return hasPendingSnapshotPublish();
 }
 
 LOOP_COLD_MEM bool Loop::tryPublishNoteEditSnapshot(const EditPassIdList& editPassIds) {

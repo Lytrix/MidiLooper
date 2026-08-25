@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-045](#dec-045-overdub-snapshot-publish-is-idle-stepped) | 2026-08-25 | Overdub `LoopSnapshot` publication queues at stop and steps from idle | Accepted |
 | [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) | 2026-08-25 | Immutable loop snapshots replace maintained LCR as the effective-state direction on the feature branch | Accepted — design phase; amended for LoopPass vs LoopSnapshot, persistent reference root, provisional/global snapshots, and latest-saved reboot |
 | [DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property) | 2026-08-22 | Execution bound class is a gated architectural property; `admit(WorkClass)` stays rejected | Accepted |
 | [DEC-042](#dec-042-same-pitch-active-note-identity-is-a-cardinality-problem-not-an-off-identity-problem) | 2026-08-19 | Same-pitch active-note identity is cardinality, not Off identity; open-NoteOn ledger | Implemented; nested HITL MET [`095902`](../captures/session_20260819_095902.log); extra-open is catch-up stack RC |
@@ -59,7 +60,45 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-045 -->
+<!-- Append new entries below (newest first). Next ID: DEC-046 -->
+
+## DEC-045 — Overdub snapshot publish is idle-stepped
+
+**Date:** 2026-08-25
+**Status:** Accepted
+**Scope:** `feature/immutable-loop-snapshot-passes`
+**Authority:** [`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md) rows 21–22,
+[`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/)
+
+**Context:** After Phase 3 playback began reading the published `LoopSnapshot`,
+overdub stop ran `tryPublishSessionExitSnapshot` on the button path.
+[`session_20260825_214529.log`](../captures/session_20260825_214529.log) spent
+11.67 s then 2.37 s in `seal_fx_push_overdub_undo` (undo push + full candidate
+construction). MIDI and display were blocked until that call returned. Playback
+already treats a published root behind `playbackRevision` as stale and uses
+compatibility gather.
+
+**Decision:**
+
+1. Overdub session-exit copies pass ids and companions in
+   `Loop::queueSessionExitSnapshot` on the stop path. It does not
+   `step(totalChangeCount)`.
+2. `Track::processDeferredIdleMaintenance` calls
+   `Loop::stepPendingSnapshotPublish(1)` before visual-cache slices. Idle runs
+   while PLAYING / OVERDUBBING / STOPPED_RECORDING and when STOPPED tracks are
+   serviced. That is the interval-path owner; the unit remains one row-21
+   `step`, not a local timer.
+3. During OVERDUBBING idle, committed wrap passes may apply onto an unpublished
+   working candidate. `storePublishedSnapshot` waits until session-exit is
+   queued and the candidate is complete.
+4. Record session-exit and NOTE_EDIT close stay synchronous. Native tests keep
+   `tryPublishSessionExitSnapshot` as queue-then-drain.
+5. Failure discards the candidate and keeps the previous published root. Do not
+   publish a prefix.
+
+**Consequences:** Audible playback after overdub stop uses compatibility gather
+until idle finishes the successor root. Stop no longer completes the candidate
+before returning to MIDI service.
 
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 

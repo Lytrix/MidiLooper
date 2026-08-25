@@ -3,14 +3,10 @@
 
 #include "Loop.h"
 
+#include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
 
 #include <utility>
-
-struct PublishedSnapshotBox {
-  ImmutableLoopSnapshotRef snapshot;
-  uint32_t revision = 0;
-};
 
 LOOP_COLD_MEM Loop::Loop() {}
 
@@ -32,6 +28,11 @@ LOOP_COLD_MEM const void* Loop::publishedSnapshotIdentity() const {
 
 LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
   publishedSnapshotBox_.reset();
+  clearPendingSnapshotPublish();
+}
+
+LOOP_COLD_MEM void Loop::clearPendingSnapshotPublish() {
+  pendingSnapshotPublishBox_.reset();
 }
 
 LOOP_COLD_MEM void Loop::storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot) {
