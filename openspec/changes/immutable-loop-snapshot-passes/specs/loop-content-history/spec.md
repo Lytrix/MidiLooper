@@ -16,6 +16,46 @@ The Loop file SHALL persist the ordered immutable content required for complete 
 - **THEN** the reconstructed Loop selects the serialized complete snapshot directly
 - **AND** normal loading does not replay intervening records to derive active state
 
+### Requirement: Snapshot persistence retains the StorageManager boundary
+
+The system SHALL keep snapshot serialization, deferred save work, loading, and
+compatibility migration owned by `StorageManager`. The storage format SHALL
+persist immutable content, stable logical references, snapshot roots, loop
+metadata, and the serialized active branch tip. It SHALL NOT persist runtime
+addresses, derived representations, playback cursor/order, active ledgers, or
+undo history.
+
+#### Scenario: Storage does not absorb runtime representation ownership
+
+- **WHEN** a snapshot is saved or loaded
+- **THEN** `StorageManager` serializes or reconstructs snapshot content
+- **AND** `Loop` rebuilds loop-local handles and selects the runtime snapshot
+- **AND** derived representation owners remain responsible for their own rebuilds
+
+### Requirement: Large-loop persistence is deferred and bounded
+
+Large-loop save and compatibility migration SHALL use existing `StorageManager`
+deferred units. They SHALL NOT perform content-sized synchronous serialization
+or migration at record/overdub stop, inside `handleMidiInput()`, during clock
+dispatch, or on a track-tick path. Any unit that executes between
+`handleMidiInput()` entries SHALL have a declared `ExecutionBounds.md` class,
+input and storage cap, maximum indivisible step, persistent progress, and
+overrun/failure policy.
+
+#### Scenario: Stop admits persistence without catch-up
+
+- **WHEN** record or overdub stop admits a large snapshot for persistence
+- **THEN** the stop path records deferred work with `StorageManager`
+- **AND** it does not synchronously serialize or migrate the complete snapshot
+- **AND** the active snapshot remains available to runtime consumers
+
+#### Scenario: Persistence unit failure preserves state
+
+- **WHEN** a save or migration unit cannot fit, overruns, or fails allocation
+- **THEN** no partial snapshot is published
+- **AND** the active snapshot and previously valid persisted state remain intact
+- **AND** pending work follows the phase-specific retention, retry, or rejection policy without silent loss
+
 ### Requirement: Load reconstructs editing state from content
 
 After loading a Loop from disk, the runtime SHALL identify the serialized snapshot tip, reconstruct loop-local stable handles, derive supported runtime undo units, and start with redo empty. An older supported format MAY be migrated through the existing `StorageManager` deferred owner by replaying its records into complete snapshot boundaries. Any migration unit that executes between `handleMidiInput()` entries SHALL satisfy the declared bound and overrun policy in [ExecutionBounds.md](../../../../docs/Authority/Architecture/ExecutionBounds.md). Normal undo and redo SHALL select existing snapshots rather than replay history.

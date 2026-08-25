@@ -1,7 +1,7 @@
 ## 1. Architecture and specification gate
 
 - [ ] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal.
-- [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan and derived-representation authority with the accepted boundary.
+- [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, derived-representation authority, and storage authority with the accepted boundary.
 - [ ] 1.3 Select this change in `docs/Runtime/CURRENT_WORK.md` and post the phase architecture gate before firmware edits.
 - [ ] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each ownership or stop-path implementation phase.
 
@@ -33,9 +33,10 @@
 
 - [ ] 5.1 Make `TrackUndo` and clear-slot restore select before/after snapshot identities while preserving strict LIFO and runtime-only undo/redo.
 - [ ] 5.2 Approve the physical storage version/layout for immutable objects, roots, metadata, active tip, and local handle rebuild.
-- [ ] 5.3 Implement the new storage reader/writer through existing `StorageManager` deferred units and compatibility migration with rollback behavior; classify any interval-path unit in `ExecutionBounds.md`.
+- [ ] 5.3 Implement the new content-only storage reader/writer through existing `StorageManager` deferred units and compatibility migration with rollback behavior; classify any interval-path unit in `ExecutionBounds.md` and keep runtime addresses and derived representations out of the format.
 - [ ] 5.4 Add native tests for round trips, selected snapshot equivalence, grouped undo, clear-slot restore, and old-format migration.
 - [ ] 5.5 Verify deferred persistence remains owned by `StorageManager` without blocking playback or `handleMidiInput()`.
+- [ ] 5.6 Verify large-loop save and migration progress, overrun/failure preservation, active-snapshot availability, and absence of content-sized synchronous work at stop, input dispatch, clock dispatch, and track-tick paths.
 
 ## 6. Compatibility retirement and closeout
 

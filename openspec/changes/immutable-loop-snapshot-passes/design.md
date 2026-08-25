@@ -162,6 +162,21 @@ and old-format migration are separate decisions. Migration uses the existing
 `handleMidiInput()` entries still requires an admissible
 `ExecutionBounds.md` classification.
 
+The storage boundary is content-only: the future format stores immutable
+objects, stable logical references, snapshot roots, loop metadata, and the
+serialized active branch tip. It does not store runtime addresses, derived
+representations, playback cursor/order, active ledgers, or undo history.
+`StorageManager` serializes and loads this content; `Loop` rebuilds local
+handles and owns runtime snapshot selection.
+
+Large-loop save and migration may take longer in total, but neither may become
+a content-sized synchronous operation at record/overdub stop, inside
+`handleMidiInput()`, during clock dispatch, or on a track-tick path. Existing
+`StorageManager` deferred units carry progress and retain the active snapshot
+and previously valid persisted state when a unit cannot fit, overruns, or fails.
+The phase must define retention/retry/rejection behavior without silently
+discarding pending content.
+
 ## Risks / Trade-offs
 
 - **[Memory overhead]** Immutable versions retain history → measure object/reference pools and admission before firmware.
