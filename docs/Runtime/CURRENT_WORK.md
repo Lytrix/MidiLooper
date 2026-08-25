@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (stale snapshot window plus unpublished-pass overlay)
+Last updated: 2026-08-25 (OVERDUBBING idle skips visual reconstruct)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** Playback gather uses a published `LoopSnapshot` window even when that
-root is stale versus `playbackRevision`. Unpublished overdub session / pending
-publish passes and their companions overlay through windowed CER. Compatibility
-full-list gather runs only when no published root exists.
-[`225025`](../../captures/session_20260825_225025.log) bar-line `cer_win` was
-`lists=18,chunks=19` because stale snapshot fell through to every committed
-chunk list. Snapshot idle remains one playhead-ordered dirty bar. NOTE_EDIT
-close stays a synchronous drain. Tasks 4.3–4.6 are **not selected**.
+**Now:** OVERDUBBING idle does not run visual-cache reconstruct. Only an
+in-flight snapshot construction may `step`. [`230556`](../../captures/session_20260825_230556.log)
+`idle_reconstruct` was **241–278 ms** (BPM 74–77) when snapshot step had no
+in-flight work and mixed dirty bars lifted the neighborhood cap to the whole
+loop. Playback still reads a stale published window plus unpublished session
+passes. NOTE_EDIT close stays a synchronous drain. Tasks 4.3–4.6 are **not
+selected**.
 
 Phase 3 tasks 4.1–4.2 remain complete. Playback preparation reads the
 published `LoopSnapshot` through `ensurePlaybackMergedMidiEventsBuilt`,

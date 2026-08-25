@@ -117,6 +117,11 @@ overlays unpublished session / pending-publish passes plus their companions.
 Compatibility gather remains only when no published root exists.
 [`225025`](../captures/session_20260825_225025.log) `cer_win` `lists=18`.
 
+**Amendment (2026-08-25):** OVERDUBBING idle does not run visual-cache
+reconstruct. When snapshot step has no in-flight construction, that turn ends.
+[`230556`](../captures/session_20260825_230556.log) `idle_reconstruct`
+241–278 ms. Visual slices resume on PLAYING / STOPPED_RECORDING.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

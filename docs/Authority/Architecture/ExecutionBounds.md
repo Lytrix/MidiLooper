@@ -113,7 +113,8 @@ Phase 2 publication is admitted at NOTE_EDIT close and idle
 stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. An idle turn that applies one
 snapshot unit does not also run a visual-cache slice. While OVERDUBBING, idle
-only applies row 21 to an already started construction. Starting the next
+only applies row 21 to an already started construction. Visual-cache idle
+slices do not run on that turn. Starting the next
 pass change-set stays on PLAYING / STOPPED_RECORDING / STOPPED. Wrap-ahead
 enqueue and `startNextPendingConstruction` stay off the OVERDUBBING idle
 turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,

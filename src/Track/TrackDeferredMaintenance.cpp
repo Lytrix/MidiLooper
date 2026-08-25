@@ -730,8 +730,12 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
     processDeferredContentResolutionDeviceGate();
   }
 
+  // OVERDUBBING idle is in-flight snapshot construction only. When that step
+  // has no work, do not fall through to visual reconstruct — mixed dirty bars
+  // lift the neighborhood cap and rebuild the whole loop
+  // (session_20260825_230556 idle_reconstruct 241–278 ms, BPM 74–77).
   const bool deferredDerivedViewMaintenance =
-      (isPlaying() || isStoppedRecording() || isOverdubbing()) && !isRecording();
+      (isPlaying() || isStoppedRecording()) && !isRecording();
   bool idleVisualSliceRan = false;
   uint8_t idleVisualBarsPerSlice = 0;
   uint16_t idleVisualDirtyBefore = 0;
