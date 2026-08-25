@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (no snapshot step on PLAYING/OVERDUB after first publish)
+Last updated: 2026-08-25 (233308 device PASS — idle hold after first publish)
 
 ---
 
@@ -18,8 +18,8 @@ advances an in-flight construction only. Playback reads a stale published
 window plus unpublished session passes. OVERDUBBING idle does not run visual
 reconstruct. After the first published root exists, PLAYING and OVERDUBBING
 do not step successor snapshot construction. NOTE_EDIT close stays synchronous.
-Capture [`232329`](../../captures/session_20260825_232329.log): one publish at
-80.27 s, then successor construction stalled MIDI on later overdubs.
+Device PASS [`233308`](../../captures/session_20260825_233308.log): no
+`snapshot_idle` after first publish until STOPPED; PLAY4 BPM 119.966–120.049.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:
