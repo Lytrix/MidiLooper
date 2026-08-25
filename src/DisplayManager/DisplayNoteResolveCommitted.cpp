@@ -93,46 +93,22 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             return liveDisplayNotes;
         }
         // RC5a: dirty visualCache does not yet include the just-committed capture suffix.
-        // Keep the composed handoff frame and re-filter it to the follow window so
-        // auto-follow can still move (`000553`: first PLAYING dropped 655 → 583 while
-        // vis stayed 2166). Clean-cache follow still uses visualCache below.
+        // Keep the composed handoff. Do not snapshot-gather on ODUB,stop,display
+        // (`003459`: display 97-154 ms). Do not in-place filter — draw already
+        // window-filters a copy; shrinking the store dropped last bars (`001907`).
         if (DisplayWindowUtils::preferPreservedOverdubStopHandoff(
                 incrementalCommittedDisplay, preservedHandoffAuthority, loop.visualCacheDirty)) {
-            if (avoidFullVisualRebuild ||
-                loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
-                uint32_t windowStart = 0;
-                uint32_t windowLength = 0;
-                uint8_t windowBars = 0;
-                if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
-                                            windowLength, windowBars)) {
-                    // A partial dirty visualCache must not lock the first-window
-                    // handoff. Filtering that slice cannot restore the bars the
-                    // 16-bar window later exposes (`001907`: first/last 4 bars).
-                    if (visualCacheCoversFollowWindow(loop, windowStart, windowLength,
-                                                      loopLength)) {
-                        uint32_t gatherStart = 0;
-                        uint32_t gatherLength = 0;
-                        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-                        filterNotesToFollowWindow(liveDisplayNotes, windowStart, windowLength,
-                                                  loopLength, liveDisplayNotes, gatherStart,
-                                                  gatherLength);
-                        liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-                        liveWindowGatherValid_ = true;
-                        liveWindowGatherStart_ = gatherStart;
-                        liveWindowGatherLength_ = gatherLength;
-                        liveWindowGatherLoopLength_ = loopLength;
-                        livePlaybackDisplaySlot_ = displaySlot;
-                        livePlaybackDisplayTrack_ = trackIndex;
-                        return liveDisplayNotes;
-                    }
-                } else {
-                    DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-                    return liveDisplayNotes;
-                }
-            } else {
-                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-                return liveDisplayNotes;
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            livePlaybackDisplaySlot_ = displaySlot;
+            livePlaybackDisplayTrack_ = trackIndex;
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            if (!liveWindowGatherValid_) {
+                liveWindowGatherValid_ = true;
+                liveWindowGatherStart_ = 0;
+                liveWindowGatherLength_ = loopLength;
+                liveWindowGatherLoopLength_ = loopLength;
             }
+            return liveDisplayNotes;
         }
         // Window filter is allowed from a non-empty visualCache even while globally dirty, so
         // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes

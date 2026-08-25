@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4.4 display: include short loop tail in first gather)
+Last updated: 2026-08-26 (4.4 display: hold composed frame on overdub stop)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -26,8 +26,11 @@ included in the first gather so a 20-bar loop does not omit the last
 2 bars and then gather on the MIDI path
 ([`002634`](../../captures/session_20260826_002634.log): window at 3072
 at 117.1 s, last-bar notes at 119.2 s, `DisplayResolve` 81–196 ms).
-After overdub stop, a dirty visual-cache prefix
-does not keep that incomplete handoff. Compatibility gather remains
+After overdub stop, `ODUB,stop,display` holds the composed frame and does
+not snapshot-gather ([`003459`](../../captures/session_20260826_003459.log)
+display 97–154 ms). Parked in OpenSpec `4b.1` / `4b.2`: deferred
+`persist_save` on the first PLAYING idle, and first-record `snapshot_idle`.
+Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,
 validation, 4.5, 4.6, and Phase 5 are **not selected**.
