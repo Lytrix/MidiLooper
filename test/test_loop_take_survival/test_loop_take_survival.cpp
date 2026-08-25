@@ -258,12 +258,22 @@ void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 67));
 }
 
+void drainPendingSnapshotPublish(Loop& loop) {
+  size_t steps = 0;
+  while (loop.hasPendingSnapshotPublish() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+}
+
 void recordLinearNote(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pitch) {
   loop.beginCapture(CapturePhase::Record);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, pitch, 100)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::RecordStop, offTick));
+  drainPendingSnapshotPublish(loop);
 }
 
 void test_record_stop_publishes_complete_snapshot() {
@@ -278,6 +288,9 @@ void test_record_stop_publishes_complete_snapshot() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(120, 1, 7, 64)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::RecordStop, 200));
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  drainPendingSnapshotPublish(loop);
 
   const auto snapshot = loop.publishedSnapshot();
   TEST_ASSERT_NOT_NULL(snapshot.get());
@@ -305,6 +318,7 @@ void test_record_wrap_note_publishes_one_reference() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(100, 1, 60, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::RecordStop, 100));
+  drainPendingSnapshotPublish(loop);
 
   const auto snapshot = loop.publishedSnapshot();
   TEST_ASSERT_NOT_NULL(snapshot.get());
@@ -459,6 +473,7 @@ void test_playback_gather_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(980, 1, 64, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::RecordStop, 980));
+  drainPendingSnapshotPublish(loop);
 
   const void* afterRecordIdentity = loop.publishedSnapshotIdentity();
   TEST_ASSERT_NOT_NULL(afterRecordIdentity);
@@ -558,15 +573,6 @@ void test_overdub_publish_keeps_pass_events_when_companion_is_missing() {
   loop.gatherCommittedEventsInWindow(compatibilityEvents, 0, 3072, false);
   TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 64));
   TEST_ASSERT_EQUAL(1, countNoteOns(compatibilityEvents, 64));
-}
-
-void drainPendingSnapshotPublish(Loop& loop) {
-  size_t steps = 0;
-  while (loop.hasPendingSnapshotPublish() && steps < 10000) {
-    loop.stepPendingSnapshotPublish(1);
-    ++steps;
-  }
-  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
 }
 
 void test_queue_overdub_snapshot_waits_for_idle_steps() {

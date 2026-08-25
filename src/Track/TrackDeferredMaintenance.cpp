@@ -688,8 +688,23 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                                                           bool postOverdubDrainWindowActive) {
-  if (getActiveLoop().hasPendingSnapshotPublish()) {
-    getActiveLoop().stepPendingSnapshotPublish(1);
+  Loop& snapshotLoop = getActiveLoop();
+  bool snapshotIdleUnitRan = false;
+  if (snapshotLoop.hasPendingSnapshotPublish()) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t snapshotIdleStartUs = micros();
+#endif
+    snapshotLoop.stepPendingSnapshotPublish(1);
+    snapshotIdleUnitRan = true;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    char snapshotLine[160];
+    snprintf(snapshotLine, sizeof(snapshotLine),
+             "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned long>(micros() - snapshotIdleStartUs),
+             snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u);
+    DebugSessionCapture::appendCaptureTextLine(snapshotLine);
+#endif
   }
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
@@ -713,7 +728,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   uint16_t idleVisualDirtyBefore = 0;
   uint16_t idleVisualDirtyAfter = 0;
   Loop& activeLoop = getActiveLoop();
-  if (deferredDerivedViewMaintenance) {
+  if (deferredDerivedViewMaintenance && !snapshotIdleUnitRan) {
     Loop& loop = activeLoop;
     const bool postOverdubDrainWindow =
         postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
