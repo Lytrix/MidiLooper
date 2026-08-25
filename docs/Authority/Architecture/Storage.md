@@ -57,7 +57,9 @@ rebuilds.
 
 `StorageManager` owns serialization, deferred save work, load, and compatibility
 migration. A future storage version serializes immutable note and non-note
-objects, stable logical references, the selected snapshot root, loop metadata,
+objects, stable logical `NoteRef` / `EventRef` membership (pitch → bar for
+complete notes; bar → ordered `EventRef` list for events), the selected
+snapshot root, loop metadata,
 and the latest saved complete snapshot. It does not serialize runtime addresses,
 derived representations, playback cursor/order, active ledgers, undo history,
 or abandoned-branch lineage sufficient to restore post-reboot undo.

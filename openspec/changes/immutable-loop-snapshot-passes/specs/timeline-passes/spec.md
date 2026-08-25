@@ -2,7 +2,7 @@
 
 ### Requirement: Loop passes owner
 
-The system SHALL store capture and note-edit history on a loop through `passes[]` (`LoopPasses`). During migration, `LoopPasses` SHALL retain compatibility `LoopPass` records for existing capture and edit boundaries and SHALL also store complete immutable `LoopSnapshot` records that define committed musical state. A `LoopPass` SHALL be the historical/compatibility operation record. A `LoopSnapshot` SHALL be the immutable effective-state reference root. Those objects SHALL NOT be interchangeable. A pass SHALL be pending only while it is not yet in `passes[]`. The system SHALL NOT use `committed` as a pass state label, container name, or pass undo kind suffix.
+The system SHALL store capture and note-edit history on a loop through `passes[]` (`LoopPasses`). During migration, `LoopPasses` SHALL retain compatibility `LoopPass` records for existing capture and edit boundaries and SHALL also store complete immutable `LoopSnapshot` records that define committed musical state. A `LoopPass` SHALL be the historical/compatibility operation record. A `LoopSnapshot` SHALL be the immutable effective-state root indexed as pitch → bar → bar NoteRefs and bar → EventRef lists. Those objects SHALL NOT be interchangeable. A pass SHALL be pending only while it is not yet in `passes[]`. The system SHALL NOT use `committed` as a pass state label, container name, or pass undo kind suffix.
 
 #### Scenario: Loop exposes compatibility passes and snapshots
 

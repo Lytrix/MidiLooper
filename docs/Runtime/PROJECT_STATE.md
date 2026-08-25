@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (pitch/bar span-index proposal plan)
+Last updated: 2026-08-25 (pitch/bar logical indexes selected)
 
 ---
 
@@ -134,7 +134,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; next spec patch is pitch → bar → `NoteRef` ([`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md)); no firmware edits authorized |
+| **`immutable-loop-snapshot-passes`** | Phase 0 architecture/specification; logical indexes selected (pitch → bar → `NoteRef`); physical directory and firmware not authorized |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

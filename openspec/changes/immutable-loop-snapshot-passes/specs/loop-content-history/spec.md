@@ -2,7 +2,7 @@
 
 ### Requirement: Loop persists content records only
 
-The Loop file SHALL persist the ordered immutable content required for the latest complete snapshot state. During compatibility migration this includes existing `RecordPass`, `OverdubPass`, `EditPass`, and `LoopGeometry` records. The new storage version SHALL serialize immutable note and non-note event objects, snapshot/reference structure, and the latest saved complete snapshot. The system SHALL NOT persist an undo stack, history cursor, history transition, undo/redo record, or abandoned-branch lineage sufficient to restore post-reboot undo. NOTE_EDIT session undo (`E:`) SHALL remain pre-commit and outside this persist model.
+The Loop file SHALL persist the ordered immutable content required for the latest complete snapshot state. During compatibility migration this includes existing `RecordPass`, `OverdubPass`, `EditPass`, and `LoopGeometry` records. The new storage version SHALL serialize immutable note and non-note event objects, logical `NoteRef` / `EventRef` membership, and the latest saved complete snapshot. The system SHALL NOT persist an undo stack, history cursor, history transition, undo/redo record, or abandoned-branch lineage sufficient to restore post-reboot undo. NOTE_EDIT session undo (`E:`) SHALL remain pre-commit and outside this persist model.
 
 #### Scenario: Stop does not write undo history
 

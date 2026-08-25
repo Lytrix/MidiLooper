@@ -8,8 +8,8 @@
 
 Replace historical pass replay as the normal effective-state mechanism with
 complete immutable `LoopSnapshot` objects. Each published snapshot owns a
-self-contained musical state represented by a persistent / structurally-shared
-reference root over immutable note and non-note event objects. Consumers select
+self-contained musical state indexed as pitch → bar → bar NoteRefs and
+bar → EventRef lists over immutable event objects. Consumers select
 the active snapshot directly; they do not walk parent snapshots for content.
 
 `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) remains the
@@ -21,9 +21,10 @@ lifecycle. That lifecycle is not reintroduced as a new effective-state owner.
 Any compatibility query surface must be stateless and snapshot-based until its
 callers are migrated and the surface is retired.
 
-Phase 0 does not authorize firmware. Phase 2 remains blocked until the
-persistent reference structure is selected against the recorded comparison
-criteria.
+Phase 0 does not authorize firmware. The logical indexes are selected. Phase 2
+remains blocked until formal reassessment (task 1.1) and an
+`ExecutionBounds.md` row for dirty-bar construction. The physical directory
+is Phase 1 / measurement.
 
 ## Core invariant
 
@@ -48,9 +49,8 @@ Immutable event objects
 - Changed event: new immutable object, replaced reference.
 - Deleted event: reference removed from the new root.
 - Added event: new immutable object, new reference.
-- The reference root itself must be persistent / structurally shared so a
-  bounded number of reference changes does not copy the complete snapshot
-  reference set.
+- Unchanged pitch/bar membership remains shared with the parent. Only dirty
+  membership and the minimum directory path to it are newly constructed.
 
 ## Ownership boundary
 
@@ -67,36 +67,37 @@ Immutable event objects
 
 ## Persistent reference-structure gate
 
-Phase 0 recorded the invariant and comparison. The proposed selection is
-pitch → bar → `NoteRef` in
-[`loop_snapshot_pitch_bar_span_index_refinement.md`](loop_snapshot_pitch_bar_span_index_refinement.md).
-That selection is not in the OpenSpec until that plan is applied.
+The **logical** indexes are selected
+([`loop_snapshot_pitch_bar_span_index_refinement.md`](loop_snapshot_pitch_bar_span_index_refinement.md),
+DEC-044 amendment):
 
-Compare before Phase 2:
+- Span index: pitch → canonical 768-tick bar → bar NoteRefs (complete notes).
+- Event index: bar → EventRef list with a defined tick/order contract.
+- Open-at-S remains the ledger / `presentAt` consumer, not a snapshot index.
 
-| Candidate | Why it is in the set |
-|-----------|----------------------|
-| Flat reference vector | Simplest; fails the no-full-copy invariant if selected |
-| Persistent chunked / reference-directory | Copy changed chunks plus directory path |
-| Path-copy ordered tree | Copy path of depth only |
+Unchanged pitch/bar membership remains shared with the parent. Only dirty
+membership lists and the minimum immutable directory path required to reach
+them are newly constructed. Dirty bars are the union of the incoming span and
+every resolver-changed geometry or membership.
 
-Score each against update cost, bounded range iteration, Teensy internal-heap
-and external-memory-pool allocation, handle identity and reclamation,
-serialization/migration shape, and the maximum indivisible construction step.
+Path-copy is rejected as the overlap model. It remains allowed as a possible
+physical directory. The physical directory (sparse directory, path-copy
+directory, or another measured form) is Phase 1 / measurement, not Phase 0.
 
-Firmware publication is not authorized until that comparison selects a
-representation that satisfies the persistent-root invariant.
+Firmware publication is not authorized until formal reassessment (task 1.1)
+and an `ExecutionBounds.md` row for dirty-bar construction. A long note can
+still touch every intersecting bar.
 
 ## Candidate construction operations
 
 Construction is not one unnamed “apply mutation” step. Before runtime
 publication, declare a complexity and `ExecutionBounds.md` class for:
 
-1. Locate affected references.
+1. Locate affected references (same pitch, dirty bars, `NoteId` dedup).
 2. Remove obsolete references.
 3. Allocate replacement event objects.
 4. Insert new references.
-5. Construct the new persistent reference root.
+5. Construct the new snapshot root (dirty membership plus minimum directory path).
 6. Retain/release roots.
 7. Update optional disposable indexes, if any.
 8. Freeze the candidate.
@@ -231,8 +232,8 @@ redo target. C remains readable only while a remaining root holds it.
 ## Migration stages
 
 1. Complete formal architecture reassessment and record approval.
-2. Complete the persistent-reference comparison and measurement gate; select the
-   structure before Phase 2.
+2. Measure and select the physical pitch/bar directory before Phase 2 firmware;
+   the logical indexes are already selected.
 3. Implement immutable objects, loop-scoped handles, shared reference storage,
    and invariant-protecting checks; define candidate construction bounds
    before runtime use.
@@ -253,8 +254,8 @@ redo target. C remains readable only while a remaining root holds it.
 The active OpenSpec design contains the detailed outcomes. The implementation
 direction agreed during review is:
 
-- `LoopSnapshot` is complete effective content only; the reference root is
-  structurally shared, but parent traversal is not allowed.
+- `LoopSnapshot` is complete effective content only; unchanged pitch/bar
+  membership is shared, but parent traversal is not allowed.
 - `LoopPass` remains the compatibility operation record.
 - LCR preparation mechanics may be reused under `Loop` / `LoopPasses` snapshot
   ownership. LCR is not a second effective-state authority.
@@ -305,9 +306,9 @@ missing physical NoteOffs. Existing `finalizePendingNotes()` and
 deferred item.
 
 These decisions remain design-only until the formal architecture reassessment
-and approval are complete. The remaining implementation gate is to select the
-persistent reference structure and classify the named construction operations
-under `ExecutionBounds.md`.
+and approval are complete. The remaining implementation gate is to classify
+the named construction operations under `ExecutionBounds.md` and measure the
+physical directory. The logical indexes are selected.
 
 ### Timing evidence and measurement gate
 
@@ -354,10 +355,7 @@ or construction representation before publication work proceeds.
 
 ## Open decisions
 
-- Persistent reference-collection representation: proposed selection is pitch →
-  bar → `NoteRef` in
-  [`loop_snapshot_pitch_bar_span_index_refinement.md`](loop_snapshot_pitch_bar_span_index_refinement.md).
-  Not applied to OpenSpec until that plan is executed.
+- Physical pitch/bar directory representation (logical indexes selected).
 - Stable-handle reclamation implementation.
 - Storage version/layout and old-format migration.
 - Optional disposable indexes and bounded consumer span access.
@@ -367,5 +365,6 @@ or construction representation before publication work proceeds.
 - Phase-specific work identity.
 
 Implementation is not authorized until the architecture review in the OpenSpec
-change is approved, the reference-structure gate is complete, and this branch is
-selected in `docs/Runtime/CURRENT_WORK.md`.
+change is approved, formal reassessment (task 1.1) is complete, dirty-bar
+construction has an `ExecutionBounds.md` class, and this branch is selected in
+`docs/Runtime/CURRENT_WORK.md`.

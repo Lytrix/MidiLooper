@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-25 (pitch/bar span-index proposal plan)
+Last updated: 2026-08-25 (pitch/bar logical indexes selected)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -12,8 +12,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Now:** OpenSpec Phase 0 — architecture and specification for complete immutable
 `LoopSnapshot` objects. No snapshot-model firmware is authorized in this phase.
-Phase 2 remains blocked until the persistent reference-structure comparison
-selects a representation that does not copy the complete reference set.
+Logical indexes are selected: pitch → bar → bar NoteRefs, and bar → EventRef.
+Phase 2 remains blocked until formal reassessment (task 1.1) and an
+`ExecutionBounds.md` row for dirty-bar construction. The physical directory
+is Phase 1 / measurement.
 
 **Authorized exception:** queued-destination visual-cache invalidation — port of the
 repair authorized on `feature/overdub-stop-lag-stage-c`. Owner:
@@ -26,7 +28,7 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
-**Next Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — select pitch → bar → `NoteRef` as the snapshot reference structure. Documentation only.
+**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Documentation only. No firmware.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on
@@ -34,7 +36,8 @@ M2-104-UM v1.1.2, with a read-only audit of the current MIDI 1.0 logic. The
 2026-08-25 reference-root refinement separates `LoopPass` from `LoopSnapshot`,
 requires a persistent reference root, defines reachability and provisional
 versus global snapshots, and loads only the latest saved snapshot after reboot.
-No firmware behavior changed.
+The later 2026-08-25 pitch/bar amendment selects the logical indexes and leaves
+the physical directory unselected. No firmware behavior changed.
 
 The maintained `LoopContentResolution` lifecycle and its playback-readiness
 continuation are not pursued on this branch. The existing `LoopContentResolution`

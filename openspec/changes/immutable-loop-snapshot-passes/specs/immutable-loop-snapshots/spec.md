@@ -33,11 +33,17 @@ Each published `LoopSnapshot` SHALL be a complete immutable view of effective mu
 - **THEN** the selected snapshot retains those events
 - **AND** selection does not reduce the state to notes only
 
-### Requirement: Persistent structurally-shared reference root
+### Requirement: Pitch-and-bar logical indexes with shared membership
 
-A `LoopSnapshot` SHALL represent effective content as an immutable collection of references to immutable event objects. Creating a successor snapshot SHALL reuse unchanged references and SHALL allocate new event objects only for added or modified content. Snapshot construction SHALL NOT copy or mutate unchanged event objects. The reference collection itself SHALL use a persistent / structurally-shared representation such that changing a bounded number of references does not require copying the complete snapshot reference set.
+A `LoopSnapshot` SHALL represent notes through a span index keyed by pitch then by canonical 768-tick bar. Each bar SHALL hold **bar NoteRefs** for complete immutable notes whose geometry intersects that bar. A `NoteRef` MAY occur in multiple bar lists in the same snapshot; each occurrence SHALL identify the same immutable note version and `NoteId`. Overlap candidate sets SHALL deduplicate by `NoteId`.
 
-Phase 0 SHALL compare a flat reference vector, a persistent chunked / reference-directory structure, and a path-copy ordered tree against update cost, bounded range iteration, Teensy allocation behavior, handle identity, serialization shape, and the maximum indivisible construction step. Firmware publication SHALL NOT begin until that comparison selects a representation that satisfies this requirement.
+A `LoopSnapshot` SHALL represent note and non-note MIDI events through an event index keyed by the same 1-bar granule. Each bar SHALL hold an **EventRef** list with a defined canonical tick/order contract. Non-note events are points and SHALL NOT appear in the span index.
+
+The span index SHALL store complete semantic notes only. It SHALL NOT store unmatched open Ons. Occupy / open-at-S SHALL remain a consumer (`ActiveNoteLedger` / `presentAt`), not a snapshot index.
+
+Creating a successor SHALL allocate new immutable event objects only for added or modified content and SHALL NOT copy or mutate unchanged event objects. Only dirty pitch/bar membership nodes and the minimum immutable directory structure required to reach them MAY be newly constructed. Unchanged pitch/bar membership SHALL remain shared with the parent snapshot.
+
+The logical model is selected. The physical directory representation (sparse directory, path-copy directory, or another measured form) remains a Phase 1 / measurement decision. Path-copy SHALL NOT be used as the semantic overlap model. A flat full-loop `NoteRef` vector SHALL NOT be the overlap or candidate structure. Firmware publication SHALL NOT treat the physical directory as already selected.
 
 #### Scenario: Unchanged objects keep the same references
 
@@ -46,17 +52,45 @@ Phase 0 SHALL compare a flat reference vector, a persistent chunked / reference-
 - **AND** it allocates a new immutable object only for the changed note
 - **AND** the older snapshot still references the original object
 
-#### Scenario: The reference root is not a full copy
+#### Scenario: Dirty bars share unchanged membership
 
-- **WHEN** a successor snapshot changes a bounded number of references
-- **THEN** construction does not copy the complete snapshot reference set
-- **AND** a flat copy of every reference is not an admissible selected representation
+- **WHEN** a successor changes notes that affect only some pitch/bar lists
+- **THEN** construction does not copy unchanged pitch/bar membership
+- **AND** only dirty membership lists and the minimum directory path to those lists are newly allocated
+- **AND** a flat copy of every snapshot reference is not an admissible representation
 
-#### Scenario: Representation remains unselected until the comparison gate
+#### Scenario: Candidate selection is not object mutation
 
-- **WHEN** Phase 0 records the reference-structure comparison
-- **THEN** the comparison criteria and measurement evidence are specified
-- **AND** no firmware phase treats a concrete structure as already selected
+- **WHEN** incoming note B (same pitch) intersects bars that also contain unchanged note A and changed note C
+- **THEN** the candidate set includes A and C after `NoteId` dedup
+- **AND** A remains the same immutable object if the resolver does not change it
+- **AND** only C and B cause new object allocation when the resolver replaces C and adds B
+
+#### Scenario: Logical structure is selected; physical directory is not
+
+- **WHEN** Phase 0 records the reference-structure decision
+- **THEN** the logical indexes are pitch → bar → NoteRef and bar → EventRef
+- **AND** no firmware phase treats a concrete directory structure as already selected
+
+### Requirement: Dirty region follows resolver geometry changes
+
+Dirty pitch SHALL be the incoming note's pitch. Dirty bars SHALL be the union of bars intersected by the incoming span, every existing note whose geometry changes, and every existing note whose membership changes because of resolution. The existing overlap / pairing / NOTE_EDIT geometry owner SHALL determine which note geometries changed and SHALL supply those changed `NoteRef`s and affected spans. Snapshot construction SHALL translate that mutation into pitch/bar membership updates and SHALL NOT independently recompute overlap.
+
+#### Scenario: Resolver-moved geometry dirties bars outside the incoming span
+
+- **WHEN** resolution changes existing note A to A' and A' intersects bars that the incoming note does not
+- **THEN** those additional bars are dirty
+- **AND** snapshot construction uses the resolver-supplied affected spans
+
+### Requirement: Wrap-crossing notes index both linear segments
+
+A wrap-crossing note SHALL keep the existing two linear segments (`[start, loopEnd)` and `[0, end)`). Each segment SHALL contribute `NoteRef` membership in the bars it intersects. Both membership sets SHALL identify the same `NoteId`. A candidate query near the loop boundary SHALL union end-side bars and zero-side bars, then deduplicate by `NoteId`. Wrap notes SHALL NOT be a special index type.
+
+#### Scenario: Wrap note is one identity in both regions
+
+- **WHEN** a wrap-crossing note occupies bars near loop end and bars near zero
+- **THEN** those bar lists all reference the same `NoteId`
+- **AND** a boundary candidate query returns that note once after dedup
 
 ### Requirement: Immutable note and event versions
 
@@ -93,7 +127,7 @@ Snapshot publication SHALL occur at an existing capture or edit commit boundary 
 
 ### Requirement: Candidate construction operations have declared bounds
 
-Candidate construction SHALL name the following operations and SHALL declare a complexity and `ExecutionBounds.md` class for each before runtime publication: locate affected references, remove obsolete references, allocate replacement event objects, insert new references, construct the new persistent reference root, retain or release roots, update optional disposable indexes, freeze the candidate, and publish the candidate. A local timer checked only between steps SHALL NOT qualify as an execution bound.
+Candidate construction SHALL name the following operations and SHALL declare a complexity and `ExecutionBounds.md` class for each before runtime publication: locate affected references by pitch and dirty bars with `NoteId` dedup, remove obsolete references, allocate replacement event objects, insert new references, construct the new snapshot root from dirty membership plus the minimum directory path, retain or release roots, update optional disposable indexes, freeze the candidate, and publish the candidate. The semantic locality bound is the affected pitch and dirty bars. Path depth SHALL NOT be treated as that bound. A long note MAY still intersect many bars; this requirement does not by itself make construction bounded. A local timer checked only between steps SHALL NOT qualify as an execution bound.
 
 #### Scenario: Named operations are classified before firmware publication
 
