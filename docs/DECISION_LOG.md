@@ -128,6 +128,14 @@ publish after record stop must not starve first paint.
 [`231632`](../captures/session_20260825_231632.log) RECORDING 653 events,
 first PLAYING 288 notes, `visualCache` notes=0.
 
+**Amendment (2026-08-25):** Once a published root exists, PLAYING and
+OVERDUBBING idle do not `step` successor construction, including an
+in-flight candidate. PLAYING visual slices also stay off unless the visual
+cache is empty. Successor publish resumes on STOPPED / STOPPED_RECORDING.
+Playback keeps the stale-window overlay.
+[`232329`](../captures/session_20260825_232329.log) one `pending=0` at 80.27 s
+during OD1; 3631 later `pending=1` steps; OD2 BPM 57; OD4 BPM 46.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

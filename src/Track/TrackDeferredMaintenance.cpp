@@ -696,11 +696,19 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   // PLAYING idle turn. Visual cache stays empty then, and display falls back
   // to a 16-bar window (session_20260825_231632: RECORDING 653 events, first
   // PLAYING 288 notes, visualCache notes=0 through the following overdub).
+  const bool havePublishedSnapshot =
+      static_cast<bool>(snapshotLoop.publishedSnapshot());
   const bool visualCacheNeedsFirstPaint =
       snapshotLoop.hasCommittedPasses() && snapshotLoop.visualCacheDirty &&
       snapshotLoop.visualCache.notes.empty();
+  // After the first root exists, playback overlays unpublished passes on that
+  // window. Successor construction copies the span root per note-bar unit and
+  // did not finish after OD1 in session_20260825_232329 (3631 pending=1
+  // steps; OD2 BPM 57; OD4 BPM 46). Do not step that work on PLAYING /
+  // OVERDUBBING once a root exists. First-record publish is unchanged.
   const bool snapshotIdleAllowed =
       !isRecording() &&
+      !(havePublishedSnapshot && (isPlaying() || isOverdubbing())) &&
       (!isOverdubbing() || snapshotLoop.hasInFlightSnapshotConstruction()) &&
       !(visualCacheNeedsFirstPaint && !isOverdubbing());
   if (snapshotLoop.hasPendingSnapshotPublish() && snapshotIdleAllowed) {
@@ -744,7 +752,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   // lift the neighborhood cap and rebuild the whole loop
   // (session_20260825_230556 idle_reconstruct 241–278 ms, BPM 74–77).
   const bool deferredDerivedViewMaintenance =
-      (isPlaying() || isStoppedRecording()) && !isRecording();
+      (isPlaying() || isStoppedRecording()) && !isRecording() &&
+      !(havePublishedSnapshot && isPlaying() && !visualCacheNeedsFirstPaint);
   bool idleVisualSliceRan = false;
   uint8_t idleVisualBarsPerSlice = 0;
   uint16_t idleVisualDirtyBefore = 0;

@@ -233,7 +233,10 @@ while OVERDUBBING. Only an in-flight row-21 construction may `step`.
 [`230556`](../../../captures/session_20260825_230556.log) `idle_reconstruct`
 was 241–278 ms when snapshot step had no in-flight work. PLAYING /
 STOPPED_RECORDING give an empty dirty visual cache that turn before snapshot
-`step` ([`231632`](../../../captures/session_20260825_231632.log)).
+`step` ([`231632`](../../../captures/session_20260825_231632.log)). After a
+published root exists, PLAYING and OVERDUBBING do not `step` successor
+construction; PLAYING visual stays off unless the cache is empty
+([`232329`](../../../captures/session_20260825_232329.log)).
 
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
