@@ -152,6 +152,28 @@ full-loop projection on a timing-critical path.
 - **THEN** it runs outside timing-critical playback and input paths
 - **AND** its work unit and storage are classified under `ExecutionBounds.md`
 
+### Requirement: Snapshot migration preserves runtime layer boundaries
+
+The system SHALL keep authoritative snapshot content, derived
+representations, interval projection, and runtime requests as separate
+contracts. `LoopSnapshot` SHALL provide immutable content and identity only;
+consumer-specific representation owners SHALL retain ownership of playback
+state, display windows, analyze indexes, LED queries, and projection context.
+`StorageManager` SHALL retain ownership of deferred persistence.
+
+#### Scenario: Consumer migration changes source, not ownership
+
+- **WHEN** a runtime consumer migrates from compatibility pass data to a selected `LoopSnapshot`
+- **THEN** it changes its content source and freshness identity
+- **AND** it retains the existing owner and policy for its derived representation or query
+- **AND** it selects its bounded interval or canonical span before projection
+
+#### Scenario: Snapshot does not absorb consumer context
+
+- **WHEN** playhead, viewport, loop origin, queued start, or selected tick changes
+- **THEN** the selected snapshot remains unchanged
+- **AND** the consumer updates its request or projection context without mutating snapshot content
+
 ### Requirement: Snapshot-backed derived representations retain owner policies
 
 The system SHALL use the selected `LoopSnapshot` as the source for normal

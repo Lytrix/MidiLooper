@@ -1,7 +1,7 @@
 ## 1. Architecture and specification gate
 
 - [ ] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal.
-- [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, derived-representation authority, and storage authority with the accepted boundary.
+- [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, and storage authority with the accepted boundary.
 - [ ] 1.3 Select this change in `docs/Runtime/CURRENT_WORK.md` and post the phase architecture gate before firmware edits.
 - [ ] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each ownership or stop-path implementation phase.
 

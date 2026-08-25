@@ -12,6 +12,7 @@ The current loop model derives effective musical state by replaying capture pass
 - Migrate playback, display, NOTE_EDIT, analysis, persistence, and load consumers in separately gated stages.
 - Keep derived representation ownership, revision, invalidation, and build policy with the existing owners defined by [`DerivedViews.md`](../../docs/Authority/Architecture/DerivedViews.md).
 - Keep persistence and compatibility migration with `StorageManager` as defined by [`Storage.md`](../../docs/Authority/Architecture/Storage.md), using deferred bounded units for large loops.
+- Preserve the four-layer boundary in [`RuntimeArchitecture.md`](../../docs/Authority/Architecture/RuntimeArchitecture.md): authoritative snapshot content, derived representations, interval projection, and runtime requests remain separate owners and contracts.
 - **BREAKING**: historical replay and maintained LCR state become compatibility-only and are retired after caller migration gates pass.
 - **BREAKING**: a future storage version is required for immutable objects and snapshot structure; its physical layout is a separate design.
 
