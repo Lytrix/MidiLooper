@@ -75,7 +75,10 @@ Phase 0 **does** select the logical indexes. It does **not** select the physical
 The formal reassessment and durable decision record approve this ownership
 evolution while retaining semantic, playback, undo, persistence, and
 derived-representation owners. Runtime publication, physical-directory
-selection, and firmware remain separately gated.
+selection, and firmware remain separately gated. Later-phase preflight and
+historical decision review are recorded in [`PREFLIGHT.md`](PREFLIGHT.md) and
+[`DECISION_REVIEW.md`](DECISION_REVIEW.md); completing them does not select a
+later implementation phase.
 
 ### Phase 1 — Native snapshot model
 
@@ -90,7 +93,9 @@ selection, and firmware remain separately gated.
 | **Reuse decision** | YES — no new manager |
 | **Phase scope** | Snapshot objects, selected reference collection, builder, and invariant-protecting native checks |
 
-Blocked until the formal reassessment is approved. Phase 1 may implement the selected logical indexes; it must still choose and measure the physical directory.
+Phase 1 remains unselected in `CURRENT_WORK.md`. When selected, it may
+implement the approved logical indexes, but it must first choose and measure
+the physical directory.
 
 ### Phase 2 — Commit publication adapters
 
