@@ -153,8 +153,6 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #endif
         StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                                  MemoryMonitor::getInternalHeapFreeBytes(), true);
-        StorageManager::deferWorkspaceSaveDispatchDuringPlayback(
-            Config::playbackSaveDispatchGraceMs);
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_request_deferred_save",
                                           micros() - requestSaveStartUs, "ok");
@@ -273,8 +271,6 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #endif
         StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                                  MemoryMonitor::getInternalHeapFreeBytes(), true);
-        StorageManager::deferWorkspaceSaveDispatchDuringPlayback(
-            Config::playbackSaveDispatchGraceMs);
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_request_deferred_save",
                                           micros() - requestSaveStartUs, "ok");
@@ -492,7 +488,6 @@ void Track::stopRecording(uint32_t currentTick) {
     StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
     StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                              MemoryMonitor::getInternalHeapFreeBytes(), true);
-    StorageManager::deferWorkspaceSaveDispatchDuringPlayback(Config::playbackSaveDispatchGraceMs);
   }
 }
 

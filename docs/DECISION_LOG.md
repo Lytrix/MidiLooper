@@ -138,6 +138,12 @@ during OD1; 3631 later `pending=1` steps; OD2 BPM 57; OD4 BPM 46.
 Device PASS [`233308`](../captures/session_20260825_233308.log): no
 `snapshot_idle` after first publish until STOPPED; PLAY4 BPM 119.966–120.049.
 
+**Amendment (2026-08-26):** Persist and first-record snapshot stay on PLAYING
+and OVERDUBBING idle, but not on the same main-loop turn
+(`MidiServiceDrain` post-stop lane). [`010505`](../captures/session_20260826_010505.log)
+stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
+(`midi_gap` 32–51 ms).
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25
