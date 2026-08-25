@@ -2,7 +2,7 @@
 
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
-- [ ] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal.
+- [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`; formal approval and task 1.2 remain open.
 - [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary.
 - [ ] 1.3 Keep this change selected in `docs/Runtime/CURRENT_WORK.md` as Phase 0 only and post the phase architecture gate before any firmware edits.
 - [ ] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each later ownership or stop-path implementation phase. Do not start those phases in Phase 0.

@@ -1,10 +1,11 @@
 # Architecture review — immutable-loop-snapshot-passes
 
-**Decision:** PENDING formal architecture reassessment and approval
+**Decision:** Reassessment complete; formal approval pending
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../../../docs/Plans/loop_pass_snapshot_effective_state_refinement.md)
+**Reassessment:** [`ARCHITECTURE-REASSESSMENT.md`](ARCHITECTURE-REASSESSMENT.md)
 **North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → membership lists of `NoteRef`s and bar → membership lists of `EventRef`s. Its logical content is completely determined by its own reference root. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
 
-This change is design-only until a phase is approved and named in `docs/Runtime/CURRENT_WORK.md`. Phase 2 firmware is not authorized until formal reassessment (task 1.1) and an `ExecutionBounds.md` row for dirty-bar construction. The logical indexes are selected; the physical directory is not.
+This change is design-only until a phase is approved and named in `docs/Runtime/CURRENT_WORK.md`. Phase 2 firmware is not authorized until formal approval, the later preflight gates, and an `ExecutionBounds.md` row for dirty-bar construction. The logical indexes are selected; the physical directory is not.
 
 ## Formal triggers
 
@@ -71,6 +72,11 @@ Phase 0 must complete, before any firmware phase:
 
 Phase 0 **does** select the logical indexes. It does **not** select the physical directory that implements shared membership.
 
+The formal reassessment recommends approving this ownership evolution while
+retaining semantic, playback, undo, persistence, and derived-representation
+owners. Approval and the durable decision record remain separate from the
+completed reassessment.
+
 ### Phase 1 — Native snapshot model
 
 | Question | Required |
@@ -84,7 +90,7 @@ Phase 0 **does** select the logical indexes. It does **not** select the physical
 | **Reuse decision** | YES — no new manager |
 | **Phase scope** | Snapshot objects, selected reference collection, builder, and invariant-protecting native checks |
 
-Blocked until Phase 0 formal reassessment (1.1) is approved. Phase 1 may implement the selected logical indexes; it must still choose and measure the physical directory.
+Blocked until the formal reassessment is approved. Phase 1 may implement the selected logical indexes; it must still choose and measure the physical directory.
 
 ### Phase 2 — Commit publication adapters
 
@@ -99,7 +105,7 @@ Blocked until Phase 0 formal reassessment (1.1) is approved. Phase 1 may impleme
 | **Reuse decision** | YES — extend existing commit boundaries |
 | **Phase scope** | Commit adapters, publication, and invariant/parity checks; no playback swap |
 
-Blocked until Phase 0 formal reassessment (1.1) is approved and the architectural construction contract has an `ExecutionBounds.md` class. The logical indexes are selected; dirty-bar construction is not yet classified as one admissible unit.
+Blocked until the formal reassessment is approved and the architectural construction contract has an `ExecutionBounds.md` class. The logical indexes are selected; dirty-bar construction is not yet classified as one admissible unit.
 
 ### Phase 3 — Direct consumers
 
