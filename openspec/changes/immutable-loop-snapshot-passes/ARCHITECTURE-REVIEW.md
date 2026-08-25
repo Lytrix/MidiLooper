@@ -27,7 +27,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 | **Execution bound change?** | NO — design only; this phase adds the execution-bound gate and does not admit runtime work |
 | **Behavior-preserving?** | YES — no firmware behavior changes |
 | **Reuse decision** | YES — extend `Loop` / `LoopPasses`; retain semantic and playback owners |
-| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, derived-representation authority, and storage authority |
+| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, parent runtime architecture, derived-representation authority, and storage authority |
 
 ### Phase 1 — Native snapshot model
 

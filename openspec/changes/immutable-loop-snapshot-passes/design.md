@@ -38,6 +38,23 @@ timing-critical input work and must satisfy
 - No content-sized candidate construction may run as one indivisible operation
   from `handleMidiInput()`, clock dispatch, or a track-tick path.
 
+### The four-layer runtime boundary remains intact
+
+The parent runtime architecture keeps these contracts separate:
+
+```text
+LoopSnapshot authoritative content
+    → derived representation owned by the existing module
+    → consumer-selected bounded interval projection
+    → runtime request and consumer result
+```
+
+The snapshot change does not make `LoopSnapshot` a consumer-window store, an
+`IntervalProjection` owner, a playback-runtime owner, or a persistence
+scheduler. A consumer migration changes its content source and freshness
+identity, not the ownership of cursor, ledger, playback order, display
+windows, analyze indexes, LED queries, or deferred persistence.
+
 ## Decisions
 
 ### `Loop` publishes and `LoopPasses` stores snapshots

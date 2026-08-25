@@ -15,7 +15,7 @@
 Each layer answers one question. Do not collapse them.
 
 ```
-Capture Storage          →  What is authoritative?
+Authoritative Content    →  What is authoritative?
 Derived Representations  →  How is it represented for runtime?
 Interval Projection      →  Which tick range is relevant?
 Runtime Request          →  Representation × interval → consumer input
@@ -23,7 +23,7 @@ Runtime Request          →  Representation × interval → consumer input
 
 ```mermaid
 flowchart TB
-  CS[Capture Storage]
+  CS[Authoritative Content / Storage]
   DR[Derived Representations]
   IP[Interval Projection]
   RR[Runtime Request]
@@ -37,12 +37,12 @@ flowchart TB
 
 | Layer | Question | Child doc |
 |-------|----------|-----------|
-| Capture storage | What is the authoritative timeline? | [Storage.md](Storage.md) |
+| Authoritative content / storage | What is the authoritative timeline? | [Storage.md](Storage.md) |
 | Derived representations | How should data be shaped for consumers? | [DerivedViews.md](DerivedViews.md) |
 | Interval projection | Which part of the timeline matters? | [IntervalProjection.md](IntervalProjection.md) |
 | Consumers | Who reads the result? | [Playback.md](Playback.md), [Display.md](Display.md); analyze and LEDs in [DerivedViews.md](DerivedViews.md) § Consumers |
 
-**Invariant:** changing the active **interval** must not require rebuilding the full **representation** unless the representation’s source revision changed.
+**Invariant:** changing the active **interval** must not require rebuilding the full **representation** unless the selected `LoopSnapshot` source revision changed.
 
 **Invariant:** changing **representation** must not change which **interval** projection selects — only what exists inside it.
 
@@ -65,19 +65,27 @@ Derived Representation  +  TickInterval  →  Consumer result
 
 Intervals are **consumer-agnostic** — one `TickInterval` (e.g. bars 8–24) can feed playback, display, or LED queries; the consumer interprets the projected slice.
 
+In the snapshot target, the selected complete `LoopSnapshot` supplies
+authoritative content to the existing representation owner. The snapshot does
+not contain consumer windows or projected intervals; each consumer selects a
+bounded source span before using `IntervalProjection` where coordinate
+projection is required.
+
 See [DerivedViews.md](DerivedViews.md) § Runtime requests.
 
 ---
 
 ## Dependency graph (data pipeline)
 
-Representations depend on storage; consumers depend on representations — not on each other’s rebuild paths.
+Representations depend on the selected `LoopSnapshot`; compatibility
+representations may temporarily depend on storage records. Consumers depend on
+representations — not on each other’s rebuild paths.
 
 ```
-Capture Storage (passes, capture, chunks)
+LoopSnapshot (target immutable authoritative content)
         │
         ▼
-Derived Event Representation  (materialized MIDI / session store / LCR indexes)
+Derived Event Representations  (materialized MIDI / session store / analyze indexes)
         │
         ├──────────────────┬──────────────────┬──────────────────┐
         ▼                  ▼                  ▼                  ▼
@@ -92,6 +100,14 @@ Derived Event Representation  (materialized MIDI / session store / LCR indexes)
 
 **Rule:** consumers **request** a representation at an interval; they do **not** call peer rebuild APIs (`ensureVisualCacheBuilt` from `MidiLedManager`, etc.).
 
+Live `Capture` and `NoteEditSession.store` remain transient overlays until
+their existing commit boundaries publish settled snapshot content. They are
+not alternate committed-state authorities.
+
+During migration, `LoopPasses` and materialized data may remain parity or
+fallback sources for a caller that has not passed its snapshot migration gate.
+They are not a second normal effective-state authority.
+
 ---
 
 ## Revisions (dependency chain)
@@ -99,11 +115,12 @@ Derived Event Representation  (materialized MIDI / session store / LCR indexes)
 Revisions are a **chain**, not independent flags. A consumer checks whether its inputs are stale relative to the chain.
 
 ```
-Storage revision (passes / capture / session store mutation)
+Snapshot source revision (publication / selection)
         │
         ▼
 Event representation revision
         │
+        ├─ compatibility inputs: passes / capture / session store mutation
         ├─────────────┬─────────────┐
         ▼             ▼             ▼
 Playback repr.   Display repr.  Analyze indexes
@@ -113,18 +130,24 @@ Playback repr.   Display repr.  Analyze indexes
 
 | Concept | Field / API today |
 |---------|-------------------|
+| Snapshot source identity (target) | Selected `LoopSnapshot` publication or selection |
 | Storage dirty | pass publish, capture seal, `NoteEditSession.store` write |
 | Display representation | `Loop::visualCache.revision`, `capturePreview.revision` |
 | Playback representation | `LoopPlaybackRuntime` rebuild / `sessionPreviewRevision_` during NOTE_EDIT |
 | Invalidate hook | `Track::invalidateCaches()` |
 
-Target behavior: validate revision → schedule rebuild on owner → consumer reads when fresh enough for policy (immediate vs idle-deferred).
+Target behavior: validate snapshot and representation revisions → request
+rebuild from the owning module → consumer reads when fresh enough for policy
+(immediate vs idle-deferred). A stale representation must not trigger a
+content-sized full-loop rebuild on a timing-critical path.
 
 ---
 
 ## Scheduling (responsibilities, not a mandated class)
 
-Whether coordination lives on `Loop`, `Track`, a future scheduler, or `main.cpp` idle maintenance is an **implementation** choice.
+Coordination remains with the existing domain owner or `main.cpp` idle
+maintenance. A new scheduler or parallel semantic owner is not authorized by
+the snapshot change.
 
 Each derived representation **must** document:
 
@@ -138,6 +161,21 @@ Each derived representation **must** document:
 | **Consumers** | Who may read it |
 
 See [DerivedViews.md](DerivedViews.md) § Owner table.
+
+---
+
+## Large-work boundary
+
+Snapshot completeness, deferred placement, and an existing commit boundary do
+not establish an execution bound. Construction, representation rebuild,
+serialization, and compatibility migration that execute from
+`handleMidiInput()`, clock dispatch, or a track-tick path must use a declared
+bounded unit or an empirically bounded unit with an explicit overrun/failure
+policy under [ExecutionBounds.md](ExecutionBounds.md).
+
+The active snapshot remains selected until a complete replacement is ready.
+No partial snapshot or representation is published, and large-loop persistence
+remains owned by `StorageManager` through its deferred units.
 
 ---
 
