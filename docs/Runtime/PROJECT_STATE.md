@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4.4 display: partial visualCache must not block snapshot gather)
+Last updated: 2026-08-26 (4.4 display: keep PLAYING handoff on first overdub)
 
 ---
 
@@ -23,7 +23,9 @@ Device PASS [`233308`](../../captures/session_20260825_233308.log): no
 Display paint fallback and visual-cache fill read published snapshot events
 when a root exists; compatibility gather remains the no-snapshot fallback.
 A nonempty dirty visual-cache prefix does not authorize the paint window
-([`235954`](../../captures/session_20260825_235954.log)). Task 4.3 stays
+([`235954`](../../captures/session_20260825_235954.log)). Live overdub keeps
+the PLAYING committed handoff and does not snapshot-gather every frame
+([`001048`](../../captures/session_20260826_001048.log)). Task 4.3 stays
 skipped.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
