@@ -42,6 +42,7 @@ struct PlaybackMergedMidiEvents;
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
 
 struct PublishedSnapshotBox;
+struct PendingSnapshotPublishBox;
 
 /// Overdub-session totals for `#CAP,DIAG,overlap_hold`. Incremented on note-off; emitted at stop.
 struct OverlapHoldTotals {
@@ -336,8 +337,14 @@ struct Loop {
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
   /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.
+  /// Completes construction in this call. Stop/idle paths use `queue` + `step`.
   bool tryPublishSessionExitSnapshot(CommitReason reason,
                                      const EditPassIdList& companionIds = {});
+  /// Queue session-exit snapshot work without constructing. Safe on the stop path.
+  bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
+  /// Apply at most `maximumChanges` pending snapshot construction units. Idle only.
+  bool stepPendingSnapshotPublish(size_t maximumChanges);
+  bool hasPendingSnapshotPublish() const;
   /// Settled NOTE_EDIT close batch. In-session durable checkpoints stay provisional.
   bool tryPublishNoteEditSnapshot(const EditPassIdList& editPassIds);
   bool captureActive() const;
@@ -513,9 +520,13 @@ struct Loop {
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
   std::unique_ptr<PublishedSnapshotBox> publishedSnapshotBox_;
+  std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
 
   void clearPublishedSnapshot();
   void storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot);
+  void clearPendingSnapshotPublish();
+  void discardUnpublishedSnapshotIfNotSessionExit();
+  void enqueueLiveOverdubPasses();
 };
 
 #endif  // LOOP_H

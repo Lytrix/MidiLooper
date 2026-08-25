@@ -688,6 +688,9 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                                                           bool postOverdubDrainWindowActive) {
+  if (getActiveLoop().hasPendingSnapshotPublish()) {
+    getActiveLoop().stepPendingSnapshotPublish(1);
+  }
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
   // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).

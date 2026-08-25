@@ -560,6 +560,76 @@ void test_overdub_publish_keeps_pass_events_when_companion_is_missing() {
   TEST_ASSERT_EQUAL(1, countNoteOns(compatibilityEvents, 64));
 }
 
+void drainPendingSnapshotPublish(Loop& loop) {
+  size_t steps = 0;
+  while (loop.hasPendingSnapshotPublish() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+}
+
+void test_queue_overdub_snapshot_waits_for_idle_steps() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 480));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.publishedSnapshot().get() != afterRecord.get());
+  TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(64, 0)->references.size());
+}
+
+void test_overdub_wrap_ahead_does_not_publish_until_session_exit() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(800, 1, 67, 80)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(860, 1, 67, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 860));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec snapshotEvents;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotEvents, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 64));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 67));
+}
+
 void test_overdub_without_parent_does_not_invent_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -614,6 +684,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_stale_published_snapshot_falls_back_to_compatibility_gather);
   RUN_TEST(test_overdub_publish_keeps_pass_events_when_companion_is_missing);
+  RUN_TEST(test_queue_overdub_snapshot_waits_for_idle_steps);
+  RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();
 }

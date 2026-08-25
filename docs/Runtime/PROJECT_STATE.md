@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-25 (Phase 3 playback snapshot reads 4.1–4.2 implemented)
+Last updated: 2026-08-25 (overdub snapshot publish deferred to idle)
 
 ---
 
@@ -12,7 +12,11 @@ Last updated: 2026-08-25 (Phase 3 playback snapshot reads 4.1–4.2 implemented)
 `546169f66658b87c54e6166b79eba74628aa3d1e` for the immutable loop snapshot
 architecture proposal. The maintained-LCR continuation from
 `feature/overdub-stop-lag-stage-c` is not pursued on this branch. See
-[`CURRENT_WORK.md`](CURRENT_WORK.md).
+[`CURRENT_WORK.md`](CURRENT_WORK.md). Overdub `LoopSnapshot` publication is
+queued at stop and stepped from idle (`DEC-045`); record and NOTE_EDIT close
+stay synchronous. Capture [`214529`](../../captures/session_20260825_214529.log)
+showed `seal_fx_push_overdub_undo` at 11.67 s / 2.37 s while
+`tryPublishSessionExitSnapshot` ran on the stop path.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:
