@@ -15,6 +15,12 @@ ledger owns open identities
 source-view covering identities answer present-at-hold
 ```
 
+**MIDI protocol boundary:** ordinary MIDI 1.0 Note On/Note Off messages carry
+channel, note number, and velocity, but not the loop’s internal `NoteId`.
+Overlap resolution therefore uses internal snapshot identities; receiver voice
+allocation for repeated same-pitch messages is not a protocol-level identity
+rule. See [`MIDI_PROTOCOL_GUIDE.md`](MIDI_PROTOCOL_GUIDE.md).
+
 Do not converge those three because a mismatch between open ledger identities and source-view covering identities looks suspicious. **Gate 5A shipped** (equal-tick Off-before-On). **RC closed** — D2-D revision guard [`174246`](../../captures/session_20260819_174246.log); plans **FROZEN**. Remaining `n>a` is diagnostic-only. **Gate 5B withdrawn** — no Length skip firmware.
 
 **Update this catalog in the same change** if any of these moved: `resolveConstrainedGeometry`, `classifyEditSessionInteraction`, `computeShortenedEndTick`, `accumulatePendingNoteChangesForIncomingNote`, `sealPendingNoteChangesToEditPasses`, `applyChangeLengthById` shorten/lengthen, `rebuildOverdubSourceView`, `collectOverdubSourceHoldParticipantIds`, pending overlay vs cache.
