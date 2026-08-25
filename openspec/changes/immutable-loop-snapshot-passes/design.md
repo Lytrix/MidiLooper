@@ -78,6 +78,37 @@ failure policy under `ExecutionBounds.md`.
 couples immutable content lifetime to mutable consumer contexts and duplicates
 playback/display/edit representation ownership.
 
+### `LoopSnapshot` is the source for derived representations
+
+The target relationship defined by
+[`DerivedViews.md`](../../docs/Authority/Architecture/DerivedViews.md) is:
+
+```text
+LoopSnapshot
+    → existing representation owner
+    → bounded canonical span selection
+    → IntervalProjection where coordinates must be projected
+    → consumer result
+```
+
+`LoopSnapshot` supplies the immutable source and source identity. It does not
+own `mergedEvents`, `visualCache`, playback order, analyze indexes, or LED
+queries. `Track` / `LoopPlaybackRuntime`, `Loop`, `EditManager` during live
+editing, and `MidiLedManager` retain their existing representation or query
+ownership and build policy.
+
+Each derived representation records the snapshot identity from which it was
+built. Snapshot publication or selection invalidates representations by that
+identity; it does not require all representations to rebuild synchronously.
+While bounded rebuilding is pending, the consumer follows its existing
+freshness policy and must not perform a full-loop rebuild on a timing-critical
+path. `LoopPasses` and materialized compatibility data may remain as parity or
+fallback sources until the individual consumer migration gate passes.
+
+**Alternative:** make `LoopSnapshot` the owner of all derived representations.
+Rejected because it would couple immutable content publication to consumer
+lifecycles and create a new cross-consumer owner.
+
 ### Construction applies existing semantic mutations
 
 At an existing commit boundary, the existing semantic owner supplies a settled

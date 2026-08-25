@@ -1,7 +1,7 @@
 ## 1. Architecture and specification gate
 
 - [ ] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal.
-- [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan with the accepted boundary.
+- [ ] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan and derived-representation authority with the accepted boundary.
 - [ ] 1.3 Select this change in `docs/Runtime/CURRENT_WORK.md` and post the phase architecture gate before firmware edits.
 - [ ] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each ownership or stop-path implementation phase.
 
@@ -27,6 +27,7 @@
 - [ ] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
 - [ ] 4.4 Migrate display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates; select bounded canonical span ranges before `IntervalProjection` and define long-span `k` candidate limits or empirical overrun policies.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, and large-loop projection behavior.
+- [ ] 4.6 Update each migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy; verify no full-loop rebuild is introduced on a timing-critical path.
 
 ## 5. Undo, load, and persistence
 

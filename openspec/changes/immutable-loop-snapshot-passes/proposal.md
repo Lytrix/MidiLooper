@@ -9,6 +9,7 @@ The current loop model derives effective musical state by replaying capture pass
 - Keep capture finalization, overlap, note pairing, and NOTE_EDIT geometry semantics in their existing owners.
 - Make undo, redo, and clear-slot restore select existing snapshot identities rather than replay history.
 - Migrate playback, display, NOTE_EDIT, analysis, persistence, and load consumers in separately gated stages.
+- Keep derived representation ownership, revision, invalidation, and build policy with the existing owners defined by [`DerivedViews.md`](../../docs/Authority/Architecture/DerivedViews.md).
 - **BREAKING**: historical replay and maintained LCR state become compatibility-only and are retired after caller migration gates pass.
 - **BREAKING**: a future storage version is required for immutable objects and snapshot structure; its physical layout is a separate design.
 
@@ -38,3 +39,7 @@ The current loop model derives effective musical state by replaying capture pass
   intervals or consumer windows. Large-loop consumers must select bounded span
   ranges before calling `IntervalProjection`; a complete snapshot does not
   authorize full-loop projection on a timing-critical path.
+- `DerivedViews.md` remains the representation ownership contract: snapshot
+  identity becomes the source revision, existing representation owners retain
+  their invalidation and build policies, and compatibility `LoopPasses` reads
+  remain until each consumer migration gate passes.

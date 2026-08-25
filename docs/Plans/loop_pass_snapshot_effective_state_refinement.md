@@ -79,6 +79,21 @@ content-dependent candidate count. Runtime phases must define a structural
 candidate cap or an empirical overrun guard and failure policy before using
 that operation on a runtime path.
 
+## Derived representation relationship
+
+[`DerivedViews.md`](../Authority/Architecture/DerivedViews.md) remains the
+representation ownership contract. `LoopSnapshot` becomes the normal immutable
+source and its identity becomes the source revision. `Loop` / `LoopPasses` do
+not absorb ownership of `mergedEvents`, `visualCache`, playback order, analyze
+indexes, or LED queries.
+
+Each existing representation owner retains its own invalidation, bounded build,
+and stale/fallback policy. Snapshot publication or selection invalidates stale
+representations by identity; it does not require synchronous rebuilding of the
+complete snapshot. Compatibility `LoopPasses` or materialized reads remain
+available only as parity/fallback sources until the corresponding consumer gate
+passes.
+
 ## Migration stages
 
 1. Complete formal architecture reassessment and record approval.
@@ -89,7 +104,8 @@ that operation on a runtime path.
    boundaries while retaining compatibility pass records; do not perform
    content-sized construction as one timing-critical operation.
 4. Migrate playback, display, NOTE_EDIT, analysis, and validation consumers in
-   separate gates.
+   separate gates; each representation retains its existing owner, source
+   identity, invalidation, and bounded build policy.
 5. Migrate undo, clear-slot restore, load, and persistence after the physical
    storage design is approved.
 6. Remove historical replay and compatibility state only after every caller gate

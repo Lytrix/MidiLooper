@@ -27,7 +27,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 | **Execution bound change?** | NO — design only; this phase adds the execution-bound gate and does not admit runtime work |
 | **Behavior-preserving?** | YES — no firmware behavior changes |
 | **Reuse decision** | YES — extend `Loop` / `LoopPasses`; retain semantic and playback owners |
-| **Phase scope** | Change artifacts, refinement plan, decision record, and runtime scope docs |
+| **Phase scope** | Change artifacts, refinement plan, decision record, runtime scope docs, and derived-representation authority |
 
 ### Phase 1 — Native snapshot model
 
@@ -60,7 +60,7 @@ This change is design-only until a phase is approved and named in `docs/Runtime/
 | Question | Required |
 |---|---|
 | **Owner module** | `Loop` publishes; `Track` / `LoopPlaybackRuntime` consumes; LCR is transitional only |
-| **Primary invariant** | Consumers use one complete snapshot identity while cursor, ledger, order, horizon ownership, and bounded projection access remain unchanged |
+| **Primary invariant** | Consumers use one complete snapshot identity while existing representation ownership, cursor, ledger, order, horizon ownership, and bounded projection access remain unchanged |
 | **Ownership change?** | NO — existing boundaries are extended |
 | **State transition change?** | YES — snapshot identity is the freshness boundary |
 | **Execution bound change?** | NO new unbounded owner; snapshot selection and any new preparation work must use an existing declared owner boundary |
@@ -105,5 +105,7 @@ Before checking off a phase in `tasks.md`:
 - [ ] Required HITL gate passes when behavior requires it
 - [ ] Every runtime candidate-construction owner has an `ExecutionBounds.md` row with unit cap, indivisible-step bound, progress, and overrun/failure policy
 - [ ] No local timer is used as the sole bound for an indivisible operation
+- [ ] Each migrated derived representation records snapshot identity for freshness and retains its existing owner, invalidation, build, and stale/fallback policy
+- [ ] `LoopPasses` and materialized compatibility sources are removed only after the individual representation migration gate passes
 - [ ] No compatibility path was removed before its caller gate passed
 - [ ] Runtime docs, decision log, and plan reflect the result
