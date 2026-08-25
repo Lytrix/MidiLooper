@@ -31,12 +31,14 @@ LOOP_SNAPSHOT_COLD_MEM std::shared_ptr<const Type> allocateConstSnapshotShared(
 
 template <typename Reference>
 struct MutableMembershipEdit {
+  SnapshotBarPageDirectory<Reference>* directory = nullptr;
   uint32_t barIndex = 0;
   std::shared_ptr<SnapshotMembership<Reference>> membership;
 };
 
 template <typename Reference>
 struct MutablePageEdit {
+  SnapshotBarPageDirectory<Reference>* directory = nullptr;
   size_t pageIndex = 0;
   std::shared_ptr<SnapshotBarPage<Reference>> page;
 };
@@ -69,7 +71,7 @@ std::shared_ptr<SnapshotMembership<Reference>> mutableMembershipForBar(
     std::vector<MutableMembershipEdit<Reference>>& membershipEdits,
     uint32_t barIndex) {
   for (auto& edit : membershipEdits) {
-    if (edit.barIndex == barIndex) {
+    if (edit.directory == &directory && edit.barIndex == barIndex) {
       return edit.membership;
     }
   }
@@ -77,7 +79,7 @@ std::shared_ptr<SnapshotMembership<Reference>> mutableMembershipForBar(
   const size_t pageIndex = pageIndexForBar<Reference>(barIndex);
   std::shared_ptr<SnapshotBarPage<Reference>> page;
   for (auto& edit : pageEdits) {
-    if (edit.pageIndex == pageIndex) {
+    if (edit.directory == &directory && edit.pageIndex == pageIndex) {
       page = edit.page;
       break;
     }
@@ -92,7 +94,7 @@ std::shared_ptr<SnapshotMembership<Reference>> mutableMembershipForBar(
       directory.pages.resize(pageIndex + 1);
     }
     directory.pages[pageIndex] = page;
-    pageEdits.push_back({pageIndex, page});
+    pageEdits.push_back({&directory, pageIndex, page});
   }
 
   const size_t pageOffset = pageOffsetForBar<Reference>(barIndex);
@@ -101,7 +103,7 @@ std::shared_ptr<SnapshotMembership<Reference>> mutableMembershipForBar(
     membership->references = page->memberships[pageOffset]->references;
   }
   page->memberships[pageOffset] = membership;
-  membershipEdits.push_back({barIndex, membership});
+  membershipEdits.push_back({&directory, barIndex, membership});
   return membership;
 }
 
@@ -227,6 +229,13 @@ LOOP_COLD_MEM LoopSnapshot::LoopSnapshot(LoopId loopId,
       spanRoot_(allocateConstSnapshotShared<SnapshotSpanRoot>()),
       eventRoot_(allocateConstSnapshotShared<SnapshotEventRoot>()) {}
 
+LOOP_COLD_MEM ImmutableLoopSnapshotRef LoopSnapshot::createEmpty(
+    LoopId loopId, uint32_t loopLengthTicks, uint32_t loopStartTick,
+    uint32_t nextNoteId, uint32_t nextEventId) {
+  return allocateConstSnapshotShared<LoopSnapshot>(
+      loopId, loopLengthTicks, loopStartTick, nextNoteId, nextEventId);
+}
+
 LOOP_COLD_MEM SnapshotMembershipRef<LoopSnapshotNoteRef>
 LoopSnapshot::noteMembership(
     uint8_t pitch, uint32_t barIndex) const {
@@ -247,6 +256,51 @@ LoopSnapshot::eventMembership(
     return {};
   }
   return membershipForBar<LoopSnapshotEventRef>(eventRoot_->pages, barIndex);
+}
+
+LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
+                                                        uint8_t pitchHint) const {
+  if (noteId == kInvalidNoteId || !spanRoot_) {
+    return {};
+  }
+  auto searchPitch = [this, noteId](uint8_t pitch) -> LoopSnapshotNoteRef {
+    if (pitch >= kLoopSnapshotPitchCount) {
+      return {};
+    }
+    const auto& pitchDirectory = spanRoot_->pitches[pitch];
+    if (!pitchDirectory) {
+      return {};
+    }
+    for (const auto& page : pitchDirectory->pages.pages) {
+      if (!page) {
+        continue;
+      }
+      for (const auto& membership : page->memberships) {
+        if (!membership) {
+          continue;
+        }
+        for (const auto& reference : membership->references) {
+          if (reference && reference->noteId == noteId) {
+            return reference;
+          }
+        }
+      }
+    }
+    return {};
+  };
+
+  if (auto found = searchPitch(pitchHint)) {
+    return found;
+  }
+  for (uint16_t pitch = 0; pitch < kLoopSnapshotPitchCount; ++pitch) {
+    if (pitch == pitchHint) {
+      continue;
+    }
+    if (auto found = searchPitch(static_cast<uint8_t>(pitch))) {
+      return found;
+    }
+  }
+  return {};
 }
 
 LOOP_COLD_MEM void LoopSnapshot::appendCanonicalSpans(
@@ -349,6 +403,10 @@ LOOP_COLD_MEM bool LoopSnapshot::applyNoteChange(
   }
 
   spanRoot_ = std::move(nextRoot);
+  if (change.kind != SnapshotChangeKind::Remove &&
+      change.next.noteId >= nextNoteId_) {
+    nextNoteId_ = change.next.noteId + 1;
+  }
   return true;
 }
 
@@ -414,6 +472,10 @@ LOOP_COLD_MEM bool LoopSnapshot::applyEventChange(
   }
 
   eventRoot_ = std::move(nextRoot);
+  if (change.kind != SnapshotChangeKind::Remove &&
+      change.next.eventId >= nextEventId_) {
+    nextEventId_ = change.next.eventId + 1;
+  }
   return true;
 }
 

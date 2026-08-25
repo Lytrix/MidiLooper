@@ -257,6 +257,169 @@ void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 67));
 }
 
+void recordLinearNote(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pitch) {
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, pitch, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, offTick));
+}
+
+void test_record_stop_publishes_complete_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(120, 1, 7, 64)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+
+  const auto snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  const auto notes = snapshot->noteMembership(60, 0);
+  TEST_ASSERT_NOT_NULL(notes.get());
+  TEST_ASSERT_EQUAL(1u, notes->references.size());
+  TEST_ASSERT_EQUAL(100u, notes->references[0]->startTick);
+  TEST_ASSERT_EQUAL(200u, notes->references[0]->endTick);
+  const auto events = snapshot->eventMembership(0);
+  TEST_ASSERT_NOT_NULL(events.get());
+  TEST_ASSERT_EQUAL(3u, events->references.size());
+  TEST_ASSERT_EQUAL(events->references[0]->canonicalOrder < events->references[1]->canonicalOrder,
+                    true);
+  TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
+}
+
+void test_record_wrap_note_publishes_one_reference() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2800, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(100, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 100));
+
+  const auto snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  const auto tail = snapshot->noteMembership(60, 3);
+  const auto head = snapshot->noteMembership(60, 0);
+  TEST_ASSERT_NOT_NULL(tail.get());
+  TEST_ASSERT_NOT_NULL(head.get());
+  TEST_ASSERT_EQUAL(1u, tail->references.size());
+  TEST_ASSERT_EQUAL(1u, head->references.size());
+  TEST_ASSERT_EQUAL_PTR(tail->references[0].get(), head->references[0].get());
+  TEST_ASSERT_TRUE(tail->references[0]->isWrap());
+}
+
+void test_overdub_wrap_does_not_publish_global_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_EQUAL(1u, loop.passes.overdubPasses.size());
+}
+
+void test_overdub_stop_publishes_successor_from_parent() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 480));
+  TEST_ASSERT_TRUE(loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop, {}));
+
+  const auto afterOverdub = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterOverdub.get());
+  TEST_ASSERT_TRUE(afterOverdub.get() != afterRecord.get());
+  TEST_ASSERT_EQUAL(1u, afterRecord->noteMembership(60, 0)->references.size());
+  TEST_ASSERT_NULL(afterRecord->noteMembership(64, 0).get());
+  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(60, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(64, 0)->references.size());
+  TEST_ASSERT_EQUAL_PTR(afterRecord->noteMembership(60, 0)->references[0].get(),
+                        afterOverdub->noteMembership(60, 0)->references[0].get());
+}
+
+void test_note_edit_close_replaces_published_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  const NoteId noteId = afterRecord->noteMembership(60, 0)->references[0]->noteId;
+
+  const EditPassId rowId = loop.saveNoteEditPass(0, makePitchRow(noteId, 100, 200, 67));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, rowId);
+  EditPassIdList ids;
+  ids.push_back(rowId);
+  TEST_ASSERT_TRUE(loop.tryPublishNoteEditSnapshot(ids));
+
+  const auto afterEdit = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterEdit.get());
+  TEST_ASSERT_TRUE(afterEdit.get() != afterRecord.get());
+  const auto oldPitch = afterEdit->noteMembership(60, 0);
+  const size_t oldPitchCount = oldPitch ? oldPitch->references.size() : 0;
+  TEST_ASSERT_EQUAL(0u, oldPitchCount);
+  TEST_ASSERT_EQUAL(1u, afterEdit->noteMembership(67, 0)->references.size());
+  TEST_ASSERT_EQUAL(noteId, afterEdit->noteMembership(67, 0)->references[0]->noteId);
+}
+
+void test_failed_edit_publish_preserves_parent_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+
+  EditPassIdList missing;
+  missing.push_back(999);
+  TEST_ASSERT_FALSE(loop.tryPublishNoteEditSnapshot(missing));
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+}
+
+void test_overdub_without_parent_does_not_invent_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 480));
+  TEST_ASSERT_FALSE(loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+}
+
 void test_reclaim_disabled_overdub_releases_committed_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -287,5 +450,12 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
   RUN_TEST(test_invalidateCaches_marks_materialize_stale_after_loop_length_change);
   RUN_TEST(test_reclaim_disabled_overdub_releases_committed_chunks);
+  RUN_TEST(test_record_stop_publishes_complete_snapshot);
+  RUN_TEST(test_record_wrap_note_publishes_one_reference);
+  RUN_TEST(test_overdub_wrap_does_not_publish_global_snapshot);
+  RUN_TEST(test_overdub_stop_publishes_successor_from_parent);
+  RUN_TEST(test_note_edit_close_replaces_published_note);
+  RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
+  RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();
 }

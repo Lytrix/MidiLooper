@@ -126,6 +126,10 @@ class LoopSnapshot {
   LoopSnapshot(LoopId loopId, uint32_t loopLengthTicks, uint32_t loopStartTick,
                uint32_t nextNoteId, uint32_t nextEventId);
 
+  static ImmutableLoopSnapshotRef createEmpty(LoopId loopId, uint32_t loopLengthTicks,
+                                              uint32_t loopStartTick, uint32_t nextNoteId,
+                                              uint32_t nextEventId);
+
   LoopId loopId() const { return loopId_; }
   uint32_t loopLengthTicks() const { return loopLengthTicks_; }
   uint32_t loopStartTick() const { return loopStartTick_; }
@@ -136,6 +140,7 @@ class LoopSnapshot {
       uint8_t pitch, uint32_t barIndex) const;
   SnapshotMembershipRef<LoopSnapshotEventRef> eventMembership(
       uint32_t barIndex) const;
+  LoopSnapshotNoteRef findNote(NoteId noteId, uint8_t pitchHint = 0) const;
 
   void appendCanonicalSpans(const LoopSnapshotNoteRef& note,
                             CanonicalNoteSpanVec& out) const;
@@ -155,8 +160,8 @@ class LoopSnapshot {
   std::shared_ptr<const SnapshotEventRoot> eventRoot_;
 };
 
-/// Native/offline construction with persistent progress. The frozen candidate
-/// never becomes active in Phase 1.
+/// Candidate construction with persistent progress. Publication is owned by
+/// `Loop` at session-exit and NOTE_EDIT close only.
 class LoopSnapshotConstruction {
  public:
   LoopSnapshotConstruction(std::shared_ptr<const LoopSnapshot> parent,

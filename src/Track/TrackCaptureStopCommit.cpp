@@ -198,6 +198,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #endif
         TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
                                             true);
+        loop.tryPublishSessionExitSnapshot(reason, companionIds);
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_push_overdub_undo",
                                           micros() - pushUndoStartUs, "ok");

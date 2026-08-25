@@ -191,3 +191,20 @@ Before checking off a phase in `tasks.md`:
 
 Phase 1 verification is complete. Phase 2 remains separately gated by a
 runtime construction-bound classification in `ExecutionBounds.md`.
+
+### Phase 2 implementation review
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership, transition, and execution-bound checkpoint answered.
+- [x] Native invariant/parity checks pass without a new test architecture.
+- [x] Capture-serial build passes with RAM1 locals at 4640.
+- [x] HITL gate not required; playback/consumers still use compatibility sources.
+- [x] `ExecutionBounds.md` rows 21–22 classify `step` and session-exit /
+      NOTE_EDIT close publication as empirically bounded with
+      discard-candidate / keep-previous-published failure.
+- [x] Compatibility `LoopPass` records remain intact.
+- [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
+      `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
+
+Phase 2 verification is complete. Phase 3 (direct consumers) remains
+separately gated.

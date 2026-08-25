@@ -172,10 +172,25 @@ membership pages, copy-on-write dirty pages, and
 
 `LoopSnapshotConstruction` copies the active root references, applies settled
 note/event changes with persistent change-index progress, freezes a complete
-candidate, and leaves the parent unchanged on failure. It is not connected to
-capture stop, NOTE_EDIT close, playback, MIDI input, clock dispatch, undo,
-persistence, or consumer selection. No runtime execution-bound class is
-claimed by this phase.
+candidate, and leaves the parent unchanged on failure.
+
+### Phase 2 publication result
+
+`ExecutionBounds.md` rows 21–22 classify dirty-bar `step` and one-candidate
+publication as empirically bounded. Overrun/failure discards the candidate
+and keeps the previous published snapshot. Construction is not admitted to
+`handleMidiInput()`, clock dispatch, track-tick, or `OverdubWrap`.
+
+`Loop` publishes through an opaque `PublishedSnapshotBox` (out-of-line
+lifetime). Record session-exit publishes in `commitPendingCapturePass` after
+the record pass is committed. Overdub session-exit publishes in
+`finalizeCommitSideEffects` after companion seal. NOTE_EDIT
+`closeNoteEditPass` publishes the settled session batch. In-session durable
+checkpoints stay provisional. First record uses a constructed empty parent;
+overdub/NOTE_EDIT require an already published parent and do not invent
+content from `materializeToEventVector()`. Compatibility pass records remain.
+
+Phase 3 consumer selection is not authorized by this result.
 
 Native checks cover self-containment, unchanged membership sharing, immutable
 object replacement, `NoteId` preservation, wrap membership, canonical event
