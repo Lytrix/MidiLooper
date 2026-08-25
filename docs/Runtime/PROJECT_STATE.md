@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4.4 display: hold overdub handoff only inside gather)
+Last updated: 2026-08-26 (4.4 display: include short loop tail in first gather)
 
 ---
 
@@ -26,7 +26,9 @@ A nonempty dirty visual-cache prefix does not authorize the paint window
 ([`235954`](../../captures/session_20260825_235954.log)). Live overdub keeps
 the PLAYING committed handoff only while the paint window stays inside
 the last gather ([`001048`](../../captures/session_20260826_001048.log),
-[`001907`](../../captures/session_20260826_001907.log)). Task 4.3 stays
+[`001907`](../../captures/session_20260826_001907.log)). First gather
+includes a short loop tail so a 20-bar loop does not omit the last 2 bars
+([`002634`](../../captures/session_20260826_002634.log)). Task 4.3 stays
 skipped.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4.4 display: hold overdub handoff only inside gather)
+Last updated: 2026-08-26 (4.4 display: include short loop tail in first gather)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -21,7 +21,12 @@ keeps the PLAYING committed handoff only while the paint window stays
 inside the last gather ([`001048`](../../captures/session_20260826_001048.log)
 `frame=0`; [`001907`](../../captures/session_20260826_001907.log) held the
 first 16-bar slice on a 21-bar loop). Follow exit or wrap invalidate
-snapshot-gathers once. After overdub stop, a dirty visual-cache prefix
+snapshot-gathers once. A remainder of at most two gather margins is
+included in the first gather so a 20-bar loop does not omit the last
+2 bars and then gather on the MIDI path
+([`002634`](../../captures/session_20260826_002634.log): window at 3072
+at 117.1 s, last-bar notes at 119.2 s, `DisplayResolve` 81–196 ms).
+After overdub stop, a dirty visual-cache prefix
 does not keep that incomplete handoff. Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,
