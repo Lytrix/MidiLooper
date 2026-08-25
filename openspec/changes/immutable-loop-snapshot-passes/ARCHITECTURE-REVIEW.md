@@ -2,7 +2,7 @@
 
 **Decision:** PENDING formal architecture reassessment and approval
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../../../docs/Plans/loop_pass_snapshot_effective_state_refinement.md)
-**North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → bar NoteRefs and bar → EventRef lists. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
+**North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → membership lists of `NoteRef`s and bar → membership lists of `EventRef`s. Its logical content is completely determined by its own reference root. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
 
 This change is design-only until a phase is approved and named in `docs/Runtime/CURRENT_WORK.md`. Phase 2 firmware is not authorized until formal reassessment (task 1.1) and an `ExecutionBounds.md` row for dirty-bar construction. The logical indexes are selected; the physical directory is not.
 
@@ -38,11 +38,11 @@ Immutable event objects
 - Changed event: new immutable object, replaced reference.
 - Deleted event: reference removed from the new root.
 - Added event: new immutable object, new reference.
-- Notes are indexed pitch → bar → bar NoteRefs; events are indexed bar → EventRef with a defined tick/order contract.
+- Notes are indexed pitch → bar → membership lists of `NoteRef`s; events are indexed bar → membership lists of `EventRef`s as a view of existing event-stream order.
 - Only dirty pitch/bar membership and the minimum directory path to those lists are newly constructed; unchanged membership remains shared with the parent.
 - Candidate sets deduplicate by `NoteId`. Inspecting a `NoteRef` does not replace it.
 - Dirty bars are the union of the incoming span and every resolver-changed geometry or membership, not the incoming span alone.
-- Consumers never traverse a parent snapshot for missing content.
+- A snapshot's logical content is completely determined by its own reference root; resolving a reference or answering a content query never requires consulting a parent snapshot.
 
 `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) is not this root. It is the compatibility operation/history record.
 
@@ -99,7 +99,7 @@ Blocked until Phase 0 formal reassessment (1.1) is approved. Phase 1 may impleme
 | **Reuse decision** | YES — extend existing commit boundaries |
 | **Phase scope** | Commit adapters, publication, and invariant/parity checks; no playback swap |
 
-Blocked until Phase 0 formal reassessment (1.1) is approved and each named construction operation has an `ExecutionBounds.md` class. The logical indexes are selected; dirty-bar construction is not yet classified as one admissible unit.
+Blocked until Phase 0 formal reassessment (1.1) is approved and the architectural construction contract has an `ExecutionBounds.md` class. The logical indexes are selected; dirty-bar construction is not yet classified as one admissible unit.
 
 ### Phase 3 — Direct consumers
 

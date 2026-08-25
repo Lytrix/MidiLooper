@@ -4,7 +4,7 @@ The current loop model derives effective musical state by replaying capture pass
 
 ## What Changes
 
-- Introduce complete immutable `LoopSnapshot` objects. Each snapshot indexes notes as pitch → bar → bar NoteRefs and events as bar → EventRef lists with a canonical tick/order contract.
+- Introduce complete immutable `LoopSnapshot` objects. Each snapshot indexes notes as pitch → bar → membership lists of `NoteRef`s and events as bar → membership lists of `EventRef`s. Event-list order is an indexed view of existing event-stream semantics. A snapshot's logical content is completely determined by its own reference root.
 - Keep `LoopPass` (`RecordPass`, `OverdubPass`, `EditPass`) as the historical/compatibility operation record. A commit may produce a compatibility pass record and a `LoopSnapshot`; those are not the same object.
 - Keep `Loop` / `LoopPasses` as the snapshot publication and storage boundary: `Loop` publishes and selects; `LoopPasses` stores snapshot records and compatibility pass rows.
 - Keep `StorageManager` as the sole persistence and migration owner; large-loop save/load work uses its existing deferred units and does not synchronously rebuild or serialize the complete loop on timing-critical paths.

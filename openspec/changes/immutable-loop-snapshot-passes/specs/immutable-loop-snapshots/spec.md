@@ -19,13 +19,19 @@ The system SHALL treat `LoopSnapshot` as the complete immutable effective-state 
 
 ### Requirement: Complete immutable loop snapshot
 
-Each published `LoopSnapshot` SHALL be a complete immutable view of effective musical state at its boundary. Snapshot content SHALL include note and non-note MIDI event objects through stable loop-scoped references. A consumer SHALL NOT traverse a parent snapshot to obtain content.
+Each published `LoopSnapshot` SHALL be a complete immutable view of effective musical state at its boundary. Snapshot content SHALL include note and non-note MIDI event objects through stable loop-scoped references. A snapshot's logical content SHALL be completely determined by its own reference root. Resolving a reference or answering a content query SHALL NOT require consulting a parent snapshot. Shared membership nodes SHALL NOT be implemented as a parent-snapshot walk or delta chain.
 
 #### Scenario: Snapshot is self-contained
 
 - **WHEN** a consumer reads an active or historical snapshot
 - **THEN** the snapshot provides all musical content for its boundary
-- **AND** the consumer does not read a parent snapshot for missing content
+- **AND** resolving a reference or answering a content query does not consult a parent snapshot
+
+#### Scenario: Successor is not a parent delta
+
+- **WHEN** a successor snapshot shares unchanged membership nodes with its parent
+- **THEN** the successor still exposes a complete logical directory
+- **AND** it does not store a parent pointer used to recover missing content
 
 #### Scenario: Non-note events remain available
 
@@ -35,9 +41,9 @@ Each published `LoopSnapshot` SHALL be a complete immutable view of effective mu
 
 ### Requirement: Pitch-and-bar logical indexes with shared membership
 
-A `LoopSnapshot` SHALL represent notes through a span index keyed by pitch then by canonical 768-tick bar. Each bar SHALL hold **bar NoteRefs** for complete immutable notes whose geometry intersects that bar. A `NoteRef` MAY occur in multiple bar lists in the same snapshot; each occurrence SHALL identify the same immutable note version and `NoteId`. Overlap candidate sets SHALL deduplicate by `NoteId`.
+A `LoopSnapshot` SHALL represent notes through a span index keyed by pitch then by canonical 768-tick bar. Each bar SHALL hold a membership list of `NoteRef`s for complete immutable notes whose geometry intersects that bar. A `NoteRef` MAY occur in multiple bar lists in the same snapshot; each occurrence SHALL identify the same immutable note version and `NoteId`. Overlap candidate sets SHALL deduplicate by `NoteId`.
 
-A `LoopSnapshot` SHALL represent note and non-note MIDI events through an event index keyed by the same 1-bar granule. Each bar SHALL hold an **EventRef** list with a defined canonical tick/order contract. Non-note events are points and SHALL NOT appear in the span index.
+A `LoopSnapshot` SHALL represent note and non-note MIDI events through an event index keyed by the same 1-bar granule. Each bar SHALL hold a membership list of `EventRef`s. Canonical event ordering SHALL remain the existing event-stream semantics; the bar list SHALL be an indexed view in that order and SHALL NOT be a second ordering authority. Non-note events are points and SHALL NOT appear in the span index.
 
 The span index SHALL store complete semantic notes only. It SHALL NOT store unmatched open Ons. Occupy / open-at-S SHALL remain a consumer (`ActiveNoteLedger` / `presentAt`), not a snapshot index.
 
@@ -127,7 +133,7 @@ Snapshot publication SHALL occur at an existing capture or edit commit boundary 
 
 ### Requirement: Candidate construction operations have declared bounds
 
-Candidate construction SHALL name the following operations and SHALL declare a complexity and `ExecutionBounds.md` class for each before runtime publication: locate affected references by pitch and dirty bars with `NoteId` dedup, remove obsolete references, allocate replacement event objects, insert new references, construct the new snapshot root from dirty membership plus the minimum directory path, retain or release roots, update optional disposable indexes, freeze the candidate, and publish the candidate. The semantic locality bound is the affected pitch and dirty bars. Path depth SHALL NOT be treated as that bound. A long note MAY still intersect many bars; this requirement does not by itself make construction bounded. A local timer checked only between steps SHALL NOT qualify as an execution bound.
+Candidate construction SHALL follow this architectural contract and SHALL declare a complexity and `ExecutionBounds.md` class for each step before runtime publication: identify affected content, apply immutable object replacements, construct the successor reference root, freeze the candidate, and atomically publish. Identify/apply/construct have semantic locality bounded by the affected pitch and dirty bars. Their execution cost remains dependent on intersecting memberships and the selected physical directory and therefore requires measurement before runtime publication. Path depth SHALL NOT be treated as an execution bound. A long note MAY still intersect many bars; this requirement does not by itself make construction bounded. A local timer checked only between steps SHALL NOT qualify as an execution bound. Phase 1 MAY decompose the contract into measured operations; those decompositions are not additional architectural owners.
 
 #### Scenario: Named operations are classified before firmware publication
 

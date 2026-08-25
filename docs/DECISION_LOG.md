@@ -148,9 +148,25 @@ old representation.
     remains shared with the parent. Path-copy is rejected as the semantic
     overlap model and remains allowed as a possible directory implementation.
     The physical directory is a Phase 1 / measurement decision.
-19. The semantic locality bound is affected pitch plus dirty bars, not path
-    depth. A long note can still touch every intersecting bar. Phase 2 stays
-    blocked on formal reassessment and an `ExecutionBounds.md` row.
+19. Affected pitch plus dirty bars is semantic locality, not an execution
+    bound. Execution cost depends on intersecting memberships and the
+    physical directory and requires measurement. A long note can still touch
+    every intersecting bar. Phase 2 stays blocked on formal reassessment and
+    an `ExecutionBounds.md` row.
+
+**Amendment (2026-08-25) — Phase 0 design trim:**
+
+20. A snapshot's logical content is completely determined by its own
+    reference root. Resolving a reference or answering a content query never
+    requires consulting a parent snapshot.
+21. Bar `EventRef` lists are an indexed view of existing event-stream
+    order, not a second ordering authority.
+22. The architectural construction contract is identify, replace, construct
+    root, freeze, and publish. Phase 1 decomposes those steps.
+23. Temporary LCR machinery may construct candidates. It never owns
+    effective state, publication, or snapshot lifetime.
+24. Record-prefix snapshot retention is a measured lifetime/memory risk
+    against the named-root policy.
 
 **References:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
 [`loop_pass_snapshot_effective_state_refinement.md`](Plans/loop_pass_snapshot_effective_state_refinement.md),
