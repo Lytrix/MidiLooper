@@ -67,7 +67,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 **Date:** 2026-08-25
 **Status:** Accepted
 **Scope:** `feature/immutable-loop-snapshot-passes`
-**Authority:** [`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md) rows 21–22,
+**Authority:** [`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md) `LoopSnapshotConstruction::step` and session-exit publish,
 [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/)
 
 **Context:** After Phase 3 playback began reading the published `LoopSnapshot`,
@@ -86,8 +86,8 @@ compatibility gather.
 2. `Track::processDeferredIdleMaintenance` calls
    `Loop::stepPendingSnapshotPublish(1)` before visual-cache slices. Idle runs
    while PLAYING / OVERDUBBING / STOPPED_RECORDING and when STOPPED tracks are
-   serviced. That is the interval-path owner; the unit remains one row-21
-   `step`, not a local timer.
+   serviced. That is the interval-path owner; the unit remains one
+   `LoopSnapshotConstruction::step`, not a local timer.
 3. During OVERDUBBING idle, only an already in-flight
    `LoopSnapshotConstruction` may `step(1)`. Do not
    `startNextPendingConstruction` or `enqueueLiveOverdubPasses` on that turn.
