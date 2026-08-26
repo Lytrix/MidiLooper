@@ -2149,6 +2149,20 @@ void test_device_gate_dirty_length_mismatch_resets() {
   TEST_ASSERT_EQUAL_UINT32(0u, LoopContentResolution::deviceGateLoopLengthTicks());
 }
 
+void test_device_gate_other_loop_does_not_match_session() {
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(50688u, 0, 3);
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateActive());
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateMatchesLoop(0, 3));
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateMatchesLoop(0, 0));
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateMatchesLoop(5, 3));
+  TEST_ASSERT_EQUAL_UINT8(0u, LoopContentResolution::deviceGateTrackIndex());
+  TEST_ASSERT_EQUAL_UINT8(3u, LoopContentResolution::deviceGateLoopIndex());
+  TEST_ASSERT_EQUAL_UINT32(50688u, LoopContentResolution::deviceGateLoopLengthTicks());
+  LoopContentResolution::deviceGateReset();
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateMatchesLoop(0, 3));
+}
+
 void test_device_gate_save_is_not_a_content_defer() {
   TEST_ASSERT_NULL(LoopContentResolution::deviceGateContentDeferReason(false, false));
   TEST_ASSERT_EQUAL_STRING("restore",
@@ -4352,6 +4366,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_slice1a_chunk_range_does_not_repeat);
   RUN_TEST(test_device_gate_dirty_matching_length_skips_without_reset);
   RUN_TEST(test_device_gate_dirty_length_mismatch_resets);
+  RUN_TEST(test_device_gate_other_loop_does_not_match_session);
   RUN_TEST(test_device_gate_save_is_not_a_content_defer);
   RUN_TEST(test_stage9_native_worst_case_micros);
   RUN_TEST(test_stage515b_equal_tick_boundary_order);

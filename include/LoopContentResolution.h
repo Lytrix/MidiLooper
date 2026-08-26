@@ -344,7 +344,11 @@ struct LoopContentResolution {
   /// Sliced device gate for idle maintenance — one heavy step per `deviceGateRunOneSlice`.
   static bool deviceGateFinished();
   static bool deviceGateActive();
-  static void deviceGateBegin(uint32_t loopLengthTicks);
+  static void deviceGateBegin(uint32_t loopLengthTicks, uint8_t trackIndex = 0,
+                              uint8_t loopIndex = 0);
+  static bool deviceGateMatchesLoop(uint8_t trackIndex, uint8_t loopIndex);
+  static uint8_t deviceGateTrackIndex();
+  static uint8_t deviceGateLoopIndex();
   static DeviceGateSliceResult deviceGateRunOneSlice(const LoopPasses& passes,
                                                      uint32_t loopLengthTicks);
   static void deviceGateFormatCaptureLine(char* line, size_t cap);

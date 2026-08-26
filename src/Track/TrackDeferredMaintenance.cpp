@@ -394,7 +394,9 @@ TRACK_COLD_MEM void Track::maybeQueueContentResolutionDeviceGate() {
 #endif
     LoopContentResolution::deviceGateReset();
   }
-  LoopContentResolution::deviceGateBegin(loop.loopLengthTicks);
+  LoopContentResolution::deviceGateBegin(loop.loopLengthTicks,
+                                         resolveTrackIndexForPersistence(*this),
+                                         getActiveLoopIndex());
 #endif
 }
 
@@ -406,6 +408,11 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
     return;
   }
   if (LoopContentResolution::deviceGateFinished() || !LoopContentResolution::deviceGateActive()) {
+    return;
+  }
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  const uint8_t loopIndex = getActiveLoopIndex();
+  if (!LoopContentResolution::deviceGateMatchesLoop(trackIndex, loopIndex)) {
     return;
   }
   Loop& loop = getActiveLoop();

@@ -1606,6 +1606,8 @@ struct DeviceGateSession {
   void reset() {
     phase = Phase::Idle;
     loopLengthTicks = 0;
+    trackIndex = 0;
+    loopIndex = 0;
     indexPassCursor = 0;
     indexChunkCursor = 0;
     indexChunkEventCursor = 0;
@@ -1725,15 +1727,21 @@ struct DeviceGateSession {
     lastStepName = "done";
   }
 
-  void begin(uint32_t ticks) {
+  void begin(uint32_t ticks, uint8_t beginTrackIndex, uint8_t beginLoopIndex) {
     reset();
     if (ticks == 0) {
       return;
     }
     loopLengthTicks = ticks;
+    trackIndex = beginTrackIndex;
+    loopIndex = beginLoopIndex;
     phase = Phase::IndexCommit;
     lastStepName = "idx";
     lastSlice.step = "idx";
+  }
+
+  bool matchesLoop(uint8_t liveTrackIndex, uint8_t liveLoopIndex) const {
+    return isActive() && trackIndex == liveTrackIndex && loopIndex == liveLoopIndex;
   }
 
   void advancePastIndexCommit() {
@@ -2231,6 +2239,8 @@ struct DeviceGateSession {
 
   Phase phase = Phase::Idle;
   uint32_t loopLengthTicks = 0;
+  uint8_t trackIndex = 0;
+  uint8_t loopIndex = 0;
   size_t indexPassCursor = 0;
   uint32_t indexChunkCursor = 0;
   uint32_t indexChunkEventCursor = 0;
@@ -2313,8 +2323,21 @@ bool LoopContentResolution::deviceGateFinished() { return sDeviceGateFinished; }
 
 bool LoopContentResolution::deviceGateActive() { return sDeviceGateSession.isActive(); }
 
-void LoopContentResolution::deviceGateBegin(uint32_t loopLengthTicks) {
-  sDeviceGateSession.begin(loopLengthTicks);
+void LoopContentResolution::deviceGateBegin(uint32_t loopLengthTicks, uint8_t trackIndex,
+                                            uint8_t loopIndex) {
+  sDeviceGateSession.begin(loopLengthTicks, trackIndex, loopIndex);
+}
+
+bool LoopContentResolution::deviceGateMatchesLoop(uint8_t trackIndex, uint8_t loopIndex) {
+  return sDeviceGateSession.matchesLoop(trackIndex, loopIndex);
+}
+
+uint8_t LoopContentResolution::deviceGateTrackIndex() {
+  return sDeviceGateSession.trackIndex;
+}
+
+uint8_t LoopContentResolution::deviceGateLoopIndex() {
+  return sDeviceGateSession.loopIndex;
 }
 
 TRACK_COLD_MEM void LoopContentResolution::deviceGateReset() {

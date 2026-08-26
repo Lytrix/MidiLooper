@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (LCR incomplete diagnostic on gate interrupt)
+Last updated: 2026-08-26 (prepare decomposition D1 — session loop match)
 
 ---
 
@@ -32,8 +32,8 @@ includes a short loop tail so a 20-bar loop does not omit the last 2 bars
 holds the composed frame — device PASS [`004934`](../../captures/session_20260826_004934.log)
 (`ODUB,stop,display` 8.8 / 12.2 ms). 4b.0 wrap/hold device PASS
 [`092755`](../../captures/session_20260826_092755.log)
-(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** Slice 1A on
-[`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
+(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** prepare decomposition D1 after 1A measure FAIL on
+[`playback_window_prepare_algorithm_decomposition_investigation.md`](../Plans/playback_window_prepare_algorithm_decomposition_investigation.md)
 ([#38](https://github.com/Lytrix/MidiLooper/issues/38)). Ring B/RC2 is
 **closed.** Residual **4b.1b** lives on
 [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
