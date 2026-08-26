@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (prepare decomposition D1 — session loop match)
+Last updated: 2026-08-26 (prepare decomposition D1 device PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,10 +11,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Immediate slice:** Slice 1A measure gate **FAIL** on
-[`213537`](../../captures/session_20260826_213537.log). Next work is
+[`213537`](../../captures/session_20260826_213537.log). Decomposition
 [`playback_window_prepare_algorithm_decomposition_investigation.md`](../Plans/playback_window_prepare_algorithm_decomposition_investigation.md)
-**D1** (bind DeviceGate session to track + loop so an empty/other loop does
-not F8-wipe). Do **not** start 1B. Parent remains
+**D1** is **closed** — native + device PASS
+[`221655`](../../captures/session_20260826_221655.log): switch track 0→1
+while `chan resume=2560`, **0** `reset,dirty`, resume `chan 2568` on return,
+then `Complete` at 178.738 s. Next is **D2 design session** (F1 `nsort` /
+`isort`). Do **not** start D2 firmware or 1B. Parent remains
 [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
 ([#38](https://github.com/Lytrix/MidiLooper/issues/38)).
 

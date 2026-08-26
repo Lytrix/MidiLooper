@@ -1,10 +1,10 @@
 # Prepare-algorithm decomposition — after Slice 1A measure FAIL
 
-**Status:** **Open.** Slice D1 native PASS (device verify open). Do **not** start owner-boundary Slice 1B.
+**Status:** **Open.** Slice D1 native + device PASS ([`221655`](../../captures/session_20260826_221655.log)). Next is D2 design session. Do **not** start owner-boundary Slice 1B.
 **Kind:** investigation
 **Parent:** [`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md)
 **GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38). Work: [Work](https://github.com/users/Lytrix/projects/1)
-**Evidence:** [`session_20260826_213537.log`](../../captures/session_20260826_213537.log)
+**Evidence:** [`213537`](../../captures/session_20260826_213537.log) (1A FAIL / F8), [`221655`](../../captures/session_20260826_221655.log) (D1 PASS)
 **Bound authority:** [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md) + [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property)
 
 1A asked whether existing prepare can become a cooperative job without changing its
@@ -79,10 +79,10 @@ Resume across PLAYING **did** work in the same capture: prepare paused at
 ## Slices
 
 ```text
-D0  pin 1A FAIL + F8 wipe owner          (this document)
-D1  bind session to track + loop index   ← now
+D0  pin 1A FAIL + F8 wipe owner          shipped (this document)
+D1  bind session to track + loop index   shipped — device PASS 221655
         empty / other loop must not reset
-D2  F1 IndexCommit nsort / isort         (design session before firmware)
+D2  F1 IndexCommit nsort / isort         ← next (design session before firmware)
 D3  remaining named blockers F4 / F6 / F7
 ```
 
@@ -95,16 +95,45 @@ D1 implementation: `deviceGateBegin` stores track index + loop index.
 `processDeferredContentResolutionDeviceGate` returns without reset when
 `deviceGateMatchesLoop` is false. Native:
 `test_device_gate_other_loop_does_not_match_session` PASS. Firmware RAM1
-locals **4640**. Device recapture still required for the D1 pass line
-(switch away and back; `ev` must not return to 0).
+locals **4640**.
 
-**D2** is not authorized as firmware in this session. `sortAndUniqueByNoteId` /
+### D1 device PASS — `221655`
+
+Clock off. One prepare attempt on track 0 / 50688 ticks / 1429 notes.
+
+| Stamp | Fact |
+|---|---|
+| 18.849 s | first `prepare,slice,idx` `resume=0` |
+| 112.595 s | last slice before switch: `chan` `resume=2560` |
+| 112.708 s | `DISP,1,STOPPED,50688` (194 notes). **0** slices on track 1. **0** `reset,dirty`. |
+| 117.372 s | `DISP,0,STOPPED,50688` (1429 notes) |
+| 117.462 s | `skip,dirty` + `incomplete,reason=dirty,step=chan` — F10 visual-cache dirty, not F8 |
+| 119.077 s | `chan` `resume=2568` — continues 2560, not `idx ev=0` |
+| 178.738 s | `prepare,slice,state` then `DIAG,lcr,mat=` / `pair,tot=` (`Complete`) |
+
+`mat=` / `pair,tot=` are not the 1A pass condition. They only show this
+attempt reached `Complete` after the parked switch.
+
+Device-measured indivisible costs on this loop (not a 1A pass; 1A still has
+no known max on `idx`):
+
+| Step | us | indiv |
+|---|---|---|
+| `idx` | 14–**9296** | 0 |
+| `nsort` | **2660** | 1 |
+| `isort` | **6573** | 1 |
+| `win` | **14423** | 1 |
+| `dedup` | **14899** | 1 |
+| `spans` first | **7205** | 0 |
+| `sort` | **2404** | 1 |
+| `csize` | **3334** | 1 |
+| `ckpt` | 9–234; eight `0→1424` walks | 0 |
+
+**D2** is not authorized as firmware until a design session. `sortAndUniqueByNoteId` /
 `sortTickEventEntriesByTick` are whole-vector operations. Subdividing them is
 algorithmic decomposition, not another yield-around-sort.
 
-**Pass for the investigation (not 1B):** STOPPED browse that switches away from
-the preparing loop and back again shows monotonic `prepare,slice` resume
-(`ev` does not return to 0). Then review F1.
+**Investigation next:** D2 design session for F1. Do not start 1B.
 
 ---
 
