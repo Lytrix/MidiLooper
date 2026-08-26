@@ -334,12 +334,11 @@ distinct destinations per bar edge; no eligible-set count is inferred from it.
 The small `lists=1/2, rows=0` gathers are separate edit-free destinations.
 **RC4 mechanism remains open after `162522`:** `snapshot_idle` lines occur
 after the inflated gather, so snapshot construction is not concurrent inside
-the `g_reconstructUs` span. Higher-priority interrupt elapsed time and
-allocator-route changes remain unmeasured; no allocator spill conclusion is
-drawn. Investigation-diag now emits `DIAG,cer_heap` beside each `cer_edit`
-to record reconstruct-span `InternalHeapFirstAllocator` hits/spills, whether
-the working `MidiEventVec` is already in PSRAM (`ext`), and nested clock
-entries (`clk`/`iclk`). Recapture pending. Question 3 is closed from code:
+the `g_reconstructUs` span. `165024` now rules out the measured
+`InternalHeapFirstAllocator` spill route and nested clock dispatch: all 16
+`cer_heap` rows report `spill=0`, `ext=0`, `clk=0`, and `iclk=0`. Higher-
+priority interrupt elapsed time and `ExternalMemoryFirstAllocator`
+service/cache effects remain unmeasured. Question 3 is closed from code:
 `adoptPersistedSnapshot` / `restorePassesSnapshot` do not publish.
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);

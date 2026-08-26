@@ -204,7 +204,7 @@ The input remains stable: the inflated and normal `T0/S6` windows retain the sam
 the same five repeated `cer_edit` signatures. The first run has no allocator-route telemetry, so
 `InternalHeapFirstAllocator` spill to PSRAM remains **unproven**.
 
-## Mechanism telemetry (in tree, device recapture pending)
+## Mechanism telemetry (`165024` captured; measured candidates closed)
 
 Investigation-diag now emits a second line next to each reported `cer_edit`:
 
@@ -226,21 +226,32 @@ call, so those being in PSRAM does not discriminate. `cer_heap` does not hook
 `InternalHeapFirstAllocator::allocate` (that template lives in a header and blew ITCM). It
 inspects `pitchEvents.data()` after `reserve` and `events.data()` at sequence start.
 
-How to read the next capture:
+`165024` contains 16 paired `cer_edit` / `cer_heap` rows. Every row reports `spill=0`,
+`sbytes=0`, and `ext=0`; `ihit` equals the number of executed lengthen rows (`lgth`). Thus the
+measured `InternalHeapFirstAllocator` buffers in this span stay in internal RAM, including the
+working `MidiEventVec` and every `pitchEvents` reserve. Every row also reports `clk=0` and
+`iclk=0`, so no nested MIDI-clock or internal-clock dispatch occurred during reconstruction.
+The repeated signatures still reproduce the normal, intermediate, and inflated bands:
+`T0/S6` `nlen=18` is `30.095 ms`, `339.941 ms`, and `187.764 ms` across the three rounds.
 
-- `spill>0` or `ext=1` on the slow `T0/S6` samples and `spill=0`/`ext=0` on the fast ones **proves**
-  allocator-route change.
-- `spill=0` and `ext=0` on both bands **rules out** internal-heap-first spill for this span.
-- `clk>0` or `iclk>0` during reconstruct **proves** a nested clock dispatch. The call graph says
-  both stay 0: `onMidiClockPulse` is reached only from `MidiHandler::handleMidiInput`, and
-  reconstruct runs inside that call.
+How to interpret the capture:
+
+- `165024` has `spill=0` and `ext=0` on both fast and slow bands, which **rules out** an
+  `InternalHeapFirstAllocator` route change for the measured working and pitch-event buffers.
+- `165024` has `clk=0` and `iclk=0` on every row, which **rules out** nested clock dispatch as
+  the source of the inflated reconstruction spans.
+- These fields do not measure the time spent inside `ExternalMemoryFirstAllocator` calls or
+  preemption by other higher-priority interrupts. Those remain separate, unmeasured sources of
+  wall-time variation.
 
 ## Open questions
 
 1. **What mechanism makes identical `T0/S6` work 7–10x slower in round 2?** The correlation with
-   preceding snapshot idle is established, but direct concurrent execution is ruled out. Higher-
-   priority interrupt elapsed time and allocator-route changes remain unmeasured and must be
-   discriminated before optimization. `cer_heap` is the discriminator; recapture is pending.
+   preceding snapshot idle is established, but direct concurrent execution is ruled out.
+   `165024` rules out the measured `InternalHeapFirstAllocator` spill route and nested clock
+   dispatch: all 16 rows have `spill=0`, `ext=0`, `clk=0`, and `iclk=0`. Higher-priority interrupt
+   elapsed time and `ExternalMemoryFirstAllocator` service/cache effects are not measured by
+   `cer_heap`; no conclusion is drawn between those remaining sources.
 2. ~~**Are the six signatures six destinations, or successive windows of one destination?**~~
    **Answered by `162522`: successive windows of `T0/S6`.**
 3. ~~**Does the immutable snapshot direction remove this path entirely?**~~ **Answered from code:
@@ -271,7 +282,8 @@ How to read the next capture:
 1. ~~**Slice 1 measurement closure**~~ **Closed by `161834` and `162522`:** destination attribution
    maps the compatibility-gather signatures to `T0/S6`.
 2. **This investigation** — question 3 is answered from code (loaded restore does not publish).
-   Question 1 waits on a `cer_heap` recapture. Question 5 remains open.
+   Question 1's measured spill and nested-clock candidates are closed by `165024`; higher-priority
+   interrupt and PSRAM-first allocation-service measurement remain. Question 5 remains open.
 3. **Measure RC4's candidate resolution** before choosing Ring A's final prefetch lead.
 4. **Size G1** in the parent plan from the resulting representative rebuild cost — **not** from
    today's 367 ms.

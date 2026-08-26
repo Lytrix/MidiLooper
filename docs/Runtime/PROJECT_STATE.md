@@ -57,8 +57,12 @@ also observed; `162522` directly pairs the repeated compatibility gathers with
 `T0/S6`. The playback rebuild `<count>` is rebuild-call count before one-shot
 emission, not distinct-destination multiplicity or an eligible-set count.
 RC4 question 3 is closed from code: `adoptPersistedSnapshot` /
-`restorePassesSnapshot` do not publish a `LoopSnapshot`. Question 1 now has
-investigation-diag `cer_heap` telemetry in tree; device recapture is pending.
+`restorePassesSnapshot` do not publish a `LoopSnapshot`. Question 1 is
+partially closed by [`165024`](../../captures/session_20260826_165024.log):
+all 16 `cer_heap` rows report `spill=0`, `ext=0`, `clk=0`, and `iclk=0`.
+The measured internal-first spill and nested-clock mechanisms are ruled out;
+higher-priority interrupt time and PSRAM-first allocation service remain
+unmeasured.
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated
