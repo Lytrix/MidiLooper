@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.2 snapshot cadence alternates unpublished PLAYING/OVERDUBBING turns)
+Last updated: 2026-08-26 (4b.2 unpublished snapshot contention constrains visual idle cadence)
 
 ---
 
@@ -38,6 +38,8 @@ snapshot idle starts after the playhead has left bar 1 and appends later
 completed bars when the parent has tick room (no live-record prefix rebuild);
 unpublished PLAYING/OVERDUBBING in-flight snapshot idle alternates eligible
 turns so one deferred owner does not run every timing-critical turn;
+unpublished snapshot contention now keeps PLAYING/OVERDUBBING visual idle
+fallback constrained and cadence-gated;
 first-take display keeps continuous playhead length (host implement; device
 verify open). 4b.1 same-turn lane stays
 in tree and is not closed. Parked: `4b.3` post-stop `usbdisp` /
@@ -46,6 +48,9 @@ Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated
 `snapshot_idle` slices and `midi_gap` spikes before cadence alternation.
+[`130244`](../../captures/session_20260826_130244.log) still stacked
+unpublished snapshot with long visual idle reconstruct bursts; host
+refinement now constrains/gates that visual fallback during contention.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:

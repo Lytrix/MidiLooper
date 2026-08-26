@@ -200,6 +200,14 @@ windows. [`125527`](../captures/session_20260826_125527.log) showed
 repeated OVERDUBBING/PLAYING `snapshot_idle` slices (2.6–27.4 ms) with
 `midi_gap` spikes while unpublished work stayed in-flight.
 
+**Amendment (2026-08-26):** During unpublished snapshot contention in
+PLAYING/OVERDUBBING, visual idle fallback stays constrained and cadence-gated
+while snapshot updates continue. This prevents long compatibility visual
+rebuild bursts from stacking on every non-snapshot realtime turn.
+[`130244`](../captures/session_20260826_130244.log) still showed
+`idle_reconstruct` 145–217 ms with unpublished in-flight work and
+`midi_gap` spikes (`415272`, `242612`, `451784`).
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

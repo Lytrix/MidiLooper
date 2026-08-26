@@ -92,7 +92,12 @@ Stop-display hold is device PASS
       unpublished in-flight snapshot idle running on consecutive
       OVERDUBBING/PLAYING turns (2.6–27.4 ms slices; `midi_gap` spikes).
       In tree: round-robin cadence alternates eligible unpublished
-      PLAYING/OVERDUBBING snapshot turns. Do not check off until device verify. Do not
+      PLAYING/OVERDUBBING snapshot turns.
+      [`130244`](../../../captures/session_20260826_130244.log) still stacked
+      unpublished snapshot with long visual idle reconstruct bursts.
+      In tree: unpublished snapshot contention keeps visual fallback
+      constrained and cadence-gated while snapshot updates stay active.
+      Do not check off until device verify. Do not
       step successor construction during OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not
