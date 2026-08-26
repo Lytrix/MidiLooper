@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-046](#dec-046--round-robin-admission-over-playback-relevant-destinations-representation-coverage-is-a-prerequisite) | 2026-08-26 | Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite; `RECORDING` included; G1 consumes RC4's post-resolution cost | Accepted — architecture direction; firmware Slices 1–4 not authorized |
 | [DEC-045](#dec-045-overdub-snapshot-publish-is-idle-stepped) | 2026-08-25 | Overdub `LoopSnapshot` publication queues at stop and steps from idle | Accepted |
 | [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) | 2026-08-25 | Immutable loop snapshots replace maintained LCR as the effective-state direction on the feature branch | Accepted — design phase; amended for LoopPass vs LoopSnapshot, persistent reference root, provisional/global snapshots, and latest-saved reboot |
 | [DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property) | 2026-08-22 | Execution bound class is a gated architectural property; `admit(WorkClass)` stays rejected | Accepted |
@@ -60,7 +61,77 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-046 -->
+<!-- Append new entries below (newest first). Next ID: DEC-047 -->
+
+## DEC-046 — Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite
+
+**Date:** 2026-08-26
+**Status:** Accepted — architecture direction. Firmware Slices 1–4 **not** authorized by this entry.
+**Scope:** `feature/immutable-loop-snapshot-passes`
+**Authority:** [`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md) rows 1, 2 and 7,
+[`RuntimeArchitecture.md`](Authority/Architecture/RuntimeArchitecture.md),
+[`IntervalProjection.md`](Authority/Architecture/IntervalProjection.md),
+[`playback_window_round_robin_admission_refinement.md`](Plans/playback_window_round_robin_admission_refinement.md)
+
+**Context:** [`session_20260826_141838`](../captures/session_20260826_141838.log) showed
+`TrackManager::updateAllTracks` at 344 ms with `midi_gap` 26 ms, and overdubbed notes vanishing from
+the display at wrap. Four distinct problems were being conflated. They are now separated:
+
+| RC | Question | Owner |
+|---|---|---|
+| RC1 | Why are multiple content-sized rebuilds admitted into one clock dispatch? | Ring A admission |
+| RC2 | Why is a nonempty but incomplete derived representation treated as authoritative? | Invariant R |
+| RC3 | Why does snapshot construction consume CPU without converging? | Separate plan |
+| RC4 | Why does one rebuild cost hundreds of milliseconds? | Separate change — [investigation](Plans/playback_window_edit_projection_unit_cost_investigation.md) |
+
+**Decision:**
+
+1. **Ring A admits one eligible content-sized playback-window rebuild per clock dispatch.** Its
+   population is the **dynamic set of playback-relevant destinations that need preparation**, not all
+   enabled slots. Admission does **not** reclassify the rebuild: it remains **Unbounded** in
+   `ExecutionBounds.md`, and no fourth bound class is introduced.
+2. **`TRACK_RECORDING` counts as playback-engine-running for other enabled slots.** Layered-slot
+   playback during recording is intentional, so those slots retain playback-window obligation. The
+   recorded slot itself is excluded by lack of committed content, not by state.
+3. **Invariant R — representation coverage is a prerequisite, not a freshness hint.** A derived
+   representation may satisfy a consumer query only when its coverage corresponds to the requested
+   interval at the requested revision. This is what the entry records; the three enforcement points
+   (display must not paint uncovered cache data, wrap append must eventually produce coverage,
+   overlap resolution must not seed from uncovered cache data) follow from it.
+4. **Invariant A1 and its failure policy are separate statements.** A1: within the design envelope a
+   playback-relevant destination has its replacement ready before its current window expires. Policy
+   on violation: **serve the old immutable window and raise a visible starvation diagnostic. No
+   synchronous rescue rebuild on the clock path** — that path is RC1 itself.
+5. **Invariant A2 — bounded waiting of persistent eligible members.** No playback-relevant
+   destination that needs a refresh may be indefinitely displaced. Verification must prove
+   **dynamic-set semantics**, not cursor arithmetic: members enter on eligibility, leave after
+   successful preparation, the cursor keeps advancing, newly eligible members cannot reset the
+   rotation, and a persistently eligible member eventually gets a turn.
+6. **Ring B rotates idle-path owners**, replacing the three pairwise gates. Owner-3
+   (`applyDeferredVisualCacheWrapAppend`) has an **eligibility** rule, not a priority: its cursor
+   position is consumed even when the owner is skipped.
+7. **Prefetch lead is derived, not chosen.** `(N-1) x T_clock` is a **conservative
+   continuously-due bound**, not a steady-state prediction. Gate **G1** sizes the lead for the
+   representative envelope of **16 tracks x 2 slots x 240 BPM**. Extreme capacity (64 slots, the full
+   `[20, 300]` clamp) is a documented capacity limit, not a blocking gate.
+8. **G1 consumes RC4's post-resolution cost.** [`160244`](../captures/session_20260826_160244.log)
+   proved unit cost is environment-dependent, not input-dependent: five byte-identical input
+   signatures cost **7.3x–9.7x** more under contention, so `cer_range` splits into an uncontended
+   band of 29.5–98.9 ms and a contended band of 306–363 ms. **The 367 ms observation is pathological
+   and must not size the prefetch lead.** RC4 may be investigated now; its firmware fix is a separate
+   change and may not enter the Ring A implementation.
+9. **Sequencing:** Slice 1 slot attribution → RC4 investigation and resolution measurement → G1
+   sizing → Ring B / RC2 → Ring A.
+
+**Consequences:** Ring A's expected benefit is restated honestly. In `160244` a single 362.9 ms
+rebuild accounts for nearly all of the 391.1 ms `tracks` maximum, and observed multiplicity is
+**pairs** (median `cer_range` spacing 1998 ms; only 8 gaps under 50 ms, all 11.9–16.8 ms). Ring A is
+worth roughly 2x there while RC4 is roughly 9x. Ring A remains architecturally correct — it bounds an
+admission multiplier that nothing bounds today — but it is **not** the fix for the observed stall.
+
+**Open, not blocking:** window **bias** (backward margin for LoopEnd launch and clock catch-up) is to
+be measured rather than guessed. It affects the eventual value of `H_fwd` and therefore G1, and does
+not reopen the admission design.
 
 ## DEC-045 — Overdub snapshot publish is idle-stepped
 

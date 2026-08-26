@@ -213,6 +213,29 @@ compatibility gather (and with it this entire cost) does not exist for a slot wi
 [DEC-045](../DECISION_LOG.md#dec-045--overdub-snapshot-publish-is-idle-stepped)). Whether loaded slots
 should publish on restore is the design question; it is **not** authorized here.
 
+### Revision from `160244` — unit cost dominates multiplicity in this capture
+
+[`session_20260826_160244`](../../captures/session_20260826_160244.log) changes the weighting between
+RC1 and RC4, and Ring A's expected benefit must be restated honestly before Slice 4:
+
+- **A single rebuild accounts for essentially the whole stall.** `tracks` max is **391.1 ms** and the
+  largest single `copyEffectiveCommittedEventsInRange` is **362.9 ms**. There is no room left for
+  multiplicity to be the main term in that sample.
+- **Observed multiplicity is 2, not 5–16.** The 67 `cer_range` samples have a **median spacing of
+  1998 ms** (one loop turn). Only 8 inter-arrival gaps fall under 50 ms, all in the 11.9–16.8 ms band
+  — adjacent dispatches, i.e. **pairs**. Destinations in this capture are already largely
+  self-staggered.
+- **Therefore Ring A's benefit here is bounded by a factor of about 2**, while RC4 is a factor of
+  roughly 9 (contended vs uncontended for identical input). Ring A remains architecturally correct —
+  it removes an unbounded admission multiplier that is not bounded by anything today — but it must
+  **not** be presented as the fix for the observed 391 ms.
+- **`representativeRebuildWall` is 30–100 ms, not 367 ms.** The uncontended band is 29.5–98.9 ms;
+  306–363 ms is the contended band. G1 must consume the former plus an explicit decision on whether
+  the contended state may persist.
+
+This strengthens rather than weakens the agreed sequencing: sizing a prefetch lead against 367 ms
+would bake a contention artifact into the scheduling architecture.
+
 **Sequencing decision (user, 2026-08-26).** RC4 is **investigated now**, in
 [`playback_window_edit_projection_unit_cost_investigation.md`](playback_window_edit_projection_unit_cost_investigation.md).
 Its **firmware fix remains a separate change** and cannot be smuggled into the Ring A implementation.
@@ -452,15 +475,15 @@ surfaced as a correctness bug.
 **By track state**, obligation exists in `TRACK_PLAYING` and `TRACK_OVERDUBBING`. It does not exist
 in `TRACK_EMPTY` or `TRACK_ARMED` (nothing started), or `TRACK_STOPPED_RECORDING` (already excluded
 in code). **`TRACK_STOPPED` is the leak** — silent by definition, yet fully rotating today.
-`TRACK_RECORDING` needs one decision: the recorded loop itself has no committed passes and is
-already excluded, but *other* enabled slots on the same track do play during RECORDING, and whether
-that is intended behavior or incidental is a product question, not a derivation (open item 1a).
+`TRACK_RECORDING` **is included** (resolved 2026-08-26, `DEC-046` item 2): layered-slot playback
+during recording is **intentional**, so other enabled slots on the same track retain playback-window
+obligation. The recorded loop itself stays excluded by lack of committed passes, not by state.
 
 **Resulting predicate** — a destination is playback-relevant when all hold:
 
 ```
 slotEnabled[track][slot]
-  && trackPlaybackEngineRunning(track)      // PLAYING or OVERDUBBING; RECORDING per item 1a
+  && trackPlaybackEngineRunning(track)      // PLAYING, OVERDUBBING or RECORDING (DEC-046 item 2)
   && loop.hasCommittedPasses()
   && loop.loopLengthTicks > 0
 ```
@@ -798,7 +821,7 @@ to characterize worst-case capacity.
 | Phase | Slice | Content | Gate |
 |---|---|---|---|
 | **Measurement closure (RC1)** | **0** | Recapture to attribute RC1's remaining ~314 ms | **DONE** — [`153941`](../../captures/session_20260826_153941.log): `edit`/`recon` is 92% of the rebuild. RAM1 blocker fixed en route. Surfaced **RC4** |
-| | **1** | `recordPlaybackRebuild` keeps per-window **maximum** + slot; count destinations rebuilt per bar edge | RAM1 locals ≥ 4000; `pio test -e native`; recapture reports **both** per-edge rebuilds separately, each attributed to its slot. **Exit criteria: (a) a representative per-rebuild duration and the observed eligible-destination count are recorded in this document; (b) it is stated whether the 367 ms sample is representative or an unusually pathological rebuild** |
+| | **1** | `recordPlaybackRebuild` keeps per-window **maximum** + slot; count destinations rebuilt per bar edge | RAM1 locals ≥ 4000; `pio test -e native`. **Narrowed by `160244`:** per-rebuild durations (29.5–98.9 ms uncontended / 306–363 ms contended) and observed multiplicity (pairs, 11.9–16.8 ms apart) are already measured, and the 367 ms sample is established as **pathological**. The **one** remaining exit criterion is **slot attribution**: whether the six recurring input signatures are six destinations or successive windows of one destination — all 67 samples report `lists=18, rows=217`, so this is unresolved |
 | **Representation repair (RC2)** | **2a** | Repairs 1 + 2 — coverage gate on the paint path, wrap append produces coverage | Native display coverage test; device: `DISP` `visualNotes` includes wrap content within one bar of wrap. **Not shippable before Slice 3** — see the ordering constraint below |
 | | **2b** | Repair 3 — source-span seed coverage gate | **Independent semantic gate:** native `test_overdub_source_view` extended to assert the overlap-resolve source is never incomplete; device: `srcafter,why=wrap` never seeds from a dirty cache |
 | **Admission (RC1)** | **3** | Ring B cursor replaces the three pairwise gates; owner-3 dependency rule | Native tests for cursor rotation and the dependency skip; device: `snapshot_idle` share bounded, `visualCache` dirty bars drain during OVERDUBBING |
@@ -941,11 +964,10 @@ not assumed.
 
 ### Open before coding
 
-1. **1a — RECORDING and layered slots.** The only residue of the playback-relevance question. During
-   `TRACK_RECORDING` the recorded loop is already excluded (no committed passes), but other enabled
-   slots on the same track do play. Whether that is intended product behavior or incidental is a
-   product decision, not a derivation. It changes only whether `TRACK_RECORDING` joins PLAYING and
-   OVERDUBBING in `trackPlaybackEngineRunning`.
+1. ~~**1a — RECORDING and layered slots.**~~ **Resolved 2026-08-26 (`DEC-046` item 2): included.**
+   Layered-slot playback during recording is intentional, so `TRACK_RECORDING` joins PLAYING and
+   OVERDUBBING in `trackPlaybackEngineRunning`. The recorded loop stays excluded by lack of committed
+   passes.
 2. **Window bias.** Content size stays at 2 bars this phase. The open question is how far `winStart`
    may move forward, which requires knowing how much backward margin "LoopEnd launch + clock
    catch-up" actually needs. The reuse test's `TICKS_PER_BAR / 2` backward tolerance is evidence of
@@ -956,20 +978,21 @@ not assumed.
 shippable before Ring B (§ *Ordering constraint*), with a stated evidence exception. No longer open.
 
 **Resolved in the design session (round 4)** — playback relevance is derived and owned
-(§ *Design session*), and queued-destination prewarm keeps its commit-boundary exemption. Only
-item 1a remains of that question.
+(§ *Design session*), and queued-destination prewarm keeps its commit-boundary exemption.
+**Item 1a resolved 2026-08-26**, so the playback-relevance question is fully closed.
 
 **Withdrawn as a blocking item:** maximum destination count and the 300 BPM ceiling. Sizing against
 64 destinations at 300 BPM is deferred to capacity documentation and does not gate this phase.
 
 ### Proceed?
 
-**NO for Slices 1–4** — `DEC-046` is required. After round 3 the remaining gates are narrow:
+**`DEC-046` is ACCEPTED (2026-08-26)** as architecture direction, and it explicitly does **not**
+authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 
 | Gate | State |
 |---|---|
-| RC1 attribution | Slice 0/1 scoped |
-| Ring A population — playback relevance | **Settled** — predicate derived, owner named; only item 1a (RECORDING + layered slots) open |
+| RC1 attribution | **Closed** — `153941` + `160244`; Slice 1 narrows to slot attribution |
+| Ring A population — playback relevance | **Closed** — predicate derived, owner named, item 1a resolved (RECORDING included) |
 | Queued-destination prewarm | Settled — commit-boundary exemption kept |
 | Design envelope (16 x 2, ≤ 240 BPM) | Settled |
 | 64 destinations / 300 BPM | Correctly deferred |
@@ -982,6 +1005,6 @@ item 1a remains of that question.
 | 2a → 3 ordering | Settled — 2a not shippable before Ring B |
 | RC3 separation | Settled — separate plan |
 
-**Slice 0 (recapture, no firmware) may run immediately.** The design session that was the last
-substantive precondition for `DEC-046` is complete; item 1a is a product decision of narrow scope,
-and item 2 (bias) affects sizing but not the admission model.
+**Next action is Slice 1 slot attribution, then the RC4 investigation.** `DEC-046` is recorded; the
+only remaining open item is item 2 (bias), which affects `H_fwd` and therefore G1 but not the
+admission model. **G1 may not be sized until RC4's post-resolution cost is measured.**

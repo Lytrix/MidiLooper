@@ -240,7 +240,14 @@ prewarm runs off the clock path via `ensurePlaybackMergedEventsForSlot`.
 running set for *other* enabled slots on the same track (product decision), and
 item **2** — window bias (needs the LoopEnd-launch/clock-catch-up backward
 margin requirement). Content window stays at 2 bars.
-**Slice 0 (recapture, no firmware) may run; Slices 1–4 need `DEC-046`.**
+**`DEC-046` ACCEPTED 2026-08-26** as architecture direction — it does **not**
+authorize firmware Slices 1–4. Item 1a resolved: **`TRACK_RECORDING` is included**
+(layered-slot playback during recording is intentional), so `TRACK_RECORDING`
+joins PLAYING and OVERDUBBING in `trackPlaybackEngineRunning`; the recorded loop
+stays excluded by lack of committed passes. Only item 2 (window bias) remains
+open, affecting `H_fwd`/G1 but not the admission model.
+**Slice 0 (recapture, no firmware) may run; Slices 1–4 still need explicit
+firmware authorization.**
 **Slice 0 RAM1 blocker found and fixed (2026-08-26).**
 `teensy41-capture-serial-investigation-diag` built at RAM1 **locals 512** —
 a FAIL against the 4000 floor despite PlatformIO `SUCCESS`, so the board was not
@@ -288,6 +295,25 @@ direction (DEC-044/045): a published snapshot carries edits applied, so the
 compatibility gather and this whole cost do not exist for a slot with a
 published root. Whether loaded slots publish on restore is the open design
 question.
+[`160244`](../../captures/session_20260826_160244.log) **proves RC4 unit cost is
+environment-dependent, not input-dependent.** Six recurring `cer_edit` input
+signatures repeat in three rounds; five with byte-identical
+`ndel/nlen/lgth/shrt/ev` cost **7.3x-9.7x** more in round 2 (long overdub,
+`snapshot_idle` 48.4% of window) than in rounds 1 and 3 (28.9% and 0%).
+`cer_range` splits into an uncontended band **29.5-98.9 ms** and a contended band
+**306-363 ms**, so **367 ms is pathological, not representative** — `G1` must
+consume the uncontended figure. Mechanism is **not** proven: wall-clock inflation
+from interleaving (48.4% load alone gives ~2x, not 9x) versus
+`InternalHeapFirstAllocator` spill to PSRAM (`min_ever` fell 340->120 KB, which is
+pressure but not exhaustion). Discriminate before optimizing.
+**Weighting between RC1 and RC4 revised:** `tracks` max 391.1 ms against a single
+362.9 ms rebuild leaves no room for multiplicity as the main term, and observed
+multiplicity is **pairs** (median `cer_range` spacing 1998 ms; only 8 gaps under
+50 ms, all 11.9-16.8 ms). Ring A's benefit here is bounded by ~2x while RC4 is
+~9x. Ring A stays architecturally correct but must not be presented as the fix
+for the 391 ms.
+Slice 1 narrows to **slot attribution only** — whether the six signatures are six
+destinations or successive windows of one (`lists=18, rows=217` on all 67 samples).
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.
