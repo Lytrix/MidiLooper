@@ -483,9 +483,9 @@ SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessU
 
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
-                                 uint8_t slotIndex, uint32_t rebuildCount) {
-  emitCapPrintf("#CAP,%lu,DIAG,playback_build,%lu,%lu,%lu,%lu,%u,%u,%lu\r\n",
-                (unsigned long)micros(), (unsigned long)durationUs,
+                                 uint8_t slotIndex, uint32_t rebuildCount, const char* path) {
+  emitCapPrintf("#CAP,%lu,DIAG,playback_build,%s,%lu,%lu,%lu,%lu,%u,%u,%lu\r\n",
+                (unsigned long)micros(), path, (unsigned long)durationUs,
                 (unsigned long)windowStartTick, (unsigned long)windowLengthTicks,
                 (unsigned long)revision, static_cast<unsigned>(trackIndex),
                 static_cast<unsigned>(slotIndex), static_cast<unsigned long>(rebuildCount));

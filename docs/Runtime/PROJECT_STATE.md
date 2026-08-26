@@ -52,6 +52,13 @@ indivisible, content-sized operation. `idle_reconstruct` reached
 baseline [`175350`](../../captures/session_20260826_175350.log), while a
 later steady overdub window improved from 366 ms to 24.325 ms. This finding
 keeps 4b.1b open; bounded reconstruction is a separate next stage.
+Architecture review parks that implementation pending snapshot-first display
+migration: `visualCache` remains the display-owned derived representation, while
+`LoopSnapshot` is the intended canonical source for bounded display projection.
+Do not make the transitional `NoteUtils::reconstructDisplayNotes` pipeline a
+new maintained state machine before snapshot-to-`DisplayNote` equivalence is
+proven for wrap projection and duplicate handling. Continue Ring B/RC2 slicing;
+the snapshot-first follow-up is not selected in the current scope.
 OpenSpec `4b.2` first-take length updates during RECORDING remain in tree;
 live-record snapshot append starts now admit at most one completed bar of
 new range per start so setup cost stays smaller in realtime windows;
@@ -83,8 +90,12 @@ clock after Record; probe counters are now file-scope volatiles.
 [`171159`](../../captures/session_20260826_171159.log) closes question 1:
 `filt` stays flat, `span`/`proj` take the 7.9x, `itickus=0` on every row.
 The follow-up `cer_snapshot` formatting probe was removed after
-[`172305`](../../captures/session_20260826_172305.log) rebooted at record start;
-the existing `playback_build` timing remains the safe snapshot-path evidence.
+[`172305`](../../captures/session_20260826_172305.log) rebooted at record start.
+`playback_build` now carries a deferred `path` field (`snapshot`,
+`compatibility`, or `note_edit`) so later investigation captures can identify
+the representation behind each emitted maximum sample without formatting on the
+clock/interval path. The existing one-shot remains an aggregate: `count` is all
+rebuild calls before emission, not distinct destinations.
 [`172802`](../../captures/session_20260826_172802.log) confirms first-clock
 recording and continued overdub/stop operation after removal.
 Task 4.3 stays skipped.

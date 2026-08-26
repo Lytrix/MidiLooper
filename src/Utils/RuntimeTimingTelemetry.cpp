@@ -120,6 +120,7 @@ struct State {
   uint32_t pendingRebuildCount = 0;
   uint8_t pendingRebuildTrack = 255;
   uint8_t pendingRebuildSlot = 255;
+  PlaybackRebuildPath pendingRebuildPath = PlaybackRebuildPath::CompatibilityPasses;
 };
 
 State& state() {
@@ -136,6 +137,30 @@ void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t t
   s.pendingLateClass = lateClass;
   s.pendingLateUs = latenessUs;
   s.pendingLateTick = tick;
+}
+
+RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
+#if defined(__IMXRT1062__)
+  switch (path) {
+    case PlaybackRebuildPath::PublishedSnapshot:
+      return PSTR("snapshot");
+    case PlaybackRebuildPath::CompatibilityPasses:
+      return PSTR("compatibility");
+    case PlaybackRebuildPath::NoteEditPreview:
+      return PSTR("note_edit");
+  }
+  return PSTR("unknown");
+#else
+  switch (path) {
+    case PlaybackRebuildPath::PublishedSnapshot:
+      return "snapshot";
+    case PlaybackRebuildPath::CompatibilityPasses:
+      return "compatibility";
+    case PlaybackRebuildPath::NoteEditPreview:
+      return "note_edit";
+  }
+  return "unknown";
+#endif
 }
 
 RT_FLASHMEM_FN void clearWindow(State& s) {
@@ -419,7 +444,8 @@ void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t on
 
 RT_FLASHMEM_FN void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                           uint32_t windowLengthTicks, uint32_t revision,
-                                          uint8_t trackIndex, uint8_t slotIndex) {
+                                          uint8_t trackIndex, uint8_t slotIndex,
+                                          PlaybackRebuildPath path) {
   State& s = state();
   ++s.pendingRebuildCount;
   if (!s.pendingPlaybackRebuild || durationUs > s.pendingRebuildDurationUs) {
@@ -429,6 +455,7 @@ RT_FLASHMEM_FN void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowSt
     s.pendingRebuildRevision = revision;
     s.pendingRebuildTrack = trackIndex;
     s.pendingRebuildSlot = slotIndex;
+    s.pendingRebuildPath = path;
   }
   s.pendingPlaybackRebuild = true;
 }
@@ -470,7 +497,8 @@ RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
     DebugSessionCapture::playbackRebuild(s.pendingRebuildDurationUs, s.pendingRebuildWindowStartTick,
                                          s.pendingRebuildWindowLengthTicks, s.pendingRebuildRevision,
                                          s.pendingRebuildTrack, s.pendingRebuildSlot,
-                                         s.pendingRebuildCount);
+                                         s.pendingRebuildCount,
+                                         playbackRebuildPathLabel(s.pendingRebuildPath));
   }
 #endif
   s.pendingLateEvent = false;
@@ -479,6 +507,7 @@ RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   s.pendingRebuildDurationUs = 0;
   s.pendingRebuildTrack = 255;
   s.pendingRebuildSlot = 255;
+  s.pendingRebuildPath = PlaybackRebuildPath::CompatibilityPasses;
 }
 
 RT_FLASHMEM_FN void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs) {
@@ -657,6 +686,7 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.pendingRebuildCount = s.pendingRebuildCount;
   out.pendingRebuildTrack = s.pendingRebuildTrack;
   out.pendingRebuildSlot = s.pendingRebuildSlot;
+  out.pendingRebuildPath = s.pendingRebuildPath;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;
