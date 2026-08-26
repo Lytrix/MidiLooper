@@ -1025,3 +1025,33 @@ and `Loop` visual/source-cache owners. Native cursor and source-coverage
 checks are in place; capture-serial and native verification are required
 before the device gate can close. RC4 firmware repair, Ring A, and the
 remaining snapshot consumer migrations stay out of scope.
+
+## Future RC — overdub overlap target semantics
+
+**Status:** Deferred; not part of Ring B/RC2.
+
+The current overdub path has two distinct identities:
+
+- the incoming note belongs to the live `Capture` for the current overdub;
+- overlap `Shorten`/`Hide` changes target `NoteId`s selected from
+  `overdubSourceViewNotes_`, which represents already committed loop content,
+  including earlier overdub passes.
+
+`Track::recordMidiEvents` invokes
+`Loop::accumulatePendingNoteChangesForIncomingNote` when the current capture
+NoteOff closes an incoming note. The resolver then creates pending transforms
+for overlapping source notes, and
+`Loop::sealPendingNoteChangesToEditPasses` persists those transforms as
+companion edit passes. Therefore a current overdub NoteOff can intentionally
+shorten or hide notes from a previous overdub. Ring B scheduling and RC2
+coverage enforcement do not change this target-selection policy; fixing RC2
+will only make the source representation more complete.
+
+This future RC must first decide the intended overlap policy—whether a new
+overdub should modify overlapping committed notes, modify only the current
+capture, or use another explicit replacement rule—before changing the
+resolver. The investigation must prove target `NoteId`s and resulting
+pass content with a multi-overdub same-pitch fixture, then add native
+coverage and a device check if the selected policy is not host-complete.
+Keep this RC separate from RC2 so source-cache coverage cannot be
+misattributed as the cause of overlap-target behavior.
