@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.2 live RECORDING appends completed bars; no prefix rebuild)
+Last updated: 2026-08-26 (4b.2 snapshot cadence alternates unpublished PLAYING/OVERDUBBING turns)
 
 ---
 
@@ -36,11 +36,16 @@ holds the composed frame — device PASS [`004934`](../../captures/session_20260
 first-take length updates during RECORDING with record-stop bar quantize;
 snapshot idle starts after the playhead has left bar 1 and appends later
 completed bars when the parent has tick room (no live-record prefix rebuild);
+unpublished PLAYING/OVERDUBBING in-flight snapshot idle alternates eligible
+turns so one deferred owner does not run every timing-critical turn;
 first-take display keeps continuous playhead length (host implement; device
 verify open). 4b.1 same-turn lane stays
 in tree and is not closed. Parked: `4b.3` post-stop `usbdisp` /
 `load_frame` / `late_on`, `4b.4` overdub `DisplayResolveLiveCapture`.
 Task 4.3 stays skipped.
+[`125527`](../../captures/session_20260826_125527.log) kept unpublished
+snapshot in-flight through OVERDUBBING/PLAYING with repeated
+`snapshot_idle` slices and `midi_gap` spikes before cadence alternation.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:

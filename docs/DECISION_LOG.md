@@ -192,6 +192,14 @@ discard unpublished and rebuild at the sealed length.
 each length step (2611 RECORDING `snapshot_idle` steps, 17.7 s CPU, BPM
 89–184, post-stop `midi_gap` 361 ms).
 
+**Amendment (2026-08-26):** During unpublished first-root construction,
+PLAYING/OVERDUBBING in-flight snapshot idle alternates eligible turns
+(round-robin cadence). This keeps live updates active while preventing
+consecutive snapshot turns from monopolizing timing-critical deferred
+windows. [`125527`](../captures/session_20260826_125527.log) showed
+repeated OVERDUBBING/PLAYING `snapshot_idle` slices (2.6–27.4 ms) with
+`midi_gap` spikes while unpublished work stayed in-flight.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

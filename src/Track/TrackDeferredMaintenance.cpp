@@ -737,7 +737,24 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
       !alternateWithPersist ||
       MidiServiceDrain::shouldRunSnapshotOnPostStopLane(
           snapshotPending, persistPending, StorageManager::preferPostStopPersistLane());
-  if (snapshotPending && snapshotIdleAllowed && snapshotLaneAllowed) {
+  const bool snapshotEligible = snapshotPending && snapshotIdleAllowed && snapshotLaneAllowed;
+  const bool snapshotRoundRobinActive = snapshotEligible &&
+                                        MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+                                            isPlaying(), isOverdubbing(),
+                                            havePublishedSnapshot,
+                                            snapshotLoop.hasInFlightSnapshotConstruction(),
+                                            snapshotPending);
+  bool snapshotCadenceTurn = true;
+  if (snapshotRoundRobinActive) {
+    // session_20260826_125527 showed uninterrupted snapshot turns in
+    // OVERDUBBING/PLAYING before the first root published. Alternate turns so
+    // snapshot does not monopolize timing-critical deferred windows.
+    snapshotCadenceTurn = snapshotIdleRoundRobinTurn_;
+    snapshotIdleRoundRobinTurn_ = !snapshotIdleRoundRobinTurn_;
+  } else {
+    snapshotIdleRoundRobinTurn_ = true;
+  }
+  if (snapshotEligible && snapshotCadenceTurn) {
 #if defined(SESSION_CAPTURE)
     const uint32_t snapshotIdleStartUs = micros();
 #endif

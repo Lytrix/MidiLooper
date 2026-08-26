@@ -685,6 +685,10 @@ advances an in-flight candidate. [`114012`](../../../captures/session_20260826_1
 started `snapshot_idle` at `record_length=768` while bar 1 was still
 being written. [`121754`](../../../captures/session_20260826_121754.log)
 rebuilt the prefix on each later length step.
+[`125527`](../../../captures/session_20260826_125527.log) kept unpublished
+snapshot in-flight through OVERDUBBING/PLAYING with repeated
+`snapshot_idle` slices; cadence now alternates eligible unpublished
+snapshot turns on those states.
 
 Parked until selected:
 

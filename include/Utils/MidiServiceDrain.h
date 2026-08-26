@@ -54,6 +54,16 @@ inline bool shouldRunPersistOnPostStopLane(bool snapshotPending, bool persistPen
   return persistLane;
 }
 
+/// During unpublished first-root construction, PLAYING/OVERDUBBING alternate snapshot
+/// idle turns so one owner cannot monopolize consecutive timing-critical turns.
+inline bool shouldRoundRobinSnapshotIdle(bool isPlaying, bool isOverdubbing,
+                                         bool havePublishedSnapshot,
+                                         bool hasInFlightConstruction,
+                                         bool snapshotPending) {
+  return (isPlaying || isOverdubbing) && !havePublishedSnapshot &&
+         hasInFlightConstruction && snapshotPending;
+}
+
 /// First-record uses the overdub live-enqueue setup: start on RECORDING after
 /// the playhead has left bar 1, and start on PLAYING. OVERDUBBING only advances
 /// an in-flight candidate (`allowStart` is false there). After a published root
