@@ -82,6 +82,9 @@ public:
   bool hasCommittedPassesInSlot(uint8_t slotIndex) const;
   uint32_t quantizeTransportRecordLength(uint32_t rawLength) const;
   uint32_t computeRecordStopLengthTicks(uint32_t rawLength, uint32_t lastEventTick) const;
+  /// First-take RECORDING only. Writes `loopLengthTicks` with the same bar
+  /// quantize as `prepareRecordStop` so snapshot idle can start at 1 bar.
+  void updateGrowingRecordLoopLength(uint32_t currentTick);
   void resetLoopSlotAfterEmptyCapture(uint8_t slotIndex);
 
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick

@@ -691,6 +691,7 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                                                           bool postOverdubDrainWindowActive) {
+  updateGrowingRecordLoopLength(clockManager.getCurrentTick());
   Loop& snapshotLoop = getActiveLoop();
   bool snapshotIdleUnitRan = false;
   // After record stop the snapshot queue is pending and would consume every

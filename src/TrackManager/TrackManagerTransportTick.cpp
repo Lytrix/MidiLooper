@@ -165,6 +165,10 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       forceMidiLedUpdate(currentTick);
     }
 
+    if (tracks[i].isRecording() && !tracks[i].isPlaying()) {
+      tracks[i].updateGrowingRecordLoopLength(currentTick);
+    }
+
     const bool audible = isTrackAudible(i);
     const uint32_t playTick = tracks[i].getEffectivePlaybackTick(currentTick);
 

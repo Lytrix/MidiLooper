@@ -43,6 +43,24 @@ void test_truncation_rewind_zero_when_final_zero() {
   TEST_ASSERT_EQUAL_UINT32(0, RecordStopLength::computeTruncationRewindTicks(100, 0));
 }
 
+void test_growing_record_reaches_one_bar_from_stop_quantize() {
+  constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  TEST_ASSERT_EQUAL_UINT32(ticksPerBar,
+                           RecordStopLength::computeRecordStopLengthTicks(0, 0));
+  TEST_ASSERT_EQUAL_UINT32(ticksPerBar,
+                           RecordStopLength::computeRecordStopLengthTicks(100, 50));
+  TEST_ASSERT_EQUAL_UINT32(ticksPerBar,
+                           RecordStopLength::computeRecordStopLengthTicks(ticksPerBar, 400));
+}
+
+void test_growing_record_lengthens_to_two_bars_past_half_bar_grace() {
+  constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  const uint32_t rawLength = ticksPerBar + (ticksPerBar / 2) + 1;
+  const uint32_t lastEvent = ticksPerBar + (ticksPerBar / 6) + 1;
+  TEST_ASSERT_EQUAL_UINT32(
+      2 * ticksPerBar, RecordStopLength::computeRecordStopLengthTicks(rawLength, lastEvent));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_stop_uses_content_length_when_shorter_than_transport);
@@ -50,5 +68,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_truncation_rewind_when_raw_exceeds_final);
   RUN_TEST(test_truncation_rewind_zero_when_equal);
   RUN_TEST(test_truncation_rewind_zero_when_final_zero);
+  RUN_TEST(test_growing_record_reaches_one_bar_from_stop_quantize);
+  RUN_TEST(test_growing_record_lengthens_to_two_bars_past_half_bar_grace);
   return UNITY_END();
 }

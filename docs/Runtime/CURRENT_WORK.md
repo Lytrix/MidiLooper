@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.2 first-record live enqueue + PLAYING start)
+Last updated: 2026-08-26 (4b.2 growing-record length + snapshot start at 1 bar)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,9 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** OpenSpec **4b.2** — first-record uses the overdub live-enqueue
-setup: start from `capture.store` during RECORDING once a length exists,
-and start on PLAYING. OVERDUBBING only advances an in-flight candidate.
+**Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
+RECORDING with the same bar-quantize as record stop
+(`computeRecordStopLengthTicks`). Snapshot idle can start at 1 bar from
+`capture.store`. PLAYING still starts remaining work. OVERDUBBING only
+advances an in-flight candidate. [`095720`](../../captures/session_20260826_095720.log)
+had no `snapshot_idle` until PLAYING because length stayed 0.
 Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).

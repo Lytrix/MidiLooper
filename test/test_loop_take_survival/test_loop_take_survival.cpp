@@ -679,6 +679,20 @@ void test_queue_overdub_snapshot_waits_for_idle_steps() {
   TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(64, 0)->references.size());
 }
 
+void test_live_record_pending_after_length_reaches_one_bar() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 0;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+}
+
 void test_live_record_starts_snapshot_before_session_exit() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -873,6 +887,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stale_snapshot_applies_unpublished_hide_companion);
   RUN_TEST(test_overdub_publish_keeps_pass_events_when_companion_is_missing);
   RUN_TEST(test_queue_overdub_snapshot_waits_for_idle_steps);
+  RUN_TEST(test_live_record_pending_after_length_reaches_one_bar);
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);

@@ -286,9 +286,25 @@ bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
          passIdInList(box.appliedPassIds, passId);
 }
 
+void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t loopLengthTicks) {
+  const bool unpublishedStale = box.unpublishedCandidate &&
+                                box.unpublishedCandidate->loopLengthTicks() != loopLengthTicks;
+  const bool constructionStale =
+      box.construction && box.construction->candidate().loopLengthTicks() != loopLengthTicks;
+  if (!unpublishedStale && !constructionStale) {
+    return;
+  }
+  box.unpublishedCandidate.reset();
+  box.construction.reset();
+  box.constructionPassId = kInvalidPassId;
+  box.appliedLiveRecordEventCount = 0;
+  box.applyingCompanions = false;
+}
+
 LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
                                                             const PendingSnapshotPublishBox& box) {
-  if (box.unpublishedCandidate) {
+  if (box.unpublishedCandidate &&
+      box.unpublishedCandidate->loopLengthTicks() == loop.loopLengthTicks) {
     return box.unpublishedCandidate;
   }
   ImmutableLoopSnapshotRef parent = loop.publishedSnapshot();
@@ -564,6 +580,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   }
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  discardPendingIfLoopLengthChanged(box, loopLengthTicks);
   if (allowStartConstruction) {
     enqueueLiveOverdubPasses();
   }

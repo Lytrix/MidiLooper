@@ -523,7 +523,8 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       }
     }
 
-    if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks) {
+    if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks &&
+        !(isRecording() && !isPlaying())) {
       tickRelative = loop.loopLengthTicks - 1;
       newEvt.tick = tickRelative;
     }
