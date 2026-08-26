@@ -119,9 +119,10 @@ SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_
 SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
 /** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick> (Tier-A). */
 SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick);
-/** Playback gather rebuild: DIAG,playback_build,<durationUs>,<winStart>,<winLen>,<revision> (Tier-A). */
+/** Playback gather rebuild: DIAG,playback_build,<durationUs>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count> (Tier-A). Duration/window/track/slot are the maximum sample; count is rebuilds since last emit. */
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
-                                 uint32_t windowLengthTicks, uint32_t revision);
+                                 uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
+                                 uint8_t slotIndex, uint32_t rebuildCount);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);

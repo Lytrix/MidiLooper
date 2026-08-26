@@ -55,6 +55,28 @@ uint32_t capturePlaybackStreamPhase(const MidiEvent& evt, const ProjectionContex
   return IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
 }
 
+uint8_t playbackRebuildTrackIndex(const Track& track) {
+  const uint8_t trackCount = trackManager.getTrackCount();
+  for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+    if (&track == &trackManager.getTrack(trackIndex)) {
+      return trackIndex;
+    }
+  }
+  return 255;
+}
+
+uint8_t playbackRebuildSlotIndex(const Track& track, const Loop& loop) {
+  if (!track.loopsAllocated()) {
+    return 255;
+  }
+  for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+    if (&loop == &track.getLoop(slotIndex)) {
+      return slotIndex;
+    }
+  }
+  return 255;
+}
+
 }  // namespace
 
 ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
@@ -176,7 +198,8 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   DIAG_TIMING_RECORD(PlaybackBuild, playbackBuildUs);
   RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(
       playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
-      runtime.mergedMidiEvents.windowLengthTicks, windowRevision);
+      runtime.mergedMidiEvents.windowLengthTicks, windowRevision,
+      playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop));
   mergedMidiEventsBuildInProgress = false;
   return true;
 }
