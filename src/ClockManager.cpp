@@ -140,9 +140,22 @@ void ClockManager::actuallyTransition(ClockSource from, ClockSource to) {
 
 
 void ClockManager::updateInternalClock() {
-  if (!sequencerRunning) return;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  const uint32_t intervalTimerStartUs = micros();
+#endif
+  if (!sequencerRunning) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    InvestigationAllocProbe::recordIntervalTimerSpan(micros() - intervalTimerStartUs);
+#endif
+    return;
+  }
   // When slaved to external MIDI clock, tick is driven only by onMidiClockPulse
-  if (clockSource == CLOCK_EXTERNAL) return;
+  if (clockSource == CLOCK_EXTERNAL) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    InvestigationAllocProbe::recordIntervalTimerSpan(micros() - intervalTimerStartUs);
+#endif
+    return;
+  }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   InvestigationAllocProbe::recordInternalClockDispatch();
 #endif
@@ -158,6 +171,9 @@ void ClockManager::updateInternalClock() {
   trackManager.advanceJamTicks(1);
   trackManager.updateAllTracks(currentTick);
   lastInternalTickTime = micros();
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  InvestigationAllocProbe::recordIntervalTimerSpan(micros() - intervalTimerStartUs);
+#endif
 }
 
 void ClockManager::onMidiClockPulse() {

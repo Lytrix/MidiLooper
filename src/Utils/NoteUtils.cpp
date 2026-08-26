@@ -13,6 +13,11 @@
 #include <vector>
 #include "Utils/NoteEditMem.h"
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+#include "Utils/InvestigationAllocProbe.h"
+#include <Arduino.h>
+#endif
+
 namespace {
 
 constexpr size_t kReconstructVerboseMaxEvents = 32;
@@ -722,9 +727,21 @@ NoteVector reconstructNotesImpl(const std::vector<MidiEvent, EventAlloc>& midiEv
     if (loopLength == 0) {
         return NoteVector{};
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    const uint32_t spanStartUs = micros();
+#endif
     const CanonicalNoteSpanVec spans = buildCanonicalSpansFromMidi(
         midiEvents, loopLength, verboseLog, finishOpenNotes, overdubPassWrapPairing);
-    return displayNotesFromCanonicalSpanVec<NoteVector>(spans, loopLength, verboseLog);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    InvestigationAllocProbe::addSpanBuildUs(micros() - spanStartUs);
+    const uint32_t projectStartUs = micros();
+#endif
+    NoteVector notes =
+        displayNotesFromCanonicalSpanVec<NoteVector>(spans, loopLength, verboseLog);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    InvestigationAllocProbe::addProjectUs(micros() - projectStartUs);
+#endif
+    return notes;
 }
 
 }  // namespace

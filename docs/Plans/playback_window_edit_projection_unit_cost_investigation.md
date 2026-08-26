@@ -244,14 +244,43 @@ How to interpret the capture:
   preemption by other higher-priority interrupts. Those remain separate, unmeasured sources of
   wall-time variation.
 
+Investigation-diag now also emits:
+
+```
+DIAG,cer_recon,recon=<us>,filt=<us>,span=<us>,proj=<us>,itick=<n>,itickus=<us>
+```
+
+| Field | Meaning |
+|---|---|
+| `filt` | Internal-heap pitch filter in `reconstructNotesForPitch` (`reserve` + scan) |
+| `span` | `buildCanonicalSpansFromMidi` — PSRAM-first stacks and event walk |
+| `proj` | `displayNotesFromCanonicalSpanVec` — PSRAM-first project + dedupe |
+| `itick` / `itickus` | `ClockManager::updateInternalClock` IntervalTimer entries and wall time during reconstruct, including `CLOCK_EXTERNAL` early returns |
+
+How to read `cer_recon`:
+
+- If `filt` inflates with `recon` while walking internal-heap events, the remaining cause is
+  preemption (IntervalTimer or another ISR). `itickus` is the measured IntervalTimer share.
+- If `filt` stays in the fast band while `span`/`proj` inflate, the remaining cause is the
+  PSRAM-first reconstruct pipeline.
+- `itickus` does not include the Teensy USB hardware ISR. That core path is not hooked.
+
 ## Open questions
 
-1. **What mechanism makes identical `T0/S6` work 7–10x slower in round 2?** The correlation with
-   preceding snapshot idle is established, but direct concurrent execution is ruled out.
-   `165024` rules out the measured `InternalHeapFirstAllocator` spill route and nested clock
-   dispatch: all 16 rows have `spill=0`, `ext=0`, `clk=0`, and `iclk=0`. Higher-priority interrupt
-   elapsed time and `ExternalMemoryFirstAllocator` service/cache effects are not measured by
-   `cer_heap`; no conclusion is drawn between those remaining sources.
+1. ~~**What mechanism makes identical `T0/S6` work 7–10x slower in round 2?**~~
+   **Answered by `171159`:** the inflation is in the PSRAM-first reconstruct pipeline
+   (`buildCanonicalSpansFromMidi` + `displayNotesFromCanonicalSpanVec`), not in the
+   internal-heap pitch filter and not in IntervalTimer ISR wall time.
+   [`171159`](../../captures/session_20260826_171159.log) paired RECORDING vs OVERDUBBING
+   windows of the same `cer_rows` signature (`active=217`, `comp=217`). The `nlen=18`
+   `lgth=8` row is `recon=37391` / `filt=36` / `span=18361` / `proj=18921` at 28.183 s,
+   then `recon=295800` / `filt=36` / `span=162790` / `proj=132843` at 64.458 s.
+   `filt` is unchanged. `span` and `proj` take the 7.9x. Every `cer_recon` row has
+   `itickus=0` while `itick` scales with reconstruct wall time (`itick=14` vs `115`),
+   so `ClockManager::updateInternalClock` early-returns are counted and each is below
+   `micros()` resolution. [`170149`](../../captures/session_20260826_170149.log) rebooted
+   at first clock after Record on function-local statics; that probe is now file-scope
+   volatiles. The Teensy USB hardware ISR remains unhooked.
 2. ~~**Are the six signatures six destinations, or successive windows of one destination?**~~
    **Answered by `162522`: successive windows of `T0/S6`.**
 3. ~~**Does the immutable snapshot direction remove this path entirely?**~~ **Answered from code:
@@ -282,8 +311,9 @@ How to interpret the capture:
 1. ~~**Slice 1 measurement closure**~~ **Closed by `161834` and `162522`:** destination attribution
    maps the compatibility-gather signatures to `T0/S6`.
 2. **This investigation** — question 3 is answered from code (loaded restore does not publish).
-   Question 1's measured spill and nested-clock candidates are closed by `165024`; higher-priority
-   interrupt and PSRAM-first allocation-service measurement remain. Question 5 remains open.
+   Question 1 is closed by `165024` + `171159`: spill, nested clock, IntervalTimer ISR
+   wall time, and internal-heap `filt` are not the inflation. The remaining measured
+   cost is PSRAM-first `span`/`proj`. Question 5 remains open.
 3. **Measure RC4's candidate resolution** before choosing Ring A's final prefetch lead.
 4. **Size G1** in the parent plan from the resulting representative rebuild cost — **not** from
    today's 367 ms.

@@ -39,6 +39,11 @@ uint32_t g_reconSpillBytes = 0;
 uint32_t g_reconClockPulses = 0;
 uint32_t g_reconInternalClockDispatches = 0;
 uint32_t g_workingSetExternal = 0;
+uint32_t g_reconFilterUs = 0;
+uint32_t g_reconSpanUs = 0;
+uint32_t g_reconProjectUs = 0;
+uint32_t g_reconIntervalTimerEntries = 0;
+uint32_t g_reconIntervalTimerUs = 0;
 
 void resetLengthPathCounters() {
   g_lengthenPathCount = 0;
@@ -50,6 +55,11 @@ void resetLengthPathCounters() {
   g_reconSpillBytes = 0;
   g_reconClockPulses = 0;
   g_reconInternalClockDispatches = 0;
+  g_reconFilterUs = 0;
+  g_reconSpanUs = 0;
+  g_reconProjectUs = 0;
+  g_reconIntervalTimerEntries = 0;
+  g_reconIntervalTimerUs = 0;
 }
 #endif
 
@@ -390,6 +400,9 @@ void shortenNoteEndById(MidiEventVec& events, NoteId noteId, uint32_t newEndTick
 // call at 2513 events (session_20260821_112151: 70 calls, 40.3 s of a 51.1 s replay).
 NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> reconstructNotesForPitch(
     const MidiEventVec& events, uint8_t pitch, uint32_t loopLength) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  const uint32_t filterStartUs = micros();
+#endif
   MidiEventVec pitchEvents;
   pitchEvents.reserve(events.size());
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
@@ -405,6 +418,9 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> reconstructNotesForPitch(
       pitchEvents.push_back(evt);
     }
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  g_reconFilterUs += micros() - filterStartUs;
+#endif
   return NoteUtils::reconstructNotes(pitchEvents, loopLength, false);
 }
 
@@ -444,6 +460,10 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   const uint32_t reconstructStartUs = micros();
   const uint32_t clockPulsesStart = InvestigationAllocProbe::clockPulseEntries();
   const uint32_t internalClockStart = InvestigationAllocProbe::internalClockDispatches();
+  const uint32_t spanStartUs = InvestigationAllocProbe::spanBuildUs();
+  const uint32_t projectStartUs = InvestigationAllocProbe::projectUs();
+  const uint32_t intervalTimerEntriesStart = InvestigationAllocProbe::intervalTimerEntries();
+  const uint32_t intervalTimerUsStart = InvestigationAllocProbe::intervalTimerUs();
 #endif
   const uint32_t newStart = refStart;
   const uint32_t displayNewEnd = (newEnd > loopLength) ? (newEnd % loopLength) : newEnd;
@@ -455,6 +475,11 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
   g_reconClockPulses += InvestigationAllocProbe::clockPulseEntries() - clockPulsesStart;
   g_reconInternalClockDispatches +=
       InvestigationAllocProbe::internalClockDispatches() - internalClockStart;
+  g_reconSpanUs += InvestigationAllocProbe::spanBuildUs() - spanStartUs;
+  g_reconProjectUs += InvestigationAllocProbe::projectUs() - projectStartUs;
+  g_reconIntervalTimerEntries +=
+      InvestigationAllocProbe::intervalTimerEntries() - intervalTimerEntriesStart;
+  g_reconIntervalTimerUs += InvestigationAllocProbe::intervalTimerUs() - intervalTimerUsStart;
 #endif
   std::vector<NoteUtils::DisplayNote> notesToDelete;
   std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
@@ -885,6 +910,16 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
                static_cast<unsigned long>(g_reconClockPulses),
                static_cast<unsigned long>(g_reconInternalClockDispatches),
                static_cast<unsigned>(g_workingSetExternal));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      snprintf(line, sizeof(line),
+               EDIT_DIAG_FMT("#CAP,%lu,DIAG,cer_recon,recon=%lu,filt=%lu,span=%lu,proj=%lu,"
+                             "itick=%lu,itickus=%lu"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(g_reconstructUs),
+               static_cast<unsigned long>(g_reconFilterUs),
+               static_cast<unsigned long>(g_reconSpanUs),
+               static_cast<unsigned long>(g_reconProjectUs),
+               static_cast<unsigned long>(g_reconIntervalTimerEntries),
+               static_cast<unsigned long>(g_reconIntervalTimerUs));
       DebugSessionCapture::appendCaptureTextLine(line);
     }
   }
