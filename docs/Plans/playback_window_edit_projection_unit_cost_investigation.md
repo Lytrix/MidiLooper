@@ -257,17 +257,6 @@ DIAG,cer_recon,recon=<us>,filt=<us>,span=<us>,proj=<us>,itick=<n>,itickus=<us>
 | `proj` | `displayNotesFromCanonicalSpanVec` — PSRAM-first project + dedupe |
 | `itick` / `itickus` | `ClockManager::updateInternalClock` IntervalTimer entries and wall time during reconstruct, including `CLOCK_EXTERNAL` early returns |
 
-The next measurement adds:
-
-```
-DIAG,cer_snapshot,us=<us>,ev=<n>,win=<ticks>,bars=<n>
-```
-
-This is the direct published-snapshot membership gather in
-`gatherPublishedSnapshotMembership`, emitted only when it takes at least 100 µs.
-It measures the candidate playback-window read without changing fallback or
-overlay behavior.
-
 How to read `cer_recon`:
 
 - If `filt` inflates with `recon` while walking internal-heap events, the remaining cause is
@@ -275,8 +264,6 @@ How to read `cer_recon`:
 - If `filt` stays in the fast band while `span`/`proj` inflate, the remaining cause is the
   PSRAM-first reconstruct pipeline.
 - `itickus` does not include the Teensy USB hardware ISR. That core path is not hooked.
-- `cer_snapshot` is the direct published-snapshot candidate cost. Pair it with the neighboring
-  `playback_build` row; it is not a replacement for per-event deadline measurements.
 
 ## Open questions
 
@@ -294,6 +281,11 @@ How to read `cer_recon`:
    `micros()` resolution. [`170149`](../../captures/session_20260826_170149.log) rebooted
    at first clock after Record on function-local statics; that probe is now file-scope
    volatiles. The Teensy USB hardware ISR remains unhooked.
+   The follow-up low-threshold snapshot formatter rebooted at record start in
+   [`172305`](../../captures/session_20260826_172305.log); it was removed from
+   the playback path. [`172802`](../../captures/session_20260826_172802.log)
+   confirms first-clock recording and continued overdub/stop operation after
+   removal. Direct snapshot timing is therefore not collected by this probe.
 2. ~~**Are the six signatures six destinations, or successive windows of one destination?**~~
    **Answered by `162522`: successive windows of `T0/S6`.**
 3. ~~**Does the immutable snapshot direction remove this path entirely?**~~ **Answered from code:
@@ -326,7 +318,9 @@ How to read `cer_recon`:
 2. **This investigation** — question 3 is answered from code (loaded restore does not publish).
    Question 1 is closed by `165024` + `171159`: spill, nested clock, IntervalTimer ISR
    wall time, and internal-heap `filt` are not the inflation. The remaining measured
-   cost is PSRAM-first `span`/`proj`. Question 5 remains open.
+   cost is PSRAM-first `span`/`proj`. The attempted direct snapshot timing probe
+   was removed after `172305` rebooted at record start; `172802` confirms stable
+   operation after removal. Question 5 remains open.
 3. **Measure RC4's candidate resolution** before choosing Ring A's final prefetch lead.
 4. **Size G1** in the parent plan from the resulting representative rebuild cost — **not** from
    today's 367 ms.
