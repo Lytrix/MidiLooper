@@ -1578,6 +1578,31 @@ struct DeviceGateSession {
     return true;
   }
 
+  bool formatIncompleteLine(char* line, size_t cap, const char* reason) const {
+    if (line == nullptr || cap == 0 || reason == nullptr) {
+      return false;
+    }
+    if (phase == Phase::Idle || phase == Phase::Done) {
+      return false;
+    }
+#if defined(ARDUINO)
+    const unsigned long stamp = static_cast<unsigned long>(micros());
+#else
+    const unsigned long stamp = 0UL;
+#endif
+    const char* step = lastSlice.step != nullptr ? lastSlice.step : lastStepName;
+    if (step == nullptr) {
+      step = "idle";
+    }
+    const unsigned evLogged = static_cast<unsigned>(indexEventCursor);
+    snprintf(line, cap,
+             "#CAP,%lu,DIAG,lcr,incomplete,reason=%s,step=%s,pass=%u,ev=%u,slice_us=%lu,slice_units=%u",
+             stamp, reason, step, static_cast<unsigned>(indexPassCursor), evLogged,
+             static_cast<unsigned long>(lastSlice.elapsedUs),
+             static_cast<unsigned>(lastSlice.workUnits));
+    return true;
+  }
+
   void reset() {
     phase = Phase::Idle;
     loopLengthTicks = 0;
@@ -2768,6 +2793,11 @@ LoopContentResolution::DeviceGateSliceRecord LoopContentResolution::deviceGateLa
 
 bool LoopContentResolution::deviceGateFormatPrepareSliceLine(char* line, size_t cap) {
   return sDeviceGateSession.formatPrepareSliceLine(line, cap);
+}
+
+bool LoopContentResolution::deviceGateFormatIncompleteLine(char* line, size_t cap,
+                                                           const char* reason) {
+  return sDeviceGateSession.formatIncompleteLine(line, cap, reason);
 }
 
 LoopContentResolution::DeviceGateSliceResult LoopContentResolution::deviceGateRunOneSlice(

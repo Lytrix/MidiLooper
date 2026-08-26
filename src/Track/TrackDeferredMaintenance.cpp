@@ -33,7 +33,7 @@ extern TrackManager trackManager;
 namespace {
 
 #if defined(ARDUINO)
-void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
+bool logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
   struct Seen {
     const char* kind;
     const char* reason;
@@ -42,11 +42,11 @@ void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
   static uint8_t seenCount = 0;
   for (uint8_t i = 0; i < seenCount; ++i) {
     if (seen[i].kind == kind && seen[i].reason == reason) {
-      return;
+      return false;
     }
   }
   if (seenCount >= 8) {
-    return;
+    return false;
   }
   seen[seenCount].kind = kind;
   seen[seenCount].reason = reason;
@@ -55,6 +55,14 @@ void logContentResolutionDeviceGateOnce(const char* kind, const char* reason) {
   snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,%s,%s",
            static_cast<unsigned long>(micros()), kind, reason);
   DebugSessionCapture::appendCaptureTextLine(line);
+  return true;
+}
+
+void logContentResolutionDeviceGateIncomplete(const char* reason) {
+  char line[192];
+  if (LoopContentResolution::deviceGateFormatIncompleteLine(line, sizeof(line), reason)) {
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
 }
 
 TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
@@ -403,6 +411,7 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   Loop& loop = getActiveLoop();
 #if defined(ARDUINO)
   if (editManager.isNoteEditActive()) {
+    logContentResolutionDeviceGateIncomplete("edit");
     logContentResolutionDeviceGateOnce("reset", "edit");
     LoopContentResolution::deviceGateReset();
     return;
@@ -410,6 +419,7 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
 #endif
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
 #if defined(ARDUINO)
+    logContentResolutionDeviceGateIncomplete("dirty");
     logContentResolutionDeviceGateOnce("reset", "dirty");
 #endif
     LoopContentResolution::deviceGateReset();
@@ -420,11 +430,14 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
         LoopContentResolution::deviceGateDirtyPolicy(true, loop.loopLengthTicks);
     if (policy == LoopContentResolution::DeviceGateDirtyPolicy::Skip) {
 #if defined(ARDUINO)
-      logContentResolutionDeviceGateOnce("skip", "dirty");
+      if (logContentResolutionDeviceGateOnce("skip", "dirty")) {
+        logContentResolutionDeviceGateIncomplete("dirty");
+      }
 #endif
       return;
     }
 #if defined(ARDUINO)
+    logContentResolutionDeviceGateIncomplete("dirty");
     logContentResolutionDeviceGateOnce("reset", "dirty");
 #endif
     LoopContentResolution::deviceGateReset();
@@ -432,7 +445,9 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   }
   if (const char* deferReason = contentResolutionDeviceGateDeferReason()) {
 #if defined(ARDUINO)
-    logContentResolutionDeviceGateOnce("skip", deferReason);
+    if (logContentResolutionDeviceGateOnce("skip", deferReason)) {
+      logContentResolutionDeviceGateIncomplete(deferReason);
+    }
 #endif
     return;
   }
@@ -440,6 +455,7 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
       LoopContentResolution::deviceGateRunOneSlice(loop.passes, loop.loopLengthTicks);
   if (result == LoopContentResolution::DeviceGateSliceResult::Inactive) {
 #if defined(ARDUINO)
+    logContentResolutionDeviceGateIncomplete("abort");
     logContentResolutionDeviceGateOnce("reset", "abort");
 #endif
     return;

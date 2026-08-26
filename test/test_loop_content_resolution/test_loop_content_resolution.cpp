@@ -1906,6 +1906,45 @@ void test_stage9_device_gate_slice_budget_matches_idle_maint_bar() {
   TEST_ASSERT_EQUAL_UINT32(1000000u, LoopContentResolution::kDeviceGatePhaseLogIntervalUs);
 }
 
+void test_device_gate_incomplete_line_while_active() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(fixture.loopLengthTicks);
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateActive());
+  TEST_ASSERT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Continue,
+                    LoopContentResolution::deviceGateRunOneSlice(fixture.passes,
+                                                                 fixture.loopLengthTicks));
+  char line[192];
+  TEST_ASSERT_TRUE(LoopContentResolution::deviceGateFormatIncompleteLine(line, sizeof(line),
+                                                                        "dirty"));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, "DIAG,lcr,incomplete,reason=dirty"));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, ",step="));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, ",pass="));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, ",ev="));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, ",slice_us="));
+  TEST_ASSERT_NOT_NULL(std::strstr(line, ",slice_units="));
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateFormatIncompleteLine(line, sizeof(line),
+                                                                         nullptr));
+  LoopContentResolution::deviceGateReset();
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateFormatIncompleteLine(line, sizeof(line),
+                                                                         "dirty"));
+}
+
+void test_device_gate_incomplete_line_absent_after_complete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(fixture.passes, fixture.loopLengthTicks, sample);
+  char line[192];
+  TEST_ASSERT_FALSE(LoopContentResolution::deviceGateFormatIncompleteLine(line, sizeof(line),
+                                                                         "dirty"));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_stage9_phase_line_on_change_not_every_slice() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4305,6 +4344,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage57c_channel_index_reserves_remaining_events);
   RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
+  RUN_TEST(test_device_gate_incomplete_line_while_active);
+  RUN_TEST(test_device_gate_incomplete_line_absent_after_complete);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);
   RUN_TEST(test_slice1a_records_bounded_work_units);
   RUN_TEST(test_slice1a_resume_matches_oracle);

@@ -354,6 +354,8 @@ struct LoopContentResolution {
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
   static DeviceGateSliceRecord deviceGateLastSlice();
   static bool deviceGateFormatPrepareSliceLine(char* line, size_t cap);
+  /// Snapshot of an interrupted prepare. False when inactive or `reason` is null.
+  static bool deviceGateFormatIncompleteLine(char* line, size_t cap, const char* reason);
   static void deviceGateReset();
   /// Prepared session loop length. 0 when the gate has not begun or was reset.
   static uint32_t deviceGateLoopLengthTicks();
