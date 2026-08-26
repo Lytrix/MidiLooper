@@ -2,13 +2,19 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (`DEC-046` accepted; Slice 1 destination attribution closed by `161834`)
+Last updated: 2026-08-26 (`DEC-046` accepted; RC4 `cer_heap` telemetry in tree, recapture pending)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
 ---
 
 ## Now implementing
+
+**Immediate slice:** RC4 mechanism telemetry on
+`teensy41-capture-serial-investigation-diag`. `cer_heap` is in tree
+(`ihit`/`spill`/`sbytes`/`clk`/`iclk`/`ext`). Device recapture is required
+before any RC4 fix. Question 3 is closed from code: loaded restore does not
+publish a `LoopSnapshot`. Slices 2–4 remain unauthorized.
 
 **Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
 RECORDING with the same bar-quantize as record stop
@@ -330,7 +336,11 @@ The small `lists=1/2, rows=0` gathers are separate edit-free destinations.
 after the inflated gather, so snapshot construction is not concurrent inside
 the `g_reconstructUs` span. Higher-priority interrupt elapsed time and
 allocator-route changes remain unmeasured; no allocator spill conclusion is
-drawn.
+drawn. Investigation-diag now emits `DIAG,cer_heap` beside each `cer_edit`
+to record reconstruct-span `InternalHeapFirstAllocator` hits/spills, whether
+the working `MidiEventVec` is already in PSRAM (`ext`), and nested clock
+entries (`clk`/`iclk`). Recapture pending. Question 3 is closed from code:
+`adoptPersistedSnapshot` / `restorePassesSnapshot` do not publish.
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.

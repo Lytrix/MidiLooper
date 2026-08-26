@@ -14,6 +14,10 @@
 #include "Utils/ClockTransportUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+#include "Utils/InvestigationAllocProbe.h"
+#endif
+
 #if defined(__IMXRT1062__)
 #define CLOCK_COLD_MEM FLASHMEM
 #else
@@ -139,6 +143,9 @@ void ClockManager::updateInternalClock() {
   if (!sequencerRunning) return;
   // When slaved to external MIDI clock, tick is driven only by onMidiClockPulse
   if (clockSource == CLOCK_EXTERNAL) return;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  InvestigationAllocProbe::recordInternalClockDispatch();
+#endif
   currentTick++;
 #if RUNTIME_TIMING_ENABLED
   const uint32_t nowUs = micros();
@@ -155,6 +162,9 @@ void ClockManager::updateInternalClock() {
 
 void ClockManager::onMidiClockPulse() {
   if (!sequencerRunning) return;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  InvestigationAllocProbe::recordClockPulseEntry();
+#endif
 
 #if RUNTIME_TIMING_ENABLED
   const uint32_t clockDispatchStartUs = micros();
