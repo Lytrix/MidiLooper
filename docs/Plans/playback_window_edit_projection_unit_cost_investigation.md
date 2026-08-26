@@ -165,15 +165,56 @@ not a per-bar-edge eligible-set count. For example, repeated `T0/S6 ... count=2`
 same destination was recorded twice before emission; it does not prove two eligible destinations.
 The capture closes destination attribution, but it does not measure Ring A's eligible-set size.
 
+## `162522` direct pairing — RC4 belongs to `T0/S6`
+
+[`session_20260826_162522`](../../captures/session_20260826_162522.log) includes both
+`cer_range` and the extended `playback_build` line. Of 58 `cer_range` samples, 48 have the
+`lists=18, rows=217` compatibility-gather shape. Every repeated `cer_edit` sample with that shape
+is followed by a `playback_build` for **`T0/S6`**:
+
+| Destination | Playback-build lines | Rebuild-call count | Median | Maximum |
+|---|---:|---:|---:|---:|
+| `T0/S6` | 49 | 112 | 24.625 ms | **360.754 ms** |
+| `T4/S0` | 19 | 20 | 8.375 ms | 12.696 ms |
+| `T6/S0` | 1 | 1 | 8.792 ms | 8.792 ms |
+| `T2/S2` | 1 | 7 | 9.462 ms | 9.462 ms |
+
+The 15 repeated `cer_edit` samples are therefore successive compatibility-gather windows of the
+single `T0/S6` destination. The small `cer_range` samples (`lists=1/2, rows=0`) are separate
+empty/edit-free gathers and are not the RC4 cost.
+
+The inflated pair is direct:
+
+```
+cer_range      360668 us, edit=337731 us, rows=217, evout=164
+playback_build 360754 us, winStart=4608, winLen=1536, revision=1, track=0, slot=6
+```
+
+## What `162522` rules out, and what it does not
+
+During the inflated interval, `snapshot_idle` lines appear **after** the compatibility gather and
+its `playback_build` line. The capture is on external MIDI clock (`External MIDI clock detected`);
+`ClockManager::onMidiClockPulse` calls `TrackManager::updateAllTracks`, while snapshot idle is a
+main-loop owner. Therefore snapshot construction is not executing concurrently inside the measured
+`g_reconstructUs` span. It can still change allocator state before a later gather, and higher-priority
+interrupt work remains a separate unmeasured source of wall-time inflation, but the earlier explanation
+"snapshot construction and reconstruction interleave" is not established and must not be used.
+
+The input remains stable: the inflated and normal `T0/S6` windows retain the same 217 replay rows and
+the same five repeated `cer_edit` signatures. The first run has no allocator-route telemetry, so
+`InternalHeapFirstAllocator` spill to PSRAM remains **unproven**. The next discriminator must record
+whether `reconstructNotesForPitch` allocations use internal heap or the external fallback, separately
+from any interrupt/preemption elapsed time.
+
 ## Open questions
 
-1. **What mechanism makes identical work 7–10x slower in round 2?** The correlation with
-   `snapshot_idle` at 48.4% is established; the mechanism is **not**. Two candidates, both requiring
-   a discriminating measurement rather than assumption:
-   - **Wall-clock inflation.** `g_reconstructUs` measures `micros()` deltas, so it includes every
-     interrupt and any preemption. If snapshot construction and reconstruction interleave, elapsed
-     time inflates while CPU work is unchanged. Note 48.4% competing load alone yields roughly 2x,
-     **not** 9x, so this cannot be the whole explanation.
+1. **What mechanism makes identical `T0/S6` work 7–10x slower in round 2?** The correlation with
+   preceding snapshot idle is established, but direct concurrent execution is ruled out. Higher-
+   priority interrupt elapsed time and allocator-route changes remain unmeasured and must be
+   discriminated before optimization.
+   - **Higher-priority interrupt time.** `g_reconstructUs` measures `micros()` deltas, so it includes every
+     interrupt and any preemption. Snapshot construction is not concurrent in this capture, so it
+     cannot account for the full 7–10x inflation through direct elapsed-time overlap.
    - **Allocator spill to PSRAM.** `InternalHeapFirstAllocator::allocate` tries `malloc` and, on
      failure, falls back to `extmem_malloc`. `reconstructNotesForPitch` allocates per row, so under
      heap pressure its vectors could land in external memory, which is far slower than internal RAM.
@@ -181,13 +222,10 @@ The capture closes destination attribution, but it does not measure Ring A's eli
      require a specific large allocation to fail under fragmentation.
 
    These are cheap to separate: count spilled allocations, or report CPU-time separately from wall
-   time, for the reconstruction span only. **Do this before any optimization**, because the two
-   candidates lead to completely different fixes.
-2. **Are the six signatures six destinations, or successive windows of one destination?** The
-   `161834` recapture identifies four playback destinations, but it does not carry `cer_range` /
-   `cer_edit` lines, so it cannot map each of the six compatibility-gather signatures directly to a
-   destination. The dominant long-loop stream is `T0/S6`; retain this question for the RC4
-   investigation if direct mapping is required.
+   time, for the reconstruction span only. Snapshot idle is not a concurrent explanation in this
+   capture: its lines occur after the gather. **Do this before any optimization.**
+2. ~~**Are the six signatures six destinations, or successive windows of one destination?**~~
+   **Answered by `162522`: successive windows of `T0/S6`.**
 3. **Does the immutable snapshot direction remove this path entirely?** If loaded slots publish a
    `LoopSnapshot` on restore
    ([DEC-044](../DECISION_LOG.md#dec-044--immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
@@ -207,9 +245,9 @@ The capture closes destination attribution, but it does not measure Ring A's eli
 
 ## Sequencing (agreed)
 
-1. **Slice 1 measurement closure** in the parent plan — separate the two per-edge rebuilds, record
-   slot, establish whether 367 ms is representative.
-2. **This investigation** — answer open questions 1, 2 and 4. Read-only plus targeted instrumentation.
+1. ~~**Slice 1 measurement closure**~~ **Closed by `161834` and `162522`:** destination attribution
+   maps the compatibility-gather signatures to `T0/S6`.
+2. **This investigation** — answer open questions 1, 3 and 5. Read-only plus targeted instrumentation.
 3. **Measure RC4's candidate resolution** before choosing Ring A's final prefetch lead.
 4. **Size G1** in the parent plan from the resulting representative rebuild cost — **not** from
    today's 367 ms.
@@ -222,6 +260,6 @@ plan becomes comfortable at every eligible count.
 
 ## Not in scope
 
-Micro-optimization of `applyNoteEditPassSequence` before question 2 is answered; changes to
+Micro-optimization of `applyNoteEditPassSequence` before question 3 is answered; changes to
 `CommittedEventRange` windowed traversal (measured at 23 ms, not the problem); the 2-bar content
 window; Ring A or Ring B admission; RC3 snapshot convergence.

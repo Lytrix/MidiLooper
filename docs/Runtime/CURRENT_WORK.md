@@ -316,14 +316,21 @@ multiplicity is **pairs** (median `cer_range` spacing 1998 ms; only 8 gaps under
 50 ms, all 11.9-16.8 ms). Ring A's benefit here is bounded by ~2x while RC4 is
 ~9x. Ring A stays architecturally correct but must not be presented as the fix
 for the 391 ms.
-**Slice 1 destination attribution closed by [`161834`](../../captures/session_20260826_161834.log).**
-The 94 `playback_build` maxima identify four destinations: `T0/S6` (57 lines,
-max 166.325 ms), `T4/S0` (34, max 25.439 ms), `T6/S0` (2, max 10.965 ms),
-and `T2/S2` (1, max 9.406 ms). `T0/S6` is the dominant long-loop stream.
+**Slice 1 destination attribution closed by [`161834`](../../captures/session_20260826_161834.log)
+and [`162522`](../../captures/session_20260826_162522.log).** The 94
+`playback_build` maxima in `161834` identify four destinations: `T0/S6` (57
+lines, max 166.325 ms), `T4/S0` (34, max 25.439 ms), `T6/S0` (2, max 10.965
+ms), and `T2/S2` (1, max 9.406 ms). `162522` directly pairs all 15 repeated
+`cer_edit` compatibility gathers with `T0/S6`; its maximum is 360.754 ms.
+`T0/S6` is the dominant long-loop stream.
 The telemetry `<count>` is rebuild calls before the next one-shot emit, not
 distinct destinations per bar edge; no eligible-set count is inferred from it.
-The capture has no `cer_range`/`cer_edit`, so it does not directly map each
-compatibility signature to a destination.
+The small `lists=1/2, rows=0` gathers are separate edit-free destinations.
+**RC4 mechanism remains open after `162522`:** `snapshot_idle` lines occur
+after the inflated gather, so snapshot construction is not concurrent inside
+the `g_reconstructUs` span. Higher-priority interrupt elapsed time and
+allocator-route changes remain unmeasured; no allocator spill conclusion is
+drawn.
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.

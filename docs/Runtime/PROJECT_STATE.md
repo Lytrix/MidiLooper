@@ -50,9 +50,11 @@ in tree and is not closed. `4b.3` post-stop `usbdisp` /
 (device verify open). `DEC-046` accepts the round-robin admission and
 representation-coverage direction; firmware Slices 2–4 remain unauthorized.
 Slice 1 telemetry is in tree and device-validated by
-[`161834`](../../captures/session_20260826_161834.log): the dominant long-loop
-rebuild destination is `T0/S6`, with `T4/S0`, `T6/S0`, and `T2/S2` also
-observed. The playback rebuild `<count>` is rebuild-call count before one-shot
+[`161834`](../../captures/session_20260826_161834.log) and
+[`162522`](../../captures/session_20260826_162522.log): the dominant
+long-loop rebuild destination is `T0/S6`, with `T4/S0`, `T6/S0`, and `T2/S2`
+also observed; `162522` directly pairs the repeated compatibility gathers with
+`T0/S6`. The playback rebuild `<count>` is rebuild-call count before one-shot
 emission, not distinct-destination multiplicity or an eligible-set count.
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
