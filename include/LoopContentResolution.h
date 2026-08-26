@@ -90,6 +90,8 @@ struct LoopContentResolution {
     /// Sliced form of `commitCapturePass` — begin, append one chunk, index an event range, pair.
     void beginCapturePass(PassId id, CapturePassState state, uint32_t mergeSequence);
     void appendCapturePassChunk(PassId id, uint16_t chunkId);
+    void appendCapturePassChunkEventRange(PassId id, uint16_t chunkId, uint32_t begin,
+                                          uint32_t endExclusive);
     void indexCapturePassEventRange(PassId id, uint32_t beginEvent, uint32_t endEventExclusive,
                                     ResolutionCostCounters* counters = nullptr);
     void pairCapturePassNotes(PassId id);
@@ -251,6 +253,10 @@ struct LoopContentResolution {
     void sortChannelByNoteId(ResolutionCostCounters* counters = nullptr);
     bool fillCheckpointRange(uint32_t beginIndex, uint32_t endIndexExclusive,
                              ResolutionCostCounters* counters = nullptr);
+    /// One checkpoint, a span sub-range. Does not walk the remaining spans.
+    bool fillCheckpointSpanRange(uint32_t checkpointIndex, uint32_t spanBegin,
+                                 uint32_t spanEndExclusive,
+                                 ResolutionCostCounters* counters = nullptr);
     void resolveState(uint32_t tick, PresentNoteVec& out,
                       ResolutionCostCounters* counters = nullptr) const;
     /// C-order append (start then end per span), then `stable_sort` by tick.
@@ -316,6 +322,15 @@ struct LoopContentResolution {
     ResolutionCostCounters state;
   };
 
+  /// Last `deviceGateRunOneSlice` work unit. Slice 1A measurement only.
+  struct DeviceGateSliceRecord {
+    const char* step = "idle";
+    uint32_t elapsedUs = 0;
+    uint32_t workUnits = 0;
+    uint32_t resumeCursor = 0;
+    bool indivisible = false;
+  };
+
   /// One-shot host/device sample. Leaves the session in Done; call `deviceGateComplete` to keep
   /// `TickIndex` for idle consume (6A).
   static void measureDeviceGate(const LoopPasses& passes, uint32_t loopLengthTicks,
@@ -337,6 +352,8 @@ struct LoopContentResolution {
   static void deviceGateFormatPairLine(char* line, size_t cap);
   /// Rate-limited progress line. Returns false when the 1 s / phase-change gate skips.
   static bool deviceGateFormatPhaseLine(char* line, size_t cap);
+  static DeviceGateSliceRecord deviceGateLastSlice();
+  static bool deviceGateFormatPrepareSliceLine(char* line, size_t cap);
   static void deviceGateReset();
   /// Prepared session loop length. 0 when the gate has not begun or was reset.
   static uint32_t deviceGateLoopLengthTicks();

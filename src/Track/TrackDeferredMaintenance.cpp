@@ -448,6 +448,11 @@ TRACK_COLD_MEM void Track::processDeferredContentResolutionDeviceGate() {
   if (LoopContentResolution::deviceGateFormatPhaseLine(phaseLine, sizeof(phaseLine))) {
     DebugSessionCapture::appendCaptureTextLine(phaseLine);
   }
+  char prepareSliceLine[192];
+  if (LoopContentResolution::deviceGateFormatPrepareSliceLine(prepareSliceLine,
+                                                             sizeof(prepareSliceLine))) {
+    DebugSessionCapture::appendCaptureTextLine(prepareSliceLine);
+  }
   if (result != LoopContentResolution::DeviceGateSliceResult::Complete) {
     return;
   }

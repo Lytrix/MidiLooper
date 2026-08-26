@@ -1919,6 +1919,170 @@ void test_stage9_phase_line_on_change_not_every_slice() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_slice1a_records_bounded_work_units() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(fixture.loopLengthTicks);
+
+  bool sawChunk = false;
+  bool sawEapply = false;
+  bool sawCkpt = false;
+  bool sawNsort = false;
+  bool sawIsort = false;
+  bool sawWin = false;
+  bool sawDedup = false;
+  bool sawCsize = false;
+  uint32_t eapplySlices = 0;
+  uint32_t guard = 0;
+  LoopContentResolution::DeviceGateSliceResult result =
+      LoopContentResolution::DeviceGateSliceResult::Continue;
+  while (result == LoopContentResolution::DeviceGateSliceResult::Continue && guard < 20000u) {
+    result = LoopContentResolution::deviceGateRunOneSlice(fixture.passes, fixture.loopLengthTicks);
+    TEST_ASSERT_NOT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Inactive, result);
+    const LoopContentResolution::DeviceGateSliceRecord rec =
+        LoopContentResolution::deviceGateLastSlice();
+    if (!rec.indivisible) {
+      TEST_ASSERT_LESS_OR_EQUAL(LoopContentResolution::kDeviceGateEventsPerSlice, rec.workUnits);
+    }
+    if (std::strcmp(rec.step, "chunk") == 0) {
+      sawChunk = true;
+      TEST_ASSERT_FALSE(rec.indivisible);
+    } else if (std::strcmp(rec.step, "eapply") == 0) {
+      sawEapply = true;
+      TEST_ASSERT_FALSE(rec.indivisible);
+      TEST_ASSERT_EQUAL_UINT32(1u, rec.workUnits);
+      eapplySlices += 1;
+    } else if (std::strcmp(rec.step, "ckpt") == 0) {
+      sawCkpt = true;
+      TEST_ASSERT_FALSE(rec.indivisible);
+    } else if (std::strcmp(rec.step, "nsort") == 0) {
+      sawNsort = true;
+      TEST_ASSERT_TRUE(rec.indivisible);
+    } else if (std::strcmp(rec.step, "isort") == 0) {
+      sawIsort = true;
+      TEST_ASSERT_TRUE(rec.indivisible);
+    } else if (std::strcmp(rec.step, "win") == 0) {
+      sawWin = true;
+      TEST_ASSERT_TRUE(rec.indivisible);
+    } else if (std::strcmp(rec.step, "dedup") == 0) {
+      sawDedup = true;
+      TEST_ASSERT_TRUE(rec.indivisible);
+    } else if (std::strcmp(rec.step, "csize") == 0) {
+      sawCsize = true;
+      TEST_ASSERT_TRUE(rec.indivisible);
+    }
+    char line[192];
+    TEST_ASSERT_TRUE(LoopContentResolution::deviceGateFormatPrepareSliceLine(line, sizeof(line)));
+    TEST_ASSERT_NOT_NULL(std::strstr(line, "DIAG,prepare,slice,"));
+    ++guard;
+  }
+  TEST_ASSERT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Complete, result);
+  TEST_ASSERT_TRUE(sawChunk);
+  TEST_ASSERT_TRUE(sawEapply);
+  TEST_ASSERT_TRUE(sawCkpt);
+  TEST_ASSERT_TRUE(sawNsort);
+  TEST_ASSERT_TRUE(sawIsort);
+  TEST_ASSERT_TRUE(sawWin);
+  TEST_ASSERT_TRUE(sawDedup);
+  TEST_ASSERT_TRUE(sawCsize);
+  TEST_ASSERT_EQUAL_UINT32(3u, eapplySlices);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_slice1a_resume_matches_oracle() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  CanonicalResolutionFixture fixture = buildCanonicalResolutionFixture();
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(fixture.loopLengthTicks);
+  LoopContentResolution::DeviceGateSliceResult result =
+      LoopContentResolution::DeviceGateSliceResult::Continue;
+  uint32_t guard = 0;
+  while (result == LoopContentResolution::DeviceGateSliceResult::Continue && guard < 20000u) {
+    result = LoopContentResolution::deviceGateRunOneSlice(fixture.passes, fixture.loopLengthTicks);
+    TEST_ASSERT_NOT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Inactive, result);
+    ++guard;
+  }
+  TEST_ASSERT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Complete, result);
+
+  constexpr uint32_t kRevision = 11;
+  LoopContentResolution::deviceGateComplete(kRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(kRevision));
+
+  const uint32_t windowLength = 2u * Config::TICKS_PER_BAR;
+  SessionMidiEventVec prepared;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedWindow(
+      fixture.passes.editPasses, fixture.loopLengthTicks, 0, windowLength, kRevision, prepared,
+      nullptr));
+  NoteUtils::DisplayNoteVec expectedNotes;
+  oracleWindowNotes(fixture.passes, fixture.loopLengthTicks, 0, windowLength, expectedNotes);
+  const NoteUtils::DisplayNoteVec actualNotes =
+      NoteUtils::reconstructDisplayNotes(prepared, fixture.loopLengthTicks, false);
+  assertDisplayNotesMatch(expectedNotes, actualNotes);
+
+  const uint32_t midTick = fixture.loopLengthTicks / 2u;
+  PresentNoteVec expectedState;
+  LoopContentResolution::resolveState(fixture.passes, fixture.loopLengthTicks, midTick,
+                                      expectedState, nullptr);
+  PresentNoteVec actualState;
+  TEST_ASSERT_TRUE(LoopContentResolution::tryResolvePreparedState(midTick, kRevision, actualState,
+                                                                 nullptr));
+  assertPresentNoteMatch(expectedState, actualState);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_slice1a_chunk_range_does_not_repeat() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetNoteIdCounter(1);
+  LoopPasses passes;
+  RecordPass record{};
+  record.id = 1;
+  record.state = CapturePassState::Active;
+  {
+    LoopEventStore store;
+    constexpr uint32_t kNotes = 20;
+    for (uint32_t i = 0; i < kNotes; ++i) {
+      const NoteId id = static_cast<NoteId>(i + 1);
+      const uint8_t pitch = static_cast<uint8_t>(40u + i);
+      TEST_ASSERT_TRUE(storeAppendNoteOn(store, i * 16u, 1, pitch, 100, id));
+      TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(i * 16u + 8u, 1, pitch, 0)));
+    }
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, record.committedChunkIds));
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, record.committedChunkIds.size());
+  TEST_ASSERT_EQUAL_UINT32(40u, LoopEventStore::chunkUsedCount(record.committedChunkIds[0]));
+  passes.recordPass = std::move(record);
+
+  const uint32_t loopLengthTicks = 4u * Config::TICKS_PER_BAR;
+  LoopContentResolution::deviceGateReset();
+  LoopContentResolution::deviceGateBegin(loopLengthTicks);
+  uint32_t chunkSlices = 0;
+  uint32_t chunkUnits = 0;
+  LoopContentResolution::DeviceGateSliceResult result =
+      LoopContentResolution::DeviceGateSliceResult::Continue;
+  uint32_t guard = 0;
+  while (result == LoopContentResolution::DeviceGateSliceResult::Continue && guard < 20000u) {
+    result = LoopContentResolution::deviceGateRunOneSlice(passes, loopLengthTicks);
+    TEST_ASSERT_NOT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Inactive, result);
+    const LoopContentResolution::DeviceGateSliceRecord rec =
+        LoopContentResolution::deviceGateLastSlice();
+    if (std::strcmp(rec.step, "chunk") == 0) {
+      TEST_ASSERT_FALSE(rec.indivisible);
+      TEST_ASSERT_LESS_OR_EQUAL(LoopContentResolution::kDeviceGateEventsPerSlice, rec.workUnits);
+      chunkSlices += 1;
+      chunkUnits += rec.workUnits;
+    }
+    ++guard;
+  }
+  TEST_ASSERT_EQUAL(LoopContentResolution::DeviceGateSliceResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT32(5u, chunkSlices);
+  TEST_ASSERT_EQUAL_UINT32(40u, chunkUnits);
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_device_gate_dirty_matching_length_skips_without_reset() {
   LoopContentResolution::deviceGateReset();
   LoopContentResolution::deviceGateBegin(768u);
@@ -4142,6 +4306,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage9_range_prep_matches_full_prepare);
   RUN_TEST(test_stage9_device_gate_slice_budget_matches_idle_maint_bar);
   RUN_TEST(test_stage9_phase_line_on_change_not_every_slice);
+  RUN_TEST(test_slice1a_records_bounded_work_units);
+  RUN_TEST(test_slice1a_resume_matches_oracle);
+  RUN_TEST(test_slice1a_chunk_range_does_not_repeat);
   RUN_TEST(test_device_gate_dirty_matching_length_skips_without_reset);
   RUN_TEST(test_device_gate_dirty_length_mismatch_resets);
   RUN_TEST(test_device_gate_save_is_not_a_content_defer);

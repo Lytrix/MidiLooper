@@ -1,8 +1,9 @@
 # Playback window build — Owner-Boundary Gate (ExecutionBounds)
 
-**Status:** **Slice 0 shipped.** Next authorized coding: **Slice 1A only** (cooperative prepare experiment). Stop after the 1A measurement gate. Slices 1B–5 are roadmap context, not permission.
+**Status:** **Slice 0 shipped.** **Slice 1A native PASS** — device measurement remains before the 1A gate. Slices 1B–5 are roadmap context, not permission. Residual **4b.1b** (visual-cache idle reconstruct) is owned here and **parked**; Ring B / RC2 is closed without it.
 **Kind:** refinement under the runtime scheduling Owner-Boundary Gate
 **Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (O–T–R–C–A–P)
+**GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38) parent; [#41](https://github.com/Lytrix/MidiLooper/issues/41) 4b.1b. Work project: [Work](https://github.com/users/Lytrix/projects/1)
 **Bound authority:** [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md) + [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property)
 **Derived-view direction:** absorbs [`loop_content_resolution_span_consume_refinement.md`](loop_content_resolution_span_consume_refinement.md)
 **Baseline evidence:** [`session_20260822_174758.log`](../../captures/session_20260822_174758.log) on `feature/overdub-stop-lag-stage-c`
@@ -157,6 +158,23 @@ After measurement, **return control to the plan/review process**.
 
 **Operational “substantial”:** resumed turn may do O(1) bookkeeping; must not reconstruct, resort, replay, or rescan already-completed preparation.
 
+#### Slice 1A implementation evidence
+
+Owner: `DeviceGateSession::runOneSlice`. Instrument line:
+`#CAP,<stamp>,DIAG,prepare,slice,<step>,us=<elapsed>,units=<work_units>,resume=<cursor>,indiv=<0|1>`.
+
+| ID | Site | 1A result |
+|---|---|---|
+| F2 | `appendCapturePassChunk` | **Converted.** `appendCapturePassChunkEventRange` copies at most 8 events; `indexChunkEventCursor` persists |
+| F3 | `applyNoteEditPassSequence` | **Converted without redesign.** One `applyNoteEditPass` per slice on persistent `prepScratch`; copy-in / copy-out stay indivisible (`ecopy`) |
+| F5 | Checkpoint fill | **Converted.** `fillCheckpointSpanRange` walks at most 8 spans; `checkpointSpanCursor` persists |
+| F1 | `nsort` / `isort` | **Blocker.** Named indivisible; do not fake-slice `std::sort` |
+| F4 | `Phase::Window` | **Blocker.** One `resolveWindow`; subdividing is Slice 2/4 |
+| F6 | `finishCanonicalSpansFromMidi` / `dedupeProjectedDisplayNotes` | **Blocker.** Named indivisible |
+| F7 | Remaining-reserve / `presentAt.resize` | **Blocker.** 5.7a contract unchanged (`csize`) |
+
+Native tests: `test_slice1a_records_bounded_work_units`, `test_slice1a_resume_matches_oracle`, `test_slice1a_chunk_range_does_not_repeat` — **PASS** with `pio test -e native`. Firmware RAM1 locals **4640**. Device measurement (`DIAG,prepare,slice,*` on `teensy41-capture-serial`) is the remaining 1A gate. Do **not** start 1B.
+
 ### ★ Measure gate (mandatory)
 
 After 1A device/native evidence, **stop**. Review in plan/review process — not inside the same coding task:
@@ -199,6 +217,48 @@ Raising event grain or adding a timer **does not** make these slices resumable. 
 | F5 | Checkpoint fill | One checkpoint/slice but walks **all** `spans` → O(spans) |
 | F6 | RebuildSpans finish | `finishCanonicalSpansFromMidi` / `dedupeProjectedDisplayNotes` on full vectors |
 | F7 | Reserves | First slice of a range `reserve`s remaining **whole** notes/events; `presentAt.resize(count)` full |
+
+### 4b.1b — visual-cache idle reconstruct (moved from Ring B / RC2)
+
+**Status:** **Open, parked.** This is now the owning record. Ring B / RC2 is closed
+without this gate. Inventory: [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md)
+row 8. **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41).
+
+Ring B bounded `Loop::advanceFallbackGatherSession` and exposed the next
+execution-bound violation: the completed gather is followed by one indivisible
+`NoteUtils::reconstructDisplayNotes` call inside
+`Loop::rebuildVisualCacheIdleSlice`. The gather budget does not bound the full
+visual-cache idle operation. This is ExecutionBounds row 8, not F6
+(`finishCanonicalSpansFromMidi` / `dedupeProjectedDisplayNotes` on the
+prepare path) and not a regression of RC2 coverage.
+
+**Device evidence** — [`185141`](../../captures/session_20260826_185141.log)
+versus baseline [`175350`](../../captures/session_20260826_175350.log):
+
+| Window | `midi_gap` | `idle_reconstruct` | Notes |
+|---|---|---|---|
+| First overdub | 146.802 ms (was 222.596 ms) | 127.249 ms | `late_on` 149.870 ms (was 220.417 ms); `late_off` 52.125 ms (was 81.373 ms) |
+| Later overdub peaks | 205.876–242.679 ms | 197.241–218.083 ms | drives `idle_maint` 217.644–242.663 ms |
+| Later steady overdub | 24.325 ms (was 366 ms) | — | Ring B admission improvement holds |
+
+`load_frame` adds about 22.6–22.9 ms in the first overdub window.
+STOPPED/PLAYING post-overdub long-tail stays out of this residual.
+
+Architecture review on 2026-08-26: `visualCache` remains the display-owned
+derived representation; `LoopSnapshot` is the intended canonical source.
+Snapshot construction consumes settled pairing and overlap mutations; it does
+not re-run `NoteGeometryResolver`. Visual-cache rebuilding should select
+canonical snapshot span memberships, apply bounded `IntervalProjection`, and
+publish a complete `DisplayNote` candidate. Do not create a second
+pairing/overlap-resolution pipeline merely to make the current compatibility
+reconstruction cooperative.
+
+**Decision:** park a cooperative `reconstructDisplayNotes` state machine.
+Revisit after snapshot-first display migration has an approved phase and proves
+exact `DisplayNote` equivalence, including wrap projection and duplicate
+handling. If the snapshot source is not sufficient, the missing canonical
+information is the next architecture task. This does not close F6 or
+ExecutionBounds row 8.
 
 **Progress loss (repeat completed work):**
 
