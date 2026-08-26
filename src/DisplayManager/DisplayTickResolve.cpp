@@ -35,6 +35,21 @@ uint32_t DisplayManager::resolveDisplayLoopLength(const Track& track, uint8_t di
         return track.getLoopLength();
     }
 
+    // First-take RECORDING writes quantized `loopLengthTicks` every bar for
+    // snapshot pending. Display must keep the continuous playhead length or
+    // the piano roll rescales on each `record_length` step
+    // (session_20260826_120020). Overdub keeps the sealed length.
+    if (isLiveRecordingDisplay(track, displaySlot) && track.isRecording() &&
+        !track.isPlaying()) {
+        const Loop& loop = track.getLoop(displaySlot);
+        if (!loop.hasCommittedPasses()) {
+            if (currentTick <= loop.startLoopTick) {
+                return 1;
+            }
+            return currentTick - loop.startLoopTick;
+        }
+    }
+
     const uint32_t loopLength = track.getLoopLengthForSlot(displaySlot);
     if (loopLength > 0) {
         return loopLength;

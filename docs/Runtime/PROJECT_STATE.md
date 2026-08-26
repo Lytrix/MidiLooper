@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.2 live snapshot starts after the playhead leaves bar 1)
+Last updated: 2026-08-26 (4b.2 first-take RECORDING display keeps continuous playhead length)
 
 ---
 
@@ -34,8 +34,8 @@ holds the composed frame — device PASS [`004934`](../../captures/session_20260
 [`092755`](../../captures/session_20260826_092755.log)
 (`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** `4b.2`
 first-take length updates during RECORDING with record-stop bar quantize;
-snapshot idle starts after the playhead has left bar 1 (host implement;
-device verify open). 4b.1 same-turn lane stays
+snapshot idle starts after the playhead has left bar 1; first-take display
+keeps continuous playhead length (host implement; device verify open). 4b.1 same-turn lane stays
 in tree and is not closed. Parked: `4b.3` post-stop `usbdisp` /
 `load_frame` / `late_on`, `4b.4` overdub `DisplayResolveLiveCapture`.
 Task 4.3 stays skipped.

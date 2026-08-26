@@ -78,9 +78,12 @@ Stop-display hold is device PASS
       Evidence: [`095720`](../../../captures/session_20260826_095720.log)
       had no `snapshot_idle` until PLAYING.
       [`114012`](../../../captures/session_20260826_114012.log) started at
-      `record_length=768` while bar 1 was still being written. Do not check
-      off until device verify. Do not step successor construction during
-      OVERDUBBING after the first root.
+      `record_length=768` while bar 1 was still being written.
+      [`120020`](../../../captures/session_20260826_120020.log) started after
+      bar 1 and did not restart during RECORDING; first-take display keeps
+      continuous playhead length so `DISP` does not rescale on each
+      `record_length` step. Do not check off until device verify. Do not
+      step successor construction during OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not
       `ODUB,stop,display`. Evidence: `004934` 67.4 ms at 113.911 s
