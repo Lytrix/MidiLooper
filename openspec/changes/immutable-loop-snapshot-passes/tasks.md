@@ -48,7 +48,8 @@ Stop-display hold is device PASS
 [`011829`](../../../captures/session_20260826_011829.log) last stop was
 **155.6 ms** after wrap cleared the composed frame. Device PASS
 [`092755`](../../../captures/session_20260826_092755.log) last stop
-**11.1 ms**. **Now:** none selected. 4b.1–4b.4 parked.
+**11.1 ms**. **Now:** 4b.2 selected (host implement; device verify open).
+4b.1 same-turn lane stays in tree and is not closed. 4b.3–4b.4 parked.
 
 - [x] 4b.0 After overdub wrap, keep the composed `DisplayNote` vector when
       resetting live compose bookkeeping (`invalidateLiveDisplayCache(true)`).
@@ -67,12 +68,14 @@ Stop-display hold is device PASS
       grace is withdrawn — [`010505`](../../../captures/session_20260826_010505.log)
       stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
       (`midi_gap` 32–51 ms).
-- [ ] 4b.2 Bound first-record `snapshot_idle` construction so PLAYING immediately
-      after record stop stays near the 7.4–8.4 ms PLAYING gap. Evidence:
-      `004934` `pending=1` from 64.418 s to 68.243 s (`midi_gap` 90.2 ms at
-      68.891 s). `003459` `pending=1` from 92.993 s to 101.082 s. `DEC-045`
-      first-publish on PLAYING idle is unchanged until this task is selected.
-      Do not step successor construction during OVERDUBBING.
+- [ ] 4b.2 Bound first-record `snapshot_idle` by starting construction as soon
+      as a length exists, using the overdub live-enqueue setup, and starting
+      on PLAYING. RECORDING idle may start from `capture.store` when
+      `loopLengthTicks > 0`. OVERDUBBING only advances an in-flight
+      candidate. First empty take still begins at session-exit
+      (`loopLengthTicks == 0` until `prepareRecordStop`) then continues on
+      PLAYING. Do not check off until device verify. Do not step successor
+      construction during OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not
       `ODUB,stop,display`. Evidence: `004934` 67.4 ms at 113.911 s

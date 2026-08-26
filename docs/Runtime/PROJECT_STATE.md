@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.0 wrap/hold device PASS 092755)
+Last updated: 2026-08-26 (4b.2 first-record live enqueue + PLAYING start)
 
 ---
 
@@ -30,11 +30,13 @@ the last gather ([`001048`](../../captures/session_20260826_001048.log),
 includes a short loop tail so a 20-bar loop does not omit the last 2 bars
 ([`002634`](../../captures/session_20260826_002634.log)). Overdub-stop paint
 holds the composed frame — device PASS [`004934`](../../captures/session_20260826_004934.log)
-(`ODUB,stop,display` 8.8 / 12.2 ms). **Now:** 4b.0 wrap/hold device PASS
+(`ODUB,stop,display` 8.8 / 12.2 ms). 4b.0 wrap/hold device PASS
 [`092755`](../../captures/session_20260826_092755.log)
-(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). Parked: `4b.1` persist/snapshot same-turn,
-`4b.2` first-record snapshot idle, `4b.3` post-stop `usbdisp` / `load_frame` /
-`late_on`, `4b.4` overdub `DisplayResolveLiveCapture`.
+(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** `4b.2`
+first-record live enqueue during RECORDING (when a length exists) and start
+on PLAYING (host implement; device verify open). 4b.1 same-turn lane stays
+in tree and is not closed. Parked: `4b.3` post-stop `usbdisp` /
+`load_frame` / `late_on`, `4b.4` overdub `DisplayResolveLiveCapture`.
 Task 4.3 stays skipped.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued

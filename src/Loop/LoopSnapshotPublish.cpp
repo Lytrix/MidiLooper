@@ -201,8 +201,41 @@ LOOP_COLD_MEM void appendCompanionChanges(const Loop& loop, const LoopSnapshot& 
   }
 }
 
-LOOP_COLD_MEM void appendCommittedPassChanges(const Loop& loop, PassId passId,
-                                              EventId& nextEventId,
+bool midiEventMatchesSnapshot(const MidiEvent& existing, const MidiEvent& incoming) {
+  if (existing.tick != incoming.tick || existing.type != incoming.type ||
+      existing.channel != incoming.channel) {
+    return false;
+  }
+  if ((incoming.isNoteOn() || incoming.isNoteOff()) &&
+      existing.data.noteData.note != incoming.data.noteData.note) {
+    return false;
+  }
+  if (incoming.noteId != kInvalidNoteId && existing.noteId != kInvalidNoteId &&
+      incoming.noteId != existing.noteId) {
+    return false;
+  }
+  return true;
+}
+
+bool eventAlreadyInSnapshot(const LoopSnapshot& snapshot, const MidiEvent& event) {
+  if (snapshot.loopLengthTicks() == 0 || event.tick >= snapshot.loopLengthTicks()) {
+    return false;
+  }
+  const uint32_t barIndex = event.tick / Config::TICKS_PER_BAR;
+  const auto membership = snapshot.eventMembership(barIndex);
+  if (!membership) {
+    return false;
+  }
+  for (const auto& ref : membership->references) {
+    if (ref && midiEventMatchesSnapshot(ref->value, event)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM void appendCommittedPassChanges(const Loop& loop, const LoopSnapshot& parent,
+                                              PassId passId, EventId& nextEventId,
                                               uint32_t& nextCanonicalOrder,
                                               LoopSnapshotChangeSet& changes) {
   bool isOverdubPass = false;
@@ -214,8 +247,23 @@ LOOP_COLD_MEM void appendCommittedPassChanges(const Loop& loop, PassId passId,
   LoopEventStore::appendChunkRefEvents(*chunks, events);
   const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
       events, loop.loopLengthTicks, false, true, isOverdubPass);
-  appendMergedPassNotes(notes, loop.loopId, loop.loopLengthTicks, changes);
-  appendPassEvents(events, loop.loopId, loop.loopLengthTicks, nextEventId, nextCanonicalOrder,
+  NoteUtils::DisplayNoteVec freshNotes;
+  freshNotes.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId != kInvalidNoteId && parent.findNote(note.noteId, note.note)) {
+      continue;
+    }
+    freshNotes.push_back(note);
+  }
+  appendMergedPassNotes(freshNotes, loop.loopId, loop.loopLengthTicks, changes);
+  MidiEventVec freshEvents;
+  freshEvents.reserve(events.size());
+  for (const MidiEvent& event : events) {
+    if (!eventAlreadyInSnapshot(parent, event)) {
+      freshEvents.push_back(event);
+    }
+  }
+  appendPassEvents(freshEvents, loop.loopId, loop.loopLengthTicks, nextEventId, nextCanonicalOrder,
                    changes);
 }
 
@@ -269,6 +317,11 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
                                        loop.nextNoteId_, 1);
     }
   }
+  if (loop.capture.phase == CapturePhase::Record && loop.loopLengthTicks > 0 &&
+      !loop.publishedSnapshot()) {
+    return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                     loop.nextNoteId_, 1);
+  }
   return {};
 }
 
@@ -284,7 +337,7 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
     LoopSnapshotChangeSet changes;
     EventId nextEventId = parent->nextEventId();
     uint32_t nextCanonicalOrder = parent->nextEventId();
-    appendCommittedPassChanges(loop, passId, nextEventId, nextCanonicalOrder, changes);
+    appendCommittedPassChanges(loop, *parent, passId, nextEventId, nextCanonicalOrder, changes);
     if (changes.notes.empty() && changes.events.empty()) {
       box.appliedPassIds.push_back(passId);
       continue;
@@ -293,6 +346,45 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
     box.constructionPassId = passId;
     box.applyingCompanions = false;
     return true;
+  }
+
+  if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
+      loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
+    loop.assignMissingNoteIdsInStore(loop.capture.store);
+    MidiEventVec events;
+    loop.capture.store.copyEventsTo(events);
+    MidiEventVec freshEvents;
+    freshEvents.reserve(events.size());
+    for (const MidiEvent& event : events) {
+      if (event.tick < loop.loopLengthTicks && !eventAlreadyInSnapshot(*parent, event)) {
+        freshEvents.push_back(event);
+      }
+    }
+    if (!freshEvents.empty()) {
+      LoopSnapshotChangeSet liveChanges;
+      EventId nextEventId = parent->nextEventId();
+      uint32_t nextCanonicalOrder = parent->nextEventId();
+      const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
+          freshEvents, loop.loopLengthTicks, false, true, false);
+      NoteUtils::DisplayNoteVec freshNotes;
+      freshNotes.reserve(notes.size());
+      for (const NoteUtils::DisplayNote& note : notes) {
+        if (note.noteId != kInvalidNoteId && parent->findNote(note.noteId, note.note)) {
+          continue;
+        }
+        freshNotes.push_back(note);
+      }
+      appendMergedPassNotes(freshNotes, loop.loopId, loop.loopLengthTicks, liveChanges);
+      appendPassEvents(freshEvents, loop.loopId, loop.loopLengthTicks, nextEventId,
+                       nextCanonicalOrder, liveChanges);
+      if (!liveChanges.notes.empty() || !liveChanges.events.empty()) {
+        box.construction = std::make_unique<LoopSnapshotConstruction>(parent, liveChanges);
+        box.constructionPassId = kInvalidPassId;
+        box.applyingCompanions = false;
+        box.appliedLiveRecordEventCount = events.size();
+        return true;
+      }
+    }
   }
 
   if (box.sessionExitQueued && !box.companionsApplied) {
@@ -356,6 +448,15 @@ LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
   if (pendingSnapshotPublishBox_) {
     const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
     if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued) {
+      return true;
+    }
+  }
+  if (capture.phase == CapturePhase::Record && loopLengthTicks > 0 && !publishedSnapshot() &&
+      !(pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued)) {
+    const size_t applied = pendingSnapshotPublishBox_
+                               ? pendingSnapshotPublishBox_->appliedLiveRecordEventCount
+                               : 0;
+    if (capture.store.size() > applied) {
       return true;
     }
   }

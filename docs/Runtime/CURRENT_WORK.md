@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.0 wrap/hold device PASS 092755)
+Last updated: 2026-08-26 (4b.2 first-record live enqueue + PLAYING start)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,11 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** OpenSpec **4b.0** wrap/hold is device PASS
-[`092755`](../../captures/session_20260826_092755.log) — last
-`ODUB,stop,display` **11.1 ms** after wrap at 151.099 s (was **155.6 ms** on
-[`011829`](../../captures/session_20260826_011829.log)). Do not start
-**4b.1**–**4b.4** unless selected. Do **not** split `atomicRenameTempFile`.
+**Now:** OpenSpec **4b.2** — first-record uses the overdub live-enqueue
+setup: start from `capture.store` during RECORDING once a length exists,
+and start on PLAYING. OVERDUBBING only advances an in-flight candidate.
+Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
+Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
+remains device PASS [`092755`](../../captures/session_20260826_092755.log).
 
 Phase 3 task **4.4 display** remains in tree (not closed). Paint and visual-cache fill read
 published `LoopSnapshot` events through
@@ -36,8 +37,9 @@ After overdub stop, `ODUB,stop,display` holds the composed frame and does
 not snapshot-gather. Device PASS [`004934`](../../captures/session_20260826_004934.log):
 display **8.8 ms** / **12.2 ms** (was 97–154 ms on
 [`003459`](../../captures/session_20260826_003459.log)). PLAYING after first
-publish is **7.4–8.4 ms** `midi_gap`. Remaining MIDI owners are OpenSpec
-`4b.1`–`4b.4` (parked). Last-stop wrap/hold is selected.
+publish is **7.4–8.4 ms** `midi_gap`. Remaining MIDI owners: **4b.2** selected (live enqueue + PLAYING start;
+device verify open); 4b.1 same-turn lane stays in tree and is not closed;
+4b.3–4b.4 parked.
 Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,
@@ -45,7 +47,8 @@ validation, 4.5, 4.6, and Phase 5 are **not selected**.
 
 After the first published `LoopSnapshot` exists, PLAYING and OVERDUBBING idle
 do not `step` successor construction. PLAYING visual stays off unless the
-cache is empty. First-record publish is unchanged. Device PASS
+cache is empty. First-record starts during RECORDING when
+`loopLengthTicks > 0` and continues on PLAYING (`DEC-045` 4b.2). Device PASS
 [`233308`](../../captures/session_20260825_233308.log): four overdubs after
 record; first publish at 97.50 s; **no** `snapshot_idle` from then until
 STOPPED; PLAY4 BPM 119.966–120.049.
