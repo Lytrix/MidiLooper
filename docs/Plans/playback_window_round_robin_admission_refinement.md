@@ -821,7 +821,7 @@ to characterize worst-case capacity.
 | Phase | Slice | Content | Gate |
 |---|---|---|---|
 | **Measurement closure (RC1)** | **0** | Recapture to attribute RC1's remaining ~314 ms | **DONE** — [`153941`](../../captures/session_20260826_153941.log): `edit`/`recon` is 92% of the rebuild. RAM1 blocker fixed en route. Surfaced **RC4** |
-| | **1** | `recordPlaybackRebuild` keeps per-window **maximum** + slot; count destinations rebuilt per bar edge | **In tree, recapture pending.** Line is now `DIAG,playback_build,<us>,<winStart>,<winLen>,<rev>,<track>,<slot>,<count>` — duration/window/track/slot are the **maximum** sample; `count` is rebuilds since last emit. Native: `test_playback_rebuild_keeps_maximum_and_counts_destinations`. Device exit criterion remains **slot attribution** of the six `cer_edit` signatures |
+| | **1** | `recordPlaybackRebuild` keeps per-window **maximum** + slot; count destinations rebuilt per bar edge | **DONE for destination attribution** — [`161834`](../../captures/session_20260826_161834.log) reports four destinations: `T0/S6` (57 lines, max 166.325 ms), `T4/S0` (34 lines, max 25.439 ms), `T6/S0` (2 lines, max 10.965 ms), and `T2/S2` (1 line, max 9.406 ms). The maximum sample carries its track/slot. **Telemetry limitation:** `<count>` counts rebuild calls before the next one-shot emit, not distinct destinations per bar edge; it is not used as an eligible-destination count. Native: `test_playback_rebuild_keeps_maximum_and_counts_destinations` |
 | **Representation repair (RC2)** | **2a** | Repairs 1 + 2 — coverage gate on the paint path, wrap append produces coverage | Native display coverage test; device: `DISP` `visualNotes` includes wrap content within one bar of wrap. **Not shippable before Slice 3** — see the ordering constraint below |
 | | **2b** | Repair 3 — source-span seed coverage gate | **Independent semantic gate:** native `test_overdub_source_view` extended to assert the overlap-resolve source is never incomplete; device: `srcafter,why=wrap` never seeds from a dirty cache |
 | **Admission (RC1)** | **3** | Ring B cursor replaces the three pairwise gates; owner-3 dependency rule | Native tests for cursor rotation and the dependency skip; device: `snapshot_idle` share bounded, `visualCache` dirty bars drain during OVERDUBBING |
@@ -991,8 +991,8 @@ authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 
 | Gate | State |
 |---|---|
-| RC1 attribution | **Closed** — `153941` + `160244`; Slice 1 narrows to slot attribution |
-| Ring A population — playback relevance | **Closed** — predicate derived, owner named, item 1a resolved (RECORDING included) |
+| RC1 attribution | **Closed** — `153941` + `160244` + `161834`; destination attribution is `T0/S6` for the dominant long-loop stream, with `T4/S0`, `T6/S0`, and `T2/S2` also observed |
+| Ring A population — playback relevance | **Closed** — predicate derived, owner named, item 1a resolved (`RECORDING` included) |
 | Queued-destination prewarm | Settled — commit-boundary exemption kept |
 | Design envelope (16 x 2, ≤ 240 BPM) | Settled |
 | 64 destinations / 300 BPM | Correctly deferred |
@@ -1005,6 +1005,9 @@ authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 | 2a → 3 ordering | Settled — 2a not shippable before Ring B |
 | RC3 separation | Settled — separate plan |
 
-**Next action is Slice 1 slot attribution, then the RC4 investigation.** `DEC-046` is recorded; the
-only remaining open item is item 2 (bias), which affects `H_fwd` and therefore G1 but not the
-admission model. **G1 may not be sized until RC4's post-resolution cost is measured.**
+**Slice 1 destination attribution is complete.** `161834` identifies `T0/S6` as the dominant
+long-loop destination and records the other observed rebuild destinations. Its `<count>` field is
+rebuild-call count before one-shot emission, not distinct-destination multiplicity; no eligible-set
+count is inferred from it. Next is the RC4 investigation. `DEC-046` is recorded; the only remaining
+open item is item 2 (bias), which affects `H_fwd` and therefore G1 but not the admission model.
+**G1 may not be sized until RC4's post-resolution cost is measured.**

@@ -137,6 +137,34 @@ Round 2 falls inside the first long overdub (`PLAYING -> OVERDUBBING` at 54.181 
 
 The heap also fell from `min_ever=340 KB` at 5 s to `min_ever=120 KB` by 135 s.
 
+## Slice 1 recapture — destination attribution
+
+[`session_20260826_161834`](../../captures/session_20260826_161834.log) carries the extended
+`playback_build` line:
+
+```
+DIAG,playback_build,<us>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count>
+```
+
+The 94 emitted maximum samples identify four destinations:
+
+| Destination | Lines | Rebuild-call count | Maximum |
+|---|---:|---:|---:|
+| `T0/S6` | 57 | 127 | 166.325 ms |
+| `T4/S0` | 34 | 37 | 25.439 ms |
+| `T6/S0` | 2 | 2 | 10.965 ms |
+| `T2/S2` | 1 | 7 | 9.406 ms |
+
+`T0/S6` is the dominant long-loop destination: it supplies the repeated 1536-tick window
+rebuilds, while `T4/S0` supplies the other recurring stream. The max sample's track/slot
+attribution is therefore working.
+
+**Important telemetry boundary:** `<count>` is the number of rebuild calls accumulated until the
+next `emitPendingDeadlineOneShots` call. It is **not** the number of distinct destinations and is
+not a per-bar-edge eligible-set count. For example, repeated `T0/S6 ... count=2` means that the
+same destination was recorded twice before emission; it does not prove two eligible destinations.
+The capture closes destination attribution, but it does not measure Ring A's eligible-set size.
+
 ## Open questions
 
 1. **What mechanism makes identical work 7–10x slower in round 2?** The correlation with
@@ -155,25 +183,27 @@ The heap also fell from `min_ever=340 KB` at 5 s to `min_ever=120 KB` by 135 s.
    These are cheap to separate: count spilled allocations, or report CPU-time separately from wall
    time, for the reconstruction span only. **Do this before any optimization**, because the two
    candidates lead to completely different fixes.
-2. **Are the six signatures six destinations, or successive windows of one destination?** All 67
-   `cer_range` samples report `lists=18, rows=217`, which is consistent with a single loop, yet the
-   signature sequence cycles with period 5. This is exactly what parent-plan Slice 1 must record, and
-   it is unresolved here: **do not** assume six eligible destinations.
-2. **Does the immutable snapshot direction remove this path entirely?** If loaded slots publish a
+2. **Are the six signatures six destinations, or successive windows of one destination?** The
+   `161834` recapture identifies four playback destinations, but it does not carry `cer_range` /
+   `cer_edit` lines, so it cannot map each of the six compatibility-gather signatures directly to a
+   destination. The dominant long-loop stream is `T0/S6`; retain this question for the RC4
+   investigation if direct mapping is required.
+3. **Does the immutable snapshot direction remove this path entirely?** If loaded slots publish a
    `LoopSnapshot` on restore
    ([DEC-044](../DECISION_LOG.md#dec-044--immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
    [DEC-045](../DECISION_LOG.md#dec-045--overdub-snapshot-publish-is-idle-stepped)), the compatibility
    gather does not run for them and RC4 disappears for the observed case. **Answer this before
    optimizing `applyNoteEditPassSequence`** — micro-optimizing a path the architecture is already
    removing would be the wrong investment.
-3. ~~**Is 367 ms representative or pathological?**~~ **Answered by `160244`: pathological.** It is the
+4. ~~**Is 367 ms representative or pathological?**~~ **Answered by `160244`: pathological.** It is the
    contended cost of a destination whose uncontended cost is 30–100 ms.
-4. **Why are there lengthen rows among replayed overdub companions at all?** All 217 Active rows are
+5. **Why are there lengthen rows among replayed overdub companions at all?** All 217 Active rows are
    companions (`comp=217`). A Shorten companion replayed against events that already reflect it
    should take the `noop` or `shorten` branch, yet 8 rows per gather take **lengthen**. Whether that
    is correct replay semantics or a replay-idempotency defect is unresolved, and it matters: if those
    8 rows should not be lengthening, RC4's fix may be a correctness fix rather than a performance
    one.
+
 
 ## Sequencing (agreed)
 
