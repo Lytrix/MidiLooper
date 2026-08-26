@@ -168,6 +168,14 @@ when `currentTick - startLoopTick >= TICKS_PER_BAR`. `loopLengthTicks` can
 already be one bar at record start because stop-quantize of a small raw
 length is one bar. Do not construct that in-progress bar.
 
+**Amendment (2026-08-26):** First-take RECORDING display length stays the
+continuous playhead (`currentTick - startLoopTick`). Quantized
+`loopLengthTicks` remains the snapshot-pending / stop-quantize working
+length and must not drive the piano-roll window.
+[`120020`](../captures/session_20260826_120020.log) had one first-bar
+`snapshot_idle` burst, then `DISP` `loopLen` jumped on every
+`record_length` step. Overdub display keeps the sealed length.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

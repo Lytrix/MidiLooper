@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.2 live snapshot starts after the playhead leaves bar 1)
+Last updated: 2026-08-26 (4b.2 first-take RECORDING display keeps continuous playhead length)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -19,6 +19,10 @@ advances an in-flight candidate. [`095720`](../../captures/session_20260826_0957
 had no `snapshot_idle` until PLAYING because length stayed 0.
 [`114012`](../../captures/session_20260826_114012.log) started at
 `record_length=768` while bar 1 was still being written.
+[`120020`](../../captures/session_20260826_120020.log) started after bar 1
+and did not restart `snapshot_idle` during RECORDING; `DISP` still jumped
+on every quantized `record_length` step. First-take display length stays
+the continuous playhead.
 Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).
