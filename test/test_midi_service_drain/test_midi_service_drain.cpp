@@ -22,45 +22,35 @@ void test_around_load_frame_only_when_post_overdub_playing_drain() {
   TEST_ASSERT_TRUE(MidiServiceDrain::aroundDeferredLoadFrame(true));
 }
 
-void test_post_stop_persist_snapshot_lane_alternates_when_both_pending() {
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRunPersistOnPostStopLane(true, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(true, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunPersistOnPostStopLane(true, true, false));
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(true, true, false));
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRunPersistOnPostStopLane(false, true, false));
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(true, false, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunPersistOnPostStopLane(true, false, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(false, true, false));
+void test_deferred_idle_owner_rotates_unconditionally() {
+  MidiServiceDrain::DeferredIdleOwner owner =
+      MidiServiceDrain::DeferredIdleOwner::Snapshot;
+  const MidiServiceDrain::DeferredIdleOwner expected[] = {
+      MidiServiceDrain::DeferredIdleOwner::VisualCache,
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
+      MidiServiceDrain::DeferredIdleOwner::Persistence,
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+  };
+  for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
+    owner = MidiServiceDrain::nextDeferredIdleOwner(owner);
+    TEST_ASSERT_EQUAL(static_cast<int>(next), static_cast<int>(owner));
+  }
 }
 
-void test_snapshot_round_robin_applies_only_to_unpublished_active_timing() {
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-      false, true, false, true, true));
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-      true, false, false, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-      false, false, false, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-      true, false, true, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-      true, false, false, false, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-      true, false, false, true, false));
-}
-
-void test_visual_constraint_matches_unpublished_snapshot_contention() {
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      false, true, false, true, true));
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      true, false, false, true, true));
-  TEST_ASSERT_TRUE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      true, false, false, false, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      true, false, true, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      true, false, false, true, false));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      false, false, false, true, true));
+void test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::Snapshot, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::VisualCache, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::Persistence, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay, false));
 }
 
 void test_live_record_snapshot_starts_after_first_bar() {
@@ -105,9 +95,8 @@ int main() {
   RUN_TEST(test_around_idle_only_when_post_overdub_playing_drain);
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_around_load_frame_only_when_post_overdub_playing_drain);
-  RUN_TEST(test_post_stop_persist_snapshot_lane_alternates_when_both_pending);
-  RUN_TEST(test_snapshot_round_robin_applies_only_to_unpublished_active_timing);
-  RUN_TEST(test_visual_constraint_matches_unpublished_snapshot_contention);
+  RUN_TEST(test_deferred_idle_owner_rotates_unconditionally);
+  RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
   return UNITY_END();

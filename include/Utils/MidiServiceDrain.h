@@ -3,10 +3,40 @@
 
 #pragma once
 
+#include <cstdint>
+
 /// Gated MIDI polls around deferred remainder. Not a scheduler and not all-PLAYING drain.
 /// Capture uses the existing after-display poll (RC-C C). Post-overdub PLAYING adds polls
 /// around idle maintenance so that work cannot stack with load_frame and persist.
 namespace MidiServiceDrain {
+
+enum class DeferredIdleOwner : uint8_t {
+  Snapshot = 0,
+  VisualCache = 1,
+  VisualCacheWrapAppend = 2,
+  Persistence = 3,
+  LoadAndDisplay = 4,
+};
+
+constexpr uint8_t kDeferredIdleOwnerCount = 5;
+
+inline DeferredIdleOwner nextDeferredIdleOwner(DeferredIdleOwner owner) {
+  const uint8_t next =
+      static_cast<uint8_t>(owner) + static_cast<uint8_t>(1);
+  return static_cast<DeferredIdleOwner>(next % kDeferredIdleOwnerCount);
+}
+
+inline bool deferredIdleOwnerDependsOnVisualCacheWrap(
+    DeferredIdleOwner owner) {
+  return owner == DeferredIdleOwner::VisualCache ||
+         owner == DeferredIdleOwner::LoadAndDisplay;
+}
+
+inline bool allowDeferredIdleOwner(DeferredIdleOwner owner,
+                                   bool wrapAppendPending) {
+  return !wrapAppendPending ||
+         !deferredIdleOwnerDependsOnVisualCacheWrap(owner);
+}
 
 inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain) {
   return postOverdubPlayingDrain;
@@ -32,52 +62,6 @@ inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
   // heavy. This keeps save work resumable and avoids avoidable load+save stacking gaps.
   constexpr uint32_t kActiveLoadFrameSaveDeferThresholdUs = 15000u;
   return !timingCriticalTrackActive || loadFrameDurationUs < kActiveLoadFrameSaveDeferThresholdUs;
-}
-
-/// While PLAYING or OVERDUBBING and both persist and first-record snapshot are pending, they take turns.
-/// When only one is pending, that owner always runs.
-inline bool shouldRunSnapshotOnPostStopLane(bool snapshotPending, bool persistPending,
-                                            bool persistLane) {
-  if (!snapshotPending) {
-    return false;
-  }
-  if (!persistPending) {
-    return true;
-  }
-  return !persistLane;
-}
-
-inline bool shouldRunPersistOnPostStopLane(bool snapshotPending, bool persistPending,
-                                           bool persistLane) {
-  if (!persistPending) {
-    return false;
-  }
-  if (!snapshotPending) {
-    return true;
-  }
-  return persistLane;
-}
-
-/// During unpublished first-root construction, PLAYING/OVERDUBBING alternate snapshot
-/// idle turns so one owner cannot monopolize consecutive timing-critical turns.
-inline bool shouldRoundRobinSnapshotIdle(bool isPlaying, bool isOverdubbing,
-                                         bool havePublishedSnapshot,
-                                         bool hasInFlightConstruction,
-                                         bool snapshotPending) {
-  return (isPlaying || isOverdubbing) && !havePublishedSnapshot &&
-         hasInFlightConstruction && snapshotPending;
-}
-
-/// When unpublished snapshot work is pending while PLAYING/OVERDUBBING, keep
-/// visual fallback constrained so compatibility rebuild does not run an
-/// unbounded neighborhood/search path on the same realtime window.
-inline bool shouldConstrainVisualIdleForUnpublishedSnapshot(bool isPlaying,
-                                                            bool isOverdubbing,
-                                                            bool havePublishedSnapshot,
-                                                            bool /*hasInFlightConstruction*/,
-                                                            bool snapshotPending) {
-  return (isPlaying || isOverdubbing) && !havePublishedSnapshot &&
-         snapshotPending;
 }
 
 /// First-record uses the overdub live-enqueue setup: start on RECORDING after

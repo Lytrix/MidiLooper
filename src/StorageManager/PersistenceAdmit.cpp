@@ -315,7 +315,6 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint
     if (isUrgentRequest) {
         storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
     }
-    storageSession.currentWorkspaceSave.postStopPersistLane = true;
     const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
     if (admissionHeap != UINT32_MAX || storageSession.currentWorkspaceSave.admissionHeap == 0) {
         storageSession.currentWorkspaceSave.admissionHeap = admissionHeap;

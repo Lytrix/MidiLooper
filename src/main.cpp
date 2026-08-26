@@ -35,6 +35,16 @@
 #include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
+static MidiServiceDrain::DeferredIdleOwner sDeferredIdleOwner =
+    MidiServiceDrain::DeferredIdleOwner::Snapshot;
+
+FLASHMEM __attribute__((noinline)) static MidiServiceDrain::DeferredIdleOwner
+takeDeferredIdleOwnerTurn() {
+  const MidiServiceDrain::DeferredIdleOwner owner = sDeferredIdleOwner;
+  sDeferredIdleOwner = MidiServiceDrain::nextDeferredIdleOwner(owner);
+  return owner;
+}
+
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
 FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSelection(
     uint32_t now, uint32_t& lastDisplayUpdate) {
@@ -326,7 +336,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 
 // Keep STOPPED idle-maintenance admission policy out of ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
-    uint32_t now, bool postOverdubPlayingMidiDrain) {
+    uint32_t now, bool postOverdubPlayingMidiDrain,
+    MidiServiceDrain::DeferredIdleOwner deferredOwner) {
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Persistence ||
+      deferredOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay) {
+    return;
+  }
   bool anyRealtimeTrackActive = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
@@ -337,12 +352,30 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   }
   const bool allTracksStopped = !anyRealtimeTrackActive;
   const bool deferStoppedIdleForClock = allTracksStopped && clockManager.isClockRunning();
-  if (deferStoppedIdleForClock) {
+  if (deferStoppedIdleForClock &&
+      deferredOwner != MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend) {
     return;
   }
   if (allTracksStopped) {
     const uint8_t trackCount = trackManager.getTrackCount();
     if (trackCount == 0) {
+      return;
+    }
+    static uint8_t sStoppedIdleTrackCursor = 0;
+    if (sStoppedIdleTrackCursor >= trackCount) {
+      sStoppedIdleTrackCursor = 0;
+    }
+    if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend) {
+      for (uint8_t offset = 0; offset < trackCount; ++offset) {
+        const uint8_t trackIndex =
+            static_cast<uint8_t>((sStoppedIdleTrackCursor + offset) % trackCount);
+        Track& track = trackManager.getTrack(trackIndex);
+        if (track.loopsAllocated() && track.getActiveLoop().hasDeferredVisualCacheWrapAppend()) {
+          track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+          sStoppedIdleTrackCursor = static_cast<uint8_t>((trackIndex + 1) % trackCount);
+          return;
+        }
+      }
       return;
     }
     // Boot title drain: keep idle on the focus track until its visual cache is
@@ -351,20 +384,17 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     if (StorageManager::isBootTitleLoadDrain()) {
       const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
       trackManager.getTrack(focusTrack)
-          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
+          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
       return;
     }
-    static uint8_t sStoppedIdleTrackCursor = 0;
-    if (sStoppedIdleTrackCursor >= trackCount) {
-      sStoppedIdleTrackCursor = 0;
-    }
     trackManager.getTrack(sStoppedIdleTrackCursor)
-        .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
+        .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
     sStoppedIdleTrackCursor = static_cast<uint8_t>((sStoppedIdleTrackCursor + 1) % trackCount);
     return;
   }
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    trackManager.getTrack(i).processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
+    trackManager.getTrack(i).processDeferredIdleMaintenance(
+        now, postOverdubPlayingMidiDrain, deferredOwner);
   }
 }
 
@@ -530,7 +560,17 @@ void loop() {
     }
   }
   const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
-  StorageManager::beginPostStopLaneTurn();
+  const MidiServiceDrain::DeferredIdleOwner deferredIdleOwner = takeDeferredIdleOwnerTurn();
+  bool visualCacheWrapAppendPending = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& track = trackManager.getTrack(i);
+    if (track.loopsAllocated() && track.getActiveLoop().hasDeferredVisualCacheWrapAppend()) {
+      visualCacheWrapAppendPending = true;
+      break;
+    }
+  }
+  const bool deferredIdleOwnerAllowed =
+      MidiServiceDrain::allowDeferredIdleOwner(deferredIdleOwner, visualCacheWrapAppendPending);
 #if defined(SESSION_CAPTURE)
   maybeRecordLoopPrefixRemainder(loopPrefixStartUs);
 #endif
@@ -542,7 +582,9 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   uint32_t remainderStartUs = micros();
 #endif
-  runDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain);
+  if (deferredIdleOwnerAllowed) {
+    runDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredIdleOwner);
+  }
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
   RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
@@ -564,10 +606,14 @@ void loop() {
 
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
-  const uint32_t loadFrameStartUs = micros();
-  runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive,
-                                 postOverdubPlayingMidiDrain);
-  const uint32_t loadFrameUs = micros() - loadFrameStartUs;
+  uint32_t loadFrameUs = 0;
+  if (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay &&
+      deferredIdleOwnerAllowed) {
+    const uint32_t loadFrameStartUs = micros();
+    runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive,
+                                   postOverdubPlayingMidiDrain);
+    loadFrameUs = micros() - loadFrameStartUs;
+  }
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_NOTE_LOAD_FRAME(loadFrameUs);
   DebugSessionCapture::recordLoopRemainderSpan("load_frame", loadFrameUs);
@@ -598,28 +644,13 @@ void loop() {
   const uint32_t persistSaveStartUs = micros();
 #endif
   const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
-  bool snapshotPendingForPersistLane = false;
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    const Track& track = trackManager.getTrack(i);
-    if ((track.isRecording() || track.isPlaying() || track.isOverdubbing()) &&
-        track.loopsAllocated() &&
-        track.getActiveLoop().hasPendingSnapshotPublish()) {
-      snapshotPendingForPersistLane = true;
-      break;
-    }
-  }
   const bool allowDeferredSaveAfterLoadFrame = MidiServiceDrain::allowDeferredSaveAfterLoadFrame(
       timingCriticalTrackActive, loadFrameUs);
-  const bool allowPostStopPersistLane = MidiServiceDrain::shouldRunPersistOnPostStopLane(
-      snapshotPendingForPersistLane, deferredSavePending, StorageManager::preferPostStopPersistLane());
-  if (allowDeferredSaveAfterLoadFrame &&
-      !StorageManager::postStopSnapshotRanThisTurn() &&
+  if (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::Persistence &&
+      deferredIdleOwnerAllowed && allowDeferredSaveAfterLoadFrame &&
       MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending) &&
-      allowPostStopPersistLane) {
+      deferredSavePending) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
-    if (snapshotPendingForPersistLane) {
-      StorageManager::notePostStopPersistRan();
-    }
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;

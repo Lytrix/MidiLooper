@@ -624,7 +624,8 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
   return overdubSourceSpanCachePlaybackRevision_ == playbackRevision;
 }
 
-LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
+LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart,
+                                                       uint32_t requestedWindowLength) {
   NoteUtils::DisplayNoteVec priorSpanCacheNotes;
   const bool keepPriorSpanCache =
       hasOverdubSession() && overdubSourceSpanCacheValid_ &&
@@ -648,11 +649,21 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
       // are unavailable instead of forcing a full materialize on this timing-critical path.
       if (!priorSpanCacheNotes.empty()) {
         overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
-      } else if (!visualCache.notes.empty()) {
+      } else if (!visualCache.notes.empty() &&
+                 visualCacheCoversWindow(visualCacheDirty, visualCache.dirtyBars,
+                                         requestedWindowStart, requestedWindowLength,
+                                         loopLengthTicks, Config::TICKS_PER_BAR)) {
         // Prepared spans can miss immediately after publish. Use the latest committed
-        // display list as a bounded seed so overdub reopen does not start from an empty
-        // source cache while waiting for prepared spans to become ready.
+        // display list only when it covers the requested source interval.
         overdubSourceSpanCacheNotes_ = visualCache.notes;
+      } else {
+        // An uncovered visual cache is not a valid overlap source. Reconstruct from
+        // committed passes so overlap resolution never receives a partial span.
+        SessionMidiEventVec fullResolvedEvents;
+        passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
+        overdubSourceSpanCacheNotes_ =
+            NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
+        appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
       }
     } else {
       SessionMidiEventVec fullResolvedEvents;
@@ -743,7 +754,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
   const char* from = "cache";
   if (!overdubSourceSpanCacheReady()) {
-    rebuildOverdubSourceSpanCache();
+    rebuildOverdubSourceSpanCache(windowStart, windowLength);
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t filterStartUs = micros();

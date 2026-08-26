@@ -13,6 +13,7 @@
 #include "MidiEvent.h"
 #include "MidiHandler.h"
 #include "Utils/DeferredValidatePolicy.h"
+#include "Utils/MidiServiceDrain.h"
 #include "Utils/NoteUtils.h"    // For CachedNoteList
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
 #include "TrackState.h"
@@ -145,7 +146,9 @@ public:
   /// MIDI-dispatched stop path.
   void queueDeferredStoredMidiVerification();
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
-  void processDeferredIdleMaintenance(uint32_t nowMs, bool postOverdubDrainWindowActive = false);
+  void processDeferredIdleMaintenance(
+      uint32_t nowMs, bool postOverdubDrainWindowActive,
+      MidiServiceDrain::DeferredIdleOwner deferredOwner);
   /// One-shot `#CAP,DIAG,stored_notes` from a clean visual cache. SESSION_CAPTURE only.
   /// Gate 0 diagnosis; disable once later-stage overlap validation proofs exist.
   void maybeLogStoredNoteCount();
@@ -379,8 +382,6 @@ private:
   bool alignLoopOriginOnNextStop;
   bool playingMidiDrainAfterOverdubStop_ = false;
   bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
-  bool snapshotIdleRoundRobinTurn_ = true;
-  uint8_t visualIdleCadenceCounter_ = 0;
   uint32_t overdubDrainFallbackRetryAtMs_ = 0;
   bool loopPrefixMeasureAfterUndo_ = false;
   bool loopPrefixMeasureAfterUndoNoted_ = false;

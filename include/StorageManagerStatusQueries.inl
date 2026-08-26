@@ -25,41 +25,6 @@ inline bool StorageManager::hasDeferredSaveWork() {
 #endif
 }
 
-inline bool StorageManager::preferPostStopPersistLane() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return StorageManagerInternal::storageSession.currentWorkspaceSave.postStopPersistLane;
-#endif
-}
-
-inline void StorageManager::beginPostStopLaneTurn() {
-#if !BYPASS_STOP_UNDO_SAVE
-    StorageManagerInternal::storageSession.currentWorkspaceSave.postStopSnapshotRanThisTurn = false;
-#endif
-}
-
-inline bool StorageManager::postStopSnapshotRanThisTurn() {
-#if BYPASS_STOP_UNDO_SAVE
-    return false;
-#else
-    return StorageManagerInternal::storageSession.currentWorkspaceSave.postStopSnapshotRanThisTurn;
-#endif
-}
-
-inline void StorageManager::notePostStopSnapshotRan() {
-#if !BYPASS_STOP_UNDO_SAVE
-    StorageManagerInternal::storageSession.currentWorkspaceSave.postStopSnapshotRanThisTurn = true;
-    StorageManagerInternal::storageSession.currentWorkspaceSave.postStopPersistLane = true;
-#endif
-}
-
-inline void StorageManager::notePostStopPersistRan() {
-#if !BYPASS_STOP_UNDO_SAVE
-    StorageManagerInternal::storageSession.currentWorkspaceSave.postStopPersistLane = false;
-#endif
-}
-
 inline bool StorageManager::hasRevisionCommitWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
