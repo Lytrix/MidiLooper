@@ -1,6 +1,6 @@
 # Playback window build — Owner-Boundary Gate (ExecutionBounds)
 
-**Status:** **Slice 0 shipped.** **Slice 1A native PASS; device measure gate not passed** ([`213537`](../../captures/session_20260826_213537.log)). Slices 1B–5 are not authorized. Residual **4b.1b** (visual-cache idle reconstruct) is owned here and **parked**; Ring B / RC2 is closed without it.
+**Status:** **Slice 0 shipped.** **Slice 1A native PASS; device measure gate FAIL** ([`213537`](../../captures/session_20260826_213537.log)). FAIL path: [`playback_window_prepare_algorithm_decomposition_investigation.md`](playback_window_prepare_algorithm_decomposition_investigation.md). Slices 1B–5 are not authorized. Residual **4b.1b** (visual-cache idle reconstruct) is owned here and **parked**; Ring B / RC2 is closed without it.
 **Kind:** refinement under the runtime scheduling Owner-Boundary Gate
 **Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (O–T–R–C–A–P)
 **GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38) parent; [#41](https://github.com/Lytrix/MidiLooper/issues/41) 4b.1b. Work project: [Work](https://github.com/users/Lytrix/projects/1)

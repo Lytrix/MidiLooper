@@ -1,0 +1,129 @@
+# Prepare-algorithm decomposition — after Slice 1A measure FAIL
+
+**Status:** **Open.** Slice D1 native PASS (device verify open). Do **not** start owner-boundary Slice 1B.
+**Kind:** investigation
+**Parent:** [`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md)
+**GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38). Work: [Work](https://github.com/users/Lytrix/projects/1)
+**Evidence:** [`session_20260826_213537.log`](../../captures/session_20260826_213537.log)
+**Bound authority:** [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md) + [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property)
+
+1A asked whether existing prepare can become a cooperative job without changing its
+semantics. Native resumability for F2 / F3 / F5 passed. Device measure on `213537`
+**failed** the gate. This investigation owns the FAIL path: decompose the remaining
+indivisible work, and stop F8 from wiping completed units during a normal STOPPED
+browse.
+
+**Do not:** start 1B (60% timer); add playback-window consume; treat
+`DIAG,lcr,mat=` / `pair,tot=` as the 1A pass condition; recapture for those old
+completion lines.
+
+---
+
+## 1A measure gate (closed — FAIL)
+
+| Question | `213537` result |
+|---|---|
+| Known max unit cost? | **No.** `idx` grows with `ev` (260 µs at 8 → 2446 µs at 704). First-of-chunk 271–3720 µs. |
+| Resume from last unit? | **Inside one attempt, yes.** Across `reset,dirty`, **no.** |
+| F1–F7 converted or named? | **Named.** Device only ran `idx` / `chunk` / `pair`. Never left `IndexCommit`. |
+| STOPPED avoids F8 wipe? | **No.** `DIAG,lcr,reset,dirty` at 25.080 s wiped pass 0 `ev=720`. |
+
+Authorized 1A instrument: `DIAG,prepare,slice,<step>,us=,units=,resume=,indiv=`.
+That is the measurement. Completion totals are not.
+
+---
+
+## D0 pin — why attempt 1 died
+
+Last slices before the wipe (`24.930–24.942 s`):
+
+```text
+prepare,slice,idx,  us=1397, units=8, resume=720
+prepare,slice,chunk, us=27,  units=8, resume=216
+```
+
+Still `Phase::IndexCommit` on pass 0. Next cooperative unit would have been more
+`chunk` / `pair`, then the named F1 blockers `nsort` / `isort`.
+
+Then:
+
+| Stamp | Line |
+|---|---|
+| 25.000 s | `VCACHE,stale_all` `notes=0` `total=0` `dirty=1` |
+| 25.003 s | `DISP,0,STOPPED,0,0,0,0,0,0` |
+| 25.003 s | `SAVE,pending` |
+| 25.080 s | `DIAG,lcr,reset,dirty` |
+| 25.839 s | `DISP,5,STOPPED,3072,…` — other track |
+| 26.026 s | prepare restarts `idx` `ev=0` |
+
+Earlier the same session painted track 0 at `50688` ticks / 1429 notes
+(`DISP,0,STOPPED,50688,…` at 20.319 s). At 25.003 s track 0’s **active loop** is
+empty (`loopLengthTicks=0`).
+
+`DeviceGateSession` is one global session. `Track::processDeferredContentResolutionDeviceGate`
+runs only on the selected track. When that track’s active loop has no committed
+passes or `loopLengthTicks == 0`, it calls `deviceGateReset()`. Selecting an empty
+slot on track 0 therefore wipes prepare progress that belonged to a different
+loop on the same track.
+
+`deviceGateDirtyPolicy` is not the wipe here. Same-length dirty would have logged
+`skip,dirty`. The log is `reset,dirty`, from the empty-loop branch in
+`processDeferredContentResolutionDeviceGate`.
+
+Resume across PLAYING **did** work in the same capture: prepare paused at
+`ev=200` while tracks flickered PLAYING (`19.112–20.227 s`) and continued at
+`ev=200` after STOPPED. F8 is slot/loop switch, not transport.
+
+---
+
+## Slices
+
+```text
+D0  pin 1A FAIL + F8 wipe owner          (this document)
+D1  bind session to track + loop index   ← now
+        empty / other loop must not reset
+D2  F1 IndexCommit nsort / isort         (design session before firmware)
+D3  remaining named blockers F4 / F6 / F7
+```
+
+**D1 invariant:** a DeviceGate session begun for track T loop L is reset only
+when **that same** loop is cleared, length-mismatched under Reset policy, or
+explicitly abandoned. Selecting another loop, or an empty slot, parks the
+session.
+
+D1 implementation: `deviceGateBegin` stores track index + loop index.
+`processDeferredContentResolutionDeviceGate` returns without reset when
+`deviceGateMatchesLoop` is false. Native:
+`test_device_gate_other_loop_does_not_match_session` PASS. Firmware RAM1
+locals **4640**. Device recapture still required for the D1 pass line
+(switch away and back; `ev` must not return to 0).
+
+**D2** is not authorized as firmware in this session. `sortAndUniqueByNoteId` /
+`sortTickEventEntriesByTick` are whole-vector operations. Subdividing them is
+algorithmic decomposition, not another yield-around-sort.
+
+**Pass for the investigation (not 1B):** STOPPED browse that switches away from
+the preparing loop and back again shows monotonic `prepare,slice` resume
+(`ev` does not return to 0). Then review F1.
+
+---
+
+## Owners
+
+| Behavior | Owner |
+|---|---|
+| Prepare session + cursors | `DeviceGateSession` in `LoopContentResolution` |
+| Idle queue / interrupt | `Track::maybeQueueContentResolutionDeviceGate`, `Track::processDeferredContentResolutionDeviceGate` |
+| Dirty same-length skip | `deviceGateDirtyPolicy` — unchanged by D1 |
+
+Reuse: add track index and loop index on the existing session. No new owner.
+
+---
+
+## Out of scope
+
+- Slice 1B operating-target timer
+- Horizon consume / Ring A / RC4
+- Cooperative `NoteUtils::reconstructDisplayNotes` (4b.1b, parked)
+- Making `DIAG,lcr,mat=` / `pair,tot=` reliable
+- Per-loop parallel sessions (one global session remains)

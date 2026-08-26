@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (LCR incomplete diagnostic on gate interrupt)
+Last updated: 2026-08-26 (prepare decomposition D1 — session loop match)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Immediate slice:** Slice 1A firmware is in tree. Device capture
-[`213537`](../../captures/session_20260826_213537.log) does **not** pass
-the 1A measure gate: prepare never left `IndexCommit`, and
-`DIAG,lcr,reset,dirty` at 25.080 s wiped pass 0 `ev=720` (F8). Completion
-lines (`DIAG,lcr,mat=` / `pair,tot=`) are absent because the gate never
-returned `Complete`. Interrupt paths now emit
-`DIAG,lcr,incomplete,reason=...` before reset/skip. Do **not** start 1B.
-Review stays on
+**Immediate slice:** Slice 1A measure gate **FAIL** on
+[`213537`](../../captures/session_20260826_213537.log). Next work is
+[`playback_window_prepare_algorithm_decomposition_investigation.md`](../Plans/playback_window_prepare_algorithm_decomposition_investigation.md)
+**D1** (bind DeviceGate session to track + loop so an empty/other loop does
+not F8-wipe). Do **not** start 1B. Parent remains
 [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
 ([#38](https://github.com/Lytrix/MidiLooper/issues/38)).
 
