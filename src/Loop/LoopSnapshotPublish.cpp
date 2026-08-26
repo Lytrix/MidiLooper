@@ -287,6 +287,9 @@ bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
 }
 
 void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t loopLengthTicks) {
+  if (!box.sessionExitQueued) {
+    return;
+  }
   const bool unpublishedStale = box.unpublishedCandidate &&
                                 box.unpublishedCandidate->loopLengthTicks() != loopLengthTicks;
   const bool constructionStale =
@@ -311,7 +314,7 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
   if (parent) {
     return parent;
   }
-  if (isRecordSessionExit(box.sessionExitReason)) {
+  if (box.sessionExitQueued && isRecordSessionExit(box.sessionExitReason)) {
     return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
                                      loop.nextNoteId_, 1);
   }
@@ -335,7 +338,7 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
   }
   if (loop.capture.phase == CapturePhase::Record && loop.loopLengthTicks > 0 &&
       !loop.publishedSnapshot()) {
-    return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+    return LoopSnapshot::createEmpty(loop.loopId, Config::TICKS_PER_BAR, loop.loopStartTick,
                                      loop.nextNoteId_, 1);
   }
   return {};
@@ -366,13 +369,16 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
 
   if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
       loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
+    if (box.unpublishedCandidate) {
+      return false;
+    }
     loop.assignMissingNoteIdsInStore(loop.capture.store);
     MidiEventVec events;
     loop.capture.store.copyEventsTo(events);
     MidiEventVec freshEvents;
     freshEvents.reserve(events.size());
     for (const MidiEvent& event : events) {
-      if (event.tick < loop.loopLengthTicks && !eventAlreadyInSnapshot(*parent, event)) {
+      if (event.tick < Config::TICKS_PER_BAR && !eventAlreadyInSnapshot(*parent, event)) {
         freshEvents.push_back(event);
       }
     }
@@ -381,7 +387,7 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
       EventId nextEventId = parent->nextEventId();
       uint32_t nextCanonicalOrder = parent->nextEventId();
       const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
-          freshEvents, loop.loopLengthTicks, false, true, false);
+          freshEvents, Config::TICKS_PER_BAR, false, true, false);
       NoteUtils::DisplayNoteVec freshNotes;
       freshNotes.reserve(notes.size());
       for (const NoteUtils::DisplayNote& note : notes) {
@@ -390,8 +396,8 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
         }
         freshNotes.push_back(note);
       }
-      appendMergedPassNotes(freshNotes, loop.loopId, loop.loopLengthTicks, liveChanges);
-      appendPassEvents(freshEvents, loop.loopId, loop.loopLengthTicks, nextEventId,
+      appendMergedPassNotes(freshNotes, loop.loopId, Config::TICKS_PER_BAR, liveChanges);
+      appendPassEvents(freshEvents, loop.loopId, Config::TICKS_PER_BAR, nextEventId,
                        nextCanonicalOrder, liveChanges);
       if (!liveChanges.notes.empty() || !liveChanges.events.empty()) {
         box.construction = std::make_unique<LoopSnapshotConstruction>(parent, liveChanges);
@@ -468,7 +474,8 @@ LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
     }
   }
   if (capture.phase == CapturePhase::Record && loopLengthTicks > 0 && !publishedSnapshot() &&
-      !(pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued)) {
+      !(pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued) &&
+      !(pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->unpublishedCandidate)) {
     const size_t applied = pendingSnapshotPublishBox_
                                ? pendingSnapshotPublishBox_->appliedLiveRecordEventCount
                                : 0;

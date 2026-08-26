@@ -54,8 +54,8 @@ inline bool shouldRunPersistOnPostStopLane(bool snapshotPending, bool persistPen
   return persistLane;
 }
 
-/// First-record uses the overdub live-enqueue setup: start as soon as a length
-/// exists (including RECORDING), and start on PLAYING. OVERDUBBING only advances
+/// First-record uses the overdub live-enqueue setup: start on RECORDING after
+/// the playhead has left bar 1, and start on PLAYING. OVERDUBBING only advances
 /// an in-flight candidate (`allowStart` is false there). After a published root
 /// exists, PLAYING / OVERDUBBING / RECORDING do not step successors (DEC-045).
 /// Empty dirty visualCache still wins on STOPPED / STOPPED_RECORDING (`231632`).
@@ -75,6 +75,17 @@ inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverd
     return false;
   }
   return true;
+}
+
+/// First-record live construction waits until `currentTick` has left bar 1.
+/// `loopLengthTicks` can already be one bar while that bar is still being
+/// written (session_20260826_114012).
+inline bool allowLiveRecordSnapshotStart(bool isRecording, uint32_t recordElapsedTicks,
+                                         uint32_t ticksPerBar) {
+  if (!isRecording) {
+    return true;
+  }
+  return recordElapsedTicks >= ticksPerBar;
 }
 
 }  // namespace MidiServiceDrain

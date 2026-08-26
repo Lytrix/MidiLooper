@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.2 growing-record length + snapshot start at 1 bar)
+Last updated: 2026-08-26 (4b.2 live snapshot starts after the playhead leaves bar 1)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -12,10 +12,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
 RECORDING with the same bar-quantize as record stop
-(`computeRecordStopLengthTicks`). Snapshot idle can start at 1 bar from
-`capture.store`. PLAYING still starts remaining work. OVERDUBBING only
+(`computeRecordStopLengthTicks`). Snapshot idle starts from `capture.store`
+only after the playhead has left bar 1, and builds that completed bar only.
+PLAYING still starts remaining work. OVERDUBBING only
 advances an in-flight candidate. [`095720`](../../captures/session_20260826_095720.log)
 had no `snapshot_idle` until PLAYING because length stayed 0.
+[`114012`](../../captures/session_20260826_114012.log) started at
+`record_length=768` while bar 1 was still being written.
 Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).
@@ -50,8 +53,8 @@ validation, 4.5, 4.6, and Phase 5 are **not selected**.
 
 After the first published `LoopSnapshot` exists, PLAYING and OVERDUBBING idle
 do not `step` successor construction. PLAYING visual stays off unless the
-cache is empty. First-record starts during RECORDING when
-`loopLengthTicks > 0` and continues on PLAYING (`DEC-045` 4b.2). Device PASS
+cache is empty. First-record starts during RECORDING after the playhead has
+left bar 1 and continues on PLAYING (`DEC-045` 4b.2). Device PASS
 [`233308`](../../captures/session_20260825_233308.log): four overdubs after
 record; first publish at 97.50 s; **no** `snapshot_idle` from then until
 STOPPED; PLAY4 BPM 119.966–120.049.

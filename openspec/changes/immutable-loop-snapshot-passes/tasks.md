@@ -68,16 +68,19 @@ Stop-display hold is device PASS
       grace is withdrawn — [`010505`](../../../captures/session_20260826_010505.log)
       stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
       (`midi_gap` 32–51 ms).
-- [ ] 4b.2 Bound first-record `snapshot_idle` by starting construction as soon
-      as a length exists, using the overdub live-enqueue setup, and starting
-      on PLAYING. First-take `loopLengthTicks` updates during RECORDING with
-      `computeRecordStopLengthTicks` so idle can start at 1 bar. Growing
-      record does not clamp capture ticks to that working length.
-      OVERDUBBING only advances an in-flight candidate. Evidence:
-      [`095720`](../../../captures/session_20260826_095720.log) had no
-      `snapshot_idle` until PLAYING. Do not check off until device verify.
-      Do not step successor construction during OVERDUBBING after the first
-      root.
+- [ ] 4b.2 Bound first-record `snapshot_idle` by starting construction after
+      the playhead has left bar 1, using the overdub live-enqueue setup, and
+      starting on PLAYING. First-take `loopLengthTicks` updates during
+      RECORDING with `computeRecordStopLengthTicks`. Live construction
+      builds only that completed first bar and does not restart on later
+      length steps. Growing record does not clamp capture ticks to that
+      working length. OVERDUBBING only advances an in-flight candidate.
+      Evidence: [`095720`](../../../captures/session_20260826_095720.log)
+      had no `snapshot_idle` until PLAYING.
+      [`114012`](../../../captures/session_20260826_114012.log) started at
+      `record_length=768` while bar 1 was still being written. Do not check
+      off until device verify. Do not step successor construction during
+      OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not
       `ODUB,stop,display`. Evidence: `004934` 67.4 ms at 113.911 s
