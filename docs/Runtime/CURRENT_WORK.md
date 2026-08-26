@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (prepare decomposition D1 device PASS)
+Last updated: 2026-08-26 (4b.1/4b.2/4b.2c closed under Ring B)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,37 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Immediate slice:** Slice 1A measure gate **FAIL** on
+**OpenSpec 4b.1 / 4b.2 / 4b.2c:** closed under Ring B round-robin
+([`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md);
+[`playback_window_round_robin_admission_refinement.md`](../Plans/playback_window_round_robin_admission_refinement.md)).
+**4b.1** pass = one owner per cursor turn (no true same-turn snapshot/persist
+stack). **4b.2** pass = first-record start after leaving bar 1 + live append
+on the five-owner cursor. **4b.2c** is closed: capture
+[`232633`](../../captures/session_20260826_232633.log) shows one in-flight
+record construction (`construction=1`, `queued=0`, `applied=0`, `exit=1`,
+`inflight=1`) through PLAYING/OVERDUBBING, then the final `pending=0` turn
+publishes `root=0x7030ad1c` with `root_rev=1`/`playback_rev=1`. No later
+PLAYING/OVERDUBBING `snapshot_idle` occurs. The apparent violation was the
+first-root construction interval, not stacked successor overdub passes.
+`DEC-045` remains unchanged. **4b.3** remains open; exclude `T0/S6` when
+scoring post-stop gaps.
+
+**Separate capture finding:** [`214703`](../../captures/session_20260826_214703.log)
+confirmed `CLN,overdub,wrap_synth,3` after `finalizePendingNotes` reported no
+pending notes/off events. Stored data contained existing head offs such as
+`F@112` plus synthetic `F@6143` (`loopLengthTicks - 1`) for the same notes.
+Track this in [`overdub_wrap_note_off_capture_bugfix.md`](../Plans/overdub_wrap_note_off_capture_bugfix.md);
+do not fold it into 4b.2c.
+
+**Immediate slice (side track):** Slice 1A measure gate **FAIL** on
 [`213537`](../../captures/session_20260826_213537.log). Decomposition
 [`playback_window_prepare_algorithm_decomposition_investigation.md`](../Plans/playback_window_prepare_algorithm_decomposition_investigation.md)
 **D1** is **closed** — native + device PASS
 [`221655`](../../captures/session_20260826_221655.log): switch track 0→1
 while `chan resume=2560`, **0** `reset,dirty`, resume `chan 2568` on return,
-then `Complete` at 178.738 s. Next is **D2 design session** (F1 `nsort` /
-`isort`). Do **not** start D2 firmware or 1B. Parent remains
+then `Complete` at 178.738 s. Next LCR-prepare step would be **D2 design**,
+but maintained-LCR prepare is not the snapshot north star; do **not** start
+D2 firmware or 1B unless re-authorized. Parent remains
 [`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
 ([#38](https://github.com/Lytrix/MidiLooper/issues/38)).
 

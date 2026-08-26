@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (prepare decomposition D1 device PASS)
+Last updated: 2026-08-26 (4b.2c telemetry boundary verified)
 
 ---
 
@@ -20,6 +20,12 @@ reconstruct. After the first published root exists, PLAYING and OVERDUBBING
 do not step successor snapshot construction. NOTE_EDIT close stays synchronous.
 Device PASS [`233308`](../../captures/session_20260825_233308.log): no
 `snapshot_idle` after first publish until STOPPED; PLAY4 BPM 119.966–120.049.
+Capture-only `snapshot_idle` telemetry exposed the root/queue boundary, and
+device capture [`232633`](../../captures/session_20260826_232633.log) verified
+that the PLAYING/OVERDUBBING rows before root publication were one in-flight
+record construction with no queued successor passes. The final `pending=0`
+row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
+4b.2c is closed without amending `DEC-045`.
 Display paint fallback and visual-cache fill read published snapshot events
 when a root exists; compatibility gather remains the no-snapshot fallback.
 A nonempty dirty visual-cache prefix does not authorize the paint window

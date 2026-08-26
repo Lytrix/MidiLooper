@@ -26,6 +26,12 @@ LOOP_COLD_MEM const void* Loop::publishedSnapshotIdentity() const {
   return publishedSnapshotIsCurrent() ? publishedSnapshotBox_->snapshot.get() : nullptr;
 }
 
+LOOP_COLD_MEM uint32_t Loop::publishedSnapshotRevision() const {
+  return publishedSnapshotBox_ && publishedSnapshotBox_->snapshot
+             ? publishedSnapshotBox_->revision
+             : 0;
+}
+
 LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
   publishedSnapshotBox_.reset();
   clearPendingSnapshotPublish();

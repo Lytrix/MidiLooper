@@ -329,6 +329,8 @@ struct Loop {
   /// Non-owning identity of the current published root, or nullptr when none is
   /// selected or the published root is stale versus `playbackRevision`.
   const void* publishedSnapshotIdentity() const;
+  /// Revision captured when the published root was stored. Zero when no root exists.
+  uint32_t publishedSnapshotRevision() const;
   /// Fill `out` from published snapshot event membership in
   /// `[windowStart, windowStart + windowLength)`. A stale published root still
   /// supplies that window; unpublished session / pending-publish passes and
@@ -356,6 +358,10 @@ struct Loop {
                                   uint32_t liveRecordCompletedTicks = 0);
   bool hasPendingSnapshotPublish() const;
   bool hasInFlightSnapshotConstruction() const;
+  size_t pendingSnapshotQueuedPassCount() const;
+  size_t pendingSnapshotAppliedPassCount() const;
+  PassId pendingSnapshotConstructionPassId() const;
+  bool pendingSnapshotSessionExitQueued() const;
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;
   /// True when a live-record parent exists with tick room, or none exists yet.

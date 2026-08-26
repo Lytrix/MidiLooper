@@ -1,8 +1,11 @@
 # Playback window and deferred owner round-robin admission
 
-**Status:** **Design session — no firmware authorized.** Two root causes are named below from
-device evidence. Slice ordering and gates are at the end. Nothing in this document authorizes an
-edit; the architecture checkpoint answers **yes** on ownership, transitions, and execution bound.
+**Status:** **Ring B / RC2 closed (2026-08-26).** Slices 2a, 2b, and 3 are device-verified.
+Ring A firmware is still not authorized. Residual **4b.1b** (indivisible
+`NoteUtils::reconstructDisplayNotes` in `Loop::rebuildVisualCacheIdleSlice`) moved to
+[`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md)
+§ *4b.1b*. Two root causes were named from device evidence. Slice ordering and gates are at
+the end. Ring A still answers **yes** on ownership, transitions, and execution bound.
 
 **Kind:** refinement under the runtime scheduling Owner-Boundary Gate
 
@@ -13,6 +16,7 @@ edit; the architecture checkpoint answers **yes** on ownership, transitions, and
 [`IntervalProjection.md`](../Authority/Architecture/IntervalProjection.md)
 
 **Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md)
+**GitHub:** [#39](https://github.com/Lytrix/MidiLooper/issues/39) Ring A. Parent [#38](https://github.com/Lytrix/MidiLooper/issues/38). Work: [Work](https://github.com/users/Lytrix/projects/1)
 
 **Sibling:** [`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md)
 (F11 companion-replay finding is reused here, not re-derived)
@@ -637,6 +641,72 @@ maximum representable slots, the full `[20, 300]` tempo clamp, pathological all-
 are established later, once the architecture has stabilized, and may be expressed as documented
 capacity limits rather than as constraints this phase must solve.
 
+### G1 result — 2026-08-26
+
+**Status:** **Satisfied** for the current horizon. This records the derived lead. It does **not**
+authorize Slice 4 / Ring A firmware.
+
+**Horizon / bias selected for this sizing.** Keep the current playhead-centred 2-bar window in
+`Track::ensurePlaybackMergedMidiEventsBuilt`:
+
+- content = `kMergedMidiEventsGatherBars * TICKS_PER_BAR` = 1536 ticks
+- `H_fwd` = `winLen / 2` = **768 ticks**
+- backward half stays one bar for LoopEnd launch + clock catch-up
+
+Window bias (item 2) is not moved. If a later measurement changes `H_fwd`, G1 is re-derived. The
+current reuse test (`TICKS_PER_BAR / 2` backward tolerance) stays as-is.
+
+**`representativeRebuildWall`.** Snapshot-path maximum from
+[`202654`](../../captures/session_20260826_202654.log): eight `path=snapshot` samples, all `T4/S0`,
+305–358 µs. **`representativeRebuildWall` = 358 µs.** `T0/S6` compatibility (maximum 325.541 ms)
+is excluded. The same capture's non-`T0/S6` compatibility ceiling is `T4/S0` 11.859 ms (`T6/S0`
+6.768 ms); that ceiling is a check, not the named representative.
+
+**Envelope constants at the binding tempo (240 BPM).**
+
+| Symbol | Value |
+|---|---|
+| `TICKS_PER_BAR` | 768 |
+| `TICKS_PER_CLOCK` | 8 |
+| tick wall | 250 ms / 192 = 1.302083 ms |
+| `T_clock` | 10.416667 ms |
+| `H_fwd_wall` | 1000.000 ms |
+| `H_fwd / 2` | 500.000 ms |
+| `N` | **32** (DEC-046 envelope: 16 tracks × 2 slots) |
+| `safetyMargin` | **1 × `T_clock`** = 10.417 ms |
+
+**Derived lead.**
+
+```
+leadWall >= (32 - 1) × 10.416667 ms + 0.358 ms + 10.417 ms
+         = 333.692 ms
+         = 256.27 ticks
+```
+
+Clock-align up to 264 ticks (33 clocks = 343.750 ms). The same-capture non-`T0/S6` compatibility
+ceiling (11.859 ms) needs 265.11 ticks at this `N` and margin, so the recorded lead is the next
+clock multiple:
+
+| Derived | Value |
+|---|---|
+| **`prefetchTicks`** | **272** (34 clocks) |
+| `leadWall` at 240 BPM | 354.167 ms |
+| Required `leadWall < H_fwd` | 354.167 < 1000 |
+| Target `leadWall <= H_fwd / 2` | 354.167 <= 500 |
+
+`N=32` is no longer tight: rebuild + margin at the snapshot representative is 10.775 ms against
+177 ms of `H_fwd / 2` room after arbitration. Substituting the 11.859 ms non-`T0/S6` ceiling still
+clears both inequalities. Substituting the excluded `T0/S6` 325.541 ms would consume the entire
+177 ms room and is why that destination is not a G1 input.
+
+Observed destinations in `202654` are `T0/S6` (ignored), `T4/S0`, and `T6/S0`. `161834` also
+reported `T2/S2` at 9.406 ms. `<count>` is still not an eligible-set size; Slice 4 verifies
+self-staggering rather than assuming it. A lead sized only for the four observed destinations
+would be ~40 ticks and is **not** used.
+
+**Not authorized by this result:** writing `prefetchTicks` into firmware, changing the reuse
+test, moving window bias, or starting Ring A.
+
 #### Invariant A1 and the missed-prefetch failure policy
 
 The invariant and the policy are separate statements. The invariant says what the architecture must
@@ -822,12 +892,12 @@ to characterize worst-case capacity.
 |---|---|---|---|
 | **Measurement closure (RC1)** | **0** | Recapture to attribute RC1's remaining ~314 ms | **DONE** — [`153941`](../../captures/session_20260826_153941.log): `edit`/`recon` is 92% of the rebuild. RAM1 blocker fixed en route. Surfaced **RC4** |
 | | **1** | `recordPlaybackRebuild` keeps per-window **maximum** + slot/path; count rebuild calls before emission | **DONE for destination attribution** — [`161834`](../../captures/session_20260826_161834.log) reports four destinations: `T0/S6` (57 lines, max 166.325 ms), `T4/S0` (34 lines, max 25.439 ms), `T6/S0` (2 lines, max 10.965 ms), and `T2/S2` (1 line, max 9.406 ms). The maximum sample carries its track/slot. The deferred line now also carries `path=snapshot|compatibility|note_edit`, captured at the existing playback branch point. [`202654`](../../captures/session_20260826_202654.log) validates 82 emitted samples: 74 compatibility, 8 snapshot, and no note-edit samples. **Telemetry limitation:** `<count>` counts rebuild calls before the next one-shot emit, not distinct destinations per bar edge; it is not used as an eligible-destination count. Native: `test_playback_rebuild_keeps_maximum_and_counts_destinations` |
-| **Representation repair (RC2)** | **2a** | Repairs 1 + 2 — coverage gate on the paint path, wrap append produces coverage | Native display coverage test; device: `DISP` `visualNotes` includes wrap content within one bar of wrap. **Not shippable before Slice 3** — see the ordering constraint below |
-| | **2b** | Repair 3 — source-span seed coverage gate | **Independent semantic gate:** native `test_overdub_source_view` extended to assert the overlap-resolve source is never incomplete; device: `srcafter,why=wrap` never seeds from a dirty cache |
-| **Admission (RC1)** | **3** | Ring B cursor replaces the three pairwise gates; owner-3 dependency rule | Native tests for cursor rotation and the dependency skip; device: `snapshot_idle` share bounded, `visualCache` dirty bars drain during OVERDUBBING |
-| | **4** | Ring A: playback-relevant eligible set + cursor + prefetch trigger + horizon/bias choice + invariants A1/A2 | **G1 satisfied first.** Device: no `tracks` sample above one dispatch period at bar edges; `late_off` back to the record-pass class (≤ 27 ms); **zero** `playback_window_starved` inside the design envelope; eligible-set size decays after the first rotation (self-staggering confirmed); `ExecutionBounds.md` row 1 admission note updated in the same commit |
+| **Representation repair (RC2)** | **2a** | Repairs 1 + 2 — coverage gate on the paint path, wrap append produces coverage | **DONE** — [`183452`](../../captures/session_20260826_183452.log) / [`185141`](../../captures/session_20260826_185141.log): wrap `DISP` rises (286→466 / 271→437). Zero `srcafter,why=wrap,from=cache`. Shipped with Slice 3 |
+| | **2b** | Repair 3 — source-span seed coverage gate | **DONE** — same captures: first wrap `from=passes` before `VCACHE,stale_range`; `srcafter,why=wrap` never seeds from a dirty cache |
+| **Admission (RC1)** | **3** | Ring B cursor replaces the three pairwise gates; owner-3 dependency rule | **DONE** — dirty bars drain during OVERDUBBING. Reconstruct residual **4b.1b** moved to the owner-boundary plan; it does not keep this slice open |
+| | **4** | Ring A: playback-relevant eligible set + cursor + prefetch trigger + horizon/bias choice + invariants A1/A2 | **G1 satisfied** — `prefetchTicks` **272**, `representativeRebuildWall` **358 µs**, horizon unchanged. Device: no `tracks` sample above one dispatch period at bar edges; `late_off` back to the record-pass class (≤ 27 ms); **zero** `playback_window_starved` inside the design envelope; eligible-set size decays after the first rotation (self-staggering confirmed); `ExecutionBounds.md` row 1 admission note updated in the same commit. **Firmware still not authorized.** |
 | **Separate** | **—** | RC3 convergence | Separate plan; not authorized here |
-| **Separate** | **—** | **RC4** unit cost — reconstruction per length-update row on the compatibility gather | **Investigation authorized and runs before G1** — [`playback_window_edit_projection_unit_cost_investigation.md`](playback_window_edit_projection_unit_cost_investigation.md). **Fix is a separate change**, not part of Slice 4. G1 consumes RC4's **post-resolution** cost, not today's 367 ms |
+| **Separate** | **—** | **RC4** unit cost — reconstruction per length-update row on the compatibility gather | **Investigation closed for G1.** [`playback_window_edit_projection_unit_cost_investigation.md`](playback_window_edit_projection_unit_cost_investigation.md). G1 now uses the snapshot-path representative (358 µs), not the 367 ms `T0/S6` stall. **Fix remains a separate change.** |
 
 **Verification for every slice:** `pio run -e teensy41-capture-serial` first (RAM1 locals ≥ 4000),
 then `pio test -e native`, then device recapture per
@@ -972,8 +1042,16 @@ not assumed.
    may move forward, which requires knowing how much backward margin "LoopEnd launch + clock
    catch-up" actually needs. The reuse test's `TICKS_PER_BAR / 2` backward tolerance is evidence of
    the intent but not a derivation of the requirement.
-3. **OpenSpec phase scope.** Slice 4 requires `openspec/changes/immutable-loop-snapshot-passes`
-   confirmation — 4b.1/4b.2/4b.3 are open and this changes the same lane arbitration.
+3. ~~**OpenSpec phase scope (4b.1 / 4b.2).**~~ **Resolved 2026-08-26:** 4b.1 and 4b.2
+   are closed under Ring B round-robin in
+   [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md).
+   Pass condition for 4b.1 is one owner per cursor turn (no true same-turn
+   snapshot/persist stack). 4b.2 covers first-record start-after-bar-1 + live
+   append under the five-owner cursor. Residual **4b.2c** (PLAYING/OVERDUBBING
+   `snapshot_idle` after first published root vs `DEC-045` / [`233308`](../../captures/session_20260825_233308.log))
+   stays an open investigation and does not reopen Ring B. **4b.3** remains open
+   (post-stop `usbdisp`/`load_frame`/`late_on`; exclude `T0/S6` when scoring).
+   Slice 4 / Ring A still needs separate OpenSpec confirmation.
 **Resolved since round 2** — 4b.4 reopen sequencing: 2a lands with native correctness but is not
 shippable before Ring B (§ *Ordering constraint*), with a stated evidence exception. No longer open.
 
@@ -997,13 +1075,14 @@ authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 | Design envelope (16 x 2, ≤ 240 BPM) | Settled |
 | 64 destinations / 300 BPM | Correctly deferred |
 | 1-bar forward horizon, 2-bar content | Settled as the candidate |
-| Window bias | Open — needs the backward-margin decision |
+| Window bias | Open — not blocking G1 at current `H_fwd` = 768; re-derive G1 if bias moves |
 | Prefetch equation | Settled; arbitration term labelled conservative |
 | A1 | Settled — invariant and policy separated |
 | Ring B + owner-3 semantics | Settled |
 | RC2 invariant R | Settled |
 | 2a → 3 ordering | Settled — 2a not shippable before Ring B |
 | RC3 separation | Settled — separate plan |
+| G1 | **Satisfied** — `prefetchTicks` 272; `representativeRebuildWall` 358 µs; horizon unchanged |
 
 **Slice 1 destination attribution is complete.** `161834` identifies the observed destinations, and
 `162522` directly maps all repeated `cer_edit` compatibility gathers to `T0/S6`. Its `<count>` field
@@ -1014,50 +1093,138 @@ internal-first spill and nested-clock mechanisms. `cer_recon` is in tree to spli
 `filt` from PSRAM-first `span`/`proj` and to record IntervalTimer ISR `itickus`; recapture
 pending. `DEC-046` is recorded. The only remaining open admission item is item 2 (bias), which
 affects `H_fwd` and therefore G1 but not the admission model.
-**G1 may not be sized until RC4's post-resolution cost is measured.**
+**G1 is satisfied (2026-08-26).** Horizon stays playhead-centred (`H_fwd` = 768).
+`representativeRebuildWall` = 358 µs from `202654` `T4/S0` `path=snapshot`.
+`prefetchTicks` = **272**. `T0/S6` compatibility is excluded. Slice 4 / Ring A
+firmware remains unauthorized. Publish-on-restore for `T0/S6` remains a separate
+change.
 
 ## Implementation status — Ring B / RC2
 
-The user authorized firmware implementation of Ring B/RC2 on 2026-08-26.
+**Closed (2026-08-26).** Slices 2a, 2b, and 3 are device-verified. Residual
+**4b.1b** (indivisible `NoteUtils::reconstructDisplayNotes` in
+`Loop::rebuildVisualCacheIdleSlice`) is not a Ring B/RC2 gate. It lives on
+[`playback_window_build_owner_boundary_refinement.md`](playback_window_build_owner_boundary_refinement.md)
+§ *4b.1b*. RC4 firmware repair, Ring A, and remaining snapshot consumer
+migrations stay out of scope.
+
 The implementation extends the existing `main.cpp` service order,
 `Track::processDeferredIdleMaintenance`, `DisplayManager` overdub paint path,
 and `Loop` visual/source-cache owners. The RC2 source-cache repair rejects an
 unproven partial prior span cache, falls back to committed-pass reconstruction,
 and reports the actual source origin in the existing diagnostics. Native
-verification passed all 1476 tests. Device gate PASS
-[`183452`](../../captures/session_20260826_183452.log): the first wrap reports
-`from=passes` before `VCACHE,stale_range`, and the following `DISP` frame rises
-from 286 to 466 visual notes. Ring B 4b.1b, RC4 firmware repair, Ring A, and
-the remaining snapshot consumer migrations stay out of scope.
+verification passed all 1476 tests.
 
-### Finding — remaining MIDI Input Gap owner
+Device PASS [`183452`](../../captures/session_20260826_183452.log): first wrap
+reports `from=passes` before `VCACHE,stale_range`; `DISP` rises 286→466.
+Reconfirmed [`185141`](../../captures/session_20260826_185141.log): `from=passes`;
+`DISP` 271→437. Zero `srcafter,why=wrap,from=cache`. Dirty bars drain during
+OVERDUBBING. First-overdub `midi_gap` 222.596 ms → 146.802 ms versus
+[`175350`](../../captures/session_20260826_175350.log); later steady overdub
+24.325 ms versus 366 ms. Remaining reconstruct timings are recorded on the
+owner-boundary plan, not here.
 
-The final Ring B/RC2 capture [`185141`](../../captures/session_20260826_185141.log)
-shows that the steady-state gap reduction is real, but 4b.1b is not closed.
-During the first overdub window, `MIDI Input Gap` (`DIAG,midi_gap`) reached
-**146.802 ms**, compared with **222.596 ms** in the baseline
-[`175350`](../../captures/session_20260826_175350.log). The same windows report
-`late_on` **149.870 ms** versus **220.417 ms**, and `late_off` **52.125 ms**
-versus **81.373 ms**. A later steady overdub window reached only **24.325 ms**,
-where the baseline reached **366 ms**.
+## 4b.2c investigation — root boundary and pass cardinality
 
-The remaining long gaps have a different owner. `Loop::rebuildVisualCacheIdleSlice`
-uses the bounded `advanceFallbackGatherSession` event budget, but after gathering
-completes it calls `NoteUtils::reconstructDisplayNotes` as one indivisible,
-content-sized operation. The child telemetry records this as
-`idle_reconstruct`: **127.249 ms** in the first overdub window and
-**197.241–218.083 ms** in later windows. Those operations drive
-`idle_maint` to **217.644–242.663 ms** and correspond to
-`MIDI Input Gap` peaks of **205.876–242.679 ms**. `load_frame` adds about
-**22.6–22.9 ms** in the first overdub window. The event-gather budget therefore
-does not bound the full visual-cache idle operation.
+**Status:** Closed 2026-08-26. Capture
+[`232633`](../../captures/session_20260826_232633.log) verifies the root
+boundary with explicit root and queue telemetry; no DEC-045 violation was
+reproduced.
 
-This is a Ring B execution-bound finding, not a regression of the RC2
-representation-coverage repair: the same capture reports the source fallback
-from committed passes before the stale-cache diagnostic. The post-overdub
-STOPPED/PLAYING long-tail remains outside the current scope. The full native
-suite passed **1476/1476**; 4b.1b remains open pending a separate bounded
-reconstruction decision.
+### Confirmed boundary
+
+`RECS,stage,publish,...,ok` is emitted by `Loop::commitCapturePass` after
+`commitPendingCapturePass`. It confirms that the compatibility `LoopPass` was
+committed; it is not the publication of the immutable `LoopSnapshot` root.
+The root is stored later by `Loop::stepPendingSnapshotPublish` when the
+session-exit queue is drained, the construction is complete, and the
+unpublished candidate exists.
+
+This distinction explains the large apparent post-publish volumes:
+
+- [`183452`](../../captures/session_20260826_183452.log) reports the record
+  pass `publish` stage at about 55.752 s. `snapshot_idle` then continues
+  through PLAYING and the first OVERDUBBING window, ending with
+  `pending=0` at about 80.059 s.
+- [`202654`](../../captures/session_20260826_202654.log),
+  [`213537`](../../captures/session_20260826_213537.log),
+  [`214703`](../../captures/session_20260826_214703.log), and
+  [`220551`](../../captures/session_20260826_220551.log) show the same
+  shape: idle construction follows the pass-publish marker and terminates
+  at the final `pending=0` turn.
+
+The `pending=0` line is emitted after `stepPendingSnapshotPublish` returns;
+on the session-exit completion turn that method has already stored the
+candidate root. No later `snapshot_idle` steps appear in PLAYING or
+OVERDUBBING in these runs. Therefore the observed 1400/679-line volumes are
+the first-root construction interval, not successor construction after an
+already published root. This is consistent with the DEC-045 guard in
+`MidiServiceDrain::allowSnapshotIdleStep`.
+
+The telemetry-enabled capture [`232633`](../../captures/session_20260826_232633.log)
+provides the decisive boundary. It contains 634 `snapshot_idle` rows, with
+343 in RECORDING, 137 in PLAYING, and 154 in OVERDUBBING. Before root
+publication, the PLAYING/OVERDUBBING rows consistently report
+`root=0x0`, `root_rev=0`, `playback_rev=1`, `construction=1`,
+`queued=0`, `applied=0`, `exit=1`, and `inflight=1`. This identifies one
+in-flight first-record construction (pass 1), with no queued or applied
+successor passes. The final row reports
+`pending=0,root=0x7030ad1c,root_rev=1,playback_rev=1,queued=0,applied=0,
+construction=0,exit=0,inflight=0`; no later PLAYING or OVERDUBBING
+`snapshot_idle` row occurs. The apparent post-publish volume was therefore
+the single first-root construction interval, not stacked overdub
+construction. `DEC-045` remains unchanged.
+
+### Pass separation versus diagnostic aggregation
+
+The implementation does separate committed overdub passes:
+
+- `TrackOverdubWrap::maybeCommitOverdubWrap` calls
+  `Loop::pushOverdubSessionPass` for each committed wrap pass.
+- `Loop::enqueueLiveOverdubPasses` adds each untracked `PassId` separately to
+  `PendingSnapshotPublishBox::queuedPassIds`.
+- `startNextPendingConstruction` removes one `PassId` and creates one
+  `LoopSnapshotConstruction` for that pass; completed IDs are retained in
+  `appliedPassIds`.
+
+The pending work is nevertheless grouped under one
+`PendingSnapshotPublishBox` for the active overdub session. The current
+`snapshot_idle` line logs only `hasPendingSnapshotPublish()`, which is a
+boolean. It does not report `queuedPassIds`, `appliedPassIds`,
+`constructionPassId`, `sessionExitQueued`, or the root identity. Consequently
+`pending=1` cannot distinguish one in-flight construction from several
+sequentially queued pass constructions. This is an observability limitation,
+not evidence that distinct overdub pass content was merged into one pass.
+
+### Synthetic note-off finding
+
+The separate overdub-stop capture investigation is confirmed by
+[`214703`](../../captures/session_20260826_214703.log):
+`finalizePendingNotes` reported no pending notes and no capture note-offs at
+stop, followed by `CLN,overdub,wrap_synth,3`. Stored verification then showed
+existing head `NoteOff` events such as `F@112` together with synthetic
+`F@6143` events for the same notes. `6143` is `loopLengthTicks - 1` for the
+captured loop. The duplicate boundary terminations explain the observed
+previous/stop bar disruption.
+
+The synthetic events are inserted by
+`LoopStopFinalize::finalizeWrapWindowOnStore` through
+`Loop::finalizeCaptureWrapWindowAtStop`; `silenceTrackMidiOutput` is separate
+and sends CC123 rather than storing note-offs. The remaining ownership question
+is why those tail notes are still unresolved when the wrap window is sealed;
+that is tracked by the existing overdub wrap note-off plan and is not folded
+into 4b.2c.
+
+### Closure evidence
+
+Keep the DEC-045 policy unchanged. The existing `Loop` snapshot publication
+owner emits a scoped capture-only diagnostic with the root identity,
+published/playback revisions, and `PendingSnapshotPublishBox` state
+(`queued`, `applied`, current `constructionPassId`, `sessionExitQueued`, and
+`inflight`) at each `snapshot_idle` line. The telemetry is
+`SESSION_CAPTURE`-gated and does not alter construction or scheduling
+behavior. Capture `232633` verified the boundary, so no policy amendment or
+additional pass aggregation change is required for 4b.2c.
 
 ## Future RC — overdub overlap target semantics
 

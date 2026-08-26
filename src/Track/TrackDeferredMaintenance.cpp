@@ -778,12 +778,21 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
         1, !isOverdubbing() && liveRecordPastFirstBar, playheadPhaseTick,
         liveRecordCompletedTicks);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    char snapshotLine[160];
+    const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
+    char snapshotLine[256];
     snprintf(snapshotLine, sizeof(snapshotLine),
-             "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u",
+             "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
+             "playback_rev=%lu,queued=%lu,applied=%lu,construction=%lu,exit=%u,inflight=%u",
              static_cast<unsigned long>(micros()),
              static_cast<unsigned long>(micros() - snapshotIdleStartUs),
-             snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u);
+             snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u, publishedSnapshot.get(),
+             static_cast<unsigned long>(snapshotLoop.publishedSnapshotRevision()),
+             static_cast<unsigned long>(snapshotLoop.playbackRevision),
+             static_cast<unsigned long>(snapshotLoop.pendingSnapshotQueuedPassCount()),
+             static_cast<unsigned long>(snapshotLoop.pendingSnapshotAppliedPassCount()),
+             static_cast<unsigned long>(snapshotLoop.pendingSnapshotConstructionPassId()),
+             snapshotLoop.pendingSnapshotSessionExitQueued() ? 1u : 0u,
+             snapshotLoop.hasInFlightSnapshotConstruction() ? 1u : 0u);
     DebugSessionCapture::appendCaptureTextLine(snapshotLine);
 #endif
   }
