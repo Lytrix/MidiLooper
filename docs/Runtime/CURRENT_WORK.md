@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.2 live snapshot continues completed bars after bar 1)
+Last updated: 2026-08-26 (4b.2 live RECORDING appends completed bars; no prefix rebuild)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -13,9 +13,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 **Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
 RECORDING with the same bar-quantize as record stop
 (`computeRecordStopLengthTicks`). Snapshot idle starts from `capture.store`
-only after the playhead has left bar 1, then continues each later completed
-bar when the unpublished parent still has tick room. The bar still being
-written is not included.
+only after the playhead has left bar 1, then appends each later completed
+bar when the unpublished parent still has tick room. Live RECORDING does
+not rebuild the settled prefix when the parent is too short; idle stops
+until session-exit. The bar still being written is not included.
 PLAYING still starts remaining work. OVERDUBBING only
 advances an in-flight candidate. [`095720`](../../captures/session_20260826_095720.log)
 had no `snapshot_idle` until PLAYING because length stayed 0.
@@ -25,6 +26,9 @@ had no `snapshot_idle` until PLAYING because length stayed 0.
 and did not restart `snapshot_idle` during RECORDING; `DISP` still jumped
 on every quantized `record_length` step. First-take display length stays
 the continuous playhead.
+[`121754`](../../captures/session_20260826_121754.log) rebuilt the whole
+settled prefix on each later length step (2611 RECORDING `snapshot_idle`
+steps, BPM drift, post-stop `midi_gap` 361 ms).
 Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).

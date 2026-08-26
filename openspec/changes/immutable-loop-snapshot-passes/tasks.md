@@ -73,7 +73,9 @@ Stop-display hold is device PASS
       starting on PLAYING. First-take `loopLengthTicks` updates during
       RECORDING with `computeRecordStopLengthTicks`. Live construction
       starts after the playhead leaves bar 1 and continues each later
-      completed bar when the parent still has tick room. Growing record
+      completed bar when the parent still has tick room. Live RECORDING
+      does not rebuild the settled prefix when the parent is too short.
+      Growing record
       does not clamp capture ticks to that
       working length. OVERDUBBING only advances an in-flight candidate.
       Evidence: [`095720`](../../../captures/session_20260826_095720.log)
@@ -83,7 +85,9 @@ Stop-display hold is device PASS
       [`120020`](../../../captures/session_20260826_120020.log) started after
       bar 1 and did not restart during RECORDING; first-take display keeps
       continuous playhead length so `DISP` does not rescale on each
-      `record_length` step. Do not check off until device verify. Do not
+      `record_length` step.
+      [`121754`](../../../captures/session_20260826_121754.log) rebuilt the
+      prefix on each length step. Do not check off until device verify. Do not
       step successor construction during OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not

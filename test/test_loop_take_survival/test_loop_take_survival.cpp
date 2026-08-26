@@ -743,6 +743,29 @@ void test_live_record_continues_next_completed_bar() {
   TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR * 2, loop.liveRecordAppliedCompletedTicks());
 }
 
+void test_live_record_does_not_rebuild_when_parent_has_no_room() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_TRUE(loop.liveRecordCanApplyCompletedTicks(Config::TICKS_PER_BAR * 17));
+  TEST_ASSERT_FALSE(loop.liveRecordCanApplyCompletedTicks(Config::TICKS_PER_BAR * 18));
+
+  const uint32_t pastParent = Config::TICKS_PER_BAR * 18;
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(pastParent + 100, 1, 67, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(pastParent + 200, 1, 67, 0)));
+  TEST_ASSERT_FALSE(loop.stepPendingSnapshotPublish(1, true, 0, pastParent));
+  TEST_ASSERT_FALSE(loop.hasInFlightSnapshotConstruction());
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+}
+
 void test_live_record_starts_snapshot_before_session_exit() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -940,6 +963,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_pending_after_length_reaches_one_bar);
   RUN_TEST(test_live_record_does_not_start_in_progress_bar);
   RUN_TEST(test_live_record_continues_next_completed_bar);
+  RUN_TEST(test_live_record_does_not_rebuild_when_parent_has_no_room);
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);

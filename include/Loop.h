@@ -358,6 +358,8 @@ struct Loop {
   bool hasInFlightSnapshotConstruction() const;
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;
+  /// True when a live-record parent exists with tick room, or none exists yet.
+  bool liveRecordCanApplyCompletedTicks(uint32_t completedTicks) const;
   /// Settled NOTE_EDIT close batch. In-session durable checkpoints stay provisional.
   bool tryPublishNoteEditSnapshot(const EditPassIdList& editPassIds);
   bool captureActive() const;

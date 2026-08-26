@@ -182,6 +182,16 @@ extra bar of tick room so the next completed bar can append. The
 in-progress bar is not applied. [`120020`](../captures/session_20260826_120020.log)
 stopped after bar 1 because unpublished blocked further live construction.
 
+**Amendment (2026-08-26):** Live RECORDING appends completed bars only when
+the unpublished parent still has tick room. It does not create a new empty
+parent and re-apply the settled prefix on the record path. The first parent
+is created with 16 extra bars of room so a typical first take appends.
+When the parent is too short, idle does not start. Session-exit may still
+discard unpublished and rebuild at the sealed length.
+[`121754`](../captures/session_20260826_121754.log) rebuilt the prefix on
+each length step (2611 RECORDING `snapshot_idle` steps, 17.7 s CPU, BPM
+89–184, post-stop `midi_gap` 361 ms).
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25
