@@ -45,18 +45,21 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
 Stop-display hold is device PASS
 [`004934`](../../../captures/session_20260826_004934.log)
 (`ODUB,stop,display` 8.8 / 12.2 ms) unless wrap immediately precedes stop.
-[`011829`](../../../captures/session_20260826_011829.log) last stop is
-**155.6 ms** after wrap cleared the composed frame. **Now:** that wrap/hold
-miss only. 4b.1–4b.4 parked.
+[`011829`](../../../captures/session_20260826_011829.log) last stop was
+**155.6 ms** after wrap cleared the composed frame. Device PASS
+[`092755`](../../../captures/session_20260826_092755.log) last stop
+**11.1 ms**. **Now:** none selected. 4b.1–4b.4 parked.
 
-- [ ] 4b.0 After overdub wrap, keep the composed `DisplayNote` vector when
+- [x] 4b.0 After overdub wrap, keep the composed `DisplayNote` vector when
       resetting live compose bookkeeping (`invalidateLiveDisplayCache(true)`).
       `ODUB,stop,display` holds that frame while `visualCache` is dirty and
       does not require a `playbackRevision` match. Do not snapshot-gather on
       the stop stack. Evidence: [`011829`](../../../captures/session_20260826_011829.log)
       last DISP 121.203 s, wrap 121.318 s, no DISP until display **155.6 ms**;
-      OD1 stop without wrap was 9.8 ms. Device gate: last `ODUB,stop,display`
-      near 8–12 ms after a wrap-then-stop.
+      OD1 stop without wrap was 9.8 ms. Device PASS
+      [`092755`](../../../captures/session_20260826_092755.log): wrap at
+      151.099 s then DISP, last `ODUB,stop,display` **11.1 ms** (no `cer_win`
+      on the stop stack); OD1 stop **21.4 ms**. BPM after last stop 117.7–122.4.
 - [ ] 4b.1 Persist and first-record snapshot stay on PLAYING and OVERDUBBING
       idle, but not on the same turn (`shouldRunPersistOnPostStopLane` /
       `shouldRunSnapshotOnPostStopLane`). Do not move save onto the stop

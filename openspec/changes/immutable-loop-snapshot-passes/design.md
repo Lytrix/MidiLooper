@@ -673,10 +673,10 @@ before runtime publication is implemented.
 
 Device [`004934`](../../../captures/session_20260826_004934.log): overdub-stop
 display hold is PASS (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first
-publish is 7.4–8.4 ms. **Selected now:** `4b.0` — overdub wrap keeps the composed `DisplayNote`
-vector; `ODUB,stop,display` holds it while `visualCache` is dirty
-([`011829`](../../../captures/session_20260826_011829.log) 155.6 ms after wrap
-cleared the frame).
+publish is 7.4–8.4 ms. **Device PASS:** `4b.0` wrap/hold —
+[`092755`](../../../captures/session_20260826_092755.log) last
+`ODUB,stop,display` **11.1 ms** after wrap (`011829` was 155.6 ms).
+**Selected now:** none.
 
 Parked until selected:
 

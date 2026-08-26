@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4.4 wrap/hold miss on last overdub stop)
+Last updated: 2026-08-26 (4b.0 wrap/hold device PASS 092755)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** last-stop wrap/hold miss only. Overdub wrap must keep the composed
-`DisplayNote` vector when it resets live compose bookkeeping (`RC-W1`).
-`ODUB,stop,display` holds that frame while `visualCache` is dirty and does
-not snapshot-gather — [`011829`](../../captures/session_20260826_011829.log)
-wrap at 121.318 s with no DISP until display **155.6 ms**. Tasks **4b.1**–**4b.4**
-stay parked. Do **not** split `atomicRenameTempFile`.
+**Now:** OpenSpec **4b.0** wrap/hold is device PASS
+[`092755`](../../captures/session_20260826_092755.log) — last
+`ODUB,stop,display` **11.1 ms** after wrap at 151.099 s (was **155.6 ms** on
+[`011829`](../../captures/session_20260826_011829.log)). Do not start
+**4b.1**–**4b.4** unless selected. Do **not** split `atomicRenameTempFile`.
 
 Phase 3 task **4.4 display** remains in tree (not closed). Paint and visual-cache fill read
 published `LoopSnapshot` events through
