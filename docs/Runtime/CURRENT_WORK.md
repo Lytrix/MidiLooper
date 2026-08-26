@@ -391,6 +391,13 @@ IntervalTimer ISR `itickus`.
 `filt` is unchanged on the 7.9x `nlen=18` pair (`36` / `36`); `span` and
 `proj` take the inflation; `itickus=0` on all 11 rows. Question 3 is closed
 from code: `adoptPersistedSnapshot` / `restorePassesSnapshot` do not publish.
+The new source-tagged telemetry is device-validated by
+[`202654`](../../captures/session_20260826_202654.log): 82 emitted
+`playback_build` samples classify as 74 `compatibility` and 8 `snapshot`
+(no `note_edit`). The long-loop `T0/S6` stream remains compatibility, reaching
+325.541 ms, while snapshot-backed `T4/S0` samples remain below 1 ms
+(maximum 358 us). This confirms the loaded-slot compatibility path and the
+published-root snapshot path coexist in one later capture.
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.

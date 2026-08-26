@@ -37,8 +37,9 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
       RC4 measurement follow-up: the deferred `playback_build` diagnostic now
       includes `path=snapshot|compatibility|note_edit`, captured at
       `Track::ensurePlaybackMergedMidiEventsBuilt`; the existing maximum-sample
-      and aggregate-count policy is unchanged. Device recapture remains required
-      to classify later builds.
+      and aggregate-count policy is unchanged. Device capture
+      [`202654`](../../../captures/session_20260826_202654.log) validates 82
+      samples: 74 `compatibility`, 8 `snapshot`, and no `note_edit`.
 - [x] 4.2 Preserve `Track` / `LoopPlaybackRuntime` ownership of cursor, order, ledger, and horizon state; verify output with existing playback gates.
 - [ ] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
 - [ ] 4.4 Migrate display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates; select bounded canonical span ranges before `IntervalProjection` and define long-span `k` candidate limits or empirical overrun policies as consumer bounds, not snapshot-architecture units. Display paint fallback and visual-cache fill now read published snapshot events; NOTE_EDIT / analysis / validation remain on compatibility sources.

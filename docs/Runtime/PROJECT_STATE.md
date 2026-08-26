@@ -96,6 +96,11 @@ The follow-up `cer_snapshot` formatting probe was removed after
 the representation behind each emitted maximum sample without formatting on the
 clock/interval path. The existing one-shot remains an aggregate: `count` is all
 rebuild calls before emission, not distinct destinations.
+Device capture [`202654`](../../captures/session_20260826_202654.log) validates
+the split: 82 emitted samples contain 74 `compatibility` and 8 `snapshot`
+paths, with no `note_edit` samples. `T0/S6` remains compatibility-backed
+(maximum 325.541 ms), while `T4/S0` uses the published snapshot
+(maximum 358 us).
 [`172802`](../../captures/session_20260826_172802.log) confirms first-clock
 recording and continued overdub/stop operation after removal.
 Task 4.3 stays skipped.
