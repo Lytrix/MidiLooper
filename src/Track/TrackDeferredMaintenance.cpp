@@ -724,8 +724,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
           isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
           snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint) &&
       (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction());
+  const uint32_t liveRecordCompletedTicks = MidiServiceDrain::liveRecordCompletedTicks(
+      recordElapsedTicks, Config::TICKS_PER_BAR);
   const bool persistPending = StorageManager::hasDeferredSaveWork();
-  const bool snapshotPending = snapshotLoop.hasPendingSnapshotPublish();
+  const bool snapshotPending =
+      snapshotLoop.hasPendingSnapshotPublish() ||
+      (isRecording() && !havePublishedSnapshot &&
+       liveRecordCompletedTicks > snapshotLoop.liveRecordAppliedCompletedTicks());
   const bool alternateWithPersist = (isPlaying() || isOverdubbing()) && persistPending;
   const bool snapshotLaneAllowed =
       !alternateWithPersist ||
@@ -741,7 +746,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
             : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
                               snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
     snapshotLoop.stepPendingSnapshotPublish(
-        1, !isOverdubbing() && liveRecordPastFirstBar, playheadPhaseTick);
+        1, !isOverdubbing() && liveRecordPastFirstBar, playheadPhaseTick,
+        liveRecordCompletedTicks);
     snapshotIdleUnitRan = true;
     if (alternateWithPersist) {
       StorageManager::notePostStopSnapshotRan();

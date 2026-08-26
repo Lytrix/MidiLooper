@@ -352,9 +352,12 @@ struct Loop {
   /// false advances an in-flight candidate only. `playheadPhaseTick` orders bars
   /// by soonest arrival.
   bool stepPendingSnapshotPublish(size_t maximumChanges, bool allowStartConstruction = true,
-                                  uint32_t playheadPhaseTick = 0);
+                                  uint32_t playheadPhaseTick = 0,
+                                  uint32_t liveRecordCompletedTicks = 0);
   bool hasPendingSnapshotPublish() const;
   bool hasInFlightSnapshotConstruction() const;
+  /// Exclusive end tick of first-record live construction already applied.
+  uint32_t liveRecordAppliedCompletedTicks() const;
   /// Settled NOTE_EDIT close batch. In-session durable checkpoints stay provisional.
   bool tryPublishNoteEditSnapshot(const EditPassIdList& editPassIds);
   bool captureActive() const;

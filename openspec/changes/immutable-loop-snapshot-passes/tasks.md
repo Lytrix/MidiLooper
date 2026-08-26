@@ -72,8 +72,9 @@ Stop-display hold is device PASS
       the playhead has left bar 1, using the overdub live-enqueue setup, and
       starting on PLAYING. First-take `loopLengthTicks` updates during
       RECORDING with `computeRecordStopLengthTicks`. Live construction
-      builds only that completed first bar and does not restart on later
-      length steps. Growing record does not clamp capture ticks to that
+      starts after the playhead leaves bar 1 and continues each later
+      completed bar when the parent still has tick room. Growing record
+      does not clamp capture ticks to that
       working length. OVERDUBBING only advances an in-flight candidate.
       Evidence: [`095720`](../../../captures/session_20260826_095720.log)
       had no `snapshot_idle` until PLAYING.
