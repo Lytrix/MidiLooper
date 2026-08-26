@@ -689,15 +689,19 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 #endif
 }
 
-TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
-                                                          bool postOverdubDrainWindowActive) {
+TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
+    uint32_t nowMs, bool postOverdubDrainWindowActive,
+    MidiServiceDrain::DeferredIdleOwner deferredOwner) {
   updateGrowingRecordLoopLength(clockManager.getCurrentTick());
+  Loop& activeLoop = getActiveLoop();
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend) {
+    if (activeLoop.hasDeferredVisualCacheWrapAppend()) {
+      activeLoop.applyDeferredVisualCacheWrapAppend();
+    }
+    return;
+  }
+
   Loop& snapshotLoop = getActiveLoop();
-  bool snapshotIdleUnitRan = false;
-  // After record stop the snapshot queue is pending and would consume every
-  // PLAYING idle turn. Visual cache stays empty then, and display falls back
-  // to a 16-bar window (session_20260825_231632: RECORDING 653 events, first
-  // PLAYING 288 notes, visualCache notes=0 through the following overdub).
   const bool havePublishedSnapshot =
       static_cast<bool>(snapshotLoop.publishedSnapshot());
   const bool visualCacheNeedsFirstPaint =
@@ -726,40 +730,14 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
       (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction());
   const uint32_t liveRecordCompletedTicks = MidiServiceDrain::liveRecordCompletedTicks(
       recordElapsedTicks, Config::TICKS_PER_BAR);
-  const bool persistPending = StorageManager::hasDeferredSaveWork();
   const bool snapshotPending =
       snapshotLoop.hasPendingSnapshotPublish() ||
       (isRecording() && !havePublishedSnapshot &&
        liveRecordCompletedTicks > snapshotLoop.liveRecordAppliedCompletedTicks() &&
        snapshotLoop.liveRecordCanApplyCompletedTicks(liveRecordCompletedTicks));
-  const bool alternateWithPersist =
-      (isRecording() || isPlaying() || isOverdubbing()) && persistPending;
-  const bool snapshotLaneAllowed =
-      !alternateWithPersist ||
-      MidiServiceDrain::shouldRunSnapshotOnPostStopLane(
-          snapshotPending, persistPending, StorageManager::preferPostStopPersistLane());
-  const bool snapshotEligible = snapshotPending && snapshotIdleAllowed && snapshotLaneAllowed;
-  const bool snapshotRoundRobinActive = snapshotEligible &&
-                                        MidiServiceDrain::shouldRoundRobinSnapshotIdle(
-                                            isPlaying(), isOverdubbing(),
-                                            havePublishedSnapshot,
-                                            snapshotLoop.hasInFlightSnapshotConstruction(),
-                                            snapshotPending);
-  const bool constrainVisualForUnpublishedSnapshot =
-      MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-          isPlaying(), isOverdubbing(), havePublishedSnapshot,
-          snapshotLoop.hasInFlightSnapshotConstruction(), snapshotPending);
-  bool snapshotCadenceTurn = true;
-  if (snapshotRoundRobinActive) {
-    // session_20260826_125527 showed uninterrupted snapshot turns in
-    // OVERDUBBING/PLAYING before the first root published. Alternate turns so
-    // snapshot does not monopolize timing-critical deferred windows.
-    snapshotCadenceTurn = snapshotIdleRoundRobinTurn_;
-    snapshotIdleRoundRobinTurn_ = !snapshotIdleRoundRobinTurn_;
-  } else {
-    snapshotIdleRoundRobinTurn_ = true;
-  }
-  if (snapshotEligible && snapshotCadenceTurn) {
+  const bool snapshotEligible = snapshotPending && snapshotIdleAllowed;
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
+      snapshotEligible) {
 #if defined(SESSION_CAPTURE)
     const uint32_t snapshotIdleStartUs = micros();
 #endif
@@ -771,10 +749,6 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
     snapshotLoop.stepPendingSnapshotPublish(
         1, !isOverdubbing() && liveRecordPastFirstBar, playheadPhaseTick,
         liveRecordCompletedTicks);
-    snapshotIdleUnitRan = true;
-    if (alternateWithPersist) {
-      StorageManager::notePostStopSnapshotRan();
-    }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     char snapshotLine[160];
     snprintf(snapshotLine, sizeof(snapshotLine),
@@ -800,57 +774,40 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
     processDeferredContentResolutionDeviceGate();
   }
 
-  // OVERDUBBING idle is in-flight snapshot construction only. When that step
-  // has no work, do not fall through to visual reconstruct — mixed dirty bars
-  // lift the neighborhood cap and rebuild the whole loop
-  // (session_20260825_230556 idle_reconstruct 241–278 ms, BPM 74–77).
   const bool deferredDerivedViewMaintenance =
-      (isPlaying() || isStoppedRecording()) && !isRecording() &&
-      !(havePublishedSnapshot && isPlaying() && !visualCacheNeedsFirstPaint);
+      (isPlaying() || isOverdubbing() || isStoppedRecording()) && !isRecording() &&
+      deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache;
   bool idleVisualSliceRan = false;
   uint8_t idleVisualBarsPerSlice = 0;
   uint16_t idleVisualDirtyBefore = 0;
   uint16_t idleVisualDirtyAfter = 0;
-  Loop& activeLoop = getActiveLoop();
-  if (deferredDerivedViewMaintenance && !snapshotIdleUnitRan) {
+  if (deferredDerivedViewMaintenance) {
     Loop& loop = activeLoop;
     const bool postOverdubDrainWindow =
         postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
-    if (!postOverdubDrainWindow && !constrainVisualForUnpublishedSnapshot) {
+    if (!postOverdubDrainWindow) {
       overdubDrainFallbackRetryAtMs_ = 0;
     }
     const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
-    const bool constrainedFallbackRequested =
-        postOverdubDrainWindow || constrainVisualForUnpublishedSnapshot;
+    const bool constrainedFallbackRequested = postOverdubDrainWindow;
     if (!constrainedFallbackRequested) {
       overdubDrainFallbackRetryAtMs_ = 0;
     }
     const bool constrainedFallbackCooldownActive =
         constrainedFallbackRequested && overdubDrainFallbackRetryAtMs_ != 0 &&
         nowMs < overdubDrainFallbackRetryAtMs_;
-    bool visualCadenceTurn = true;
-    if (constrainVisualForUnpublishedSnapshot) {
-      // session_20260826_130244 showed long idle_reconstruct spikes when
-      // unpublished snapshot and compatibility visual rebuild ran on every
-      // non-snapshot realtime turn. Keep visual updates active but spread them.
-      visualCadenceTurn = (visualIdleCadenceCounter_ == 0);
-      visualIdleCadenceCounter_ = static_cast<uint8_t>((visualIdleCadenceCounter_ + 1) % 4);
-    } else {
-      visualIdleCadenceCounter_ = 0;
-    }
     const bool constrainFallbackGather =
-        constrainedFallbackRequested && !constrainedFallbackCooldownActive;
+        postOverdubDrainWindow && !constrainedFallbackCooldownActive;
     const bool overdubDrainOwnerTrack = playingMidiDrainAfterOverdubStopActive();
     const bool allowVisualMaintenanceSlice =
         (!postOverdubDrainWindow || overdubDrainOwnerTrack) &&
-        !constrainedFallbackCooldownActive && visualCadenceTurn;
+        !constrainedFallbackCooldownActive;
     if (allowVisualMaintenanceSlice && loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
       if (deferredSavePending) {
         barsPerSlice = 2;
       }
-      if ((postOverdubDrainWindow || constrainVisualForUnpublishedSnapshot) &&
-          barsPerSlice > 1) {
+      if (postOverdubDrainWindow && barsPerSlice > 1) {
         barsPerSlice = 1;
       }
       idleVisualBarsPerSlice = barsPerSlice;
@@ -923,7 +880,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   emitOverdubStopDebtProbeIfArmed(activeLoop, idleVisualSliceRan, idleVisualBarsPerSlice,
                                   idleVisualDirtyBefore, idleVisualDirtyAfter);
 
-  if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
+      !isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
     if (loop.hasCommittedPasses()) {
       // Phase 3: queued background restores must not block idle visual work.

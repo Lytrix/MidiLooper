@@ -64,14 +64,6 @@ public:
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();
     static bool hasDeferredSaveWork();
-    /// Post-stop persist/snapshot turn. True = persist's turn while both are pending.
-    static bool preferPostStopPersistLane();
-    /// Clear per-turn post-stop lane markers at the start of each loop() turn.
-    static void beginPostStopLaneTurn();
-    /// True when snapshot already ran on this loop() turn.
-    static bool postStopSnapshotRanThisTurn();
-    static void notePostStopSnapshotRan();
-    static void notePostStopPersistRan();
     /// True while boot-time loop slot payloads are still queued for idle restore.
     static bool hasPendingLoopSlotRestore();
     /// True when the in-flight, parked, or next queued restore targets the selected track/slot.

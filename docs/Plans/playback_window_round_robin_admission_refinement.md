@@ -1015,3 +1015,13 @@ internal-first spill and nested-clock mechanisms. `cer_recon` is in tree to spli
 pending. `DEC-046` is recorded. The only remaining open admission item is item 2 (bias), which
 affects `H_fwd` and therefore G1 but not the admission model.
 **G1 may not be sized until RC4's post-resolution cost is measured.**
+
+## Implementation status — Ring B / RC2
+
+The user authorized firmware implementation of Ring B/RC2 on 2026-08-26.
+The implementation extends the existing `main.cpp` service order,
+`Track::processDeferredIdleMaintenance`, `DisplayManager` overdub paint path,
+and `Loop` visual/source-cache owners. Native cursor and source-coverage
+checks are in place; capture-serial and native verification are required
+before the device gate can close. RC4 firmware repair, Ring A, and the
+remaining snapshot consumer migrations stay out of scope.

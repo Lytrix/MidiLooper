@@ -54,6 +54,20 @@ implementation (load-frame polls + post-overdub MIDI batch cap) is in tree
 (device verify open). 4b.4 is closed for the `DisplayResolveLiveCapture`
 owner after repeated sub-10 ms captures.
 
+- [x] 4b.1a Implement Ring B idle admission with one unconditional five-owner
+      cursor turn; remove the snapshot cadence, visual cadence, and post-stop
+      persist/snapshot pairwise gates. Keep the wrapped-content dependency skip
+      non-priority and owned by the cursor position.
+- [ ] 4b.1b Run the capture-serial device gate for Ring B: verify bounded
+      `snapshot_idle`, visual dirty-bar progress during OVERDUBBING, and no
+      same-turn snapshot/persistence overlap.
+- [x] 4b.2a Implement RC2 representation coverage enforcement: overdub paint
+      refuses uncovered visual-cache reads, wrap append is admitted through the
+      Ring B owner, and dirty visual-cache source seeds fall back to committed
+      pass reconstruction.
+- [ ] 4b.2b Run the RC2 device gate: verify wrapped content reaches `DISP` and
+      source-span diagnostics never use an uncovered dirty-cache seed.
+
 - [x] 4b.0 After overdub wrap, keep the composed `DisplayNote` vector when
       resetting live compose bookkeeping (`invalidateLiveDisplayCache(true)`).
       `ODUB,stop,display` holds that frame while `visualCache` is dirty and
@@ -65,9 +79,9 @@ owner after repeated sub-10 ms captures.
       151.099 s then DISP, last `ODUB,stop,display` **11.1 ms** (no `cer_win`
       on the stop stack); OD1 stop **21.4 ms**. BPM after last stop 117.7–122.4.
 - [ ] 4b.1 Persist and first-record snapshot stay on PLAYING and OVERDUBBING
-      idle, but not on the same turn (`shouldRunPersistOnPostStopLane` /
-      `shouldRunSnapshotOnPostStopLane`). Do not move save onto the stop
-      commit path. Do not convert `VerifyAndRename`. The 2 s playback-save
+      idle through the Ring B five-owner cursor, but not on the same turn as
+      one another. Do not move save onto the stop commit path. Do not convert
+      `VerifyAndRename`. The 2 s playback-save
       grace is withdrawn — [`010505`](../../../captures/session_20260826_010505.log)
       stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
       (`midi_gap` 32–51 ms).
@@ -115,8 +129,7 @@ owner after repeated sub-10 ms captures.
       [`125527`](../../../captures/session_20260826_125527.log) kept
       unpublished in-flight snapshot idle running on consecutive
       OVERDUBBING/PLAYING turns (2.6–27.4 ms slices; `midi_gap` spikes).
-      In tree: round-robin cadence alternates eligible unpublished
-      PLAYING/OVERDUBBING snapshot turns.
+      In tree: Ring B admits the snapshot owner on its five-way cursor.
       [`130244`](../../../captures/session_20260826_130244.log) still stacked
       unpublished snapshot with long visual idle reconstruct bursts.
       In tree: unpublished snapshot contention keeps visual fallback

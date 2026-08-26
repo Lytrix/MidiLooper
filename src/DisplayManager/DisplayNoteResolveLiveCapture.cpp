@@ -343,11 +343,9 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             return;
         }
         if (havePaintWindow && loop.publishedSnapshot() &&
-            (liveDisplayNotes.empty() || !paintWindowInsideGather) &&
-            loop.visualCache.notes.empty()) {
-            // OVERDUBBING budget guard (4b.4): when visualCache already has notes,
-            // prefer the cheaper window filter / held layer branches below instead
-            // of a snapshot gather+reconstruct on the paint path.
+            (liveDisplayNotes.empty() || !paintWindowInsideGather)) {
+            // A failed visual-cache coverage check must use the bounded published
+            // snapshot window gather; a nonempty cache is not evidence of coverage.
             uint32_t gatherStart = 0;
             uint32_t gatherLength = 0;
             const uint32_t marginTicks =
@@ -373,24 +371,6 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         if (canHoldCommittedLayer) {
             liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
             liveCommittedLayerHeldForDirtyCache_ = true;
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            return;
-        }
-        if (havePaintWindow && !loop.visualCache.notes.empty()) {
-            uint32_t gatherStart = 0;
-            uint32_t gatherLength = 0;
-            DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
-            filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart, paintWindowLength,
-                                      liveLoopLength, liveDisplayNotes, gatherStart, gatherLength);
-            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-            liveWindowGatherValid_ = true;
-            liveWindowGatherStart_ = gatherStart;
-            liveWindowGatherLength_ = gatherLength;
-            liveWindowGatherLoopLength_ = liveLoopLength;
-            liveDisplayCommittedFromWindowGather_ = false;
-            liveCommittedLayerHeldForDirtyCache_ = false;
-            liveOverdubSourceViewNoteCount_ =
-                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }

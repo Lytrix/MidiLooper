@@ -415,7 +415,7 @@ GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `
 - Global undo stack is persisted in v4 (header token + entries). **SAVE** / **SVOK** SD file tokens and slot-file vocabulary: [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md).
 - After load, **`validateAndCleanupMidiEvents()`** runs once per slot with events.
 - Chunk IDs are **in-RAM only** until a format version bump; save/load flattens chunk contents through the persisted snapshot path.
-- `StorageManager::processDeferredSaveState` runs as background work when no track is recording/overdubbing, including while playback is active; each slice yields back to the main loop before the next iteration.
+- `StorageManager::processDeferredSaveState` runs as background work when no track is recording/overdubbing, including while playback is active; `main.cpp` admits it through the Ring B five-owner idle cursor, and each slice yields back to the main loop before the next iteration.
 
 ---
 

@@ -242,7 +242,7 @@ void test_disable_edit_pass_rebuild_restores_pre_edit_display() {
   TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 70, 64));
 }
 
-void test_session_open_without_prewarm_leaves_empty_source_view() {
+void test_session_open_without_prewarm_falls_back_when_visual_cache_empty() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -255,7 +255,7 @@ void test_session_open_without_prewarm_leaves_empty_source_view() {
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
-  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
 void test_session_open_without_prewarm_uses_clean_visual_cache_seed() {
@@ -275,22 +275,32 @@ void test_session_open_without_prewarm_uses_clean_visual_cache_seed() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
-void test_session_open_without_prewarm_uses_dirty_visual_cache_seed() {
+void test_session_open_without_prewarm_falls_back_from_dirty_visual_cache() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
   Loop loop;
-  seedRecordNote(loop, 10, 58, 60);
+  seedTwoRecordNotes(loop, 10, 58, 1, 100, 148, 2, 60);
   loop.rebuildVisualCacheFromPasses();
-  TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 100));
   loop.markDisplayCachesStale();
   TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  for (auto it = loop.visualCache.notes.begin(); it != loop.visualCache.notes.end(); ++it) {
+    if (it->startTick == 100) {
+      loop.visualCache.notes.erase(it);
+      break;
+    }
+  }
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 60, 100));
 
   TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
-  TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 100));
+  LoopContentResolution::deviceGateReset();
 }
 
 void test_overdub_restamp_miss_reopens_from_visual_cache() {
@@ -2845,9 +2855,9 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
   RUN_TEST(test_disable_edit_pass_rebuild_restores_pre_edit_display);
-  RUN_TEST(test_session_open_without_prewarm_leaves_empty_source_view);
+  RUN_TEST(test_session_open_without_prewarm_falls_back_when_visual_cache_empty);
   RUN_TEST(test_session_open_without_prewarm_uses_clean_visual_cache_seed);
-  RUN_TEST(test_session_open_without_prewarm_uses_dirty_visual_cache_seed);
+  RUN_TEST(test_session_open_without_prewarm_falls_back_from_dirty_visual_cache);
   RUN_TEST(test_overdub_restamp_miss_reopens_from_visual_cache);
   RUN_TEST(test_prewarm_span_cache_then_session_open_has_source_notes);
   RUN_TEST(test_overdub_start_establishes_source_view);

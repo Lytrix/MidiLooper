@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (`DEC-046` accepted; RC4 question 1 closed by `171159`; firmware fix still unauthorized)
+Last updated: 2026-08-26 (`DEC-046` accepted; Ring B/RC2 implementation authorized by user)
 
 ---
 
@@ -32,23 +32,23 @@ includes a short loop tail so a 20-bar loop does not omit the last 2 bars
 holds the composed frame — device PASS [`004934`](../../captures/session_20260826_004934.log)
 (`ODUB,stop,display` 8.8 / 12.2 ms). 4b.0 wrap/hold device PASS
 [`092755`](../../captures/session_20260826_092755.log)
-(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** `4b.2`
-first-take length updates during RECORDING with record-stop bar quantize;
-snapshot idle starts after the playhead has left bar 1 and appends later
-completed bars when the parent has tick room (no live-record prefix rebuild);
-unpublished PLAYING/OVERDUBBING in-flight snapshot idle alternates eligible
-turns so one deferred owner does not run every timing-critical turn;
-unpublished snapshot contention now keeps PLAYING/OVERDUBBING visual idle
-fallback constrained and cadence-gated;
+(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** Ring B/RC2
+implementation rotates snapshot, visual-cache, wrap-append, persistence, and
+load/display owners through one unconditional cursor. Visual-dependent turns
+are skipped only while wrapped content is pending, and RC2 refuses uncovered
+visual-cache reads on the overdub paint and overlap-source paths;
+native verification is required and device verification remains open.
+OpenSpec `4b.2` first-take length updates during RECORDING remain in tree;
 live-record snapshot append starts now admit at most one completed bar of
 new range per start so setup cost stays smaller in realtime windows;
 first-take display keeps continuous playhead length (host implement; device
-verify open). 4b.1 same-turn lane stays
-in tree and is not closed. `4b.3` post-stop `usbdisp` /
+verify open). Ring B now owns the five-way deferred idle turn; `4b.3`
+post-stop `usbdisp` /
 `load_frame` / `late_on` is now in tree (device verify open);
 `4b.4` overdub `DisplayResolveLiveCapture` owner refinement is now in tree
 (device verify open). `DEC-046` accepts the round-robin admission and
-representation-coverage direction; firmware Slices 2–4 remain unauthorized.
+representation-coverage direction; the user has now authorized Ring B/RC2
+firmware implementation. RC4 repair and Ring A remain separate.
 Slice 1 telemetry is in tree and device-validated by
 [`161834`](../../captures/session_20260826_161834.log) and
 [`162522`](../../captures/session_20260826_162522.log): the dominant

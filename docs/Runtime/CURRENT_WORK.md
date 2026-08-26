@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (`DEC-046` accepted; RC4 question 1 closed by `171159`; snapshot probe removed after `172305` reboot)
+Last updated: 2026-08-26 (`DEC-046` accepted; Ring B/RC2 implementation authorized by user)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,27 +23,30 @@ Counters are now file-scope volatiles.
 [`171159`](../../captures/session_20260826_171159.log) survived Record→first
 clock and closed question 1: `filt` stays flat while `span`/`proj` take the
 7.9x; `itickus=0` on every row. Device recapture for the mechanism question
-is done. The RC4 firmware fix remains unauthorized. The gated
+is done. The RC4 firmware fix remains a separate change. The gated
 `cer_snapshot` formatting probe caused a reboot at record start in
 [`172305`](../../captures/session_20260826_172305.log) and has been removed
 from the playback path. Question 3 is closed from code: loaded restore does
 not publish a `LoopSnapshot`. [`172802`](../../captures/session_20260826_172802.log)
 confirms first-clock recording and continued overdub/stop operation after the
-removal. Slices 2–4 remain unauthorized.
+removal. Ring B/RC2 is now the authorized implementation slice; RC4 firmware
+repair and Ring A remain separate.
 
-**Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
-RECORDING with the same bar-quantize as record stop
-(`computeRecordStopLengthTicks`). Snapshot idle starts from `capture.store`
-only after the playhead has left bar 1, then appends each later completed
-bar when the unpublished parent still has tick room. Live RECORDING does
-not rebuild the settled prefix when the parent is too short; idle stops
-until session-exit. The bar still being written is not included.
-PLAYING still starts remaining work. During unpublished
-PLAYING/OVERDUBBING in-flight construction, snapshot idle runs on alternating
-eligible turns (round-robin cadence) so one deferred owner cannot consume
-every timing-critical turn. OVERDUBBING only
-advances an in-flight candidate. [`095720`](../../captures/session_20260826_095720.log)
-had no `snapshot_idle` until PLAYING because length stayed 0.
+**Now:** Ring B/RC2 — the five deferred owners rotate through one
+unconditional cursor turn: snapshot step, visual-cache slice, wrap append,
+deferred persistence, and load/display. Visual-dependent turns are skipped
+only while the wrapped append is pending, without transferring that cursor
+position to another owner. RC2 also refuses uncovered visual-cache reads on
+the overdub paint path, guarantees the existing wrap-append owner a turn, and
+falls back to committed-pass reconstruction when a dirty visual cache cannot
+cover the requested overlap source span. Native verification is required;
+device verification remains open.
+
+OpenSpec **4b.2** remains the first-take `loopLengthTicks` behavior:
+snapshot idle starts from `capture.store` only after the playhead has left bar
+1, then appends each later completed bar when the unpublished parent still has
+tick room. Live RECORDING does not rebuild the settled prefix when the parent
+is too short; the bar still being written is not included.
 [`114012`](../../captures/session_20260826_114012.log) started at
 `record_length=768` while bar 1 was still being written.
 [`120020`](../../captures/session_20260826_120020.log) started after bar 1
@@ -272,7 +275,7 @@ open, affecting `H_fwd`/G1 but not the admission model.
 track/slot, plus a rebuild count. Capture line is
 `DIAG,playback_build,<us>,<winStart>,<winLen>,<rev>,<track>,<slot>,<count>`.
 Device recapture is required to attribute the six `cer_edit` signatures.
-Slices 2–4 remain unauthorized.
+Ring B/RC2 is now authorized by the user; its device gate remains open.
 **Slice 0 RAM1 blocker found and fixed (2026-08-26).**
 `teensy41-capture-serial-investigation-diag` built at RAM1 **locals 512** —
 a FAIL against the 4000 floor despite PlatformIO `SUCCESS`, so the board was not
@@ -396,11 +399,9 @@ After overdub stop, `ODUB,stop,display` holds the composed frame and does
 not snapshot-gather. Device PASS [`004934`](../../captures/session_20260826_004934.log):
 display **8.8 ms** / **12.2 ms** (was 97–154 ms on
 [`003459`](../../captures/session_20260826_003459.log)). PLAYING after first
-publish is **7.4–8.4 ms** `midi_gap`. Remaining MIDI owners: **4b.2** selected
-(live enqueue + PLAYING start; device verify open); 4b.1 same-turn lane stays
-in tree and is not closed; 4b.3 post-overdub load-frame drain polls are in tree
-(device verify open); 4b.4 overdub committed-layer gather guard is in tree
-(device verify open).
+publish is **7.4–8.4 ms** `midi_gap`. Ring B/RC2 host implementation is now
+in tree; its capture-serial device gate remains open. 4b.3 post-overdub
+load-frame drain polls remain separately device-verification work.
 Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,
