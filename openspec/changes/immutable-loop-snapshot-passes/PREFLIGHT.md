@@ -235,8 +235,9 @@ paint holds the composed frame; `ODUB,stop,display` must not snapshot-gather
 Parked (not selected): `tasks.md` 4b.1 persist/snapshot same-turn;
 4b.2 first-record `snapshot_idle` bound; 4b.3 post-stop `usbdisp` /
 `load_frame` / `late_on`; 4b.4 OVERDUBBING `DisplayResolveLiveCapture`.
-Selected: last-stop wrap/hold miss
-([`011829`](../../../captures/session_20260826_011829.log)).
+`4b.0` wrap/hold is device PASS
+([`092755`](../../../captures/session_20260826_092755.log) last display
+11.1 ms). Selected: none.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
