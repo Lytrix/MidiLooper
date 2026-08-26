@@ -149,10 +149,14 @@ stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
 RECORDING once `loopLengthTicks > 0`, and starts on PLAYING
 (`allowStartConstruction = !isOverdubbing()`). OVERDUBBING only advances an
 in-flight candidate. After a root exists, PLAYING and OVERDUBBING still do
-not step successor construction. First empty take still has
-`loopLengthTicks == 0` until `prepareRecordStop`, so that take begins at
-session-exit then continues on PLAYING. No µs budget. Off-PLAYING first-record
-was withdrawn.
+not step successor construction. First-take `loopLengthTicks` updates during
+RECORDING with `RecordStopLength::computeRecordStopLengthTicks` (same bar
+quantize as `prepareRecordStop`) so idle can start at 1 bar. Growing record
+does not clamp capture ticks to that working length. A length change discards
+an unpublished candidate built at the previous length. No µs budget. Off-PLAYING
+first-record was withdrawn. [`095720`](../captures/session_20260826_095720.log)
+had no `snapshot_idle` until PLAYING because length stayed 0 for the whole
+RECORDING window.
 
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 

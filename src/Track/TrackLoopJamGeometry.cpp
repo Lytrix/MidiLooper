@@ -4,11 +4,13 @@
 #include "TrackInternal.h"
 
 #include <Arduino.h>
+#include <cstdio>
 
 #include "ClockManager.h"
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/RecordStopLength.h"
 
@@ -173,6 +175,36 @@ TRACK_COLD_MEM uint32_t Track::quantizeTransportRecordLength(uint32_t rawLength)
 TRACK_COLD_MEM uint32_t Track::computeRecordStopLengthTicks(uint32_t rawLength,
                                                             uint32_t lastEventTick) const {
   return RecordStopLength::computeRecordStopLengthTicks(rawLength, lastEventTick);
+}
+
+void Track::updateGrowingRecordLoopLength(uint32_t currentTick) {
+  if (!isRecording() || isPlaying()) {
+    return;
+  }
+  Loop& loop = getActiveLoop();
+  if (loop.hasCommittedPasses()) {
+    return;
+  }
+  uint32_t rawLength = 0;
+  if (loop.startLoopTick != UINT32_MAX && currentTick >= loop.startLoopTick) {
+    rawLength = currentTick - loop.startLoopTick;
+  }
+  uint32_t lastEventTick = 0;
+  if (!loop.capture.store.empty()) {
+    lastEventTick = loop.capture.store.at(loop.capture.store.size() - 1).tick;
+  }
+  const uint32_t nextLength = computeRecordStopLengthTicks(rawLength, lastEventTick);
+  if (nextLength == loop.loopLengthTicks) {
+    return;
+  }
+#if defined(SESSION_CAPTURE)
+  char line[96];
+  snprintf(line, sizeof(line), "#CAP,%lu,DIAG,record_length,ticks=%lu",
+           static_cast<unsigned long>(micros()),
+           static_cast<unsigned long>(nextLength));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+  loop.loopLengthTicks = nextLength;
 }
 
 TRACK_COLD_MEM void Track::resetLoopSlotAfterEmptyCapture(uint8_t slotIndex) {

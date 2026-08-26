@@ -676,9 +676,10 @@ display hold is PASS (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first
 publish is 7.4–8.4 ms. **Device PASS:** `4b.0` wrap/hold —
 [`092755`](../../../captures/session_20260826_092755.log) last
 `ODUB,stop,display` **11.1 ms** after wrap (`011829` was 155.6 ms).
-**Selected now:** `4b.2` first-record live enqueue + PLAYING start (host
-implement; device verify open). RECORDING may start from `capture.store`
-when a length exists. OVERDUBBING only advances an in-flight candidate.
+**Selected now:** `4b.2` first-take length updates during RECORDING with
+record-stop bar quantize so snapshot idle can start at 1 bar (host
+implement; device verify open). OVERDUBBING only advances an in-flight
+candidate.
 
 Parked until selected:
 
