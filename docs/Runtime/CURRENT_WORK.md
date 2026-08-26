@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.2 snapshot cadence alternates unpublished PLAYING/OVERDUBBING turns)
+Last updated: 2026-08-26 (4b.2 unpublished snapshot contention constrains visual idle cadence)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -36,6 +36,12 @@ steps, BPM drift, post-stop `midi_gap` 361 ms).
 snapshot in-flight through OVERDUBBING with repeated 2.6–27.4 ms
 `snapshot_idle` turns and `midi_gap` spikes (35 ms, 432 ms); cadence
 alternation is in tree for device verify.
+[`130244`](../../captures/session_20260826_130244.log) still stacked
+unpublished snapshot with long PLAYING/OVERDUBBING visual idle reconstruct
+bursts (`idle_reconstruct` ~145–217 ms; `midi_gap` 415 ms OVERDUBBING,
+242 ms PLAYING, 451 ms STOPPED). In tree: unpublished snapshot contention
+keeps visual fallback constrained and cadence-gated (1-bar constrained
+slice on every 4th eligible turn) while snapshot updates stay active.
 Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).

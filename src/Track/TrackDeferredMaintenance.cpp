@@ -744,6 +744,10 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
                                             havePublishedSnapshot,
                                             snapshotLoop.hasInFlightSnapshotConstruction(),
                                             snapshotPending);
+  const bool constrainVisualForUnpublishedSnapshot =
+      MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
+          isPlaying(), isOverdubbing(), havePublishedSnapshot,
+          snapshotLoop.hasInFlightSnapshotConstruction(), snapshotPending);
   bool snapshotCadenceTurn = true;
   if (snapshotRoundRobinActive) {
     // session_20260826_125527 showed uninterrupted snapshot turns in
@@ -811,29 +815,41 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
     Loop& loop = activeLoop;
     const bool postOverdubDrainWindow =
         postOverdubDrainWindowActive && (isPlaying() || isStoppedRecording());
-    if (!postOverdubDrainWindow) {
+    if (!postOverdubDrainWindow && !constrainVisualForUnpublishedSnapshot) {
       overdubDrainFallbackRetryAtMs_ = 0;
     }
     const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
-    const bool constrainedFallbackRequested = postOverdubDrainWindow;
+    const bool constrainedFallbackRequested =
+        postOverdubDrainWindow || constrainVisualForUnpublishedSnapshot;
     if (!constrainedFallbackRequested) {
       overdubDrainFallbackRetryAtMs_ = 0;
     }
     const bool constrainedFallbackCooldownActive =
         constrainedFallbackRequested && overdubDrainFallbackRetryAtMs_ != 0 &&
         nowMs < overdubDrainFallbackRetryAtMs_;
+    bool visualCadenceTurn = true;
+    if (constrainVisualForUnpublishedSnapshot) {
+      // session_20260826_130244 showed long idle_reconstruct spikes when
+      // unpublished snapshot and compatibility visual rebuild ran on every
+      // non-snapshot realtime turn. Keep visual updates active but spread them.
+      visualCadenceTurn = (visualIdleCadenceCounter_ == 0);
+      visualIdleCadenceCounter_ = static_cast<uint8_t>((visualIdleCadenceCounter_ + 1) % 4);
+    } else {
+      visualIdleCadenceCounter_ = 0;
+    }
     const bool constrainFallbackGather =
         constrainedFallbackRequested && !constrainedFallbackCooldownActive;
     const bool overdubDrainOwnerTrack = playingMidiDrainAfterOverdubStopActive();
     const bool allowVisualMaintenanceSlice =
         (!postOverdubDrainWindow || overdubDrainOwnerTrack) &&
-        !constrainedFallbackCooldownActive;
+        !constrainedFallbackCooldownActive && visualCadenceTurn;
     if (allowVisualMaintenanceSlice && loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
       if (deferredSavePending) {
         barsPerSlice = 2;
       }
-      if (postOverdubDrainWindow && barsPerSlice > 1) {
+      if ((postOverdubDrainWindow || constrainVisualForUnpublishedSnapshot) &&
+          barsPerSlice > 1) {
         barsPerSlice = 1;
       }
       idleVisualBarsPerSlice = barsPerSlice;
@@ -871,7 +887,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
           if (sawCleanBar && sawDirtyBar) {
             // Post-overdub drain window: keep neighborhood-bounded slices to avoid
             // one-turn long-loop dirty-bar walks that starve MIDI input.
-            if (!postOverdubDrainWindow) {
+            if (!constrainedFallbackRequested) {
               maxBarDistanceFromPriority = UINT32_MAX;
             }
             break;

@@ -380,6 +380,7 @@ private:
   bool playingMidiDrainAfterOverdubStop_ = false;
   bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
   bool snapshotIdleRoundRobinTurn_ = true;
+  uint8_t visualIdleCadenceCounter_ = 0;
   uint32_t overdubDrainFallbackRetryAtMs_ = 0;
   bool loopPrefixMeasureAfterUndo_ = false;
   bool loopPrefixMeasureAfterUndoNoted_ = false;

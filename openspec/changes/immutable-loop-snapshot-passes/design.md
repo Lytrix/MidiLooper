@@ -689,6 +689,10 @@ rebuilt the prefix on each later length step.
 snapshot in-flight through OVERDUBBING/PLAYING with repeated
 `snapshot_idle` slices; cadence now alternates eligible unpublished
 snapshot turns on those states.
+[`130244`](../../../captures/session_20260826_130244.log) still stacked
+unpublished snapshot with long visual idle reconstruct bursts in
+PLAYING/OVERDUBBING. Host refinement in tree keeps visual fallback
+constrained and cadence-gated during unpublished snapshot contention.
 
 Parked until selected:
 
