@@ -28,6 +28,21 @@ void test_post_stop_persist_snapshot_lane_alternates_when_both_pending() {
   TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(false, true, false));
 }
 
+void test_snapshot_round_robin_applies_only_to_unpublished_active_timing() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+      false, true, false, true, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+      true, false, false, true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+      false, false, false, true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+      true, false, true, true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+      true, false, false, false, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::shouldRoundRobinSnapshotIdle(
+      true, false, false, true, false));
+}
+
 void test_live_record_snapshot_starts_after_first_bar() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowLiveRecordSnapshotStart(false, 0, 768));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowLiveRecordSnapshotStart(true, 0, 768));
@@ -70,6 +85,7 @@ int main() {
   RUN_TEST(test_around_idle_only_when_post_overdub_playing_drain);
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_post_stop_persist_snapshot_lane_alternates_when_both_pending);
+  RUN_TEST(test_snapshot_round_robin_applies_only_to_unpublished_active_timing);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
   return UNITY_END();

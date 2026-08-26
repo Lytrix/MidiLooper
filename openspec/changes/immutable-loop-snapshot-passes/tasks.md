@@ -87,7 +87,12 @@ Stop-display hold is device PASS
       continuous playhead length so `DISP` does not rescale on each
       `record_length` step.
       [`121754`](../../../captures/session_20260826_121754.log) rebuilt the
-      prefix on each length step. Do not check off until device verify. Do not
+      prefix on each length step.
+      [`125527`](../../../captures/session_20260826_125527.log) kept
+      unpublished in-flight snapshot idle running on consecutive
+      OVERDUBBING/PLAYING turns (2.6–27.4 ms slices; `midi_gap` spikes).
+      In tree: round-robin cadence alternates eligible unpublished
+      PLAYING/OVERDUBBING snapshot turns. Do not check off until device verify. Do not
       step successor construction during OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not

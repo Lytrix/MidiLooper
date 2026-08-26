@@ -379,6 +379,7 @@ private:
   bool alignLoopOriginOnNextStop;
   bool playingMidiDrainAfterOverdubStop_ = false;
   bool playingMidiDrainAfterOverdubStopIdleNoted_ = false;
+  bool snapshotIdleRoundRobinTurn_ = true;
   uint32_t overdubDrainFallbackRetryAtMs_ = 0;
   bool loopPrefixMeasureAfterUndo_ = false;
   bool loopPrefixMeasureAfterUndoNoted_ = false;
