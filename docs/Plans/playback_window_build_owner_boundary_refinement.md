@@ -195,6 +195,8 @@ Observed steps: `idx`, `chunk`, `pair` only. No `nsort` / `isort` / `win` / `eco
 
 Non-indivisible `units > 8`: **0**. Resume is monotonic inside an attempt (`chunk` 8…248 then `0` at chunk end). Attempt 1 is not resumed across `reset,dirty`.
 
+`DIAG,lcr,mat=` / `DIAG,lcr,pair,tot=` emit only when `deviceGateRunOneSlice` returns `Complete`. Interrupt paths now emit `#CAP,...,DIAG,lcr,incomplete,reason=<reason>,step=,pass=,ev=,slice_us=,slice_units=` before reset/skip so a capture that never completes still has a terminal diagnostic.
+
 ### ★ Measure gate (mandatory)
 
 After 1A device/native evidence, **stop**. Review in plan/review process — not inside the same coding task:
