@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.1 persist/snapshot post-stop turn-taking)
+Last updated: 2026-08-26 (4.4 wrap/hold miss on last overdub stop)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,11 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now:** OpenSpec task **4b.1** only. Persist and first-record snapshot stay
-on PLAYING and OVERDUBBING idle, but not on the same turn. The 2 s
-playback-save grace is withdrawn — [`010505`](../../captures/session_20260826_010505.log)
-stacked persist `done=46697` with snapshot on first OD. Do **not** split
-`atomicRenameTempFile`. Tasks **4b.2**–**4b.4** stay parked.
+**Now:** last-stop wrap/hold miss only. Overdub wrap must keep the composed
+`DisplayNote` vector when it resets live compose bookkeeping (`RC-W1`).
+`ODUB,stop,display` holds that frame while `visualCache` is dirty and does
+not snapshot-gather — [`011829`](../../captures/session_20260826_011829.log)
+wrap at 121.318 s with no DISP until display **155.6 ms**. Tasks **4b.1**–**4b.4**
+stay parked. Do **not** split `atomicRenameTempFile`.
 
 Phase 3 task **4.4 display** remains in tree (not closed). Paint and visual-cache fill read
 published `LoopSnapshot` events through
@@ -37,7 +38,7 @@ not snapshot-gather. Device PASS [`004934`](../../captures/session_20260826_0049
 display **8.8 ms** / **12.2 ms** (was 97–154 ms on
 [`003459`](../../captures/session_20260826_003459.log)). PLAYING after first
 publish is **7.4–8.4 ms** `midi_gap`. Remaining MIDI owners are OpenSpec
-`4b.1`–`4b.4` (4b.1 selected).
+`4b.1`–`4b.4` (parked). Last-stop wrap/hold is selected.
 Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,

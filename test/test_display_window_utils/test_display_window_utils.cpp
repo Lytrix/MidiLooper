@@ -144,6 +144,12 @@ void test_prefer_preserved_overdub_stop_handoff_while_cache_dirty() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::preferPreservedOverdubStopHandoff(false, true, true));
 }
 
+void test_preserve_composed_notes_on_overdub_wrap_invalidate() {
+  // session_20260826_011829: wrap invalidate without preserve left no frame for
+  // ODUB,stop,display (155 ms gather). RC-W1 still resets bookkeeping.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::preserveComposedNotesOnOverdubWrapInvalidate());
+}
+
 void test_committed_display_visual_cache_authoritative() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(false, true));
   // Dirty + notes present: paint must consume stale/handoff, not ensureVisualCacheBuilt.
@@ -532,6 +538,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
+  RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
   RUN_TEST(test_prefer_incremental_committed_display_includes_stopped);
   RUN_TEST(test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow);

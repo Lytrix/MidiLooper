@@ -7,6 +7,7 @@
 #include "DisplayManager.h"
 #include "Logger.h"
 #include "LoopContentResolution.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/TrackMem.h"
 
 bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
@@ -63,10 +64,11 @@ TRACK_COLD_MEM bool Track::commitOverdubWrapAtSessionStart() {
   }
   loop.noteOverdubWrapCommitted();
   if (wrapped) {
-    // RC-W1: live composition keeps liveDisplayCacheCommittedNoteCount_ across wrap when
-    // source-view note count is unchanged. Reset so the next frame rebuilds the committed
-    // prefix from overdubSourceViewNotes and reapplies the new capturePreview.
-    displayManager.invalidateLiveDisplayCache();
+    // RC-W1: reset live compose bookkeeping so the next OVERDUBBING frame rebuilds
+    // the committed prefix from overdubSourceViewNotes. Keep the composed notes —
+    // a stop before that frame must still have a holdable frame (`011829`).
+    displayManager.invalidateLiveDisplayCache(
+        DisplayWindowUtils::preserveComposedNotesOnOverdubWrapInvalidate());
   }
   logger.logTrackEvent("Overdub wrap committed", clockManager.getCurrentTick());
   return wrapped;

@@ -75,8 +75,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 loop.visualCacheDirty, !loop.visualCache.notes.empty());
         const bool preservedHandoffAuthority =
             !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
-            trackIndex == livePlaybackDisplayTrack_ &&
-            liveMergePlaybackRevision_ == loop.playbackRevision;
+            trackIndex == livePlaybackDisplayTrack_;
         // RC5f: STOPPED must use the same incremental paths as deferred PLAYING — otherwise
         // transport/play stop falls into dirty-cache window gather (174742 ~0.9s DFRAME gap).
         const bool incrementalCommittedDisplay =
@@ -101,6 +100,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
             liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             if (!liveWindowGatherValid_) {
                 liveWindowGatherValid_ = true;
@@ -112,8 +112,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         }
         // Window filter is allowed from a non-empty visualCache even while globally dirty, so
         // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes
-        // on short loops.
-        if (incrementalCommittedDisplay && !loop.visualCache.notes.empty()) {
+        // on short loops. Do not snapshot-gather here when a composed live frame exists
+        // (`011829` wrap-then-stop).
+        if (incrementalCommittedDisplay && !loop.visualCache.notes.empty() &&
+            liveDisplayNotes.empty()) {
             if (avoidFullVisualRebuild ||
                 loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
                 uint32_t windowStart = 0;
