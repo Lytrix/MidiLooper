@@ -13,6 +13,7 @@
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/InvestigationAllocProbe.h"
 #include <Arduino.h>
 #endif
 
@@ -32,12 +33,23 @@ uint32_t g_lengthenPathCount = 0;
 uint32_t g_shortenPathCount = 0;
 uint32_t g_noOpPathCount = 0;
 uint32_t g_reconstructUs = 0;
+uint32_t g_reconInternalHits = 0;
+uint32_t g_reconSpillHits = 0;
+uint32_t g_reconSpillBytes = 0;
+uint32_t g_reconClockPulses = 0;
+uint32_t g_reconInternalClockDispatches = 0;
+uint32_t g_workingSetExternal = 0;
 
 void resetLengthPathCounters() {
   g_lengthenPathCount = 0;
   g_shortenPathCount = 0;
   g_noOpPathCount = 0;
   g_reconstructUs = 0;
+  g_reconInternalHits = 0;
+  g_reconSpillHits = 0;
+  g_reconSpillBytes = 0;
+  g_reconClockPulses = 0;
+  g_reconInternalClockDispatches = 0;
 }
 #endif
 
@@ -380,6 +392,14 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> reconstructNotesForPitch(
     const MidiEventVec& events, uint8_t pitch, uint32_t loopLength) {
   MidiEventVec pitchEvents;
   pitchEvents.reserve(events.size());
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  if (isInExternalMemoryPool(pitchEvents.data())) {
+    ++g_reconSpillHits;
+    g_reconSpillBytes += static_cast<uint32_t>(events.size() * sizeof(MidiEvent));
+  } else {
+    ++g_reconInternalHits;
+  }
+#endif
   for (const MidiEvent& evt : events) {
     if ((evt.isNoteOn() || evt.isNoteOff()) && evt.data.noteData.note == pitch) {
       pitchEvents.push_back(evt);
@@ -422,6 +442,8 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   ++g_lengthenPathCount;
   const uint32_t reconstructStartUs = micros();
+  const uint32_t clockPulsesStart = InvestigationAllocProbe::clockPulseEntries();
+  const uint32_t internalClockStart = InvestigationAllocProbe::internalClockDispatches();
 #endif
   const uint32_t newStart = refStart;
   const uint32_t displayNewEnd = (newEnd > loopLength) ? (newEnd % loopLength) : newEnd;
@@ -430,6 +452,9 @@ void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
       reconstructNotesForPitch(events, onEvt.data.noteData.note, loopLength);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   g_reconstructUs += micros() - reconstructStartUs;
+  g_reconClockPulses += InvestigationAllocProbe::clockPulseEntries() - clockPulsesStart;
+  g_reconInternalClockDispatches +=
+      InvestigationAllocProbe::internalClockDispatches() - internalClockStart;
 #endif
   std::vector<NoteUtils::DisplayNote> notesToDelete;
   std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
@@ -748,6 +773,7 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
   uint32_t deletesExecuted = 0;
   uint32_t lengthsExecuted = 0;
   resetLengthPathCounters();
+  g_workingSetExternal = isInExternalMemoryPool(events.data()) ? 1u : 0u;
 #endif
   std::vector<const EditPass*> plannedRows;
   uint32_t rowsCollapsed = 0;
@@ -848,6 +874,17 @@ NOTE_EDIT_MEM void applyNoteEditPassSequence(MidiEventVec& events, const EditPas
                static_cast<unsigned>(g_lengthenPathCount),
                static_cast<unsigned>(g_shortenPathCount),
                static_cast<unsigned>(g_noOpPathCount), static_cast<unsigned>(events.size()));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      snprintf(line, sizeof(line),
+               EDIT_DIAG_FMT("#CAP,%lu,DIAG,cer_heap,recon=%lu,ihit=%lu,spill=%lu,sbytes=%lu,"
+                             "clk=%lu,iclk=%lu,ext=%u"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(g_reconstructUs),
+               static_cast<unsigned long>(g_reconInternalHits),
+               static_cast<unsigned long>(g_reconSpillHits),
+               static_cast<unsigned long>(g_reconSpillBytes),
+               static_cast<unsigned long>(g_reconClockPulses),
+               static_cast<unsigned long>(g_reconInternalClockDispatches),
+               static_cast<unsigned>(g_workingSetExternal));
       DebugSessionCapture::appendCaptureTextLine(line);
     }
   }

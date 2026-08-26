@@ -1008,7 +1008,9 @@ authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 **Slice 1 destination attribution is complete.** `161834` identifies the observed destinations, and
 `162522` directly maps all repeated `cer_edit` compatibility gathers to `T0/S6`. Its `<count>` field
 is rebuild-call count before one-shot emission, not distinct-destination multiplicity; no eligible-set
-count is inferred from it. Next is the RC4 mechanism investigation. `DEC-046` is recorded; the only
-remaining open item is item 2 (bias), which affects `H_fwd` and therefore G1 but not the admission
-model.
+count is inferred from it. RC4 question 3 is answered from code: loaded restore does not publish a
+`LoopSnapshot`, so `T0/S6` stays on the compatibility gather. Question 1 now has `cer_heap`
+telemetry in tree (`ihit`/`spill`/`sbytes`/`clk`/`iclk`/`ext`); device recapture is pending.
+`DEC-046` is recorded; the only remaining open admission item is item 2 (bias), which affects
+`H_fwd` and therefore G1 but not the admission model.
 **G1 may not be sized until RC4's post-resolution cost is measured.**

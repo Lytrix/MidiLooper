@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (`DEC-046` accepted; Slice 1 destination attribution closed by `161834`)
+Last updated: 2026-08-26 (`DEC-046` accepted; RC4 `cer_heap` telemetry in tree, recapture pending)
 
 ---
 
@@ -56,6 +56,9 @@ long-loop rebuild destination is `T0/S6`, with `T4/S0`, `T6/S0`, and `T2/S2`
 also observed; `162522` directly pairs the repeated compatibility gathers with
 `T0/S6`. The playback rebuild `<count>` is rebuild-call count before one-shot
 emission, not distinct-destination multiplicity or an eligible-set count.
+RC4 question 3 is closed from code: `adoptPersistedSnapshot` /
+`restorePassesSnapshot` do not publish a `LoopSnapshot`. Question 1 now has
+investigation-diag `cer_heap` telemetry in tree; device recapture is pending.
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated

@@ -202,37 +202,60 @@ interrupt work remains a separate unmeasured source of wall-time inflation, but 
 
 The input remains stable: the inflated and normal `T0/S6` windows retain the same 217 replay rows and
 the same five repeated `cer_edit` signatures. The first run has no allocator-route telemetry, so
-`InternalHeapFirstAllocator` spill to PSRAM remains **unproven**. The next discriminator must record
-whether `reconstructNotesForPitch` allocations use internal heap or the external fallback, separately
-from any interrupt/preemption elapsed time.
+`InternalHeapFirstAllocator` spill to PSRAM remains **unproven**.
+
+## Mechanism telemetry (in tree, device recapture pending)
+
+Investigation-diag now emits a second line next to each reported `cer_edit`:
+
+```
+DIAG,cer_heap,recon=<us>,ihit=<n>,spill=<n>,sbytes=<n>,clk=<n>,iclk=<n>,ext=<0|1>
+```
+
+| Field | Meaning |
+|---|---|
+| `recon` | Same `g_reconstructUs` as `cer_edit` — pairs the two lines |
+| `ihit` | `reconstructNotesForPitch` calls whose `pitchEvents` buffer stayed on the internal heap |
+| `spill` / `sbytes` | Those calls whose `pitchEvents.reserve` landed in the external pool, and reserved bytes |
+| `clk` | `ClockManager::onMidiClockPulse` entries during the span |
+| `iclk` | `ClockManager::updateInternalClock` entries that pass the `CLOCK_EXTERNAL` guard |
+| `ext` | `1` when the working `MidiEventVec` already lives in the external pool at sequence start |
+
+`DisplayNoteVec` and the canonical-span temporaries use `ExternalMemoryFirstAllocator` on every
+call, so those being in PSRAM does not discriminate. `cer_heap` does not hook
+`InternalHeapFirstAllocator::allocate` (that template lives in a header and blew ITCM). It
+inspects `pitchEvents.data()` after `reserve` and `events.data()` at sequence start.
+
+How to read the next capture:
+
+- `spill>0` or `ext=1` on the slow `T0/S6` samples and `spill=0`/`ext=0` on the fast ones **proves**
+  allocator-route change.
+- `spill=0` and `ext=0` on both bands **rules out** internal-heap-first spill for this span.
+- `clk>0` or `iclk>0` during reconstruct **proves** a nested clock dispatch. The call graph says
+  both stay 0: `onMidiClockPulse` is reached only from `MidiHandler::handleMidiInput`, and
+  reconstruct runs inside that call.
 
 ## Open questions
 
 1. **What mechanism makes identical `T0/S6` work 7–10x slower in round 2?** The correlation with
    preceding snapshot idle is established, but direct concurrent execution is ruled out. Higher-
    priority interrupt elapsed time and allocator-route changes remain unmeasured and must be
-   discriminated before optimization.
-   - **Higher-priority interrupt time.** `g_reconstructUs` measures `micros()` deltas, so it includes every
-     interrupt and any preemption. Snapshot construction is not concurrent in this capture, so it
-     cannot account for the full 7–10x inflation through direct elapsed-time overlap.
-   - **Allocator spill to PSRAM.** `InternalHeapFirstAllocator::allocate` tries `malloc` and, on
-     failure, falls back to `extmem_malloc`. `reconstructNotesForPitch` allocates per row, so under
-     heap pressure its vectors could land in external memory, which is far slower than internal RAM.
-     `min_ever=120 KB` shows real pressure but **not** exhaustion, so a spill is unproven — it would
-     require a specific large allocation to fail under fragmentation.
-
-   These are cheap to separate: count spilled allocations, or report CPU-time separately from wall
-   time, for the reconstruction span only. Snapshot idle is not a concurrent explanation in this
-   capture: its lines occur after the gather. **Do this before any optimization.**
+   discriminated before optimization. `cer_heap` is the discriminator; recapture is pending.
 2. ~~**Are the six signatures six destinations, or successive windows of one destination?**~~
    **Answered by `162522`: successive windows of `T0/S6`.**
-3. **Does the immutable snapshot direction remove this path entirely?** If loaded slots publish a
-   `LoopSnapshot` on restore
-   ([DEC-044](../DECISION_LOG.md#dec-044--immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
-   [DEC-045](../DECISION_LOG.md#dec-045--overdub-snapshot-publish-is-idle-stepped)), the compatibility
-   gather does not run for them and RC4 disappears for the observed case. **Answer this before
-   optimizing `applyNoteEditPassSequence`** — micro-optimizing a path the architecture is already
-   removing would be the wrong investment.
+3. ~~**Does the immutable snapshot direction remove this path entirely?**~~ **Answered from code:
+   not for loaded slots today.** `Loop::adoptPersistedSnapshot` and `Loop::restorePassesSnapshot`
+   restore pass storage and call `notifyCommittedContentChanged()` → `markPassDerivedStale()`.
+   They do not call `queueSessionExitSnapshot`, `storePublishedSnapshot`, or
+   `stepPendingSnapshotPublish`. `Loop::tryGatherPublishedSnapshotEventsInWindow` returns false
+   when `publishedSnapshot()` is null, so playback falls through to
+   `gatherCommittedEventsInWindow` → `copyEffectiveCommittedEventsInRange` →
+   `applyNoteEditPassSequence`. Snapshot publish is queued at session exit
+   (`queueSessionExitSnapshot`) and stepped from idle (`DEC-045`). A published root already
+   removes this replay for that slot. Restore does not create that root, so the observed `T0/S6`
+   compatibility gather remains. Adding publish-on-restore (or an idle bootstrap that constructs
+   a root from already-committed loaded passes) would remove this path; that is a separate
+   change, not an `applyNoteEditPassSequence` optimization.
 4. ~~**Is 367 ms representative or pathological?**~~ **Answered by `160244`: pathological.** It is the
    contended cost of a destination whose uncontended cost is 30–100 ms.
 5. **Why are there lengthen rows among replayed overdub companions at all?** All 217 Active rows are
@@ -247,7 +270,8 @@ from any interrupt/preemption elapsed time.
 
 1. ~~**Slice 1 measurement closure**~~ **Closed by `161834` and `162522`:** destination attribution
    maps the compatibility-gather signatures to `T0/S6`.
-2. **This investigation** — answer open questions 1, 3 and 5. Read-only plus targeted instrumentation.
+2. **This investigation** — question 3 is answered from code (loaded restore does not publish).
+   Question 1 waits on a `cer_heap` recapture. Question 5 remains open.
 3. **Measure RC4's candidate resolution** before choosing Ring A's final prefetch lead.
 4. **Size G1** in the parent plan from the resulting representative rebuild cost — **not** from
    today's 367 ms.
@@ -260,6 +284,6 @@ plan becomes comfortable at every eligible count.
 
 ## Not in scope
 
-Micro-optimization of `applyNoteEditPassSequence` before question 3 is answered; changes to
-`CommittedEventRange` windowed traversal (measured at 23 ms, not the problem); the 2-bar content
-window; Ring A or Ring B admission; RC3 snapshot convergence.
+Micro-optimization of `applyNoteEditPassSequence` before question 1 is closed and a candidate
+resolution is chosen; changes to `CommittedEventRange` windowed traversal (measured at 23 ms, not
+the problem); the 2-bar content window; Ring A or Ring B admission; RC3 snapshot convergence.
