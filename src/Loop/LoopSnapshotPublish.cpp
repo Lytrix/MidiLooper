@@ -291,7 +291,10 @@ uint32_t liveRecordCompletedOrOneBar(uint32_t liveRecordCompletedTicks) {
 }
 
 uint32_t liveRecordNewParentLength(uint32_t completedTicks, uint32_t loopLengthTicks) {
-  const uint32_t withRoom = completedTicks + Config::TICKS_PER_BAR;
+  // One detailed-window of extra bars so later completed bars append instead of
+  // rebuilding the whole prefix on each length step (session_20260826_121754).
+  constexpr uint32_t kExtraBars = 16;
+  const uint32_t withRoom = completedTicks + kExtraBars * Config::TICKS_PER_BAR;
   return loopLengthTicks > withRoom ? loopLengthTicks : withRoom;
 }
 
@@ -351,9 +354,11 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
   }
   if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
       loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
-    if (box.unpublishedCandidate &&
-        box.unpublishedCandidate->loopLengthTicks() >= completedTicks) {
-      return box.unpublishedCandidate;
+    if (box.unpublishedCandidate) {
+      if (box.unpublishedCandidate->loopLengthTicks() >= completedTicks) {
+        return box.unpublishedCandidate;
+      }
+      return {};
     }
     return LoopSnapshot::createEmpty(
         loop.loopId, liveRecordNewParentLength(completedTicks, loop.loopLengthTicks),
@@ -390,6 +395,10 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
   if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
       loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
     const uint32_t completedTicks = liveRecordCompletedOrOneBar(liveRecordCompletedTicks);
+    if (box.unpublishedCandidate &&
+        box.unpublishedCandidate->loopLengthTicks() < completedTicks) {
+      return false;
+    }
     const uint32_t includeUntil =
         completedTicks < parent->loopLengthTicks() ? completedTicks : parent->loopLengthTicks();
     if (includeUntil == 0) {
@@ -530,6 +539,19 @@ LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
 LOOP_COLD_MEM uint32_t Loop::liveRecordAppliedCompletedTicks() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedLiveRecordCompletedTicks
                                     : 0;
+}
+
+LOOP_COLD_MEM bool Loop::liveRecordCanApplyCompletedTicks(uint32_t completedTicks) const {
+  if (completedTicks == 0) {
+    return false;
+  }
+  if (!pendingSnapshotPublishBox_ || !pendingSnapshotPublishBox_->unpublishedCandidate) {
+    return true;
+  }
+  if (pendingSnapshotPublishBox_->sessionExitQueued) {
+    return true;
+  }
+  return pendingSnapshotPublishBox_->unpublishedCandidate->loopLengthTicks() >= completedTicks;
 }
 
 LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
