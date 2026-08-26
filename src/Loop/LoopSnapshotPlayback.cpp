@@ -9,7 +9,19 @@
 #include "Utils/LoopMem.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+#include "Utils/DebugSessionCapture.h"
+#include <Arduino.h>
+#endif
+
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define LOOP_SNAPSHOT_DIAG_FMT(literal) PSTR(literal)
+#else
+#define LOOP_SNAPSHOT_DIAG_FMT(literal) literal
+#endif
 
 namespace {
 
@@ -69,6 +81,9 @@ void appendChunkListForPass(const LoopPasses& passes, PassId passId,
 
 void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidiEventVec& out,
                                        uint32_t windowStart, uint32_t windowLength) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  const uint32_t gatherStartUs = micros();
+#endif
   const uint32_t loopLength = snapshot.loopLengthTicks();
   if (loopLength == 0 || windowLength == 0) {
     out.clear();
@@ -116,6 +131,18 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
   for (const OrderedSnapshotEvent& event : collected) {
     out.push_back(event.value);
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+  const uint32_t gatherUs = micros() - gatherStartUs;
+  if (gatherUs >= 100u) {
+    char line[192];
+    snprintf(line, sizeof(line),
+             LOOP_SNAPSHOT_DIAG_FMT("#CAP,%lu,DIAG,cer_snapshot,us=%lu,ev=%u,win=%lu,bars=%u"),
+             static_cast<unsigned long>(micros()), static_cast<unsigned long>(gatherUs),
+             static_cast<unsigned>(out.size()), static_cast<unsigned long>(windowLength),
+             static_cast<unsigned>(lastBar - firstBar + 1u));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
 }
 
 }  // namespace

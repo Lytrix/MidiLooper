@@ -257,6 +257,17 @@ DIAG,cer_recon,recon=<us>,filt=<us>,span=<us>,proj=<us>,itick=<n>,itickus=<us>
 | `proj` | `displayNotesFromCanonicalSpanVec` — PSRAM-first project + dedupe |
 | `itick` / `itickus` | `ClockManager::updateInternalClock` IntervalTimer entries and wall time during reconstruct, including `CLOCK_EXTERNAL` early returns |
 
+The next measurement adds:
+
+```
+DIAG,cer_snapshot,us=<us>,ev=<n>,win=<ticks>,bars=<n>
+```
+
+This is the direct published-snapshot membership gather in
+`gatherPublishedSnapshotMembership`, emitted only when it takes at least 100 µs.
+It measures the candidate playback-window read without changing fallback or
+overlay behavior.
+
 How to read `cer_recon`:
 
 - If `filt` inflates with `recon` while walking internal-heap events, the remaining cause is
@@ -264,6 +275,8 @@ How to read `cer_recon`:
 - If `filt` stays in the fast band while `span`/`proj` inflate, the remaining cause is the
   PSRAM-first reconstruct pipeline.
 - `itickus` does not include the Teensy USB hardware ISR. That core path is not hooked.
+- `cer_snapshot` is the direct published-snapshot candidate cost. Pair it with the neighboring
+  `playback_build` row; it is not a replacement for per-event deadline measurements.
 
 ## Open questions
 
