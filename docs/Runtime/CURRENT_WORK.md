@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (`DEC-046` accepted; RC4 question 1 closed by `171159`; snapshot candidate measurement in progress)
+Last updated: 2026-08-26 (`DEC-046` accepted; RC4 question 1 closed by `171159`; snapshot probe removed after `172305` reboot)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,10 +23,13 @@ Counters are now file-scope volatiles.
 [`171159`](../../captures/session_20260826_171159.log) survived Record→first
 clock and closed question 1: `filt` stays flat while `span`/`proj` take the
 7.9x; `itickus=0` on every row. Device recapture for the mechanism question
-is done. The RC4 firmware fix remains unauthorized. The next measurement is
-gated `cer_snapshot` timing for the direct published-snapshot membership
-gather, paired with `playback_build`. Question 3 is closed from code: loaded
-restore does not publish a `LoopSnapshot`. Slices 2–4 remain unauthorized.
+is done. The RC4 firmware fix remains unauthorized. The gated
+`cer_snapshot` formatting probe caused a reboot at record start in
+[`172305`](../../captures/session_20260826_172305.log) and has been removed
+from the playback path. Question 3 is closed from code: loaded restore does
+not publish a `LoopSnapshot`. [`172802`](../../captures/session_20260826_172802.log)
+confirms first-clock recording and continued overdub/stop operation after the
+removal. Slices 2–4 remain unauthorized.
 
 **Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
 RECORDING with the same bar-quantize as record stop

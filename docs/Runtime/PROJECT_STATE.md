@@ -68,6 +68,11 @@ The measured internal-first spill and nested-clock mechanisms are ruled out.
 clock after Record; probe counters are now file-scope volatiles.
 [`171159`](../../captures/session_20260826_171159.log) closes question 1:
 `filt` stays flat, `span`/`proj` take the 7.9x, `itickus=0` on every row.
+The follow-up `cer_snapshot` formatting probe was removed after
+[`172305`](../../captures/session_20260826_172305.log) rebooted at record start;
+the existing `playback_build` timing remains the safe snapshot-path evidence.
+[`172802`](../../captures/session_20260826_172802.log) confirms first-clock
+recording and continued overdub/stop operation after removal.
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated
