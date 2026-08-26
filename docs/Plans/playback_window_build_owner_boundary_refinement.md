@@ -1,6 +1,6 @@
 # Playback window build — Owner-Boundary Gate (ExecutionBounds)
 
-**Status:** **Slice 0 shipped.** **Slice 1A native PASS** — device measurement remains before the 1A gate. Slices 1B–5 are roadmap context, not permission. Residual **4b.1b** (visual-cache idle reconstruct) is owned here and **parked**; Ring B / RC2 is closed without it.
+**Status:** **Slice 0 shipped.** **Slice 1A native PASS; device measure gate not passed** ([`213537`](../../captures/session_20260826_213537.log)). Slices 1B–5 are not authorized. Residual **4b.1b** (visual-cache idle reconstruct) is owned here and **parked**; Ring B / RC2 is closed without it.
 **Kind:** refinement under the runtime scheduling Owner-Boundary Gate
 **Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (O–T–R–C–A–P)
 **GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38) parent; [#41](https://github.com/Lytrix/MidiLooper/issues/41) 4b.1b. Work project: [Work](https://github.com/users/Lytrix/projects/1)
@@ -173,7 +173,27 @@ Owner: `DeviceGateSession::runOneSlice`. Instrument line:
 | F6 | `finishCanonicalSpansFromMidi` / `dedupeProjectedDisplayNotes` | **Blocker.** Named indivisible |
 | F7 | Remaining-reserve / `presentAt.resize` | **Blocker.** 5.7a contract unchanged (`csize`) |
 
-Native tests: `test_slice1a_records_bounded_work_units`, `test_slice1a_resume_matches_oracle`, `test_slice1a_chunk_range_does_not_repeat` — **PASS** with `pio test -e native`. Firmware RAM1 locals **4640**. Device measurement (`DIAG,prepare,slice,*` on `teensy41-capture-serial`) is the remaining 1A gate. Do **not** start 1B.
+Native tests: `test_slice1a_records_bounded_work_units`, `test_slice1a_resume_matches_oracle`, `test_slice1a_chunk_range_does_not_repeat` — **PASS** with `pio test -e native`. Firmware RAM1 locals **4640**.
+
+Device capture [`213537`](../../captures/session_20260826_213537.log): **1A measure gate not passed.** Do **not** start 1B.
+
+| Window | Prepare slices | Last phase |
+|---|---|---|
+| 17.615–24.942 s STOPPED | 182 (`idx` 91 / `chunk` 91) | pass 0 `ev=720` |
+| 25.080 s | `DIAG,lcr,reset,dirty` | F8 wipe — next slice is `ev=0` |
+| 26.026–27.541 s STOPPED | 49 (`idx` 23 / `chunk` 21 / `pair` 5) | pass 1 `ev=24` |
+| RECORDING / PLAYING / OVERDUBBING | 0 | — |
+| 96.194–98.347 s STOPPED | 65 (`idx` 33 / `chunk` 32) | pass 0 `ev=256` — capture ends |
+
+Observed steps: `idx`, `chunk`, `pair` only. No `nsort` / `isort` / `win` / `ecopy` / `eapply` / `ckpt` / `dedup` / `csize`. No `lcr` complete line.
+
+| Step | n | us min–max | units | notes |
+|---|---|---|---|---|
+| `chunk` | 144 | 24–3720 | 8 | Steady 25–37 µs; first-of-chunk (`resume=8`) 271–3720 µs |
+| `idx` | 147 | 14–2446 | 0 or 8 | us rises with `resume`/`ev` (260 µs at 8 → 2446 µs at 704) |
+| `pair` | 5 | 21–592 | 8 | Only attempt 2, 40 events |
+
+Non-indivisible `units > 8`: **0**. Resume is monotonic inside an attempt (`chunk` 8…248 then `0` at chunk end). Attempt 1 is not resumed across `reset,dirty`.
 
 ### ★ Measure gate (mandatory)
 

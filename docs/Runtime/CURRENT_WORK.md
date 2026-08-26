@@ -10,12 +10,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Immediate slice:** [Slice 1A](../Plans/playback_window_build_owner_boundary_refinement.md)
-cooperative-prepare experiment on `DeviceGateSession::runOneSlice`
-([#38](https://github.com/Lytrix/MidiLooper/issues/38)). Convert F2/F3/F5
-into resumable work units; name F1/F4/F6/F7 as indivisible blockers; emit
-`DIAG,prepare,slice,*`. Do **not** start 1B, consume, Ring A, or RC4
-firmware. After the first complete 1A measurement run, **STOP**.
+**Immediate slice:** Slice 1A firmware is in tree. Device capture
+[`213537`](../../captures/session_20260826_213537.log) does **not** pass
+the 1A measure gate: prepare never left `IndexCommit`, and
+`DIAG,lcr,reset,dirty` at 25.080 s wiped pass 0 `ev=720` (F8). Observed
+steps are `idx` / `chunk` / `pair` only. Do **not** start 1B. Review stays
+on
+[`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
+([#38](https://github.com/Lytrix/MidiLooper/issues/38)).
 
 G1 sizing is **satisfied** (doc-only). `representativeRebuildWall` = 358 µs
 from [`202654`](../../captures/session_20260826_202654.log) `T4/S0`
