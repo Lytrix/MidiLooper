@@ -84,6 +84,29 @@ const auto allNotes = reconstructNotesForPitch(events, onEvt.data.noteData.note,
 The measured split confirms the branch attribution: `shrt=10` shorten rows contributed **nothing** to
 `recon`, while `lgth=8` lengthen rows carry all 339 ms — **~42 ms per lengthen call**.
 
+## Measurement continuation decision
+
+The direct published-snapshot timing probe is not safe on the playback/clock path. The low-threshold
+`cer_snapshot` formatter caused the record-start reboot in
+[`172305`](../../captures/session_20260826_172305.log); removing it restored stable first-clock
+recording in [`172802`](../../captures/session_20260826_172802.log). The failure is therefore in the
+added interval-path formatting/capture emission, not evidence that published-snapshot gathering is
+slow.
+
+Continue **Ring B / RC2** independently. Do not size **G1** or implement **Ring A** from the current
+data. The next RC4 measurement must:
+
+1. keep `snprintf` and capture-ring writes out of `gatherPublishedSnapshotMembership` and the
+   playback/clock interval path;
+2. source-tag the existing `playback_build` diagnostic so snapshot and compatibility builds are
+   distinguishable;
+3. accumulate direct snapshot timing in fixed counters and emit it from an idle/cold diagnostic path;
+4. retain per-event MIDI deadline timing as the correctness gate, rather than using
+   `playback_build` duration as a deadline proxy.
+
+The existing `playback_build` rows remain useful for locating the path, but cannot be used as
+snapshot-only cost until source attribution is present.
+
 ## Scope: compatibility gather only
 
 `cer_range` first appears at **52.014 s**, before this session's long record began at 61.168 s, and
