@@ -83,7 +83,8 @@ public:
   uint32_t quantizeTransportRecordLength(uint32_t rawLength) const;
   uint32_t computeRecordStopLengthTicks(uint32_t rawLength, uint32_t lastEventTick) const;
   /// First-take RECORDING only. Writes `loopLengthTicks` with the same bar
-  /// quantize as `prepareRecordStop` so snapshot idle can start at 1 bar.
+  /// quantize as `prepareRecordStop`. Snapshot idle waits until the playhead
+  /// has left bar 1.
   void updateGrowingRecordLoopLength(uint32_t currentTick);
   void resetLoopSlotAfterEmptyCapture(uint8_t slotIndex);
 

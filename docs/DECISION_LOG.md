@@ -146,17 +146,27 @@ stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
 
 **Amendment (2026-08-26):** First-record uses the overdub live-enqueue setup.
 `stepPendingSnapshotPublish` starts construction from `capture.store` during
-RECORDING once `loopLengthTicks > 0`, and starts on PLAYING
+RECORDING after the playhead has left bar 1, and starts on PLAYING
 (`allowStartConstruction = !isOverdubbing()`). OVERDUBBING only advances an
 in-flight candidate. After a root exists, PLAYING and OVERDUBBING still do
 not step successor construction. First-take `loopLengthTicks` updates during
 RECORDING with `RecordStopLength::computeRecordStopLengthTicks` (same bar
-quantize as `prepareRecordStop`) so idle can start at 1 bar. Growing record
-does not clamp capture ticks to that working length. A length change discards
-an unpublished candidate built at the previous length. No µs budget. Off-PLAYING
-first-record was withdrawn. [`095720`](../captures/session_20260826_095720.log)
-had no `snapshot_idle` until PLAYING because length stayed 0 for the whole
-RECORDING window.
+quantize as `prepareRecordStop`) so idle can start after the playhead has
+left bar 1. Growing record does not clamp capture ticks to that working
+length. Live RECORDING construction builds only that completed first bar
+and does not restart when later `loopLengthTicks` steps grow. Session-exit
+discards a first-bar unpublished candidate when the sealed length differs.
+No µs budget. Off-PLAYING first-record was withdrawn.
+[`095720`](../captures/session_20260826_095720.log) had no `snapshot_idle`
+until PLAYING because length stayed 0 for the whole RECORDING window.
+[`114012`](../captures/session_20260826_114012.log) started `snapshot_idle`
+at `record_length=768` while bar 1 was still being written, then rebuilt
+on every later length step.
+
+**Amendment (2026-08-26):** First-record live `snapshot_idle` starts only
+when `currentTick - startLoopTick >= TICKS_PER_BAR`. `loopLengthTicks` can
+already be one bar at record start because stop-quantize of a small raw
+length is one bar. Do not construct that in-progress bar.
 
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 

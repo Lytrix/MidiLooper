@@ -708,11 +708,22 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   // did not finish after OD1 in session_20260825_232329 (3631 pending=1
   // steps; OD2 BPM 57; OD4 BPM 46). Do not step that work on PLAYING /
   // OVERDUBBING once a root exists. First-record uses the overdub setup:
-  // start during RECORDING once a length exists, and start on PLAYING.
-  // OVERDUBBING only advances an in-flight candidate.
-  const bool snapshotIdleAllowed = MidiServiceDrain::allowSnapshotIdleStep(
-      isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
-      snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint);
+  // start during RECORDING after the playhead has left bar 1, and start on
+  // PLAYING. OVERDUBBING only advances an in-flight candidate.
+  uint32_t recordElapsedTicks = 0;
+  if (snapshotLoop.startLoopTick != UINT32_MAX) {
+    const uint32_t currentTick = clockManager.getCurrentTick();
+    if (currentTick >= snapshotLoop.startLoopTick) {
+      recordElapsedTicks = currentTick - snapshotLoop.startLoopTick;
+    }
+  }
+  const bool liveRecordPastFirstBar = MidiServiceDrain::allowLiveRecordSnapshotStart(
+      isRecording(), recordElapsedTicks, Config::TICKS_PER_BAR);
+  const bool snapshotIdleAllowed =
+      MidiServiceDrain::allowSnapshotIdleStep(
+          isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
+          snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint) &&
+      (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction());
   const bool persistPending = StorageManager::hasDeferredSaveWork();
   const bool snapshotPending = snapshotLoop.hasPendingSnapshotPublish();
   const bool alternateWithPersist = (isPlaying() || isOverdubbing()) && persistPending;
@@ -729,7 +740,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
             ? 0
             : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
                               snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
-    snapshotLoop.stepPendingSnapshotPublish(1, !isOverdubbing(), playheadPhaseTick);
+    snapshotLoop.stepPendingSnapshotPublish(
+        1, !isOverdubbing() && liveRecordPastFirstBar, playheadPhaseTick);
     snapshotIdleUnitRan = true;
     if (alternateWithPersist) {
       StorageManager::notePostStopSnapshotRan();

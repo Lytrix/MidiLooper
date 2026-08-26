@@ -114,7 +114,7 @@ stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. An idle turn that applies one
 snapshot unit does not also run a visual-cache slice. First-record
 construction uses the overdub live-enqueue setup (`DEC-045` 4b.2): RECORDING
-may start from `capture.store` once `loopLengthTicks > 0`, and PLAYING
+may start from `capture.store` after the playhead has left bar 1, and PLAYING
 starts construction. While OVERDUBBING, idle only applies
 `LoopSnapshotConstruction::step` to an already started construction.
 After a published root exists, PLAYING and OVERDUBBING do not apply

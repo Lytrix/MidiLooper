@@ -235,10 +235,10 @@ paint holds the composed frame; `ODUB,stop,display` must not snapshot-gather
 `4b.0` wrap/hold is device PASS
 ([`092755`](../../../captures/session_20260826_092755.log) last display
 11.1 ms). Selected: `4b.2` first-record live enqueue + PLAYING start.
-RECORDING may start from `capture.store` when a length exists. OVERDUBBING
-only advances an in-flight candidate. 4b.1 same-turn lane stays in tree
-and is not closed. Parked: 4b.3 post-stop `usbdisp` / `load_frame` /
-`late_on`; 4b.4 OVERDUBBING `DisplayResolveLiveCapture`.
+RECORDING may start from `capture.store` after the playhead has left
+bar 1. OVERDUBBING only advances an in-flight candidate. 4b.1 same-turn
+lane stays in tree and is not closed. Parked: 4b.3 post-stop `usbdisp` /
+`load_frame` / `late_on`; 4b.4 OVERDUBBING `DisplayResolveLiveCapture`.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
@@ -246,8 +246,8 @@ Overdub and record session-exit no longer complete a candidate on the stop
 path. `Loop::queueSessionExitSnapshot` copies pass ids; idle
 `stepPendingSnapshotPublish(1)` applies one `LoopSnapshotConstruction::step`.
 First-record uses the overdub live-enqueue setup: RECORDING may start from
-`capture.store` once a length exists, and PLAYING starts construction
-(`allowStartConstruction` true). During OVERDUBBING, idle only advances an
+`capture.store` after the playhead has left bar 1, and PLAYING starts
+construction (`allowStartConstruction` true). During OVERDUBBING, idle only advances an
 in-flight candidate. After a root exists, PLAYING and OVERDUBBING do not
 step successor construction. One idle unit is one dirty bar, ordered by
 soonest playhead arrival. NOTE_EDIT close remains a synchronous
