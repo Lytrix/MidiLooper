@@ -1011,6 +1011,8 @@ is rebuild-call count before one-shot emission, not distinct-destination multipl
 count is inferred from it. RC4 question 3 is answered from code: loaded restore does not publish a
 `LoopSnapshot`, so `T0/S6` stays on the compatibility gather. Question 1 now has `cer_heap`
 telemetry in tree (`ihit`/`spill`/`sbytes`/`clk`/`iclk`/`ext`); device recapture is pending.
-`DEC-046` is recorded; the only remaining open admission item is item 2 (bias), which affects
-`H_fwd` and therefore G1 but not the admission model.
+`DEC-046` is recorded; `165024` rules out the measured internal-first spill and nested-clock
+mechanisms for RC4, but does not measure higher-priority interrupt time or PSRAM-first allocation
+service. The only remaining open admission item is item 2 (bias), which affects `H_fwd` and
+therefore G1 but not the admission model.
 **G1 may not be sized until RC4's post-resolution cost is measured.**
