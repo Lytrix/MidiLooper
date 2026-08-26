@@ -64,16 +64,16 @@ inline bool shouldRoundRobinSnapshotIdle(bool isPlaying, bool isOverdubbing,
          hasInFlightConstruction && snapshotPending;
 }
 
-/// When unpublished snapshot construction is still in-flight while PLAYING/OVERDUBBING,
-/// keep visual fallback constrained so compatibility rebuild does not run an unbounded
-/// neighborhood/search path on the same realtime window.
+/// When unpublished snapshot work is pending while PLAYING/OVERDUBBING, keep
+/// visual fallback constrained so compatibility rebuild does not run an
+/// unbounded neighborhood/search path on the same realtime window.
 inline bool shouldConstrainVisualIdleForUnpublishedSnapshot(bool isPlaying,
                                                             bool isOverdubbing,
                                                             bool havePublishedSnapshot,
-                                                            bool hasInFlightConstruction,
+                                                            bool /*hasInFlightConstruction*/,
                                                             bool snapshotPending) {
   return (isPlaying || isOverdubbing) && !havePublishedSnapshot &&
-         hasInFlightConstruction && snapshotPending;
+         snapshotPending;
 }
 
 /// First-record uses the overdub live-enqueue setup: start on RECORDING after

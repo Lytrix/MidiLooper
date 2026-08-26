@@ -208,6 +208,14 @@ rebuild bursts from stacking on every non-snapshot realtime turn.
 `idle_reconstruct` 145–217 ms with unpublished in-flight work and
 `midi_gap` spikes (`415272`, `242612`, `451784`).
 
+**Amendment (2026-08-26):** Unpublished visual fallback constraints apply
+whenever unpublished snapshot work is pending (not only while an in-flight
+construction already exists). Live-record snapshot append starts cap admitted
+new settled range to one completed bar per start so setup cost does not jump
+when completed ticks race ahead. [`131338`](../captures/session_20260826_131338.log)
+still showed first-PLAYING stacked `idle_maint`/snapshot/persist and later
+`usbdisp`/`load_frame`/`late_on` windows.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

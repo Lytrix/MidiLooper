@@ -97,6 +97,12 @@ Stop-display hold is device PASS
       unpublished snapshot with long visual idle reconstruct bursts.
       In tree: unpublished snapshot contention keeps visual fallback
       constrained and cadence-gated while snapshot updates stay active.
+      [`131338`](../../../captures/session_20260826_131338.log) still showed
+      PLAYING stalls with first-PLAYING stacked idle/snapshot/persist and
+      later `usbdisp`/`load_frame`/`late_on` windows.
+      In tree: unpublished visual constraints now apply whenever
+      unpublished work is pending, and live-record append-start range is
+      capped to one completed bar per start.
       Do not check off until device verify. Do not
       step successor construction during OVERDUBBING after the first root.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
