@@ -673,13 +673,14 @@ before runtime publication is implemented.
 
 Device [`004934`](../../../captures/session_20260826_004934.log): overdub-stop
 display hold is PASS (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first
-publish is 7.4–8.4 ms. **Selected now:** `4b.1` — persist and first-record snapshot stay on PLAYING
-and OVERDUBBING idle, but not on the same turn. `VerifyAndRename` stays one
-SD step. The 2 s overdub-start grace is withdrawn
-([`010505`](../../../captures/session_20260826_010505.log)).
+publish is 7.4–8.4 ms. **Selected now:** `4b.0` — overdub wrap keeps the composed `DisplayNote`
+vector; `ODUB,stop,display` holds it while `visualCache` is dirty
+([`011829`](../../../captures/session_20260826_011829.log) 155.6 ms after wrap
+cleared the frame).
 
 Parked until selected:
 
+- `4b.1` persist / first-record snapshot same-turn exclusion
 - `4b.2` first-record `snapshot_idle` until the first publish
 - `4b.3` post-overdub-stop PLAYING `usbdisp` / `load_frame` / `late_on`
 - `4b.4` OVERDUBBING `DisplayResolveLiveCapture` (58 ms on `004934`)

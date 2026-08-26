@@ -67,13 +67,24 @@ inline size_t preservedOverdubStopDisplayNoteCount(size_t liveNoteCount, size_t 
     return composeBaseCount < liveNoteCount ? composeBaseCount : liveNoteCount;
 }
 
-/// RC5a: while visualCache is dirty after overdub stop, the revision-matched composed
-/// frame (committed + capture suffix) stays paint authority. A nonempty dirty cache
+/// RC5a: while visualCache is dirty after overdub stop, the composed frame
+/// (committed + capture suffix) stays paint authority. A nonempty dirty cache
 /// does not yet include those just-committed notes (`000553`: 655 → 583 at same vis=2166).
+/// Revision need not match — wrap and stop both increment `playbackRevision`
+/// (`011829` wrap-then-stop gathered 155 ms when the hold required a match).
 inline bool preferPreservedOverdubStopHandoff(bool incrementalCommittedDisplay,
                                              bool preservedHandoffAuthority,
                                              bool visualCacheDirty) {
     return incrementalCommittedDisplay && preservedHandoffAuthority && visualCacheDirty;
+}
+
+/// RC-W1 wrap resets live compose bookkeeping so the next OVERDUBBING frame
+/// rebuilds the committed prefix. It must not drop the composed DisplayNote
+/// vector — a stop before that frame has nothing to hold
+/// (`011829`: last DISP 121.203 s, wrap invalidate 121.318 s, no DISP until
+/// `ODUB,stop,display` 155 ms).
+inline bool preserveComposedNotesOnOverdubWrapInvalidate() {
+    return true;
 }
 
 /// Clean visualCache may authorize committed display; dirty/stale cache must not (RC5b).
