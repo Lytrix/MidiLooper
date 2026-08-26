@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.2 first-take RECORDING display keeps continuous playhead length)
+Last updated: 2026-08-26 (4b.2 live snapshot continues completed bars after bar 1)
 
 ---
 

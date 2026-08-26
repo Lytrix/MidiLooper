@@ -286,6 +286,15 @@ bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
          passIdInList(box.appliedPassIds, passId);
 }
 
+uint32_t liveRecordCompletedOrOneBar(uint32_t liveRecordCompletedTicks) {
+  return liveRecordCompletedTicks == 0 ? Config::TICKS_PER_BAR : liveRecordCompletedTicks;
+}
+
+uint32_t liveRecordNewParentLength(uint32_t completedTicks, uint32_t loopLengthTicks) {
+  const uint32_t withRoom = completedTicks + Config::TICKS_PER_BAR;
+  return loopLengthTicks > withRoom ? loopLengthTicks : withRoom;
+}
+
 void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t loopLengthTicks) {
   if (!box.sessionExitQueued) {
     return;
@@ -301,13 +310,17 @@ void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t 
   box.construction.reset();
   box.constructionPassId = kInvalidPassId;
   box.appliedLiveRecordEventCount = 0;
+  box.appliedLiveRecordCompletedTicks = 0;
   box.applyingCompanions = false;
 }
 
 LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
-                                                            const PendingSnapshotPublishBox& box) {
+                                                            const PendingSnapshotPublishBox& box,
+                                                            uint32_t liveRecordCompletedTicks) {
+  const uint32_t completedTicks = liveRecordCompletedOrOneBar(liveRecordCompletedTicks);
   if (box.unpublishedCandidate &&
-      box.unpublishedCandidate->loopLengthTicks() == loop.loopLengthTicks) {
+      box.unpublishedCandidate->loopLengthTicks() == loop.loopLengthTicks &&
+      (box.sessionExitQueued || box.unpublishedCandidate->loopLengthTicks() >= completedTicks)) {
     return box.unpublishedCandidate;
   }
   ImmutableLoopSnapshotRef parent = loop.publishedSnapshot();
@@ -336,16 +349,23 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
                                        loop.nextNoteId_, 1);
     }
   }
-  if (loop.capture.phase == CapturePhase::Record && loop.loopLengthTicks > 0 &&
-      !loop.publishedSnapshot()) {
-    return LoopSnapshot::createEmpty(loop.loopId, Config::TICKS_PER_BAR, loop.loopStartTick,
-                                     loop.nextNoteId_, 1);
+  if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
+      loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
+    if (box.unpublishedCandidate &&
+        box.unpublishedCandidate->loopLengthTicks() >= completedTicks) {
+      return box.unpublishedCandidate;
+    }
+    return LoopSnapshot::createEmpty(
+        loop.loopId, liveRecordNewParentLength(completedTicks, loop.loopLengthTicks),
+        loop.loopStartTick, loop.nextNoteId_, 1);
   }
   return {};
 }
 
-LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPublishBox& box) {
-  const ImmutableLoopSnapshotRef parent = resolvePendingParent(loop, box);
+LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPublishBox& box,
+                                                uint32_t liveRecordCompletedTicks) {
+  const ImmutableLoopSnapshotRef parent =
+      resolvePendingParent(loop, box, liveRecordCompletedTicks);
   if (!parent) {
     return false;
   }
@@ -369,7 +389,10 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
 
   if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
       loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
-    if (box.unpublishedCandidate) {
+    const uint32_t completedTicks = liveRecordCompletedOrOneBar(liveRecordCompletedTicks);
+    const uint32_t includeUntil =
+        completedTicks < parent->loopLengthTicks() ? completedTicks : parent->loopLengthTicks();
+    if (includeUntil == 0) {
       return false;
     }
     loop.assignMissingNoteIdsInStore(loop.capture.store);
@@ -378,7 +401,7 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
     MidiEventVec freshEvents;
     freshEvents.reserve(events.size());
     for (const MidiEvent& event : events) {
-      if (event.tick < Config::TICKS_PER_BAR && !eventAlreadyInSnapshot(*parent, event)) {
+      if (event.tick < includeUntil && !eventAlreadyInSnapshot(*parent, event)) {
         freshEvents.push_back(event);
       }
     }
@@ -387,7 +410,7 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
       EventId nextEventId = parent->nextEventId();
       uint32_t nextCanonicalOrder = parent->nextEventId();
       const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
-          freshEvents, Config::TICKS_PER_BAR, false, true, false);
+          freshEvents, parent->loopLengthTicks(), false, true, false);
       NoteUtils::DisplayNoteVec freshNotes;
       freshNotes.reserve(notes.size());
       for (const NoteUtils::DisplayNote& note : notes) {
@@ -396,17 +419,19 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
         }
         freshNotes.push_back(note);
       }
-      appendMergedPassNotes(freshNotes, loop.loopId, Config::TICKS_PER_BAR, liveChanges);
-      appendPassEvents(freshEvents, loop.loopId, Config::TICKS_PER_BAR, nextEventId,
+      appendMergedPassNotes(freshNotes, loop.loopId, parent->loopLengthTicks(), liveChanges);
+      appendPassEvents(freshEvents, loop.loopId, parent->loopLengthTicks(), nextEventId,
                        nextCanonicalOrder, liveChanges);
       if (!liveChanges.notes.empty() || !liveChanges.events.empty()) {
         box.construction = std::make_unique<LoopSnapshotConstruction>(parent, liveChanges);
         box.constructionPassId = kInvalidPassId;
         box.applyingCompanions = false;
         box.appliedLiveRecordEventCount = events.size();
+        box.appliedLiveRecordCompletedTicks = includeUntil;
         return true;
       }
     }
+    box.appliedLiveRecordCompletedTicks = includeUntil;
   }
 
   if (box.sessionExitQueued && !box.companionsApplied) {
@@ -502,6 +527,11 @@ LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->construction;
 }
 
+LOOP_COLD_MEM uint32_t Loop::liveRecordAppliedCompletedTicks() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedLiveRecordCompletedTicks
+                                    : 0;
+}
+
 LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
                                                   const EditPassIdList& companionIds) {
   if (!isSessionExit(reason) || loopLengthTicks == 0) {
@@ -576,7 +606,8 @@ LOOP_COLD_MEM bool Loop::tryPublishSessionExitSnapshot(CommitReason reason,
 
 LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
                                                     bool allowStartConstruction,
-                                                    uint32_t playheadPhaseTick) {
+                                                    uint32_t playheadPhaseTick,
+                                                    uint32_t liveRecordCompletedTicks) {
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
   }
@@ -595,7 +626,8 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   size_t remaining = maximumChanges;
   while (remaining > 0) {
     if (!box.construction) {
-      if (!allowStartConstruction || !startNextPendingConstruction(*this, box)) {
+      if (!allowStartConstruction ||
+          !startNextPendingConstruction(*this, box, liveRecordCompletedTicks)) {
         break;
       }
       if (maximumChanges <= 1) {

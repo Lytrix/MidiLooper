@@ -88,4 +88,13 @@ inline bool allowLiveRecordSnapshotStart(bool isRecording, uint32_t recordElapse
   return recordElapsedTicks >= ticksPerBar;
 }
 
+/// Exclusive end of completed first-record bars. The bar still being written
+/// is not included.
+inline uint32_t liveRecordCompletedTicks(uint32_t recordElapsedTicks, uint32_t ticksPerBar) {
+  if (ticksPerBar == 0 || recordElapsedTicks < ticksPerBar) {
+    return 0;
+  }
+  return (recordElapsedTicks / ticksPerBar) * ticksPerBar;
+}
+
 }  // namespace MidiServiceDrain

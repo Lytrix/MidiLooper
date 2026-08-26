@@ -23,6 +23,7 @@ struct PendingSnapshotPublishBox {
   std::vector<PassId> appliedPassIds;
   PassId constructionPassId = kInvalidPassId;
   size_t appliedLiveRecordEventCount = 0;
+  uint32_t appliedLiveRecordCompletedTicks = 0;
   std::unique_ptr<LoopSnapshotConstruction> construction;
   ImmutableLoopSnapshotRef unpublishedCandidate;
 };

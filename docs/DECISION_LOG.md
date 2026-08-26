@@ -176,6 +176,12 @@ length and must not drive the piano-roll window.
 `snapshot_idle` burst, then `DISP` `loopLen` jumped on every
 `record_length` step. Overdub display keeps the sealed length.
 
+**Amendment (2026-08-26):** Live first-record construction continues after
+bar 1 for each later completed bar. The first parent is created with one
+extra bar of tick room so the next completed bar can append. The
+in-progress bar is not applied. [`120020`](../captures/session_20260826_120020.log)
+stopped after bar 1 because unpublished blocked further live construction.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25
