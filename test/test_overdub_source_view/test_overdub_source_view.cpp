@@ -303,6 +303,38 @@ void test_session_open_without_prewarm_falls_back_from_dirty_visual_cache() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_source_view_rejects_partial_prior_span_cache() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLongLoop = kBar * 20;
+  Loop loop;
+  loop.loopLengthTicks = kLongLoop;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, kBar, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(kBar + 48, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, kBar * 15, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(kBar * 15 + 48, 1, 60, 0)));
+  loop.seedRecordPassFromStore(store);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  NoteUtils::DisplayNoteVec partial;
+  NoteUtils::DisplayNote partialNote{};
+  partialNote.noteId = 1;
+  partialNote.note = 60;
+  partialNote.startTick = kBar;
+  partialNote.endTick = kBar + 48;
+  partial.push_back(partialNote);
+  loop.replaceOverdubSourceViewNotesForTest(std::move(partial));
+  ++loop.playbackRevision;
+
+  loop.rebuildOverdubSourceView(kBar * 14);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, kBar * 15));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_overdub_restamp_miss_reopens_from_visual_cache() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2858,6 +2890,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_open_without_prewarm_falls_back_when_visual_cache_empty);
   RUN_TEST(test_session_open_without_prewarm_uses_clean_visual_cache_seed);
   RUN_TEST(test_session_open_without_prewarm_falls_back_from_dirty_visual_cache);
+  RUN_TEST(test_source_view_rejects_partial_prior_span_cache);
   RUN_TEST(test_overdub_restamp_miss_reopens_from_visual_cache);
   RUN_TEST(test_prewarm_span_cache_then_session_open_has_source_notes);
   RUN_TEST(test_overdub_start_establishes_source_view);

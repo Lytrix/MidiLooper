@@ -36,8 +36,22 @@ holds the composed frame — device PASS [`004934`](../../captures/session_20260
 implementation rotates snapshot, visual-cache, wrap-append, persistence, and
 load/display owners through one unconditional cursor. Visual-dependent turns
 are skipped only while wrapped content is pending, and RC2 refuses uncovered
-visual-cache reads on the overdub paint and overlap-source paths;
-native verification is required and device verification remains open.
+visual-cache reads on the overdub paint and overlap-source paths. The source
+cache also rejects unproven partial prior spans and reports its actual source
+origin. Native verification passed all 1476 tests. Device PASS
+[`183452`](../../captures/session_20260826_183452.log): the first wrap reports
+`from=passes` before `VCACHE,stale_range`, and `DISP` rises from 286 to 466
+visual notes. Ring B 4b.1b remains open separately. Final capture
+[`185141`](../../captures/session_20260826_185141.log) identifies the remaining
+gap owner: `Loop::rebuildVisualCacheIdleSlice` bounds the fallback event gather,
+but its subsequent `NoteUtils::reconstructDisplayNotes` call remains one
+indivisible, content-sized operation. `idle_reconstruct` reached
+127.249 ms in the first overdub window and 197.241–218.083 ms later, with
+`midi_gap` peaks of 146.802 ms in the first overdub window and
+205.876–242.679 ms later. The first-overdub gap improved from 222.596 ms in
+baseline [`175350`](../../captures/session_20260826_175350.log), while a
+later steady overdub window improved from 366 ms to 24.325 ms. This finding
+keeps 4b.1b open; bounded reconstruction is a separate next stage.
 OpenSpec `4b.2` first-take length updates during RECORDING remain in tree;
 live-record snapshot append starts now admit at most one completed bar of
 new range per start so setup cost stays smaller in realtime windows;

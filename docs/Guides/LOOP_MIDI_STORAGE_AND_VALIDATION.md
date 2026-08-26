@@ -264,6 +264,12 @@ Playback/materialize from committed passes uses the same **paired on/off** model
 | **`validateAndCleanupMidiEvents`** | Idle fallback: remove orphan on/off; no synth insert |
 | **Q16** | **`removePairsShorterThanNoteMinLength`** + **`verifyCaptureHotStop`** on hot stop when enabled |
 
+RC2 source-cache invariant: `Loop::rebuildOverdubSourceSpanCache` may reuse a
+prior span cache only after it was proven full-loop. A nonempty partial cache is
+not authoritative for a later overlap-source window; the owner falls back to
+committed-pass reconstruction and reports that origin in the existing
+`DIAG,lcr,src` telemetry.
+
 #### Overdub stop — same-pitch overlap restore (pending-note close)
 
 **Owner:** `Track::finalizePendingNotes`
