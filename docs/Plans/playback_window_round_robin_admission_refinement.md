@@ -991,7 +991,7 @@ authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 
 | Gate | State |
 |---|---|
-| RC1 attribution | **Closed** — `153941` + `160244` + `161834`; destination attribution is `T0/S6` for the dominant long-loop stream, with `T4/S0`, `T6/S0`, and `T2/S2` also observed |
+| RC1 attribution | **Closed** — `153941` + `160244` + `161834` + `162522`; all repeated `cer_edit` compatibility gathers map directly to `T0/S6`, with `T4/S0`, `T6/S0`, and `T2/S2` also observed |
 | Ring A population — playback relevance | **Closed** — predicate derived, owner named, item 1a resolved (`RECORDING` included) |
 | Queued-destination prewarm | Settled — commit-boundary exemption kept |
 | Design envelope (16 x 2, ≤ 240 BPM) | Settled |
@@ -1005,9 +1005,10 @@ authorize firmware Slices 1–4. Gate state after round 4 and item 1a:
 | 2a → 3 ordering | Settled — 2a not shippable before Ring B |
 | RC3 separation | Settled — separate plan |
 
-**Slice 1 destination attribution is complete.** `161834` identifies `T0/S6` as the dominant
-long-loop destination and records the other observed rebuild destinations. Its `<count>` field is
-rebuild-call count before one-shot emission, not distinct-destination multiplicity; no eligible-set
-count is inferred from it. Next is the RC4 investigation. `DEC-046` is recorded; the only remaining
-open item is item 2 (bias), which affects `H_fwd` and therefore G1 but not the admission model.
+**Slice 1 destination attribution is complete.** `161834` identifies the observed destinations, and
+`162522` directly maps all repeated `cer_edit` compatibility gathers to `T0/S6`. Its `<count>` field
+is rebuild-call count before one-shot emission, not distinct-destination multiplicity; no eligible-set
+count is inferred from it. Next is the RC4 mechanism investigation. `DEC-046` is recorded; the only
+remaining open item is item 2 (bias), which affects `H_fwd` and therefore G1 but not the admission
+model.
 **G1 may not be sized until RC4's post-resolution cost is measured.**
