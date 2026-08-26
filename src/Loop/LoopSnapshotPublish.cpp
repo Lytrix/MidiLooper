@@ -399,8 +399,16 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
         box.unpublishedCandidate->loopLengthTicks() < completedTicks) {
       return false;
     }
-    const uint32_t includeUntil =
-        completedTicks < parent->loopLengthTicks() ? completedTicks : parent->loopLengthTicks();
+    // Bound each live-record append start to at most one completed bar of new
+    // settled range so the setup cost stays small in realtime windows.
+    const uint32_t previousCompletedTicks = box.appliedLiveRecordCompletedTicks;
+    uint32_t targetCompletedTicks = completedTicks;
+    if (targetCompletedTicks > previousCompletedTicks + Config::TICKS_PER_BAR) {
+      targetCompletedTicks = previousCompletedTicks + Config::TICKS_PER_BAR;
+    }
+    const uint32_t includeUntil = targetCompletedTicks < parent->loopLengthTicks()
+                                      ? targetCompletedTicks
+                                      : parent->loopLengthTicks();
     if (includeUntil == 0) {
       return false;
     }

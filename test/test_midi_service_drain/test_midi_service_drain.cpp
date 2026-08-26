@@ -48,10 +48,10 @@ void test_visual_constraint_matches_unpublished_snapshot_contention() {
       false, true, false, true, true));
   TEST_ASSERT_TRUE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
       true, false, false, true, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
+      true, false, false, false, true));
   TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
       true, false, true, true, true));
-  TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
-      true, false, false, false, true));
   TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(
       true, false, false, true, false));
   TEST_ASSERT_FALSE(MidiServiceDrain::shouldConstrainVisualIdleForUnpublishedSnapshot(

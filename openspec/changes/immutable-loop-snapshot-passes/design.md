@@ -693,6 +693,11 @@ snapshot turns on those states.
 unpublished snapshot with long visual idle reconstruct bursts in
 PLAYING/OVERDUBBING. Host refinement in tree keeps visual fallback
 constrained and cadence-gated during unpublished snapshot contention.
+[`131338`](../../../captures/session_20260826_131338.log) still showed
+PLAYING stalls with first-PLAYING stacked idle/snapshot/persist and later
+`usbdisp`/`load_frame`/`late_on` windows. Host refinement broadens the
+unpublished visual constraint to all pending unpublished work and caps
+live-record append-start range to one completed bar per start.
 
 Parked until selected:
 
