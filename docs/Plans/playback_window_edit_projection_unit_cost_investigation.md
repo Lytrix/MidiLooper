@@ -126,6 +126,13 @@ rebuild calls in that interval. Every emitted playback-build sample is therefore
 without adding serial formatting or capture-ring writes to the clock/interval path. A later
 capture must still use `<count>` as an aggregate, not as a distinct-destination count.
 
+Capture [`202654`](../../captures/session_20260826_202654.log) validates the new field:
+it contains 82 source-tagged playback-build samples — 74 `compatibility`, 8 `snapshot`,
+and 0 `note_edit`. The compatibility path includes the long-loop `T0/S6` stream, with
+a maximum emitted sample of 325.541 ms; the snapshot samples are `T4/S0` and remain
+sub-millisecond (maximum 358 µs). This confirms that the loaded `T0/S6` slot still
+uses compatibility replay while a published-root destination uses the snapshot path.
+
 ## Scope: compatibility gather only
 
 `cer_range` first appears at **52.014 s**, before this session's long record began at 61.168 s, and
@@ -333,8 +340,8 @@ How to read `cer_recon`:
    removal. Direct snapshot timing is therefore not collected by this probe.
 2. ~~**Are the six signatures six destinations, or successive windows of one destination?**~~
    **Answered by `162522`: successive windows of `T0/S6`.**
-3. ~~**Does the immutable snapshot direction remove this path entirely?**~~ **Answered from code:
-   not for loaded slots today.** `Loop::adoptPersistedSnapshot` and `Loop::restorePassesSnapshot`
+3. ~~**Does the immutable snapshot direction remove this path entirely?**~~ **Answered from code
+   and capture:** not for loaded slots today. `Loop::adoptPersistedSnapshot` and `Loop::restorePassesSnapshot`
    restore pass storage and call `notifyCommittedContentChanged()` → `markPassDerivedStale()`.
    They do not call `queueSessionExitSnapshot`, `storePublishedSnapshot`, or
    `stepPendingSnapshotPublish`. `Loop::tryGatherPublishedSnapshotEventsInWindow` returns false
@@ -346,6 +353,8 @@ How to read `cer_recon`:
    compatibility gather remains. Adding publish-on-restore (or an idle bootstrap that constructs
    a root from already-committed loaded passes) would remove this path; that is a separate
    change, not an `applyNoteEditPassSequence` optimization.
+   Capture [`202654`](../../captures/session_20260826_202654.log) confirms the split:
+   74 compatibility samples remain, while 8 `T4/S0` samples use `snapshot`.
 4. ~~**Is 367 ms representative or pathological?**~~ **Answered by `160244`: pathological.** It is the
    contended cost of a destination whose uncontended cost is 30–100 ms.
 5. **Why are there lengthen rows among replayed overdub companions at all?** All 217 Active rows are
