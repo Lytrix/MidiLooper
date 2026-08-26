@@ -55,7 +55,14 @@ first overdub window and 205.876–242.679 ms later. The first-overdub gap is
 down from 222.596 ms in baseline [`175350`](../../captures/session_20260826_175350.log),
 and a later steady overdub window is 24.325 ms versus 366 ms baseline. This
 finding does not close 4b.1b; bounded reconstruction remains a separate next
-stage. STOPPED/PLAYING post-overdub long-tail work remains out of scope.
+stage. Architecture review now parks that implementation: `visualCache` remains
+the display-owned derived representation, while `LoopSnapshot` is the intended
+canonical source for a future snapshot-first display projection. Do not create
+a permanent cooperative `NoteUtils::reconstructDisplayNotes` state machine
+before that migration proves exact `DisplayNote` equivalence, including wrap
+projection and duplicate handling. Continue the existing Ring B/RC2 slicing
+work; this snapshot-first follow-up is not authorized in the current slice.
+STOPPED/PLAYING post-overdub long-tail work remains out of scope.
 
 OpenSpec **4b.2** remains the first-take `loopLengthTicks` behavior:
 snapshot idle starts from `capture.store` only after the playhead has left bar
@@ -287,9 +294,13 @@ stays excluded by lack of committed passes. Only item 2 (window bias) remains
 open, affecting `H_fwd`/G1 but not the admission model.
 **Slice 1 firmware is in tree (user authorized this slice):**
 `recordPlaybackRebuild` keeps the maximum duration and that sample's
-track/slot, plus a rebuild count. Capture line is
-`DIAG,playback_build,<us>,<winStart>,<winLen>,<rev>,<track>,<slot>,<count>`.
-Device recapture is required to attribute the six `cer_edit` signatures.
+track/slot/path, plus a rebuild count. Capture line is
+`DIAG,playback_build,<path>,<us>,<winStart>,<winLen>,<rev>,<track>,<slot>,<count>`,
+where `<path>` is `snapshot`, `compatibility`, or `note_edit`. The path is
+captured at `Track::ensurePlaybackMergedMidiEventsBuilt`; the one-shot remains
+deferred and `<count>` remains an aggregate of rebuild calls before emission.
+Device recapture is required to attribute the six `cer_edit` signatures to
+snapshot versus compatibility playback.
 Ring B/RC2 is authorized by the user; RC2 device gate 4b.2b is closed by
 [`183452`](../../captures/session_20260826_183452.log). Ring B 4b.1b remains
 open.

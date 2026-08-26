@@ -289,27 +289,39 @@ void test_on_off_clock_lateness_are_independent() {
 }
 
 void test_playback_rebuild_queues_one_shot_without_lateness() {
-  RuntimeTimingTelemetry::recordPlaybackRebuild(12345, 192, 384, 9, 3, 1);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(
+      12345, 192, 384, 9, 3, 1,
+      RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot);
   const auto queued = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_TRUE(queued.pendingPlaybackRebuild);
   TEST_ASSERT_EQUAL_UINT32(12345, queued.pendingRebuildDurationUs);
   TEST_ASSERT_EQUAL_UINT32(1, queued.pendingRebuildCount);
   TEST_ASSERT_EQUAL_UINT8(3, queued.pendingRebuildTrack);
   TEST_ASSERT_EQUAL_UINT8(1, queued.pendingRebuildSlot);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot),
+                        static_cast<int>(queued.pendingRebuildPath));
   RuntimeTimingTelemetry::emitPendingDeadlineOneShots();
   TEST_ASSERT_FALSE(RuntimeTimingTelemetry::peek().pendingPlaybackRebuild);
 }
 
 void test_playback_rebuild_keeps_maximum_and_counts_destinations() {
-  RuntimeTimingTelemetry::recordPlaybackRebuild(4000, 0, 1536, 1, 2, 0);
-  RuntimeTimingTelemetry::recordPlaybackRebuild(12000, 768, 1536, 2, 5, 1);
-  RuntimeTimingTelemetry::recordPlaybackRebuild(8000, 1536, 1536, 3, 4, 2);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(
+      4000, 0, 1536, 1, 2, 0,
+      RuntimeTimingTelemetry::PlaybackRebuildPath::CompatibilityPasses);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(
+      12000, 768, 1536, 2, 5, 1,
+      RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(
+      8000, 1536, 1536, 3, 4, 2,
+      RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot);
   const auto queued = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_TRUE(queued.pendingPlaybackRebuild);
   TEST_ASSERT_EQUAL_UINT32(12000, queued.pendingRebuildDurationUs);
   TEST_ASSERT_EQUAL_UINT32(3, queued.pendingRebuildCount);
   TEST_ASSERT_EQUAL_UINT8(5, queued.pendingRebuildTrack);
   TEST_ASSERT_EQUAL_UINT8(1, queued.pendingRebuildSlot);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview),
+                        static_cast<int>(queued.pendingRebuildPath));
   RuntimeTimingTelemetry::emitPendingDeadlineOneShots();
   const auto cleared = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_FALSE(cleared.pendingPlaybackRebuild);

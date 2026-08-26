@@ -98,14 +98,33 @@ data. The next RC4 measurement must:
 
 1. keep `snprintf` and capture-ring writes out of `gatherPublishedSnapshotMembership` and the
    playback/clock interval path;
-2. source-tag the existing `playback_build` diagnostic so snapshot and compatibility builds are
-   distinguishable;
+2. source-tag the existing `playback_build` diagnostic so snapshot, compatibility, and
+   NOTE_EDIT preview builds are distinguishable;
 3. accumulate direct snapshot timing in fixed counters and emit it from an idle/cold diagnostic path;
 4. retain per-event MIDI deadline timing as the correctness gate, rather than using
    `playback_build` duration as a deadline proxy.
 
 The existing `playback_build` rows remain useful for locating the path, but cannot be used as
 snapshot-only cost until source attribution is present.
+
+### Playback-build source attribution
+
+The existing deferred one-shot now emits the representation path:
+
+```text
+DIAG,playback_build,<path>,<us>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count>
+```
+
+`<path>` is one of `snapshot`, `compatibility`, or `note_edit`. The path is captured at the
+existing `Track::ensurePlaybackMergedMidiEventsBuilt` branch point, where `usedSnapshotIdentity`
+already distinguishes a successful published-snapshot gather from the compatibility pass gather.
+The NOTE_EDIT preview branch is reported separately.
+
+The existing one-shot policy is unchanged: `<us>`, window, revision, track, and slot describe
+the maximum rebuild observed since the previous main-loop emission, while `<count>` counts all
+rebuild calls in that interval. Every emitted playback-build sample is therefore source-tagged
+without adding serial formatting or capture-ring writes to the clock/interval path. A later
+capture must still use `<count>` as an aggregate, not as a distinct-destination count.
 
 ## Scope: compatibility gather only
 
@@ -166,10 +185,13 @@ The heap also fell from `min_ever=340 KB` at 5 s to `min_ever=120 KB` by 135 s.
 `playback_build` line:
 
 ```
-DIAG,playback_build,<us>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count>
+DIAG,playback_build,<path>,<us>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count>
 ```
 
-The 94 emitted maximum samples identify four destinations:
+The 94 emitted maximum samples identify four destinations. Newer investigation
+captures also identify the representation path for each emitted maximum sample:
+`snapshot`, `compatibility`, or `note_edit`. The existing captures predate this
+field and remain valid for destination attribution.
 
 | Destination | Lines | Rebuild-call count | Maximum |
 |---|---:|---:|---:|

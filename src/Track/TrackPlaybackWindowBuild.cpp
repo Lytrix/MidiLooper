@@ -199,7 +199,11 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(
       playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
       runtime.mergedMidiEvents.windowLengthTicks, windowRevision,
-      playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop));
+      playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop),
+      noteEditPreview ? RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview
+                      : (usedSnapshotIdentity != nullptr
+                             ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
+                             : RuntimeTimingTelemetry::PlaybackRebuildPath::CompatibilityPasses));
   mergedMidiEventsBuildInProgress = false;
   return true;
 }

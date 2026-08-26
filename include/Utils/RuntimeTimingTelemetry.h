@@ -29,6 +29,13 @@ namespace RuntimeTimingTelemetry {
 /** Rate-limit DIAG emission to once per this many microseconds. */
 constexpr uint32_t kEmitIntervalUs = 5000000u;
 
+/** Representation used by one playback rebuild sample. */
+enum class PlaybackRebuildPath : uint8_t {
+  PublishedSnapshot,
+  CompatibilityPasses,
+  NoteEditPreview,
+};
+
 /**
  * Soft ceiling used only to count `overCount` samples in S0 telemetry.
  * Not a runtime-admission contract and not a MIDI Input Gap ceiling.
@@ -97,6 +104,7 @@ struct Snapshot {
   uint32_t pendingRebuildCount = 0;
   uint8_t pendingRebuildTrack = 255;
   uint8_t pendingRebuildSlot = 255;
+  PlaybackRebuildPath pendingRebuildPath = PlaybackRebuildPath::CompatibilityPasses;
 };
 
 void resetForTest();
@@ -196,13 +204,13 @@ void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t on
 
 /**
  * Queue a playback-gather rebuild one-shot. Keeps the **maximum** duration
- * (and that sample's window / track / slot) plus a count of rebuilds recorded
- * before emit. ISR-safe integer stores; emit from
+ * (and that sample's window / track / slot / representation path) plus a count
+ * of rebuilds recorded before emit. ISR-safe integer stores; emit from
  * `emitPendingDeadlineOneShots` on the main loop.
  */
 void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                            uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
-                           uint8_t slotIndex);
+                           uint8_t slotIndex, PlaybackRebuildPath path);
 
 /**
  * Main-loop only: emit pending first-late / rebuild `#CAP` lines (SESSION_CAPTURE).
@@ -292,9 +300,9 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) \
   RuntimeTimingTelemetry::recordOutgoingClockSend(nowUs, clockPeriodUs, onTimeWindowUs, tick)
 #define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision, \
-                                               trackIndex, slotIndex) \
+                                               trackIndex, slotIndex, path) \
   RuntimeTimingTelemetry::recordPlaybackRebuild(durationUs, windowStartTick, windowLengthTicks, revision, \
-                                                trackIndex, slotIndex)
+                                                trackIndex, slotIndex, path)
 #define RUNTIME_TIMING_RECORD_LOOP_REMAINDER_IF_MEASURING(measure, span, startUs) \
   RuntimeTimingTelemetry::recordLoopRemainderIfMeasuring(measure, span, startUs)
 #define RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, helper, startUs) \
@@ -336,7 +344,7 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) ((void)0)
 #define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) ((void)0)
 #define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision, \
-                                               trackIndex, slotIndex) \
+                                               trackIndex, slotIndex, path) \
   ((void)0)
 #define RUNTIME_TIMING_RECORD_LOOP_REMAINDER_IF_MEASURING(measure, span, startUs) ((void)0)
 #define RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, helper, startUs) ((void)0)

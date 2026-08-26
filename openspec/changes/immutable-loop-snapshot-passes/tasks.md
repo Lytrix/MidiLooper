@@ -34,6 +34,11 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
 ## 4. Direct consumers
 
 - [x] 4.1 Make playback preparation read the active snapshot directly and use snapshot identity for freshness while retaining safe fallback; select the bounded playback span range before applying projection and keep `playbackEventPhase` scalar in the hot path.
+      RC4 measurement follow-up: the deferred `playback_build` diagnostic now
+      includes `path=snapshot|compatibility|note_edit`, captured at
+      `Track::ensurePlaybackMergedMidiEventsBuilt`; the existing maximum-sample
+      and aggregate-count policy is unchanged. Device recapture remains required
+      to classify later builds.
 - [x] 4.2 Preserve `Track` / `LoopPlaybackRuntime` ownership of cursor, order, ledger, and horizon state; verify output with existing playback gates.
 - [ ] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
 - [ ] 4.4 Migrate display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates; select bounded canonical span ranges before `IntervalProjection` and define long-span `k` candidate limits or empirical overrun policies as consumer bounds, not snapshot-architecture units. Display paint fallback and visual-cache fill now read published snapshot events; NOTE_EDIT / analysis / validation remain on compatibility sources.
@@ -69,7 +74,11 @@ owner after repeated sub-10 ms captures.
       `NoteUtils::reconstructDisplayNotes` step after the bounded fallback
       gather in `Loop::rebuildVisualCacheIdleSlice`; `idle_reconstruct` reached
       127.249 ms initially and 197.241–218.083 ms later. The gate remains open
-      pending a separate bounded-reconstruction stage.
+      pending a future snapshot-first display migration. `visualCache` remains
+      the display-owned derived representation, but its target source is the
+      canonical `LoopSnapshot` span membership followed by bounded
+      `IntervalProjection`; no cooperative compatibility reconstruction is
+      authorized before exact `DisplayNote` equivalence is proven.
 - [x] 4b.2a Implement RC2 representation coverage enforcement: overdub paint
       refuses uncovered visual-cache reads, wrap append is admitted through the
       Ring B owner, and dirty visual-cache source seeds fall back to committed
