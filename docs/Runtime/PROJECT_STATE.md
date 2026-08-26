@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (141034 evidence added; 4b.4 closed; 4b.3/source-cache reopen still open)
+Last updated: 2026-08-26 (`DEC-046` accepted; Slice 1 destination attribution closed by `161834`)
 
 ---
 
@@ -47,7 +47,13 @@ verify open). 4b.1 same-turn lane stays
 in tree and is not closed. `4b.3` post-stop `usbdisp` /
 `load_frame` / `late_on` is now in tree (device verify open);
 `4b.4` overdub `DisplayResolveLiveCapture` owner refinement is now in tree
-(device verify open).
+(device verify open). `DEC-046` accepts the round-robin admission and
+representation-coverage direction; firmware Slices 2–4 remain unauthorized.
+Slice 1 telemetry is in tree and device-validated by
+[`161834`](../../captures/session_20260826_161834.log): the dominant long-loop
+rebuild destination is `T0/S6`, with `T4/S0`, `T6/S0`, and `T2/S2` also
+observed. The playback rebuild `<count>` is rebuild-call count before one-shot
+emission, not distinct-destination multiplicity or an eligible-set count.
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated

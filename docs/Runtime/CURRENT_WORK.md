@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (`DEC-046` accepted; Slice 1 `playback_build` max+slot+count in tree, recapture pending)
+Last updated: 2026-08-26 (`DEC-046` accepted; Slice 1 destination attribution closed by `161834`)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -316,8 +316,14 @@ multiplicity is **pairs** (median `cer_range` spacing 1998 ms; only 8 gaps under
 50 ms, all 11.9-16.8 ms). Ring A's benefit here is bounded by ~2x while RC4 is
 ~9x. Ring A stays architecturally correct but must not be presented as the fix
 for the 391 ms.
-Slice 1 narrows to **slot attribution only** — whether the six signatures are six
-destinations or successive windows of one (`lists=18, rows=217` on all 67 samples).
+**Slice 1 destination attribution closed by [`161834`](../../captures/session_20260826_161834.log).**
+The 94 `playback_build` maxima identify four destinations: `T0/S6` (57 lines,
+max 166.325 ms), `T4/S0` (34, max 25.439 ms), `T6/S0` (2, max 10.965 ms),
+and `T2/S2` (1, max 9.406 ms). `T0/S6` is the dominant long-loop stream.
+The telemetry `<count>` is rebuild calls before the next one-shot emit, not
+distinct destinations per bar edge; no eligible-set count is inferred from it.
+The capture has no `cer_range`/`cer_edit`, so it does not directly map each
+compatibility signature to a destination.
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.
