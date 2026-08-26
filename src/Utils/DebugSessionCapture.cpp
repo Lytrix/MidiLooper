@@ -482,10 +482,13 @@ SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessU
 }
 
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
-                                 uint32_t windowLengthTicks, uint32_t revision) {
-  emitCapPrintf("#CAP,%lu,DIAG,playback_build,%lu,%lu,%lu,%lu\r\n", (unsigned long)micros(),
-                (unsigned long)durationUs, (unsigned long)windowStartTick,
-                (unsigned long)windowLengthTicks, (unsigned long)revision);
+                                 uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
+                                 uint8_t slotIndex, uint32_t rebuildCount) {
+  emitCapPrintf("#CAP,%lu,DIAG,playback_build,%lu,%lu,%lu,%lu,%u,%u,%lu\r\n",
+                (unsigned long)micros(), (unsigned long)durationUs,
+                (unsigned long)windowStartTick, (unsigned long)windowLengthTicks,
+                (unsigned long)revision, static_cast<unsigned>(trackIndex),
+                static_cast<unsigned>(slotIndex), static_cast<unsigned long>(rebuildCount));
 }
 
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,

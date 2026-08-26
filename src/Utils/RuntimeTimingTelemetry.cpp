@@ -117,6 +117,9 @@ struct State {
   uint32_t pendingRebuildWindowStartTick = 0;
   uint32_t pendingRebuildWindowLengthTicks = 0;
   uint32_t pendingRebuildRevision = 0;
+  uint32_t pendingRebuildCount = 0;
+  uint8_t pendingRebuildTrack = 255;
+  uint8_t pendingRebuildSlot = 255;
 };
 
 State& state() {
@@ -415,13 +418,19 @@ void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t on
 }
 
 RT_FLASHMEM_FN void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
-                                          uint32_t windowLengthTicks, uint32_t revision) {
+                                          uint32_t windowLengthTicks, uint32_t revision,
+                                          uint8_t trackIndex, uint8_t slotIndex) {
   State& s = state();
+  ++s.pendingRebuildCount;
+  if (!s.pendingPlaybackRebuild || durationUs > s.pendingRebuildDurationUs) {
+    s.pendingRebuildDurationUs = durationUs;
+    s.pendingRebuildWindowStartTick = windowStartTick;
+    s.pendingRebuildWindowLengthTicks = windowLengthTicks;
+    s.pendingRebuildRevision = revision;
+    s.pendingRebuildTrack = trackIndex;
+    s.pendingRebuildSlot = slotIndex;
+  }
   s.pendingPlaybackRebuild = true;
-  s.pendingRebuildDurationUs = durationUs;
-  s.pendingRebuildWindowStartTick = windowStartTick;
-  s.pendingRebuildWindowLengthTicks = windowLengthTicks;
-  s.pendingRebuildRevision = revision;
 }
 
 RT_FLASHMEM_FN void noteIdleMaint(uint32_t durationUs) {
@@ -459,12 +468,17 @@ RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   }
   if (s.pendingPlaybackRebuild) {
     DebugSessionCapture::playbackRebuild(s.pendingRebuildDurationUs, s.pendingRebuildWindowStartTick,
-                                         s.pendingRebuildWindowLengthTicks,
-                                         s.pendingRebuildRevision);
+                                         s.pendingRebuildWindowLengthTicks, s.pendingRebuildRevision,
+                                         s.pendingRebuildTrack, s.pendingRebuildSlot,
+                                         s.pendingRebuildCount);
   }
 #endif
   s.pendingLateEvent = false;
   s.pendingPlaybackRebuild = false;
+  s.pendingRebuildCount = 0;
+  s.pendingRebuildDurationUs = 0;
+  s.pendingRebuildTrack = 255;
+  s.pendingRebuildSlot = 255;
 }
 
 RT_FLASHMEM_FN void recordLoopRemainderIfMeasuring(bool measure, const char* span, uint32_t startUs) {
@@ -639,6 +653,10 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.lateOneShotArmed = s.lateOneShotArmed;
   out.pendingLateEvent = s.pendingLateEvent;
   out.pendingPlaybackRebuild = s.pendingPlaybackRebuild;
+  out.pendingRebuildDurationUs = s.pendingRebuildDurationUs;
+  out.pendingRebuildCount = s.pendingRebuildCount;
+  out.pendingRebuildTrack = s.pendingRebuildTrack;
+  out.pendingRebuildSlot = s.pendingRebuildSlot;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

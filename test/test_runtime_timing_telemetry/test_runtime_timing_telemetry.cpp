@@ -289,10 +289,31 @@ void test_on_off_clock_lateness_are_independent() {
 }
 
 void test_playback_rebuild_queues_one_shot_without_lateness() {
-  RuntimeTimingTelemetry::recordPlaybackRebuild(12345, 192, 384, 9);
-  TEST_ASSERT_TRUE(RuntimeTimingTelemetry::peek().pendingPlaybackRebuild);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(12345, 192, 384, 9, 3, 1);
+  const auto queued = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_TRUE(queued.pendingPlaybackRebuild);
+  TEST_ASSERT_EQUAL_UINT32(12345, queued.pendingRebuildDurationUs);
+  TEST_ASSERT_EQUAL_UINT32(1, queued.pendingRebuildCount);
+  TEST_ASSERT_EQUAL_UINT8(3, queued.pendingRebuildTrack);
+  TEST_ASSERT_EQUAL_UINT8(1, queued.pendingRebuildSlot);
   RuntimeTimingTelemetry::emitPendingDeadlineOneShots();
   TEST_ASSERT_FALSE(RuntimeTimingTelemetry::peek().pendingPlaybackRebuild);
+}
+
+void test_playback_rebuild_keeps_maximum_and_counts_destinations() {
+  RuntimeTimingTelemetry::recordPlaybackRebuild(4000, 0, 1536, 1, 2, 0);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(12000, 768, 1536, 2, 5, 1);
+  RuntimeTimingTelemetry::recordPlaybackRebuild(8000, 1536, 1536, 3, 4, 2);
+  const auto queued = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_TRUE(queued.pendingPlaybackRebuild);
+  TEST_ASSERT_EQUAL_UINT32(12000, queued.pendingRebuildDurationUs);
+  TEST_ASSERT_EQUAL_UINT32(3, queued.pendingRebuildCount);
+  TEST_ASSERT_EQUAL_UINT8(5, queued.pendingRebuildTrack);
+  TEST_ASSERT_EQUAL_UINT8(1, queued.pendingRebuildSlot);
+  RuntimeTimingTelemetry::emitPendingDeadlineOneShots();
+  const auto cleared = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_FALSE(cleared.pendingPlaybackRebuild);
+  TEST_ASSERT_EQUAL_UINT32(0, cleared.pendingRebuildCount);
 }
 
 void test_reset_playback_deadline_cadence_clears_late_clock_baseline() {
@@ -330,6 +351,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_outgoing_clock_late_only_past_one_tick_window);
   RUN_TEST(test_on_off_clock_lateness_are_independent);
   RUN_TEST(test_playback_rebuild_queues_one_shot_without_lateness);
+  RUN_TEST(test_playback_rebuild_keeps_maximum_and_counts_destinations);
   RUN_TEST(test_reset_playback_deadline_cadence_clears_late_clock_baseline);
   return UNITY_END();
 }

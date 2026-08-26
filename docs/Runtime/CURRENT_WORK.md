@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (141838 evidence added; **4b.4 reopened**; RC1 playback-window convergence and RC2 wrap-content reachability named; round-robin design doc revised after review round 1 — no bound reclassification, derived prefetch lead, invariants R and A1. No firmware; Slices 1–4 need `DEC-046`)
+Last updated: 2026-08-26 (`DEC-046` accepted; Slice 1 `playback_build` max+slot+count in tree, recapture pending)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -246,8 +246,12 @@ authorize firmware Slices 1–4. Item 1a resolved: **`TRACK_RECORDING` is includ
 joins PLAYING and OVERDUBBING in `trackPlaybackEngineRunning`; the recorded loop
 stays excluded by lack of committed passes. Only item 2 (window bias) remains
 open, affecting `H_fwd`/G1 but not the admission model.
-**Slice 0 (recapture, no firmware) may run; Slices 1–4 still need explicit
-firmware authorization.**
+**Slice 1 firmware is in tree (user authorized this slice):**
+`recordPlaybackRebuild` keeps the maximum duration and that sample's
+track/slot, plus a rebuild count. Capture line is
+`DIAG,playback_build,<us>,<winStart>,<winLen>,<rev>,<track>,<slot>,<count>`.
+Device recapture is required to attribute the six `cer_edit` signatures.
+Slices 2–4 remain unauthorized.
 **Slice 0 RAM1 blocker found and fixed (2026-08-26).**
 `teensy41-capture-serial-investigation-diag` built at RAM1 **locals 512** —
 a FAIL against the 4000 floor despite PlatformIO `SUCCESS`, so the board was not
