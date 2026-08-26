@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (`DEC-046` accepted; RC4 `cer_heap` telemetry in tree, recapture pending)
+Last updated: 2026-08-26 (`DEC-046` accepted; RC4 question 1 closed by `171159`; firmware fix still unauthorized)
 
 ---
 
@@ -58,11 +58,16 @@ also observed; `162522` directly pairs the repeated compatibility gathers with
 emission, not distinct-destination multiplicity or an eligible-set count.
 RC4 question 3 is closed from code: `adoptPersistedSnapshot` /
 `restorePassesSnapshot` do not publish a `LoopSnapshot`. Question 1 is
-partially closed by [`165024`](../../captures/session_20260826_165024.log):
+closed by [`165024`](../../captures/session_20260826_165024.log) and
+[`171159`](../../captures/session_20260826_171159.log):
 all 16 `cer_heap` rows report `spill=0`, `ext=0`, `clk=0`, and `iclk=0`.
-The measured internal-first spill and nested-clock mechanisms are ruled out;
-higher-priority interrupt time and PSRAM-first allocation service remain
-unmeasured.
+The measured internal-first spill and nested-clock mechanisms are ruled out.
+`cer_recon` is in tree to split internal-heap `filt` from PSRAM-first
+`span`/`proj` and to record IntervalTimer ISR `itickus`.
+[`170149`](../../captures/session_20260826_170149.log) rebooted at first
+clock after Record; probe counters are now file-scope volatiles.
+[`171159`](../../captures/session_20260826_171159.log) closes question 1:
+`filt` stays flat, `span`/`proj` take the 7.9x, `itickus=0` on every row.
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated

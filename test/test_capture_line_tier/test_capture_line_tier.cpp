@@ -63,6 +63,9 @@ void test_timing_telemetry_lines_are_tier_a() {
       "chunks=900,nospan=0,outside=700,copied=200,evcopy=6000,evout=2093"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,6701480,DIAG,cer_heap,recon=334201,ihit=24,spill=0,sbytes=0,clk=0,iclk=0,ext=1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701481,DIAG,cer_recon,recon=339941,filt=1200,span=200000,proj=120000,itick=12,"
+      "itickus=80"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,39804843,DIAG,loop_rem,load_frame,3981504,0,4,2,0"));
   TEST_ASSERT_TRUE(

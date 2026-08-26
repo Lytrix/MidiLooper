@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (`DEC-046` accepted; RC4 `cer_heap` telemetry in tree, recapture pending)
+Last updated: 2026-08-26 (`DEC-046` accepted; RC4 question 1 closed by `171159`; firmware fix still unauthorized)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,10 +11,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Immediate slice:** RC4 mechanism telemetry on
-`teensy41-capture-serial-investigation-diag`. `cer_heap` is in tree
-(`ihit`/`spill`/`sbytes`/`clk`/`iclk`/`ext`). Device recapture is required
-before any RC4 fix. Question 3 is closed from code: loaded restore does not
-publish a `LoopSnapshot`. Slices 2–4 remain unauthorized.
+`teensy41-capture-serial-investigation-diag`. `cer_heap` closed the measured
+internal-first spill and nested-clock candidates (`165024`). `cer_recon` is
+now in tree (`filt`/`span`/`proj`/`itick`/`itickus`) to split internal-heap
+filter time from the PSRAM-first reconstruct pipeline and to record
+IntervalTimer ISR wall time.
+[`170149`](../../captures/session_20260826_170149.log) rebooted at the first
+MIDI clock after Record because those IntervalTimer counters were
+function-local statics initialized from `ClockManager::updateInternalClock`.
+Counters are now file-scope volatiles.
+[`171159`](../../captures/session_20260826_171159.log) survived Record→first
+clock and closed question 1: `filt` stays flat while `span`/`proj` take the
+7.9x; `itickus=0` on every row. Device recapture for the mechanism question
+is done. The RC4 firmware fix remains unauthorized. Question 3 is closed from
+code: loaded restore does not publish a `LoopSnapshot`. Slices 2–4 remain
+unauthorized.
 
 **Now:** OpenSpec **4b.2** — first-take `loopLengthTicks` updates during
 RECORDING with the same bar-quantize as record stop
@@ -338,8 +349,13 @@ the `g_reconstructUs` span. `165024` now rules out the measured
 `InternalHeapFirstAllocator` spill route and nested clock dispatch: all 16
 `cer_heap` rows report `spill=0`, `ext=0`, `clk=0`, and `iclk=0`. Higher-
 priority interrupt elapsed time and `ExternalMemoryFirstAllocator`
-service/cache effects remain unmeasured. Question 3 is closed from code:
-`adoptPersistedSnapshot` / `restorePassesSnapshot` do not publish.
+service/cache effects remain unmeasured. `cer_recon` now splits
+internal-heap `filt` from PSRAM-first `span`/`proj` and records
+IntervalTimer ISR `itickus`.
+[`171159`](../../captures/session_20260826_171159.log) closes that split:
+`filt` is unchanged on the 7.9x `nlen=18` pair (`36` / `36`); `span` and
+`proj` take the inflation; `itickus=0` on all 11 rows. Question 3 is closed
+from code: `adoptPersistedSnapshot` / `restorePassesSnapshot` do not publish.
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.
