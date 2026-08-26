@@ -16,6 +16,10 @@ inline bool afterDeferredDisplay(bool captureActive, bool postOverdubPlayingDrai
   return captureActive || postOverdubPlayingDrain;
 }
 
+inline bool aroundDeferredLoadFrame(bool postOverdubPlayingDrain) {
+  return postOverdubPlayingDrain;
+}
+
 inline bool allowDeferredSave(bool postOverdubPlayingDrain, bool deferredSavePending) {
   // During the post-overdub drain window, do not stack pending save work into the same
   // PLAYING turn that is already draining idle maintenance debt.

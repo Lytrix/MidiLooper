@@ -732,7 +732,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
       (isRecording() && !havePublishedSnapshot &&
        liveRecordCompletedTicks > snapshotLoop.liveRecordAppliedCompletedTicks() &&
        snapshotLoop.liveRecordCanApplyCompletedTicks(liveRecordCompletedTicks));
-  const bool alternateWithPersist = (isPlaying() || isOverdubbing()) && persistPending;
+  const bool alternateWithPersist =
+      (isRecording() || isPlaying() || isOverdubbing()) && persistPending;
   const bool snapshotLaneAllowed =
       !alternateWithPersist ||
       MidiServiceDrain::shouldRunSnapshotOnPostStopLane(

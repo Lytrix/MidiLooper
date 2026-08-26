@@ -90,6 +90,7 @@ MidiHandler::MidiHandler()
 namespace {
 
 constexpr size_t kMidiInputBatchMax = 128;
+constexpr size_t kPostOverdubDrainMidiInputBatchMax = 32;
 
 struct MidiInputMsg {
   byte type;
@@ -167,13 +168,19 @@ void MidiHandler::handleMidiInput() {
 
   MidiInputMsg batch[kMidiInputBatchMax];
   size_t count = 0;
+  // Post-overdub PLAYING drain: reduce one-turn USB dispatch monopolization so
+  // load/display slices and playback note deadlines are not delayed by 128-message bursts.
+  const size_t midiInputBatchMax =
+      trackManager.anyPlayingMidiDrainAfterOverdubStop()
+          ? kPostOverdubDrainMidiInputBatchMax
+          : kMidiInputBatchMax;
 
   // --- USB MIDI Input (transport before notes within each poll) ---
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_BEGIN_USB_DEVICE_NESTED();
   uint32_t segmentStartUs = micros();
 #endif
-  while (count < kMidiInputBatchMax && usbMIDI.read()) {
+  while (count < midiInputBatchMax && usbMIDI.read()) {
     batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
                       usbMIDI.getData2(), SOURCE_USB};
   }
@@ -193,7 +200,7 @@ void MidiHandler::handleMidiInput() {
 #if RUNTIME_TIMING_ENABLED
   segmentStartUs = micros();
 #endif
-  while (count < kMidiInputBatchMax && MIDIserial.read()) {
+  while (count < midiInputBatchMax && MIDIserial.read()) {
     batch[count++] = {MIDIserial.getType(), MIDIserial.getChannel(), MIDIserial.getData1(),
                       MIDIserial.getData2(), SOURCE_SERIAL};
   }
@@ -234,16 +241,16 @@ void MidiHandler::handleMidiInput() {
   segmentStartUs = micros();
 #endif
   size_t hostReads = 0;
-  while (hostReads < kMidiInputBatchMax && usbHostMIDI.read()) {
+  while (hostReads < midiInputBatchMax && usbHostMIDI.read()) {
     ++hostReads;
   }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_HOST_DRAIN(micros() - segmentStartUs);
 #endif
-  if (hostReads >= kMidiInputBatchMax) {
+  if (hostReads >= midiInputBatchMax) {
     logger.log(CAT_MIDI, LOG_DEBUG,
                "USB Host MIDI drain hit batch cap (%u)",
-               static_cast<unsigned>(kMidiInputBatchMax));
+               static_cast<unsigned>(midiInputBatchMax));
   }
 
   RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(micros());

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.2 constrains unpublished visual fallback and one-bar snapshot append starts)
+Last updated: 2026-08-26 (141034 evidence added; 4b.4 closed; 4b.3/source-cache reopen still open)
 
 ---
 
@@ -44,8 +44,10 @@ live-record snapshot append starts now admit at most one completed bar of
 new range per start so setup cost stays smaller in realtime windows;
 first-take display keeps continuous playhead length (host implement; device
 verify open). 4b.1 same-turn lane stays
-in tree and is not closed. Parked: `4b.3` post-stop `usbdisp` /
-`load_frame` / `late_on`, `4b.4` overdub `DisplayResolveLiveCapture`.
+in tree and is not closed. `4b.3` post-stop `usbdisp` /
+`load_frame` / `late_on` is now in tree (device verify open);
+`4b.4` overdub `DisplayResolveLiveCapture` owner refinement is now in tree
+(device verify open).
 Task 4.3 stays skipped.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated
@@ -58,6 +60,83 @@ stalls (`midi_gap` 195 ms, 184 ms) with first-PLAYING stacked
 `idle_maint`/snapshot/persist and later `usbdisp`/`load_frame`/`late_on`
 windows; host refinement now broadens unpublished visual constraints to
 all pending unpublished work and caps each live-record append-start range.
+[`131852`](../../captures/session_20260826_131852.log) confirms the parked
+issues remain: same-turn `snapshot_idle` + `PERS,work` overlap is still
+visible (`snapshot_idle us=26823` then `PERS payload_slice=20806`), large
+OVERDUBBING windows remain (`midi_gap=236090`, `usbdisp=143649`,
+`load_frame=25638`), STOPPED still hits `midi_gap=430552`
+(`usbdisp=538063`, `load_frame=401498`, `idle_maint=337246`), and overdub
+display still spikes (`timing_max,DisplayResolveLiveCapture,215619`) while
+`ODUB,stop,display` remains 21.9-50.7 ms. In tree: same-turn lane now blocks
+deferred save after snapshot on the same loop turn; recapture pending and
+4b.1 remains open.
+[`132627`](../../captures/session_20260826_132627.log) no longer showed
+`PERS,work` while `snapshot_idle` was active (same-turn overlap not observed
+in that run), but 4b.3 and 4b.4 owners remained:
+post-overdub PLAYING `midi_gap=175230`
+(`usbdisp=121603`, `load_frame=14728`, `late_on=184364`), STOPPED
+`midi_gap=198666` (`usbdisp=319516`, `load_frame=191331`, `late_on=30491`),
+and `timing_max,DisplayResolveLiveCapture,157754`. In tree for 4b.3:
+post-overdub drain now polls MIDI during `runDeferredLoadAndDisplayFrame`
+between display/load slices; recapture pending.
+[`133517`](../../captures/session_20260826_133517.log) still showed
+`snapshot_idle`/`PERS,work` interleaving while pending (example:
+`snapshot_idle us=7360` then `PERS,work 86`), and OVERDUBBING spikes remained
+(`midi_gap=200549` with `usbdisp=129828`, `load_frame=23600`, `late_on=26036`;
+`midi_gap=196173` with `usbdisp=68686`, `load_frame=15178`, `late_on=96834`,
+`persist_save=32056`). Post-overdub PLAYING windows in that run were in the
+26-52 ms class after stop-display lines (`ODUB,stop,display` 19.6-51.4 ms).
+In tree for 4b.1: lane arbitration now includes RECORDING pending snapshot
+work (not PLAYING/OVERDUBBING only), and persist lane toggles now use
+RECORDING/PLAYING/OVERDUBBING pending snapshot detection; recapture pending.
+[`134438`](../../captures/session_20260826_134438.log) showed no `PERS,work`
+entries (`0` matches) while `snapshot_idle` remained active, so same-turn
+snapshot/persist overlap was not observed in that run. 4b.3 remains open:
+post-overdub PLAYING still reached `midi_gap=242938`
+(`usbdisp=149450`, `load_frame=53120`, `late_on=69979`) after
+`ODUB,stop,display=44222`; STOPPED still reached `midi_gap=323973` with
+`loop_rem,idle_reconstruct=148417`, `loop_rem,idle_maint=180315`,
+`idle_maint=319996`, and `load_frame=38737`. 4b.4 remains open with
+`timing_max,DisplayResolveLiveCapture=225601`. In tree for 4b.3:
+`MidiHandler::handleMidiInput` now reduces per-call dispatch batch size from
+`128` to `32` while `anyPlayingMidiDrainAfterOverdubStop()` is active, so
+post-overdub drain turns bound `usbdisp` burst size before the next poll.
+`pio run -e teensy41-capture-serial` and `pio test -e native` PASS; recapture
+pending.
+[`135317`](../../captures/session_20260826_135317.log) again showed
+`PERS,work=0` while `snapshot_idle` remained active (4b.1 still open pending
+repeated recaptures). 4b.3 remains open: first stop cycle held
+`ODUB,stop,display=15428`, but a later `midi_gap=181392` was logged after
+PLAYING re-entered OVERDUBBING; later cycles were `midi_gap=42033` and
+`midi_gap=22132`. 4b.4 remains open with
+`timing_max,DisplayResolveLiveCapture=163008`. In tree for 4b.4:
+`DisplayManager::rebuildOverdubCommittedDisplayLayer` now skips overdub paint
+snapshot gather+reconstruct when `visualCache` already has notes, preferring
+held-layer/window-filter branches to bound resolve cost. Verification:
+`pio run -e teensy41-capture-serial` PASS with RAM1 locals `4608`, and
+`pio test -e native` PASS (`1472/1472`).
+[`140201`](../../captures/session_20260826_140201.log) kept `PERS,work=0`
+while `snapshot_idle` remained active. 4b.3 improved but remains open:
+post-stop PLAYING `midi_gap` reduced to `48361` (from `142534` in `135317`),
+but first-bars OVERDUBBING still reached `midi_gap=133468`. 4b.4 improved
+strongly in this run with `timing_max,DisplayResolveLiveCapture=7107`
+(from `163008`). The same capture showed overdub reopen source drift
+(`DIAG,lcr,src,why=open` notes `0`/`165`/`228` versus nearby PLAYING `DISP`
+totals `240`/`253`/`308`) and restamp miss evidence
+(`seal_publish_span_cache_restamp ... invalidated_missing_id` together with
+`capture hot stop verify: non-canonical storage (check=16)`). In tree:
+`Loop::commitPendingCapturePass` now invalidates source-span cache on restamp
+miss, and `Loop::rebuildOverdubSourceSpanCache` now seeds from clean
+`visualCache` when prepared spans miss and no prior cache seed exists.
+`pio run -e teensy41-capture-serial` and `pio test -e native` PASS;
+recapture pending.
+[`141034`](../../captures/session_20260826_141034.log) confirms 4b.4 stays
+bounded (`timing_max,DisplayResolveLiveCapture=8608`), so 4b.4 is closed.
+4b.3 remains open: first-overdub windows still show repeated
+`load_frame`+`usbdisp`+`late_on` lag signatures around bars 4-8, and wrap
+reopen still showed `DIAG,lcr,src,why=open ... notes=0` after a restamp miss.
+In tree: source-cache fallback now also seeds from non-empty dirty
+`visualCache` when prepared spans miss during an overdub session.
 
 **Queued-dest visual cache:** `invalidateForSlotChange` leaves a PLAYING queued
 destination `visualCache` in place. Firmware in tree; HITL open. Plan:

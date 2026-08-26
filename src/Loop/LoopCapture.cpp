@@ -648,6 +648,11 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceSpanCache() {
       // are unavailable instead of forcing a full materialize on this timing-critical path.
       if (!priorSpanCacheNotes.empty()) {
         overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
+      } else if (!visualCache.notes.empty()) {
+        // Prepared spans can miss immediately after publish. Use the latest committed
+        // display list as a bounded seed so overdub reopen does not start from an empty
+        // source cache while waiting for prepared spans to become ready.
+        overdubSourceSpanCacheNotes_ = visualCache.notes;
       }
     } else {
       SessionMidiEventVec fullResolvedEvents;
@@ -1502,6 +1507,10 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
         }
       }
     }
+  }
+  if (spanCacheRestampAttempted && !spanCacheCanRestamp) {
+    // Do not reuse a stale pre-commit cache after a failed restamp.
+    overdubSourceSpanCacheValid_ = false;
   }
 #if defined(SESSION_CAPTURE)
   if (spanCacheCanRestamp && spanCacheRestampAttempted) {
