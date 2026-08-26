@@ -23,6 +23,13 @@
 #include <Arduino.h>
 #endif
 
+// Keep diagnostic format strings out of DTCM .rodata — see RT_TAG in RuntimeTimingTelemetry.
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define LOOP_VCACHE_DIAG_FMT(literal) PSTR(literal)
+#else
+#define LOOP_VCACHE_DIAG_FMT(literal) literal
+#endif
+
 namespace {
 
 uint32_t totalVisualBarsForLoop(uint32_t loopLengthTicks) {
@@ -341,7 +348,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     const uint32_t windowUs = static_cast<uint32_t>(windowCounters.elapsedMicros);
     char line[192];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u",
+             LOOP_VCACHE_DIAG_FMT("#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u"),
              static_cast<unsigned long>(micros()), static_cast<unsigned long>(windowUs),
              static_cast<unsigned long>(reconstructUs),
              static_cast<unsigned long>(windowUs + reconstructUs),
@@ -466,7 +473,8 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
     char line[224];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,lcr,vch,gather_progress,ev=%u,total=%u,done=%u,resume=%u",
+             LOOP_VCACHE_DIAG_FMT(
+                 "#CAP,%lu,DIAG,lcr,vch,gather_progress,ev=%u,total=%u,done=%u,resume=%u"),
              static_cast<unsigned long>(micros()),
              static_cast<unsigned>(traversal.eventsAppended),
              static_cast<unsigned>(fallbackGatherSessionEvents_.size()),
@@ -488,7 +496,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
       const uint32_t sortUs = micros() - sortStartUs;
       char line[224];
       snprintf(line, sizeof(line),
-               "#CAP,%lu,DIAG,lcr,vch,gather_sort,us=%lu,ev=%u",
+               LOOP_VCACHE_DIAG_FMT("#CAP,%lu,DIAG,lcr,vch,gather_sort,us=%lu,ev=%u"),
                static_cast<unsigned long>(micros()),
                static_cast<unsigned long>(sortUs),
                static_cast<unsigned>(fallbackGatherSessionEvents_.size()));
@@ -512,7 +520,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
         const uint32_t editUs = micros() - editStartUs;
         char line[224];
         snprintf(line, sizeof(line),
-                 "#CAP,%lu,DIAG,lcr,vch,gather_edit,us=%lu,rows=%u,ev=%u",
+                 LOOP_VCACHE_DIAG_FMT("#CAP,%lu,DIAG,lcr,vch,gather_edit,us=%lu,rows=%u,ev=%u"),
                  static_cast<unsigned long>(micros()),
                  static_cast<unsigned long>(editUs),
                  static_cast<unsigned>(activeRows.size()),

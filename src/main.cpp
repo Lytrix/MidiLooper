@@ -173,7 +173,8 @@ FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlo
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
-    uint32_t now, uint32_t& lastDisplayUpdate, bool timingCriticalTrackActive) {
+    uint32_t now, uint32_t& lastDisplayUpdate, bool timingCriticalTrackActive,
+    bool postOverdubPlayingMidiDrain) {
   static bool bootSlotLoadRefreshPending = true;
   StorageManager::setBootTitleLoadDrain(bootSlotLoadRefreshPending);
   bool captureActive = false;
@@ -209,6 +210,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
       focusSlotRestoreWork && SlotLoadSession::isActive() && !captureActive &&
       timingCriticalTrackActive;
 
+  const bool pollDuringDeferredLoadFrame =
+      MidiServiceDrain::aroundDeferredLoadFrame(postOverdubPlayingMidiDrain);
+
   // Paint before background LoadLoopJob while PLAYING (session_20260718_213044).
   // Skip OLED only on focus Commit / focus-load session — not every SlotLoadSession.
   if (playBackgroundLoad) {
@@ -224,6 +228,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #if defined(SESSION_CAPTURE)
       RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
 #endif
+      if (pollDuringDeferredLoadFrame) {
+        midiHandler.handleMidiInput();
+      }
     }
   }
 
@@ -242,6 +249,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #if defined(SESSION_CAPTURE)
     RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(1, loadJobStartUs);
 #endif
+    if (pollDuringDeferredLoadFrame) {
+      midiHandler.handleMidiInput();
+    }
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       skipDisplayAfterFocusCommit = true;
@@ -271,6 +281,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #if defined(SESSION_CAPTURE)
       RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
 #endif
+      if (pollDuringDeferredLoadFrame) {
+        midiHandler.handleMidiInput();
+      }
     }
   }
 
@@ -517,6 +530,7 @@ void loop() {
     }
   }
   const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
+  StorageManager::beginPostStopLaneTurn();
 #if defined(SESSION_CAPTURE)
   maybeRecordLoopPrefixRemainder(loopPrefixStartUs);
 #endif
@@ -551,7 +565,8 @@ void loop() {
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   const uint32_t loadFrameStartUs = micros();
-  runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
+  runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive,
+                                 postOverdubPlayingMidiDrain);
   const uint32_t loadFrameUs = micros() - loadFrameStartUs;
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_NOTE_LOAD_FRAME(loadFrameUs);
@@ -583,24 +598,26 @@ void loop() {
   const uint32_t persistSaveStartUs = micros();
 #endif
   const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
-  bool snapshotPendingOnTransport = false;
+  bool snapshotPendingForPersistLane = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& track = trackManager.getTrack(i);
-    if ((track.isPlaying() || track.isOverdubbing()) && track.loopsAllocated() &&
+    if ((track.isRecording() || track.isPlaying() || track.isOverdubbing()) &&
+        track.loopsAllocated() &&
         track.getActiveLoop().hasPendingSnapshotPublish()) {
-      snapshotPendingOnTransport = true;
+      snapshotPendingForPersistLane = true;
       break;
     }
   }
   const bool allowDeferredSaveAfterLoadFrame = MidiServiceDrain::allowDeferredSaveAfterLoadFrame(
       timingCriticalTrackActive, loadFrameUs);
   const bool allowPostStopPersistLane = MidiServiceDrain::shouldRunPersistOnPostStopLane(
-      snapshotPendingOnTransport, deferredSavePending, StorageManager::preferPostStopPersistLane());
+      snapshotPendingForPersistLane, deferredSavePending, StorageManager::preferPostStopPersistLane());
   if (allowDeferredSaveAfterLoadFrame &&
+      !StorageManager::postStopSnapshotRanThisTurn() &&
       MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending) &&
       allowPostStopPersistLane) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
-    if (snapshotPendingOnTransport) {
+    if (snapshotPendingForPersistLane) {
       StorageManager::notePostStopPersistRan();
     }
   }

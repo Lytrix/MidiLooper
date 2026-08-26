@@ -66,6 +66,10 @@ public:
     static bool hasDeferredSaveWork();
     /// Post-stop persist/snapshot turn. True = persist's turn while both are pending.
     static bool preferPostStopPersistLane();
+    /// Clear per-turn post-stop lane markers at the start of each loop() turn.
+    static void beginPostStopLaneTurn();
+    /// True when snapshot already ran on this loop() turn.
+    static bool postStopSnapshotRanThisTurn();
     static void notePostStopSnapshotRan();
     static void notePostStopPersistRan();
     /// True while boot-time loop slot payloads are still queued for idle restore.

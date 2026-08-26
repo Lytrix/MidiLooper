@@ -28,6 +28,13 @@ inline uint32_t micros() { return 0; }
 #include <Arduino.h>
 #endif
 
+// Keep diagnostic format strings out of DTCM .rodata — see RT_TAG in RuntimeTimingTelemetry.
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define LOOP_NOTECHANGE_DIAG_FMT(literal) PSTR(literal)
+#else
+#define LOOP_NOTECHANGE_DIAG_FMT(literal) literal
+#endif
+
 namespace {
 
 bool linearSoundingSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength,
@@ -228,7 +235,8 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   char line[224];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=hold,from=cache,pitch=%u,merged=%u,notes=%u,cache=%u,bars=%u",
+           LOOP_NOTECHANGE_DIAG_FMT("#CAP,%lu,DIAG,lcr,src,why=hold,from=cache,pitch=%u,merged=%u,"
+                                    "notes=%u,cache=%u,bars=%u"),
            static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
            static_cast<unsigned>(toMerge.size()),
            static_cast<unsigned>(overdubSourceViewNotes_.size()),
@@ -534,8 +542,9 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (scanOnly != 0 || lateNotes != 0 || idsWithoutNotes != 0) {
     char line[176];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,consume,select,pitch=%u,ids=%u,idsel=%u,scan=%u,late=%u,norow=%u,"
-             "s=%lu,e=%lu,jit=%u",
+             LOOP_NOTECHANGE_DIAG_FMT(
+                 "#CAP,%lu,DIAG,consume,select,pitch=%u,ids=%u,idsel=%u,scan=%u,late=%u,norow=%u,"
+                 "s=%lu,e=%lu,jit=%u"),
              static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
              static_cast<unsigned>(overlapNoteIds.size()),
              static_cast<unsigned>(idSelectedCount), static_cast<unsigned>(scanOnly),
@@ -561,7 +570,8 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       }
       char line[160];
       snprintf(line, sizeof(line),
-               "#CAP,%lu,DIAG,consume,norowid,pitch=%u,id=%u,s=%lu,e=%lu,jit=%u",
+               LOOP_NOTECHANGE_DIAG_FMT(
+                   "#CAP,%lu,DIAG,consume,norowid,pitch=%u,id=%u,s=%lu,e=%lu,jit=%u"),
                static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
                static_cast<unsigned>(id), static_cast<unsigned long>(startTick),
                static_cast<unsigned long>(endTick), jitEligible ? 1u : 0u);
@@ -577,7 +587,9 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       const bool inIds = overlapNoteIds.contains(note.noteId);
       char line[192];
       snprintf(line, sizeof(line),
-               "#CAP,%lu,DIAG,consume,scanadd,pitch=%u,id=%u,in_ids=%u,start=%lu,end=%lu,jit=%u",
+               LOOP_NOTECHANGE_DIAG_FMT(
+                   "#CAP,%lu,DIAG,consume,scanadd,pitch=%u,id=%u,in_ids=%u,start=%lu,end=%lu,"
+                   "jit=%u"),
                static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
                static_cast<unsigned>(note.noteId), inIds ? 1u : 0u,
                static_cast<unsigned long>(note.startTick),
@@ -739,7 +751,8 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
         const char* kind =
             (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
         snprintf(line, sizeof(line),
-                 "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u",
+                 LOOP_NOTECHANGE_DIAG_FMT(
+                     "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u"),
                  static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
                  static_cast<unsigned>(change.noteId), kind,
                  static_cast<unsigned>(change.endTick));
@@ -753,7 +766,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   if (companionRowsToSeal > 0) {
     char line[160];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,seal_companion_batch,rows=%u,sealed=%u,us=%lu",
+             LOOP_NOTECHANGE_DIAG_FMT("#CAP,%lu,DIAG,seal_companion_batch,rows=%u,sealed=%u,us=%lu"),
              static_cast<unsigned long>(micros()),
              static_cast<unsigned>(companionRowsToSeal),
              static_cast<unsigned>(sealedIds.size()),

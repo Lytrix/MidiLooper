@@ -343,7 +343,11 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             return;
         }
         if (havePaintWindow && loop.publishedSnapshot() &&
-            (liveDisplayNotes.empty() || !paintWindowInsideGather)) {
+            (liveDisplayNotes.empty() || !paintWindowInsideGather) &&
+            loop.visualCache.notes.empty()) {
+            // OVERDUBBING budget guard (4b.4): when visualCache already has notes,
+            // prefer the cheaper window filter / held layer branches below instead
+            // of a snapshot gather+reconstruct on the paint path.
             uint32_t gatherStart = 0;
             uint32_t gatherLength = 0;
             const uint32_t marginTicks =

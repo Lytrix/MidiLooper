@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.2 constrains unpublished visual fallback and one-bar snapshot append starts)
+Last updated: 2026-08-26 (141838 evidence added; **4b.4 reopened**; RC1 playback-window convergence and RC2 wrap-content reachability named; round-robin design doc revised after review round 1 — no bound reclassification, derived prefetch lead, invariants R and A1. No firmware; Slices 1–4 need `DEC-046`)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -49,7 +49,258 @@ windows. Refinement in tree: unpublished visual fallback constraint now
 applies whenever unpublished snapshot work is pending (not only in-flight),
 and live-record snapshot append starts now admit at most one completed bar
 of new range per start to keep setup cost small.
-Do **not** check off 4b.2 until device verify. Do not start **4b.3**–**4b.4**.
+[`131852`](../../captures/session_20260826_131852.log) confirms the parked
+owners are still active: `snapshot_idle` and `PERS,work` still share turns
+(`snapshot_idle us=26823` at 147.341 s then `PERS,work payload_slice=20806`,
+plus repeated alternation while pending), OVERDUBBING still reaches
+`midi_gap=236090` with `usbdisp=143649` / `load_frame=25638`, and STOPPED
+reaches `midi_gap=430552` with `usbdisp=538063`, `load_frame=401498`,
+`idle_maint=337246` while `ODUB,stop,display` remains 21.9-50.7 ms. The
+same capture records `timing_max,DisplayResolveLiveCapture,215619`. In tree:
+post-stop lane now blocks deferred save on turns where snapshot already ran;
+device recapture is still required and 4b.1 remains open.
+[`132627`](../../captures/session_20260826_132627.log) no longer shows
+`PERS,work` while `snapshot_idle` is active (same-turn overlap not observed in
+that run), but 4b.3/4b.4 owners remain: post-overdub PLAYING still reached
+`midi_gap=175230` (`usbdisp=121603`, `load_frame=14728`, `late_on=184364`),
+STOPPED reached `midi_gap=198666` (`usbdisp=319516`, `load_frame=191331`,
+`late_on=30491`), and `timing_max,DisplayResolveLiveCapture` remained high
+(`157754`). In tree for 4b.3: post-overdub drain now inserts MIDI polls during
+`runDeferredLoadAndDisplayFrame` (after display and load-job slices) so
+`load_frame` does not monopolize an entire drain turn before the next USB
+dispatch. Device recapture required.
+[`133517`](../../captures/session_20260826_133517.log) still showed
+`snapshot_idle`/`PERS,work` interleaving while pending (e.g.
+`snapshot_idle us=7360` then `PERS,work 86`), plus OVERDUBBING windows with
+`midi_gap=200549` (`usbdisp=129828`, `load_frame=23600`, `late_on=26036`) and
+`midi_gap=196173` (`usbdisp=68686`, `load_frame=15178`, `late_on=96834`,
+`persist_save=32056`). Post-overdub PLAYING windows in that run were
+26-52 ms class after stop-display lines (display 19.6-51.4 ms). In tree for
+4b.1: lane arbitration now includes RECORDING alongside PLAYING/OVERDUBBING
+for pending snapshot work, and persist lane toggles now use
+RECORDING/PLAYING/OVERDUBBING pending snapshot detection (not transport-only).
+Device recapture required.
+[`134438`](../../captures/session_20260826_134438.log) showed no
+`PERS,work` entries (`0` matches) while `snapshot_idle` remained active, so
+same-turn overlap was not observed in that run. 4b.3 remains open:
+post-overdub PLAYING still reached `midi_gap=242938`
+(`usbdisp=149450`, `load_frame=53120`, `late_on=69979`) after
+`ODUB,stop,display=44222`, and STOPPED still reached `midi_gap=323973` with
+`loop_rem,idle_reconstruct=148417`, `loop_rem,idle_maint=180315`,
+`idle_maint=319996`, and `load_frame=38737`. 4b.4 remains open:
+`timing_max,DisplayResolveLiveCapture=225601`. In tree for 4b.3:
+`MidiHandler::handleMidiInput` now caps per-call dispatch batch size to `32`
+(from `128`) while `anyPlayingMidiDrainAfterOverdubStop()` is active, so
+post-overdub drain turns cannot spend a full 128-message USB dispatch burst in
+one `usbdisp` slice. `pio run -e teensy41-capture-serial` and
+`pio test -e native` PASS; device recapture required.
+[`135317`](../../captures/session_20260826_135317.log) kept `PERS,work=0`
+while `snapshot_idle` remained active (4b.1 still open until repeated holds).
+4b.3 remains open: first post-stop cycle stayed bounded at
+`ODUB,stop,display=15428`, but later `midi_gap=181392` occurred in
+OVERDUBBING after PLAYING re-entered overdub; later cycles were
+`midi_gap=42033` and `22132`. 4b.4 remains open:
+`timing_max,DisplayResolveLiveCapture=163008`. In tree for 4b.4:
+`rebuildOverdubCommittedDisplayLayer` now avoids snapshot gather+reconstruct on
+the overdub paint path when `visualCache` already has notes (falls through to
+held-layer/window-filter branches), bounding this owner before recapture.
+`pio run -e teensy41-capture-serial` and `pio test -e native` PASS
+(`RAM1 free for local variables: 4608`).
+[`140201`](../../captures/session_20260826_140201.log) kept `PERS,work=0`
+while `snapshot_idle` remained active. 4b.3 improved but remains open:
+post-stop PLAYING `midi_gap` reduced to `48361` (from `142534` in `135317`),
+but OVERDUBBING still reached `midi_gap=133468` in first-bars windows. 4b.4
+improved strongly in this run: `timing_max,DisplayResolveLiveCapture=7107`
+(from `163008`). The same capture showed overdub reopen source drift
+(`DIAG,lcr,src,why=open` notes `0`/`165`/`228` while nearby PLAYING `DISP`
+totals were `240`/`253`/`308`) and a stop-path restamp miss
+(`seal_publish_span_cache_restamp ... invalidated_missing_id` with
+`capture hot stop verify: non-canonical storage (check=16)`). In tree:
+`Loop::commitPendingCapturePass` now invalidates source-span cache on restamp
+miss, and `Loop::rebuildOverdubSourceSpanCache` now seeds from a clean
+`visualCache` when prepared spans miss and no prior cache seed exists.
+`pio run -e teensy41-capture-serial` and `pio test -e native` PASS; device
+recapture required.
+[`141034`](../../captures/session_20260826_141034.log) confirms 4b.4 stays
+bounded (`timing_max,DisplayResolveLiveCapture=8608`), so 4b.4 is closed.
+4b.3 remains open: first-overdub windows still show repeated
+`load_frame`+`usbdisp`+`late_on` lag signatures around bars 4-8, and the
+wrap-reopen source drop (`src,why=open ... notes=0`) remains under active fix.
+[`141838`](../../captures/session_20260826_141838.log) **reopens 4b.4** and names
+two root causes — design session doc
+[`playback_window_round_robin_admission_refinement.md`](../Plans/playback_window_round_robin_admission_refinement.md),
+**no firmware authorized** (architecture checkpoint answers yes on ownership,
+transitions, and execution bound; needs `DEC-046`).
+**RC1 (bar 4–8 stalls):** one `TrackManager::updateAllTracks` call ran **344 ms**
+inside clock dispatch (`midi_input`/`clk`/`tracks`/`usbdev`/`usbdisp`/`usbclk`
+all `344xxx,3`; `midi_gap` only `26165`), producing `late_event,off,264136,4608`.
+`PlaybackMergedMidiEventsRebuild=41` over 22 bar edges is **two** content-sized
+`ensurePlaybackMergedMidiEventsBuilt` rebuilds admitted in the same interval,
+because the reuse test expires exactly one bar after the last rebuild for every
+enabled slot (9 enabled here). ~314 ms is unattributed: `recordPlaybackRebuild`
+emits the **last** pending sample, not the max, and `cer_range`/`gather_*` are
+compiled out at `SESSION_CAPTURE_INVESTIGATION_DIAG=0`.
+**RC2 (overdub notes vanish at wrap):** wrap only records a pass id, no publish
+happens between the record seal (52.157 s) and the stop seal (91.592 s),
+`visualCache` is left dirty record-only (`VCACHE,stale,notes,270 … dcnt,18`),
+`deferredDerivedViewMaintenance` excludes OVERDUBBING so the dirty bars never
+drain, and the **4b.4 guard** `loop.visualCache.notes.empty()` in
+`rebuildOverdubCommittedDisplayLayer` blocks the snapshot gather after
+`visualCacheCoversFollowWindow` already failed — the exact condition task 4.4
+forbids above. `DISP` `visualNotes` stays at `270` until
+`STOPPED,…,504,504` at 106.118 s. Same stale cache also seeded overlap-resolve:
+`srcafter,why=wrap,from=cache,after=240` against true content `452`.
+**RC3 (separate, not bundled):** `snapshot_idle` burned ~1.0 s CPU per 2 s wall
+from 16 s to 77 s (2992 turns) and published nothing.
+**Review round 1 outcome:** architecture direction and the RC1/RC2/RC3
+separation accepted; four changes applied to the design doc before `DEC-046`.
+(1) **No bound reclassification** — Ring A caps admission multiplicity, which is
+not an execution-bound class, so `ExecutionBounds.md` rows 1 and 2 both stay
+`Unbounded` and no fourth class is introduced (DEC-043). (2) `prefetchTicks` is
+**derived**, not chosen: `(slots-1) x clockInterval + worstCaseSingleRebuild +
+margin`, binding at the **highest** supported tempo (`ClockManager` clamp
+`[20,300]`). The originally proposed `TICKS_PER_BAR/4` is short at 120 BPM / 9
+slots (500 vs 511 ms) and short by 2x at 300 BPM — gate **G1** blocks Slice 4
+until the per-rebuild worst case is measured. (3) RC2 promoted to invariant
+**R** (a derived representation may satisfy a query only when its coverage
+corresponds to the requested interval and revision); the three repairs are its
+enforcement points, and the `rebuildOverdubSourceSpanCache` repair is a
+**semantic** gate independent of the display gate. (4) Missed-prefetch policy is
+explicit (invariant **A1**): keep the existing immutable window, **never** a
+synchronous rebuild on the clock path, and count
+`DIAG,playback_window_starved` as an architecture failure. Slice order is now
+measurement closure (0+1) → representation repair (2a/2b) → admission (3, 4).
+**Review round 2 outcome:** sizing basis narrowed, rings unchanged. Ring A's
+population is now the **playback-relevant** destinations whose window needs
+preparation — a dynamic demand-driven set, not all enabled `(track, slot)` pairs
+(invariant **A2**: no playback-relevant destination needing refresh may be
+indefinitely displaced). A **design envelope** (16 tracks x 2 active slots,
+≤ 240 BPM) is stated separately from absolute capacity; the 64-destination /
+300 BPM calculation is **withdrawn as a blocking gate** and deferred to capacity
+documentation. G1 is now representative envelope sizing, not worst-case
+characterization. Investigating the reopened horizon question found
+`ensurePlaybackMergedMidiEventsBuilt` centres the window on the playhead
+(`winStart = playhead - winLen/2`), so the **forward horizon is already 1 bar**
+(768 ticks) and 1-bar total content would halve it — the available lever is
+window **bias**, not size. Within the envelope (`H_fwd`=1000 ms at 240 BPM) the
+arbitration term is 73 / 156 / 323 ms at 8 / 16 / 32 eligible destinations, so
+the design space is comfortable to ~16 even against the stricter
+`lead <= H_fwd/2` target. Open architectural question of this phase is now
+**what constitutes a playback-relevant destination** (`updateAllTracks` gates
+only on `engineShouldRun(slotEnabled[i][s])` today, independent of track state),
+plus horizon/bias.
+**Review round 3 outcome:** four tightenings applied; sizing basis accepted.
+The `(N-1) x T_clock` arbitration term is now labelled a **conservative** bound
+for continuously-due destinations, not the expected steady state (self-staggering
+is verified in Slice 4, not assumed), and the 32-destination row is the normal
+upper envelope rather than a Ring A design target. **A1** is split into invariant
+("under the design envelope, a playback-relevant destination must have its
+replacement ready before its current window expires") and failure policy
+(existing immutable window stays selected; no synchronous rebuild on the clock
+path), so the failure branch is not unreachable by definition. Ring B's owner-3
+dependency skip is given **normative non-priority semantics**: a skip consumes
+the cursor position and transfers no turn. Content window **stays at 2 bars**;
+only bias is open. **2a is not shippable ahead of Ring B** (Slice 3) — it lands
+with native correctness tests and its device gate closes after Ring B, unless
+recapture shows the restored gather path is unexercised (no
+`DisplayCaptureFullGather` growth, `timing_max,DisplayResolveLiveCapture` inside
+the 4b.4-closed class of 8608 us).
+**Design session (round 4) — playback relevance derived; last blocking item
+closed.** Finding: **no track-state check exists anywhere on the
+playback-window path.** `PlaybackMidiOutput::engineShouldRun` is
+`return slotEnabled;`, `Track::getEffectivePlaybackTick` returns the global
+`currentTick` regardless of state, and `playMidiEvents` /
+`playMidiEventsForSlot` return early only on `isStoppedRecording()` and
+`!hasCommittedPasses() || loopLengthTicks == 0` — then
+`playCommittedLoopMidi` calls `ensurePlaybackMergedMidiEventsBuilt` *before*
+the `mergedEvents.empty()` return. So any enabled slot with committed content
+rebuilds its 2-bar window once per bar forever, playing or not.
+`141838` confirms it: only **one** track ever changes state (all nine
+`ST,Track` lines), nine slots were enabled at boot, and
+`DIAG,playback_build` window starts advance exactly one bar per ~2 s
+(`0, 768, 1536, 2304, …`) from 15.409 s — record start. No spurious emission:
+MO on every channel except the recorded channel 5 is 9–10, matching the nine
+transition-driven all-notes-off broadcasts. Pure waste, which is why it never
+surfaced as a correctness bug.
+**Obligation** exists in `TRACK_PLAYING` and `TRACK_OVERDUBBING`; not in
+`EMPTY`/`ARMED` (nothing started) or `STOPPED_RECORDING` (already excluded in
+code). **`TRACK_STOPPED` is the leak.** Mute/solo/slot-mute do **not** remove
+obligation — `PlaybackMidiOutput.h` documents that they suppress send, not the
+engine, and the engine must keep cursor and ledger coherent for unmute.
+Active-vs-layered selects `PlaybackEmitPolicy`, not obligation.
+Predicate: `slotEnabled && trackPlaybackEngineRunning && hasCommittedPasses &&
+loopLengthTicks > 0`, owned by `TrackManager` in
+`TrackManagerPlaybackPolicy.cpp` as the engine-side counterpart of
+`isTrackAudible` — no new module.
+**Queued-destination prewarm keeps its commit-boundary exemption** (open item 3
+resolved): `updateAllTracks` already refuses to commit a slot switch while
+`!isPlaybackMergedMidiEventsReadyForSlot(targetSlot)` on a long loop, and
+prewarm runs off the clock path via `ensurePlaybackMergedEventsForSlot`.
+**Remaining open:** item **1a** — whether `TRACK_RECORDING` joins the engine-
+running set for *other* enabled slots on the same track (product decision), and
+item **2** — window bias (needs the LoopEnd-launch/clock-catch-up backward
+margin requirement). Content window stays at 2 bars.
+**Slice 0 (recapture, no firmware) may run; Slices 1–4 need `DEC-046`.**
+**Slice 0 RAM1 blocker found and fixed (2026-08-26).**
+`teensy41-capture-serial-investigation-diag` built at RAM1 **locals 512** —
+a FAIL against the 4000 floor despite PlatformIO `SUCCESS`, so the board was not
+flashed. ELF section diff attributed the cost to `.data` +1024 / `.bss` +3072
+with ITCM unchanged (424796+1188 = 424860+1124 = 425984), and the confirmed
+cause was `SESSION_CAPTURE_INVESTIGATION_DIAG` format strings **not**
+flash-placed: `LoopMaterialization.cpp` and `EditApply.cpp` already had
+`LOOP_DIAG_FMT`/`EDIT_DIAG_FMT` = `PSTR(...)`, but `LoopVisualCache.cpp`
+(4 literals) and `LoopPendingNoteChange.cpp` (6 literals) had none, so their
+`#CAP` literals landed in DTCM — contrary to
+`Instrumentation-Session-Capture-Gating`. Fix adds
+`LOOP_VCACHE_DIAG_FMT` / `LOOP_NOTECHANGE_DIAG_FMT` on the same pattern.
+Result: investigation-diag RAM1 variables 97792 → **93696**, locals 512 →
+**4608** — identical to `teensy41-capture-serial`, so the investigation build now
+costs **no** DTCM over the default capture build. Flash absorbed the strings
+(`data` 78692 → 79796). Both envs PASS; `pio test -e native` **1475/1475**.
+Checkpoint: ownership no, transitions no, unbounded interval work no.
+**Slice 0 DONE — attribution closed.**
+[`153941`](../../captures/session_20260826_153941.log) on the investigation-diag
+env reproduced the stall larger (`tracks=393818`, `midi_input=393845`, same
+chain) and attributed it end to end. Of one `updateAllTracks` at **393818 us**:
+`cer_range` **367412** (93%) → `edit` (`applyNoteEditPassSequence`) **343625**
+(94% of that) → `ulen` **341642** → **`recon` 339073**. The windowed CER
+traversal is only `append=23511`; `collect`+`sort` are 276 us. So **92% of the
+rebuild is note reconstruction inside the edit projection.**
+`cer_rows` is constant in all 50 non-empty samples: `active=217, comp=217`
+(every Active row an overdub companion), `del=185`, `ulen=32` — 217 rows
+replayed to emit **164** events in a 2-bar window. F11 proven: edit-projection
+cost scales with EditPass count, not window size. `recon` is 98–99% of `ulen`
+in every sample; `nlen` drives it (18→339 ms, 16→287 ms, 12→170 ms) but the
+same `nlen=18` also measured 68989 us, so per-row cost is content-dependent
+(~19 ms/row worst).
+**Compatibility path, not snapshot path:** `cer_range` starts at 52.014 s,
+before this session's long record at 61.168 s, and every publish belongs to the
+one transitioning track — so the loop carrying 18 chunk lists and 217 companion
+rows is a **loaded slot with no published root**, reaching
+`copyEffectiveCommittedEventsInRange` via `gatherCommittedEventsInWindow`.
+**New root cause RC4 (separate, not bundled):** the length-update path re-runs
+note reconstruction per row on the compatibility gather. RC1 is admission
+multiplicity; RC4 is unit cost. Against the envelope (`H_fwd_wall`=1000 ms at
+240 BPM) a 367 ms rebuild clears `L < H_fwd` but **violates the `L <= H_fwd/2`
+target from 16 eligible destinations upward** — admission scheduling alone only
+just fits, with no margin. Candidate resolution is already in the architecture
+direction (DEC-044/045): a published snapshot carries edits applied, so the
+compatibility gather and this whole cost do not exist for a slot with a
+published root. Whether loaded slots publish on restore is the open design
+question.
+**RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
+in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
+the **firmware fix is a separate change** and must not enter the Ring A slice.
+Owner is proven: `applyChangeLengthById` reconstructs **only on the lengthen
+branch** via `reconstructNotesForPitch`, which per row reallocates, rescans every
+event, and re-runs the full canonical-span pipeline — `lgth=8` rows carry all
+339 ms (~42 ms each) while `shrt=10` shorten rows contribute nothing.
+Order: Slice 1 closure → RC4 investigation → measure RC4 resolution → **size G1
+from the post-resolution cost** → Ring B/RC2 independently → Ring A last. Do
+**not** lock the prefetch lead at 367 ms: that is ~35 clock dispatch periods at
+240 BPM, and two samples with identical row counts differ 5x (339 vs 69 ms), so
+representativeness is unestablished.
+Do **not** check off 4b.2 or 4b.3 until device verify.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).
 
@@ -73,9 +324,11 @@ After overdub stop, `ODUB,stop,display` holds the composed frame and does
 not snapshot-gather. Device PASS [`004934`](../../captures/session_20260826_004934.log):
 display **8.8 ms** / **12.2 ms** (was 97–154 ms on
 [`003459`](../../captures/session_20260826_003459.log)). PLAYING after first
-publish is **7.4–8.4 ms** `midi_gap`. Remaining MIDI owners: **4b.2** selected (live enqueue + PLAYING start;
-device verify open); 4b.1 same-turn lane stays in tree and is not closed;
-4b.3–4b.4 parked.
+publish is **7.4–8.4 ms** `midi_gap`. Remaining MIDI owners: **4b.2** selected
+(live enqueue + PLAYING start; device verify open); 4b.1 same-turn lane stays
+in tree and is not closed; 4b.3 post-overdub load-frame drain polls are in tree
+(device verify open); 4b.4 overdub committed-layer gather guard is in tree
+(device verify open).
 Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint
 path. Task **4.3** stays skipped. NOTE_EDIT, overdub analysis,

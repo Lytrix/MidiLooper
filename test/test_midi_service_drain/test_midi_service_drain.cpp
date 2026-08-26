@@ -17,6 +17,11 @@ void test_after_display_keeps_capture_and_adds_post_overdub() {
   TEST_ASSERT_TRUE(MidiServiceDrain::afterDeferredDisplay(true, true));
 }
 
+void test_around_load_frame_only_when_post_overdub_playing_drain() {
+  TEST_ASSERT_FALSE(MidiServiceDrain::aroundDeferredLoadFrame(false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::aroundDeferredLoadFrame(true));
+}
+
 void test_post_stop_persist_snapshot_lane_alternates_when_both_pending() {
   TEST_ASSERT_TRUE(MidiServiceDrain::shouldRunPersistOnPostStopLane(true, true, true));
   TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(true, true, true));
@@ -99,6 +104,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_around_idle_only_when_post_overdub_playing_drain);
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
+  RUN_TEST(test_around_load_frame_only_when_post_overdub_playing_drain);
   RUN_TEST(test_post_stop_persist_snapshot_lane_alternates_when_both_pending);
   RUN_TEST(test_snapshot_round_robin_applies_only_to_unpublished_active_timing);
   RUN_TEST(test_visual_constraint_matches_unpublished_snapshot_contention);

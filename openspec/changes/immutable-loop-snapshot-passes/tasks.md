@@ -49,7 +49,10 @@ Stop-display hold is device PASS
 **155.6 ms** after wrap cleared the composed frame. Device PASS
 [`092755`](../../../captures/session_20260826_092755.log) last stop
 **11.1 ms**. **Now:** 4b.2 selected (host implement; device verify open).
-4b.1 same-turn lane stays in tree and is not closed. 4b.3–4b.4 parked.
+4b.1 same-turn lane stays in tree and is not closed. 4b.3 host
+implementation (load-frame polls + post-overdub MIDI batch cap) is in tree
+(device verify open). 4b.4 is closed for the `DisplayResolveLiveCapture`
+owner after repeated sub-10 ms captures.
 
 - [x] 4b.0 After overdub wrap, keep the composed `DisplayNote` vector when
       resetting live compose bookkeeping (`invalidateLiveDisplayCache(true)`).
@@ -68,6 +71,27 @@ Stop-display hold is device PASS
       grace is withdrawn — [`010505`](../../../captures/session_20260826_010505.log)
       stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
       (`midi_gap` 32–51 ms).
+      [`131852`](../../../captures/session_20260826_131852.log) still shows
+      same-turn overlap (`snapshot_idle us=26823` at 147.341 s followed by
+      `PERS,work payload_slice=20806`; repeated while pending). Guard landed
+      in tree to block deferred save after a same-turn snapshot; recapture
+      required before checkoff.
+      [`132627`](../../../captures/session_20260826_132627.log) did not emit
+      `PERS,work` while `snapshot_idle` was active (same-turn overlap not
+      observed in that run). Keep open until repeated device recaptures hold.
+      [`133517`](../../../captures/session_20260826_133517.log) again showed
+      interleaving while pending (`snapshot_idle us=7360` then
+      `PERS,work 86`). In tree: lane arbitration now includes RECORDING
+      pending snapshot work and persist lane toggles now use
+      RECORDING/PLAYING/OVERDUBBING pending snapshot detection; recapture
+      required before checkoff.
+      [`134438`](../../../captures/session_20260826_134438.log) emitted
+      `snapshot_idle` lines but `PERS,work` count stayed `0`; same-turn
+      overlap was not observed in that run. Keep open until repeated
+      recaptures hold.
+      [`135317`](../../../captures/session_20260826_135317.log) again kept
+      `PERS,work=0` while `snapshot_idle` remained active. Keep open until
+      repeated recaptures hold.
 - [ ] 4b.2 Bound first-record `snapshot_idle` by starting construction after
       the playhead has left bar 1, using the overdub live-enqueue setup, and
       starting on PLAYING. First-take `loopLengthTicks` updates during
@@ -111,11 +135,67 @@ Stop-display hold is device PASS
       (`usbdisp=60134`, `late_on=57719`, `load_frame=17575`; display was
       8.8 ms) and 152.3 ms at 168.952 s (`usbdisp=93249`, `late_on=103564`,
       `load_frame=27039`; display was 12.2 ms). Do not implement with 4b.1.
-- [ ] 4b.4 Bound `DisplayResolveLiveCapture` during OVERDUBBING so a live
+      [`131852`](../../../captures/session_20260826_131852.log) reinforces
+      this owner split: OVERDUB `midi_gap=236090` (`usbdisp=143649`,
+      `load_frame=25638`) and STOPPED `midi_gap=430552`
+      (`usbdisp=538063`, `load_frame=401498`, `idle_maint=337246`) while
+      `ODUB,stop,display` stays 21.9-50.7 ms.
+      [`132627`](../../../captures/session_20260826_132627.log) still shows
+      post-overdub PLAYING `midi_gap=175230`
+      (`usbdisp=121603`, `load_frame=14728`, `late_on=184364`) and STOPPED
+      `midi_gap=198666` (`usbdisp=319516`, `load_frame=191331`,
+      `late_on=30491`) while `ODUB,stop,display` remains bounded
+      (18.5-38.1 ms). In tree: post-overdub drain now polls MIDI during
+      `runDeferredLoadAndDisplayFrame` between display/load slices; recapture
+      required before checkoff.
+      [`133517`](../../../captures/session_20260826_133517.log) kept
+      post-overdub PLAYING windows in the 26-52 ms class after stop-display
+      lines (`ODUB,stop,display` 19.6-51.4 ms), while larger windows remained
+      in OVERDUBBING (`midi_gap=200549` with `usbdisp=129828`,
+      `load_frame=23600`, `late_on=26036`).
+      [`134438`](../../../captures/session_20260826_134438.log) still shows
+      post-overdub PLAYING `midi_gap=242938`
+      (`usbdisp=149450`, `load_frame=53120`, `late_on=69979`) after
+      `ODUB,stop,display=44222`; STOPPED still reached `midi_gap=323973`
+      with `loop_rem,idle_reconstruct=148417`, `loop_rem,idle_maint=180315`,
+      and `load_frame=38737`.
+      In tree: `MidiHandler::handleMidiInput` now caps per-call dispatch batch
+      size to `32` (from `128`) while
+      `anyPlayingMidiDrainAfterOverdubStop()` is active, so post-overdub
+      drain turns cannot spend a full 128-message burst in one `usbdisp`
+      slice. Recapture required before checkoff.
+      [`135317`](../../../captures/session_20260826_135317.log) first
+      post-stop cycle remained bounded (`ODUB,stop,display=15428`), but later
+      `midi_gap=181392` appeared after PLAYING re-entered OVERDUBBING; later
+      cycles were `midi_gap=42033` and `midi_gap=22132`. Keep open.
+      [`140201`](../../../captures/session_20260826_140201.log) improved
+      post-stop PLAYING `midi_gap` to `48361` (from `142534` in `135317`), but
+      first-bars OVERDUBBING still reached `midi_gap=133468`. The same run also
+      showed overdub reopen source drift (`DIAG,lcr,src,why=open` notes
+      `0`/`165`/`228` versus nearby PLAYING `DISP` totals `240`/`253`/`308`).
+      In tree: source-cache reopen hardening now invalidates span-cache reuse on
+      restamp miss and seeds from clean `visualCache` when prepared spans miss
+      and no prior cache seed exists. Keep open until recapture.
+- [x] 4b.4 Bound `DisplayResolveLiveCapture` during OVERDUBBING so a live
       compose does not take a 50 ms class slice. Evidence: `004934`
       `timing_max,DisplayResolveLiveCapture,58188` at 150.535 s. Owner stays
       `rebuildOverdubCommittedDisplayLayer`. Do not CER-gather on overdub
       paint. Do not implement with 4b.1.
+      [`131852`](../../../captures/session_20260826_131852.log) records
+      `timing_max,DisplayResolveLiveCapture,215619` at 194.429 s.
+      [`134438`](../../../captures/session_20260826_134438.log) records
+      `timing_max,DisplayResolveLiveCapture,225601`.
+      [`135317`](../../../captures/session_20260826_135317.log) records
+      `timing_max,DisplayResolveLiveCapture,163008`.
+      [`140201`](../../../captures/session_20260826_140201.log) records
+      `timing_max,DisplayResolveLiveCapture,7107` (improved from `163008`).
+      [`141034`](../../../captures/session_20260826_141034.log) records
+      `timing_max,DisplayResolveLiveCapture,8608` (still below the 50 ms class).
+      In tree: `DisplayManager::rebuildOverdubCommittedDisplayLayer` now skips
+      overdub paint snapshot gather+reconstruct when `visualCache` already has
+      notes and falls through to held-layer/window-filter branches. This keeps
+      the owner-local fallback bounded. Closed for this owner; first-overdub
+      stalls and wrap note-loss remain tracked under 4b.3 / source-cache reopen.
 
 ## 5. Undo, load, and persistence
 
