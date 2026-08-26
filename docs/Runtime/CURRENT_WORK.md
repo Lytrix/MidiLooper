@@ -39,8 +39,23 @@ only while the wrapped append is pending, without transferring that cursor
 position to another owner. RC2 also refuses uncovered visual-cache reads on
 the overdub paint path, guarantees the existing wrap-append owner a turn, and
 falls back to committed-pass reconstruction when a dirty visual cache cannot
-cover the requested overlap source span. Native verification is required;
-device verification remains open.
+cover the requested overlap source span. The source-cache repair also rejects
+an unproven partial prior span cache and reports the actual source origin.
+Native verification passed all 1476 tests. Device PASS
+[`183452`](../../captures/session_20260826_183452.log): first wrap reports
+`from=passes` before `VCACHE,stale_range`, and `DISP` rises from 286 to 466
+visual notes. Ring B 4b.1b remains open separately. Final capture
+[`185141`](../../captures/session_20260826_185141.log) identifies the remaining
+gap owner: `Loop::rebuildVisualCacheIdleSlice` bounds
+`advanceFallbackGatherSession`, but its subsequent
+`NoteUtils::reconstructDisplayNotes` call is indivisible and content-sized.
+`idle_reconstruct` reached 127.249 ms in the first overdub window and
+197.241–218.083 ms later, producing `midi_gap` peaks of 146.802 ms in the
+first overdub window and 205.876–242.679 ms later. The first-overdub gap is
+down from 222.596 ms in baseline [`175350`](../../captures/session_20260826_175350.log),
+and a later steady overdub window is 24.325 ms versus 366 ms baseline. This
+finding does not close 4b.1b; bounded reconstruction remains a separate next
+stage. STOPPED/PLAYING post-overdub long-tail work remains out of scope.
 
 OpenSpec **4b.2** remains the first-take `loopLengthTicks` behavior:
 snapshot idle starts from `capture.store` only after the playhead has left bar
@@ -275,7 +290,9 @@ open, affecting `H_fwd`/G1 but not the admission model.
 track/slot, plus a rebuild count. Capture line is
 `DIAG,playback_build,<us>,<winStart>,<winLen>,<rev>,<track>,<slot>,<count>`.
 Device recapture is required to attribute the six `cer_edit` signatures.
-Ring B/RC2 is now authorized by the user; its device gate remains open.
+Ring B/RC2 is authorized by the user; RC2 device gate 4b.2b is closed by
+[`183452`](../../captures/session_20260826_183452.log). Ring B 4b.1b remains
+open.
 **Slice 0 RAM1 blocker found and fixed (2026-08-26).**
 `teensy41-capture-serial-investigation-diag` built at RAM1 **locals 512** —
 a FAIL against the 4000 floor despite PlatformIO `SUCCESS`, so the board was not
@@ -375,7 +392,9 @@ from the post-resolution cost** → Ring B/RC2 independently → Ring A last. Do
 **not** lock the prefetch lead at 367 ms: that is ~35 clock dispatch periods at
 240 BPM, and two samples with identical row counts differ 5x (339 vs 69 ms), so
 representativeness is unestablished.
-Do **not** check off 4b.2 or 4b.3 until device verify.
+RC2 device gate 4b.2b is closed by
+[`183452`](../../captures/session_20260826_183452.log). Do **not** check off
+4b.3 until device verify.
 Do not close **4b.1**. Do **not** split `atomicRenameTempFile`. 4b.0 wrap/hold
 remains device PASS [`092755`](../../captures/session_20260826_092755.log).
 
@@ -400,7 +419,8 @@ not snapshot-gather. Device PASS [`004934`](../../captures/session_20260826_0049
 display **8.8 ms** / **12.2 ms** (was 97–154 ms on
 [`003459`](../../captures/session_20260826_003459.log)). PLAYING after first
 publish is **7.4–8.4 ms** `midi_gap`. Ring B/RC2 host implementation is now
-in tree; its capture-serial device gate remains open. 4b.3 post-overdub
+in tree; RC2 device gate 4b.2b is closed by
+[`183452`](../../captures/session_20260826_183452.log). 4b.3 post-overdub
 load-frame drain polls remain separately device-verification work.
 Compatibility gather remains
 when no published root exists. Do not CER-gather on the overdub paint

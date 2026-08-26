@@ -61,12 +61,25 @@ owner after repeated sub-10 ms captures.
 - [ ] 4b.1b Run the capture-serial device gate for Ring B: verify bounded
       `snapshot_idle`, visual dirty-bar progress during OVERDUBBING, and no
       same-turn snapshot/persistence overlap.
+      Finding [`185141`](../../../captures/session_20260826_185141.log): the
+      first-overdub `midi_gap` improved to 146.802 ms from 222.596 ms in
+      baseline [`175350`](../../../captures/session_20260826_175350.log), and
+      a later steady overdub window improved to 24.325 ms from 366 ms.
+      Remaining long gaps are owned by the indivisible
+      `NoteUtils::reconstructDisplayNotes` step after the bounded fallback
+      gather in `Loop::rebuildVisualCacheIdleSlice`; `idle_reconstruct` reached
+      127.249 ms initially and 197.241–218.083 ms later. The gate remains open
+      pending a separate bounded-reconstruction stage.
 - [x] 4b.2a Implement RC2 representation coverage enforcement: overdub paint
       refuses uncovered visual-cache reads, wrap append is admitted through the
       Ring B owner, and dirty visual-cache source seeds fall back to committed
       pass reconstruction.
-- [ ] 4b.2b Run the RC2 device gate: verify wrapped content reaches `DISP` and
+- [x] 4b.2b Run the RC2 device gate: verify wrapped content reaches `DISP` and
       source-span diagnostics never use an uncovered dirty-cache seed.
+      Device PASS [`183452`](../../../captures/session_20260826_183452.log):
+      first wrap reports `lcr,srcafter ... from=passes` before
+      `VCACHE,stale_range`, and the following `DISP` frame rises from 286 to
+      466 visual notes. Native suite: 1476 tests passed.
 
 - [x] 4b.0 After overdub wrap, keep the composed `DisplayNote` vector when
       resetting live compose bookkeeping (`invalidateLiveDisplayCache(true)`).

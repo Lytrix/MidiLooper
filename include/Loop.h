@@ -481,8 +481,8 @@ struct Loop {
   /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
   void notifyCommittedContentChanged();
   void rebuildEffectiveEventStore() const;
-  void rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart = 0,
-                                     uint32_t requestedWindowLength = 0);
+  const char* rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart = 0,
+                                             uint32_t requestedWindowLength = 0);
   bool overdubSourceSpanCacheReady() const;
   uint32_t overdubSourceWindowLengthTicks() const;
   void resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
@@ -498,6 +498,7 @@ struct Loop {
   uint32_t overdubSourceSpanCacheLoopLengthTicks_ = 0;
   uint32_t overdubSourceSpanCachePlaybackRevision_ = 0;
   bool overdubSourceSpanCacheValid_ = false;
+  bool overdubSourceSpanCacheFullLoop_ = false;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   bool fallbackGatherSessionActive_ = false;

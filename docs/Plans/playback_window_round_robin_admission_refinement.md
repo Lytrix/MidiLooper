@@ -1021,10 +1021,43 @@ affects `H_fwd` and therefore G1 but not the admission model.
 The user authorized firmware implementation of Ring B/RC2 on 2026-08-26.
 The implementation extends the existing `main.cpp` service order,
 `Track::processDeferredIdleMaintenance`, `DisplayManager` overdub paint path,
-and `Loop` visual/source-cache owners. Native cursor and source-coverage
-checks are in place; capture-serial and native verification are required
-before the device gate can close. RC4 firmware repair, Ring A, and the
-remaining snapshot consumer migrations stay out of scope.
+and `Loop` visual/source-cache owners. The RC2 source-cache repair rejects an
+unproven partial prior span cache, falls back to committed-pass reconstruction,
+and reports the actual source origin in the existing diagnostics. Native
+verification passed all 1476 tests. Device gate PASS
+[`183452`](../../captures/session_20260826_183452.log): the first wrap reports
+`from=passes` before `VCACHE,stale_range`, and the following `DISP` frame rises
+from 286 to 466 visual notes. Ring B 4b.1b, RC4 firmware repair, Ring A, and
+the remaining snapshot consumer migrations stay out of scope.
+
+### Finding — remaining MIDI Input Gap owner
+
+The final Ring B/RC2 capture [`185141`](../../captures/session_20260826_185141.log)
+shows that the steady-state gap reduction is real, but 4b.1b is not closed.
+During the first overdub window, `MIDI Input Gap` (`DIAG,midi_gap`) reached
+**146.802 ms**, compared with **222.596 ms** in the baseline
+[`175350`](../../captures/session_20260826_175350.log). The same windows report
+`late_on` **149.870 ms** versus **220.417 ms**, and `late_off` **52.125 ms**
+versus **81.373 ms**. A later steady overdub window reached only **24.325 ms**,
+where the baseline reached **366 ms**.
+
+The remaining long gaps have a different owner. `Loop::rebuildVisualCacheIdleSlice`
+uses the bounded `advanceFallbackGatherSession` event budget, but after gathering
+completes it calls `NoteUtils::reconstructDisplayNotes` as one indivisible,
+content-sized operation. The child telemetry records this as
+`idle_reconstruct`: **127.249 ms** in the first overdub window and
+**197.241–218.083 ms** in later windows. Those operations drive
+`idle_maint` to **217.644–242.663 ms** and correspond to
+`MIDI Input Gap` peaks of **205.876–242.679 ms**. `load_frame` adds about
+**22.6–22.9 ms** in the first overdub window. The event-gather budget therefore
+does not bound the full visual-cache idle operation.
+
+This is a Ring B execution-bound finding, not a regression of the RC2
+representation-coverage repair: the same capture reports the source fallback
+from committed passes before the stale-cache diagnostic. The post-overdub
+STOPPED/PLAYING long-tail remains outside the current scope. The full native
+suite passed **1476/1476**; 4b.1b remains open pending a separate bounded
+reconstruction decision.
 
 ## Future RC — overdub overlap target semantics
 
