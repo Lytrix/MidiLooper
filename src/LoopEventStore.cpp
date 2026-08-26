@@ -680,6 +680,53 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvent(
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
+uint16_t LoopEventStore::chunkUsedCount(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return 0;
+  }
+  return pool_[id].used;
+}
+
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEventRange(uint16_t id, uint32_t begin,
+                                                                       uint32_t endExclusive,
+                                                                       MidiEventVec& out) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return;
+  }
+  const EventChunk& c = pool_[id];
+  if (begin >= c.used) {
+    return;
+  }
+  if (endExclusive > c.used) {
+    endExclusive = c.used;
+  }
+  if (begin >= endExclusive) {
+    return;
+  }
+  out.reserve(out.size() + (c.used - begin));
+  out.insert(out.end(), c.events + begin, c.events + endExclusive);
+}
+
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEventRange(
+    uint16_t id, uint32_t begin, uint32_t endExclusive,
+    std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return;
+  }
+  const EventChunk& c = pool_[id];
+  if (begin >= c.used) {
+    return;
+  }
+  if (endExclusive > c.used) {
+    endExclusive = c.used;
+  }
+  if (begin >= endExclusive) {
+    return;
+  }
+  out.reserve(out.size() + (c.used - begin));
+  out.insert(out.end(), c.events + begin, c.events + endExclusive);
+}
+
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const CaptureChunkIdList& ids, MidiEventVec& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;

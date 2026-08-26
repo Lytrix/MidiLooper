@@ -120,6 +120,13 @@ class LoopEventStore {
   static void appendChunkRefEvent(uint16_t id, MidiEventVec& out);
   static void appendChunkRefEvent(
       uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+  /// Live pool chunk event count. 0 when the id is unused or out of range.
+  static uint16_t chunkUsedCount(uint16_t id);
+  static void appendChunkRefEventRange(uint16_t id, uint32_t begin, uint32_t endExclusive,
+                                       MidiEventVec& out);
+  static void appendChunkRefEventRange(
+      uint16_t id, uint32_t begin, uint32_t endExclusive,
+      std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Append events from chunk refs (read-only; does not mutate ids).
   static void appendChunkRefEvents(const CaptureChunkIdList& ids, MidiEventVec& out);
   static void appendChunkRefEvents(const CommittedChunkIdList& ids, MidiEventVec& out);

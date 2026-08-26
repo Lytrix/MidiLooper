@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (`DEC-046` accepted; Ring B/RC2 implementation authorized by user)
+Last updated: 2026-08-26 (Slice 1A cooperative prepare experiment)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,59 +10,33 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Immediate slice:** RC4 mechanism telemetry on
-`teensy41-capture-serial-investigation-diag`. `cer_heap` closed the measured
-internal-first spill and nested-clock candidates (`165024`). `cer_recon` is
-now in tree (`filt`/`span`/`proj`/`itick`/`itickus`) to split internal-heap
-filter time from the PSRAM-first reconstruct pipeline and to record
-IntervalTimer ISR wall time.
-[`170149`](../../captures/session_20260826_170149.log) rebooted at the first
-MIDI clock after Record because those IntervalTimer counters were
-function-local statics initialized from `ClockManager::updateInternalClock`.
-Counters are now file-scope volatiles.
-[`171159`](../../captures/session_20260826_171159.log) survived Record→first
-clock and closed question 1: `filt` stays flat while `span`/`proj` take the
-7.9x; `itickus=0` on every row. Device recapture for the mechanism question
-is done. The RC4 firmware fix remains a separate change. The gated
-`cer_snapshot` formatting probe caused a reboot at record start in
-[`172305`](../../captures/session_20260826_172305.log) and has been removed
-from the playback path. Question 3 is closed from code: loaded restore does
-not publish a `LoopSnapshot`. [`172802`](../../captures/session_20260826_172802.log)
-confirms first-clock recording and continued overdub/stop operation after the
-removal. Ring B/RC2 is now the authorized implementation slice; RC4 firmware
-repair and Ring A remain separate.
+**Immediate slice:** [Slice 1A](../Plans/playback_window_build_owner_boundary_refinement.md)
+cooperative-prepare experiment on `DeviceGateSession::runOneSlice`
+([#38](https://github.com/Lytrix/MidiLooper/issues/38)). Convert F2/F3/F5
+into resumable work units; name F1/F4/F6/F7 as indivisible blockers; emit
+`DIAG,prepare,slice,*`. Do **not** start 1B, consume, Ring A, or RC4
+firmware. After the first complete 1A measurement run, **STOP**.
 
-**Now:** Ring B/RC2 — the five deferred owners rotate through one
-unconditional cursor turn: snapshot step, visual-cache slice, wrap append,
-deferred persistence, and load/display. Visual-dependent turns are skipped
-only while the wrapped append is pending, without transferring that cursor
-position to another owner. RC2 also refuses uncovered visual-cache reads on
-the overdub paint path, guarantees the existing wrap-append owner a turn, and
-falls back to committed-pass reconstruction when a dirty visual cache cannot
-cover the requested overlap source span. The source-cache repair also rejects
-an unproven partial prior span cache and reports the actual source origin.
-Native verification passed all 1476 tests. Device PASS
-[`183452`](../../captures/session_20260826_183452.log): first wrap reports
-`from=passes` before `VCACHE,stale_range`, and `DISP` rises from 286 to 466
-visual notes. Ring B 4b.1b remains open separately. Final capture
-[`185141`](../../captures/session_20260826_185141.log) identifies the remaining
-gap owner: `Loop::rebuildVisualCacheIdleSlice` bounds
-`advanceFallbackGatherSession`, but its subsequent
-`NoteUtils::reconstructDisplayNotes` call is indivisible and content-sized.
-`idle_reconstruct` reached 127.249 ms in the first overdub window and
-197.241–218.083 ms later, producing `midi_gap` peaks of 146.802 ms in the
-first overdub window and 205.876–242.679 ms later. The first-overdub gap is
-down from 222.596 ms in baseline [`175350`](../../captures/session_20260826_175350.log),
-and a later steady overdub window is 24.325 ms versus 366 ms baseline. This
-finding does not close 4b.1b; bounded reconstruction remains a separate next
-stage. Architecture review now parks that implementation: `visualCache` remains
-the display-owned derived representation, while `LoopSnapshot` is the intended
-canonical source for a future snapshot-first display projection. Do not create
-a permanent cooperative `NoteUtils::reconstructDisplayNotes` state machine
-before that migration proves exact `DisplayNote` equivalence, including wrap
-projection and duplicate handling. Continue the existing Ring B/RC2 slicing
-work; this snapshot-first follow-up is not authorized in the current slice.
-STOPPED/PLAYING post-overdub long-tail work remains out of scope.
+G1 sizing is **satisfied** (doc-only). `representativeRebuildWall` = 358 µs
+from [`202654`](../../captures/session_20260826_202654.log) `T4/S0`
+`path=snapshot`; `prefetchTicks` = **272**; horizon stays playhead-centred
+(`H_fwd` = 768). `T0/S6` compatibility is excluded. Slice 4 / Ring A firmware
+is not authorized. Residual **4b.1b** (indivisible
+`NoteUtils::reconstructDisplayNotes` in `Loop::rebuildVisualCacheIdleSlice`)
+stays **parked**. Do not make a cooperative reconstruct state machine.
+STOPPED/PLAYING post-overdub long-tail stays out of scope.
+
+Ring B/RC2 shipped: five deferred owners rotate through one unconditional
+cursor turn (snapshot step, visual-cache slice, wrap append, deferred
+persistence, load/display). Visual-dependent turns skip only while wrapped
+append is pending. RC2 refuses uncovered visual-cache reads on the overdub
+paint path and falls back to committed-pass reconstruction when a dirty cache
+cannot cover the overlap source span. Device PASS
+[`183452`](../../captures/session_20260826_183452.log) / reconfirm
+[`185141`](../../captures/session_20260826_185141.log): wrap `from=passes`,
+`DISP` 286→466 / 271→437. First-overdub `midi_gap` 222.596→146.802 ms vs
+[`175350`](../../captures/session_20260826_175350.log); later steady 24.325 ms
+vs 366 ms. Reconstruct timings for 4b.1b live on the owner-boundary plan.
 
 OpenSpec **4b.2** remains the first-take `loopLengthTicks` behavior:
 snapshot idle starts from `capture.store` only after the playhead has left bar
@@ -301,9 +275,9 @@ captured at `Track::ensurePlaybackMergedMidiEventsBuilt`; the one-shot remains
 deferred and `<count>` remains an aggregate of rebuild calls before emission.
 Device recapture is required to attribute the six `cer_edit` signatures to
 snapshot versus compatibility playback.
-Ring B/RC2 is authorized by the user; RC2 device gate 4b.2b is closed by
-[`183452`](../../captures/session_20260826_183452.log). Ring B 4b.1b remains
-open.
+Ring B/RC2 is **closed**. RC2 device gate 4b.2b is closed by
+[`183452`](../../captures/session_20260826_183452.log). Residual 4b.1b is
+owned by the owner-boundary plan and parked.
 **Slice 0 RAM1 blocker found and fixed (2026-08-26).**
 `teensy41-capture-serial-investigation-diag` built at RAM1 **locals 512** —
 a FAIL against the 4000 floor despite PlatformIO `SUCCESS`, so the board was not
@@ -398,6 +372,19 @@ The new source-tagged telemetry is device-validated by
 325.541 ms, while snapshot-backed `T4/S0` samples remain below 1 ms
 (maximum 358 us). This confirms the loaded-slot compatibility path and the
 published-root snapshot path coexist in one later capture.
+RC4 question 5 is closed as `T0/S6` compatibility-only: the eight `lgth`
+rows belong to that loaded slot's companion replay, not to a published
+snapshot. Ignore further `T0/S6` lengthen-branch forensics.
+**G1 satisfied:** `representativeRebuildWall` = 358 µs (`T4/S0` snapshot
+maximum in `202654`); `prefetchTicks` = 272; `H_fwd` = 768. The same
+capture's non-`T0/S6` compatibility ceiling is 11.859 ms and still fits
+that lead. Ring A firmware remains unauthorized.
+[`205447`](../../captures/session_20260826_205447.log) confirms leaving
+`T0/S6` for `T0/S5`: S5 rebuild is 334 µs and S6 drops out of
+`playback_build`. The same timestamp is a 377 ms `idle_maint` / `midi_gap`
+stall after `VCACHE,stale_all`, not an S5 rebuild cost. RC4 conclusions
+are in
+[`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md).
 **RC4 sequencing decided (user, 2026-08-26):** investigation is **authorized now**
 in [`playback_window_edit_projection_unit_cost_investigation.md`](../Plans/playback_window_edit_projection_unit_cost_investigation.md);
 the **firmware fix is a separate change** and must not enter the Ring A slice.

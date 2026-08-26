@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (`DEC-046` accepted; Ring B/RC2 implementation authorized by user)
+Last updated: 2026-08-26 (Slice 1A cooperative prepare experiment)
 
 ---
 
@@ -32,33 +32,20 @@ includes a short loop tail so a 20-bar loop does not omit the last 2 bars
 holds the composed frame — device PASS [`004934`](../../captures/session_20260826_004934.log)
 (`ODUB,stop,display` 8.8 / 12.2 ms). 4b.0 wrap/hold device PASS
 [`092755`](../../captures/session_20260826_092755.log)
-(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** Ring B/RC2
-implementation rotates snapshot, visual-cache, wrap-append, persistence, and
-load/display owners through one unconditional cursor. Visual-dependent turns
-are skipped only while wrapped content is pending, and RC2 refuses uncovered
-visual-cache reads on the overdub paint and overlap-source paths. The source
-cache also rejects unproven partial prior spans and reports its actual source
-origin. Native verification passed all 1476 tests. Device PASS
-[`183452`](../../captures/session_20260826_183452.log): the first wrap reports
-`from=passes` before `VCACHE,stale_range`, and `DISP` rises from 286 to 466
-visual notes. Ring B 4b.1b remains open separately. Final capture
-[`185141`](../../captures/session_20260826_185141.log) identifies the remaining
-gap owner: `Loop::rebuildVisualCacheIdleSlice` bounds the fallback event gather,
-but its subsequent `NoteUtils::reconstructDisplayNotes` call remains one
-indivisible, content-sized operation. `idle_reconstruct` reached
-127.249 ms in the first overdub window and 197.241–218.083 ms later, with
-`midi_gap` peaks of 146.802 ms in the first overdub window and
-205.876–242.679 ms later. The first-overdub gap improved from 222.596 ms in
-baseline [`175350`](../../captures/session_20260826_175350.log), while a
-later steady overdub window improved from 366 ms to 24.325 ms. This finding
-keeps 4b.1b open; bounded reconstruction is a separate next stage.
-Architecture review parks that implementation pending snapshot-first display
-migration: `visualCache` remains the display-owned derived representation, while
-`LoopSnapshot` is the intended canonical source for bounded display projection.
-Do not make the transitional `NoteUtils::reconstructDisplayNotes` pipeline a
-new maintained state machine before snapshot-to-`DisplayNote` equivalence is
-proven for wrap projection and duplicate handling. Continue Ring B/RC2 slicing;
-the snapshot-first follow-up is not selected in the current scope.
+(`ODUB,stop,display` 21.4 / **11.1 ms** after wrap). **Now:** Slice 1A on
+[`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
+([#38](https://github.com/Lytrix/MidiLooper/issues/38)). Ring B/RC2 is
+**closed.** Residual **4b.1b** lives on
+[`playback_window_build_owner_boundary_refinement.md`](../Plans/playback_window_build_owner_boundary_refinement.md)
+§ *4b.1b* and is parked. Ring A firmware is not authorized. Ring B/RC2 shipped
+the five-owner cursor (snapshot, visual-cache, wrap-append, persistence,
+load/display) and RC2 coverage: refuse uncovered visual-cache reads; fall back
+to committed-pass reconstruction. Device PASS
+[`183452`](../../captures/session_20260826_183452.log) / reconfirm
+[`185141`](../../captures/session_20260826_185141.log): wrap `from=passes`,
+`DISP` 286→466 / 271→437. First-overdub `midi_gap` 222.596→146.802 ms vs
+[`175350`](../../captures/session_20260826_175350.log); later steady 24.325 ms
+vs 366 ms. Reconstruct timings stay on the owner-boundary plan.
 OpenSpec `4b.2` first-take length updates during RECORDING remain in tree;
 live-record snapshot append starts now admit at most one completed bar of
 new range per start so setup cost stays smaller in realtime windows;
@@ -68,8 +55,8 @@ post-stop `usbdisp` /
 `load_frame` / `late_on` is now in tree (device verify open);
 `4b.4` overdub `DisplayResolveLiveCapture` owner refinement is now in tree
 (device verify open). `DEC-046` accepts the round-robin admission and
-representation-coverage direction; the user has now authorized Ring B/RC2
-firmware implementation. RC4 repair and Ring A remain separate.
+representation-coverage direction. Ring B/RC2 firmware is **closed**.
+RC4 repair and Ring A remain separate.
 Slice 1 telemetry is in tree and device-validated by
 [`161834`](../../captures/session_20260826_161834.log) and
 [`162522`](../../captures/session_20260826_162522.log): the dominant
@@ -100,7 +87,13 @@ Device capture [`202654`](../../captures/session_20260826_202654.log) validates
 the split: 82 emitted samples contain 74 `compatibility` and 8 `snapshot`
 paths, with no `note_edit` samples. `T0/S6` remains compatibility-backed
 (maximum 325.541 ms), while `T4/S0` uses the published snapshot
-(maximum 358 us).
+(maximum 358 us). RC4 question 5 is closed as that `T0/S6` compatibility
+replay; ignore it for snapshot-path sizing. **G1 is satisfied:**
+`representativeRebuildWall` = 358 µs; `prefetchTicks` = 272; horizon
+unchanged. Ring A firmware is not authorized.
+[`205447`](../../captures/session_20260826_205447.log) `T0/S5` rebuild is
+334 µs; the 377 ms gap at that switch is `idle_maint`, not the new-slot
+rebuild.
 [`172802`](../../captures/session_20260826_172802.log) confirms first-clock
 recording and continued overdub/stop operation after removal.
 Task 4.3 stays skipped.
