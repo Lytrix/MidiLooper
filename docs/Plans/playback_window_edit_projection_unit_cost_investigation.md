@@ -96,15 +96,69 @@ published root**, reaching `copyEffectiveCommittedEventsInRange` through
 A published `LoopSnapshot` carries edits **already applied**. If loaded slots published on restore,
 this entire replay — and therefore this entire cost — would not exist for them.
 
+## Unit cost is environment-dependent, not input-dependent (proven)
+
+[`session_20260826_160244`](../../captures/session_20260826_160244.log) settles this. Its 16
+`cer_edit` samples fall into **six recurring input signatures that repeat in the same order in three
+rounds**, roughly one sample every 2 s (one loop turn). Five signatures appear in all three rounds
+with **byte-identical** `ndel / nlen / lgth / shrt / ev`:
+
+| `ndel,nlen,lgth,shrt,ev` | Round 1 `recon` (12–53 s) | Round 2 `recon` (54–98 s) | Round 3 `recon` (98–109 s) | R2 / R1 |
+|---|---|---|---|---|
+| `66,4,2,2,154` | 8 531 | **78 605** | 9 597 | **9.2x** |
+| `48,9,2,7,168` | 8 141 | **73 822** | 10 618 | **9.1x** |
+| `40,16,7,9,181` | 28 663 | **278 869** | 33 501 | **9.7x** |
+| `40,18,8,10,164` | 38 237 | **334 201** | 41 119 | **8.7x** |
+| `35,12,4,8,124` | 22 031 | **161 886** | 19 809 | **7.3x** |
+
+**Identical input, 7.3x–9.7x cost.** The inflation is uniform across every signature and confined to
+one time window, so unit cost is **not** a function of row count, lengthen count, or event count. The
+5x gap seen in `153941` was the same effect sampled twice, not input variance.
+
+Consequently:
+
+- **367 ms is not representative.** It is the *contended* cost of one destination whose uncontended
+  cost is 30–100 ms. `cer_range` totals split cleanly into a normal band of **29.5–98.9 ms** and a
+  contended band of **306–363 ms**.
+- **Any G1 lead sized on 367 ms would be sized on a contention artifact.** The correct input is the
+  uncontended representative cost *plus* an explicit decision about whether the contended state is
+  permitted to persist at all.
+
+### What round 2 coincides with
+
+Round 2 falls inside the first long overdub (`PLAYING -> OVERDUBBING` at 54.181 s,
+`OVERDUBBING -> PLAYING` at 97.863 s). Measured load per 9 s window:
+
+| Window | Transport | `snapshot_idle` share | `cer_range` sum |
+|---|---|---|---|
+| 20–29 s | RECORDING | 28.9% | 202 ms (normal) |
+| **60–69 s** | **long OVERDUBBING** | **48.4%** | **1062 ms (inflated)** |
+| 100–109 s | PLAYING + short OVERDUBBING | **0%** | 226 ms (normal) |
+
+The heap also fell from `min_ever=340 KB` at 5 s to `min_ever=120 KB` by 135 s.
+
 ## Open questions
 
-1. **Why does the same work cost 5x more in one call than another?** Two samples with **identical**
-   `nlen=18, lgth=8, shrt=10, noop=0, ev=164` measured `recon=339073` and `recon=68989`. Row counts
-   and final event count do not explain it. Candidates to **test, not assume**: working-set size at
-   edit time (`cer_win` reports `evcopy=1300` against `evout=237`, so the set the edit walks is much
-   larger than the 164 it emits), heap state and allocation cost across the per-row allocations, and
-   canonical-span pipeline cost as a function of same-pitch span count. This must be measured before
-   any optimization.
+1. **What mechanism makes identical work 7–10x slower in round 2?** The correlation with
+   `snapshot_idle` at 48.4% is established; the mechanism is **not**. Two candidates, both requiring
+   a discriminating measurement rather than assumption:
+   - **Wall-clock inflation.** `g_reconstructUs` measures `micros()` deltas, so it includes every
+     interrupt and any preemption. If snapshot construction and reconstruction interleave, elapsed
+     time inflates while CPU work is unchanged. Note 48.4% competing load alone yields roughly 2x,
+     **not** 9x, so this cannot be the whole explanation.
+   - **Allocator spill to PSRAM.** `InternalHeapFirstAllocator::allocate` tries `malloc` and, on
+     failure, falls back to `extmem_malloc`. `reconstructNotesForPitch` allocates per row, so under
+     heap pressure its vectors could land in external memory, which is far slower than internal RAM.
+     `min_ever=120 KB` shows real pressure but **not** exhaustion, so a spill is unproven — it would
+     require a specific large allocation to fail under fragmentation.
+
+   These are cheap to separate: count spilled allocations, or report CPU-time separately from wall
+   time, for the reconstruction span only. **Do this before any optimization**, because the two
+   candidates lead to completely different fixes.
+2. **Are the six signatures six destinations, or successive windows of one destination?** All 67
+   `cer_range` samples report `lists=18, rows=217`, which is consistent with a single loop, yet the
+   signature sequence cycles with period 5. This is exactly what parent-plan Slice 1 must record, and
+   it is unresolved here: **do not** assume six eligible destinations.
 2. **Does the immutable snapshot direction remove this path entirely?** If loaded slots publish a
    `LoopSnapshot` on restore
    ([DEC-044](../DECISION_LOG.md#dec-044--immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
@@ -112,10 +166,8 @@ this entire replay — and therefore this entire cost — would not exist for th
    gather does not run for them and RC4 disappears for the observed case. **Answer this before
    optimizing `applyNoteEditPassSequence`** — micro-optimizing a path the architecture is already
    removing would be the wrong investment.
-3. **Is 367 ms representative or pathological?** Parent-plan Slice 1 (per-rebuild maximum plus slot)
-   is the instrument. The `rows=217` population is constant across all 50 non-empty samples in this
-   capture, so it is at least stable for this configuration — but one capture with one loaded-slot
-   population is not a distribution.
+3. ~~**Is 367 ms representative or pathological?**~~ **Answered by `160244`: pathological.** It is the
+   contended cost of a destination whose uncontended cost is 30–100 ms.
 4. **Why are there lengthen rows among replayed overdub companions at all?** All 217 Active rows are
    companions (`comp=217`). A Shorten companion replayed against events that already reflect it
    should take the `noop` or `shorten` branch, yet 8 rows per gather take **lengthen**. Whether that
