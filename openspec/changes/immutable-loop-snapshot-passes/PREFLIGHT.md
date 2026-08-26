@@ -232,22 +232,25 @@ overdub is not allowed
 ([`002634`](../../../captures/session_20260826_002634.log)). Overdub-stop
 paint holds the composed frame; `ODUB,stop,display` must not snapshot-gather
 ([`003459`](../../../captures/session_20260826_003459.log) display 97–154 ms).
-Parked (not selected): `tasks.md` 4b.1 persist/snapshot same-turn;
-4b.2 first-record `snapshot_idle` bound; 4b.3 post-stop `usbdisp` /
-`load_frame` / `late_on`; 4b.4 OVERDUBBING `DisplayResolveLiveCapture`.
 `4b.0` wrap/hold is device PASS
 ([`092755`](../../../captures/session_20260826_092755.log) last display
-11.1 ms). Selected: none.
+11.1 ms). Selected: `4b.2` first-record live enqueue + PLAYING start.
+RECORDING may start from `capture.store` when a length exists. OVERDUBBING
+only advances an in-flight candidate. 4b.1 same-turn lane stays in tree
+and is not closed. Parked: 4b.3 post-stop `usbdisp` / `load_frame` /
+`late_on`; 4b.4 OVERDUBBING `DisplayResolveLiveCapture`.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
 Overdub and record session-exit no longer complete a candidate on the stop
 path. `Loop::queueSessionExitSnapshot` copies pass ids; idle
 `stepPendingSnapshotPublish(1)` applies one `LoopSnapshotConstruction::step`.
-During OVERDUBBING,
-idle only advances an in-flight construction (`allowStartConstruction` false).
-One idle unit is one dirty bar, ordered by soonest playhead arrival. PLAYING
-may start the next pass change-set. NOTE_EDIT close remains a synchronous
+First-record uses the overdub live-enqueue setup: RECORDING may start from
+`capture.store` once a length exists, and PLAYING starts construction
+(`allowStartConstruction` true). During OVERDUBBING, idle only advances an
+in-flight candidate. After a root exists, PLAYING and OVERDUBBING do not
+step successor construction. One idle unit is one dirty bar, ordered by
+soonest playhead arrival. NOTE_EDIT close remains a synchronous
 drain. Failure still discards the candidate. See `DEC-045`.
 
 ### Amendment (2026-08-25) — stale snapshot window plus unpublished overlay

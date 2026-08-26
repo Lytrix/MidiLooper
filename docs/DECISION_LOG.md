@@ -144,6 +144,16 @@ and OVERDUBBING idle, but not on the same main-loop turn
 stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
 (`midi_gap` 32–51 ms).
 
+**Amendment (2026-08-26):** First-record uses the overdub live-enqueue setup.
+`stepPendingSnapshotPublish` starts construction from `capture.store` during
+RECORDING once `loopLengthTicks > 0`, and starts on PLAYING
+(`allowStartConstruction = !isOverdubbing()`). OVERDUBBING only advances an
+in-flight candidate. After a root exists, PLAYING and OVERDUBBING still do
+not step successor construction. First empty take still has
+`loopLengthTicks == 0` until `prepareRecordStop`, so that take begins at
+session-exit then continues on PLAYING. No µs budget. Off-PLAYING first-record
+was withdrawn.
+
 ## DEC-044 — Immutable loop snapshot model replaces maintained LCR direction
 
 **Date:** 2026-08-25

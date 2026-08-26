@@ -706,14 +706,12 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(uint32_t nowMs,
   // window. Successor construction copies the span root per note-bar unit and
   // did not finish after OD1 in session_20260825_232329 (3631 pending=1
   // steps; OD2 BPM 57; OD4 BPM 46). Do not step that work on PLAYING /
-  // OVERDUBBING once a root exists. First-record publish stays on PLAYING
-  // and OVERDUBBING idle, but not on the same turn as persist
-  // (session_20260826_010505 stacked both on first OD).
-  const bool snapshotIdleAllowed =
-      !isRecording() &&
-      !(havePublishedSnapshot && (isPlaying() || isOverdubbing())) &&
-      (!isOverdubbing() || snapshotLoop.hasInFlightSnapshotConstruction()) &&
-      !(visualCacheNeedsFirstPaint && !isOverdubbing());
+  // OVERDUBBING once a root exists. First-record uses the overdub setup:
+  // start during RECORDING once a length exists, and start on PLAYING.
+  // OVERDUBBING only advances an in-flight candidate.
+  const bool snapshotIdleAllowed = MidiServiceDrain::allowSnapshotIdleStep(
+      isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
+      snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint);
   const bool persistPending = StorageManager::hasDeferredSaveWork();
   const bool snapshotPending = snapshotLoop.hasPendingSnapshotPublish();
   const bool alternateWithPersist = (isPlaying() || isOverdubbing()) && persistPending;

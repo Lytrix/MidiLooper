@@ -28,10 +28,36 @@ void test_post_stop_persist_snapshot_lane_alternates_when_both_pending() {
   TEST_ASSERT_FALSE(MidiServiceDrain::shouldRunSnapshotOnPostStopLane(false, true, false));
 }
 
+void test_first_record_snapshot_idle_matches_overdub_playing_start() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      true, false, false, false, false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, true, false, false, false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, true, false, false, true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, true, false, true, true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      true, false, false, true, false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, true, false, false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, true, false, true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, true, true, true, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, false, false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, false, false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, true, false, false));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_around_idle_only_when_post_overdub_playing_drain);
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_post_stop_persist_snapshot_lane_alternates_when_both_pending);
+  RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
   return UNITY_END();
 }
