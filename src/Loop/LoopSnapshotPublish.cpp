@@ -544,6 +544,23 @@ LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->construction;
 }
 
+LOOP_COLD_MEM size_t Loop::pendingSnapshotQueuedPassCount() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->queuedPassIds.size() : 0;
+}
+
+LOOP_COLD_MEM size_t Loop::pendingSnapshotAppliedPassCount() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedPassIds.size() : 0;
+}
+
+LOOP_COLD_MEM PassId Loop::pendingSnapshotConstructionPassId() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->constructionPassId
+                                    : kInvalidPassId;
+}
+
+LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
+  return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued;
+}
+
 LOOP_COLD_MEM uint32_t Loop::liveRecordAppliedCompletedTicks() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedLiveRecordCompletedTicks
                                     : 0;

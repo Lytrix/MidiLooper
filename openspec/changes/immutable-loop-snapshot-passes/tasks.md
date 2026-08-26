@@ -2,6 +2,11 @@
 
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
+Progress checkpoint (2026-08-26): 27/43 tasks are complete. Sections 1-3 are
+complete. In section 4, 4.1 and 4.2 are complete. In section 4b, 4b.0, 4b.1,
+4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b, and 4b.4 are complete under Ring B
+round-robin. Open now: 4.3-4.6, 4b.3, 5.1-5.6, and 6.1-6.5.
+
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes are approved; the physical directory remains a later measurement decision.
 - [x] 1.3 Keep this change selected in `docs/Runtime/CURRENT_WORK.md` as Phase 0 only and post the phase architecture gate before any firmware edits. Gate posted in the implementation session; no firmware is authorized.
@@ -54,32 +59,26 @@ Stop-display hold is device PASS
 [`011829`](../../../captures/session_20260826_011829.log) last stop was
 **155.6 ms** after wrap cleared the composed frame. Device PASS
 [`092755`](../../../captures/session_20260826_092755.log) last stop
-**11.1 ms**. **Now:** 4b.2 selected (host implement; device verify open).
-4b.1 same-turn lane stays in tree and is not closed. 4b.3 host
-implementation (load-frame polls + post-overdub MIDI batch cap) is in tree
-(device verify open). 4b.4 is closed for the `DisplayResolveLiveCapture`
-owner after repeated sub-10 ms captures.
+**11.1 ms**. **Now:** Ring B / RC2 is closed. **4b.1** and **4b.2** are closed
+as Ring B round-robin admission + first-record live-start contracts — see
+[`playback_window_round_robin_admission_refinement.md`](../../../docs/Plans/playback_window_round_robin_admission_refinement.md).
+Open residual: **4b.3** (post-overdub PLAYING window attribution). 4b.4 is
+closed for `DisplayResolveLiveCapture`.
 
 - [x] 4b.1a Implement Ring B idle admission with one unconditional five-owner
       cursor turn; remove the snapshot cadence, visual cadence, and post-stop
       persist/snapshot pairwise gates. Keep the wrapped-content dependency skip
       non-priority and owned by the cursor position.
-- [ ] 4b.1b Run the capture-serial device gate for Ring B: verify bounded
-      `snapshot_idle`, visual dirty-bar progress during OVERDUBBING, and no
-      same-turn snapshot/persistence overlap.
-      Finding [`185141`](../../../captures/session_20260826_185141.log): the
-      first-overdub `midi_gap` improved to 146.802 ms from 222.596 ms in
-      baseline [`175350`](../../../captures/session_20260826_175350.log), and
-      a later steady overdub window improved to 24.325 ms from 366 ms.
-      Remaining long gaps are owned by the indivisible
-      `NoteUtils::reconstructDisplayNotes` step after the bounded fallback
-      gather in `Loop::rebuildVisualCacheIdleSlice`; `idle_reconstruct` reached
-      127.249 ms initially and 197.241–218.083 ms later. The gate remains open
-      pending a future snapshot-first display migration. `visualCache` remains
-      the display-owned derived representation, but its target source is the
-      canonical `LoopSnapshot` span membership followed by bounded
-      `IntervalProjection`; no cooperative compatibility reconstruction is
-      authorized before exact `DisplayNote` equivalence is proven.
+- [x] 4b.1b Ring B / RC2 device gate closed. Dirty bars drain during
+      OVERDUBBING; wrap coverage closed by 4b.2b
+      ([`183452`](../../../captures/session_20260826_183452.log),
+      [`185141`](../../../captures/session_20260826_185141.log):
+      `from=passes`, `DISP` 286→466 / 271→437; first-overdub `midi_gap`
+      222.596→146.802 ms vs [`175350`](../../../captures/session_20260826_175350.log);
+      later steady 24.325 ms vs 366 ms). Reconstruct residual transferred to
+      [`playback_window_build_owner_boundary_refinement.md`](../../../docs/Plans/playback_window_build_owner_boundary_refinement.md)
+      § *4b.1b* — ExecutionBounds row 8 is still unbounded; F6 is unchanged.
+      No cooperative `reconstructDisplayNotes` is authorized.
 - [x] 4b.2a Implement RC2 representation coverage enforcement: overdub paint
       refuses uncovered visual-cache reads, wrap append is admitted through the
       Ring B owner, and dirty visual-cache source seeds fall back to committed
@@ -101,70 +100,66 @@ owner after repeated sub-10 ms captures.
       [`092755`](../../../captures/session_20260826_092755.log): wrap at
       151.099 s then DISP, last `ODUB,stop,display` **11.1 ms** (no `cer_win`
       on the stop stack); OD1 stop **21.4 ms**. BPM after last stop 117.7–122.4.
-- [ ] 4b.1 Persist and first-record snapshot stay on PLAYING and OVERDUBBING
-      idle through the Ring B five-owner cursor, but not on the same turn as
-      one another. Do not move save onto the stop commit path. Do not convert
-      `VerifyAndRename`. The 2 s playback-save
-      grace is withdrawn — [`010505`](../../../captures/session_20260826_010505.log)
-      stacked `LoopPersist` `done=46697` with `snapshot_idle` on first OD
-      (`midi_gap` 32–51 ms).
-      [`131852`](../../../captures/session_20260826_131852.log) still shows
-      same-turn overlap (`snapshot_idle us=26823` at 147.341 s followed by
-      `PERS,work payload_slice=20806`; repeated while pending). Guard landed
-      in tree to block deferred save after a same-turn snapshot; recapture
-      required before checkoff.
-      [`132627`](../../../captures/session_20260826_132627.log) did not emit
-      `PERS,work` while `snapshot_idle` was active (same-turn overlap not
-      observed in that run). Keep open until repeated device recaptures hold.
-      [`133517`](../../../captures/session_20260826_133517.log) again showed
-      interleaving while pending (`snapshot_idle us=7360` then
-      `PERS,work 86`). In tree: lane arbitration now includes RECORDING
-      pending snapshot work and persist lane toggles now use
-      RECORDING/PLAYING/OVERDUBBING pending snapshot detection; recapture
-      required before checkoff.
-      [`134438`](../../../captures/session_20260826_134438.log) emitted
-      `snapshot_idle` lines but `PERS,work` count stayed `0`; same-turn
-      overlap was not observed in that run. Keep open until repeated
-      recaptures hold.
-      [`135317`](../../../captures/session_20260826_135317.log) again kept
-      `PERS,work=0` while `snapshot_idle` remained active. Keep open until
-      repeated recaptures hold.
-- [ ] 4b.2 Bound first-record `snapshot_idle` by starting construction after
-      the playhead has left bar 1, using the overdub live-enqueue setup, and
-      starting on PLAYING. First-take `loopLengthTicks` updates during
-      RECORDING with `computeRecordStopLengthTicks`. Live construction
-      starts after the playhead leaves bar 1 and continues each later
-      completed bar when the parent still has tick room. Live RECORDING
-      does not rebuild the settled prefix when the parent is too short.
-      Growing record
-      does not clamp capture ticks to that
-      working length. OVERDUBBING only advances an in-flight candidate.
-      Evidence: [`095720`](../../../captures/session_20260826_095720.log)
-      had no `snapshot_idle` until PLAYING.
-      [`114012`](../../../captures/session_20260826_114012.log) started at
-      `record_length=768` while bar 1 was still being written.
-      [`120020`](../../../captures/session_20260826_120020.log) started after
-      bar 1 and did not restart during RECORDING; first-take display keeps
-      continuous playhead length so `DISP` does not rescale on each
-      `record_length` step.
-      [`121754`](../../../captures/session_20260826_121754.log) rebuilt the
-      prefix on each length step.
-      [`125527`](../../../captures/session_20260826_125527.log) kept
-      unpublished in-flight snapshot idle running on consecutive
-      OVERDUBBING/PLAYING turns (2.6–27.4 ms slices; `midi_gap` spikes).
-      In tree: Ring B admits the snapshot owner on its five-way cursor.
-      [`130244`](../../../captures/session_20260826_130244.log) still stacked
-      unpublished snapshot with long visual idle reconstruct bursts.
-      In tree: unpublished snapshot contention keeps visual fallback
-      constrained and cadence-gated while snapshot updates stay active.
-      [`131338`](../../../captures/session_20260826_131338.log) still showed
-      PLAYING stalls with first-PLAYING stacked idle/snapshot/persist and
-      later `usbdisp`/`load_frame`/`late_on` windows.
-      In tree: unpublished visual constraints now apply whenever
-      unpublished work is pending, and live-record append-start range is
-      capped to one completed bar per start.
-      Do not check off until device verify. Do not
-      step successor construction during OVERDUBBING after the first root.
+- [x] 4b.1 Persist and snapshot share PLAYING / OVERDUBBING / RECORDING idle
+      only through the Ring B five-owner cursor: **one owner per turn**.
+      Adjacent-turn `snapshot_idle` then `PERS,work` while both are pending is
+      allowed Round-robin alternation, not a failure. Pass condition is **no
+      true same-turn stack** (`PERS,work` must not fall inside a
+      `snapshot_idle` `[t−us, t]` window). Do not move save onto the stop
+      commit path. Do not convert `VerifyAndRename`. The pre-Ring-B 2 s
+      playback-save grace stays withdrawn.
+      Evidence: [`131852`](../../../captures/session_20260826_131852.log) was
+      the pairwise-gate baseline (stacked costs). After Ring B + same-turn
+      guard, recent overdub/record captures show **0** true same-turn wall
+      overlaps (`183452`, `185141`, `202654`, `213537`, `214703`, `220551`).
+      Closed under Ring B; residual post-first-root idle policy is **4b.2c**.
+- [x] 4b.2 First-record live `snapshot_idle` under Ring B / `DEC-045`: start
+      construction only after the playhead has left bar 1
+      (`currentTick - startLoopTick >= TICKS_PER_BAR`), use the overdub
+      live-enqueue setup, update first-take `loopLengthTicks` with
+      `computeRecordStopLengthTicks`, append later completed bars when the
+      parent still has tick room, and do not rebuild the settled prefix when
+      the parent is too short. Growing record does not clamp capture ticks to
+      that working length. First-take display length stays continuous playhead.
+      Ring B admits the snapshot owner on its five-way cursor.
+      Device: first `snapshot_idle` is ~2 s after `record_length=768` and ~1 s
+      before `record_length=1536` on [`183452`](../../../captures/session_20260826_183452.log),
+      [`185141`](../../../captures/session_20260826_185141.log),
+      [`202654`](../../../captures/session_20260826_202654.log),
+      [`220551`](../../../captures/session_20260826_220551.log) — matches the
+      left-bar-1 tick rule (not the withdrawn start-at-`768`-while-writing fail).
+      Closed for this first-record / Ring B scope. Successor-after-root is
+      **4b.2c**, not part of this checkoff.
+- [x] 4b.2c Resolve the apparent PLAYING / OVERDUBBING `snapshot_idle` after
+      the first published root. [`DEC-045`](../../../docs/DECISION_LOG.md#dec-045-overdub-snapshot-publish-is-idle-stepped)
+      and device PASS [`233308`](../../../captures/session_20260825_233308.log)
+      require **no** successor steps on PLAYING/OVERDUBBING after the first
+      root until STOPPED. Investigation found that `RECS,stage,publish … ok`
+      is the compatibility `LoopPass` commit marker, not immutable-root
+      publication. In [`183452`](../../../captures/session_20260826_183452.log)
+      and comparable captures [`202654`](../../../captures/session_20260826_202654.log),
+      [`213537`](../../../captures/session_20260826_213537.log),
+      [`214703`](../../../captures/session_20260826_214703.log), and
+      [`220551`](../../../captures/session_20260826_220551.log), the long
+      `pending=1` run ends at the final `pending=0` turn; no later
+      PLAYING/OVERDUBBING `snapshot_idle` is present. The apparent violation
+      is therefore not reproduced by these captures.
+      `PendingSnapshotPublishBox` does retain individual `PassId`s, but the
+      `snapshot_idle` diagnostic exposes only boolean pending state and cannot
+      distinguish one construction from several queued pass constructions.
+      SESSION_CAPTURE-gated root identity and queue/pass-count telemetry is now
+      emitted from the existing `Loop` publication owner. Capture
+      [`232633`](../../../captures/session_20260826_232633.log) makes the
+      boundary explicit: during PLAYING/OVERDUBBING before root publication,
+      `construction=1`, `queued=0`, `applied=0`, `exit=1`, and `inflight=1`;
+      the final `pending=0` turn publishes `root=0x7030ad1c` with
+      `root_rev=1`/`playback_rev=1`, after which no further PLAYING or
+      OVERDUBBING `snapshot_idle` occurs. The run therefore proves that the
+      apparent volume was the single first-record root construction, not
+      successor construction or stacked overdub passes. `DEC-045` remains
+      unchanged. Closed with the telemetry boundary verified.
+      Do not close by filtering `T0/S6`; this is idle-policy evidence, not gap
+      attribution.
 - [ ] 4b.3 Attribute and bound the post-overdub-stop PLAYING window whose
       `midi_gap` is `usbdisp` + `load_frame` + `late_on`, not
       `ODUB,stop,display`. Evidence: `004934` 67.4 ms at 113.911 s
