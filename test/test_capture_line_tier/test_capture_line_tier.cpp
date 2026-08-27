@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <unity.h>
 
 #include "Utils/CaptureLineTier.h"
@@ -96,8 +97,36 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"
       "playback_rev=0,queued=3,applied=1,construction=4,exit=1,inflight=1,"
-      "journals=0,fragment=0/0,parent_rev=0,start_us=79000,pass_change_us=1200,"
-      "step_us=80,finish_us=40,publish_us=0,probe_us=1"));
+      "journals=0,fragment=0/0,parent_rev=0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,195718000,DIAG,snapshot_idle,child,start=79000,pass_change=1200,"
+      "step=80,finish=40,publish=0,probe=1"));
+}
+
+void test_snapshot_idle_lines_fit_capture_text_budget() {
+  // DebugSessionCapture kMaxCaptureTextBytes is 192; payload is 191 + NUL.
+  // Parent uses observed-class maxima plus 10-digit micros. Child uses uint32
+  // maxima and must still fit. Teensy %p is 0x + 8 hex digits.
+  constexpr size_t kMaxCaptureTextPayload = 191;
+  char parent[256];
+  char child[256];
+  const int parentLen = snprintf(
+      parent, sizeof(parent),
+      "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=0xffffffff,root_rev=%lu,"
+      "playback_rev=%lu,queued=%lu,applied=%lu,construction=%lu,exit=%u,inflight=%u,"
+      "journals=%lu,fragment=%u/%u,parent_rev=%lu",
+      4294967295ul, 16252ul, 1u, 10ul, 10ul, 4ul, 4ul, 32ul, 1u, 1u, 18ul, 18u,
+      18u, 10ul);
+  const int childLen = snprintf(
+      child, sizeof(child),
+      "#CAP,%lu,DIAG,snapshot_idle,child,start=%lu,pass_change=%lu,step=%lu,"
+      "finish=%lu,publish=%lu,probe=%lu",
+      4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul,
+      4294967295ul, 4294967295ul);
+  TEST_ASSERT_GREATER_THAN(0, parentLen);
+  TEST_ASSERT_GREATER_THAN(0, childLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), parentLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), childLen);
 }
 
 void test_transport_and_persistence_lines_are_tier_a() {
@@ -147,6 +176,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_tag_is_the_field_after_micros);
   RUN_TEST(test_timing_telemetry_lines_are_tier_a);
+  RUN_TEST(test_snapshot_idle_lines_fit_capture_text_budget);
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);

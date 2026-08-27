@@ -105,9 +105,19 @@ first STOPPED `snapshot_idle` at +0.070 s, candidate stayed `root=0x0` until
 `finish_us`, `publish_us`, and `probe_us`. `pass_change_us` is nested inside
 `start_us`. `probe_us` is one empty `micros()` pair. `DIAG,snapshot_idle` is
 Tier-A. Capture-serial RAM1 locals **6976**; native **1489/1489**.
-Construction code is unchanged. Device recapture must attribute the
-79 ms class before any construction-bound change. Do not check off OpenSpec
-`3.5`/`3.6`.
+Construction code is unchanged. Device recapture
+[`222401`](../../captures/session_20260827_222401.log) shows the 10–12 ms
+first-record and 5–8 ms STOPPED session-exit costs in `start_us`. Parent
+max is 16.252 ms (`start_us=7070`, 9.182 ms leftover). Every
+`snapshot_idle` line is truncated at 191 bytes, so `pass_change_us` /
+`step_us` / `finish_us` / `publish_us` / `probe_us` never appear. Candidate
+stayed `root=0x0` until +38.487 s, then `pending=0` published
+`root=0x7039436c` / `root_rev=7`. Child timers now emit a second
+`DIAG,snapshot_idle,child` line (`start`, `pass_change`, `step`,
+`finish`, `publish`, `probe`) so the 191-byte capture budget no longer
+clips them. Parent `snapshot_idle` fields are unchanged. Capture-serial
+RAM1 locals **6976**; native **1490/1490**. Do not change construction
+bounds. Do not check off OpenSpec `3.5`/`3.6`.
 
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:
