@@ -430,8 +430,26 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       until `pending=0` / `root=0x703248cc` / `root_rev=1`.
       The record/overdub pass identity
       invariant supports a proposed caller-scoped pitch lookup for
-      `startNextPassChangeFragment`, while its inner ownership and
-      pitch-local cost remain unmeasured;
+      `startNextPassChangeFragment`. Capture-gated inner timings
+      (`refill`, `event_scan`, `note_lookup`, `change_build`,
+      `construct`) are in tree on `DIAG,snapshot_idle,inner`;
+      recapture the 12.4 ms `pass_change` class before that lookup;
       no `step` rewrite is justified yet; and freezing the minimum observed
       reserve is rejected as a guarantee. Do not remove the +16 live-record
       bars.
+
+### Stage 2 pass-change inner timings — 2026-08-28
+
+- [x] Architecture gate posted: owner remains
+      `startNextPassChangeFragment` plus `appendSnapshotIdleCaptureLine`;
+      no ownership, transition, or execution-bound change.
+- [x] Capture-serial `snapshot_idle` emits a third `inner` line with
+      `refill` / `event_scan` / `note_lookup` / `change_build` /
+      `construct`. Lookup and the 32-change journal cap are unchanged.
+- [x] Capture-serial RAM1 locals **6944**.
+- [x] Full native suite passes: **1494/1494** tests.
+- [x] Device recapture [`004119`](../../../captures/session_20260828_004119.log):
+      18216/18216 complete inner rows; 21.096 ms STOPPED session-exit is
+      `note_lookup=18293` on `pass_change=21050`; candidate stayed
+      `root=0x0` until `pending=0` / `root=0x703f2eb0` / `root_rev=6`.
+- [ ] Do not check off tasks `3.5`/`3.6` on this measurement slice.

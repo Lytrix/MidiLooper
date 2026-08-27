@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-28 (session-exit length handoff device PASS)
+Last updated: 2026-08-28 (pass-change inner attribution device PASS)
 
 ---
 
@@ -73,10 +73,9 @@ that probe is ≤ 39 µs. STOPPED session-exit `start`/`pass_change` reaches
 Session-exit length handoff device PASS
 [`003015`](../../captures/session_20260828_003015.log): record-stop
 PLAYING `discard=47`, first root `pending=0` / `root=0x703248cc` /
-`root_rev=1`. Non-fit discard remains a content-sized destructor. For
-`startNextPassChangeFragment`, the record/overdub
-pass identity invariant supports a proposed caller-scoped pitch lookup;
-inner ownership and the remaining pitch-local cost are still unmeasured.
+`root_rev=1`. Non-fit discard remains a content-sized destructor. Device recapture [`004119`](../../captures/session_20260828_004119.log)
+names the 21 ms session-exit as `note_lookup` (86.9% of
+`pass_change=21050`). Caller-scoped pitch lookup is the next slice.
 No `step` rewrite is justified yet; and freezing the minimum observed
 `T_RT_reserve` is rejected as a guarantee. Construction bounds stay
 unchanged.

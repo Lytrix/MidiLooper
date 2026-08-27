@@ -24,6 +24,11 @@ struct SnapshotIdleChildTimes {
   uint32_t enqueueUs = 0;
   uint32_t discardUs = 0;
   uint32_t emitUs = 0;
+  uint32_t refillUs = 0;
+  uint32_t eventScanUs = 0;
+  uint32_t noteLookupUs = 0;
+  uint32_t changeBuildUs = 0;
+  uint32_t constructUs = 0;
 };
 
 static SnapshotIdleChildTimes s_lastSnapshotIdleChildren;
@@ -660,16 +665,37 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
                                                 LoopSnapshotChangeSet& changes,
                                                 uint32_t& affectedBars,
                                                 uint32_t& membershipEntries) {
-  refillPassChangeBatch(loop, progress);
+  {
+#if defined(SESSION_CAPTURE)
+    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.refillUs);
+#endif
+    refillPassChangeBatch(loop, progress);
+  }
   while (!progress.batchExhausted()) {
     const MidiEvent& event = progress.batch[progress.batchIndex];
-    const bool addEvent = !eventAlreadyInSnapshot(parent, event);
+    bool addEvent = false;
+    {
+#if defined(SESSION_CAPTURE)
+      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.eventScanUs);
+#endif
+      addEvent = !eventAlreadyInSnapshot(parent, event);
+    }
     const bool isNoteEvent = event.isNoteOn() || event.isNoteOff();
+    bool parentHasNote = false;
+    if (isNoteEvent && event.noteId != kInvalidNoteId) {
+#if defined(SESSION_CAPTURE)
+      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.noteLookupUs);
+#endif
+      parentHasNote =
+          static_cast<bool>(parent.findNote(event.noteId, event.data.noteData.note));
+    }
+#if defined(SESSION_CAPTURE)
+    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.changeBuildUs);
+#endif
     PendingPassChangeProgress::OpenNote prospective{};
     PendingPassChangeProgress::OpenNote* existing = nullptr;
     bool trackNote = false;
-    if (isNoteEvent && event.noteId != kInvalidNoteId &&
-        !parent.findNote(event.noteId, event.data.noteData.note)) {
+    if (isNoteEvent && event.noteId != kInvalidNoteId && !parentHasNote) {
       existing = findOpenPassNote(progress, event.noteId);
       if (existing != nullptr) {
         prospective = *existing;
@@ -751,7 +777,12 @@ LOOP_COLD_MEM bool startNextPassChangeFragment(Loop& loop, PendingSnapshotPublis
     }
     return progress.active || !box.queuedPassIds.empty();
   }
-  box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+  {
+#if defined(SESSION_CAPTURE)
+    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.constructUs);
+#endif
+    box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+  }
   box.constructionPassId = progress.passId;
   box.applyingCompanions = false;
   return true;
@@ -1254,6 +1285,46 @@ LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleDiscardUs() const {
 LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEmitUs() const {
 #if defined(SESSION_CAPTURE)
   return s_lastSnapshotIdleChildren.emitUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleRefillUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.refillUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEventScanUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.eventScanUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleNoteLookupUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.noteLookupUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleChangeBuildUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.changeBuildUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleConstructUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.constructUs;
 #else
   return 0;
 #endif
