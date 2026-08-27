@@ -342,3 +342,20 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
 - [x] Full native suite passes: **1485/1485** tests.
 - [ ] Device recapture must remeasure `T_RT_reserve` on
       [`202635`](../../../captures/session_20260827_202635.log)-class content.
+
+### Wrap publication completeness implementation review — 2026-08-27
+
+- [x] Architecture gate posted: owner remains `stepPendingSnapshotPublish`;
+      no ownership or transition change.
+- [x] Wrap-journal completion no longer calls `storePublishedSnapshot` while
+      queued session-exit passes, construction progress, or companion
+      changes remain.
+- [x] Native fixture
+      `test_wrap_journal_drain_keeps_first_record_while_session_exit_pending`
+      asserts the first record remains in playback gather until publication
+      completes.
+- [x] Capture-serial build passes with RAM1 locals **7008**.
+- [x] Full native suite passes: **1486/1486** tests.
+- [ ] Device recapture must confirm first-record playback after wrap-journal
+      drain on [`204136`](../../../captures/session_20260827_204136.log)-class
+      content.

@@ -76,6 +76,14 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     `CommittedEventRange` cursor; one admitted unit begins at most one
     journal-capped pass-change fragment. Device `T_RT_reserve` recapture
     remains open.
+  - Capture [`204136`](../../../captures/session_20260827_204136.log)
+    published `root_rev=8` when wrap journals drained while `queued=3`
+    session-exit passes remained. Playback then read that incomplete
+    snapshot and dropped the first record pass. Wrap completion now leaves
+    the candidate unpublished until queued passes, construction progress,
+    and companion changes complete. Native fixture
+    `test_wrap_journal_drain_keeps_first_record_while_session_exit_pending`
+    covers the gather invariant. Device recapture remains open.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers

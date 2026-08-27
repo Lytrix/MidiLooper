@@ -279,6 +279,7 @@ struct Loop {
   void clearCommittedPlaybackNoteOnIdentities();
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
+  void pushPendingNoteChangeForTest(PendingNoteChange change);
   bool overdubSourceSpanCacheReadyForTest() const { return overdubSourceSpanCacheReady(); }
 #endif
 
@@ -349,6 +350,8 @@ struct Loop {
                                      const EditPassIdList& companionIds = {});
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
+  /// Queue bounded wrap-journal fragments from settled pending mutations. Wrap path only.
+  bool queueOverdubWrapSnapshotJournal(PassId wrapPassId);
   /// Apply at most `maximumChanges` pending snapshot construction units. Idle only.
   /// One unit is one dirty bar of the in-flight change. `allowStartConstruction`
   /// false advances an in-flight candidate only. `playheadPhaseTick` orders bars
@@ -358,9 +361,14 @@ struct Loop {
                                   uint32_t liveRecordCompletedTicks = 0);
   bool hasPendingSnapshotPublish() const;
   bool hasInFlightSnapshotConstruction() const;
+  bool hasPendingWrapJournal() const;
   size_t pendingSnapshotQueuedPassCount() const;
   size_t pendingSnapshotAppliedPassCount() const;
   PassId pendingSnapshotConstructionPassId() const;
+  size_t pendingSnapshotWrapJournalCount() const;
+  uint8_t pendingSnapshotWrapFragmentIndex() const;
+  uint8_t pendingSnapshotWrapFragmentCount() const;
+  uint32_t pendingSnapshotWrapParentRevision() const;
   bool pendingSnapshotSessionExitQueued() const;
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;

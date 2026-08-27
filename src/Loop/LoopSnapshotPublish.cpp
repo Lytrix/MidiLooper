@@ -866,6 +866,11 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
   return false;
 }
 
+bool remainingSessionExitPublishWork(const PendingSnapshotPublishBox& box) {
+  return !box.queuedPassIds.empty() || box.passChangeProgress.active ||
+         !box.companionsApplied;
+}
+
 LOOP_COLD_MEM bool finishPendingConstruction(PendingSnapshotPublishBox& box) {
   ImmutableLoopSnapshotRef frozen = box.construction->freeze();
   if (!frozen) {
@@ -1262,14 +1267,14 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       box.wrapJournalInFlight = false;
       return hasPendingSnapshotPublish();
     }
-    if (wrapping && fragmentIndex + 1 == fragmentCount && box.unpublishedCandidate) {
+    if (wrapping && fragmentIndex + 1 == fragmentCount && box.unpublishedCandidate &&
+        !remainingSessionExitPublishWork(box)) {
       storePublishedSnapshot(box.unpublishedCandidate);
     }
   }
 
-  if (box.sessionExitQueued && !box.construction && box.queuedPassIds.empty() &&
-      box.queuedWrapJournals.empty() && !box.passChangeProgress.active &&
-      box.companionsApplied) {
+  if (box.sessionExitQueued && !box.construction && box.queuedWrapJournals.empty() &&
+      !remainingSessionExitPublishWork(box)) {
     if (!box.unpublishedCandidate) {
       clearPendingSnapshotPublish();
       return false;

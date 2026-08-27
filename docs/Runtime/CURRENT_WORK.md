@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-27 (task 3.6 snapshot admission starvation fix)
+Last updated: 2026-08-27 (wrap publication waits for session-exit work)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -67,7 +67,13 @@ fails `T_RT_reserve`: `snapshot_idle` reached 79.169 ms because session-exit
 start reconstructed a whole queued pass in one admitted unit. Existing journal
 caps now also bound that start: `startNextPendingConstruction` walks committed
 pass events through a persistent `CommittedEventRange` cursor and begins at
-most one journal-capped change fragment. Device recapture remains open.
+most one journal-capped change fragment. Capture
+[`204136`](../../captures/session_20260827_204136.log) then published that
+wrap candidate as soon as `journals=0` while `queued=3` session-exit passes
+remained, so playback selected an incomplete snapshot and dropped the first
+record pass. Wrap completion now keeps the candidate unpublished until queued
+passes, construction progress, and companion changes complete. Device
+recapture remains open.
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:
 [`DEC-047`](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication).

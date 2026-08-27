@@ -137,6 +137,18 @@ caps and a persistent `CommittedEventRange` cursor so one admitted unit builds
 at most one bounded pass-change fragment. Publication stays atomic until every
 queued fragment completes. Device `T_RT_reserve` recapture remains open.
 
+### Premature wrap publication — 2026-08-27
+
+Capture [`204136`](../../captures/session_20260827_204136.log) published
+`root_rev=8` as soon as wrap journals reached `journals=0`, while
+`queued=3` session-exit passes were still pending. Playback switched to
+`playback_build,snapshot` for that incomplete root, so
+`tryGatherPublishedSnapshotEventsInWindow` skipped the unpublished overlay
+and the first record pass disappeared. Wrap-journal completion now keeps the
+candidate unpublished while queued passes, construction progress, or
+companion changes remain; `storePublishedSnapshot` waits for that same
+complete gate. Device recapture remains open.
+
 ## Work stages
 
 1. **Measure the existing wrap phases**

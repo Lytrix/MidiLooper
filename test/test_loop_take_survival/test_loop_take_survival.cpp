@@ -902,6 +902,68 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
 }
 
+void test_wrap_journal_drain_keeps_first_record_while_session_exit_pending() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(60, 0)->count);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 72;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(loop.lastCommittedPassId()));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(800, 1, 64, 80)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(860, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 860));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.pendingSnapshotQueuedPassCount() > 0);
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  SessionMidiEventVec gathered;
+  if (!loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072)) {
+    loop.gatherCommittedEventsInWindow(gathered, 0, 3072, false);
+  }
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec after;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(after, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(after, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(after, 72));
+  TEST_ASSERT_EQUAL(1, countNoteOns(after, 64));
+}
+
 void test_session_exit_pass_starts_as_journal_capped_fragments() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -999,6 +1061,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
+  RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_session_exit_pass_starts_as_journal_capped_fragments);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();
