@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-27 (task 3.6 snapshot admission starvation fix)
+Last updated: 2026-08-27 (Stage 1 STOPPED first-paint snapshot admission)
 
 ---
 
@@ -56,7 +56,9 @@ unit builds at most one bounded pass-change fragment. Capture
 when wrap journals drained while session-exit passes were still queued;
 playback then dropped the first record pass. Wrap completion now waits for
 queued passes, construction progress, and companion changes before
-`storePublishedSnapshot`. Device `T_RT_reserve` recapture remains open.
+`storePublishedSnapshot`. Stage 1 now admits pending STOPPED Snapshot work
+over the visual first-paint predicate; device recapture remains open.
+`T_RT_reserve` remains Stage 2.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

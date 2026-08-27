@@ -115,6 +115,8 @@ stop (`queueSessionExitSnapshot`) and construct from
 bounded journal fragments from `Track::commitOverdubWrapAtSessionStart` and
 steps them during PLAYING/OVERDUBBING after the first root (`DEC-047`). An idle
 turn that applies one snapshot unit does not also run a visual-cache slice.
+`STOPPED` first-paint (`visualCacheNeedsFirstPaint`) does not suppress that
+Snapshot turn when session-exit, in-flight, or wrap-journal work is pending.
 First-record construction uses the overdub live-enqueue setup (`DEC-045` 4b.2):
 RECORDING may start from `capture.store` after the playhead has left bar 1.
 Wrap-ahead admission consumes only bounded journal fragments and never starts

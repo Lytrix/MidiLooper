@@ -84,6 +84,12 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     and companion changes complete. Native fixture
     `test_wrap_journal_drain_keeps_first_record_while_session_exit_pending`
     covers the gather invariant. Device recapture remains open.
+  - Stage 1 of
+    [`snapshot_publication_timing_bugfix.md`](../../../docs/Plans/snapshot_publication_timing_bugfix.md)
+    admits pending STOPPED Snapshot work over `visualCacheNeedsFirstPaint`.
+    Native fixture `test_stopped_pending_snapshot_wins_over_first_paint`
+    covers that combination. Device recapture remains open; `T_RT_reserve`
+    stays Stage 2.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers
