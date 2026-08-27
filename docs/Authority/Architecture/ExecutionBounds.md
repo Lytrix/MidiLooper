@@ -145,7 +145,14 @@ Selected structural caps:
 
 `T_RT_reserve` remains the 3.6 device gate for construction-attributable MIDI
 gap and deadline lateness. These structural caps admit the 3.5 firmware path;
-they do not close that device measurement.
+they do not close that device measurement. Capture-serial `snapshot_idle` now
+emits child durations for `startNextPendingConstruction`, nested
+`startNextPassChangeFragment`, `LoopSnapshotConstruction::step`,
+`finishPendingConstruction`, and `storePublishedSnapshot`, plus a `probe_us`
+overhead sample. Rows 21 and 22 stay **structurally bounded** until that
+attribution shows whether the 79 ms class sits outside the classified unit or
+the classification is wrong. Do not reclassify from the parent `snapshot_idle`
+span alone.
 
 A local timer is not the bound. Measured first-record idle `step(1)` vs
 `MI`/`MO` note gaps: [`233308`](../../captures/session_20260825_233308.log)

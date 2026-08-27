@@ -370,6 +370,13 @@ struct Loop {
   uint8_t pendingSnapshotWrapFragmentCount() const;
   uint32_t pendingSnapshotWrapParentRevision() const;
   bool pendingSnapshotSessionExitQueued() const;
+  /// Last idle-step child durations. Capture-serial only; 0 in normal builds.
+  uint32_t lastSnapshotIdleStartUs() const;
+  uint32_t lastSnapshotIdlePassChangeUs() const;
+  uint32_t lastSnapshotIdleStepUs() const;
+  uint32_t lastSnapshotIdleFinishUs() const;
+  uint32_t lastSnapshotIdlePublishUs() const;
+  uint32_t lastSnapshotIdleProbeUs() const;
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;
   /// True when a live-record parent exists with tick room, or none exists yet.

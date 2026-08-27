@@ -88,8 +88,12 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     [`snapshot_publication_timing_bugfix.md`](../../../docs/Plans/snapshot_publication_timing_bugfix.md)
     admits pending STOPPED Snapshot work over `visualCacheNeedsFirstPaint`.
     Native fixture `test_stopped_pending_snapshot_wins_over_first_paint`
-    covers that combination. Device recapture remains open; `T_RT_reserve`
-    stays Stage 2.
+    covers that combination. Device recapture
+    [`221054`](../../../captures/session_20260827_221054.log) closed Stage 1.
+    Stage 2 child timing is now on `snapshot_idle` (`start_us`,
+    `pass_change_us`, `step_us`, `finish_us`, `publish_us`, `probe_us`).
+    Device recapture must attribute the 79 ms class before any
+    construction-bound change; `T_RT_reserve` is not frozen yet.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers

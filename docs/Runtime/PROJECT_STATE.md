@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-27 (Stage 1 STOPPED snapshot admission closed)
+Last updated: 2026-08-27 (Stage 2 snapshot child timing in tree)
 
 ---
 
@@ -60,7 +60,11 @@ queued passes, construction progress, and companion changes before
 [`221054`](../../captures/session_20260827_221054.log): Snapshot idle ran
 after stop, the candidate stayed private, and publication occurred only at
 `pending=0` / `root=0x70400ac8` / `root_rev=10`.
-`T_RT_reserve` remains Stage 2.
+Stage 2 child timing is in tree on `snapshot_idle`
+(`start_us`, `pass_change_us`, `step_us`, `finish_us`, `publish_us`,
+`probe_us`). Capture-serial RAM1 locals **6976**; native **1489/1489**.
+Construction bounds stay unchanged until the instrumented recapture
+attributes the 79 ms class and freezes `T_RT_reserve`.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

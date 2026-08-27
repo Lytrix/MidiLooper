@@ -390,3 +390,17 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       first STOPPED `snapshot_idle` at +0.070 s; candidate stayed `root=0x0`
       until +77.765 s; then `pending=0` published `root=0x70400ac8` /
       `root_rev=10`.
+
+### Stage 2 construction child timing — 2026-08-27
+
+- [x] Architecture gate posted: owner remains
+      `Loop::stepPendingSnapshotPublish` plus
+      `appendSnapshotIdleCaptureLine`; no ownership, transition, or
+      execution-bound change.
+- [x] Capture-serial `snapshot_idle` emits `start_us`, `pass_change_us`,
+      `step_us`, `finish_us`, `publish_us`, and `probe_us`.
+- [x] `DIAG,snapshot_idle` is Tier-A.
+- [x] Capture-serial build passes with RAM1 locals **6976**.
+- [x] Full native suite passes: **1489/1489** tests.
+- [ ] Device recapture attributes the 79 ms class and freezes `T_RT_reserve`
+      before any construction-bound change.
