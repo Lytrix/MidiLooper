@@ -582,6 +582,18 @@ void test_snapshot_find_note_uses_pitch_hint_then_scan() {
   TEST_ASSERT_NULL(snapshot->findNote(91, 60).get());
 }
 
+void test_snapshot_find_note_at_pitch_stays_on_event_pitch() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(90, 60, 100, 200));
+  const auto snapshot = buildSnapshotForTests(changes);
+  TEST_ASSERT_NOT_NULL(snapshot->findNoteAtPitch(90, 60).get());
+  TEST_ASSERT_EQUAL_PTR(snapshot->findNote(90, 60).get(),
+                        snapshot->findNoteAtPitch(90, 60).get());
+  TEST_ASSERT_NULL(snapshot->findNoteAtPitch(90, 64).get());
+  TEST_ASSERT_EQUAL(90u, snapshot->findNote(90, 64)->noteId);
+  TEST_ASSERT_NULL(snapshot->findNoteAtPitch(91, 60).get());
+}
+
 void test_snapshot_applies_one_bar_in_playhead_arrival_order() {
   LoopSnapshotChangeSet changes;
   changes.notes.push_back(addSnapshotNote(70, 60, 0, 3072));
@@ -742,5 +754,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_failed_candidate_preserves_parent);
   RUN_TEST(test_snapshot_replaces_pitch_and_clears_old_membership);
   RUN_TEST(test_snapshot_find_note_uses_pitch_hint_then_scan);
+  RUN_TEST(test_snapshot_find_note_at_pitch_stays_on_event_pitch);
   return UNITY_END();
 }

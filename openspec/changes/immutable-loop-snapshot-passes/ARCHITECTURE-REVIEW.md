@@ -453,3 +453,19 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       `note_lookup=18293` on `pass_change=21050`; candidate stayed
       `root=0x0` until `pending=0` / `root=0x703f2eb0` / `root_rev=6`.
 - [ ] Do not check off tasks `3.5`/`3.6` on this measurement slice.
+
+### Stage 2 caller-scoped pitch lookup — 2026-08-28
+
+- [x] Architecture gate posted: owner remains `LoopSnapshot` plus
+      `appendNextPassChangeFragment`; no ownership, transition, or
+      execution-bound change.
+- [x] Pass-change identity uses `findNoteAtPitch`; generic `findNote`
+      still walks other pitches for note-edit.
+- [x] Native fixture
+      `test_snapshot_find_note_at_pitch_stays_on_event_pitch`.
+- [x] Capture-serial RAM1 locals **6944**.
+- [x] Full native suite passes: **1495/1495** tests.
+- [x] Device recapture [`005527`](../../../captures/session_20260828_005527.log):
+      `note_lookup` max 857 µs (was 18293); `pass_change` max 3.219 ms;
+      candidate stayed `root=0x0`. File ends still `pending=1`.
+- [ ] Do not check off tasks `3.5`/`3.6` on this lookup slice.

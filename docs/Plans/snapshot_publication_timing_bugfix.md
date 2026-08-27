@@ -501,7 +501,7 @@ out of scope.
 | Item | Finding | Status |
 |---|---|---|
 | Session-exit length retarget | The 15.262 ms discard is closed on [`003015`](../../captures/session_20260828_003015.log): first PLAYING idle after record stop is `discard=47`. Snapshot-root length is the sole note-boundary authority. Session-exit clones one header when applied live-record ticks fit the sealed length; non-fit still destroys the tree. | Device recapture closed |
-| `startNextPassChangeFragment` | The 20 ms start is `note_lookup` (`LoopSnapshot::findNote`). On [`004119`](../../captures/session_20260828_004119.log) at 100.119 s, `pass_change=21050` and `note_lookup=18293` (86.9%). Every ≥10 ms fragment is 82–88% lookup. The caller-specific record/overdub pass invariant permits pitch-scoped identity lookup. | Inner attribution closed; lookup not implemented |
+| `startNextPassChangeFragment` | The 20 ms start was `note_lookup`. [`005527`](../../captures/session_20260828_005527.log) drops that class: `note_lookup` max **857 µs**, `pass_change` max **3.219 ms** (was 18.293 / 21.050 ms on [`004119`](../../captures/session_20260828_004119.log)). Remaining pass-change cost is refill-dominated. Same-pitch scan remains content-sized. | Device recapture closed for the other-pitch walk |
 | `LoopSnapshotConstruction::step` | The 5.992 ms observation does not justify a rewrite by itself. | No firmware change justified yet |
 | `T_RT_reserve` | Per-turn measurement remains necessary; freezing the minimum observed reserve is not a valid guarantee. | Contract remains open |
 | ExecutionBounds rows 21–22 | Intended goals remain valid, but the current implementation does not fully enforce them. | Update only with matching firmware |
@@ -509,7 +509,7 @@ out of scope.
 Do not check off OpenSpec `3.5` / `3.6` until the reserve contract and
 device gate are closed.
 
-## Proposed solution — caller-scoped pitch lookup (not implemented)
+## Proposed solution — caller-scoped pitch lookup (implemented 2026-08-28)
 
 **Problem:** On [`225659`](../../captures/session_20260827_225659.log) at
 125.868 s, STOPPED session-exit idle is **20.016 ms** with
@@ -563,13 +563,13 @@ support the same-pitch participant contract. The pass-specific proof
 also depends on the capture-pass `NoteId` lifecycle and on keeping
 note-edit replay outside this caller.
 
-**Proposed lookup change**
+**Implemented lookup change**
 
 Keep `LoopSnapshot::findNote` unchanged for note-edit and other generic
-callers. Add or reuse a `LoopSnapshot` extension that searches only the
-event's pitch, and use it only from `appendNextPassChangeFragment`.
+callers. `LoopSnapshot::findNoteAtPitch` searches only the event's pitch
+and is used only from `appendNextPassChangeFragment`.
 The existing `eventAlreadyInSnapshot` check remains unchanged; only the
-parent-note identity test becomes caller-scoped.
+parent-note identity test is caller-scoped.
 
 This preserves the current publication transitions and the 32-change
 journal cap. It removes the unrelated-pitch walk without changing
@@ -634,12 +634,15 @@ Owner stays `Loop` / `LoopSnapshot`. No new manager.
 
 **Remaining gate**
 
-- Device recapture [`004119`](../../captures/session_20260828_004119.log)
-  **closes** inner attribution: the 20 ms class is `note_lookup`.
-  Completeness held (`root=0x0` until `pending=0` /
-  `root=0x703f2eb0` / `root_rev=6`).
-- Pitch-scoped lookup is now authorized by that named owner. Implement
-  it as the next slice.
+- Native fixture
+  `test_snapshot_find_note_at_pitch_stays_on_event_pitch` covers scoped
+  versus generic lookup.
+- Device recapture [`005527`](../../captures/session_20260828_005527.log)
+  **closes** the other-pitch walk: `note_lookup` max 857 µs. Completeness
+  held (`root=0x0` through the file). The file ends at 103.013 s still
+  `pending=1` / `queued=3`, so publication itself is not closed here.
+- Same-pitch membership scan and refill remain measured but not bounded.
+- Do not freeze `T_RT_reserve`. Do not check off OpenSpec `3.5` / `3.6`.
 
 ## No justified `LoopSnapshotConstruction::step` fix
 
@@ -853,3 +856,50 @@ firmware that enforces the corresponding goal.
   rebuild.
 - `T_RT_reserve` is not frozen. `step` max is 5.399 ms. Do not check
   off OpenSpec `3.5` / `3.6`.
+
+## Pre-implementation review — Stage 2 caller-scoped pitch lookup
+
+### Ready
+- `findNote` already has a one-pitch search.
+- `appendNextPassChangeFragment` is the measured 20 ms caller.
+- Generic `findNote(90, 64)` still covers note-edit cross-pitch.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| New method | `LoopSnapshot::findNoteAtPitch` |
+| Caller | `appendNextPassChangeFragment` only |
+| Generic `findNote` | Unchanged |
+| Journal cap | Unchanged |
+
+### Open before coding
+1. Device recapture of the [`004119`](../../captures/session_20260828_004119.log)
+   21 ms class — not a firmware blocker.
+
+### Proceed?
+- YES — implemented 2026-08-28. Host gates: capture-serial RAM1 locals
+  **6944**; native **1495/1495**. Device recapture
+  [`005527`](../../captures/session_20260828_005527.log) drops
+  `note_lookup` from 18.293 ms to 857 µs.
+
+## Stage 2 recapture — [`005527`](../../captures/session_20260828_005527.log)
+
+- Other-pitch walk **closed**. 18704 parent / child / inner triples, 0
+  truncated.
+- `note_lookup` max **857 µs** (was 18293 on
+  [`004119`](../../captures/session_20260828_004119.log)). `pass_change`
+  max **3.219 ms** (was 21050). No `pass_change >= 10000`.
+- Largest pass-change rows are refill-dominated (`refill=2236` of
+  `pass_change=3219` at 86.350 s). Lookup share on `pass_change >= 1000`
+  is 0.05–0.39.
+- Exclusive leftover after the five inners is 3–29 µs on those rows.
+- Discard gate remains closed: `discard` max **35 µs**.
+- Completeness held: `root=0x0` on every row. File ends at 103.013 s
+  still `pending=1`, `queued=3`, `construction=10`, `journals=0`. This
+  file does not close publication.
+- Stage 1 hold: `PLAYING -> STOPPED` at 94.769 s; first STOPPED idle at
+  +0.071 s (`pending=1`, `queued=3`, `root=0x0`).
+- RECORDING used 3780 idles / **379 ms** CPU, `us_max=7.480 ms`. That
+  is not a prefix rebuild. The 7.480 ms parent is a live-record `start`
+  with `pass_change=0`.
+- `step` max is 5.835 ms. `T_RT_reserve` is not frozen.
