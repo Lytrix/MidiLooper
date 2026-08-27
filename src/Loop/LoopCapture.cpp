@@ -607,6 +607,10 @@ void Loop::replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes)
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
   overdubSourceViewEstablished_ = true;
 }
+
+void Loop::pushPendingNoteChangeForTest(PendingNoteChange change) {
+  pendingNoteChanges_.push_back(std::move(change));
+}
 #endif
 
 LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) {

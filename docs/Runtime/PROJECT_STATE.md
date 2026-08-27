@@ -51,8 +51,12 @@ Capture [`202635`](../../captures/session_20260827_202635.log) confirms journal
 drain and eventual `pending=0`, but still records 79.169 ms and 74.453 ms
 slices from whole-pass session-exit start. That start now uses a persistent
 `CommittedEventRange` cursor and the existing journal caps so one admitted
-unit builds at most one bounded pass-change fragment. Device `T_RT_reserve`
-recapture remains open.
+unit builds at most one bounded pass-change fragment. Capture
+[`204136`](../../captures/session_20260827_204136.log) published `root_rev=8`
+when wrap journals drained while session-exit passes were still queued;
+playback then dropped the first record pass. Wrap completion now waits for
+queued passes, construction progress, and companion changes before
+`storePublishedSnapshot`. Device `T_RT_reserve` recapture remains open.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.
