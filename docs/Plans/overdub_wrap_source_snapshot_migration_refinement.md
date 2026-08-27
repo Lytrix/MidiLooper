@@ -82,6 +82,9 @@ Stages 6–8 are follow-on work and are not activated by this refinement.
 - Candidate construction uses fixed-capacity immutable membership pages and a
   persistent bar cursor. `begin()` must not enumerate all bars up front, and a
   construction unit must not copy, scan, or sort an unbounded membership list.
+  The existing apply state now persists membership-copy, mutation, append, and
+  event-sort progress so one admitted unit copies, scans, appends, or sorts at
+  most one 16-reference membership page.
 - The event index is effective content for this slice. Hide removes the paired
   NoteOn/NoteOff event references by `NoteId`; geometry changes replace their
   immutable note event objects while preserving `NoteId` and canonical order.
@@ -107,6 +110,32 @@ The fix extends those existing admission gates to recognize all pending
 snapshot work while retaining `stepPendingSnapshotPublish(1)`. Native and
 capture-serial build gates pass; device recapture must verify a final
 `pending=0` row.
+
+### Construction slice finding — 2026-08-27
+
+Capture [`200115`](../../captures/session_20260827_200115.log) showed a
+63.667 ms session-exit construction slice and a following 64 ms `midi_gap`.
+The previous “one bar” unit could copy and scan all eight membership pages in
+one admitted step. `LoopSnapshotConstruction` now retains page-level progress
+through copy, mutation, append, and event sorting while keeping publication
+atomic. The capture-serial build remains RAM1-safe at 7008 locals; native
+verification passes, but the device `T_RT_reserve` recapture remains open.
+
+### Device recapture — 2026-08-27
+
+Capture [`202635`](../../captures/session_20260827_202635.log) confirms the
+admission fix and journal publication: 18 wrap fragments drain from
+`journals=18` to `journals=0`, the root advances to `root_rev=5`, and the
+session eventually reaches `pending=0` at `root_rev=13`. The page-progress
+build still fails the interruption gate: `snapshot_idle` reaches 79.169 ms
+(`construction=4`), with later 74.453 ms and 41.000 ms slices. Corresponding
+construction-period `midi_gap` values reach 79.486 ms and 74.944 ms, and
+deadline-lateness markers reach 78.024 ms (NoteOn) and 20.948 ms (NoteOff).
+The 79.169 ms slice is `startNextPendingConstruction` for a queued session-exit
+pass, not a membership-page step. That start now reuses the existing journal
+caps and a persistent `CommittedEventRange` cursor so one admitted unit builds
+at most one bounded pass-change fragment. Publication stays atomic until every
+queued fragment completes. Device `T_RT_reserve` recapture remains open.
 
 ## Work stages
 

@@ -330,3 +330,15 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
 - [x] Full native suite passes: **1484/1484** tests.
 - [ ] Device recapture must show the queued session-exit pass completing with
       `pending=0`, then measure the remaining `T_RT_reserve` gate.
+
+### Session-exit start fragment implementation review — 2026-08-27
+
+- [x] Architecture gate posted: owner remains `startNextPendingConstruction`;
+      no ownership or transition change.
+- [x] Session-exit start now emits at most one journal-capped pass-change
+      fragment through a persistent `CommittedEventRange` cursor.
+- [x] Publication still waits until every queued fragment completes.
+- [x] Capture-serial build passes with RAM1 locals **7008**.
+- [x] Full native suite passes: **1485/1485** tests.
+- [ ] Device recapture must remeasure `T_RT_reserve` on
+      [`202635`](../../../captures/session_20260827_202635.log)-class content.

@@ -43,7 +43,16 @@ without USB-host ownership changes, so task `3.6` recapture is unblocked.
 The follow-up admission fix allows queued session-exit snapshot work after
 wrap-journal drain and permits the bounded Snapshot owner while tracks are
 stopped but the transport clock remains running. Focused native coverage
-passes; full native and device recapture remain open.
+passes; full native and device recapture remain open. Construction now
+persists membership-copy, mutation, append, and event-sort progress at one
+fixed-capacity membership page per admitted unit. The capture-serial build
+remains at **7008** RAM1 locals; device `T_RT_reserve` recapture remains open.
+Capture [`202635`](../../captures/session_20260827_202635.log) confirms journal
+drain and eventual `pending=0`, but still records 79.169 ms and 74.453 ms
+slices from whole-pass session-exit start. That start now uses a persistent
+`CommittedEventRange` cursor and the existing journal caps so one admitted
+unit builds at most one bounded pass-change fragment. Device `T_RT_reserve`
+recapture remains open.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

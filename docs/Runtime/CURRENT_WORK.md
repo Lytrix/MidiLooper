@@ -59,7 +59,15 @@ code 420652, padding 5332). The follow-up admission fix now allows queued
 session-exit snapshot work after the wrap journals drain, and allows the
 bounded Snapshot owner to run when tracks are stopped but the transport clock
 is still running. Focused native admission coverage passes; full native and
-device recapture remain open.
+device recapture remain open. Construction now persists membership-copy,
+mutation, append, and event-sort progress at one fixed-capacity membership
+page per admitted unit; native snapshot/take-survival coverage passes and the
+device recapture [`202635`](../../captures/session_20260827_202635.log) still
+fails `T_RT_reserve`: `snapshot_idle` reached 79.169 ms because session-exit
+start reconstructed a whole queued pass in one admitted unit. Existing journal
+caps now also bound that start: `startNextPendingConstruction` walks committed
+pass events through a persistent `CommittedEventRange` cursor and begins at
+most one journal-capped change fragment. Device recapture remains open.
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:
 [`DEC-047`](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication).

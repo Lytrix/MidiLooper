@@ -296,12 +296,12 @@ void test_record_stop_publishes_complete_snapshot() {
   TEST_ASSERT_NOT_NULL(snapshot.get());
   const auto notes = snapshot->noteMembership(60, 0);
   TEST_ASSERT_NOT_NULL(notes.get());
-  TEST_ASSERT_EQUAL(1u, notes->references.size());
+  TEST_ASSERT_EQUAL(1u, notes->count);
   TEST_ASSERT_EQUAL(100u, notes->references[0]->startTick);
   TEST_ASSERT_EQUAL(200u, notes->references[0]->endTick);
   const auto events = snapshot->eventMembership(0);
   TEST_ASSERT_NOT_NULL(events.get());
-  TEST_ASSERT_EQUAL(3u, events->references.size());
+  TEST_ASSERT_EQUAL(3u, events->count);
   TEST_ASSERT_EQUAL(events->references[0]->canonicalOrder < events->references[1]->canonicalOrder,
                     true);
   TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
@@ -326,8 +326,8 @@ void test_record_wrap_note_publishes_one_reference() {
   const auto head = snapshot->noteMembership(60, 0);
   TEST_ASSERT_NOT_NULL(tail.get());
   TEST_ASSERT_NOT_NULL(head.get());
-  TEST_ASSERT_EQUAL(1u, tail->references.size());
-  TEST_ASSERT_EQUAL(1u, head->references.size());
+  TEST_ASSERT_EQUAL(1u, tail->count);
+  TEST_ASSERT_EQUAL(1u, head->count);
   TEST_ASSERT_EQUAL_PTR(tail->references[0].get(), head->references[0].get());
   TEST_ASSERT_TRUE(tail->references[0]->isWrap());
 }
@@ -371,10 +371,10 @@ void test_overdub_stop_publishes_successor_from_parent() {
   const auto afterOverdub = loop.publishedSnapshot();
   TEST_ASSERT_NOT_NULL(afterOverdub.get());
   TEST_ASSERT_TRUE(afterOverdub.get() != afterRecord.get());
-  TEST_ASSERT_EQUAL(1u, afterRecord->noteMembership(60, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, afterRecord->noteMembership(60, 0)->count);
   TEST_ASSERT_NULL(afterRecord->noteMembership(64, 0).get());
-  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(60, 0)->references.size());
-  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(64, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(60, 0)->count);
+  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(64, 0)->count);
   TEST_ASSERT_EQUAL_PTR(afterRecord->noteMembership(60, 0)->references[0].get(),
                         afterOverdub->noteMembership(60, 0)->references[0].get());
 }
@@ -399,9 +399,9 @@ void test_note_edit_close_replaces_published_note() {
   TEST_ASSERT_NOT_NULL(afterEdit.get());
   TEST_ASSERT_TRUE(afterEdit.get() != afterRecord.get());
   const auto oldPitch = afterEdit->noteMembership(60, 0);
-  const size_t oldPitchCount = oldPitch ? oldPitch->references.size() : 0;
+  const size_t oldPitchCount = oldPitch ? oldPitch->count : 0;
   TEST_ASSERT_EQUAL(0u, oldPitchCount);
-  TEST_ASSERT_EQUAL(1u, afterEdit->noteMembership(67, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, afterEdit->noteMembership(67, 0)->count);
   TEST_ASSERT_EQUAL(noteId, afterEdit->noteMembership(67, 0)->references[0]->noteId);
 }
 
@@ -582,8 +582,8 @@ void test_stale_snapshot_applies_unpublished_hide_companion() {
   recordLinearNote(loop, 100, 200, 60);
   const auto membership = loop.publishedSnapshot()->noteMembership(60, 0);
   TEST_ASSERT_NOT_NULL(membership.get());
-  TEST_ASSERT_FALSE(membership->references.empty());
-  const NoteId hiddenNoteId = membership->references.front()->noteId;
+  TEST_ASSERT_TRUE(snapshotMembershipCount(membership.get()) > 0);
+  const NoteId hiddenNoteId = membership->references[0]->noteId;
   TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, hiddenNoteId);
 
   loop.openOverdubSession(0);
@@ -676,7 +676,7 @@ void test_queue_overdub_snapshot_waits_for_idle_steps() {
   drainPendingSnapshotPublish(loop);
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_TRUE(loop.publishedSnapshot().get() != afterRecord.get());
-  TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(64, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(64, 0)->count);
 }
 
 void test_live_record_pending_after_length_reaches_one_bar() {
@@ -792,7 +792,7 @@ void test_live_record_starts_snapshot_before_session_exit() {
                     loop.commitCapturePass(CommitReason::RecordStop, 200));
   drainPendingSnapshotPublish(loop);
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
-  TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(60, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(60, 0)->count);
 }
 
 void test_overdub_idle_advances_in_flight_construction_only() {
@@ -902,6 +902,38 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
 }
 
+void test_session_exit_pass_starts_as_journal_capped_fragments() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  constexpr uint8_t kNoteCount = 20;
+  for (uint8_t i = 0; i < kNoteCount; ++i) {
+    const uint32_t onTick = 40u + static_cast<uint32_t>(i) * 80u;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, 60 + i, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(onTick + 40u, 1, 60 + i, 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 1600));
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec snapshotEvents;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotEvents, 0, 3072));
+  uint8_t foundNoteOns = 0;
+  for (uint8_t i = 0; i < kNoteCount; ++i) {
+    TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, static_cast<uint8_t>(60 + i)));
+    ++foundNoteOns;
+  }
+  TEST_ASSERT_EQUAL(kNoteCount, foundNoteOns);
+}
+
 void test_overdub_without_parent_does_not_invent_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -967,6 +999,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
+  RUN_TEST(test_session_exit_pass_starts_as_journal_capped_fragments);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();
 }
