@@ -120,12 +120,15 @@ idle after record stop is `discard=47` (was `15262` on
 stayed `root=0x0` until `pending=0` / `root=0x703248cc` / `root_rev=1`.
 RECORDING used 2669 idles / 234 ms CPU, not a prefix rebuild. Native
 fixtures cover the 9216/21504 fit pair and the applied-ticks overflow
-discard. Host gates: capture-serial RAM1 locals **6976**; native
-**1494/1494**. For
-`startNextPassChangeFragment`, the record/overdub pass identity invariant
-now supports a proposed caller-scoped pitch lookup; inner ownership and
-the remaining pitch-local cost are still unmeasured. No `step` rewrite is
-justified yet.
+discard. Host gates after inner timings: capture-serial RAM1 locals
+**6944**. For
+`startNextPassChangeFragment`, device recapture
+[`004119`](../../captures/session_20260828_004119.log) names the 21 ms
+STOPPED session-exit as `note_lookup=18293` on `pass_change=21050`
+(86.9%). Every ≥10 ms fragment is 82–88% `LoopSnapshot::findNote`.
+Caller-scoped pitch lookup is the next slice. No `step` rewrite is
+justified yet. Host gates: capture-serial RAM1 locals **6944**; native
+**1494/1494**.
 Per-turn reserve measurement remains necessary, but freezing the minimum
 observed reserve is rejected as a guarantee. Do not remove the +16
 live-record bars. Do not check off OpenSpec `3.5`/`3.6`.

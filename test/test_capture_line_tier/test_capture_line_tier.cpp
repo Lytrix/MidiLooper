@@ -101,16 +101,20 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,child,start=79000,pass_change=1200,"
       "step=80,finish=40,publish=0,probe=1,enqueue=0,discard=0,emit=40"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,195718000,DIAG,snapshot_idle,inner,refill=200,event_scan=800,"
+      "note_lookup=18000,change_build=400,construct=300"));
 }
 
 void test_snapshot_idle_lines_fit_capture_text_budget() {
   // DebugSessionCapture kMaxCaptureTextBytes is 192; payload is 191 + NUL.
   // Parent uses observed-class maxima plus 10-digit micros. Child uses 6-digit
-  // durations (above observed leftover) so nine fields still fit. Teensy %p
-  // is 0x + 8 hex digits.
+  // durations (above observed leftover) so nine fields still fit. Inner uses
+  // the same 6-digit ceiling on a third line. Teensy %p is 0x + 8 hex digits.
   constexpr size_t kMaxCaptureTextPayload = 191;
   char parent[256];
   char child[256];
+  char inner[256];
   const int parentLen = snprintf(
       parent, sizeof(parent),
       "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=0xffffffff,root_rev=%lu,"
@@ -124,10 +128,17 @@ void test_snapshot_idle_lines_fit_capture_text_budget() {
       "finish=%lu,publish=%lu,probe=%lu,enqueue=%lu,discard=%lu,emit=%lu",
       4294967295ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul,
       999999ul, 999999ul, 999999ul);
+  const int innerLen = snprintf(
+      inner, sizeof(inner),
+      "#CAP,%lu,DIAG,snapshot_idle,inner,refill=%lu,event_scan=%lu,"
+      "note_lookup=%lu,change_build=%lu,construct=%lu",
+      4294967295ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul);
   TEST_ASSERT_GREATER_THAN(0, parentLen);
   TEST_ASSERT_GREATER_THAN(0, childLen);
+  TEST_ASSERT_GREATER_THAN(0, innerLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), parentLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), childLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), innerLen);
 }
 
 void test_transport_and_persistence_lines_are_tier_a() {

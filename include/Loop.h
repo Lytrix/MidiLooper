@@ -381,6 +381,11 @@ struct Loop {
   uint32_t lastSnapshotIdleEnqueueUs() const;
   uint32_t lastSnapshotIdleDiscardUs() const;
   uint32_t lastSnapshotIdleEmitUs() const;
+  uint32_t lastSnapshotIdleRefillUs() const;
+  uint32_t lastSnapshotIdleEventScanUs() const;
+  uint32_t lastSnapshotIdleNoteLookupUs() const;
+  uint32_t lastSnapshotIdleChangeBuildUs() const;
+  uint32_t lastSnapshotIdleConstructUs() const;
   void addSnapshotIdleEmitUs(uint32_t durationUs);
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;

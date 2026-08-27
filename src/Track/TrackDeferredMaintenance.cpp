@@ -109,6 +109,15 @@ TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleDiscardUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEmitUs()));
   DebugSessionCapture::appendCaptureTextLine(childLine);
+  snprintf(childLine, sizeof(childLine),
+           "#CAP,%lu,DIAG,snapshot_idle,inner,refill=%lu,event_scan=%lu,"
+           "note_lookup=%lu,change_build=%lu,construct=%lu",
+           nowUs, static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleRefillUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEventScanUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleNoteLookupUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleChangeBuildUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleConstructUs()));
+  DebugSessionCapture::appendCaptureTextLine(childLine);
 }
 
 TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,

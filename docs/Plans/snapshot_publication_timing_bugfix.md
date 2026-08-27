@@ -501,7 +501,7 @@ out of scope.
 | Item | Finding | Status |
 |---|---|---|
 | Session-exit length retarget | The 15.262 ms discard is closed on [`003015`](../../captures/session_20260828_003015.log): first PLAYING idle after record stop is `discard=47`. Snapshot-root length is the sole note-boundary authority. Session-exit clones one header when applied live-record ticks fit the sealed length; non-fit still destroys the tree. | Device recapture closed |
-| `startNextPassChangeFragment` | The 20.016 ms start is real. The caller-specific record/overdub pass invariant permits pitch-scoped identity lookup; its inner owner and remaining pitch-local cost are still unmeasured. | Proposed solution below; no implementation |
+| `startNextPassChangeFragment` | The 20 ms start is `note_lookup` (`LoopSnapshot::findNote`). On [`004119`](../../captures/session_20260828_004119.log) at 100.119 s, `pass_change=21050` and `note_lookup=18293` (86.9%). Every ≥10 ms fragment is 82–88% lookup. The caller-specific record/overdub pass invariant permits pitch-scoped identity lookup. | Inner attribution closed; lookup not implemented |
 | `LoopSnapshotConstruction::step` | The 5.992 ms observation does not justify a rewrite by itself. | No firmware change justified yet |
 | `T_RT_reserve` | Per-turn measurement remains necessary; freezing the minimum observed reserve is not a valid guarantee. | Contract remains open |
 | ExecutionBounds rows 21–22 | Intended goals remain valid, but the current implementation does not fully enforce them. | Update only with matching firmware |
@@ -577,14 +577,14 @@ same-pitch identity semantics. It does not yet establish a complete
 microsecond bound: a full scan of all bar memberships within one pitch
 remains content-dependent and must be measured.
 
-**Inner attribution**
+**Inner attribution (in tree 2026-08-28)**
 
-Add capture-gated inner timings on the existing child telemetry for the
-same STOPPED session-exit class:
+Capture-gated inner timings on a third `DIAG,snapshot_idle,inner` line
+from `appendSnapshotIdleCaptureLine`, paired by the same `#CAP` micros:
 
 - `refill` — `refillPassChangeBatch`;
 - `event_scan` — `eventAlreadyInSnapshot`;
-- `note_lookup` — the current or pitch-scoped `findNote` operation;
+- `note_lookup` — the current `findNote` operation;
 - `change_build` — open-note tracking and change-vector construction;
 - `construct` — `LoopSnapshotConstruction` creation.
 
@@ -634,10 +634,12 @@ Owner stays `Loop` / `LoopSnapshot`. No new manager.
 
 **Remaining gate**
 
-- Device recapture of the 125.868 s class with inner attribution;
-  completeness must remain `root=0x0` until `pending=0`.
-- Only after the caller-specific identity invariant and the limiting
-  inner owner are covered should the pitch-scoped lookup be implemented.
+- Device recapture [`004119`](../../captures/session_20260828_004119.log)
+  **closes** inner attribution: the 20 ms class is `note_lookup`.
+  Completeness held (`root=0x0` until `pending=0` /
+  `root=0x703f2eb0` / `root_rev=6`).
+- Pitch-scoped lookup is now authorized by that named owner. Implement
+  it as the next slice.
 
 ## No justified `LoopSnapshotConstruction::step` fix
 
@@ -802,3 +804,52 @@ firmware that enforces the corresponding goal.
   has no later `snapshot_idle` in this file.
 - Named maxima still open: `start`/`pass_change` **12.405 / 12.357 ms**,
   `step` 4.391 ms. `T_RT_reserve` is not frozen.
+
+## Pre-implementation review — Stage 2 pass-change inner timings
+
+### Ready
+- `pass_change` already wraps `startNextPassChangeFragment`.
+- Child line is at nine fields; five more fields do not fit 191 bytes.
+- `DIAG,snapshot_idle,` is already Tier-A.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Fit method | Third `DIAG,snapshot_idle,inner` line; reuse the child buffer |
+| Pairing | Same `#CAP` micros as parent/child |
+| Lookup / journal cap | Unchanged this slice |
+| Construction | Unchanged |
+
+### Open before coding
+1. Device recapture of the 12.4 ms `pass_change` class — not a firmware blocker.
+
+### Proceed?
+- YES — implemented 2026-08-28. Host gates: capture-serial RAM1 locals
+  **6944**; native **1494/1494**. Device recapture
+  [`004119`](../../captures/session_20260828_004119.log) names
+  `note_lookup`.
+
+## Stage 2 recapture — [`004119`](../../captures/session_20260828_004119.log)
+
+- Inner-line budget **closed**. 18216 parent / child / inner rows, 0
+  truncated. Inner length 101–115.
+- Exclusive `pass_change` leftover after the five inners is 4–28 µs on
+  every `pass_change >= 1000` row.
+- The 20 ms STOPPED session-exit class is `note_lookup`. At 100.119 s:
+  parent **21.096 ms**, `start=21073`, `pass_change=21050`,
+  `note_lookup=18293` (86.9%), `refill=1299`, `event_scan=1253`,
+  `change_build=162`, `construct=15`. Every ≥10 ms fragment is 82–88%
+  lookup. `step=0` on those rows.
+- A separate 2–3.5 ms cluster at 80.8 s (after `OVERDUBBING -> PLAYING`)
+  is `refill`-dominated. That is not the 20 ms class.
+- Discard gate remains closed: `discard` max **30 µs**.
+- Completeness held: `root=0x0` until 108.551 s
+  (`pending=0`, `root=0x703f2eb0`, `root_rev=6`, `queued=0`,
+  `construction=0`, `journals=0`). No earlier nonzero root.
+- Stage 1 hold: `PLAYING -> STOPPED` at 91.640 s; first STOPPED idle at
+  +0.121 s (`pending=1`, `queued=1`, `root=0x0`).
+- RECORDING used 3923 idles / **318 ms** CPU, `us_max=7.745 ms`. That
+  is not a [`121754`](../../captures/session_20260826_121754.log) prefix
+  rebuild.
+- `T_RT_reserve` is not frozen. `step` max is 5.399 ms. Do not check
+  off OpenSpec `3.5` / `3.6`.
