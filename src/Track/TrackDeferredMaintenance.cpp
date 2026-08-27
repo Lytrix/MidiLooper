@@ -754,7 +754,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     return;
   }
 
-  Loop& snapshotLoop = getActiveLoop();
+  Loop& snapshotLoop = loopWithPendingSnapshotPublish();
   const bool havePublishedSnapshot =
       static_cast<bool>(snapshotLoop.publishedSnapshot());
   const bool visualCacheNeedsFirstPaint =

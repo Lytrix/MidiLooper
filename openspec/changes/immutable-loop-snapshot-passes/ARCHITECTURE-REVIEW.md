@@ -373,3 +373,15 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
 - [x] Full native suite passes: **1487/1487** tests.
 - [ ] Device recapture and the HITL publication gate remain open.
 - [ ] Do not check off tasks `3.5`/`3.6` on this Stage 1 policy slice.
+
+### Stage 1 STOPPED pending-track selection — 2026-08-27
+
+- [x] Architecture gate posted: owner remains
+      `main.cpp::runDeferredIdleMaintenance` plus
+      `Track::processDeferredIdleMaintenance`; no ownership, transition, or
+      execution-bound change.
+- [x] STOPPED Snapshot turns scan every slot and select a track with pending
+      publication instead of `sStoppedIdleTrackCursor`.
+- [x] Capture-serial build passes with RAM1 locals **7008**.
+- [x] Full native suite passes: **1489/1489** tests.
+- [ ] Device recapture remains open.

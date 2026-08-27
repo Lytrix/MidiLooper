@@ -93,6 +93,32 @@ inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverd
   return true;
 }
 
+/// STOPPED idle may keep the transport clock running. Snapshot is still
+/// admitted when any slot still has pending publication work.
+inline bool allowStoppedClockSnapshotStep(bool allTracksStopped, bool clockRunning,
+                                          bool anyPendingSnapshotWork) {
+  return !allTracksStopped || !clockRunning || anyPendingSnapshotWork;
+}
+
+/// Prefer a track with pending snapshot work on a STOPPED Snapshot turn.
+/// Walks from `cursor`. Returns `cursor` when no pending flag is set.
+inline uint8_t selectStoppedSnapshotTrack(uint8_t cursor, uint8_t trackCount,
+                                          const bool* pendingByTrack) {
+  if (trackCount == 0 || pendingByTrack == nullptr) {
+    return 0;
+  }
+  if (cursor >= trackCount) {
+    cursor = 0;
+  }
+  for (uint8_t offset = 0; offset < trackCount; ++offset) {
+    const uint8_t index = static_cast<uint8_t>((cursor + offset) % trackCount);
+    if (pendingByTrack[index]) {
+      return index;
+    }
+  }
+  return cursor;
+}
+
 /// First-record live construction waits until `currentTick` has left bar 1.
 /// `loopLengthTicks` can already be one bar while that bar is still being
 /// written (session_20260826_114012).

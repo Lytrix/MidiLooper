@@ -184,4 +184,29 @@ must not hide the construction execution cost.
 - Native: `test_stopped_pending_snapshot_wins_over_first_paint`.
 - Host gates: `teensy41-capture-serial` RAM1 locals **7008**; native
   **1487/1487**.
-- Device recapture and HITL publication gate remain open.
+- Device recapture [`214832`](../../captures/session_20260827_214832.log):
+  **not closed**. Completeness held (`journals=0`, `queued=4`, `root=0x0`).
+  After `PLAYING -> STOPPED` the first-paint `VCACHE` (`notes=0`, `dirty=1`)
+  and persist work ran; no `STOPPED` `snapshot_idle` appeared. Last PLAYING
+  idle was still `pending=1`, `queued=4`, `construction=1`. Publication
+  never reached `pending=0` with a root. MIDI timing is observation only.
+- Device recapture [`215420`](../../captures/session_20260827_215420.log):
+  **not closed**. Completeness held (`root=0x0` through journal drain and
+  `queued>=1`). Last PLAYING idle at 87.733 s is `pending=1`, `queued=1`,
+  `applied=1`, `construction=31`. `PLAYING -> STOPPED` at 87.802 s; capture
+  continues past 104 s with persist and `idle_maint`, zero `STOPPED`
+  `snapshot_idle`, and zero post-stop `VCACHE`. Last pre-stop cache is
+  `slice_clean` `notes=166` `dirty=0`, so this hold is not the first-paint
+  combination. Undo/redo are present during PLAYING (`82.421` / `84.047`),
+  not after publication.
+- Device recapture [`215845`](../../captures/session_20260827_215845.log):
+  **not closed**. File starts mid-stream. Completeness held (`root=0x0`).
+  Last PLAYING idle at 323.017 s is `pending=1`, `queued=3`, `journals=2`,
+  `construction=28`. `PLAYING -> STOPPED` at 323.033 s; the hold continues
+  past 452 s with persist and `idle_maint` (~300 µs after 327 s), zero
+  `STOPPED` `snapshot_idle`, and zero post-stop `VCACHE`. Last pre-stop
+  cache is `slice_clean` `notes=153` `dirty=0`. No undo/redo.
+- Remaining admission hole (2026-08-27): first-paint policy is not the
+  STOPPED miss. `runDeferredIdleMaintenance` only scanned `getActiveLoop()`
+  and then serviced `sStoppedIdleTrackCursor`. STOPPED Snapshot turns now
+  scan every slot and select a track that still has pending publication.

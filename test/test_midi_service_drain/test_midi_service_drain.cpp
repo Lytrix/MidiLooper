@@ -98,6 +98,22 @@ void test_first_record_snapshot_idle_matches_overdub_playing_start() {
       false, false, false, true, false, false));
 }
 
+void test_stopped_clock_snapshot_requires_pending_work() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(false, true, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, true, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, true, true));
+}
+
+void test_stopped_snapshot_track_prefers_pending_slot() {
+  const bool pending[] = {false, false, true, false};
+  TEST_ASSERT_EQUAL_UINT8(2, MidiServiceDrain::selectStoppedSnapshotTrack(0, 4, pending));
+  TEST_ASSERT_EQUAL_UINT8(2, MidiServiceDrain::selectStoppedSnapshotTrack(2, 4, pending));
+  TEST_ASSERT_EQUAL_UINT8(2, MidiServiceDrain::selectStoppedSnapshotTrack(3, 4, pending));
+  const bool none[] = {false, false, false, false};
+  TEST_ASSERT_EQUAL_UINT8(1, MidiServiceDrain::selectStoppedSnapshotTrack(1, 4, none));
+}
+
 void test_stopped_pending_snapshot_wins_over_first_paint() {
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
       false, false, false, false, false, true));
@@ -120,6 +136,8 @@ int main() {
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
+  RUN_TEST(test_stopped_clock_snapshot_requires_pending_work);
+  RUN_TEST(test_stopped_snapshot_track_prefers_pending_slot);
   RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);
   return UNITY_END();
 }
