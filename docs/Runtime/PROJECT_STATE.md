@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-28 (pass-change inner attribution device PASS)
+Last updated: 2026-08-28 (caller-scoped pitch lookup device PASS)
 
 ---
 
@@ -75,7 +75,9 @@ Session-exit length handoff device PASS
 PLAYING `discard=47`, first root `pending=0` / `root=0x703248cc` /
 `root_rev=1`. Non-fit discard remains a content-sized destructor. Device recapture [`004119`](../../captures/session_20260828_004119.log)
 names the 21 ms session-exit as `note_lookup` (86.9% of
-`pass_change=21050`). Caller-scoped pitch lookup is the next slice.
+`pass_change=21050`). Caller-scoped pitch lookup device PASS
+[`005527`](../../captures/session_20260828_005527.log): `note_lookup`
+max 857 µs, `pass_change` max 3.219 ms.
 No `step` rewrite is justified yet; and freezing the minimum observed
 `T_RT_reserve` is rejected as a guarantee. Construction bounds stay
 unchanged.

@@ -686,8 +686,8 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.noteLookupUs);
 #endif
-      parentHasNote =
-          static_cast<bool>(parent.findNote(event.noteId, event.data.noteData.note));
+      parentHasNote = static_cast<bool>(
+          parent.findNoteAtPitch(event.noteId, event.data.noteData.note));
     }
 #if defined(SESSION_CAPTURE)
     SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.changeBuildUs);

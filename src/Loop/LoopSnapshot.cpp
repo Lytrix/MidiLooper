@@ -582,50 +582,51 @@ LoopSnapshot::eventMembership(
   return membershipForBar<LoopSnapshotEventRef>(eventRoot_->pages, barIndex);
 }
 
-LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
-                                                        uint8_t pitchHint) const {
-  if (noteId == kInvalidNoteId || !spanRoot_) {
+LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNoteAtPitch(NoteId noteId,
+                                                               uint8_t pitch) const {
+  if (noteId == kInvalidNoteId || !spanRoot_ || pitch >= kLoopSnapshotPitchCount) {
     return {};
   }
-  auto searchPitch = [this, noteId](uint8_t pitch) -> LoopSnapshotNoteRef {
-    if (pitch >= kLoopSnapshotPitchCount) {
-      return {};
+  const auto& pitchDirectory = spanRoot_->pitches[pitch];
+  if (!pitchDirectory) {
+    return {};
+  }
+  for (const auto& page : pitchDirectory->pages.pages) {
+    if (!page) {
+      continue;
     }
-    const auto& pitchDirectory = spanRoot_->pitches[pitch];
-    if (!pitchDirectory) {
-      return {};
-    }
-    for (const auto& page : pitchDirectory->pages.pages) {
-      if (!page) {
+    for (const auto& membership : page->memberships) {
+      if (!membership) {
         continue;
       }
-      for (const auto& membership : page->memberships) {
-        if (!membership) {
-          continue;
-        }
-        LoopSnapshotNoteRef found;
-        forEachSnapshotMembershipReference(
-            membership.get(), [noteId, &found](const LoopSnapshotNoteRef& reference) {
-              if (!found && reference && reference->noteId == noteId) {
-                found = reference;
-              }
-            });
-        if (found) {
-          return found;
-        }
+      LoopSnapshotNoteRef found;
+      forEachSnapshotMembershipReference(
+          membership.get(), [noteId, &found](const LoopSnapshotNoteRef& reference) {
+            if (!found && reference && reference->noteId == noteId) {
+              found = reference;
+            }
+          });
+      if (found) {
+        return found;
       }
     }
-    return {};
-  };
+  }
+  return {};
+}
 
-  if (auto found = searchPitch(pitchHint)) {
+LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
+                                                        uint8_t pitchHint) const {
+  if (auto found = findNoteAtPitch(noteId, pitchHint)) {
     return found;
+  }
+  if (noteId == kInvalidNoteId || !spanRoot_) {
+    return {};
   }
   for (uint16_t pitch = 0; pitch < kLoopSnapshotPitchCount; ++pitch) {
     if (pitch == pitchHint) {
       continue;
     }
-    if (auto found = searchPitch(static_cast<uint8_t>(pitch))) {
+    if (auto found = findNoteAtPitch(noteId, static_cast<uint8_t>(pitch))) {
       return found;
     }
   }

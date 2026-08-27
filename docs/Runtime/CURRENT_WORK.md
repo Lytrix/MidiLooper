@@ -126,9 +126,14 @@ discard. Host gates after inner timings: capture-serial RAM1 locals
 [`004119`](../../captures/session_20260828_004119.log) names the 21 ms
 STOPPED session-exit as `note_lookup=18293` on `pass_change=21050`
 (86.9%). Every ≥10 ms fragment is 82–88% `LoopSnapshot::findNote`.
-Caller-scoped pitch lookup is the next slice. No `step` rewrite is
+Caller-scoped pitch lookup device PASS
+[`005527`](../../captures/session_20260828_005527.log): `note_lookup`
+max **857 µs** (was 18293 on
+[`004119`](../../captures/session_20260828_004119.log)); `pass_change`
+max **3.219 ms**. Completeness held (`root=0x0`); the file ends still
+`pending=1`. Same-pitch scan and refill remain. No `step` rewrite is
 justified yet. Host gates: capture-serial RAM1 locals **6944**; native
-**1494/1494**.
+**1495/1495**.
 Per-turn reserve measurement remains necessary, but freezing the minimum
 observed reserve is rejected as a guarantee. Do not remove the +16
 live-record bars. Do not check off OpenSpec `3.5`/`3.6`.

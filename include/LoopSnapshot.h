@@ -185,6 +185,8 @@ class LoopSnapshot {
   SnapshotMembershipRef<LoopSnapshotEventRef> eventMembership(
       uint32_t barIndex) const;
   LoopSnapshotNoteRef findNote(NoteId noteId, uint8_t pitchHint = 0) const;
+  /// One-pitch identity lookup. Does not walk other pitches on a miss.
+  LoopSnapshotNoteRef findNoteAtPitch(NoteId noteId, uint8_t pitch) const;
 
   void appendCanonicalSpans(const LoopSnapshotNoteRef& note,
                             CanonicalNoteSpanVec& out) const;
