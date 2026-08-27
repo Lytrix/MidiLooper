@@ -87,8 +87,7 @@ const EditPass* findActiveEditPass(const Loop& loop, EditPassId id) {
 }
 
 LOOP_COLD_MEM void appendMergedPassNotes(const NoteUtils::DisplayNoteVec& notes,
-                                         LoopId loopId, uint32_t loopLengthTicks,
-                                         LoopSnapshotChangeSet& changes) {
+                                         LoopId loopId, LoopSnapshotChangeSet& changes) {
   struct MergedNote {
     NoteId noteId = kInvalidNoteId;
     LoopSnapshotNote value{};
@@ -114,7 +113,6 @@ LOOP_COLD_MEM void appendMergedPassNotes(const NoteUtils::DisplayNoteVec& notes,
       created.value.velocity = note.velocity;
       created.value.startTick = note.startTick;
       created.value.endTick = note.endTick;
-      created.value.loopLengthTicks = loopLengthTicks;
       merged.push_back(created);
       continue;
     }
@@ -152,8 +150,7 @@ LOOP_COLD_MEM void appendPassEvents(const MidiEventVec& events, LoopId loopId,
 }
 
 LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPass& row,
-                                       LoopId loopId, uint32_t loopLengthTicks,
-                                       LoopSnapshotChangeSet& changes) {
+                                       LoopId loopId, LoopSnapshotChangeSet& changes) {
   if (row.passType != EditPassType::Note) {
     return true;
   }
@@ -176,7 +173,6 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
   next.velocity = row.velocity;
   next.startTick = row.startTick;
   next.endTick = row.endTick;
-  next.loopLengthTicks = loopLengthTicks;
 
   const LoopSnapshotNoteRef previous = parent.findNote(row.targetNoteId, row.pitch);
   if (row.actionType == EditActionType::Create && !previous) {
@@ -197,7 +193,6 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
   change.previous = previous;
   change.next = *previous;
   change.next.loopId = loopId;
-  change.next.loopLengthTicks = loopLengthTicks;
   if (row.propertyType == EditPropertyType::Pitch ||
       row.propertyType == EditPropertyType::None ||
       row.propertyType == EditPropertyType::NoteRange ||
@@ -230,7 +225,7 @@ LOOP_COLD_MEM void appendCompanionChanges(const Loop& loop, const LoopSnapshot& 
     if (row == nullptr) {
       continue;
     }
-    appendEditRowChange(parent, *row, loop.loopId, loop.loopLengthTicks, changes);
+    appendEditRowChange(parent, *row, loop.loopId, changes);
   }
 }
 
@@ -292,14 +287,14 @@ bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
          (box.passChangeProgress.active && box.passChangeProgress.passId == passId);
 }
 
-uint32_t estimateNoteAffectedBars(const LoopSnapshotNote& note) {
-  if (note.loopLengthTicks == 0) {
+uint32_t estimateNoteAffectedBars(const LoopSnapshotNote& note, uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0) {
     return 0;
   }
-  if (note.isWrap()) {
+  if (note.isWrap(loopLengthTicks)) {
     const uint32_t tailBars =
-        note.startTick < note.loopLengthTicks
-            ? ((note.loopLengthTicks - 1 - note.startTick) / Config::TICKS_PER_BAR) + 1
+        note.startTick < loopLengthTicks
+            ? ((loopLengthTicks - 1 - note.startTick) / Config::TICKS_PER_BAR) + 1
             : 0;
     const uint32_t headBars =
         note.endTick == 0 ? 0 : ((note.endTick - 1) / Config::TICKS_PER_BAR) + 1;
@@ -425,7 +420,6 @@ void appendPendingNoteChange(const LoopSnapshot& parent, const PendingNoteChange
   noteChange.next.velocity = change.velocity;
   noteChange.next.startTick = change.startTick;
   noteChange.next.endTick = change.endTick;
-  noteChange.next.loopLengthTicks = loopLengthTicks;
   if (change.kind == PendingNoteChangeKind::Add) {
     noteChange.kind = SnapshotChangeKind::Add;
   } else if (change.kind == PendingNoteChangeKind::Hide) {
@@ -444,7 +438,6 @@ void appendPendingNoteChange(const LoopSnapshot& parent, const PendingNoteChange
     noteChange.previous = previous;
     noteChange.next = *previous;
     noteChange.next.loopId = loopId;
-    noteChange.next.loopLengthTicks = loopLengthTicks;
     noteChange.next.startTick = change.startTick;
     noteChange.next.endTick = change.endTick;
     noteChange.next.velocity = change.velocity == 0 ? previous->velocity : change.velocity;
@@ -504,6 +497,41 @@ uint32_t liveRecordNewParentLength(uint32_t completedTicks, uint32_t loopLengthT
   return loopLengthTicks > withRoom ? loopLengthTicks : withRoom;
 }
 
+bool pendingSnapshotFitsSealedLength(const PendingSnapshotPublishBox& box,
+                                     uint32_t sealedLength) {
+  if (sealedLength == 0 || box.appliedLiveRecordCompletedTicks == 0 ||
+      box.appliedLiveRecordCompletedTicks > sealedLength) {
+    return false;
+  }
+  if (box.unpublishedCandidate &&
+      box.unpublishedCandidate->loopLengthTicks() < sealedLength) {
+    return false;
+  }
+  if (box.construction &&
+      box.construction->candidate().loopLengthTicks() < sealedLength) {
+    return false;
+  }
+  return true;
+}
+
+bool handoffPendingSnapshotLength(PendingSnapshotPublishBox& box,
+                                  uint32_t sealedLength) {
+  if (box.unpublishedCandidate &&
+      box.unpublishedCandidate->loopLengthTicks() != sealedLength) {
+    ImmutableLoopSnapshotRef handedOff =
+        box.unpublishedCandidate->withLoopLengthTicks(sealedLength);
+    if (!handedOff) {
+      return false;
+    }
+    box.unpublishedCandidate = std::move(handedOff);
+  }
+  if (box.construction &&
+      box.construction->candidate().loopLengthTicks() != sealedLength) {
+    box.construction->handoffLoopLengthTicks(sealedLength);
+  }
+  return true;
+}
+
 void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t loopLengthTicks) {
   if (!box.sessionExitQueued) {
     return;
@@ -513,6 +541,10 @@ void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t 
   const bool constructionStale =
       box.construction && box.construction->candidate().loopLengthTicks() != loopLengthTicks;
   if (!unpublishedStale && !constructionStale) {
+    return;
+  }
+  if (pendingSnapshotFitsSealedLength(box, loopLengthTicks) &&
+      handoffPendingSnapshotLength(box, loopLengthTicks)) {
     return;
   }
   box.unpublishedCandidate.reset();
@@ -584,7 +616,7 @@ void updateOpenPassNoteFromEvent(PendingPassChangeProgress::OpenNote& open,
 }
 
 bool appendOpenNoteChange(const PendingPassChangeProgress::OpenNote& open, LoopId loopId,
-                          uint32_t loopLengthTicks, LoopSnapshotChangeSet& changes) {
+                          LoopSnapshotChangeSet& changes) {
   if (!open.hasStart || !open.hasEnd || open.noteId == kInvalidNoteId) {
     return false;
   }
@@ -596,7 +628,6 @@ bool appendOpenNoteChange(const PendingPassChangeProgress::OpenNote& open, LoopI
   change.next.velocity = open.velocity;
   change.next.startTick = open.startTick;
   change.next.endTick = open.endTick;
-  change.next.loopLengthTicks = loopLengthTicks;
   changes.notes.push_back(change);
   return true;
 }
@@ -655,8 +686,7 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
       LoopSnapshotNote note{};
       note.startTick = prospective.startTick;
       note.endTick = prospective.endTick;
-      note.loopLengthTicks = loop.loopLengthTicks;
-      addedBars = estimateNoteAffectedBars(note);
+      addedBars = estimateNoteAffectedBars(note, loop.loopLengthTicks);
     }
     if (addedChanges == 0) {
       ++progress.batchIndex;
@@ -677,7 +707,7 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
       changes.events.push_back(eventChange);
     }
     if (emitNote) {
-      appendOpenNoteChange(prospective, loop.loopId, loop.loopLengthTicks, changes);
+      appendOpenNoteChange(prospective, loop.loopId, changes);
       if (existing != nullptr) {
         removeOpenPassNote(progress, existing);
       }
@@ -871,7 +901,7 @@ LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPubli
         }
         freshNotes.push_back(note);
       }
-      appendMergedPassNotes(freshNotes, loop.loopId, parent->loopLengthTicks(), liveChanges);
+      appendMergedPassNotes(freshNotes, loop.loopId, liveChanges);
       appendPassEvents(freshEvents, loop.loopId, parent->loopLengthTicks(), nextEventId,
                        nextCanonicalOrder, liveChanges);
       if (!liveChanges.notes.empty() || !liveChanges.events.empty()) {
@@ -981,10 +1011,10 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
     uint32_t addedBars = 0;
     for (const SnapshotNoteChange& noteChange : incoming.notes) {
       if (noteChange.previous) {
-        addedBars += estimateNoteAffectedBars(*noteChange.previous);
+        addedBars += estimateNoteAffectedBars(*noteChange.previous, parent->loopLengthTicks());
       }
       if (noteChange.kind != SnapshotChangeKind::Remove) {
-        addedBars += estimateNoteAffectedBars(noteChange.next);
+        addedBars += estimateNoteAffectedBars(noteChange.next, parent->loopLengthTicks());
       }
     }
     const size_t addedChanges = journalChangeCount(incoming);
@@ -1142,6 +1172,19 @@ LOOP_COLD_MEM uint32_t Loop::pendingSnapshotWrapParentRevision() const {
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued;
+}
+
+LOOP_COLD_MEM uint32_t Loop::pendingSnapshotCandidateLengthTicks() const {
+  if (!pendingSnapshotPublishBox_) {
+    return 0;
+  }
+  if (pendingSnapshotPublishBox_->unpublishedCandidate) {
+    return pendingSnapshotPublishBox_->unpublishedCandidate->loopLengthTicks();
+  }
+  if (pendingSnapshotPublishBox_->construction) {
+    return pendingSnapshotPublishBox_->construction->candidate().loopLengthTicks();
+  }
+  return 0;
 }
 
 LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleStartUs() const {
@@ -1451,7 +1494,7 @@ LOOP_COLD_MEM bool Loop::tryPublishNoteEditSnapshot(const EditPassIdList& editPa
     if (row == nullptr) {
       return false;
     }
-    if (!appendEditRowChange(*parent, *row, loopId, loopLengthTicks, changes)) {
+    if (!appendEditRowChange(*parent, *row, loopId, changes)) {
       return false;
     }
   }

@@ -388,8 +388,7 @@ std::shared_ptr<const LoopSnapshot> buildSnapshotForTests(
 }
 
 SnapshotNoteChange addSnapshotNote(NoteId noteId, uint8_t pitch,
-                                   uint32_t startTick, uint32_t endTick,
-                                   uint32_t loopLength = 3072) {
+                                   uint32_t startTick, uint32_t endTick) {
   SnapshotNoteChange change{};
   change.kind = SnapshotChangeKind::Add;
   change.next.loopId = 7;
@@ -398,7 +397,6 @@ SnapshotNoteChange addSnapshotNote(NoteId noteId, uint8_t pitch,
   change.next.velocity = 100;
   change.next.startTick = startTick;
   change.next.endTick = endTick;
-  change.next.loopLengthTicks = loopLength;
   return change;
 }
 
@@ -432,9 +430,9 @@ void test_snapshot_replaces_note_and_shares_unchanged_membership() {
 
   TEST_ASSERT_NOT_NULL(successor.get());
   TEST_ASSERT_EQUAL(100u, oldNote->startTick);
-  TEST_ASSERT_EQUAL(0u, successor->noteMembership(60, 0)->references.size());
-  TEST_ASSERT_EQUAL(1u, successor->noteMembership(60, 1)->references.size());
-  TEST_ASSERT_EQUAL(1u, successor->noteMembership(60, 2)->references.size());
+  TEST_ASSERT_EQUAL(0u, snapshotMembershipCount(successor->noteMembership(60, 0).get()));
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(successor->noteMembership(60, 1).get()));
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(successor->noteMembership(60, 2).get()));
   const auto newNote = successor->noteMembership(60, 1)->references[0];
   TEST_ASSERT_NOT_EQUAL(oldNote.get(), newNote.get());
   TEST_ASSERT_EQUAL(oldNote->noteId, newNote->noteId);
@@ -452,17 +450,68 @@ void test_snapshot_wrap_membership_uses_one_note_reference() {
   const auto head = snapshot->noteMembership(64, 0);
   TEST_ASSERT_NOT_NULL(tail.get());
   TEST_ASSERT_NOT_NULL(head.get());
-  TEST_ASSERT_EQUAL(1u, tail->references.size());
-  TEST_ASSERT_EQUAL(1u, head->references.size());
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(tail.get()));
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(head.get()));
   TEST_ASSERT_EQUAL_PTR(tail->references[0].get(), head->references[0].get());
 
   CanonicalNoteSpanVec spans;
   snapshot->appendCanonicalSpans(tail->references[0], spans);
+  TEST_ASSERT_TRUE(tail->references[0]->isWrap(snapshot->loopLengthTicks()));
+  TEST_ASSERT_FALSE(tail->references[0]->isWrap(0));
   TEST_ASSERT_EQUAL(2u, spans.size());
   TEST_ASSERT_EQUAL(2300, spans[0].interval.start);
   TEST_ASSERT_EQUAL(3072, spans[0].interval.end);
   TEST_ASSERT_EQUAL(0, spans[1].interval.start);
   TEST_ASSERT_EQUAL(200, spans[1].interval.end);
+}
+
+void test_snapshot_wrap_spans_follow_root_length() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(55, 64, 1400, 100));
+  const auto snapshot = buildSnapshotForTests(changes, 1536);
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  TEST_ASSERT_EQUAL(1536u, snapshot->loopLengthTicks());
+  TEST_ASSERT_TRUE(snapshot->findNote(55, 64)->isWrap(snapshot->loopLengthTicks()));
+
+  CanonicalNoteSpanVec spans;
+  snapshot->appendCanonicalSpans(snapshot->findNote(55, 64), spans);
+  TEST_ASSERT_EQUAL(2u, spans.size());
+  TEST_ASSERT_EQUAL(1400, spans[0].interval.start);
+  TEST_ASSERT_EQUAL(1536, spans[0].interval.end);
+  TEST_ASSERT_EQUAL(0, spans[1].interval.start);
+  TEST_ASSERT_EQUAL(100, spans[1].interval.end);
+
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(snapshot->noteMembership(64, 1).get()));
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(snapshot->noteMembership(64, 0).get()));
+  TEST_ASSERT_NULL(snapshot->noteMembership(64, 2).get());
+
+  LoopSnapshotChangeSet linearChanges;
+  linearChanges.notes.push_back(addSnapshotNote(56, 60, 100, 200));
+  const auto linear = buildSnapshotForTests(linearChanges, 1536);
+  TEST_ASSERT_FALSE(linear->findNote(56, 60)->isWrap(linear->loopLengthTicks()));
+  CanonicalNoteSpanVec linearSpans;
+  linear->appendCanonicalSpans(linear->findNote(56, 60), linearSpans);
+  TEST_ASSERT_EQUAL(1u, linearSpans.size());
+  TEST_ASSERT_EQUAL(100, linearSpans[0].interval.start);
+  TEST_ASSERT_EQUAL(200, linearSpans[0].interval.end);
+}
+
+void test_snapshot_with_loop_length_shares_membership() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(56, 60, 100, 200));
+  const auto parent = buildSnapshotForTests(changes, 21504);
+  TEST_ASSERT_NOT_NULL(parent.get());
+  const auto membership = parent->noteMembership(60, 0);
+  const auto note = parent->findNote(56, 60);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_NOT_NULL(note.get());
+
+  const auto handedOff = parent->withLoopLengthTicks(9216);
+  TEST_ASSERT_NOT_NULL(handedOff.get());
+  TEST_ASSERT_EQUAL(21504u, parent->loopLengthTicks());
+  TEST_ASSERT_EQUAL(9216u, handedOff->loopLengthTicks());
+  TEST_ASSERT_EQUAL_PTR(membership.get(), handedOff->noteMembership(60, 0).get());
+  TEST_ASSERT_EQUAL_PTR(note.get(), handedOff->findNote(56, 60).get());
 }
 
 void test_snapshot_event_index_preserves_canonical_order() {
@@ -481,7 +530,7 @@ void test_snapshot_event_index_preserves_canonical_order() {
   changes.events.push_back(earlier);
   const auto snapshot = buildSnapshotForTests(changes);
   const auto events = snapshot->eventMembership(0);
-  TEST_ASSERT_EQUAL(2u, events->references.size());
+  TEST_ASSERT_EQUAL(2u, snapshotMembershipCount(events.get()));
   TEST_ASSERT_EQUAL(1u, events->references[0]->eventId);
   TEST_ASSERT_EQUAL(2u, events->references[1]->eventId);
 }
@@ -518,9 +567,9 @@ void test_snapshot_replaces_pitch_and_clears_old_membership() {
   TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
   const auto successor = construction.freeze();
   const auto oldPitch = successor->noteMembership(60, 0);
-  const size_t oldCount = oldPitch ? oldPitch->references.size() : 0;
+  const size_t oldCount = snapshotMembershipCount(oldPitch.get());
   TEST_ASSERT_EQUAL(0u, oldCount);
-  TEST_ASSERT_EQUAL(1u, successor->noteMembership(67, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(successor->noteMembership(67, 0).get()));
   TEST_ASSERT_EQUAL(41u, successor->noteMembership(67, 0)->references[0]->noteId);
 }
 
@@ -539,39 +588,111 @@ void test_snapshot_applies_one_bar_in_playhead_arrival_order() {
   auto parent = std::make_shared<const LoopSnapshot>(
       LoopSnapshot(7, 3072, 0, 100, 100));
   LoopSnapshotConstruction construction(parent, changes);
-  const uint32_t playheadInBarTwo = 2 * Config::TICKS_PER_BAR + 10;
 
   auto noteCount = [&construction](uint32_t barIndex) -> size_t {
     const auto membership = construction.candidate().noteMembership(60, barIndex);
-    return membership ? membership->references.size() : 0;
+    return snapshotMembershipCount(membership.get());
   };
 
-  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
+  TEST_ASSERT_TRUE(construction.step(1));
   TEST_ASSERT_FALSE(construction.complete());
-  TEST_ASSERT_EQUAL(0u, noteCount(0));
+  TEST_ASSERT_EQUAL(1u, noteCount(0));
   TEST_ASSERT_EQUAL(0u, noteCount(1));
+  TEST_ASSERT_EQUAL(0u, noteCount(2));
+  TEST_ASSERT_EQUAL(0u, noteCount(3));
+
+  TEST_ASSERT_TRUE(construction.step(1));
+  TEST_ASSERT_EQUAL(1u, noteCount(0));
+  TEST_ASSERT_EQUAL(1u, noteCount(1));
+  TEST_ASSERT_EQUAL(0u, noteCount(2));
+  TEST_ASSERT_EQUAL(0u, noteCount(3));
+
+  TEST_ASSERT_TRUE(construction.step(1));
+  TEST_ASSERT_EQUAL(1u, noteCount(0));
+  TEST_ASSERT_EQUAL(1u, noteCount(1));
   TEST_ASSERT_EQUAL(1u, noteCount(2));
   TEST_ASSERT_EQUAL(0u, noteCount(3));
 
-  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
-  TEST_ASSERT_EQUAL(0u, noteCount(0));
-  TEST_ASSERT_EQUAL(0u, noteCount(1));
-  TEST_ASSERT_EQUAL(1u, noteCount(2));
-  TEST_ASSERT_EQUAL(1u, noteCount(3));
-
-  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
-  TEST_ASSERT_EQUAL(1u, noteCount(0));
-  TEST_ASSERT_EQUAL(0u, noteCount(1));
-  TEST_ASSERT_EQUAL(1u, noteCount(2));
-  TEST_ASSERT_EQUAL(1u, noteCount(3));
-
-  TEST_ASSERT_TRUE(construction.step(1, playheadInBarTwo));
+  TEST_ASSERT_TRUE(construction.step(1));
   TEST_ASSERT_TRUE(construction.complete());
   TEST_ASSERT_EQUAL(1u, noteCount(0));
   TEST_ASSERT_EQUAL(1u, noteCount(1));
   TEST_ASSERT_EQUAL(1u, noteCount(2));
   TEST_ASSERT_EQUAL(1u, noteCount(3));
   TEST_ASSERT_NOT_NULL(construction.freeze().get());
+}
+
+void test_snapshot_hide_removes_same_note_id() {
+  LoopSnapshotChangeSet initialChanges;
+  initialChanges.notes.push_back(addSnapshotNote(44, 60, 100, 400));
+  const auto parent = buildSnapshotForTests(initialChanges);
+  SnapshotNoteChange hide{};
+  hide.kind = SnapshotChangeKind::Remove;
+  hide.previous = parent->findNote(44, 60);
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(hide);
+  LoopSnapshotConstruction construction(parent, changes);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
+  const auto successor = construction.freeze();
+  TEST_ASSERT_NOT_NULL(successor.get());
+  TEST_ASSERT_NULL(successor->findNote(44, 60).get());
+  TEST_ASSERT_EQUAL(0u, snapshotMembershipCount(successor->noteMembership(60, 0).get()));
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(parent->noteMembership(60, 0).get()));
+}
+
+void test_snapshot_one_bar_node_count_and_unchanged_membership_share() {
+  LoopSnapshotChangeSet firstChanges;
+  for (uint8_t index = 0; index < 16; ++index) {
+    const uint32_t startTick = static_cast<uint32_t>(10 + index * 20);
+    firstChanges.notes.push_back(
+        addSnapshotNote(100 + index, static_cast<uint8_t>(40 + index), startTick,
+                        startTick + 10));
+  }
+  for (uint8_t index = 0; index < 32; ++index) {
+    SnapshotEventChange event{};
+    event.kind = SnapshotChangeKind::Add;
+    event.next.loopId = 7;
+    event.next.eventId = static_cast<EventId>(1 + index);
+    event.next.canonicalOrder = static_cast<uint32_t>(1 + index);
+    event.next.value = MidiEvent::ControlChange(20 + index * 10, 1, 7, index);
+    firstChanges.events.push_back(event);
+  }
+
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(7, 3072, 0, 100, 100));
+  resetSnapshotAllocCounters();
+  LoopSnapshotConstruction firstConstruction(empty, firstChanges);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(firstConstruction));
+  const auto parent = firstConstruction.freeze();
+  TEST_ASSERT_NOT_NULL(parent.get());
+  const uint32_t firstNodes = snapshotAllocNodeCount();
+  const uint32_t firstSlabs = snapshotAllocSlabCount();
+  std::printf("snapshot-alloc first-bar nodes=%u bytes=%u slabs=%u\n",
+              firstNodes, snapshotAllocByteCount(), firstSlabs);
+  TEST_ASSERT_TRUE(firstNodes >= 51);
+  TEST_ASSERT_TRUE(firstNodes <= 200);
+  TEST_ASSERT_TRUE(firstSlabs >= 1);
+  TEST_ASSERT_TRUE(firstSlabs <= 3);
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(parent->noteMembership(40, 0).get()));
+  TEST_ASSERT_EQUAL(32u, snapshotMembershipCount(parent->eventMembership(0).get()));
+
+  const auto unchangedMembership = parent->noteMembership(41, 0);
+  TEST_ASSERT_NOT_NULL(unchangedMembership.get());
+  SnapshotNoteChange replacement{};
+  replacement.kind = SnapshotChangeKind::Replace;
+  replacement.previous = parent->findNote(100, 40);
+  replacement.next = *replacement.previous;
+  replacement.next.endTick = 40;
+  LoopSnapshotChangeSet successorChanges;
+  successorChanges.notes.push_back(replacement);
+  resetSnapshotAllocCounters();
+  LoopSnapshotConstruction successorConstruction(parent, successorChanges);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(successorConstruction));
+  const auto successor = successorConstruction.freeze();
+  TEST_ASSERT_NOT_NULL(successor.get());
+  TEST_ASSERT_EQUAL_PTR(unchangedMembership.get(), successor->noteMembership(41, 0).get());
+  TEST_ASSERT_TRUE(snapshotAllocNodeCount() >= 4);
+  TEST_ASSERT_TRUE(snapshotAllocNodeCount() < firstNodes);
+  TEST_ASSERT_EQUAL(40u, successor->findNote(100, 40)->endTick);
 }
 
 void test_snapshot_failed_candidate_preserves_parent() {
@@ -586,7 +707,7 @@ void test_snapshot_failed_candidate_preserves_parent() {
   TEST_ASSERT_FALSE(construction.step(1));
   TEST_ASSERT_TRUE(construction.failed());
   TEST_ASSERT_NULL(construction.freeze().get());
-  TEST_ASSERT_EQUAL(1u, parent->noteMembership(60, 0)->references.size());
+  TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(parent->noteMembership(60, 0).get()));
   TEST_ASSERT_NULL(parent->noteMembership(60, 1).get());
 }
 
@@ -611,9 +732,13 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_measure_paged_directory_successor_locality);
   RUN_TEST(test_snapshot_replaces_note_and_shares_unchanged_membership);
   RUN_TEST(test_snapshot_wrap_membership_uses_one_note_reference);
+  RUN_TEST(test_snapshot_wrap_spans_follow_root_length);
+  RUN_TEST(test_snapshot_with_loop_length_shares_membership);
   RUN_TEST(test_snapshot_event_index_preserves_canonical_order);
   RUN_TEST(test_snapshot_candidate_progress_and_alias_safety);
   RUN_TEST(test_snapshot_applies_one_bar_in_playhead_arrival_order);
+  RUN_TEST(test_snapshot_hide_removes_same_note_id);
+  RUN_TEST(test_snapshot_one_bar_node_count_and_unchanged_membership_share);
   RUN_TEST(test_snapshot_failed_candidate_preserves_parent);
   RUN_TEST(test_snapshot_replaces_pitch_and_clears_old_membership);
   RUN_TEST(test_snapshot_find_note_uses_pitch_hint_then_scan);

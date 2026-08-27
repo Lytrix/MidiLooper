@@ -93,9 +93,45 @@ Dirty pitch SHALL be the incoming note's pitch. Dirty bars SHALL be the union of
 - **THEN** those additional bars are dirty
 - **AND** snapshot construction uses the resolver-supplied affected spans
 
+### Requirement: Snapshot-root length is the loop-boundary authority
+
+`LoopSnapshot::loopLengthTicks()` SHALL be the sole loop-boundary
+authority for wrap detection, canonical spans, bar membership, and
+construction cursors. A `LoopSnapshotNote` SHALL store identity, pitch,
+velocity, start, and end only. It SHALL NOT store an independent loop
+length. Linear note duration SHALL be derived from `startTick` and
+`endTick`. Wrap spans SHALL use those ticks plus the snapshot root
+length.
+
+#### Scenario: Wrap spans follow the snapshot root
+
+- **WHEN** a wrap-crossing note is stored in a snapshot whose root
+  length is L
+- **THEN** canonical spans are `[start, L)` and `[0, end)`
+- **AND** membership bars are computed from L, not from a note-level
+  length field
+
+#### Scenario: Linear notes do not consult a note-level loop length
+
+- **WHEN** a linear note has `endTick >= startTick`
+- **THEN** its duration is `endTick - startTick`
+- **AND** construction and span queries do not read a length stored on
+  the note object
+
+#### Scenario: Session-exit handoff when notes fit the sealed length
+
+- **WHEN** session-exit seals a shorter loop length than the unpublished
+  live-record parent
+- **AND** applied live-record ticks already fit the sealed length
+- **THEN** the unpublished candidate root length is replaced without
+  destroying the tree
+- **AND** the candidate stays unpublished until construction completes
+- **AND** a later sealed length that the applied ticks do not fit still
+  discards the pending tree
+
 ### Requirement: Wrap-crossing notes index both linear segments
 
-A wrap-crossing note SHALL keep the existing two linear segments (`[start, loopEnd)` and `[0, end)`). Each segment SHALL contribute `NoteRef` membership in the bars it intersects. Both membership sets SHALL identify the same `NoteId`. A candidate query near the loop boundary SHALL union end-side bars and zero-side bars, then deduplicate by `NoteId`. Wrap notes SHALL NOT be a special index type.
+A wrap-crossing note SHALL keep the existing two linear segments (`[start, loopEnd)` and `[0, end)`). Each segment SHALL contribute `NoteRef` membership in the bars it intersects. Both membership sets SHALL identify the same `NoteId`. A candidate query near the loop boundary SHALL union end-side bars and zero-side bars, then deduplicate by `NoteId`. Wrap notes SHALL NOT be a special index type. The `loopEnd` used for those segments SHALL be the snapshot root length.
 
 #### Scenario: Wrap note is one identity in both regions
 
@@ -105,7 +141,10 @@ A wrap-crossing note SHALL keep the existing two linear segments (`[start, loopE
 
 ### Requirement: Immutable note and event versions
 
-Note and non-note event objects SHALL be immutable after construction. A logical `NoteId` SHALL remain stable across an edit that creates a new object version.
+Note and non-note event objects SHALL be immutable after construction. A
+logical `NoteId` SHALL remain stable across an edit that creates a new object
+version and SHALL identify both events of its logical NoteOn/NoteOff pair.
+`EventId` SHALL identify non-note event objects only.
 
 #### Scenario: Editing preserves older versions
 
@@ -119,14 +158,56 @@ Note and non-note event objects SHALL be immutable after construction. A logical
 - **THEN** the new snapshot does not reference that note
 - **AND** older snapshots that referenced it remain unchanged
 
+### Requirement: Selected snapshot contains the latest note version
+
+For each effective logical `NoteId`, the selected complete `LoopSnapshot` SHALL
+expose only its latest immutable `NoteRef` version. A geometry-only mutation
+SHALL preserve the `NoteId`, replace the prior reference in every affected
+pitch/bar membership, and SHALL NOT mutate the prior immutable object.
+`playbackRevision` SHALL NOT be used as a per-note version.
+`SnapshotNoteChange` SHALL be transient construction input only and SHALL NOT
+be retained as an authoritative representation of loop content.
+
+#### Scenario: Geometry-only update preserves identity
+
+- **WHEN** an existing note is shortened, moved, or has its length changed
+- **THEN** the successor creates a new immutable note object
+- **AND** the new object has the same `NoteId`
+- **AND** only the settled geometry fields differ for a geometry-only update
+- **AND** old geometry is removed from old memberships
+- **AND** new geometry is inserted into all new memberships
+
+#### Scenario: Latest version is used after successive updates
+
+- **WHEN** one logical note receives multiple committed geometry updates
+- **THEN** the selected snapshot returns the final immutable reference
+- **AND** no earlier reference for that `NoteId` remains in the selected
+  snapshot's effective memberships
+- **AND** older snapshot roots remain readable with their original versions
+
+#### Scenario: Overdub hide removes the effective reference
+
+- **WHEN** an overdub companion hides an existing logical note
+- **THEN** the successor snapshot removes that `NoteId` from its effective
+  memberships
+- **AND** older snapshots that contain the note remain unchanged
+
 ### Requirement: Atomic snapshot construction and publication
 
-Snapshot publication SHALL occur at an existing capture or edit commit boundary after capture finalization. Candidate construction SHALL read the active snapshot as const and apply a semantic mutation supplied by the existing owner. Construction MAY complete before publication through bounded resumable units, but the complete candidate SHALL be frozen and published atomically. Failure SHALL leave active and historical snapshots unchanged.
+Snapshot publication SHALL be initiated at an existing capture or edit commit
+boundary after capture finalization. Candidate construction SHALL read the
+active snapshot as const and apply a semantic mutation supplied by the
+existing owner. Construction MAY complete after the boundary through bounded
+resumable units, but the complete candidate SHALL be frozen and published
+atomically by the existing `Loop` owner. Failure SHALL leave active and
+historical snapshots unchanged while retaining the settled mutation for retry.
 
 #### Scenario: Capture commit publishes one global candidate
 
 - **WHEN** a record or overdub session is finalized and its mutation is accepted
-- **THEN** one complete candidate snapshot is published as the global after snapshot at the existing commit boundary
+- **THEN** the settled mutation is queued at the existing boundary
+- **AND** one complete candidate snapshot is published as the global after
+  snapshot when bounded construction completes
 - **AND** an overdub session with multiple wraps does not create a global undo snapshot per wrap
 
 #### Scenario: Failed candidate preserves active state
@@ -135,6 +216,7 @@ Snapshot publication SHALL occur at an existing capture or edit commit boundary 
 - **THEN** the candidate is discarded
 - **AND** the previous complete snapshot remains active
 - **AND** no partial collection is visible
+- **AND** the settled mutation journal remains queued for retry
 
 ### Requirement: Candidate construction operations have declared bounds
 
@@ -145,6 +227,79 @@ Candidate construction SHALL follow this architectural contract and SHALL declar
 - **WHEN** a later phase introduces runtime candidate construction
 - **THEN** each named operation has a declared complexity and bound class
 - **AND** publication does not hide an unclassified O(N) reference-set copy
+
+### Requirement: Bounded overdub-wrap mutation publication
+
+For the activated capture-publication phase, a settled overdub wrap SHALL
+provide `Loop` with a transient mutation journal rather than requiring
+content-sized pass reconstruction as candidate setup. Capture/pairing state
+SHALL assign `NoteId` incrementally to each logical NoteOn/NoteOff pair before
+pass promotion. Pass promotion SHALL NOT scan capture content to assign pair
+identities. `EventId` SHALL be retained for non-note events only.
+
+The journal SHALL have structural caps for mutation count, affected-bar
+count, membership-entry count, and storage bytes. A wrap exceeding one
+fragment's cap SHALL be represented as ordered bounded fragments belonging to
+one wrap transaction. Each fragment SHALL retain its exact parent snapshot
+identity, and no fragment SHALL publish an incomplete candidate.
+
+#### Scenario: Multiple wraps remain ordered
+
+- **WHEN** a later overdub wrap settles while an earlier wrap candidate is
+  incomplete
+- **THEN** the later mutation is queued after the earlier bounded fragments
+- **AND** construction applies it to the earlier wrap's latest complete
+  unpublished candidate
+- **AND** no candidate with incomplete fragments becomes selected
+
+#### Scenario: Failed fragment is retried
+
+- **WHEN** a bounded fragment cannot fit or reaches its overrun guard
+- **THEN** the previous complete snapshot remains selected
+- **AND** the exact fragment and parent identity remain available for retry
+- **AND** the settled compatibility mutation is not silently lost
+
+### Requirement: Bounded immutable membership construction
+
+Runtime candidate construction SHALL use fixed-capacity immutable membership
+pages and persistent bar-cursor progress. Construction initialization and each
+per-change begin operation SHALL NOT enumerate every bar intersected by a
+changed note before the first construction unit. A construction unit SHALL process only its declared
+bounded bar and membership-page fragments. Membership insertion, removal,
+copy-on-write, and event ordering SHALL NOT copy or scan an unbounded
+membership vector in one unit.
+
+The fixed-capacity membership representation SHALL be selected and measured
+before runtime publication. The construction owner SHALL retain all progress
+and journal fragments across units, while the active candidate remains
+invisible until complete.
+
+#### Scenario: Long wrap note yields across units
+
+- **WHEN** a changed note intersects more bars than one construction unit
+  permits
+- **THEN** its linear tail/head ranges are advanced by persistent cursors
+- **AND** each unit stays within the declared bar and membership-page caps
+- **AND** the selected snapshot remains the previous complete root until
+  construction completes
+
+### Requirement: Effective event-index note mutation
+
+When a settled note geometry mutation is published, the mutation SHALL carry
+the pair `NoteId` prepared by capture/pairing state. A Hide SHALL remove both
+paired event references from the successor event index. A geometry replacement
+SHALL create new immutable note event objects while preserving the same
+logical `NoteId` and canonical order. Non-note event objects retain their
+logical `EventId`. Pair `NoteId`s and non-note `EventId`s are runtime-only
+until the later persistence phase.
+
+#### Scenario: Wrap geometry replacement preserves event identity
+
+- **WHEN** a settled wrap shortens or otherwise changes an existing note
+- **THEN** the successor removes the old paired event references by `NoteId`
+- **AND** inserts the replacement note event objects at their new ticks
+- **AND** preserves the pair `NoteId` and canonical ordering
+- **AND** the older snapshot retains the original event objects
 
 ### Requirement: Existing owners supply semantic mutations
 
@@ -350,6 +505,38 @@ analyze indexes, or LED queries.
 - **THEN** the consumer follows its existing stale, fallback, or deferred-freshness policy
 - **AND** it does not synchronously rebuild the complete snapshot on a timing-critical path
 
+### Requirement: Overdub source resolution reads immutable snapshot notes
+
+After a settled overdub wrap publishes a complete provisional snapshot, normal
+overdub source resolution SHALL read the selected snapshot's pitch/bar
+`NoteRef` memberships, deduplicate candidates by `NoteId`, and use the
+immutable note geometry. It SHALL NOT rebuild a complete pass-derived source
+note list as the normal source or make a derived cache a second effective-state
+authority.
+
+#### Scenario: Wrap source sees the latest geometry
+
+- **WHEN** a settled overdub wrap changes existing note geometry
+- **THEN** the next overdub source query reads the selected provisional
+  snapshot
+- **AND** it uses the latest immutable geometry for the logical `NoteId`
+- **AND** it does not use the prior geometry from an older snapshot version
+
+#### Scenario: Wrapped source deduplicates one logical note
+
+- **WHEN** a note spans the loop boundary and appears in both tail and head
+  bar memberships
+- **THEN** the source query unions the relevant memberships
+- **AND** it returns that logical `NoteId` once
+- **AND** both memberships refer to the same immutable note version
+
+#### Scenario: Incomplete successor remains invisible
+
+- **WHEN** provisional snapshot construction has not completed or fails
+- **THEN** the previous complete snapshot remains selected
+- **AND** no partial successor note set is visible to overdub or other
+  consumers
+
 #### Scenario: Compatibility sources are transitional
 
 - **WHEN** a consumer has not completed its snapshot migration gate
@@ -416,3 +603,32 @@ timer checked only between steps SHALL NOT qualify as an execution bound.
 - **WHEN** construction is content-dependent without an enforced bound
 - **THEN** it is not introduced on the interval path or timing-critical input path
 - **AND** a separate approved phase defines the bound, progress, and overrun policy before runtime publication
+
+### Requirement: Snapshot construction uses the existing maintenance owner
+
+`LoopSnapshotConstruction` SHALL execute through the existing bounded/resumable
+maintenance mechanism and its existing `Loop` owner boundary. It SHALL NOT
+introduce a new scheduler or runtime budget owner.
+
+#### Scenario: Existing maintenance mechanism advances construction
+
+- **WHEN** a pending snapshot candidate is admitted for maintenance
+- **THEN** `Loop::stepPendingSnapshotPublish` advances it through the existing
+  maintenance cursor
+- **AND** no separate scheduler or runtime budget authority is created
+
+### Requirement: Snapshot construction has a MIDI-interruption gate
+
+Before runtime publication of wrap snapshot construction, verification SHALL
+measure the maximum MIDI gap attributable to snapshot construction,
+maintenance time per slice, and total construction wall time. The phase SHALL
+define pass/fail thresholds and overrun behavior before device validation.
+
+#### Scenario: Construction does not hide MIDI interruption
+
+- **WHEN** snapshot construction is exercised on device
+- **THEN** the capture records construction-attributable maximum MIDI gap,
+  per-slice maintenance time, and total construction wall time
+- **AND** an overrun preserves the previous complete selected snapshot
+- **AND** total construction wall time alone is not accepted as the performance
+  gate

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-27 (Stage 2 leftover named on 225659)
+Last updated: 2026-08-28 (session-exit length handoff device PASS)
 
 ---
 
@@ -62,14 +62,24 @@ after stop, the candidate stayed private, and publication occurred only at
 `pending=0` / `root=0x70400ac8` / `root_rev=10`.
 Stage 2 child timing is in tree on `snapshot_idle`
 (`start`, `pass_change`, `step`, `finish`, `publish`, `probe`, `enqueue`,
-`discard`, `emit`). Capture-serial RAM1 locals **6976**; native **1490/1490**.
+`discard`, `emit`). Capture-serial RAM1 locals **6976**; native **1491/1491**.
 Capture [`225659`](../../captures/session_20260827_225659.log) names the
 224842 record-stop leftover as `discardPendingIfLoopLengthChanged`
 (`discard=15262` on the 20.984 ms PLAYING idle). Exclusive leftover after
 that probe is ≤ 39 µs. STOPPED session-exit `start`/`pass_change` reaches
 19.996 ms. Publication closed at `pending=0` / `root=0x70431844` /
-`root_rev=8`. Construction bounds stay unchanged until `T_RT_reserve` is
-frozen.
+`root_rev=8`. The Stage 2 falsification review is recorded in
+[`snapshot_publication_timing_bugfix.md`](../Plans/snapshot_publication_timing_bugfix.md).
+Session-exit length handoff device PASS
+[`003015`](../../captures/session_20260828_003015.log): record-stop
+PLAYING `discard=47`, first root `pending=0` / `root=0x703248cc` /
+`root_rev=1`. Non-fit discard remains a content-sized destructor. For
+`startNextPassChangeFragment`, the record/overdub
+pass identity invariant supports a proposed caller-scoped pitch lookup;
+inner ownership and the remaining pitch-local cost are still unmeasured.
+No `step` rewrite is justified yet; and freezing the minimum observed
+`T_RT_reserve` is rejected as a guarantee. Construction bounds stay
+unchanged.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

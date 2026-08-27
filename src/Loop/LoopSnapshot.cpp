@@ -2,11 +2,19 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "LoopSnapshot.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/LoopMem.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
+#include <new>
 #include <utility>
+
+#if defined(SESSION_CAPTURE)
+#include "Utils/DebugSessionCapture.h"
+#include <cstdio>
+#endif
 
 #if defined(__IMXRT1062__)
 #define LOOP_SNAPSHOT_COLD_MEM __attribute__((noinline, section(".flashmem")))
@@ -14,13 +22,203 @@
 #define LOOP_SNAPSHOT_COLD_MEM
 #endif
 
+#if defined(SESSION_CAPTURE) || !defined(ARDUINO)
+#define SNAPSHOT_ALLOC_COUNTERS 1
+#else
+#define SNAPSHOT_ALLOC_COUNTERS 0
+#endif
+
 namespace {
+
+struct SnapshotSlab {
+  uint32_t liveCount = 0;
+  uint32_t used = 0;
+};
+
+constexpr size_t kSnapshotSlabAlign = 8;
+constexpr size_t kSnapshotSlabPrefixBytes = sizeof(SnapshotSlab*);
+
+#if SNAPSHOT_ALLOC_COUNTERS
+uint32_t g_snapshotAllocNodes = 0;
+uint32_t g_snapshotAllocBytes = 0;
+uint32_t g_snapshotAllocSlabs = 0;
+#endif
+
+SnapshotSlab* g_currentSnapshotSlab = nullptr;
+
+LOOP_SNAPSHOT_COLD_MEM size_t alignSnapshotSlabOffset(size_t offset) {
+  return (offset + (kSnapshotSlabAlign - 1)) & ~(kSnapshotSlabAlign - 1);
+}
+
+LOOP_SNAPSHOT_COLD_MEM uint8_t* snapshotSlabPayload(SnapshotSlab* slab) {
+  return reinterpret_cast<uint8_t*>(slab) + alignSnapshotSlabOffset(sizeof(SnapshotSlab));
+}
+
+LOOP_SNAPSHOT_COLD_MEM size_t snapshotSlabPayloadBytes() {
+  return kSnapshotSlabBytes - alignSnapshotSlabOffset(sizeof(SnapshotSlab));
+}
+
+LOOP_SNAPSHOT_COLD_MEM void* snapshotSlabMalloc(size_t bytes) {
+#if EXTMEM_AVAILABLE
+  return extmem_malloc(bytes);
+#else
+  return std::malloc(bytes);
+#endif
+}
+
+LOOP_SNAPSHOT_COLD_MEM void snapshotSlabFree(void* pointer) {
+#if EXTMEM_AVAILABLE
+  extmem_free(pointer);
+#else
+  std::free(pointer);
+#endif
+}
+
+LOOP_SNAPSHOT_COLD_MEM SnapshotSlab* snapshotSlabOpen() {
+  void* memory = snapshotSlabMalloc(kSnapshotSlabBytes);
+  if (memory == nullptr) {
+    return nullptr;
+  }
+  auto* slab = new (memory) SnapshotSlab();
+  g_currentSnapshotSlab = slab;
+#if SNAPSHOT_ALLOC_COUNTERS
+  ++g_snapshotAllocSlabs;
+#endif
+  return slab;
+}
+
+LOOP_SNAPSHOT_COLD_MEM bool snapshotSlabHasRoom(const SnapshotSlab* slab, size_t bytes) {
+  if (slab == nullptr) {
+    return false;
+  }
+  const size_t userOffset =
+      alignSnapshotSlabOffset(static_cast<size_t>(slab->used) + kSnapshotSlabPrefixBytes);
+  return userOffset + bytes <= snapshotSlabPayloadBytes();
+}
+
+LOOP_SNAPSHOT_COLD_MEM bool snapshotSlabEnsureCapacity(size_t bytes) {
+  if (bytes > snapshotSlabPayloadBytes()) {
+    return false;
+  }
+  if (snapshotSlabHasRoom(g_currentSnapshotSlab, bytes)) {
+    return true;
+  }
+  return snapshotSlabOpen() != nullptr;
+}
+
+LOOP_SNAPSHOT_COLD_MEM void* snapshotSlabAllocate(size_t bytes) {
+  if (bytes > snapshotSlabPayloadBytes()) {
+    return nullptr;
+  }
+  if (!snapshotSlabHasRoom(g_currentSnapshotSlab, bytes) && snapshotSlabOpen() == nullptr) {
+    return nullptr;
+  }
+  SnapshotSlab* slab = g_currentSnapshotSlab;
+  const size_t userOffset =
+      alignSnapshotSlabOffset(static_cast<size_t>(slab->used) + kSnapshotSlabPrefixBytes);
+  uint8_t* user = snapshotSlabPayload(slab) + userOffset;
+  *reinterpret_cast<SnapshotSlab**>(user - kSnapshotSlabPrefixBytes) = slab;
+  slab->used = static_cast<uint32_t>(userOffset + bytes);
+  ++slab->liveCount;
+  return user;
+}
+
+LOOP_SNAPSHOT_COLD_MEM void snapshotSlabDeallocate(void* pointer) {
+  if (pointer == nullptr) {
+    return;
+  }
+  auto* slab = *reinterpret_cast<SnapshotSlab**>(static_cast<uint8_t*>(pointer) -
+                                                 kSnapshotSlabPrefixBytes);
+  if (slab->liveCount == 0) {
+    return;
+  }
+  --slab->liveCount;
+  if (slab->liveCount > 0) {
+    return;
+  }
+  if (g_currentSnapshotSlab == slab) {
+    g_currentSnapshotSlab = nullptr;
+  }
+  slab->~SnapshotSlab();
+  snapshotSlabFree(slab);
+}
+
+#if SNAPSHOT_ALLOC_COUNTERS
+LOOP_SNAPSHOT_COLD_MEM void snapshotAllocRecord(size_t objectBytes) {
+  ++g_snapshotAllocNodes;
+  g_snapshotAllocBytes += static_cast<uint32_t>(objectBytes);
+}
+#endif
+
+template <typename Type>
+class SnapshotSlabAllocator {
+ public:
+  using value_type = Type;
+
+  template <typename Other>
+  struct rebind {
+    using other = SnapshotSlabAllocator<Other>;
+  };
+
+  SnapshotSlabAllocator() noexcept = default;
+
+  template <typename Other>
+  SnapshotSlabAllocator(const SnapshotSlabAllocator<Other>&) noexcept {}
+
+  Type* allocate(std::size_t count) {
+    void* pointer = snapshotSlabAllocate(count * sizeof(Type));
+    if (pointer == nullptr) {
+#if defined(ARDUINO)
+      abort();
+#else
+      throw std::bad_alloc();
+#endif
+    }
+    return static_cast<Type*>(pointer);
+  }
+
+  void deallocate(Type* pointer, std::size_t /*count*/) noexcept {
+    snapshotSlabDeallocate(pointer);
+  }
+
+  template <typename Other>
+  bool operator==(const SnapshotSlabAllocator<Other>&) const noexcept {
+    return true;
+  }
+
+  template <typename Other>
+  bool operator!=(const SnapshotSlabAllocator<Other>&) const noexcept {
+    return false;
+  }
+};
 
 template <typename Type, typename... Arguments>
 LOOP_SNAPSHOT_COLD_MEM std::shared_ptr<Type> allocateSnapshotShared(
     Arguments&&... arguments) {
-  return std::allocate_shared<Type>(ExternalMemoryFirstAllocator<Type>{},
-                                    std::forward<Arguments>(arguments)...);
+  constexpr size_t estimate =
+      128 + ((sizeof(Type) + (kSnapshotSlabAlign - 1)) & ~(kSnapshotSlabAlign - 1));
+  if (!snapshotSlabEnsureCapacity(estimate)) {
+    return {};
+  }
+#if !defined(ARDUINO)
+  try {
+    auto allocated = std::allocate_shared<Type>(SnapshotSlabAllocator<Type>{},
+                                                std::forward<Arguments>(arguments)...);
+#if SNAPSHOT_ALLOC_COUNTERS
+    snapshotAllocRecord(sizeof(Type));
+#endif
+    return allocated;
+  } catch (const std::bad_alloc&) {
+    return {};
+  }
+#else
+  auto allocated = std::allocate_shared<Type>(SnapshotSlabAllocator<Type>{},
+                                              std::forward<Arguments>(arguments)...);
+#if SNAPSHOT_ALLOC_COUNTERS
+  snapshotAllocRecord(sizeof(Type));
+#endif
+  return allocated;
+#endif
 }
 
 template <typename Type, typename... Arguments>
@@ -35,6 +233,7 @@ struct MutableMembershipEdit {
   SnapshotBarPageDirectory<Reference>* directory = nullptr;
   uint32_t barIndex = 0;
   std::shared_ptr<SnapshotMembership<Reference>> membership;
+  uint8_t pageCount = 0;
 };
 
 template <typename Reference>
@@ -65,79 +264,160 @@ LOOP_SNAPSHOT_COLD_MEM SnapshotMembershipRef<Reference> membershipForBar(
 }
 
 template <typename Reference>
-LOOP_SNAPSHOT_COLD_MEM
-std::shared_ptr<SnapshotMembership<Reference>> mutableMembershipForBar(
+struct SnapshotMembershipCopyProgress {
+  SnapshotMembershipRef<Reference> source;
+  std::shared_ptr<SnapshotMembership<Reference>> head;
+  std::shared_ptr<SnapshotMembership<Reference>> tail;
+  uint8_t pageCount = 0;
+  bool sourceWasEmpty = false;
+  bool complete = false;
+
+  void begin(const SnapshotMembershipRef<Reference>& input) {
+    source = input;
+    head.reset();
+    tail.reset();
+    pageCount = 0;
+    sourceWasEmpty = !input;
+    complete = false;
+  }
+
+  bool copyNextPage() {
+    if (complete) {
+      return true;
+    }
+    if (source) {
+      if (pageCount >= kSnapshotMembershipMaxPages) {
+        return false;
+      }
+      auto copy = allocateSnapshotShared<SnapshotMembership<Reference>>();
+      if (!copy) {
+        return false;
+      }
+      copy->references = source->references;
+      copy->count = source->count;
+      if (!head) {
+        head = copy;
+      } else {
+        tail->next = copy;
+      }
+      tail = copy;
+      source = source->next;
+      ++pageCount;
+      return true;
+    }
+    if (!head) {
+      head = allocateSnapshotShared<SnapshotMembership<Reference>>();
+      if (!head) {
+        return false;
+      }
+      tail = head;
+      pageCount = 1;
+    }
+    complete = true;
+    return true;
+  }
+};
+
+template <typename Reference>
+LOOP_SNAPSHOT_COLD_MEM std::shared_ptr<SnapshotBarPage<Reference>> mutableBarPageForBar(
     SnapshotBarPageDirectory<Reference>& directory,
     std::vector<MutablePageEdit<Reference>>& pageEdits,
-    std::vector<MutableMembershipEdit<Reference>>& membershipEdits,
     uint32_t barIndex) {
-  for (auto& edit : membershipEdits) {
-    if (edit.directory == &directory && edit.barIndex == barIndex) {
-      return edit.membership;
-    }
-  }
-
   const size_t pageIndex = pageIndexForBar<Reference>(barIndex);
-  std::shared_ptr<SnapshotBarPage<Reference>> page;
   for (auto& edit : pageEdits) {
     if (edit.directory == &directory && edit.pageIndex == pageIndex) {
-      page = edit.page;
-      break;
+      return edit.page;
     }
   }
-
+  auto page = allocateSnapshotShared<SnapshotBarPage<Reference>>();
   if (!page) {
-    page = allocateSnapshotShared<SnapshotBarPage<Reference>>();
-    if (pageIndex < directory.pages.size() && directory.pages[pageIndex]) {
-      *page = *directory.pages[pageIndex];
+    return {};
+  }
+  if (pageIndex < directory.pages.size() && directory.pages[pageIndex]) {
+    *page = *directory.pages[pageIndex];
+  }
+  if (directory.pages.size() <= pageIndex) {
+    directory.pages.resize(pageIndex + 1);
+  }
+  directory.pages[pageIndex] = page;
+  pageEdits.push_back({&directory, pageIndex, page});
+  return page;
+}
+
+struct SnapshotNoteBarCursor {
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+  uint32_t loopLengthTicks = 0;
+  uint32_t nextTick = 0;
+  uint8_t segment = 0;
+  bool active = false;
+
+  void begin(uint32_t rangeStart, uint32_t rangeEnd, uint32_t lengthTicks) {
+    startTick = rangeStart;
+    endTick = rangeEnd;
+    loopLengthTicks = lengthTicks;
+    nextTick = 0;
+    segment = 0;
+    active = false;
+    if (lengthTicks == 0) {
+      return;
     }
-    if (directory.pages.size() <= pageIndex) {
-      directory.pages.resize(pageIndex + 1);
+    startTick = std::min(startTick, lengthTicks);
+    endTick = std::min(endTick, lengthTicks);
+    if (endTick < startTick) {
+      nextTick = startTick;
+      active = startTick < lengthTicks || endTick > 0;
+      return;
     }
-    directory.pages[pageIndex] = page;
-    pageEdits.push_back({&directory, pageIndex, page});
+    if (startTick >= endTick) {
+      return;
+    }
+    nextTick = startTick;
+    active = true;
   }
 
-  const size_t pageOffset = pageOffsetForBar<Reference>(barIndex);
-  auto membership = allocateSnapshotShared<SnapshotMembership<Reference>>();
-  if (page->memberships[pageOffset]) {
-    membership->references = page->memberships[pageOffset]->references;
-  }
-  page->memberships[pageOffset] = membership;
-  membershipEdits.push_back({&directory, barIndex, membership});
-  return membership;
-}
-
-LOOP_SNAPSHOT_COLD_MEM void appendBarRange(std::vector<uint32_t>& bars,
-                                           uint32_t startTick,
-                                           uint32_t endTick,
-                                           uint32_t loopLengthTicks) {
-  if (loopLengthTicks == 0) {
-    return;
-  }
-  startTick = std::min(startTick, loopLengthTicks);
-  endTick = std::min(endTick, loopLengthTicks);
-  if (startTick >= endTick) {
-    return;
+  void beginNote(const LoopSnapshotNote& note, uint32_t lengthTicks) {
+    begin(note.startTick, note.endTick, lengthTicks);
   }
 
-  const uint32_t firstBar = startTick / Config::TICKS_PER_BAR;
-  const uint32_t lastBar = (endTick - 1) / Config::TICKS_PER_BAR;
-  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    bars.push_back(bar);
-  }
-}
+  bool takeNextBar(uint32_t& barIndex) {
+    if (!active || loopLengthTicks == 0) {
+      active = false;
+      return false;
+    }
+    if (endTick < startTick) {
+      if (segment == 0) {
+        if (nextTick >= loopLengthTicks) {
+          segment = 1;
+          nextTick = 0;
+        }
+      }
+      if (segment == 1 && nextTick >= endTick) {
+        active = false;
+        return false;
+      }
+    } else if (nextTick >= endTick) {
+      active = false;
+      return false;
+    }
 
-LOOP_SNAPSHOT_COLD_MEM void appendNoteBars(const LoopSnapshotNote& note,
-                                           std::vector<uint32_t>& bars) {
-  if (note.isWrap()) {
-    appendBarRange(bars, note.startTick, note.loopLengthTicks,
-                   note.loopLengthTicks);
-    appendBarRange(bars, 0, note.endTick, note.loopLengthTicks);
-    return;
+    barIndex = nextTick / Config::TICKS_PER_BAR;
+    const uint32_t barEnd = (barIndex + 1) * Config::TICKS_PER_BAR;
+    nextTick = barEnd;
+    if (endTick < startTick) {
+      if (segment == 0 && nextTick >= loopLengthTicks) {
+        if (endTick == 0) {
+          active = false;
+        }
+      } else if (segment == 1 && nextTick >= endTick) {
+        active = false;
+      }
+    } else if (nextTick >= endTick) {
+      active = false;
+    }
+    return true;
   }
-  appendBarRange(bars, note.startTick, note.endTick, note.loopLengthTicks);
-}
+};
 
 LOOP_SNAPSHOT_COLD_MEM void sortUniqueBars(std::vector<uint32_t>& bars) {
   std::sort(bars.begin(), bars.end());
@@ -155,38 +435,28 @@ LOOP_SNAPSHOT_COLD_MEM EventId referenceId(
 }
 
 template <typename Reference>
-LOOP_SNAPSHOT_COLD_MEM void removeReference(
-    SnapshotMembership<Reference>& membership, const Reference& target) {
+LOOP_SNAPSHOT_COLD_MEM bool removeReferenceFromPage(
+    SnapshotMembership<Reference>& page, const Reference& target) {
   const auto targetId = referenceId(target);
-  auto& references = membership.references;
-  references.erase(
-      std::remove_if(references.begin(), references.end(),
-                     [targetId](const Reference& reference) {
-                       return referenceId(reference) == targetId;
-                     }),
-      references.end());
-}
-
-LOOP_SNAPSHOT_COLD_MEM void addNoteReference(
-    SnapshotMembership<LoopSnapshotNoteRef>& membership,
-    const LoopSnapshotNoteRef& reference) {
-  removeReference(membership, reference);
-  membership.references.push_back(reference);
-}
-
-LOOP_SNAPSHOT_COLD_MEM void addEventReference(
-    SnapshotMembership<LoopSnapshotEventRef>& membership,
-    const LoopSnapshotEventRef& reference) {
-  removeReference(membership, reference);
-  membership.references.push_back(reference);
-  std::sort(membership.references.begin(), membership.references.end(),
-            [](const LoopSnapshotEventRef& left,
-               const LoopSnapshotEventRef& right) {
-              if (left->canonicalOrder != right->canonicalOrder) {
-                return left->canonicalOrder < right->canonicalOrder;
-              }
-              return left->eventId < right->eventId;
-            });
+  uint8_t write = 0;
+  bool removed = false;
+  for (uint8_t read = 0; read < page.count; ++read) {
+    if (!removed && referenceId(page.references[read]) == targetId) {
+      removed = true;
+      continue;
+    }
+    if (write != read) {
+      page.references[write] = page.references[read];
+    }
+    ++write;
+  }
+  if (removed) {
+    if (write < page.count) {
+      page.references[write] = {};
+    }
+    page.count = write;
+  }
+  return removed;
 }
 
 LOOP_SNAPSHOT_COLD_MEM uint32_t ticksUntilBarReached(uint32_t phaseTick,
@@ -230,7 +500,7 @@ LOOP_SNAPSHOT_COLD_MEM void sortBarsBySoonestPlayhead(std::vector<uint32_t>& bar
 }  // namespace
 
 LOOP_COLD_MEM void LoopSnapshotNote::appendCanonicalSpans(
-    CanonicalNoteSpanVec& out) const {
+    uint32_t loopLengthTicks, CanonicalNoteSpanVec& out) const {
   auto appendSpan = [this, &out](uint32_t startTick, uint32_t endTick,
                                  bool splitHeadTail) {
     if (startTick >= endTick) {
@@ -247,7 +517,7 @@ LOOP_COLD_MEM void LoopSnapshotNote::appendCanonicalSpans(
     out.push_back(span);
   };
 
-  if (isWrap()) {
+  if (isWrap(loopLengthTicks)) {
     appendSpan(startTick, loopLengthTicks, true);
     appendSpan(0, endTick, true);
     return;
@@ -268,11 +538,26 @@ LOOP_COLD_MEM LoopSnapshot::LoopSnapshot(LoopId loopId,
       spanRoot_(allocateConstSnapshotShared<SnapshotSpanRoot>()),
       eventRoot_(allocateConstSnapshotShared<SnapshotEventRoot>()) {}
 
+LOOP_COLD_MEM LoopSnapshot::LoopSnapshot(const LoopSnapshot& other,
+                                         uint32_t loopLengthTicks)
+    : loopId_(other.loopId_),
+      loopLengthTicks_(loopLengthTicks),
+      loopStartTick_(other.loopStartTick_),
+      nextNoteId_(other.nextNoteId_),
+      nextEventId_(other.nextEventId_),
+      spanRoot_(other.spanRoot_),
+      eventRoot_(other.eventRoot_) {}
+
 LOOP_COLD_MEM ImmutableLoopSnapshotRef LoopSnapshot::createEmpty(
     LoopId loopId, uint32_t loopLengthTicks, uint32_t loopStartTick,
     uint32_t nextNoteId, uint32_t nextEventId) {
   return allocateConstSnapshotShared<LoopSnapshot>(
       loopId, loopLengthTicks, loopStartTick, nextNoteId, nextEventId);
+}
+
+LOOP_COLD_MEM ImmutableLoopSnapshotRef LoopSnapshot::withLoopLengthTicks(
+    uint32_t loopLengthTicks) const {
+  return allocateConstSnapshotShared<LoopSnapshot>(*this, loopLengthTicks);
 }
 
 LOOP_COLD_MEM SnapshotMembershipRef<LoopSnapshotNoteRef>
@@ -318,10 +603,15 @@ LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
         if (!membership) {
           continue;
         }
-        for (const auto& reference : membership->references) {
-          if (reference && reference->noteId == noteId) {
-            return reference;
-          }
+        LoopSnapshotNoteRef found;
+        forEachSnapshotMembershipReference(
+            membership.get(), [noteId, &found](const LoopSnapshotNoteRef& reference) {
+              if (!found && reference && reference->noteId == noteId) {
+                found = reference;
+              }
+            });
+        if (found) {
+          return found;
         }
       }
     }
@@ -345,21 +635,45 @@ LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
 LOOP_COLD_MEM void LoopSnapshot::appendCanonicalSpans(
     const LoopSnapshotNoteRef& note, CanonicalNoteSpanVec& out) const {
   if (note && note->loopId == loopId_) {
-    note->appendCanonicalSpans(out);
+    note->appendCanonicalSpans(loopLengthTicks_, out);
   }
 }
 
 struct LoopSnapshotNoteBarApply {
+  enum class BarStage : uint8_t {
+    Select,
+    CopyMembership,
+    RemoveReference,
+    AppendReference,
+    Complete,
+  };
+
   SnapshotNoteChange change;
-  std::vector<uint32_t> remainingBars;
-  std::vector<uint32_t> oldBars;
-  std::vector<uint32_t> nextBars;
+  SnapshotNoteBarCursor oldCursor;
+  SnapshotNoteBarCursor nextCursor;
   std::shared_ptr<SnapshotSpanRoot> nextRoot;
   std::vector<std::pair<uint8_t, std::shared_ptr<SnapshotPitchDirectory>>>
       pitchEdits;
   std::vector<MutablePageEdit<LoopSnapshotNoteRef>> pageEdits;
   std::vector<MutableMembershipEdit<LoopSnapshotNoteRef>> membershipEdits;
   LoopSnapshotNoteRef nextReference;
+  SnapshotMembershipCopyProgress<LoopSnapshotNoteRef> membershipCopy;
+  std::shared_ptr<SnapshotMembership<LoopSnapshotNoteRef>> currentMembership;
+  std::shared_ptr<SnapshotBarPage<LoopSnapshotNoteRef>> currentPage;
+  SnapshotMembership<LoopSnapshotNoteRef>* mutationPage = nullptr;
+  SnapshotMembership<LoopSnapshotNoteRef>* appendPage = nullptr;
+  SnapshotBarPageDirectory<LoopSnapshotNoteRef>* currentDirectory = nullptr;
+  uint8_t currentPageCount = 0;
+  uint32_t currentBarIndex = 0;
+  bool currentBarActive = false;
+  bool currentBarRemovesReference = false;
+  bool currentBarAppendsReference = false;
+  bool currentBarRemovesPreviousReference = false;
+  BarStage barStage = BarStage::Select;
+
+  bool done() const {
+    return !oldCursor.active && !nextCursor.active && !currentBarActive;
+  }
 
   std::shared_ptr<SnapshotPitchDirectory> mutablePitchDirectory(uint8_t pitch) {
     for (auto& edit : pitchEdits) {
@@ -368,6 +682,9 @@ struct LoopSnapshotNoteBarApply {
       }
     }
     auto directory = allocateSnapshotShared<SnapshotPitchDirectory>();
+    if (!directory) {
+      return {};
+    }
     if (nextRoot->pitches[pitch]) {
       *directory = *nextRoot->pitches[pitch];
     }
@@ -376,7 +693,8 @@ struct LoopSnapshotNoteBarApply {
     return directory;
   }
 
-  bool begin(LoopSnapshot& snapshot, const SnapshotNoteChange& incoming) {
+  bool begin(LoopSnapshot& snapshot, const SnapshotNoteChange& incoming,
+             std::shared_ptr<SnapshotSpanRoot>& constructionSpanRoot) {
     const bool hasPrevious = static_cast<bool>(incoming.previous);
     if (incoming.kind == SnapshotChangeKind::Add && hasPrevious) {
       return false;
@@ -390,8 +708,7 @@ struct LoopSnapshotNoteBarApply {
     if (incoming.kind != SnapshotChangeKind::Remove &&
         (incoming.next.loopId != snapshot.loopId_ ||
          incoming.next.noteId == kInvalidNoteId ||
-         incoming.next.pitch >= kLoopSnapshotPitchCount ||
-         incoming.next.loopLengthTicks != snapshot.loopLengthTicks_)) {
+         incoming.next.pitch >= kLoopSnapshotPitchCount)) {
       return false;
     }
     if (incoming.previous &&
@@ -402,63 +719,198 @@ struct LoopSnapshotNoteBarApply {
     }
 
     change = incoming;
-    nextRoot = allocateSnapshotShared<SnapshotSpanRoot>(
-        snapshot.spanRoot_ ? *snapshot.spanRoot_ : SnapshotSpanRoot{});
+    if (constructionSpanRoot) {
+      nextRoot = constructionSpanRoot;
+    } else {
+      nextRoot = allocateSnapshotShared<SnapshotSpanRoot>(
+          snapshot.spanRoot_ ? *snapshot.spanRoot_ : SnapshotSpanRoot{});
+      if (!nextRoot) {
+        return false;
+      }
+      constructionSpanRoot = nextRoot;
+    }
     if (incoming.previous) {
-      appendNoteBars(*incoming.previous, oldBars);
+      oldCursor.beginNote(*incoming.previous, snapshot.loopLengthTicks_);
     }
     if (incoming.kind != SnapshotChangeKind::Remove) {
-      appendNoteBars(incoming.next, nextBars);
+      nextCursor.beginNote(incoming.next, snapshot.loopLengthTicks_);
       nextReference = allocateConstSnapshotShared<LoopSnapshotNote>(incoming.next);
+      if (!nextReference) {
+        return false;
+      }
     }
-    sortUniqueBars(oldBars);
-    sortUniqueBars(nextBars);
-    remainingBars = oldBars;
-    remainingBars.insert(remainingBars.end(), nextBars.begin(), nextBars.end());
-    sortUniqueBars(remainingBars);
     return true;
   }
 
-  bool applySoonestBar(LoopSnapshot& snapshot, uint32_t playheadPhaseTick) {
-    if (!remainingBars.empty()) {
-      sortBarsBySoonestPlayhead(remainingBars, playheadPhaseTick,
-                                snapshot.loopLengthTicks_);
-      const uint32_t barIndex = remainingBars.front();
-      remainingBars.erase(remainingBars.begin());
-      const bool oldMember =
-          std::binary_search(oldBars.begin(), oldBars.end(), barIndex);
-      const bool nextMember =
-          std::binary_search(nextBars.begin(), nextBars.end(), barIndex);
-      const uint8_t oldPitch =
-          change.previous ? change.previous->pitch : change.next.pitch;
-      const uint8_t nextPitch = change.next.pitch;
-      if (oldMember) {
-        auto directory = mutablePitchDirectory(oldPitch);
-        auto membership = mutableMembershipForBar<LoopSnapshotNoteRef>(
-            directory->pages, pageEdits, membershipEdits, barIndex);
-        removeReference(*membership, change.previous);
-      }
-      if (nextMember) {
-        auto directory = mutablePitchDirectory(nextPitch);
-        auto membership = mutableMembershipForBar<LoopSnapshotNoteRef>(
-            directory->pages, pageEdits, membershipEdits, barIndex);
-        addNoteReference(*membership, nextReference);
-      }
-      snapshot.spanRoot_ = nextRoot;
+  bool beginCurrentBar(uint32_t barIndex, bool removeReferenceValue,
+                       bool appendReferenceValue, bool removesPreviousReference) {
+    currentBarIndex = barIndex;
+    currentBarRemovesReference = removeReferenceValue;
+    currentBarAppendsReference = appendReferenceValue;
+    currentBarRemovesPreviousReference = removesPreviousReference;
+    const uint8_t pitch =
+        removesPreviousReference
+            ? (change.previous ? change.previous->pitch : change.next.pitch)
+            : change.next.pitch;
+    auto directory = mutablePitchDirectory(pitch);
+    if (!directory) {
+      return false;
     }
-    if (!remainingBars.empty()) {
-      return true;
+    currentDirectory = &directory->pages;
+    currentPage = mutableBarPageForBar(
+        *currentDirectory, pageEdits, currentBarIndex);
+    if (!currentPage) {
+      return false;
     }
-    snapshot.spanRoot_ = std::move(nextRoot);
-    if (change.kind != SnapshotChangeKind::Remove &&
+    const size_t pageOffset = pageOffsetForBar<LoopSnapshotNoteRef>(currentBarIndex);
+    for (const auto& edit : membershipEdits) {
+      if (edit.directory == currentDirectory && edit.barIndex == currentBarIndex) {
+        currentMembership = edit.membership;
+        currentPageCount = edit.pageCount;
+        mutationPage = currentMembership.get();
+        appendPage = currentMembership.get();
+        barStage = currentBarRemovesReference ? BarStage::RemoveReference
+                                              : BarStage::AppendReference;
+        return true;
+      }
+    }
+    membershipCopy.begin(currentPage->memberships[pageOffset]);
+    barStage = BarStage::CopyMembership;
+    return true;
+  }
+
+  void installCopiedMembership() {
+    currentMembership = membershipCopy.head;
+    currentPageCount = membershipCopy.pageCount;
+    const size_t pageOffset = pageOffsetForBar<LoopSnapshotNoteRef>(currentBarIndex);
+    currentPage->memberships[pageOffset] = currentMembership;
+    membershipEdits.push_back(
+        {currentDirectory, currentBarIndex, currentMembership, currentPageCount});
+    mutationPage = currentMembership.get();
+    appendPage = membershipCopy.tail.get();
+  }
+
+  bool appendCurrentReference(LoopSnapshot& snapshot) {
+    if (appendPage == nullptr) {
+      return false;
+    }
+    if (appendPage->count == kSnapshotMembershipPageCapacity) {
+      if (currentPageCount >= kSnapshotMembershipMaxPages) {
+        return false;
+      }
+      auto nextPage = allocateSnapshotShared<SnapshotMembership<LoopSnapshotNoteRef>>();
+      if (!nextPage) {
+        return false;
+      }
+      appendPage->next = nextPage;
+      appendPage = nextPage.get();
+      ++currentPageCount;
+    }
+    appendPage->references[appendPage->count++] = nextReference;
+    return finishCurrentBar(snapshot);
+  }
+
+  bool finishCurrentBar(LoopSnapshot& snapshot) {
+    snapshot.spanRoot_ = nextRoot;
+    currentBarActive = false;
+    currentMembership.reset();
+    currentPage.reset();
+    mutationPage = nullptr;
+    appendPage = nullptr;
+    currentDirectory = nullptr;
+    currentPageCount = 0;
+    currentBarRemovesPreviousReference = false;
+    barStage = BarStage::Select;
+    if (done() && change.kind != SnapshotChangeKind::Remove &&
         change.next.noteId >= snapshot.nextNoteId_) {
       snapshot.nextNoteId_ = change.next.noteId + 1;
     }
     return true;
   }
+
+  bool applySoonestBar(LoopSnapshot& snapshot, uint32_t playheadPhaseTick) {
+    (void)playheadPhaseTick;
+    if (!currentBarActive) {
+      uint32_t barIndex = 0;
+      if (oldCursor.takeNextBar(barIndex)) {
+        currentBarActive = true;
+        if (!beginCurrentBar(barIndex, true, false, true)) {
+          return false;
+        }
+        return true;
+      }
+      if (nextCursor.takeNextBar(barIndex)) {
+        currentBarActive = true;
+        if (!beginCurrentBar(barIndex, change.kind != SnapshotChangeKind::Remove, true,
+                             false)) {
+          return false;
+        }
+        if (barStage == BarStage::CopyMembership && membershipCopy.sourceWasEmpty) {
+          if (!membershipCopy.copyNextPage()) {
+            return false;
+          }
+          installCopiedMembership();
+          return appendCurrentReference(snapshot);
+        }
+        return true;
+      }
+      return true;
+    }
+
+    if (barStage == BarStage::CopyMembership) {
+      if (!membershipCopy.copyNextPage()) {
+        return false;
+      }
+      if (!membershipCopy.complete) {
+        return true;
+      }
+      installCopiedMembership();
+      if (membershipCopy.sourceWasEmpty && currentBarAppendsReference) {
+        return appendCurrentReference(snapshot);
+      }
+      barStage = currentBarRemovesReference ? BarStage::RemoveReference
+                                            : BarStage::AppendReference;
+      return true;
+    }
+
+    if (barStage == BarStage::RemoveReference) {
+      if (mutationPage != nullptr) {
+        SnapshotMembership<LoopSnapshotNoteRef>* page = mutationPage;
+        mutationPage = const_cast<SnapshotMembership<LoopSnapshotNoteRef>*>(
+            page->next.get());
+        appendPage = page;
+        const LoopSnapshotNoteRef& target =
+            currentBarRemovesPreviousReference ? change.previous : nextReference;
+        if (removeReferenceFromPage(*page, target)) {
+          if (!currentBarAppendsReference) {
+            barStage = BarStage::Complete;
+          }
+        }
+        return true;
+      }
+      barStage = currentBarAppendsReference ? BarStage::AppendReference
+                                            : BarStage::Complete;
+      return true;
+    }
+
+    if (barStage == BarStage::AppendReference) {
+      return appendCurrentReference(snapshot);
+    }
+
+    return finishCurrentBar(snapshot);
+  }
 };
 
 struct LoopSnapshotEventBarApply {
+  enum class BarStage : uint8_t {
+    Select,
+    CopyMembership,
+    RemoveReference,
+    AppendReference,
+    SortMembership,
+    Complete,
+  };
+
   SnapshotEventChange change;
   std::vector<uint32_t> remainingBars;
   uint32_t oldBar = 0;
@@ -469,8 +921,25 @@ struct LoopSnapshotEventBarApply {
   std::vector<MutablePageEdit<LoopSnapshotEventRef>> pageEdits;
   std::vector<MutableMembershipEdit<LoopSnapshotEventRef>> membershipEdits;
   LoopSnapshotEventRef nextReference;
+  SnapshotMembershipCopyProgress<LoopSnapshotEventRef> membershipCopy;
+  std::shared_ptr<SnapshotMembership<LoopSnapshotEventRef>> currentMembership;
+  std::shared_ptr<SnapshotBarPage<LoopSnapshotEventRef>> currentPage;
+  SnapshotMembership<LoopSnapshotEventRef>* mutationPage = nullptr;
+  SnapshotMembership<LoopSnapshotEventRef>* appendPage = nullptr;
+  SnapshotMembership<LoopSnapshotEventRef>* sortPage = nullptr;
+  SnapshotBarPageDirectory<LoopSnapshotEventRef>* currentDirectory = nullptr;
+  uint8_t currentPageCount = 0;
+  uint32_t currentBarIndex = 0;
+  bool currentBarActive = false;
+  bool currentBarRemovesReference = false;
+  bool currentBarAppendsReference = false;
+  bool currentBarRemovesPreviousReference = false;
+  BarStage barStage = BarStage::Select;
 
-  bool begin(LoopSnapshot& snapshot, const SnapshotEventChange& incoming) {
+  bool done() const { return remainingBars.empty() && !currentBarActive; }
+
+  bool begin(LoopSnapshot& snapshot, const SnapshotEventChange& incoming,
+             std::shared_ptr<SnapshotEventRoot>& constructionEventRoot) {
     const bool hasPrevious = static_cast<bool>(incoming.previous);
     if (incoming.kind == SnapshotChangeKind::Add && hasPrevious) {
       return false;
@@ -503,44 +972,224 @@ struct LoopSnapshotEventBarApply {
                   : incoming.next.value.tick / Config::TICKS_PER_BAR;
     removeOld = static_cast<bool>(incoming.previous);
     addNext = incoming.kind != SnapshotChangeKind::Remove;
-    remainingBars.push_back(oldBar);
-    if (nextBar != oldBar) {
+    if (removeOld) {
+      remainingBars.push_back(oldBar);
+    }
+    if (addNext && (!removeOld || nextBar != oldBar)) {
       remainingBars.push_back(nextBar);
     }
     sortUniqueBars(remainingBars);
-    nextRoot = allocateSnapshotShared<SnapshotEventRoot>(
-        snapshot.eventRoot_ ? *snapshot.eventRoot_ : SnapshotEventRoot{});
+    if (constructionEventRoot) {
+      nextRoot = constructionEventRoot;
+    } else {
+      nextRoot = allocateSnapshotShared<SnapshotEventRoot>(
+          snapshot.eventRoot_ ? *snapshot.eventRoot_ : SnapshotEventRoot{});
+      if (!nextRoot) {
+        return false;
+      }
+      constructionEventRoot = nextRoot;
+    }
     if (addNext) {
       nextReference = allocateConstSnapshotShared<LoopSnapshotEvent>(incoming.next);
+      if (!nextReference) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool beginCurrentBar(uint32_t barIndex, bool removeReferenceValue,
+                       bool appendReferenceValue, bool removesPreviousReference) {
+    currentBarIndex = barIndex;
+    currentBarRemovesReference = removeReferenceValue;
+    currentBarAppendsReference = appendReferenceValue;
+    currentBarRemovesPreviousReference = removesPreviousReference;
+    currentDirectory = &nextRoot->pages;
+    currentPage = mutableBarPageForBar(
+        *currentDirectory, pageEdits, currentBarIndex);
+    if (!currentPage) {
+      return false;
+    }
+    const size_t pageOffset = pageOffsetForBar<LoopSnapshotEventRef>(currentBarIndex);
+    for (const auto& edit : membershipEdits) {
+      if (edit.directory == currentDirectory && edit.barIndex == currentBarIndex) {
+        currentMembership = edit.membership;
+        currentPageCount = edit.pageCount;
+        mutationPage = currentMembership.get();
+        appendPage = currentMembership.get();
+        barStage = currentBarRemovesReference ? BarStage::RemoveReference
+                                              : BarStage::AppendReference;
+        return true;
+      }
+    }
+    membershipCopy.begin(currentPage->memberships[pageOffset]);
+    barStage = BarStage::CopyMembership;
+    return true;
+  }
+
+  void installCopiedMembership() {
+    currentMembership = membershipCopy.head;
+    currentPageCount = membershipCopy.pageCount;
+    const size_t pageOffset = pageOffsetForBar<LoopSnapshotEventRef>(currentBarIndex);
+    currentPage->memberships[pageOffset] = currentMembership;
+    membershipEdits.push_back(
+        {currentDirectory, currentBarIndex, currentMembership, currentPageCount});
+    mutationPage = currentMembership.get();
+    appendPage = membershipCopy.tail.get();
+  }
+
+  bool appendCurrentReference(LoopSnapshot& snapshot) {
+    if (appendPage == nullptr) {
+      return false;
+    }
+    if (appendPage->count == kSnapshotMembershipPageCapacity) {
+      if (currentPageCount >= kSnapshotMembershipMaxPages) {
+        return false;
+      }
+      auto nextPage = allocateSnapshotShared<SnapshotMembership<LoopSnapshotEventRef>>();
+      if (!nextPage) {
+        return false;
+      }
+      appendPage->next = nextPage;
+      appendPage = nextPage.get();
+      ++currentPageCount;
+    }
+    appendPage->references[appendPage->count++] = nextReference;
+    sortPage = currentMembership.get();
+    if (membershipCopy.sourceWasEmpty) {
+      auto* page = sortPage;
+      std::sort(page->references.begin(),
+                page->references.begin() + page->count,
+                [](const LoopSnapshotEventRef& left,
+                   const LoopSnapshotEventRef& right) {
+                  if (!left || !right) {
+                    return static_cast<bool>(left) && !right;
+                  }
+                  if (left->canonicalOrder != right->canonicalOrder) {
+                    return left->canonicalOrder < right->canonicalOrder;
+                  }
+                  return left->eventId < right->eventId;
+                });
+      return finishCurrentBar(snapshot);
+    }
+    barStage = BarStage::SortMembership;
+    return true;
+  }
+
+  bool finishCurrentBar(LoopSnapshot& snapshot) {
+    snapshot.eventRoot_ = nextRoot;
+    currentBarActive = false;
+    currentMembership.reset();
+    currentPage.reset();
+    mutationPage = nullptr;
+    appendPage = nullptr;
+    sortPage = nullptr;
+    currentDirectory = nullptr;
+    currentPageCount = 0;
+    currentBarRemovesPreviousReference = false;
+    barStage = BarStage::Select;
+    if (done() && change.kind != SnapshotChangeKind::Remove &&
+        change.next.eventId >= snapshot.nextEventId_) {
+      snapshot.nextEventId_ = change.next.eventId + 1;
     }
     return true;
   }
 
   bool applySoonestBar(LoopSnapshot& snapshot, uint32_t playheadPhaseTick) {
-    if (!remainingBars.empty()) {
-      sortBarsBySoonestPlayhead(remainingBars, playheadPhaseTick,
-                                snapshot.loopLengthTicks_);
-      const uint32_t barIndex = remainingBars.front();
-      remainingBars.erase(remainingBars.begin());
-      auto membership = mutableMembershipForBar<LoopSnapshotEventRef>(
-          nextRoot->pages, pageEdits, membershipEdits, barIndex);
-      if (removeOld && barIndex == oldBar) {
-        removeReference(*membership, change.previous);
+    if (!currentBarActive) {
+      if (!remainingBars.empty()) {
+        sortBarsBySoonestPlayhead(remainingBars, playheadPhaseTick,
+                                  snapshot.loopLengthTicks_);
+        currentBarIndex = remainingBars.front();
+        remainingBars.erase(remainingBars.begin());
+        currentBarActive = true;
+        const bool removes = removeOld && currentBarIndex == oldBar;
+        const bool appends = addNext && currentBarIndex == nextBar;
+        if (!beginCurrentBar(currentBarIndex, removes || appends, appends, removes)) {
+          return false;
+        }
+        if (barStage == BarStage::CopyMembership && membershipCopy.sourceWasEmpty && appends) {
+          if (!membershipCopy.copyNextPage()) {
+            return false;
+          }
+          installCopiedMembership();
+          return appendCurrentReference(snapshot);
+        }
+        return true;
       }
-      if (addNext && barIndex == nextBar) {
-        addEventReference(*membership, nextReference);
-      }
-      snapshot.eventRoot_ = nextRoot;
+      return true;
     }
+
+    if (barStage == BarStage::CopyMembership) {
+      if (!membershipCopy.copyNextPage()) {
+        return false;
+      }
+      if (!membershipCopy.complete) {
+        return true;
+      }
+      installCopiedMembership();
+      if (membershipCopy.sourceWasEmpty && currentBarAppendsReference) {
+        return appendCurrentReference(snapshot);
+      }
+      barStage = currentBarRemovesReference ? BarStage::RemoveReference
+                                            : BarStage::AppendReference;
+      return true;
+    }
+
+    if (barStage == BarStage::RemoveReference) {
+      if (mutationPage != nullptr) {
+        SnapshotMembership<LoopSnapshotEventRef>* page = mutationPage;
+        mutationPage = const_cast<SnapshotMembership<LoopSnapshotEventRef>*>(
+            page->next.get());
+        appendPage = page;
+        const LoopSnapshotEventRef& target =
+            currentBarRemovesPreviousReference ? change.previous : nextReference;
+        if (removeReferenceFromPage(*page, target)) {
+          if (!currentBarAppendsReference) {
+            barStage = BarStage::Complete;
+          }
+        }
+        return true;
+      }
+      barStage = currentBarAppendsReference ? BarStage::AppendReference
+                                            : BarStage::Complete;
+      return true;
+    }
+
+    if (barStage == BarStage::AppendReference) {
+      return appendCurrentReference(snapshot);
+    }
+
+    if (barStage == BarStage::SortMembership) {
+      if (sortPage == nullptr) {
+        return finishCurrentBar(snapshot);
+      }
+      auto* page = sortPage;
+      sortPage = const_cast<SnapshotMembership<LoopSnapshotEventRef>*>(
+          page->next.get());
+      std::sort(page->references.begin(),
+                page->references.begin() + page->count,
+                [](const LoopSnapshotEventRef& left,
+                   const LoopSnapshotEventRef& right) {
+                  if (!left || !right) {
+                    return static_cast<bool>(left) && !right;
+                  }
+                  if (left->canonicalOrder != right->canonicalOrder) {
+                    return left->canonicalOrder < right->canonicalOrder;
+                  }
+                  return left->eventId < right->eventId;
+                });
+      return true;
+    }
+
+    if (barStage == BarStage::Complete) {
+      return finishCurrentBar(snapshot);
+    }
+
     if (!remainingBars.empty()) {
       return true;
     }
-    snapshot.eventRoot_ = std::move(nextRoot);
-    if (change.kind != SnapshotChangeKind::Remove &&
-        change.next.eventId >= snapshot.nextEventId_) {
-      snapshot.nextEventId_ = change.next.eventId + 1;
-    }
-    return true;
+    return finishCurrentBar(snapshot);
   }
 };
 
@@ -555,13 +1204,18 @@ LOOP_COLD_MEM LoopSnapshotConstruction::LoopSnapshotConstruction(
 
 LOOP_COLD_MEM LoopSnapshotConstruction::~LoopSnapshotConstruction() = default;
 
+LOOP_COLD_MEM void LoopSnapshotConstruction::handoffLoopLengthTicks(
+    uint32_t loopLengthTicks) {
+  candidate_.loopLengthTicks_ = loopLengthTicks;
+}
+
 LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
     uint32_t playheadPhaseTick) {
   if (noteApply_) {
     if (!noteApply_->applySoonestBar(candidate_, playheadPhaseTick)) {
       return false;
     }
-    if (noteApply_->remainingBars.empty()) {
+    if (noteApply_->done()) {
       noteApply_.reset();
       ++nextChangeIndex_;
     }
@@ -571,7 +1225,7 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
     if (!eventApply_->applySoonestBar(candidate_, playheadPhaseTick)) {
       return false;
     }
-    if (eventApply_->remainingBars.empty()) {
+    if (eventApply_->done()) {
       eventApply_.reset();
       ++nextChangeIndex_;
     }
@@ -579,7 +1233,8 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
   }
   if (nextChangeIndex_ < changes_.notes.size()) {
     noteApply_ = std::make_unique<LoopSnapshotNoteBarApply>();
-    if (!noteApply_->begin(candidate_, changes_.notes[nextChangeIndex_])) {
+    if (!noteApply_->begin(candidate_, changes_.notes[nextChangeIndex_],
+                           constructionSpanRoot_)) {
       noteApply_.reset();
       return false;
     }
@@ -587,7 +1242,8 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
   }
   const size_t eventIndex = nextChangeIndex_ - changes_.notes.size();
   eventApply_ = std::make_unique<LoopSnapshotEventBarApply>();
-  if (!eventApply_->begin(candidate_, changes_.events[eventIndex])) {
+  if (!eventApply_->begin(candidate_, changes_.events[eventIndex],
+                         constructionEventRoot_)) {
     eventApply_.reset();
     return false;
   }
@@ -622,6 +1278,54 @@ LoopSnapshotConstruction::freeze() const {
   }
   if (!frozenCandidate_) {
     frozenCandidate_ = allocateConstSnapshotShared<LoopSnapshot>(candidate_);
+    emitSnapshotAllocCounters();
   }
   return frozenCandidate_;
+}
+
+void resetSnapshotAllocCounters() {
+#if SNAPSHOT_ALLOC_COUNTERS
+  g_snapshotAllocNodes = 0;
+  g_snapshotAllocBytes = 0;
+  g_snapshotAllocSlabs = 0;
+#endif
+}
+
+uint32_t snapshotAllocNodeCount() {
+#if SNAPSHOT_ALLOC_COUNTERS
+  return g_snapshotAllocNodes;
+#else
+  return 0;
+#endif
+}
+
+uint32_t snapshotAllocByteCount() {
+#if SNAPSHOT_ALLOC_COUNTERS
+  return g_snapshotAllocBytes;
+#else
+  return 0;
+#endif
+}
+
+uint32_t snapshotAllocSlabCount() {
+#if SNAPSHOT_ALLOC_COUNTERS
+  return g_snapshotAllocSlabs;
+#else
+  return 0;
+#endif
+}
+
+void emitSnapshotAllocCounters() {
+#if defined(SESSION_CAPTURE)
+  char line[160];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,snapshot_alloc,nodes=%lu,bytes=%lu,slabs=%lu",
+           static_cast<unsigned long>(micros()),
+           static_cast<unsigned long>(snapshotAllocNodeCount()),
+           static_cast<unsigned long>(snapshotAllocByteCount()),
+           static_cast<unsigned long>(snapshotAllocSlabCount()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)0;
+#endif
 }

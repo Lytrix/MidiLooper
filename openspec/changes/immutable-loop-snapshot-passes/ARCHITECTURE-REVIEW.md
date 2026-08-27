@@ -421,7 +421,17 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       `discardPendingIfLoopLengthChanged` (`discard=15262`). Exclusive
       leftover after that probe is ≤ 39 µs. Publication closed at
       `pending=0` / `root=0x70431844` / `root_rev=8`.
-- [ ] Reconcile named costs (`discard` 15.262 ms, session-exit
-      `start`/`pass_change` 19.996 ms, `step` 5.992 ms) with
-      `ExecutionBounds.md` rows 21–22 and freeze `T_RT_reserve` before
-      any construction-bound change.
+- [ ] Stage 2 falsification review is in
+      [`snapshot_publication_timing_bugfix.md`](../../../docs/Plans/snapshot_publication_timing_bugfix.md):
+      discard remains a real content-sized destructor for non-fit.
+      Session-exit length handoff device PASS
+      [`003015`](../../../captures/session_20260828_003015.log):
+      record-stop PLAYING `discard=47`; first root stayed `root=0x0`
+      until `pending=0` / `root=0x703248cc` / `root_rev=1`.
+      The record/overdub pass identity
+      invariant supports a proposed caller-scoped pitch lookup for
+      `startNextPassChangeFragment`, while its inner ownership and
+      pitch-local cost remain unmeasured;
+      no `step` rewrite is justified yet; and freezing the minimum observed
+      reserve is rejected as a guarantee. Do not remove the +16 live-record
+      bars.

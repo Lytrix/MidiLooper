@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-27 (Stage 2 leftover named on 225659)
+Last updated: 2026-08-28 (session-exit length handoff device PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -112,8 +112,23 @@ STOPPED session-exit `start`/`pass_change` reaches **19.996 / 19.968 ms**.
 `pending=0` row). Publication closed at 183.121 s:
 `root=0x70431844` / `root_rev=8` / `finish=671` / `publish=10`.
 First STOPPED idle +0.066 s. Child-line budget held (31701/31701 complete
-child rows). `T_RT_reserve` is not frozen. Do not change construction
-bounds. Do not check off OpenSpec `3.5`/`3.6`.
+child rows). The Stage 2 falsification review is recorded in the plan.
+Session-exit length handoff device PASS
+[`003015`](../../captures/session_20260828_003015.log): first PLAYING
+idle after record stop is `discard=47` (was `15262` on
+[`225659`](../../captures/session_20260827_225659.log)). The candidate
+stayed `root=0x0` until `pending=0` / `root=0x703248cc` / `root_rev=1`.
+RECORDING used 2669 idles / 234 ms CPU, not a prefix rebuild. Native
+fixtures cover the 9216/21504 fit pair and the applied-ticks overflow
+discard. Host gates: capture-serial RAM1 locals **6976**; native
+**1494/1494**. For
+`startNextPassChangeFragment`, the record/overdub pass identity invariant
+now supports a proposed caller-scoped pitch lookup; inner ownership and
+the remaining pitch-local cost are still unmeasured. No `step` rewrite is
+justified yet.
+Per-turn reserve measurement remains necessary, but freezing the minimum
+observed reserve is rejected as a guarantee. Do not remove the +16
+live-record bars. Do not check off OpenSpec `3.5`/`3.6`.
 
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:

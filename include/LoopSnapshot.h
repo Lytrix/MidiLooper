@@ -20,6 +20,19 @@ constexpr EventId kInvalidEventId = 0;
 
 constexpr uint16_t kLoopSnapshotPitchCount = 128;
 constexpr uint16_t kLoopSnapshotBarsPerPage = 32;
+constexpr uint16_t kSnapshotMembershipPageCapacity = 16;
+constexpr uint16_t kSnapshotMembershipMaxPages = 8;
+constexpr uint32_t kSnapshotSlabBytes = 32 * 1024;
+
+void resetSnapshotAllocCounters();
+uint32_t snapshotAllocNodeCount();
+uint32_t snapshotAllocByteCount();
+uint32_t snapshotAllocSlabCount();
+void emitSnapshotAllocCounters();
+constexpr uint16_t kSnapshotWrapJournalMaxChanges = 32;
+constexpr uint16_t kSnapshotWrapJournalMaxAffectedBars = 32;
+constexpr uint16_t kSnapshotWrapJournalMaxMembershipEntries = 64;
+constexpr uint16_t kSnapshotWrapJournalMaxBytes = 4096;
 
 struct LoopSnapshotNote {
   LoopId loopId = kInvalidLoopId;
@@ -28,13 +41,12 @@ struct LoopSnapshotNote {
   uint8_t velocity = 0;
   uint32_t startTick = 0;
   uint32_t endTick = 0;
-  uint32_t loopLengthTicks = 0;
 
-  bool isWrap() const {
+  bool isWrap(uint32_t loopLengthTicks) const {
     return loopLengthTicks > 0 && endTick < startTick;
   }
 
-  void appendCanonicalSpans(CanonicalNoteSpanVec& out) const;
+  void appendCanonicalSpans(uint32_t loopLengthTicks, CanonicalNoteSpanVec& out) const;
 };
 
 struct LoopSnapshotEvent {
@@ -48,13 +60,33 @@ using LoopSnapshotNoteRef = std::shared_ptr<const LoopSnapshotNote>;
 using LoopSnapshotEventRef = std::shared_ptr<const LoopSnapshotEvent>;
 
 template <typename Reference>
-using SnapshotReferenceVec =
-    std::vector<Reference, ExternalMemoryFirstAllocator<Reference>>;
+struct SnapshotMembership {
+  std::array<Reference, kSnapshotMembershipPageCapacity> references{};
+  uint8_t count = 0;
+  std::shared_ptr<const SnapshotMembership<Reference>> next;
+};
 
 template <typename Reference>
-struct SnapshotMembership {
-  SnapshotReferenceVec<Reference> references;
-};
+inline size_t snapshotMembershipCount(
+    const SnapshotMembership<Reference>* membership) {
+  size_t total = 0;
+  while (membership != nullptr) {
+    total += membership->count;
+    membership = membership->next.get();
+  }
+  return total;
+}
+
+template <typename Reference, typename Visitor>
+inline void forEachSnapshotMembershipReference(
+    const SnapshotMembership<Reference>* membership, Visitor&& visitor) {
+  while (membership != nullptr) {
+    for (uint8_t index = 0; index < membership->count; ++index) {
+      visitor(membership->references[index]);
+    }
+    membership = membership->next.get();
+  }
+}
 
 template <typename Reference>
 using SnapshotMembershipRef = std::shared_ptr<const SnapshotMembership<Reference>>;
@@ -121,16 +153,26 @@ struct LoopSnapshotNoteBarApply;
 struct LoopSnapshotEventBarApply;
 using ImmutableLoopSnapshotRef = std::shared_ptr<const LoopSnapshot>;
 
+struct SnapshotWrapJournalFragment {
+  ImmutableLoopSnapshotRef parent;
+  LoopSnapshotChangeSet changes;
+  PassId wrapPassId = kInvalidPassId;
+  uint8_t fragmentIndex = 0;
+  uint8_t fragmentCount = 1;
+};
+
 /// Complete immutable effective-state root after construction is frozen.
 class LoopSnapshot {
  public:
   LoopSnapshot() = default;
   LoopSnapshot(LoopId loopId, uint32_t loopLengthTicks, uint32_t loopStartTick,
                uint32_t nextNoteId, uint32_t nextEventId);
+  LoopSnapshot(const LoopSnapshot& other, uint32_t loopLengthTicks);
 
   static ImmutableLoopSnapshotRef createEmpty(LoopId loopId, uint32_t loopLengthTicks,
                                               uint32_t loopStartTick, uint32_t nextNoteId,
                                               uint32_t nextEventId);
+  ImmutableLoopSnapshotRef withLoopLengthTicks(uint32_t loopLengthTicks) const;
 
   LoopId loopId() const { return loopId_; }
   uint32_t loopLengthTicks() const { return loopLengthTicks_; }
@@ -161,8 +203,8 @@ class LoopSnapshot {
   std::shared_ptr<const SnapshotEventRoot> eventRoot_;
 };
 
-/// Candidate construction with persistent progress. Publication is owned by
-/// `Loop` at session-exit and NOTE_EDIT close only.
+/// Candidate construction with persistent bar-cursor progress. Publication is
+/// owned by `Loop` at session-exit, wrap-journal idle, and NOTE_EDIT close.
 class LoopSnapshotConstruction {
  public:
   LoopSnapshotConstruction(std::shared_ptr<const LoopSnapshot> parent,
@@ -179,6 +221,7 @@ class LoopSnapshotConstruction {
   size_t totalChangeCount() const { return changes_.notes.size() + changes_.events.size(); }
 
   const LoopSnapshot& candidate() const { return candidate_; }
+  void handoffLoopLengthTicks(uint32_t loopLengthTicks);
   std::shared_ptr<const LoopSnapshot> freeze() const;
 
  private:
@@ -187,6 +230,8 @@ class LoopSnapshotConstruction {
   std::shared_ptr<const LoopSnapshot> parent_;
   LoopSnapshot candidate_;
   LoopSnapshotChangeSet changes_;
+  std::shared_ptr<SnapshotSpanRoot> constructionSpanRoot_;
+  std::shared_ptr<SnapshotEventRoot> constructionEventRoot_;
   std::unique_ptr<LoopSnapshotNoteBarApply> noteApply_;
   std::unique_ptr<LoopSnapshotEventBarApply> eventApply_;
   size_t nextChangeIndex_ = 0;
