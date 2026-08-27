@@ -67,8 +67,11 @@ void logContentResolutionDeviceGateIncomplete(const char* reason) {
 
 TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
     Loop& snapshotLoop, uint32_t snapshotIdleStartUs) {
-  const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
   const unsigned long nowUs = static_cast<unsigned long>(micros());
+#if defined(SESSION_CAPTURE)
+  const uint32_t emitStartUs = micros();
+#endif
+  const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
   char snapshotLine[192];
   snprintf(snapshotLine, sizeof(snapshotLine),
            "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
@@ -88,17 +91,23 @@ TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
            snapshotLoop.pendingSnapshotWrapFragmentCount(),
            static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapParentRevision()));
   DebugSessionCapture::appendCaptureTextLine(snapshotLine);
+#if defined(SESSION_CAPTURE)
+  snapshotLoop.addSnapshotIdleEmitUs(micros() - emitStartUs);
+#endif
 
   char childLine[192];
   snprintf(childLine, sizeof(childLine),
            "#CAP,%lu,DIAG,snapshot_idle,child,start=%lu,pass_change=%lu,step=%lu,"
-           "finish=%lu,publish=%lu,probe=%lu",
+           "finish=%lu,publish=%lu,probe=%lu,enqueue=%lu,discard=%lu,emit=%lu",
            nowUs, static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleStartUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdlePassChangeUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleStepUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleFinishUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdlePublishUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleProbeUs()));
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleProbeUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEnqueueUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleDiscardUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEmitUs()));
   DebugSessionCapture::appendCaptureTextLine(childLine);
 }
 

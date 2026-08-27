@@ -377,6 +377,10 @@ struct Loop {
   uint32_t lastSnapshotIdleFinishUs() const;
   uint32_t lastSnapshotIdlePublishUs() const;
   uint32_t lastSnapshotIdleProbeUs() const;
+  uint32_t lastSnapshotIdleEnqueueUs() const;
+  uint32_t lastSnapshotIdleDiscardUs() const;
+  uint32_t lastSnapshotIdleEmitUs() const;
+  void addSnapshotIdleEmitUs(uint32_t durationUs);
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;
   /// True when a live-record parent exists with tick room, or none exists yet.

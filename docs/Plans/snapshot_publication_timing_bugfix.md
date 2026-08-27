@@ -333,4 +333,98 @@ line. Do not add a new telemetry owner.
 1. Device recapture after upload.
 
 ### Proceed?
-- YES — implementing the second child line.
+- YES — implemented 2026-08-27.
+
+## Stage 2 recapture — [`224842`](../../captures/session_20260827_224842.log)
+
+- Child-line budget **closed**. 12789 parent rows, 12789 complete
+  `DIAG,snapshot_idle,child` rows, 0 truncated. Parent length 171–175;
+  child length 94–100.
+- `probe` is 0 or 1 µs (886 nonzero of 12789). Five timestamp pairs are
+  at most a few microseconds; instrumented totals can be read as the
+  named children.
+- First-record live starts (4.0–5.4 ms) are `start` with `pass_change=0`.
+- STOPPED/session-exit starts (5.5–5.8 ms) are `start` ≈ `pass_change`
+  (`startNextPassChangeFragment`).
+- The `start=0` 2.1–3.4 ms class is `step` (`LoopSnapshotConstruction::step`).
+  Leftover on those rows is 8–30 µs.
+- Record-stop PLAYING idle at 23.896 s is **12.438 ms**: `start=4880`
+  (`pass_change=2225` nested), `step=0`, `finish=0`, `publish=0`,
+  leftover **7558 µs**. That leftover is outside the five named children.
+- `finish` max is 537 µs. `publish` is 0; the file ends before publication.
+- Completeness held through the captured window: `root=0x0` on every row.
+  `PLAYING -> STOPPED` at 61.929 s; first STOPPED idle at +0.068 s
+  (`pending=1`, `queued=3`). Capture ends at 69.020 s still `pending=1`,
+  `queued=2`, `construction=4`, `root=0x0`. This file does not close
+  publication.
+- After record start, `midi_gap` 260.228 ms at 13.867 s sits beside a
+  48 µs idle, not a construction child. The 34.801 ms gap at 23.874 s
+  sits beside the 12.438 ms leftover slice (`late_on=7054`,
+  `late_off=6053`, `late_clk=0`).
+- `T_RT_reserve` is not frozen. Named children max at 5.732 ms start /
+  3.434 ms step. The 7.558 ms leftover is the largest exclusive piece of
+  the longest parent. Do not change construction bounds until that
+  leftover is named.
+
+Next measurement slice: leftover probes are in tree on the existing
+`DIAG,snapshot_idle,child` line (`enqueue`, `discard`, `emit`). Parent
+`us` is stamped at the start of `appendSnapshotIdleCaptureLine`, so
+`emit` is after that stamp and is not part of parent leftover. Exclusive
+leftover is `us − (start + step + finish + publish + enqueue + discard)`.
+`pass_change` stays nested in `start`. Recapture the record-stop PLAYING
+class before changing construction bounds. Do not add a new telemetry
+owner.
+
+## Stage 2 recapture — [`225659`](../../captures/session_20260827_225659.log)
+
+- Leftover probes **closed**. 31701 parent rows, 31701 complete
+  `DIAG,snapshot_idle,child` rows with `enqueue` / `discard` / `emit`.
+  Parent length 171–177; child length 121–132. 0 truncated child rows.
+- Record-stop PLAYING idle at 30.164 s is **20.984 ms**:
+  `discard=15262` (`discardPendingIfLoopLengthChanged`), `start=5704`
+  (`pass_change=2810` nested), `enqueue=5`, exclusive leftover **13 µs**.
+  This is the 224842 leftover class.
+- Exclusive leftover after `enqueue`/`discard` is ≤ 39 µs on every paired
+  row. `enqueue` max is 14 µs. `emit` max is 52 µs (after the parent
+  `us` stamp). `probe` is 0 or 1 µs.
+- First-record live start at 8.571 s is 5.355 ms `start` with
+  `pass_change=0`.
+- STOPPED session-exit starts remain `start` ≈ `pass_change`, now
+  **19.996 / 19.968 ms** at 125.868 s.
+- The `start=0` multi-ms class remains `step` (max 5.992 ms).
+- Completeness held: `root=0x0` until the final `pending=0` idle at
+  183.121 s (`root=0x70431844`, `root_rev=8`, `finish=671`,
+  `publish=10`). No earlier nonzero root.
+- Stage 1 hold: `PLAYING -> STOPPED` at 105.089 s; first STOPPED idle
+  at +0.066 s (`pending=1`, `queued=4`, `root=0x0`).
+- After record start, `midi_gap` 260.252 ms at 9.606 s sits beside the
+  first-record window. The 36.415 ms gap at 34.610 s sits in the window
+  that includes the 20.984 ms discard slice (`late_on=0`, `late_off=0`,
+  `late_clk=0`).
+- `T_RT_reserve` is not frozen. Named maxima: `start`/`pass_change`
+  19.996 ms, `discard` 15.262 ms, `step` 5.992 ms. Do not change
+  construction bounds until those named units are reconciled with
+  `ExecutionBounds.md` rows 21–22.
+
+## Pre-implementation review — Stage 2 leftover probes
+
+### Ready
+- `discardPendingIfLoopLengthChanged` and `enqueueLiveOverdubPasses` are
+  the named untimed calls before start.
+- `appendSnapshotIdleCaptureLine` already owns the child line.
+- Child-line budget on [`224842`](../../captures/session_20260827_224842.log)
+  left room for three 6-digit fields.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Named units | `enqueueLiveOverdubPasses`, `discardPendingIfLoopLengthChanged`, parent-line emit |
+| Fit method | Same `DIAG,snapshot_idle,child` line |
+| Parent `us` | Stops at emit start; `emit` is diagnostic only |
+| Construction | Unchanged |
+
+### Open before coding
+1. Device recapture after upload.
+
+### Proceed?
+- YES — implemented 2026-08-27.
