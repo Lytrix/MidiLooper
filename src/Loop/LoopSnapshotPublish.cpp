@@ -11,6 +11,35 @@
 #include <utility>
 #include <vector>
 
+#if defined(SESSION_CAPTURE)
+#include <cstdint>
+
+struct SnapshotIdleChildTimes {
+  uint32_t startUs = 0;
+  uint32_t passChangeUs = 0;
+  uint32_t stepUs = 0;
+  uint32_t finishUs = 0;
+  uint32_t publishUs = 0;
+  uint32_t probeUs = 0;
+};
+
+static SnapshotIdleChildTimes s_lastSnapshotIdleChildren;
+
+struct SnapshotIdleChildAdd {
+  uint32_t& field;
+  uint32_t startUs;
+  explicit SnapshotIdleChildAdd(uint32_t& target) : field(target), startUs(micros()) {}
+  ~SnapshotIdleChildAdd() { field += micros() - startUs; }
+};
+
+static void resetSnapshotIdleChildTimes() {
+  s_lastSnapshotIdleChildren = SnapshotIdleChildTimes{};
+  const uint32_t probeA = micros();
+  const uint32_t probeB = micros();
+  s_lastSnapshotIdleChildren.probeUs = probeB - probeA;
+}
+#endif
+
 namespace {
 
 bool isRecordSessionExit(CommitReason reason) {
@@ -670,6 +699,9 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
 
 LOOP_COLD_MEM bool startNextPassChangeFragment(Loop& loop, PendingSnapshotPublishBox& box,
                                                const ImmutableLoopSnapshotRef& parent) {
+#if defined(SESSION_CAPTURE)
+  SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.passChangeUs);
+#endif
   PendingPassChangeProgress& progress = box.passChangeProgress;
   LoopSnapshotChangeSet changes;
   uint32_t affectedBars = 0;
@@ -1109,6 +1141,54 @@ LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued;
 }
 
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleStartUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.startUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdlePassChangeUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.passChangeUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleStepUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.stepUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleFinishUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.finishUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdlePublishUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.publishUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleProbeUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.probeUs;
+#else
+  return 0;
+#endif
+}
+
 LOOP_COLD_MEM uint32_t Loop::liveRecordAppliedCompletedTicks() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedLiveRecordCompletedTicks
                                     : 0;
@@ -1203,6 +1283,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
                                                     bool allowStartConstruction,
                                                     uint32_t playheadPhaseTick,
                                                     uint32_t liveRecordCompletedTicks) {
+#if defined(SESSION_CAPTURE)
+  resetSnapshotIdleChildTimes();
+#endif
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
   }
@@ -1221,8 +1304,15 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   size_t remaining = maximumChanges;
   while (remaining > 0) {
     if (!box.construction) {
-      if (!allowStartConstruction ||
-          !startNextPendingConstruction(*this, box, liveRecordCompletedTicks)) {
+      bool started = false;
+      {
+#if defined(SESSION_CAPTURE)
+        SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.startUs);
+#endif
+        started = allowStartConstruction &&
+                  startNextPendingConstruction(*this, box, liveRecordCompletedTicks);
+      }
+      if (!started) {
         break;
       }
       if (maximumChanges <= 1) {
@@ -1233,7 +1323,12 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       break;
     }
     const size_t before = box.construction->completedUnitCount();
-    box.construction->step(remaining, playheadPhaseTick);
+    {
+#if defined(SESSION_CAPTURE)
+      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.stepUs);
+#endif
+      box.construction->step(remaining, playheadPhaseTick);
+    }
     if (box.construction->failed()) {
       box.construction.reset();
       if (!box.passChangeProgress.active) {
@@ -1259,7 +1354,14 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
         wrapping && !box.queuedWrapJournals.empty()
             ? box.queuedWrapJournals.front().fragmentCount
             : 1;
-    if (!finishPendingConstruction(box)) {
+    bool finished = false;
+    {
+#if defined(SESSION_CAPTURE)
+      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.finishUs);
+#endif
+      finished = finishPendingConstruction(box);
+    }
+    if (!finished) {
       box.construction.reset();
       if (!box.passChangeProgress.active) {
         box.constructionPassId = kInvalidPassId;
@@ -1269,6 +1371,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     }
     if (wrapping && fragmentIndex + 1 == fragmentCount && box.unpublishedCandidate &&
         !remainingSessionExitPublishWork(box)) {
+#if defined(SESSION_CAPTURE)
+      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
+#endif
       storePublishedSnapshot(box.unpublishedCandidate);
     }
   }
@@ -1279,7 +1384,12 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       clearPendingSnapshotPublish();
       return false;
     }
-    storePublishedSnapshot(box.unpublishedCandidate);
+    {
+#if defined(SESSION_CAPTURE)
+      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
+#endif
+      storePublishedSnapshot(box.unpublishedCandidate);
+    }
     clearPendingSnapshotPublish();
     return false;
   }

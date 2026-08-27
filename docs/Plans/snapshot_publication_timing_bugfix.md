@@ -177,6 +177,51 @@ must not hide the construction execution cost.
 ### Proceed?
 - YES — implemented 2026-08-27.
 
+## Pre-implementation review — Stage 2 child timing
+
+### Ready
+- `Loop::stepPendingSnapshotPublish()` already calls the five named operations.
+- `appendSnapshotIdleCaptureLine()` already emits the parent `snapshot_idle` span.
+- Existing pending-snapshot accessors show the Loop-to-Track read pattern.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Child output | Named fields on the existing `snapshot_idle` line, not 50 ms `loop_rem` one-shots. |
+| Nested fragment | `pass_change_us` is nested inside `start_us`. Exclusive leftover uses `start_us + step_us + finish_us + publish_us`. |
+| Overhead | `probe_us` is one empty consecutive `micros()` pair per idle step. |
+| Construction code | Unchanged in this slice. |
+| Tier-A | `DIAG,snapshot_idle` is Tier-A so children survive ring pressure. |
+
+### Open before coding
+1. Device recapture after upload — not a firmware blocker.
+
+### Proceed?
+- YES — child timing implemented 2026-08-27. Construction-bound change waits for attribution.
+
+## `T_RT_reserve` measurement procedure
+
+`T_RT_reserve` is the remaining runtime interval for deferred maintenance after
+the current MIDI scheduling boundary. It is not `T_clock`, not 60% of
+`T_clock`, and not an already-consumed maintenance interval. The 60% clock
+proxy stays an operating observation only.
+
+| Item | Definition |
+|---|---|
+| **Origin** | Start of the admitted Snapshot idle turn (`snapshot_idle` work-window start `t − us`). |
+| **Deadline** | Next timing-critical `handleMidiInput()` entry. |
+| **Observed interval** | The `DIAG,midi_gap` sample whose window contains that work window. `midi_gap` is the interval since the previous `handleMidiInput()` exit, not an owner duration. |
+| **Deadline lateness** | `DIAG,late_clk` / `DIAG,late_on` / `DIAG,late_off` in the same window, from `notePlaybackServiceEnter`. |
+| **Clock reference** | Nearest `#CAP,BPM` before the idle line: `T_clock_us = 1_000_000 × 60 / (BPM × 24)`. Use it only to name the scheduling period, not as the reserve. |
+| **Per-turn reserve** | Time from idle-turn start until the next `handleMidiInput()` deadline. When Snapshot is the first deferred owner in the gap, that remaining time is the gap still available at admission, not the full observed `midi_gap`. |
+| **Child attribution** | Exclusive children are `start_us`, `step_us`, `finish_us`, and `publish_us`. `pass_change_us` is nested inside `start_us`. `probe_us` is measurement overhead for one timestamp pair; five child timers cost about `5 × probe_us`. |
+| **Acceptance after freeze** | The largest exclusive child, construction-attributable `midi_gap`, and construction-attributable deadline lateness all stay within the measured reserve. An overrun yields and retries without publishing an incomplete candidate. |
+
+Do not freeze a numeric reserve until the instrumented recapture attributes the
+79 ms class. Rows 21 and 22 stay structurally classified until that attribution
+shows whether the cost is outside the classified unit or the classification is
+wrong.
+
 ## Stage 1 status
 
 - Policy: `STOPPED` + `visualCacheNeedsFirstPaint` + pending snapshot work now
@@ -219,3 +264,14 @@ must not hide the construction execution cost.
   published `pending=0`, `root=0x70400ac8`, `root_rev=10`, `playback_rev=10`,
   `queued=0`, `construction=0`, `journals=0`. No earlier nonzero root. No
   post-stop undo/redo. MIDI timing remains observation only.
+
+## Stage 2 status — child timing
+
+- Capture-serial `snapshot_idle` now emits exclusive `start_us`, `step_us`,
+  `finish_us`, `publish_us`, nested `pass_change_us`, and `probe_us`.
+- `DIAG,snapshot_idle` is Tier-A. Native fixture covers that tag.
+- Host gates: `teensy41-capture-serial` RAM1 locals **6976**; native
+  **1489/1489**.
+- Construction, publication, and admission owners are unchanged.
+- Device recapture is required to attribute the 79 ms class and freeze
+  `T_RT_reserve`. Do not change construction bounds until that attribution.

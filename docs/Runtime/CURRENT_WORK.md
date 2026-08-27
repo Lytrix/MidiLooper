@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-27 (Stage 1 STOPPED snapshot admission closed)
+Last updated: 2026-08-27 (Stage 2 snapshot child timing in tree)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -98,8 +98,16 @@ pending publication instead of the visual idle cursor. Device recapture
 [`221054`](../../captures/session_20260827_221054.log) **closes Stage 1**:
 first STOPPED `snapshot_idle` at +0.070 s, candidate stayed `root=0x0` until
 +77.765 s, then `pending=0` published `root=0x70400ac8` / `root_rev=10`.
-Do not start Stage 2 until asked. Construction reserve (`T_RT_reserve`)
-stays Stage 2. Do not check off OpenSpec `3.5`/`3.6`.
+
+**Immediate Stage 2 child timing**
+([`snapshot_publication_timing_bugfix.md`](../Plans/snapshot_publication_timing_bugfix.md)):
+`snapshot_idle` now emits `start_us`, `pass_change_us`, `step_us`,
+`finish_us`, `publish_us`, and `probe_us`. `pass_change_us` is nested inside
+`start_us`. `probe_us` is one empty `micros()` pair. `DIAG,snapshot_idle` is
+Tier-A. Capture-serial RAM1 locals **6976**; native **1489/1489**.
+Construction code is unchanged. Device recapture must attribute the
+79 ms class before any construction-bound change. Do not check off OpenSpec
+`3.5`/`3.6`.
 
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:

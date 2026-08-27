@@ -68,11 +68,12 @@ void logContentResolutionDeviceGateIncomplete(const char* reason) {
 TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
     Loop& snapshotLoop, uint32_t snapshotIdleStartUs) {
   const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
-  char snapshotLine[320];
+  char snapshotLine[448];
   snprintf(snapshotLine, sizeof(snapshotLine),
            "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
            "playback_rev=%lu,queued=%lu,applied=%lu,construction=%lu,exit=%u,inflight=%u,"
-           "journals=%lu,fragment=%u/%u,parent_rev=%lu",
+           "journals=%lu,fragment=%u/%u,parent_rev=%lu,start_us=%lu,pass_change_us=%lu,"
+           "step_us=%lu,finish_us=%lu,publish_us=%lu,probe_us=%lu",
            static_cast<unsigned long>(micros()),
            static_cast<unsigned long>(micros() - snapshotIdleStartUs),
            snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u, publishedSnapshot.get(),
@@ -86,7 +87,13 @@ TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
            static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapJournalCount()),
            snapshotLoop.pendingSnapshotWrapFragmentIndex(),
            snapshotLoop.pendingSnapshotWrapFragmentCount(),
-           static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapParentRevision()));
+           static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapParentRevision()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleStartUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdlePassChangeUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleStepUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleFinishUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdlePublishUs()),
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleProbeUs()));
   DebugSessionCapture::appendCaptureTextLine(snapshotLine);
 }
 
