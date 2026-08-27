@@ -639,8 +639,9 @@ Owner stays `Loop` / `LoopSnapshot`. No new manager.
   versus generic lookup.
 - Device recapture [`005527`](../../captures/session_20260828_005527.log)
   **closes** the other-pitch walk: `note_lookup` max 857 µs. Completeness
-  held (`root=0x0` through the file). The file ends at 103.013 s still
-  `pending=1` / `queued=3`, so publication itself is not closed here.
+  held (`root=0x0` through that file). Tail
+  [`005819`](../../captures/session_20260828_005819.log) publishes
+  `pending=0` / `root=0x70413fec` / `root_rev=10` at 125.041 s.
 - Same-pitch membership scan and refill remain measured but not bounded.
 - Do not freeze `T_RT_reserve`. Do not check off OpenSpec `3.5` / `3.6`.
 
@@ -895,8 +896,12 @@ firmware that enforces the corresponding goal.
 - Exclusive leftover after the five inners is 3–29 µs on those rows.
 - Discard gate remains closed: `discard` max **35 µs**.
 - Completeness held: `root=0x0` on every row. File ends at 103.013 s
-  still `pending=1`, `queued=3`, `construction=10`, `journals=0`. This
-  file does not close publication.
+  still `pending=1`, `queued=3`, `construction=10`, `journals=0`.
+- Tail [`005819`](../../captures/session_20260828_005819.log) **closes
+  publication**: `root=0x0` until 125.041 s, then `pending=0` /
+  `root=0x70413fec` / `root_rev=10` / `publish=9`. `note_lookup` max
+  in the tail is 136 µs; `pass_change` max is 1.038 ms. One
+  `RING,overflow` at the start of that file.
 - Stage 1 hold: `PLAYING -> STOPPED` at 94.769 s; first STOPPED idle at
   +0.071 s (`pending=1`, `queued=3`, `root=0x0`).
 - RECORDING used 3780 idles / **379 ms** CPU, `us_max=7.480 ms`. That

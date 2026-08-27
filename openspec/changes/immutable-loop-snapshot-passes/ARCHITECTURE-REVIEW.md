@@ -467,5 +467,7 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
 - [x] Full native suite passes: **1495/1495** tests.
 - [x] Device recapture [`005527`](../../../captures/session_20260828_005527.log):
       `note_lookup` max 857 µs (was 18293); `pass_change` max 3.219 ms;
-      candidate stayed `root=0x0`. File ends still `pending=1`.
+      candidate stayed `root=0x0`. Tail
+      [`005819`](../../../captures/session_20260828_005819.log)
+      publishes `pending=0` / `root=0x70413fec` / `root_rev=10`.
 - [ ] Do not check off tasks `3.5`/`3.6` on this lookup slice.
